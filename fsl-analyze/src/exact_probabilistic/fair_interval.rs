@@ -66,8 +66,8 @@ pub fn decide_fair_reachability_threshold(
             sweeps,
             policy,
         } => Ok(UnboundedOutcome::Bounds {
-            lower: upper.iter().map(|bound| complement(bound)).collect(),
-            upper: lower.iter().map(|bound| complement(bound)).collect(),
+            lower: upper.iter().map(complement).collect(),
+            upper: lower.iter().map(complement).collect(),
             precision_bits,
             sweeps,
             policy,
@@ -121,7 +121,6 @@ mod tests {
                     accumulator: None,
                     pending: None,
                     certificate_state: None,
-                    timed_history: None,
                 })
                 .collect(),
             kind: ProductKind::Mdp,

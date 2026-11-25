@@ -117,7 +117,9 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
             .iter()
             .find(|row| {
                 let key = key(row);
-                key[5][1] == remaining && key[5][2] == "active" && key[6][2] == amount
+                key[5][1] == json!(remaining.to_string())
+                    && key[5][2] == "active"
+                    && key[6][2] == amount
             })
             .expect("an active amount row");
         assert_eq!(
@@ -222,7 +224,9 @@ fn every_scheduler_checks_shifted_extrema_and_the_strict_zero_edge() {
             .iter()
             .find(|row| {
                 let state = key(row);
-                state[5][1] == remaining && state[5][2] == "active" && state[6][2] == amount
+                state[5][1] == json!(remaining.to_string())
+                    && state[5][2] == "active"
+                    && state[6][2] == amount
             })
             .unwrap();
         assert_eq!(
@@ -933,9 +937,27 @@ fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_sche
                 "Ge",
                 scheduler,
                 "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) >= 2",
+            ) + &claim(
+                "Numeric",
+                scheduler,
+                "probability <= 0.5 [steps from holds(false) until holds(m.delivered) within 4 <= 2]",
             )),
         ));
         let system = ModelSystem::new(world.subject().simulation).unwrap();
+        let numeric = settle(&world, "Numeric", ModelCheckLimits::default());
+        let numeric_document = fsl_replay::read_measure_probability_certificate(
+            numeric
+                .terminal()
+                .unwrap()
+                .exact_certificate_document()
+                .expect("a complete numeric profile"),
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap();
+        let seed = ExactProbabilityCertificate {
+            values: numeric_document.values,
+        };
         for name in ["Le", "Ge"] {
             let record = settle(&world, name, ModelCheckLimits::default());
             let terminal = record
@@ -977,7 +999,7 @@ fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_sche
                     &system,
                     claims,
                     &item,
-                    &ExactProbabilityCertificate { values: Vec::new() },
+                    &seed,
                     payoff,
                     document_limits(),
                     &Cancel::new(),
@@ -3073,7 +3095,7 @@ fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
                 .find(|row| {
                     let state = key(row);
                     state[4] == initial[4]
-                        && state[5][1] == remaining
+                        && state[5][1] == json!(remaining.to_string())
                         && state[6]
                             == json!([
                                 "count-fraction",

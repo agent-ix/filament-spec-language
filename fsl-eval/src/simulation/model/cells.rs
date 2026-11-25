@@ -33,7 +33,7 @@ impl ModelSimState {
     /// The value `cell` holds; `None` when the object is absent or leaves
     /// the field absent.
     pub fn cell(&self, cell: &Cell) -> Option<&Value> {
-        self.state
+        self.state()
             .populations
             .get(&cell.population)?
             .get(&cell.key)?
@@ -45,7 +45,7 @@ impl ModelSimState {
     /// absent, and `None` leaves the field absent.
     pub(crate) fn set_cell(&mut self, cell: &Cell, value: Option<Value>) {
         let Some(object) = self
-            .state
+            .state_mut()
             .populations
             .get_mut(&cell.population)
             .and_then(|objects| objects.get_mut(&cell.key))
@@ -108,7 +108,7 @@ impl ModelSystem<'_> {
         let Location::Field { object, field } = location else {
             return Ok(None);
         };
-        let mut rows: Vec<Row> = rows_of(self, &state.state)?;
+        let mut rows: Vec<Row> = rows_of(self, state.state())?;
         rows.extend(absent_rows(self, state));
         let Some(row) = rows.into_iter().find(|row| row.reference == *object) else {
             return Ok(None);

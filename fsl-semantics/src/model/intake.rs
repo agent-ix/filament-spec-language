@@ -212,13 +212,13 @@ pub use model_unit::{
     compile_model_unit, compile_model_unit_with_causes, is_model_unit_source,
     package_input_from_sources, CompiledModelUnit,
 };
+pub(crate) use unit::SelectedModelsParts;
 pub use unit::{
     admit_unit, admit_unit_with_cancel, admit_units_with_cancel, NormalizedModel,
     OperationClauseFailure, SelectedModel, SelectedModels, TypeInvariantFailure, UnitIntakeCause,
     UnitIntakeRefusal,
 };
 pub(crate) use unit::{normalize_model_with_provenance, NormalizedModelProvenance};
-pub(crate) use unit::SelectedModelsParts;
 
 /// A Quire meaning id (FR-208): the sole legitimate way to determine what a
 /// construct or type definition IS. Kind names and modules are never
@@ -5492,6 +5492,7 @@ pub(super) fn read_tuple_value_type(
                             | meaning::RECORD_VALUE_TYPE
                             | meaning::TUPLE_VALUE_TYPE
                             | meaning::VARIANT_TYPE
+                            | meaning::OBJECT_TYPE
                     )
                 })
             }
@@ -5556,6 +5557,7 @@ fn variant_payload_is_value_type(
                     | meaning::RECORD_VALUE_TYPE
                     | meaning::TUPLE_VALUE_TYPE
                     | meaning::VARIANT_TYPE
+                    | meaning::OBJECT_TYPE
             )
         }),
     }

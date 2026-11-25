@@ -32,6 +32,13 @@ use serde_json::{json, Value};
 
 use super::*;
 
+#[path = "../../../fsl-semantics/tests/support/tc235_k2.rs"]
+#[expect(
+    dead_code,
+    reason = "the shared K2 builder is used by multiple emitter test modules"
+)]
+mod tc235_k2;
+
 /// [`super::node_id`] for a test's one id.
 fn node_id(key: impl std::borrow::Borrow<NodeKey>) -> CheckedNodeId {
     fsl_semantics::check::wire_id::structural_id(key.borrow())
@@ -43,6 +50,7 @@ mod admission_corpus;
 mod bare_world;
 mod bytes_operations;
 mod carried_quantity_paths;
+mod class_c;
 mod check_mode;
 mod checked_views;
 mod child_composite;

@@ -356,7 +356,7 @@ pub(super) struct PopulationDeclaration {
 /// What admission reads of the package declarations: the navigation
 /// relationships with their ends, and the population declarations.
 #[derive(Clone, Debug)]
-pub(super) struct ModelFacts {
+pub(crate) struct ModelFacts {
     navigation: Vec<NavigationRelationship<DeclarationKey>>,
     populations: Vec<PopulationDeclaration>,
 }
@@ -894,7 +894,7 @@ pub(super) fn build_extents(
     extents: &[CheckedExtent],
     completeness: &BTreeMap<String, bool>,
 ) -> Result<RelationshipExtents, AdmissionFailure> {
-    admit_supplied_extents(types, facts, supplied_extents(extents)?, completeness)
+    admit_supplied_extents(types, &facts, supplied_extents(extents)?, completeness)
 }
 
 /// `extents` as the supplied extents the store admits, every instance end
@@ -929,7 +929,7 @@ pub(super) fn supplied_extents(
 /// The store over already supplied extents.
 pub(super) fn admit_supplied_extents(
     types: &TypeEnvironment,
-    facts: ModelFacts,
+    facts: &ModelFacts,
     supplied: Vec<RelationshipExtent<DeclarationKey>>,
     completeness: &BTreeMap<String, bool>,
 ) -> Result<RelationshipExtents, AdmissionFailure> {

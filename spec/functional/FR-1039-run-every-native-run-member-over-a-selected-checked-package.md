@@ -99,7 +99,8 @@ request echo carrying `package` where a source request carries `program`.
   request carrying neither `program` nor `package` (`invalid-request` naming
   `program`), both (naming `program`), or `package` beside `libraries`,
   `refinement_internals` or `integer_division` (naming that member), each at
-  stage `request`, exit 20.
+  stage `request`, exit 20. Where such a request also lacks a member FR-1047
+  lists, FR-1047 states which refusal the entry gives.
 - FSL SHALL take the edition, profiles, dependency selections and laws from
   the admitted package's `lock`, so a call evaluates `div` and `rem` under
   the law the package recorded (FR-767), and SHALL resolve every name a
@@ -375,6 +376,7 @@ reader refusal in the table.
 | FR-1039-AC-10 | Source and package runs of TC-1295 rows 41 and 42 use the same admitted source bytes and native references: timestamped and progressed inputs, with and without a ledger, render non-empty decision support with the exact whole atom `holds( p )`. Removing or changing its reference, shortening the admitted source below the region, or placing a region endpoint inside a UTF-8 scalar gives `SourceNotSupplied`, `invalid_runtime_input`/`missing-member` naming `sources`, stage `call`, exit 20, source identity and clause, no clause record. Handoff source bytes cannot satisfy the request. | Test |
 | FR-1039-AC-11 | A package call refusal and a refused source-native condition with a region locus render the same code, cause, fields and native source span as their source runs, with `file` equal to the caller-supplied authored path even when it differs from the compiler's path. An omitted or wrong native reference, a short source or a non-UTF-8-boundary endpoint gives the caller-source refusal in AC-10 at stage `call`, exit 20, with no rendered member outcome. Different valid formal metadata does not change native region matching or atom text. | Test |
 | FR-1039-AC-12 | A package TL lowering with absent `sources`, `[]` and valid caller sources produces the same canonical atom text from the package projections as FR-931 specifies. Caller sources neither change package evaluation nor supply libraries, imports or bindings; no adapter discovers handoff source bytes, compiles caller sources or authenticates caller labels against their bytes. | Test |
+| FR-1039-AC-13 | For `native-run/1` with `package` selected by `file`, a valid non-empty `libraries` selection refuses before any package, model or selected-library file is opened with outer code `invalid-request`, stage `request`, exit 20, and a message naming `libraries`; no member outcome is written. A present, valid `refinement_internals` member with the same package selection refuses the same way before any selected package or model file is opened, naming `refinement_internals`; malformed carrier decoding keeps its existing request rule. For each member independently, when the request also carries neither `call` nor FR-031's clause-run form, this package-member refusal takes precedence over FR-100-AC-25's no-call message. `libraries` absent or `[]` does not trigger this package-member refusal. | Test (TC-3019) |
 
 ## Dependencies
 

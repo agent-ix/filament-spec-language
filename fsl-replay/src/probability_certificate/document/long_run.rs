@@ -1396,9 +1396,11 @@ fn induced_graph(
         .collect::<Vec<_>>();
     let Some(chosen) = super::refutation::randomized_scheduled_choices(
         system,
-        &graph,
-        reference,
-        &distributions,
+        super::refutation::ScheduleEvidence {
+            graph: &graph,
+            reference,
+            rows: &distributions,
+        },
         cx.limits,
         cx.cancel,
         &mut cx.meter,

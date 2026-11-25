@@ -1301,6 +1301,48 @@ fn the_support_graph_is_the_state_graph() {
     assert_eq!(seen.len(), 7);
 }
 
+#[trace("FR-101-AC-2")]
+#[test]
+fn model_state_key_memo_tracks_clones_and_cell_mutation() {
+    let world = World::new(&world::link());
+    let system = world.system();
+    let state = initial(&system);
+    let cloned = state.clone();
+    assert!(state.shares_key_memo(&cloned));
+    let cold_debug = format!("{state:?}");
+    let original = system.state_key(&state).expect("key").0;
+    assert_eq!(format!("{state:?}"), cold_debug);
+    assert_eq!(system.state_key(&cloned).expect("cloned key").0, original);
+
+    let (population, objects) = state
+        .state()
+        .populations
+        .iter()
+        .next()
+        .expect("one population");
+    let (key, object) = objects.iter().next().expect("one object");
+    let (field, _) = object.fields.iter().next().expect("one field");
+    let cell = super::super::Cell {
+        population: population.clone(),
+        key: key.clone(),
+        field: field.clone(),
+        name: "memo-test".to_owned(),
+    };
+    let mut changed = cloned;
+    changed.set_cell(&cell, None);
+    assert!(!state.shares_key_memo(&changed));
+    let changed_key = system.state_key(&changed).expect("changed key").0;
+    assert_ne!(changed_key, original);
+    let mut freshly_changed = initial(&system);
+    freshly_changed.set_cell(&cell, None);
+    let freshly_computed_key = system
+        .state_key(&freshly_changed)
+        .expect("freshly computed key for the changed state")
+        .0;
+    assert_eq!(changed_key, freshly_computed_key);
+    assert_eq!(system.state_key(&state).expect("original key").0, original);
+}
+
 /// FR-185-AC-7 (TC-620 step 7): `Service`, with `d` typed `Millis = Int[1,
 /// 12]`, checks at S3 with its record intact; S4 writes its random
 /// parameters, workload and reward, and the strict reader admits them.

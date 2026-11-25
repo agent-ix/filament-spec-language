@@ -12,6 +12,8 @@
 //! loop make, so a step that passes here is a successor of `a` in the
 //! abstract system's own expansion and the two never disagree.
 
+use std::cell::RefCell;
+
 use filament_checked::key::DeclarationKey;
 use filament_exact::{ObjectReference, Value};
 use filament_semantic_value::catalog::CatalogCode;
@@ -218,7 +220,7 @@ impl ModelSystem<'_> {
         let recorded = post
             .reached_by()
             .and_then(|effect| effect.result.as_deref());
-        let references: Vec<ObjectReference> = rows_of(self, &post.state)?
+        let references: Vec<ObjectReference> = rows_of(self, post.state())?
             .into_iter()
             .map(|row| row.reference)
             .collect();
@@ -375,6 +377,7 @@ impl ModelSystem<'_> {
                 operation_postconditions: &[],
                 footprint: None,
                 references: super::reference_arguments(&args),
+                result_order_cache: RefCell::new(None),
                 frames: &frames,
             };
             let judgement = run.judge(&preconditions, request)?;

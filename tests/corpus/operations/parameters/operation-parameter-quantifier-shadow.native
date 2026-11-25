@@ -1,0 +1,7 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model M = "test/orders";
+pre Shadow using v on M::Switch::set {
+    let flags: Sequence<Boolean>[2,2] = sequence[true, false] in
+        forall(flag in flags: flag = M::Switch::set::flag)
+}

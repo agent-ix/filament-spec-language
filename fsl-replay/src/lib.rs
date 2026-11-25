@@ -382,11 +382,14 @@ pub use model_check::replay::{
 };
 pub use model_check::settle::{
     settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
-    settle_smt_proof, CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel,
-    Truth, EXPLICIT_STATE, K_INDUCTION,
+    settle_smt_proof, settle_smt_proof_with_evidence, smt_query_digest, CertificateChecker,
+    Execution,
+    ModelCheckRecord, RecordWarning, ResultLabel, SmtProofSettlement, Truth, EXPLICIT_STATE,
+    K_INDUCTION,
 };
 pub use model_check::smt_query::{
-    encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
+    encode_smt_query, encode_temporal_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal,
+    SmtQueryKind,
 };
 pub use fsl_eval::smt::SmtRunLimits;
 pub use model_check::state_graph::{
@@ -419,6 +422,7 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
+    check_step_for_model,
     abstract_classes, candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
     candidate_lasso_has_fair_run,
     candidate_lasso_has_fair_run_with_recurring_edge, check_initial, check_protocol_initial,
@@ -454,10 +458,10 @@ pub use outcome::verdict_bound_wire;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,
-    probabilistic_undefined_wire, probabilistic_wire, probabilistic_wire_with_enum_members,
-    protocol_temporal_wire, read_outcome_diagnostics, read_task_temporal_counterexample,
-    read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
-    replay_task_product_trace, sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    probabilistic_undefined_wire, probabilistic_wire, protocol_temporal_wire,
+    read_outcome_diagnostics, read_task_temporal_counterexample, read_task_temporal_document,
+    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
+    sampled_witness_wire, state_key_wire, task_product_transition_wire,
     task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
     task_transition_wire, temporal_wire, ClauseRunNotAnItem, ConformanceClosureOutput,
     ConformanceGlobalOutput, ConformanceMessageBoundOutput, ConformanceObligationOutput,
@@ -465,8 +469,8 @@ pub use outcome::{
     ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
     OmittedWitness, Operation, OutcomeDiagnostic, OutcomeDiagnosticRead, OutcomeDocument,
     OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason,
-    ProtocolConformanceOutput, ProtocolWire, ReadCounterexample, ResultLimit, ResultValue,
-    TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
+    ProbabilisticValueSchema, ProtocolConformanceOutput, ProtocolWire, ReadCounterexample,
+    ResultLimit, ResultValue, TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
     TemporalCounterexampleReadRefusal, TraceAlphabet, WitnessOmission, OUTCOME_FORMAT,
 };
 pub use planner::{
@@ -493,13 +497,14 @@ pub use probability_certificate::{
     digital_probability_product_key, long_run_probability_certificate_document,
     measure_probability_certificate_document, measure_probability_objective,
     measure_probability_product_key, on_each_has_instance, on_each_outcome,
-    probabilistic_claim_identity, probabilistic_formula_monitor_context,
-    probability_certificate_document, probability_proof_document,
-    read_long_run_probability_certificate, read_measure_probability_certificate,
-    read_probability_certificate, read_probability_proof_document,
-    read_weighted_long_run_probability_certificate, region_probability_product_key,
-    replay_on_each_witness, replay_probabilistic_undefined, replay_probabilistic_witness,
-    replay_probabilistic_witness_from_package, vacuous_measure_probability_certificate_document,
+    partial_lower_probability_proof_document, probabilistic_claim_identity,
+    probabilistic_formula_monitor_context, probability_certificate_document,
+    probability_proof_document, read_long_run_probability_certificate,
+    read_measure_probability_certificate, read_probability_certificate,
+    read_probability_proof_document, read_weighted_long_run_probability_certificate,
+    region_probability_product_key, replay_on_each_witness, replay_probabilistic_undefined,
+    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
+    vacuous_measure_probability_certificate_document,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
     write_measure_probability_certificate, write_value_bounds_measure_certificate,
     write_probability_certificate,

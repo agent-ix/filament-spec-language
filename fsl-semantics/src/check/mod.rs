@@ -993,6 +993,9 @@ pub struct CheckedGraph {
     /// ADR-011 §2.4 `model_selections`: each admitted domain package's
     /// selection, ascending by identity.
     model_selections: Vec<DomainPackageRef>,
+    /// FR-081/FR-400: retain the effective views formed for the selected
+    /// model aliases so package emission uses admitted facts directly.
+    selected_views: BTreeMap<String, crate::model::normalize::EffectiveView>,
     /// Exact identity rows issued by model intake for the same selected
     /// documents, carried to the package's IR projection boundary.
     selected_exact_identity_rows: (
@@ -1164,11 +1167,10 @@ pub struct CheckedGraph {
     /// FR-115: every admitted object type's effective identity, by its
     /// declaration key.
     object_types: BTreeMap<filament_checked::key::DeclarationKey, filament_exact::EffectiveId>,
-    /// ADR-012 §15.4: every admitted object type's `model`/`object_type`
-    /// node key, by its declaration key -- keyed from the declaration
-    /// whether or not this package's lowering minted the node, so
-    /// [`Self::field_domain`] names a field's declaring type even when no
-    /// clause reads it.
+    /// ADR-012 §15.4: every admitted object type or operation owner's model
+    /// node key, by declaration key -- keyed from the declaration whether or
+    /// not this package's lowering minted the node, so requirement rows can
+    /// name state-machine and process owners as well as object types.
     object_nodes: BTreeMap<filament_checked::key::DeclarationKey, filament_exact::NodeKey>,
     /// ADR-012 §15.7: each `model` alias's population declarations, by
     /// artifact id, each with its canonical member type and ordinal, as
@@ -1243,6 +1245,7 @@ impl DebugWith for CheckedGraph {
             synthesized_spans,
             embedding,
             model_selections,
+            selected_views,
             selected_exact_identity_rows,
             selected_tuple_declaration_rows,
             operation_effects,
@@ -1364,6 +1367,7 @@ impl DebugWith for CheckedGraph {
             .field("synthesized_spans", &synthesized_spans)
             .field("embedding", &embedding)
             .field("model_selections", &model_selections)
+            .field("selected_views", &selected_views)
             .field(
                 "selected_exact_identity_rows",
                 &selected_exact_identity_rows,
@@ -3460,6 +3464,7 @@ impl PackageDeclarations {
             .collect();
         let object_nodes = object_types
             .keys()
+            .chain(owner_types.keys())
             .filter_map(|declaration| {
                 models
                     .iter()
@@ -6516,7 +6521,6 @@ impl PackageDeclarations {
                                 location,
                                 reference: location,
                             }),
-                        authored_operation_name: form.authored_operation.as_deref(),
                         parameters: &typed.parameters,
                         body: typed.body.root(),
                         body_slots: &typed.slot_names,
@@ -7209,13 +7213,11 @@ impl PackageDeclarations {
         }
         // FR-375: each refinement's rows, keyed once its catalog is, each
         // row expression located at its own site. A refinement whose
-        // catalog names a node not written yet, or whose history initial has
-        // no literal form, is not emitted, so its rows are not keyed.
+        // catalog names a node not written yet is not emitted, so its rows
+        // are not keyed.
         let mut refinement_booleans = std::collections::BTreeMap::new();
         for checked in &mut refinements {
-            if (checked.class_catalog.is_some() && checked.class_catalog_keys.is_none())
-                || !checked.history_initials_have_literals()
-            {
+            if checked.class_catalog.is_some() && checked.class_catalog_keys.is_none() {
                 continue;
             }
             for row in checked.rows() {
@@ -8716,6 +8718,7 @@ impl PackageDeclarations {
             synthesized_spans,
             embedding,
             model_selections,
+            selected_views: self.selected_views,
             selected_exact_identity_rows: self.selected_exact_identity_rows,
             selected_tuple_declaration_rows: self.selected_tuple_declaration_rows,
             operation_effects,
@@ -9791,6 +9794,42 @@ impl CheckedGraph {
     /// `model_selections`.
     pub fn model_selections(&self) -> &[DomainPackageRef] {
         &self.model_selections
+    }
+
+    /// The identity of the domain package that owns the obligation `claim`
+    /// names, FR-621's certificate `model` (FSpec FR-201, FR-412): the package
+    /// of a temporal clause's `over` object type, else the package's one model
+    /// selection. `None` when the claim names no single owning package: a
+    /// package with no model selection, or several and a claim with no `over`
+    /// object type.
+    pub fn owning_model<'a>(&'a self, claim: &'a filament_exact::NodeKey) -> Option<&'a str> {
+        let over = self
+            .temporal_clauses()
+            .iter()
+            .find(|clause| clause.identity() == *claim)
+            .and_then(|clause| match &clause.clause().over().1 {
+                ValueType::Reference(object_type) => Some(object_type.original().package()),
+                _ => None,
+            });
+        let hybrid = self
+            .hybrid_claim_sites()
+            .iter()
+            .any(|site| &site.identity == claim)
+            .then(|| claim.package());
+        over.or(hybrid).or_else(|| match self.model_selections() {
+            [selection] => Some(selection.identity.as_str()),
+            _ => None,
+        })
+    }
+
+    /// FR-081/FR-400: the completed effective declaration view for each
+    /// selected model alias, as produced during S3 admission. Package
+    /// emission reads these retained views rather than normalizing source
+    /// documents a second time.
+    pub fn selected_model_views(
+        &self,
+    ) -> &BTreeMap<String, crate::model::normalize::EffectiveView> {
+        &self.selected_views
     }
 
     /// The model-intake declaration and field rows, validated against the

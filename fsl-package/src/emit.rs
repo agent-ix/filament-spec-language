@@ -7062,9 +7062,8 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let mut meter = OutputMeter::new(limits);
     let (requirement_rows, path_condition_frames, renumbered) =
-        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map, &mut meter)?;
+        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     if let Some(data) = &mut checked_term_data {
         value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
     }
@@ -8094,15 +8093,13 @@ fn emit_package_nodes(
     }
     append_model_roots(
         ids,
-        graph.model_roots().zip(
-            graph
-                .model_root_locations()
-                .iter()
-                .map(|location| regions(location)),
-        ),
+        graph
+            .model_roots()
+            .zip(graph.model_root_locations().iter().map(&regions)),
         &mut nodes,
         &mut source_map,
     )?;
+    model_correspondence::append(ids, graph, &regions, &mut nodes, &mut source_map)?;
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
@@ -8123,8 +8120,7 @@ fn emit_package_nodes(
             .and_then(|candidate| candidate.expression_region(claim.origin().ordinal(), &regions))
             .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
-    // The meter charges the owner walks the renumbering makes, then every row
-    // section below.
+    // The meter charges the canonical rows that are written below.
     let mut meter = OutputMeter::new(limits);
     let value_validity = value_validity_requirements::append(
         ids,
@@ -8133,7 +8129,6 @@ fn emit_package_nodes(
         &mut source_map,
         &value_validity_region,
         &omitted_causes,
-        &mut meter,
     )?;
     omitted.extend(value_validity.omitted.iter().cloned());
     omitted.sort_by(|left, right| left.node.cmp(&right.node));
@@ -11230,6 +11225,7 @@ fn own_evidence(lock: &CheckedPackageLockV2) -> CheckedPackageEvidence {
     evidence
 }
 
+mod model_correspondence;
 mod model_relation_requirements;
 mod probabilistic;
 mod selected_rows;
@@ -11250,6 +11246,7 @@ pub use clock_selection::{
 };
 mod body_locations;
 mod identity_rows;
+mod location_paths;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
 pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};

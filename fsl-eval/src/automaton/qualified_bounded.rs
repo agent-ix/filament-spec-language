@@ -222,7 +222,7 @@ impl QualifiedBoundedMonitor {
     /// binding, real remaining horizon and pending window debt.
     pub fn key(&self, state: StateId) -> Result<AutomatonStateKey, QualifiedBoundedError> {
         if self.nested_eventually_always {
-            return self.formula_state_key(state).map_err(Into::into);
+            return self.formula_state_key(state);
         }
         Ok(self.translation.key(self.state(state)?)?)
     }

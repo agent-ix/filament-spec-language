@@ -464,9 +464,8 @@ fn malformed_target_objects_refuse_before_driver_handoff() {
                 options: &options,
             },
             fsl_command::command::RunLimits::default(),
-            &caller,
+            fsl_command::command::MonitorPreparation::new(&caller, &mut preparer),
             &Cancel::new(),
-            &mut preparer,
         )
         .expect_err("malformed target must be refused");
         assert_eq!(
@@ -527,9 +526,8 @@ fn accepted_target_and_activation_bound_reach_driver_preparer() {
             options: &options,
         },
         fsl_command::command::RunLimits::default(),
-        &caller,
+        fsl_command::command::MonitorPreparation::new(&caller, &mut preparer),
         &Cancel::new(),
-        &mut preparer,
     )
     .expect("the driver handoff admits the target");
     assert_eq!(summary.exit_code, 0);
@@ -580,9 +578,8 @@ fn timed_target_reaches_driver_preparer_before_timed_trace_refusal() {
     let pulled = std::cell::Cell::new(0);
     let records = std::io::Cursor::new(records(&[2], true))
         .split(b'\n')
-        .map(|line| {
+        .inspect(|_| {
             pulled.set(pulled.get() + 1);
-            line
         });
     let options = fsl_analyze::provider::ProviderOptions::default();
     let error = fsl_command::command::monitor_with_target_preparer(
@@ -595,9 +592,8 @@ fn timed_target_reaches_driver_preparer_before_timed_trace_refusal() {
             options: &options,
         },
         fsl_command::command::RunLimits::default(),
-        &caller,
+        fsl_command::command::MonitorPreparation::new(&caller, &mut preparer),
         &Cancel::new(),
-        &mut preparer,
     )
     .expect_err("timed traces remain unsupported after target handoff");
     assert!(

@@ -47,6 +47,7 @@ use crate::counter::{
 use crate::fill::tcb_01_event_position_selection;
 
 mod certificate_boundary_cases;
+mod smt_proof_settlement;
 mod tp3_each;
 
 const GUARDED: &str = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n\
@@ -437,6 +438,7 @@ fn closure(
 /// holds every one of the 16 reachable model states under each of the two
 /// instances' carried root, and the core checker accepts it.
 #[trace("TC-525")]
+#[trace("TC-764", "FR-282-AC-5")]
 #[test]
 fn a_proved_invariant_carries_a_certificate_the_core_accepts() {
     let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
@@ -461,6 +463,7 @@ fn a_proved_invariant_carries_a_certificate_the_core_accepts() {
 /// `SuccessorMissing` at that product state, and with the initial (0, 0)
 /// removed, `InitialMissing` at it.
 #[trace("TC-525")]
+#[trace("TC-764", "FR-282-AC-5")]
 #[test]
 fn a_certificate_missing_a_reached_state_is_rejected_at_it() {
     let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
@@ -2144,7 +2147,7 @@ fn hyper_product_rejection_and_checker_stop_never_settle_certified() {
 
 /// Closure failure precedes a rejecting monitor member, even when that
 /// rejecting member is initial and is visited before the missing successor.
-#[trace("TC-646", "FR-163-AC-2")]
+#[trace("TC-646", "FR-163-AC-2", "FR-282-AC-8")]
 #[test]
 fn hyper_product_closure_is_checked_before_a_projected_violation() {
     use crate::hyper_world::{instance, Vault, World};
@@ -2224,14 +2227,46 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         .iter()
         .map(|state| product_state_key(&product.key(state)).expect("initial key"))
         .collect::<std::collections::BTreeSet<_>>();
+    let missing_target = product
+        .initial()
+        .iter()
+        .flat_map(|state| {
+            product
+                .successors(state)
+                .expect("an initial product state expands")
+                .successors
+        })
+        .map(|(_, next)| product_state_key(&product.key(&next)).expect("a successor key"))
+        .find(|key| !initial.contains(key))
+        .expect("the fixture has a successor outside its initial set");
     assert!(
         product_members(&proof).len() > initial.len(),
         "the product has non-initial successors"
     );
     product_members_mut(&mut proof).retain(|key| initial.contains(key));
-    assert!(
-        matches!(check_product_closure(&request, &proof, &limits, &cancel).expect("check"),
-        fsl_replay::ProductClosureCheck::Rejected(rejection) if rejection.rule == CertificateRule::SuccessorMissing)
+    let fsl_replay::ProductClosureCheck::Rejected(rejection) =
+        check_product_closure(&request, &proof, &limits, &cancel).expect("check")
+    else {
+        panic!("a missing product successor is rejected");
+    };
+    assert_eq!(rejection.rule, CertificateRule::SuccessorMissing);
+    assert_eq!(
+        rejection.at,
+        CertificateLocus::HyperProductState(missing_target.0.clone()),
+        "FR-282-AC-8 names the exact absent target product key"
+    );
+    let wire = serde_json::to_value(&rejection.at).expect("the missing target locus serializes");
+    // FR-331's locus spells each component's state key as a State `{key}`.
+    let mut expected =
+        serde_json::to_value(&missing_target).expect("the missing target key serializes");
+    for state in expected["states"].as_array_mut().expect("component keys") {
+        *state = serde_json::json!({"key": state.take()});
+    }
+    assert_eq!(wire, expected);
+    crate::probability_from_source::assert_valid(
+        &crate::probability_from_source::provider_definition("HyperProductStateLocus"),
+        &wire,
+        "the missing target locus",
     );
 }
 

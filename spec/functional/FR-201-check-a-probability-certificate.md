@@ -221,12 +221,15 @@ explicitly unsupported rather than be encoded as this profile.
   key octets, with no duplicate keys. Values and ranking SHALL cover
   exactly the checker-rebuilt reachable states, including terminal states;
   probabilities SHALL lie in [0,1].
-- Keys SHALL use FR-196's authoritative complete eight-member basis,
-  including the actual `binding`, `instance` and `activation`, through the shared
+- Keys SHALL use FR-196's authoritative complete basis, including the actual
+  `binding`, `instance` and `activation`, through the shared
   `ProbabilityProductKey::for_model_state` helper for the unbounded subset.
-  The bounded subset SHALL use the existing complete formula-monitor
-  representation, with null accumulator and pending components. FSpec
-  FR-412, FR-331 and the provider schema state the same eight members. Actual absent monitor,
+  This checker profile has no reset process, so its keys use the original
+  eight-member representation; FR-196 appends `root` only for a reset
+  process over multiple canonical initial roots. The bounded subset SHALL
+  use the existing complete formula-monitor representation, with null
+  accumulator and pending components. FSpec FR-412, FR-331 and the provider
+  schema state the same conditional representation. Actual absent monitor,
   accumulator and pending components remain null. The reader SHALL admit
   keys against the checked subject and compare complete canonical octets;
   a model-only key, foreign binding or altered component is not an alias.
@@ -670,8 +673,11 @@ AST or additional body field is added.
   cycle. A `Bounds` result for these forms SHALL NOT be serialized as an
   exact document; this profile does not establish FR-1042 `base` admission
   for these objectives, and EN-5 SHALL move to its exact method before it
-  emits a proof. When the exact violated quantity exceeds
-  `max_rational_bits`, EN-5 SHALL settle the item as
+  emits a proof. When the exact solve for one of these claims passes
+  `max_rational_bits`
+  ([FR-198](FR-198-decide-unbounded-reachability-and-expected-rewards.md),
+  "Rational budget"), as it does when the exact violated quantity is past it,
+  EN-5 SHALL settle the item as
   [FR-1042](FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md)
   (Bases) settles a long-run value that exceeds that setting, with no
   certificate and no truth value.
@@ -1288,7 +1294,8 @@ not from that set, values, component rows or a producer's graph.
   behavior outside that direct entry.
 - The document SHALL have exactly `identity`, `objective`, `kind`,
   `values` and `components`, with `kind` equal to `"long-run"`; `ranking`
-  and `policy` SHALL be absent. Identity, exact rationals, full eight-member
+  and `policy` SHALL be absent. Identity and exact rationals use the existing
+  encodings. This no-reset profile uses the original eight-member FR-196
   binding-bearing model keys with null absent monitor/accumulator/pending,
   strict canonical JSON and unpadded base64url retain the existing owner
   contracts. `values` SHALL cover exactly the entire independently rebuilt
@@ -1644,8 +1651,11 @@ initial states/bindings and refutations remain outside this profile.
   root/profile/origin/binding constructor, initialization at position zero,
   observation transitions and terminal false-extension closure. The new
   certificate profile string SHALL NOT replace that context constructor.
-  Keys retain FR-196's eight members `[domain,binding,instance,activation,
-  model,monitor,accumulator,pending]`, with null accumulator/pending here.
+  Keys retain FR-196's applicable canonical components. This bounded-fair
+  profile has one initial state and no reset process, so its keys use the
+  original eight-member form `[domain,binding,instance,activation,model,
+  monitor,accumulator,pending]`, with null accumulator/pending here. The
+  ninth `root` member belongs only to a multi-root reset process.
   Fairness is checked claim identity and objective content, not a key
   member.
   Equal fair/unfair numerical values do not establish equality of complete
@@ -1690,7 +1700,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-8 | Over each of those ACs' own model, the checked-subject form gives the verdict, rule and locus that AC states: AC-1's certificate over §15.4's `Link`, including the `4/5` replaced by `9/10` rejection; AC-2's `LongRun` certificate over §15.3's model and its dyadic `Lower` certificate over §15.1's; AC-3's `FairTerminates` certificates over §15.6's `Coin` model, the fairness-removed one rejected; and AC-5's tight-action cases over its `Opt` model. | Test (TC-636) |
 | FR-201-AC-9 | For an admitted acyclic eventual claim, writing and reading the closed profile preserves identity, exact rational values, complete keys, targets and required ranks byte for byte. Duplicate/out-of-order rows, unreduced 2/4, denominator 0, missing ranking, extra fields, padded base64url and a model-only key are rejected. | Test |
 | FR-201-AC-10 | A valid document offered for another identity refuses before enumeration; replacing its targets or optimization while retaining valid Bellman rows refuses objective mismatch. A same-model key with a different binding is rejected rather than merged. Altering a value fails equality; removing or breaking positive-value rank progress fails ranking even when equalities hold. | Test |
-| FR-201-AC-11 | Minimum AtLeast, maximum AtMost and resolved-workload exact proofs pass the profile checker at an attained threshold; a threshold strictly beyond the certified initial value fails. Unbounded cyclic, timed, reward, fair, multi-initial and multi-binding cases, bounded forms outside the admitted subset and non-exact kinds return explicit unsupported with no accepted certificate. Pre-cancelled input and exhausted byte/state/edge/arithmetic budgets stop without a truth value. | Test |
+| FR-201-AC-11 | Minimum AtLeast, maximum AtMost and resolved-workload exact proofs pass the `reachability/v1` profile checker at an attained threshold; a threshold strictly beyond the certified initial value fails. Forms offered to this profile that are unbounded cyclic, timed, reward, fair, multi-initial or multi-binding, bounded forms outside the admitted subset, and non-exact kinds return explicit unsupported with no accepted `reachability/v1` certificate. This profile-specific rejection does not apply to a `conditional` `optimum` certificate: when its reset process has multiple canonical initial roots, FR-196 keys retain the root index and the checker validates each root's rows as required by FSpec FR-412-AC-35..41. Pre-cancelled input and exhausted byte/state/edge/arithmetic budgets stop without a truth value. | Test |
 | FR-201-AC-12 | ADR-028 §15.4's bounded Deliver at horizon 2 gives accepted exact minimum AtLeast at 24/25, maximum AtMost at 99/100 and Even workload at 391/400; after one loss the minimum is 4/5 and workload 17/20. Each threshold beyond the certified side fails. Existing unbounded profile documents retain their verdict and canonical bytes. | Test |
 | FR-201-AC-13 | A model that stays undelivered with probability 1/2 and delivers with probability 1/2 per step has bounded horizon-2 probability 3/4 despite its raw self-cycle. The initial and one-loss visits share the model key but have distinct full formula-bearing keys and ranks 2 and 1. Horizon 0 accepts iff P holds at position 0. A terminal undelivered state closes to rejection by false extension without enumerating stutter positions. | Test |
 | FR-201-AC-14 | For AC-13's valid certificate, replacing a running monitor with a local StateId, null, another remaining horizon, or another binding cannot certify the claim. Changing rank 2 to 3 while retaining valid values fails RankBroken at that full key. An exact document fabricated from a dyadic interval is never emitted; FR-1042 lower/upper documents and precision stops produce no accepted exact certificate. | Test |
@@ -1729,7 +1739,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-56 | A `Health` chain whose `ok` state stays `ok` with `9/10` per step and otherwise moves to a fault state: `probability >= 0.75 [always[0,2] holds(ok)]` under its workload settles `proved`, `ExactValue{81/100}`, with a `reachability/v1` bounded document whose undecided keys (remaining horizon 2 and 1) have values `81/100` and `9/10` and ranks 2 and 1, whose `targets` are the accepting decided keys after position 2, and which `fsl-probability-check` accepts; the fault state is a rejecting decided key with value 0, and a variant whose fault state is terminal closes by false extension with the same values. The value `81/100` replaced by `9/10` is rejected `InequalityFails` at the initial key. | Test (TC-636) |
 | FR-201-AC-47 | The bounded fair profile admits the exact Every/minimum AtLeast and maximum AtMost slice with nonempty checked weak/strong whole/each operation fairness; horizon zero and transported 0/1 values work with interior source bounds. The fair and unfair bounded fixture both have minimum 24/25, while fair result/objective retain the exact checked set. Fairness-empty documents retain existing bytes. Unsupported shapes and zero instances emit no new-profile proof. | Test |
 | FR-201-AC-48 | Canonical fairness records reuse the closed shared operation target and independently match the resolved checked set, including inherited declaring identities and whole/each receiver semantics. Authored reorder/duplicate spellings normalize identically; missing, extra, changed-kind/granularity/model/name, duplicate or out-of-order records and malformed/foreign targets cannot establish the claim. Distinct weak/strong constraints are retained. | Test |
-| FR-201-AC-49 | Independent bounded reconstruction checks exact targets, optimization, complete eight-member keys, actual monitor context and remaining-horizon ranks without producer linkage. Wrong identity/binding/receiver, goal, monitor, horizon, values/ranks, coverage or canonical transport cannot be accepted, with existing precise rule/locus. Numeric invariance introduces no fair-MEC, policy, key member or new vacuity outcome. | Test |
+| FR-201-AC-49 | Independent bounded reconstruction checks exact targets, optimization, complete FR-196 keys (the original eight-member form for this profile, which has no reset process), actual monitor context and remaining-horizon ranks without producer linkage. Wrong identity/binding/receiver, goal, monitor, horizon, values/ranks, coverage or canonical transport cannot be accepted, with existing precise rule/locus. Numeric invariance introduces no fair-MEC, policy, key member or new vacuity outcome. | Test |
 | FR-201-AC-50 | Actual Requested/Deadline cancellation and byte/state/edge/work/storage/representation/arithmetic exhaustion during checked fairness/source declaration intake, structural identity traversal/encoding, canonical writing, raw/full-key admission and independent graph/arithmetic/rank checking retain typed causes without accepted truth. Earlier source refusals and unsupported/undefined evaluation remain distinct. External transition/private-reader and ordinary interpreter allocation boundaries are not claimed qualified. | Test |
 | FR-201-AC-51 | `fsl-probability-check`, run as a separate process with no `fsl-analyze` linkage, accepts an EN-5 `Exact` certificate for FR-201-AC-1, `Lower` and `Upper` certificates for a value-bounds proof of a cyclic DTMC eventual claim (FR-1042-AC-1), a `LongRun` certificate for FR-201-AC-27, an unbounded fair eventual `Exact` certificate over a cyclic MDP (FR-1041-AC-5), a finite-horizon quantile certificate under every scheduler (FR-1043-AC-6) and a digital-clock certificate for FSpec FR-421-AC-1, each read from its bytes with the byte provision of an emitted package; each with one value altered is rejected with its FR-201 rule and locus. | Test (TC-2065) |
 | FR-201-AC-52 | Over FSpec FR-407-AC-18's model, written as an `on each (x: T) when (g)` claim, EN-5 emits for `probability >= rational(1, 2)` over every scheduler an `Optimum` `Conditional` certificate (`post` 1 and `1/2` at the two first activating states, `reset` `1/2` at the initial state with policy `b`) that `fsl-probability-check` accepts with side `AtLeast`; with `reset`'s initial value `1/4` it is rejected `InequalityFails` at the initial state with `part` `reset`, and for `rational(3, 5)` `ThresholdMissed`. Under the workload choosing both actions with `1/2` each, the `Ratio` certificate (numerator `3/8`, denominator `5/8`) is accepted at `rational(3, 5)`; with the denominator replaced by 1 it is rejected `InequalityFails` with `part` `denominator`. | Test (TC-3061) |
@@ -1756,7 +1766,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-78 | Over AC-76's snapshot, the document with `numerator` `1/2` at `m`'s initial key is rejected `InequalityFails` at `m`'s initial key with `part` `numerator` (the part's conditions run before the threshold); the document with `denominator` `1/2` there is rejected `InequalityFails` at `m`'s initial key with `part` `denominator`; and the document whose `numerator` ranking is `0` at `m`'s initial key is rejected `RankBroken` at that key with `part` `numerator` (a rank of 0 leaves no successor of smaller rank, whatever ranking the part otherwise uses). | Test (TC-3209) |
 | FR-201-AC-79 | Over AC-76's snapshot, a `numerator` part that omits the row of `m`'s initial key, repeats it, lists two rows out of ascending order, or adds a row for a key the checker did not rebuild is rejected `Malformed` at `CertificateMember` `numerator`, and the same fault in the `denominator` part is rejected `Malformed` at `CertificateMember` `denominator`, before any arithmetic. | Test (TC-3209) |
 | FR-201-AC-80 | A `Ratio` document of the profile offered for FR-875's claim under every scheduler is rejected `Malformed` at `mode`; a claim of the on-each form over a cyclic continuation graph, with authored fairness or over a timed subject is not admitted by this profile: no `on-each-reachability/v1` document is written or accepted for it. | Test (TC-3209) |
-| FR-201-AC-81 | In FR-196's cap-2 no-operation timed oracle, let `T`, `V`, and `J` be the complete non-clock state, actual time UnitId, and actual clock identity that FR-196 rederives. The complete canonical product keys are K0=`["filament.probability-product-key/v1",null,null,null,["filament.simulation.state-key/v1",["digital",T,V,"1",[[J,"0","2"]],null,"running"]],null,null,null]`, K1 with clock value `"1"` and tail `"idle-delayed"`, and K2 with clock value `"2"` and tail `"idle-delayed"`; monitor, accumulator, and pending are actual null. The finite `MeanTime` Lower document has `values` `(K0,5 ms),(K1,4 ms),(K2,3 ms)`, `ranking` `(K0,3),(K1,2),(K2,1)`, and the geometric policy `IdleDelay` with probability 3/4 and `IdleObserve` with probability 1/4 at K2. The value 5 ms is the same exact initial quantity stated in FR-204-AC-2 for the threshold-3 claim. `fsl-probability-check` accepts this document with bound side `AtLeast`. | Test (TC-639) |
+| FR-201-AC-81 | In FR-196's cap-2 no-operation timed oracle, whose single initial root has no reset process, let `T`, `V`, and `J` be the complete non-clock state, actual time UnitId, and actual clock identity that FR-196 rederives. The complete canonical product keys are K0=`["filament.probability-product-key/v1",null,null,null,["filament.simulation.state-key/v1",["digital",T,V,"1",[[J,"0","2"]],null,"running"]],null,null,null]`, K1 with clock value `"1"` and tail `"idle-delayed"`, and K2 with clock value `"2"` and tail `"idle-delayed"`; monitor, accumulator, and pending are actual null. The finite `MeanTime` Lower document has `values` `(K0,5 ms),(K1,4 ms),(K2,3 ms)`, `ranking` `(K0,3),(K1,2),(K2,1)`, and the geometric policy `IdleDelay` with probability 3/4 and `IdleObserve` with probability 1/4 at K2. The value 5 ms is the same exact initial quantity stated in FR-204-AC-2 for the threshold-3 claim. `fsl-probability-check` accepts this document with bound side `AtLeast`. | Test (TC-639) |
 | FR-201-AC-82 | On AC-81's graph, each pretarget row has positive rank, every positive-probability nonterminal policy successor has strictly smaller rank, and the goal-observation edge has terminal rank 0; `fsl-probability-check` accepts the AC-81 Lower document with bound side `AtLeast`. | Test (TC-639) |
 | FR-201-AC-83 | On AC-81's document, omitting the `ranking` member rejects `Malformed` at `CertificateMember("ranking")` before graph enumeration. | Test (TC-639) |
 | FR-201-AC-84 | On AC-81's document, changing only K0's rank from 3 to 2 while K1 remains rank 2 rejects `RankBroken` at K0, the initial pretarget key and first failing key in canonical order. | Test (TC-639) |

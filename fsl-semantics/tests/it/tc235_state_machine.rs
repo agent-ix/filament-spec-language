@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-235 state-machine binder vectors (FR-208).
 
 use super::*;
@@ -79,6 +80,8 @@ fn assert_conflicting_binding(refusal: &ModelRefusal, key: &str, path: &str) {
 
 /// M05: resolve transition targets, triggers, guards, and emitted event types
 /// at the K2 intake/normalization boundary without accepting invalid forms.
+/// The semantic-IR reader refuses a reference that names nothing, ending
+/// intake; a reference of the wrong kind is refused at normalization.
 #[test]
 fn tc235_m05_state_machine_transition_reference_vectors() {
     let cases = [
@@ -105,7 +108,7 @@ fn tc235_m05_state_machine_transition_reference_vectors() {
         let document = mutate_k2(|document| {
             type_named_mut(document, "OrderLifecycle")["transitions"][0][member] = value;
         });
-        let refusals = normalized_refusals(&document, 21);
+        let refusals = intake_refusals(&document);
         assert_eq!(refusals.len(), 1, "M05 {member}: {refusals:?}");
         let member_path = format!("TypeDefinition.transitions[0].{member}");
         assert_missing_name(&refusals[0], path, &member_path, Some(reference));
@@ -127,7 +130,7 @@ fn tc235_m05_state_machine_transition_reference_vectors() {
         type_named_mut(document, "OrderLifecycle")["transitions"][0]["emits"] =
             json!([id("OrderShipped")]);
     });
-    let refusals = normalized_refusals(&unknown_emitted_node, 21);
+    let refusals = intake_refusals(&unknown_emitted_node);
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_missing_name(
         &refusals[0],
@@ -150,21 +153,18 @@ fn tc235_m05_state_machine_transition_reference_vectors() {
 
 /// M06: require nonempty operations, states, and transitions; distinguish
 /// invariant clauses from transition guards; refuse duplicate local names.
+/// Emptying operations or states leaves transitions naming nothing, which the
+/// semantic-IR reader refuses; each emptiness refusal of normalization is read
+/// from the same machine with its transitions emptied too.
 #[test]
 fn tc235_m06_state_machine_required_members_and_bindings() {
     let empty_operations = mutate_k2(|document| {
         type_named_mut(document, "OrderLifecycle")["operations"] = json!([]);
     });
-    let refusals = normalized_refusals(&empty_operations, 19);
-    assert_eq!(refusals.len(), 4);
-    assert_malformed_at(
-        &refusals[0],
-        &id("OrderLifecycle"),
-        "TypeDefinition.operations",
-    );
+    let refusals = intake_refusals(&empty_operations);
+    assert_eq!(refusals.len(), 3, "{refusals:?}");
     for (position, (refusal, reference)) in refusals
         .iter()
-        .skip(1)
         .zip(["place", "cancel", "cancel"])
         .enumerate()
     {
@@ -176,21 +176,54 @@ fn tc235_m06_state_machine_required_members_and_bindings() {
         );
     }
 
+    let no_operations_or_transitions = mutate_k2(|document| {
+        let machine = type_named_mut(document, "OrderLifecycle");
+        machine["operations"] = json!([]);
+        machine["transitions"] = json!([]);
+    });
+    let refusals = normalized_refusals(&no_operations_or_transitions, 19);
+    assert_eq!(refusals.len(), 2, "{refusals:?}");
+    for (refusal, path) in refusals
+        .iter()
+        .zip(["TypeDefinition.operations", "TypeDefinition.transitions"])
+    {
+        assert_malformed_at(refusal, &id("OrderLifecycle"), path);
+    }
+
     let empty_states = mutate_k2(|document| {
         type_named_mut(document, "OrderLifecycle")["states"] = json!([]);
     });
-    let refusals = normalized_refusals(&empty_states, 21);
-    assert_eq!(refusals.len(), 7);
-    assert_malformed_at(&refusals[0], &id("OrderLifecycle"), "TypeDefinition.states");
-    for (refusal, (path, member_path)) in refusals.iter().skip(1).zip((0..3).flat_map(|position| {
-        ["from", "to"].map(|member| {
-            (
-                format!("/types/4/transitions/{position}/{member}"),
-                format!("TypeDefinition.transitions[{position}].{member}"),
-            )
-        })
-    })) {
-        assert_missing_name(refusal, &path, &member_path, None);
+    let refusals = intake_refusals(&empty_states);
+    let dangling = [
+        (0, "from", "Draft"),
+        (0, "to", "Placed"),
+        (1, "from", "Draft"),
+        (1, "to", "Cancelled"),
+        (2, "from", "Placed"),
+        (2, "to", "Cancelled"),
+    ];
+    assert_eq!(refusals.len(), dangling.len(), "{refusals:?}");
+    for (refusal, (position, member, state)) in refusals.iter().zip(dangling) {
+        assert_missing_name(
+            refusal,
+            &format!("/types/4/transitions/{position}/{member}"),
+            &format!("TypeDefinition.transitions[{position}].{member}"),
+            Some(&format!("OrderLifecycle/{state}")),
+        );
+    }
+
+    let no_states_or_transitions = mutate_k2(|document| {
+        let machine = type_named_mut(document, "OrderLifecycle");
+        machine["states"] = json!([]);
+        machine["transitions"] = json!([]);
+    });
+    let refusals = normalized_refusals(&no_states_or_transitions, 21);
+    assert_eq!(refusals.len(), 2, "{refusals:?}");
+    for (refusal, path) in refusals
+        .iter()
+        .zip(["TypeDefinition.states", "TypeDefinition.transitions"])
+    {
+        assert_malformed_at(refusal, &id("OrderLifecycle"), path);
     }
 
     let empty_transitions = mutate_k2(|document| {
@@ -264,8 +297,8 @@ fn tc235_m06_state_machine_required_members_and_bindings() {
             .unwrap()
             .push(lifecycle_state("OrderLifecycle", "Draft"));
     });
-    let refusals = normalized_refusals(&duplicate_state, 21);
-    assert_eq!(refusals.len(), 1);
+    let refusals = intake_refusals(&duplicate_state);
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_conflicting_binding(
         &refusals[0],
         "OrderLifecycle/Draft",
@@ -286,7 +319,7 @@ fn tc235_m06_state_machine_required_members_and_bindings() {
             ));
     });
     let refusals = normalized_refusals(&duplicate_transition, 21);
-    assert_eq!(refusals.len(), 1);
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_conflicting_binding(
         &refusals[0],
         "OrderLifecycle/transition3",
@@ -350,18 +383,28 @@ fn tc235_m06_run7_postcondition_is_bound_to_place() {
     record_charges(&package, 21);
 }
 
-/// FR-103-AC-7: `pre` entries are kept as `requires`, in declared order, and
-/// an operation that declares neither list keeps both empty.
-#[trace("FR-103-AC-7", "TC-993")]
+/// FR-103-AC-13: `pre` entries are kept as `requires`, in declared order, and
+/// an operation that declares neither list keeps both empty. A language the
+/// semantic-IR reader does not admit ends intake.
+#[trace("FR-103-AC-13", "TC-993")]
 #[test]
 fn operation_pre_is_kept_as_requires_in_order() {
-    let document = mutate_k2(|document| {
-        type_named_mut(document, "OrderLifecycle")["operations"][0]["pre"] = json!([
-            {"language": "quire", "text": "not self.placed", "origin": origin("OrderLifecycle/place")},
-            {"language": "other", "text": "anything", "origin": origin("OrderLifecycle/place")},
-        ]);
-    });
-    let package = read_k2(&document).expect("operation precondition is valid");
+    let with_second_language = |language: &str| {
+        mutate_k2(|document| {
+            type_named_mut(document, "OrderLifecycle")["operations"][0]["pre"] = json!([
+                {"language": "quire", "text": "not self.placed", "origin": origin("OrderLifecycle/place")},
+                {"language": language, "text": "anything", "origin": origin("OrderLifecycle/place")},
+            ]);
+        })
+    };
+    let refusals = intake_refusals(&with_second_language("other"));
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_malformed_at(
+        &refusals[0],
+        &id("OrderLifecycle/place"),
+        "Operation.pre[1].language",
+    );
+    let package = read_k2(&with_second_language("ocl")).expect("operation precondition is valid");
     let place = package
         .records
         .iter()
@@ -387,7 +430,7 @@ fn operation_pre_is_kept_as_requires_in_order() {
         .collect();
     assert_eq!(
         kept,
-        [(0, "quire", "not self.placed"), (1, "other", "anything")]
+        [(0, "quire", "not self.placed"), (1, "ocl", "anything")]
     );
     assert!(place.ensures.is_empty());
 }
@@ -396,19 +439,26 @@ fn operation_pre_is_kept_as_requires_in_order() {
 /// same-meaning supertypes; unsupported meanings must not be malformed refs.
 #[test]
 fn tc235_m11_state_machine_supertype_meaning_rules() {
-    for node in ["Money", "OrderPlaced", "OrderLifecycle", "Fulfilment"] {
-        let document = mutate_k2(|document| {
+    let with_object_supertype = |node: &str| {
+        mutate_k2(|document| {
             type_named_mut(document, node)["supertypes"] = json!([id("Order")]);
-        });
-        let refusals = normalized_refusals(&document, 21);
+        })
+    };
+    for node in ["Money", "OrderPlaced", "OrderLifecycle"] {
+        let refusals = intake_refusals(&with_object_supertype(node));
         assert_eq!(refusals.len(), 1, "{node}: {refusals:?}");
         assert_malformed_at(&refusals[0], &id(node), "TypeDefinition.supertypes[0]");
     }
+    // Intake leaves a process's supertype meaning to normalization.
+    let refusals = normalized_refusals(&with_object_supertype("Fulfilment"), 21);
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_malformed_at(
+        &refusals[0],
+        &id("Fulfilment"),
+        "TypeDefinition.supertypes[0]",
+    );
     for node in ["OrderStore", "OrderManagement"] {
-        let document = mutate_k2(|document| {
-            type_named_mut(document, node)["supertypes"] = json!([id("Order")]);
-        });
-        let refusals = normalized_refusals(&document, 21);
+        let refusals = intake_refusals(&with_object_supertype(node));
         assert_eq!(refusals.len(), 1, "{node}: {refusals:?}");
         assert_unsupported_at(&refusals[0], &id(node), "TypeDefinition.supertypes");
     }
@@ -741,16 +791,17 @@ fn tc235_m19_state_machine_specialization_vectors() {
         "TypeDefinition.transitions[3].to",
     );
 
-    // Run 5: the row's literal input, `supertypes: [Fulfilment]`. The single
-    // refusal is at `supertypes[0]`; the `from` it also leaves unresolvable
-    // is a phase-3 finding that never runs after an intake refusal.
+    // Run 5: the row's literal input, `supertypes: [Fulfilment]`. The
+    // semantic-IR reader's single refusal is at `supertypes[0]`; the `from` it
+    // also leaves unresolvable is a phase-3 finding that never runs after an
+    // intake refusal.
     let wrong_supertype = mutate_k2(|document| {
         document["types"]
             .as_array_mut()
             .unwrap()
             .push(express_lifecycle("Fulfilment", &["Expedited"], inherited));
     });
-    let refusals = normalized_refusals(&wrong_supertype, 23);
+    let refusals = intake_refusals(&wrong_supertype);
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_malformed_at(
         &refusals[0],
@@ -870,7 +921,10 @@ fn tc235_a_grandparent_state_redeclaration_is_a_derivation_conflict() {
 #[trace("FSpec-TC-235")]
 #[test]
 fn tc235_a_reference_to_an_object_types_member_is_a_missing_name() {
-    for member in ["trigger", "guard"] {
+    for (member, reference) in [
+        ("trigger", "Order/only_on_order"),
+        ("guard", "OrderLifecycle/OnlyOnOrder"),
+    ] {
         let document = mutate_k2(|document| {
             let order = type_named_mut(document, "Order");
             for (collection, entry) in [
@@ -892,10 +946,14 @@ fn tc235_a_reference_to_an_object_types_member_is_a_missing_name() {
                 _ => transition["guard"] = json!("OnlyOnOrder"),
             }
         });
-        let refusals = normalized_refusals(&document, 23);
+        let refusals = intake_refusals(&document);
         assert_eq!(refusals.len(), 1, "{member}: {refusals:?}");
-        assert_eq!(refusals[0].code, Code::MissingDeclaration, "{member}");
-        assert_eq!(refusals[0].cause.as_str(), "missing-name", "{member}");
+        assert_missing_name(
+            &refusals[0],
+            &format!("/types/4/transitions/0/{member}"),
+            &format!("TypeDefinition.transitions[0].{member}"),
+            Some(reference),
+        );
     }
 }
 
@@ -988,14 +1046,13 @@ fn tc235_m32_run2_clause_named_like_an_operation_is_conflicting_binding() {
                 "self.placed or not self.placed",
             ));
     });
-    let refusals = normalized_refusals(&document, 22);
+    let refusals = intake_refusals(&document);
     assert_eq!(refusals.len(), 1, "one refusal: {refusals:?}");
-    assert_eq!(refusals[0].code, Code::InvalidModelBinding);
-    assert_eq!(refusals[0].cause.as_str(), "conflicting-binding");
-    let ModelRefusalCause::ConflictingBinding { member: at, .. } = &refusals[0].cause else {
-        panic!("expected conflicting-binding, got {:?}", refusals[0]);
-    };
-    assert_eq!(at.as_ref(), Some(&member("TypeDefinition.clauses[1]")));
+    assert_conflicting_binding(
+        &refusals[0],
+        "OrderLifecycle/cancel",
+        "TypeDefinition.clauses[1]",
+    );
 }
 
 /// `ExpressLifecycleCopy`: a full machine sharing `ExpressLifecycle`'s display

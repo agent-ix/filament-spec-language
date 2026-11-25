@@ -448,6 +448,68 @@ pub fn cas_refines_counter_add() -> String {
     )
 }
 
+/// A concrete model whose only enabled operation is the no-op `bump`, mapped
+/// to the abstract `add`, which keeps the value only by adding 0, of the
+/// protocol `Comp`, activated again and again (`on each`). Each instance
+/// applies `add`, then its compensation of `inc` fails and ends; every other
+/// step is internal, so no abstract step applies `inc`. The refinement
+/// requires strong fairness of `add` and of `inc`, in that order.
+///
+/// Three instances of at most seven phases live at once, so check one
+/// concrete step only: the closure grows with the square of the candidates.
+pub fn failing_compensation() -> World {
+    let source = "profile p = \"filament.protocol.finite-global/v1\";\n\
+         profile t0 = \"filament.temporal.timed/v1\";\n\
+         record Fwd { ok: Boolean; }\n\
+         record Try { ok: Boolean; }\n\
+         protocol Comp using p over (c: Spec::Counter) on each (opened: Boolean) when (opened) {\n\
+         role w on Spec::Counter;\n\
+         compensate Undo for Main::Paid as (fwd: Fwd) by w on Spec::Counter::inc \
+         using t0 clock \"c\" {\n\
+         activate first (trigger: Boolean) when { true } { }\n\
+         within [0,10]; attempts 1 of Try;\n\
+         retry (earlier: Try, later: Try) { false };\n\
+         commit never; recover (recovery: Boolean) { recovery }; }\n\
+         scheduling adversarial;\n\
+         run sequence Main {\n\
+         attempt a1 by w on Spec::Counter::add contracts [] as (r1: Boolean) { true };\n\
+         effect Paid of Main::a1 as (pd: Fwd) { pd.ok };\n\
+         event Fail by w as (failed: Boolean) { failed };\n\
+         }\n\
+         finish Done as (d: Boolean) { d };\n\
+         }\n\
+         refinement Repeats using inf abstract Spec::Comp concrete Impl {\n\
+         population Spec::counters from Impl::counters;\n\
+         object Spec::Counter from Impl::Counter { value = self.value; }\n\
+         step Impl::Counter::bump -> Spec::Counter::add(self, _);\n\
+         step Impl::Counter::commitA -> stutter;\n\
+         step Impl::Counter::commitB -> stutter;\n\
+         step Impl::Counter::beginA -> stutter;\n\
+         step Impl::Counter::beginB -> stutter;\n\
+         step Impl::Counter::retryA -> stutter;\n\
+         step Impl::Counter::retryB -> stutter;\n\
+         ensure fair strong Spec::Counter::add;\n\
+         ensure fair strong Spec::Counter::inc;\n\
+         }";
+    World::with_internals(
+        Variant {
+            add: true,
+            peek: false,
+            disable_begin: true,
+            ..Variant::CAS
+        },
+        source,
+        serde_json::json!([{"refinement": "Repeats", "internal": [
+            "activate Spec::Comp",
+            "Spec::Comp::Paid",
+            "Spec::Comp::Fail",
+            "cfail Spec::Comp::Undo",
+            "cend Spec::Comp::Undo",
+            "Spec::Comp::Done",
+        ]}]),
+    )
+}
+
 /// The divergence variant of `CasRefinesCounter` (ADR-020 §8): `assume` rows
 /// only for `commitA` and `commitB`.
 pub fn divergence_refinement() -> String {

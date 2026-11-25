@@ -13,7 +13,7 @@ use fsl_foundation::wire_format::WireFormat;
 use fsl_foundation::Code;
 use serde_json::value::RawValue;
 
-use super::{ExportSelection, Result, RunCause};
+use super::{CompleteRunSelection, ExportSelection, Result, RunCause};
 
 /// The entry families of FR-1047's table of request entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,7 +125,7 @@ const EVIDENCE_SHAPE: &str = "export evidence reads a native-run/1 request whose
 
 /// One missing entry: a required member, or a one-of group none of whose
 /// members is present.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Missing {
     Member(String),
     Group(Vec<String>),
@@ -229,14 +229,17 @@ const PROGRAM_OR_PACKAGE: Entry = Entry::OneOf(&[
     field("package", Shape::Leaf(PACKAGE_FILE)),
 ]);
 
+/// The run reading's run members: its `call` / `clause` / `items` group.
+const RUN_MEMBERS: &[Field] = &[
+    field("call", Shape::Object(CALL)),
+    field("clause", Shape::Leaf("{}")),
+    field("items", Shape::Leaf("{}")),
+];
+
 const RUN: &[Entry] = &[
     models(),
     PROGRAM_OR_PACKAGE,
-    Entry::OneOf(&[
-        field("call", Shape::Object(CALL)),
-        field("clause", Shape::Leaf("{}")),
-        field("items", Shape::Leaf("{}")),
-    ]),
+    Entry::OneOf(RUN_MEMBERS),
     libraries(),
 ];
 
@@ -524,6 +527,13 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
     if missing.is_empty() {
         return Ok(());
     }
+    // FR-1047 "A selected source with no run member": the typed reader's own
+    // refusals come first, and it then gives [`no_run_member`].
+    if missing == [run_group()]
+        && request.contains_key("program") != request.contains_key("package")
+    {
+        return Ok(());
+    }
     let selected = match family {
         Family::Export(ExportSelection::Ordinary) => Some(("/request/export", ORDINARY_SHAPE)),
         Family::Export(ExportSelection::Evidence) => {
@@ -653,6 +663,26 @@ fn missing_members(missing: &[Missing], shape: Option<&str>) -> RunCause {
     RunCause::MissingMembers {
         message: missing_message(missing, shape),
         missing: missing.iter().map(Missing::detail).collect(),
+    }
+}
+
+/// The missing entry of a request that carries none of [`RUN_MEMBERS`].
+fn run_group() -> Missing {
+    Missing::Group(
+        RUN_MEMBERS
+            .iter()
+            .map(|field| format!("/request/{}", token(field.name)))
+            .collect(),
+    )
+}
+
+/// FR-1047-AC-10, FR-100-AC-25: the refusal of a request that selects a
+/// source and no run member: the run group as its one missing entry, under
+/// FR-100's message.
+pub(super) fn no_run_member() -> RunCause {
+    RunCause::MissingMembers {
+        message: RunCause::CompleteRunSelection(CompleteRunSelection::NoCall).to_string(),
+        missing: vec![run_group().detail()],
     }
 }
 

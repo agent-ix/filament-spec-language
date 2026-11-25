@@ -10,6 +10,7 @@ use ix_trace_rs::trace;
 
 /// The shared grammar's published path inside the standard's pinned package.
 const SHARED_GRAMMAR: &str = "proposals/filament-v1/shared-grammar.md";
+const TC_1010: &str = "spec/test-cases/TC-1010-grammar-production-inventory-is-self-consistent.md";
 
 /// The bytes of a standard file, read only through the pinned
 /// `filament_specification` crate (FR-760, FSpec FR-660): no environment
@@ -52,6 +53,34 @@ fn shared_grammar_productions() -> BTreeSet<String> {
         }
     }
     names
+}
+
+/// The lexical terminals allowed by FSpec FR-503-AC-2, repeated in TC-1010.
+fn shared_grammar_lexical_terminals() -> BTreeSet<String> {
+    let text = published_file(TC_1010)
+        .unwrap_or_else(|| panic!("{TC_1010}: not published by the pinned standard"));
+    let expected = text
+        .lines()
+        .skip_while(|line| *line != "## Expected Results")
+        .skip(1)
+        .find(|line| line.contains("every right-hand-side name is defined or is one of"))
+        .unwrap_or_else(|| panic!("{TC_1010}: expected terminal list is missing"));
+    let names = expected
+        .split_once("or is one of")
+        .and_then(|(_, rest)| rest.split_once(". The"))
+        .map(|(names, _)| names)
+        .unwrap_or_else(|| panic!("{TC_1010}: expected terminal list is malformed"));
+    let terminals: BTreeSet<String> = names
+        .split('`')
+        .enumerate()
+        .filter(|(index, _)| index % 2 == 1)
+        .map(|(_, name)| name.to_owned())
+        .collect();
+    assert!(
+        !terminals.is_empty(),
+        "{TC_1010}: expected terminal list is empty"
+    );
+    terminals
 }
 
 /// The parser's production names.
@@ -851,11 +880,10 @@ fn the_language_forms_recorded_in_the_standard_are_mapped() {
 /// name is defined or is a lexical terminal.
 #[trace("FSpec-TC-1010", "FSpec-FR-503-AC-1", "FSpec-FR-503-AC-2")]
 #[test]
-#[ignore = "QSL-2960: the pinned standard uses decimal-literal, step-target and step-argument without an ebnf definition and outside the five lexical terminals; a filament-specification change"]
 fn every_name_the_shared_grammar_uses_is_defined() {
-    const TERMINALS: [&str; 5] = ["ident", "member-name", "string", "uint", "EOF"];
     let text = published_file(SHARED_GRAMMAR).expect("published");
     let defined = shared_grammar_productions();
+    let terminals = shared_grammar_lexical_terminals();
     assert!(!defined.is_empty());
     let mut in_ebnf = false;
     let mut undefined = Vec::new();
@@ -887,7 +915,7 @@ fn every_name_the_shared_grammar_uses_is_defined() {
                         .next()
                         .is_some_and(|f| f.is_ascii_lowercase() || f == 'E')
                     && !defined.contains(&word)
-                    && !TERMINALS.contains(&word.as_str())
+                    && !terminals.contains(&word)
                 {
                     undefined.push(format!("line {}: `{word}`", number + 1));
                 }

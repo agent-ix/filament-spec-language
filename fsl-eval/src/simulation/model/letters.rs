@@ -633,13 +633,13 @@ impl ClauseLetters<'_, '_> {
     fn observe(&self, state: &ModelSimState) -> Result<Rc<Observed>, AtomStop> {
         let key = self
             .system
-            .canonical_state_key(state)
+            .canonical_state_key_ref(state)
             .map_err(|_| AtomStop::Unobservable(stop(BROKEN)))?;
         let known = self
             .observed
             .borrow()
             .as_ref()
-            .filter(|(known, _)| *known == key)
+            .filter(|(known, _)| known == key)
             .map(|(_, observed)| Rc::clone(observed));
         match known {
             Some(observed) => Ok(observed),
@@ -647,13 +647,13 @@ impl ClauseLetters<'_, '_> {
                 let observation = self
                     .system
                     .model
-                    .observation(&state.state, state_document())
+                    .observation(state.state(), state_document())
                     .map_err(|_| AtomStop::Unobservable(stop(BROKEN)))?;
-                let rows = rows_of(self.system, &state.state).map_err(AtomStop::Unobservable)?;
+                let rows = rows_of(self.system, state.state()).map_err(AtomStop::Unobservable)?;
                 let observed = Rc::new(Observed { observation, rows });
                 self.observations
                     .set(self.observations.get().saturating_add(1));
-                *self.observed.borrow_mut() = Some((key, Rc::clone(&observed)));
+                *self.observed.borrow_mut() = Some((key.clone(), Rc::clone(&observed)));
                 Ok(observed)
             }
         }

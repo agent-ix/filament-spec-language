@@ -422,7 +422,9 @@ pub fn check_match_witness(
             "marks its steps other than as its kind does: every step of a projected one and none of any other",
         ));
     }
-    if let Err(refusal) = shape(replay, &counterexample) {
+    if let Err(refusal) =
+        shape(replay, &counterexample).and_then(|()| instance_of_clause(replay, &witness.instance))
+    {
         return MatchWitnessCheck::Refused(refusal);
     }
     let executed = match execute(replay, &counterexample) {
@@ -441,6 +443,46 @@ pub fn check_match_witness(
         )),
         Err(refusal) => MatchWitnessCheck::Refused(refusal),
     }
+}
+
+/// FR-183 "Match witness": `instance` binds each object parameter of the
+/// clause once, in parameter order, to a key of the universe of the
+/// parameter's population (FR-125).
+fn instance_of_clause(
+    replay: &HyperReplay<'_, '_>,
+    instance: &[(String, String)],
+) -> Result<(), ReplayRefusal> {
+    let parameters = replay.clause.parameters();
+    if instance.len() != parameters.len()
+        || parameters
+            .iter()
+            .zip(instance)
+            .any(|(parameter, (name, _))| parameter.name != *name)
+    {
+        return Err(shape_error(
+            "does not bind each object parameter once, in parameter order",
+        ));
+    }
+    for (parameter, (_, key)) in parameters.iter().zip(instance) {
+        let system = replay
+            .clause
+            .quantifiers()
+            .iter()
+            .zip(&replay.systems)
+            .find_map(|(quantifier, system)| {
+                (quantifier.alias == parameter.alias).then_some(*system)
+            })
+            .ok_or_else(|| fault("a-parameter-alias-has-a-trace"))?;
+        let listed = system
+            .hyper_instances(&parameter.population)
+            .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
+        if !listed.iter().any(|instance| instance.key == *key) {
+            return Err(shape_error(
+                "binds a parameter to a key outside its population's universe",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The reason a lockstep or witness counterexample of an `align skip` clause

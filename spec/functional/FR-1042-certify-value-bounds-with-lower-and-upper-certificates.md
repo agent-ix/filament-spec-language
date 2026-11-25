@@ -55,6 +55,12 @@ accepts both, so the reported interval is certified at both ends.
   interval iteration) with its lower and upper vectors and, over every
   scheduler, its policy. FR-204 may provide timed expected-elapsed bounds
   with a `timed-product/v1` base.
+- With no fairness set and outside the derived TS-5 case, FR-198's exact
+  policy iteration is not a source of a `Bounds` result: a solve past
+  `max_rational_bits` keeps no value, and the bounds are interval iteration's
+  own, with its `precision_bits` and `sweeps` (FR-198, "Rational budget").
+  [FR-1041](FR-1041-certify-unbounded-fair-eventual-verdicts.md) states the
+  fair bounds.
 
 ## Outputs
 

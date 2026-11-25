@@ -10,9 +10,10 @@ use fsl_foundation::Span;
 use fsl_route::request::items_from_requirements;
 use fsl_route::{CandidateOutcome, ProviderOrigin, Registry};
 use fsl_semantics::check::{
-    Capability, CheckedScheduleClaim, RequirementMap, RequirementRecord, ScheduleClaim,
-    SchedulingPolicy,
+    Capability, CheckRefusal, CheckedGraph, CheckedScheduleClaim, RequirementMap,
+    RequirementRecord, ScheduleClaim, SchedulingPolicy,
 };
+use fsl_semantics::family::{ClaimExtent, Requirements};
 use ix_trace_rs::trace;
 
 fn claim(name: &str, policy: SchedulingPolicy) -> CheckedScheduleClaim {
@@ -87,44 +88,53 @@ struct World {
     provision: fsl_analyze::analyze::SourceProvision,
 }
 
+fn checked_graph(source: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("no model documents");
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:schedulability-routing"),
+        "ctl.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
+        &unit.selections().models,
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("no model selection");
+    fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        models,
+        Vec::new(),
+    )
+    .expect("the unit assembles")
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
+}
+
 impl World {
     fn new() -> Self {
-        use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+        Self::from_source(CTL)
+    }
+
+    fn from_source(source: &str) -> Self {
         let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
             .expect("no model documents");
-        let parsed = fsl_cst::parse(
-            fsl_foundation::SourceIdentity::new("agent-ix", "test:schedulability-routing"),
-            "ctl.native",
-            CTL.as_bytes(),
-            fsl_cst::Limits::default(),
-        )
-        .expect("S1 reads the unit");
-        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-        let models = fsl_semantics::model::intake::admit_unit(
-            &unit.selections().models,
-            &packages,
-            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-        )
-        .expect("no model selection");
-        let graph = fsl_semantics::check::PackageDeclarations::assemble(
-            parsed.source().reference().clone(),
-            "fixture".to_owned(),
-            unit,
-            models,
-            Vec::new(),
-        )
-        .expect("the unit assembles")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_eval::value::S6aRewardEvaluator,
-        )
-        .expect("the unit checks");
+        let graph = checked_graph(source).expect("the unit checks");
         Self {
             provision: fsl_analyze::analyze::SourceProvision::single(
                 graph.source(),
-                CTL.as_bytes(),
+                source.as_bytes(),
             ),
             package: fsl_package::CheckedPackage::link(graph),
             packages,
@@ -299,9 +309,11 @@ fn schedulability_is_registered() {
     );
     let mut schedulability: Vec<_> = engines
         .registrations()
-        .filter(|descriptor| descriptor
-            .advertises()
-            .any(|(kind, _)| kind == Capability::Schedulability))
+        .filter(|descriptor| {
+            descriptor
+                .advertises()
+                .any(|(kind, _)| kind == Capability::Schedulability)
+        })
         .map(|descriptor| descriptor.id().as_str())
         .collect();
     schedulability.sort_unstable();
@@ -309,9 +321,9 @@ fn schedulability_is_registered() {
     let unbounded: Vec<_> = engines
         .registrations()
         .filter(|descriptor| {
-            descriptor.advertises().any(|pair| {
-                pair == (Capability::Schedulability, fsl_route::Mode::Unbounded)
-            })
+            descriptor
+                .advertises()
+                .any(|pair| pair == (Capability::Schedulability, fsl_route::Mode::Unbounded))
         })
         .map(|descriptor| descriptor.id().as_str())
         .collect();
@@ -469,6 +481,297 @@ fn task_set_claims_have_requirement_records_that_route_to_en_7() {
         let ids: Vec<_> = set.candidates().iter().map(|c| c.id().as_str()).collect();
         assert_eq!(ids, [manifest::BACKEND_ID]);
     }
+}
+
+/// FR-246-AC-4: all three claim forms write one bounded, unowned
+/// schedulability record at their claim occurrence; request items follow the
+/// occurrence-key order, and admitted package rows reconstruct equal items.
+#[test]
+#[trace("TC-2961", "FR-246-AC-4")]
+fn three_task_claim_records_and_package_rows_preserve_occurrence_order() {
+    const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        profile t = \"filament.temporal.complete/v1\";\n\
+        dimension Time;\nunit ms : Time = rational(1, 1);\n\
+        taskset Ctl {\n\
+        task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+        task b periodic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
+        task c periodic 12 ms deadline 12 ms wcet 5 ms priority 3 lo;\n\
+        }\n\
+        schedulable CtlFp on Ctl under fixed_priority;\n\
+        schedulable CtlEdf on Ctl under edf;\n\
+        response R on Ctl.c <= 12 ms under fixed_priority;\n";
+
+    let world = World::from_source(SOURCE);
+    let graph = world.package.graph();
+    let claims = graph.task_sets().claims();
+    assert_eq!(claims.len(), 3);
+    assert_eq!(
+        claims
+            .iter()
+            .map(|claim| claim.name.as_str())
+            .collect::<Vec<_>>(),
+        ["CtlFp", "CtlEdf", "R"]
+    );
+    assert_eq!(
+        claims
+            .iter()
+            .map(CheckedScheduleClaim::policy)
+            .collect::<Vec<_>>(),
+        [
+            SchedulingPolicy::FixedPriority,
+            SchedulingPolicy::Edf,
+            SchedulingPolicy::FixedPriority,
+        ]
+    );
+
+    let records = graph.requirements();
+    let claim_occurrences = claims
+        .iter()
+        .map(|claim| claim.occurrence().expect("checked claim occurrence"))
+        .collect::<Vec<_>>();
+    for occurrence in &claim_occurrences {
+        let record = records
+            .get(occurrence)
+            .expect("each claim occurrence keys one requirement record");
+        assert_eq!(record.requirements().kind(), Capability::Schedulability);
+        assert_eq!(record.requirements().extent(), &ClaimExtent::Bounded);
+        assert!(!record.requirements().task_product());
+        assert_eq!(record.owner(), None);
+        assert!(record.extent_roots().is_empty());
+        assert!(record.path_condition().is_empty());
+    }
+    let schedulability_records = records
+        .iter()
+        .filter(|(_, record)| record.requirements().kind() == Capability::Schedulability)
+        .collect::<Vec<_>>();
+    assert_eq!(schedulability_records.len(), 3);
+
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the engines register");
+    let registry = registry_of(&engines);
+    let source_items = items_from_requirements(records, &registry, None);
+    assert_eq!(source_items.len(), 3);
+    let mut expected_occurrences = claim_occurrences.clone();
+    expected_occurrences.sort();
+    assert_eq!(
+        source_items
+            .iter()
+            .map(|item| item.occurrence().clone())
+            .collect::<Vec<_>>(),
+        expected_occurrences,
+        "items use canonical occurrence-key order"
+    );
+    for (index, item) in source_items.iter().enumerate() {
+        assert_eq!(item.index(), fsl_foundation::RequestIndex::new(index));
+        assert_eq!(item.kind(), Capability::Schedulability);
+        let CandidateOutcome::Candidates(set) = item.candidates() else {
+            panic!("registered backend candidates: {:?}", item.candidates());
+        };
+        assert_eq!(
+            set.candidates()
+                .iter()
+                .map(|candidate| candidate.id().as_str())
+                .collect::<Vec<_>>(),
+            ["en-7"]
+        );
+    }
+
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("the checked claims emit");
+    let admitted = match filament_contract_model::CheckedPackageV2::read(
+        emission.package().bytes(),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        emission.evidence(),
+    ) {
+        filament_contract_model::CheckedPackageV2ReadResult::Admitted(package) => package,
+        result => panic!("the compiled package is admitted: {result:?}"),
+    };
+    let roots = fsl_package::schedulability_roots(&admitted)
+        .expect("the package exposes admitted claim rows");
+    assert_eq!(roots.len(), 3);
+    let package_records: RequirementMap = roots
+        .iter()
+        .map(|root| {
+            let occurrence = root.occurrence().clone();
+            let source_record = records
+                .get(&occurrence)
+                .expect("package claim row joins its source claim occurrence");
+            let claim = root.claim();
+            let mut requirements =
+                Requirements::new(Capability::Schedulability, ClaimExtent::Bounded);
+            if claim.kind() == filament_contract_model::CheckedSchedulabilityKind::Schedulable
+                && claim.release_bindings().next().is_some()
+            {
+                requirements = requirements.for_task_product();
+            }
+            (
+                occurrence,
+                RequirementRecord::model_claim(
+                    requirements,
+                    source_record.result_bound().node().clone(),
+                ),
+            )
+        })
+        .collect();
+    let package_items = items_from_requirements(&package_records, &registry, None);
+    assert_eq!(
+        package_items, source_items,
+        "records reconstructed from the admitted package rows produce equal request items"
+    );
+}
+
+/// FR-075-AC-23 and FR-962-AC-6: rebuilding the real schedulability
+/// registrations in either insertion order preserves the final candidates,
+/// including the release-backed unnamed EN-7 tie resolution.
+#[test]
+#[trace("TC-3009", "FR-075-AC-23")]
+#[trace("TC-3009", "FR-962-AC-6")]
+fn schedulability_candidate_sets_ignore_registration_order() {
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the engines register");
+    let world = World::new();
+    let claim = world.package.graph().task_sets().claims()[0]
+        .occurrence()
+        .expect("the checked claim has an occurrence");
+    let descriptors = engines
+        .registrations()
+        .filter(|descriptor| {
+            descriptor
+                .advertises()
+                .any(|(kind, _)| kind == Capability::Schedulability)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors
+            .iter()
+            .map(|descriptor| descriptor.id().as_str())
+            .collect::<Vec<_>>(),
+        ["en-6", "en-7"]
+    );
+
+    let candidate_ids = |outcome: CandidateOutcome| match outcome {
+        CandidateOutcome::Candidates(set) => set
+            .candidates()
+            .iter()
+            .map(|candidate| candidate.id().as_str().to_owned())
+            .collect::<Vec<_>>(),
+        CandidateOutcome::UnknownBackend(backend) => vec![format!("unknown:{}", backend.as_str())],
+    };
+    let mut outcomes = Vec::new();
+    for reverse in [false, true] {
+        let mut registry = Registry::new();
+        let ordered = if reverse {
+            descriptors.iter().rev().collect::<Vec<_>>()
+        } else {
+            descriptors.iter().collect::<Vec<_>>()
+        };
+        for descriptor in ordered {
+            registry
+                .register(descriptor.clone())
+                .expect("the engine descriptors register");
+        }
+
+        let ordinary = Requirements::new(Capability::Schedulability, ClaimExtent::Bounded);
+        let backed = ordinary.clone().for_task_product();
+        let ordinary_all = fsl_route::request::requirement_candidates(&ordinary, &registry, None);
+        let ordinary_named = fsl_route::request::requirement_candidates(
+            &ordinary,
+            &registry,
+            Some(&fsl_foundation::BackendId::new("en-6")),
+        );
+        let backed_all = fsl_route::request::requirement_candidates(&backed, &registry, None);
+        let backed_all_ids = candidate_ids(backed_all.clone());
+        let backed_unnamed_final = fsl_analyze::tie_rule::resolve_tie(
+            &world.package,
+            &claim,
+            Capability::Schedulability,
+            None,
+            false,
+            backed_all,
+        );
+        let CandidateOutcome::Candidates(final_set) = &backed_unnamed_final else {
+            panic!("the backed unnamed item has a candidate: {backed_unnamed_final:?}");
+        };
+        assert_eq!(
+            final_set.candidates().len(),
+            1,
+            "FR-962 leaves one backend, so negotiation is not ambiguous"
+        );
+        assert_eq!(final_set.candidates()[0].id().as_str(), "en-7");
+        let backed_named = fsl_route::request::requirement_candidates(
+            &backed,
+            &registry,
+            Some(&fsl_foundation::BackendId::new("en-6")),
+        );
+        let backed_named_final = fsl_analyze::tie_rule::resolve_tie(
+            &world.package,
+            &claim,
+            Capability::Schedulability,
+            Some(&fsl_foundation::BackendId::new("en-6")),
+            false,
+            backed_named,
+        );
+        outcomes.push((
+            candidate_ids(ordinary_all),
+            candidate_ids(ordinary_named),
+            backed_all_ids,
+            candidate_ids(backed_unnamed_final),
+            candidate_ids(backed_named_final),
+        ));
+    }
+    let expected = (
+        vec!["en-7".to_owned()],
+        Vec::new(),
+        vec!["en-6".to_owned(), "en-7".to_owned()],
+        vec!["en-7".to_owned()],
+        vec!["en-6".to_owned()],
+    );
+    assert_eq!(outcomes, [expected.clone(), expected]);
+}
+
+/// FR-246-AC-4: a claim over a zero-period task set is refused during S3, so
+/// no checked graph or schedulability requirement record can be emitted.
+#[test]
+#[trace("TC-2961", "FR-246-AC-4")]
+fn zero_period_task_set_claim_is_omitted_from_checked_requirements() {
+    const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        profile t = \"filament.temporal.complete/v1\";\n\
+        dimension Time;\nunit ms : Time = rational(1, 1);\n\
+        taskset Empty {\n\
+        task a periodic 0 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+        }\n\
+        schedulable EmptyFp on Empty under fixed_priority;\n\
+        response EmptyResponse on Empty.a <= 4 ms under fixed_priority;\n";
+
+    let Err(refusals) = checked_graph(SOURCE) else {
+        panic!("an invalid zero-period task set must not produce a checked graph");
+    };
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    let refusal = &refusals[0];
+    assert_eq!(
+        refusal.cause.code(),
+        fsl_foundation::diagnostic::Code::InvalidTimedModel
+    );
+    let fsl_semantics::check::CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
+        panic!("period zero is a temporal refusal: {refusal:?}");
+    };
+    assert_eq!(cause.tag(), "invalid-task-set");
+    let fsl_semantics::check::TemporalCause::InvalidTaskSet {
+        task_set,
+        tasks,
+        defect,
+        ..
+    } = cause.as_ref()
+    else {
+        panic!("period zero is a task-set refusal: {refusal:?}");
+    };
+    assert_eq!(task_set, "Empty");
+    assert_eq!(tasks, &["a".to_owned()]);
+    assert_eq!(
+        defect,
+        &fsl_semantics::check::TaskSetDefect::NotPositive(
+            fsl_semantics::check::TaskTimeMember::Period
+        )
+    );
 }
 
 /// ADR-026 §12's `Ctl` with the third WCET 6, which misses under both

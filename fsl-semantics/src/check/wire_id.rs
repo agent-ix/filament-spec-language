@@ -962,6 +962,17 @@ pub fn foreign_id_container(object: &serde_json::Map<String, serde_json::Value>)
         && object.contains_key("node")
 }
 
+/// Whether `object` is an FSpec FR-412 certificate identity, `{node_id,
+/// model, ordinal}`. Its `node_id` is certificate identity JSON, the FR-201
+/// structural id with every operand nested (FSpec `CertificateNodeId`), and
+/// never a document-held id, so no id walk converts what it holds.
+pub fn certificate_identity(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+    object.len() == 3
+        && object.contains_key("node_id")
+        && object.contains_key("model")
+        && object.contains_key("ordinal")
+}
+
 /// Why a component-guarantee slot key (FSpec FR-322 "Scope") has no
 /// structural form.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -1546,7 +1557,8 @@ impl WireGraph {
     /// it written in this document's held form: each nested operand id of a
     /// structural id becomes the index segment `{"node": i}` of this graph's
     /// node. A foreign `{package, node}` or `dependency_reference` container
-    /// is left as it is, as every other id walk leaves it.
+    /// is left as it is, as every other id walk leaves it, and so is a
+    /// [`certificate_identity`].
     ///
     /// # Errors
     ///
@@ -1565,7 +1577,10 @@ impl WireGraph {
         let mut value = value.clone();
         let mut pending = vec![(&mut value, holder)];
         while let Some((current, mut holder)) = pending.pop() {
-            if current.as_object().is_some_and(foreign_id_container) {
+            if current
+                .as_object()
+                .is_some_and(|object| foreign_id_container(object) || certificate_identity(object))
+            {
                 continue;
             }
             if holder.is_none() && !self.rows.is_empty() && current.get("node_tag").is_some() {

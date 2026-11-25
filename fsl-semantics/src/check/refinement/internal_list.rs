@@ -24,7 +24,7 @@ use super::protocol::MemoryStepKind;
 use crate::check::protocol_clause::{BoundAttempt, CheckedProtocol, ProtocolNodeId};
 use crate::check::protocol_slots::CheckedLifetime;
 
-/// Which kind of abstract step a class is (ADR-027 ST-1 to ST-15).
+/// Which kind of abstract step a class is (ADR-027 ST-1 to ST-18).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AbstractStepKind {
     /// The `attempt`, `event`, `send`, `receive`, `timeout`, `finish` or
@@ -36,6 +36,12 @@ pub enum AbstractStepKind {
     Join,
     /// The `cend` of one compensation template.
     Cend,
+    /// The `cfail` of one compensation template.
+    Cfail,
+    /// The `ctimeout` of one compensation template.
+    Ctimeout,
+    /// The `cexpire` of one compensation template.
+    Cexpire,
     /// The `duplicate` of one channel.
     Duplicate,
     /// The `lose` of one channel.
@@ -59,6 +65,9 @@ impl AbstractStepKind {
             Self::Fork => Some("fork"),
             Self::Join => Some("join"),
             Self::Cend => Some("cend"),
+            Self::Cfail => Some("cfail"),
+            Self::Ctimeout => Some("ctimeout"),
+            Self::Cexpire => Some("cexpire"),
             Self::Duplicate => Some("duplicate"),
             Self::Lose => Some("lose"),
             Self::Spawn => Some("spawn"),
@@ -76,6 +85,9 @@ impl AbstractStepKind {
             "fork" => Self::Fork,
             "join" => Self::Join,
             "cend" => Self::Cend,
+            "cfail" => Self::Cfail,
+            "ctimeout" => Self::Ctimeout,
+            "cexpire" => Self::Cexpire,
             "duplicate" => Self::Duplicate,
             "lose" => Self::Lose,
             "spawn" => Self::Spawn,
@@ -233,6 +245,9 @@ fn parse_spelling(text: &str) -> Option<Spelling> {
             | AbstractStepKind::Fork
             | AbstractStepKind::Join
             | AbstractStepKind::Cend
+            | AbstractStepKind::Cfail
+            | AbstractStepKind::Ctimeout
+            | AbstractStepKind::Cexpire
             | AbstractStepKind::Duplicate
             | AbstractStepKind::Lose
             | AbstractStepKind::Spawn
@@ -431,7 +446,8 @@ pub(crate) enum NodeClass {
     Bare(ProtocolNodeKind),
     /// A `parallel` node: the classes `fork` and `join`.
     Parallel,
-    /// A compensation template: the classes `cattempt` and `cend`.
+    /// A compensation template: the classes `cattempt`, `cend`, `cfail`,
+    /// `ctimeout` and `cexpire`.
     Template,
 }
 
@@ -700,10 +716,13 @@ impl ProtocolClasses {
                     add_node(format!("fork {}::{name}", self.protocol), Vec::new())?;
                     add_node(format!("join {}::{name}", self.protocol), Vec::new())?;
                 }
-                // FR-375-AC-28: the template's `cend` has no binder types.
+                // The template's bare path is its `cattempt`. Its other
+                // classes have no binder types (FR-375-AC-28 for `cend`).
                 NodeClass::Template => {
                     add_node(format!("{}::{name}", self.protocol), binder_types)?;
-                    add_node(format!("cend {}::{name}", self.protocol), Vec::new())?;
+                    for prefix in ["cend", "cfail", "ctimeout", "cexpire"] {
+                        add_node(format!("{prefix} {}::{name}", self.protocol), Vec::new())?;
+                    }
                 }
             }
         }
@@ -859,7 +878,10 @@ impl ProtocolClasses {
             AbstractStepKind::Fork | AbstractStepKind::Join => {
                 self.nodes.get(member) == Some(&NodeClass::Parallel)
             }
-            AbstractStepKind::Cend => self.nodes.get(member) == Some(&NodeClass::Template),
+            AbstractStepKind::Cend
+            | AbstractStepKind::Cfail
+            | AbstractStepKind::Ctimeout
+            | AbstractStepKind::Cexpire => self.nodes.get(member) == Some(&NodeClass::Template),
             AbstractStepKind::Duplicate => self.channels.get(member).is_some_and(|c| c.0),
             AbstractStepKind::Lose => self.channels.get(member).is_some_and(|c| c.1),
             AbstractStepKind::Spawn => self.roles.contains_key(member),

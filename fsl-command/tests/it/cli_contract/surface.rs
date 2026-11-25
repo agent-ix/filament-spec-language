@@ -11,7 +11,9 @@
 //! Each is checked in both directions: every name the parser accepts is
 //! listed, every listed name is accepted, and everything else is refused.
 
-use fsl_foundation::setting::{parse_operands, AccountingSetting, Setting, UsageCause};
+use fsl_foundation::setting::{
+    parse_operands, AccountingSetting, Setting, SettingName, UsageCause,
+};
 use fsl_foundation::SettingLimits;
 use fsl_replay::{CallerLimits, WorkerCounts};
 use ix_trace_rs::trace;
@@ -95,6 +97,77 @@ fn every_limit_refusal_cause_is_reached() {
     }
 }
 
+/// FR-255-AC-26: the settings operation accepts and preserves every row's
+/// maximum typed bound, and refuses the first integer above that bound.
+#[test]
+#[trace("FR-255-AC-26")]
+fn settings_preserve_each_typed_maximum_and_refuse_values_above_it() {
+    use std::collections::BTreeMap;
+
+    const U32_MAX: u64 = 4_294_967_295;
+    const U64_MAX: u64 = 18_446_744_073_709_551_615;
+    let expected_stage: BTreeMap<_, _> = Setting::ALL
+        .iter()
+        .copied()
+        .map(|setting| {
+            (
+                setting,
+                if setting == Setting::ModelSequenceMaximum {
+                    U32_MAX
+                } else {
+                    U64_MAX
+                },
+            )
+        })
+        .collect();
+    let operands: Vec<_> = Setting::ALL
+        .iter()
+        .copied()
+        .map(|setting| format!("{}={}", setting.name(), expected_stage[&setting]))
+        .chain(
+            AccountingSetting::ALL
+                .iter()
+                .map(|setting| format!("{}={U64_MAX}", setting.name())),
+        )
+        .collect();
+    let input: Vec<_> = operands.iter().map(String::as_str).collect();
+    let expected: Vec<_> = Setting::ALL
+        .iter()
+        .copied()
+        .map(|setting| (SettingName::Stage(setting), expected_stage[&setting]))
+        .chain(
+            AccountingSetting::ALL
+                .iter()
+                .copied()
+                .map(|setting| (SettingName::Accounting(setting), U64_MAX)),
+        )
+        .collect();
+    assert_eq!(
+        parse_operands(input).expect("each maximum is representable"),
+        expected
+    );
+
+    for setting in Setting::ALL.iter().copied() {
+        let maximum = expected_stage[&setting];
+        assert_eq!(setting.greatest_bound(), maximum, "{}", setting.name());
+        let above = if maximum == U64_MAX {
+            "18446744073709551616".to_owned()
+        } else {
+            (maximum + 1).to_string()
+        };
+        let operand = format!("{}={above}", setting.name());
+        let refusal = parse_operands([operand.as_str()]).expect_err("the value exceeds its type");
+        assert_eq!(refusal.cause, UsageCause::NotAnInteger, "{operand}");
+        assert_eq!(refusal.operand, operand);
+    }
+    for setting in AccountingSetting::ALL {
+        let operand = format!("{}=18446744073709551616", setting.name());
+        let refusal = parse_operands([operand.as_str()]).expect_err("the value exceeds u64");
+        assert_eq!(refusal.cause, UsageCause::NotAnInteger, "{operand}");
+        assert_eq!(refusal.operand, operand);
+    }
+}
+
 /// FR-255-AC-21: the public settings operation returns independent worker
 /// counts, leaves engine bounds unchanged, and refuses invalid worker names.
 #[test]
@@ -153,8 +226,10 @@ fn worker_settings_change_only_their_own_counts() {
     ] {
         let actual =
             CallerLimits::from_operands([operand]).expect("a single worker setting is accepted");
-        let mut expected = CallerLimits::default();
-        expected.workers = workers;
+        let expected = CallerLimits {
+            workers,
+            ..CallerLimits::default()
+        };
         assert_eq!(actual, expected, "{operand}");
     }
     for name in [

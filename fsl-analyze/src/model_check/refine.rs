@@ -53,7 +53,7 @@ use fsl_eval::simulation::{
 };
 use fsl_replay::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
-    check_protocol_state_relations, check_protocol_step, check_step,
+    check_protocol_state_relations, check_protocol_step, check_step_for_model,
     open_protocol_systems_with_initial_limit, open_systems_with_initial_limit, AbstractClass,
     AbstractProtocolSystem, CandidateFairState,
     CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
@@ -1982,7 +1982,7 @@ impl Run<'_, '_> {
                         index,
                         state.state(),
                     )
-                    .map_err(|refusal| ModelCheckRefusal::Protocol(refusal))?
+                    .map_err(ModelCheckRefusal::Protocol)?
                     .verdict
                 }
                 None => check_initial(
@@ -2204,7 +2204,7 @@ impl Run<'_, '_> {
                         post: &state,
                     },
                 ),
-                None => check_step(
+                None => check_step_for_model(
                     self.refinement,
                     self.concrete,
                     self.abstract_system,
@@ -3102,10 +3102,7 @@ impl Run<'_, '_> {
         Ok(classes
             .iter()
             .map(|class| FairMark {
-                taken: path.iter().any(|step| {
-                    step.application()
-                        .is_some_and(|transition| class.covers(transition))
-                }),
+                taken: class.is_taken_along(path),
                 enabled_somewhere: enabled_sets.iter().any(|set| class.is_enabled_in(set)),
                 enabled_everywhere: enabled_sets.iter().all(|set| class.is_enabled_in(set)),
             })
@@ -3510,10 +3507,13 @@ mod cas_fixture;
 
 #[cfg(test)]
 mod tests {
+    use fsl_eval::simulation::protocol::StepKind;
     use ix_trace_rs::trace;
 
     use super::super::fair_summary::at_least_as_fair;
-    use super::cas_fixture::{UNLIMITED, World, cas_refines_counter};
+    use super::cas_fixture::{
+        SPEC, UNLIMITED, World, cas_refines_counter, failing_compensation, key,
+    };
     use super::*;
 
     fn request(world: &World) -> RefinementCheckRequest<'_> {
@@ -3589,5 +3589,130 @@ mod tests {
             panic!("the second phase's fault is a refusal");
         };
         assert_eq!(fault, InternalFault::new("refinement-liveness", "injected"));
+    }
+
+    /// One concrete step of [`failing_compensation`]: along each abstract
+    /// path that fails the compensation of `inc`, the engine's label takes
+    /// the class of `add` and leaves the class of `inc` enabled and not
+    /// taken, so a loop along the path does not satisfy strong fairness of
+    /// `inc`.
+    #[trace("TC-657", "FR-212-AC-5")]
+    #[test]
+    fn a_loop_along_a_failed_compensation_attempt_starves_the_operation() {
+        let world = failing_compensation();
+        let systems = fsl_replay::open_protocol_systems(
+            world.refinement(),
+            &world.concrete_request(UNLIMITED),
+            world.package(),
+            vec![world.abstract_initial()],
+            ModelInstance {
+                population: key(SPEC, "counters"),
+                key: "c".to_owned(),
+            },
+            &[],
+        )
+        .expect("the compensating protocol opens");
+        let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+        let state = systems.concrete.initial_states()[0].clone();
+        let StepVerdict::Passes { post: position, .. } = check_protocol_initial(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            0,
+            state.state(),
+        )
+        .expect("initial states settle")
+        .verdict
+        else {
+            panic!("the root maps");
+        };
+        let (transition, post) = systems
+            .concrete
+            .successors(&state)
+            .expect("the concrete state expands")
+            .successors
+            .into_iter()
+            .next()
+            .expect("bump is enabled");
+        let StepVerdict::Passes { taken, .. } = check_protocol_step(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            &position,
+            &ConcreteStep {
+                position: 1,
+                transition: Some(&transition),
+                post: &post,
+            },
+        )
+        .verdict
+        else {
+            panic!("bump passes");
+        };
+        let Taken::ProtocolTraces(traces) = *taken else {
+            panic!("bump takes protocol traces");
+        };
+        let fairness: Vec<_> = world
+            .refinement()
+            .abstract_operation_fairness()
+            .cloned()
+            .collect();
+        let classes = abstract_classes(&systems.abstract_system, &fairness, &[])
+            .expect("both constraints name declared operations");
+        let cancel = Cancel::new();
+        let mut run = Run {
+            refinement: world.refinement(),
+            concrete: &systems.concrete,
+            abstract_system: &systems.abstract_system,
+            abstract_protocol: Some(protocol),
+            limits: ModelCheckLimits::default(),
+            max_depth: None,
+            meter: UNLIMITED,
+            max_candidates: systems.abstract_system.max_candidates(),
+            cancel: &cancel,
+            nodes: Vec::new(),
+            known: BTreeMap::new(),
+            queue: VecDeque::new(),
+            initial_positions: Vec::new(),
+            transitions: 0,
+            edges: 0,
+            horizon_cut: false,
+            classes_of: abstract_classes,
+        };
+        let mut failed = 0;
+        for path in traces.iter().filter(|path| {
+            path.transitions
+                .iter()
+                .any(|step| step.kind() == StepKind::CFail)
+        }) {
+            let mut count = 0;
+            let Ok(start_enabled) = run.protocol_enabled(protocol, &path.start, &mut count) else {
+                panic!("the start expands");
+            };
+            let interior = path
+                .candidates
+                .split_last()
+                .map_or(&[][..], |(_, interior)| interior);
+            let Ok(label) =
+                run.protocol_path_label(&start_enabled, interior, &path.transitions, &classes)
+            else {
+                panic!("the path labels");
+            };
+            let [add, inc] = label.as_slice() else {
+                panic!("one class per constraint: {label:?}");
+            };
+            assert!(add.taken, "{label:?}");
+            assert!(inc.enabled_somewhere && !inc.taken, "{label:?}");
+            let mut relation = CandidateRelation::new();
+            let lap = (0, path.start_key.clone());
+            insert_relation_label(&mut relation, (lap.clone(), lap), label);
+            assert!(!idempotent_has_fair_candidate(
+                &relation, &classes, &fairness
+            ));
+            failed += 1;
+        }
+        assert!(failed > 0, "some path fails the compensation of inc");
     }
 }

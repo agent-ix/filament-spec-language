@@ -4097,10 +4097,10 @@ fn history_refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<fsl_semantics::che
 const HISTORY_STEP: &str =
     "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
 
-/// FR-901-AC-1 (TC-2540): a `Boolean` and an optional-absent history initial
-/// are `literal` nodes built by the one literal path a checked expression's
-/// literal uses; each package is admitted by the strict reader, and the
-/// refinement body holds the `histories` row.
+/// FR-901-AC-1 (TC-2540): a `Boolean` initial is a reference to a `literal` node
+/// built by the one literal path a checked expression's literal uses, and an
+/// optional-absent initial is an inline `literal` term; each package is admitted
+/// by the strict reader, and the refinement body holds the `histories` row.
 #[trace("TC-2540", "FR-901-AC-1")]
 #[test]
 fn history_initials_of_each_literal_form_are_written() {
@@ -4118,7 +4118,9 @@ fn history_initials_of_each_literal_form_are_written() {
         let histories = node["body"]["histories"].as_array().expect("histories");
         assert_eq!(histories.len(), 1, "{declared}: {histories:?}");
         assert_eq!(histories[0]["name"], "last", "{declared}");
-        assert_eq!(histories[0]["initial"]["term"], "reference", "{declared}");
+        // An enum or absent-option initial is written inline; others reference a node.
+        let form = if initial == "none" { "literal" } else { "reference" };
+        assert_eq!(histories[0]["initial"]["term"], form, "{declared}");
         assert_eq!(
             histories[0]["updates"].as_array().map(Vec::len),
             Some(1),

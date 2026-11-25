@@ -857,7 +857,7 @@ impl ModelSystem<'_> {
             .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
         {
             let key = match key_policy {
-                Some(policy) => policy.key(self, &state.state)?,
+                Some(policy) => policy.key(self, state.state())?,
                 None => self.canonical_state_key(state).map_err(|_| stop(BROKEN))?,
             };
             return Ok(Err(UndecidedSuccessor { state: key }));
@@ -903,7 +903,7 @@ impl ModelSystem<'_> {
                     .and_then(Option::take)
                     .ok_or_else(|| stop(BROKEN))?;
                 let key = match key_policy {
-                    Some(policy) => policy.key(self, &successor.1.state)?,
+                    Some(policy) => policy.key(self, &successor.1.state())?,
                     None => self
                         .canonical_state_key(&successor.1)
                         .map_err(|_| stop(BROKEN))?,
@@ -1045,7 +1045,7 @@ impl ModelSystem<'_> {
             }]));
         }
         let key = match key_policy {
-            Some(policy) => policy.key(self, &state.state)?,
+            Some(policy) => policy.key(self, state.state())?,
             None => self.canonical_state_key(state).map_err(|_| stop(BROKEN))?,
         };
         for action in &actions {
@@ -1145,7 +1145,7 @@ impl ModelSystem<'_> {
                 )));
             }
             let key = match key_policy {
-                Some(policy) => policy.key(self, &post.state)?,
+                Some(policy) => policy.key(self, post.state())?,
                 None => self.canonical_state_key(post).map_err(|_| stop(BROKEN))?,
             };
             // Candidate generation visits each assignment once and retains

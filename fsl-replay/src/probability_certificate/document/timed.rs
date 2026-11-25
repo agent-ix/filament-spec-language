@@ -9,9 +9,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
-use fsl_eval::temporal::{
-    AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TimedTrace,
-};
 use num_traits::Zero;
 use serde_json::{Value as JsonValue, json};
 
@@ -205,14 +202,6 @@ pub(super) fn check(
     }
     let replay_targets = target_keys(&graph);
     if replay_targets != document.targets {
-        return Err(ProbabilityDocumentError::ObjectiveMismatch);
-    }
-    if graph.states.len() != document.values.len()
-        || document
-            .values
-            .iter()
-            .any(|row| !graph.states.contains_key(&row.state))
-    {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     let certificate = ExactProbabilityCertificate {
@@ -1399,34 +1388,9 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
             })
         };
 
-    // Same-timestamp OR is valid only for the admitted direct Eventually
-    // letter: a hit at any observation at that timestamp satisfies it.
-    if let FormulaNode::Unary {
-        operator: UnaryTemporal::Eventually,
-        interval: Some(CheckedInterval::Timed(interval)),
-        operand,
-    } = root
-    {
-        if interval.lower().is_zero()
-            && interval.lower_closed()
-            && interval.upper_closed()
-            && direct_holds(operand.index()).is_some()
-        {
-            return Some((
-                bound.clone(),
-                Watch::TimedTrace {
-                    formula,
-                    predicates: vec![condition(operand.index())?],
-                    horizon,
-                    scale,
-                },
-            ));
-        }
-    }
-
     let (kind, interval, predicates) = match root {
         FormulaNode::Unary {
-            operator: UnaryTemporal::Eventually,
+            operator: operator @ (UnaryTemporal::Eventually | UnaryTemporal::Always),
             interval: Some(CheckedInterval::Timed(outer)),
             operand,
         } if !matches!(
@@ -1435,12 +1399,22 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
         ) =>
         {
             let FormulaNode::Unary {
-                operator: UnaryTemporal::Always,
+                operator: inner_operator,
                 interval: Some(CheckedInterval::Timed(inner)),
                 operand: atom,
             } = checked.nodes().get(operand.index())?
             else {
                 return None;
+            };
+            // Only the root operator's dual may nest under it.
+            let (root_kind, nested_kind) = match (operator, inner_operator) {
+                (UnaryTemporal::Eventually, UnaryTemporal::Always) => {
+                    (DeadlineKind::Eventually, DeadlineKind::Always)
+                }
+                (UnaryTemporal::Always, UnaryTemporal::Eventually) => {
+                    (DeadlineKind::Always, DeadlineKind::Eventually)
+                }
+                _ => return None,
             };
             if inner.lower() != inner.upper()?
                 || !outer.lower_closed()
@@ -1454,8 +1428,8 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
             return Some((
                 bound.clone(),
                 Watch::Nested {
-                    root: timed_operator(root_index, DeadlineKind::Eventually, outer)?,
-                    nested: timed_operator(operand.index(), DeadlineKind::Always, inner)?,
+                    root: timed_operator(root_index, root_kind, outer)?,
+                    nested: timed_operator(operand.index(), nested_kind, inner)?,
                     predicate,
                     horizon,
                 },
@@ -1525,40 +1499,6 @@ enum Phase {
         fsl_eval::probabilistic::TimedOperatorState,
         fsl_eval::probabilistic::TimedOperatorState,
     ),
-    /// The exact observation history needed to replay every occurrence in a
-    /// checked timed formula, retained through its complete closed horizon.
-    TimedTrace {
-        horizon: u64,
-        history: Vec<TimedFormulaObservation>,
-        verdict: Option<bool>,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TimedFormulaObservation {
-    time: u64,
-    values: Vec<bool>,
-}
-
-fn push_timed_formula_observation(
-    history: &mut Vec<TimedFormulaObservation>,
-    time: u64,
-    values: &[bool],
-) {
-    // TimedTrace is admitted only for one atomic Eventually read. Independently
-    // reconstruct its idempotent same-time truth summary from replayed states.
-    if let Some(observation) = history.iter_mut().rev().find(|entry| entry.time == time) {
-        if observation.values.len() == values.len() {
-            for (summary, value) in observation.values.iter_mut().zip(values) {
-                *summary |= *value;
-            }
-            return;
-        }
-    }
-    history.push(TimedFormulaObservation {
-        time,
-        values: values.to_vec(),
-    });
 }
 
 impl Phase {
@@ -1568,7 +1508,6 @@ impl Phase {
             Self::Bounded(operator) | Self::NestedBounded(operator, _) => {
                 operator.phase != fsl_eval::probabilistic::DeadlinePhase::Pending
             }
-            Self::TimedTrace { verdict, .. } => verdict.is_some(),
             _ => true,
         }
     }
@@ -1589,7 +1528,6 @@ fn phase_value(phase: &Phase) -> Option<bool> {
             MonitorPhase::Reject => Some(false),
             MonitorPhase::Pending => None,
         },
-        Phase::TimedTrace { verdict, .. } => *verdict,
         _ => None,
     }
 }
@@ -1631,23 +1569,6 @@ fn monitor_json(phase: &Phase) -> JsonValue {
                 Some(encode_operator(*nested))
             ])
         }
-        Phase::TimedTrace {
-            horizon,
-            history,
-            verdict,
-        } => json!([
-            "timed-formula-trace",
-            horizon.to_string(),
-            history
-                .iter()
-                .map(|observation| json!([observation.time.to_string(), observation.values,]))
-                .collect::<Vec<_>>(),
-            match verdict {
-                None => "pending",
-                Some(true) => "accept",
-                Some(false) => "reject",
-            }
-        ]),
         Phase::Pending => json!(["deadline", "eventually", "pending"]),
         Phase::Accepted => json!(["deadline", "eventually", "accept"]),
         Phase::Rejected => json!(["deadline", "eventually", "reject"]),
@@ -1669,12 +1590,6 @@ struct ElapsedWatch<'a> {
 /// FR-877's elapsed measure.
 enum Watch<'a> {
     Deadline(&'a fsl_semantics::check::CheckedPredicate),
-    TimedTrace {
-        formula: &'a fsl_semantics::check::CheckedTemporalFormula,
-        predicates: Vec<&'a fsl_semantics::check::CheckedPredicate>,
-        horizon: u64,
-        scale: u64,
-    },
     Bounded {
         root: fsl_eval::probabilistic::TimedOperatorState,
         predicates: Vec<&'a fsl_semantics::check::CheckedPredicate>,
@@ -1693,11 +1608,6 @@ impl Watch<'_> {
     fn start(&self) -> Phase {
         match self {
             Self::Deadline(_) => Phase::Pending,
-            Self::TimedTrace { horizon, .. } => Phase::TimedTrace {
-                horizon: *horizon,
-                history: Vec::new(),
-                verdict: None,
-            },
             Self::Bounded { root, .. } => Phase::Bounded(*root),
             Self::Nested { root, nested, .. } => {
                 let mut root = *root;
@@ -1712,7 +1622,6 @@ impl Watch<'_> {
 
     fn horizon(&self) -> u64 {
         match self {
-            Self::TimedTrace { horizon, .. } => *horizon,
             Self::Bounded { horizon, .. } | Self::Nested { horizon, .. } => *horizon,
             _ => 0,
         }
@@ -1732,96 +1641,6 @@ impl Watch<'_> {
         cancel: &Cancel,
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         let watch = match self {
-            Self::TimedTrace {
-                formula,
-                predicates,
-                horizon,
-                scale,
-            } => {
-                let (mut history, prior_verdict) = match previous {
-                    Phase::TimedTrace {
-                        history, verdict, ..
-                    } => (history, verdict),
-                    _ => (Vec::new(), None),
-                };
-                if let Some(verdict) = prior_verdict {
-                    return Ok((
-                        Phase::TimedTrace {
-                            horizon: *horizon,
-                            history,
-                            verdict: Some(verdict),
-                        },
-                        elapsed,
-                    ));
-                }
-                let truths = read_truths(system, predicates, binding, state, cancel)?;
-                if let Some(previous) = history.last().cloned() {
-                    let mut at = previous.time.saturating_add(1);
-                    while at < elapsed {
-                        push_timed_formula_observation(&mut history, at, &previous.values);
-                        at = at.saturating_add(1);
-                    }
-                    if elapsed > previous.time && truths != previous.values {
-                        push_timed_formula_observation(&mut history, elapsed, &previous.values);
-                    }
-                }
-                push_timed_formula_observation(&mut history, elapsed, &truths);
-                let verdict = if elapsed <= *horizon && truths.iter().any(|truth| *truth) {
-                    Some(true)
-                } else if elapsed > *horizon {
-                    let selected = history
-                        .iter()
-                        .filter(|observation| observation.time <= *horizon)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let stamps = selected
-                        .iter()
-                        .map(|observation| {
-                            Rational::new(Integer::from(observation.time), Integer::from(*scale))
-                                .map_err(|_| ProbabilityDocumentError::Unsupported)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let through = Rational::new(Integer::from(*horizon), Integer::from(*scale))
-                        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-                    let trace = TimedTrace::through(stamps, through)
-                        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-                    let values = selected
-                        .iter()
-                        .map(|observation| observation.values.clone())
-                        .collect::<Vec<_>>();
-                    let mut letters = TimedFormulaLetters {
-                        formula,
-                        history: &values,
-                    };
-                    let mut meter = filament_exact::Meter::new(system.meter_limits())
-                        .with_cancel(cancel.clone());
-                    Some(
-                        match fsl_eval::temporal::evaluate_timed_formula_at(
-                            formula.formula(),
-                            &trace,
-                            TemporalPosition::new(0),
-                            &mut letters,
-                            &mut meter,
-                        )
-                        .map_err(|_| ProbabilityDocumentError::Unsupported)?
-                        {
-                            TemporalOutcome::Holds => true,
-                            TemporalOutcome::Violated { .. } => false,
-                            _ => return Err(ProbabilityDocumentError::Unsupported),
-                        },
-                    )
-                } else {
-                    None
-                };
-                return Ok((
-                    Phase::TimedTrace {
-                        horizon: *horizon,
-                        history,
-                        verdict,
-                    },
-                    elapsed,
-                ));
-            }
             Self::Deadline(predicate) => {
                 let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
                 return Ok((phase, elapsed));
@@ -1863,7 +1682,12 @@ impl Watch<'_> {
                 if root.elapsed == u64::MAX {
                     root.elapsed = 0;
                 }
-                advance_nested_deadline(&mut root, &mut nested, &truths, elapsed);
+                fsl_eval::probabilistic::advance_nested_timed_deadline(
+                    &mut root,
+                    &mut nested,
+                    truths.first().copied().unwrap_or(false),
+                    elapsed,
+                );
                 return Ok((Phase::NestedBounded(root, nested), elapsed));
             }
             Self::Elapsed(watch) => watch,
@@ -1944,49 +1768,6 @@ fn read_truths(
         .collect()
 }
 
-struct TimedFormulaLetters<'a> {
-    formula: &'a fsl_semantics::check::CheckedTemporalFormula,
-    history: &'a [Vec<bool>],
-}
-
-impl TemporalLetters for TimedFormulaLetters<'_> {
-    fn activation(
-        &mut self,
-        _position: TemporalPosition,
-        _meter: &mut filament_exact::Meter,
-    ) -> Result<AtomReading, LetterStop> {
-        Ok(AtomReading::True)
-    }
-
-    fn atom(
-        &mut self,
-        atom: fsl_semantics::check::FormulaNodeId,
-        position: TemporalPosition,
-        _meter: &mut filament_exact::Meter,
-    ) -> Result<AtomReading, LetterStop> {
-        let value_index = self
-            .formula
-            .formula()
-            .nodes()
-            .iter()
-            .take(atom.index())
-            .filter(|node| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
-            .count();
-        let position = usize::try_from(position.index()).map_err(|_| LetterStop::Refused)?;
-        let value = self
-            .history
-            .get(position)
-            .and_then(|values| values.get(value_index))
-            .copied()
-            .ok_or(LetterStop::Refused)?;
-        Ok(if value {
-            AtomReading::True
-        } else {
-            AtomReading::False
-        })
-    }
-}
-
 fn deadline_read(
     kind: fsl_eval::probabilistic::DeadlineKind,
     phase: fsl_eval::probabilistic::DeadlinePhase,
@@ -2012,36 +1793,6 @@ fn deadline_read(
         }
         _ => Phase::Pending,
     }
-}
-
-fn advance_nested_deadline(
-    root: &mut fsl_eval::probabilistic::TimedOperatorState,
-    nested: &mut fsl_eval::probabilistic::TimedOperatorState,
-    truths: &[bool],
-    elapsed: u64,
-) {
-    use fsl_eval::probabilistic::DeadlinePhase;
-
-    let lower = root.lower.saturating_add(nested.lower);
-    let upper = root.upper.saturating_add(nested.upper);
-    if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
-        nested.elapsed = elapsed.saturating_sub(root.lower);
-        nested.phase = if truths.first().copied().unwrap_or(false) {
-            root.phase = DeadlinePhase::Accept;
-            DeadlinePhase::Accept
-        } else {
-            DeadlinePhase::Reject
-        };
-    } else {
-        nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
-        if root.phase == DeadlinePhase::Pending {
-            nested.phase = DeadlinePhase::Pending;
-        }
-    }
-    if root.phase == DeadlinePhase::Pending && elapsed > upper {
-        root.phase = DeadlinePhase::Reject;
-    }
-    root.elapsed = elapsed;
 }
 
 fn deadline_timeout(
@@ -2205,8 +1956,7 @@ fn enumerate_digital_deadline(
             | Phase::Inactive
             | Phase::Active
             | Phase::Bounded(_)
-            | Phase::NestedBounded(_, _)
-            | Phase::TimedTrace { .. } => {}
+            | Phase::NestedBounded(_, _) => {}
         }
         if current.tail != DigitalTail::Running {
             let mut choices = Vec::new();
@@ -2265,12 +2015,10 @@ fn enumerate_digital_deadline(
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         admit_workload(system, claim, &actions)?;
         let enabled = digital_enabled_actions(system, timed, &current.timed, claim, cancel)?;
-        if matches!(watch, Watch::Deadline(_))
-            && matches!(
-                claim.scheduler,
-                fsl_semantics::check::ProbScheduler::Workload(_)
-            )
-        {
+        if matches!(
+            claim.scheduler,
+            fsl_semantics::check::ProbScheduler::Workload(_)
+        ) {
             let run = WorkloadRun {
                 system,
                 timed,
@@ -2677,7 +2425,6 @@ fn enumerate_region_deadline(
                     activated.insert(key.clone());
                 }
             }
-            Phase::TimedTrace { .. } => {}
         }
         let mut choices = Vec::new();
         if let Some((delayed_key, delayed)) = next_region_delay(
@@ -2847,6 +2594,34 @@ fn region_scale_parts(
     Ok((base, subdivisions))
 }
 
+fn phase_at(
+    system: &ModelSystem<'_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    state: &ModelSimState,
+    elapsed: u64,
+    deadline: u64,
+    cancel: &Cancel,
+) -> Result<Phase, ProbabilityDocumentError> {
+    if elapsed > deadline {
+        return Ok(Phase::Rejected);
+    }
+    let readings = system
+        .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    let [reading] = readings.as_slice() else {
+        return Err(ProbabilityDocumentError::Unsupported);
+    };
+    match reading {
+        fsl_eval::simulation::model::PredicateReading::True => Ok(Phase::Accepted),
+        fsl_eval::simulation::model::PredicateReading::False => Ok(Phase::Pending),
+        fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_) => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
+    }
+}
+
 fn time_bound(
     claim: &CheckedProbabilisticClaim,
     scale: u64,
@@ -2905,34 +2680,6 @@ fn quantized_clocks(
             rational_units(value, scale)
         })
         .collect()
-}
-
-fn phase_at(
-    system: &ModelSystem<'_>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
-    binding: Option<&filament_exact::ObjectReference>,
-    state: &ModelSimState,
-    elapsed: u64,
-    deadline: u64,
-    cancel: &Cancel,
-) -> Result<Phase, ProbabilityDocumentError> {
-    if elapsed > deadline {
-        return Ok(Phase::Rejected);
-    }
-    let readings = system
-        .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
-        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-    let [reading] = readings.as_slice() else {
-        return Err(ProbabilityDocumentError::Unsupported);
-    };
-    match reading {
-        fsl_eval::simulation::model::PredicateReading::True => Ok(Phase::Accepted),
-        fsl_eval::simulation::model::PredicateReading::False => Ok(Phase::Pending),
-        fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-        | fsl_eval::simulation::model::PredicateReading::Refused(_) => {
-            Err(ProbabilityDocumentError::Unsupported)
-        }
-    }
 }
 
 #[allow(
@@ -4892,9 +4639,6 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     if let Some(query) = elapsed::query(claim) {
         return elapsed::replay(system, claim, &query, witness, limits, cancel);
     }
-    let Some((bound, predicate)) = deadline_event(claim) else {
-        return Err(unsupported());
-    };
     if !claim.fairness.is_empty() {
         return Err(unsupported());
     }
@@ -4905,9 +4649,23 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         TimedProbabilityRoute::Digital
     };
     let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
+    let timed_watch = deadline_event(claim)
+        .map(|(bound, predicate)| (bound, Watch::Deadline(predicate)))
+        .or_else(|| bounded_event(claim, scale));
+    let Some((bound, watch)) = timed_watch else {
+        return Err(unsupported());
+    };
     let binding = claim_binding(system, claim)
         .map_err(|_| unsupported())?
         .map(|binding| binding.reference);
+    // A bounded monitor keeps the claim's whole horizon, as the certificate
+    // check does: a nested window ends past its root operator's upper bound.
+    let clock_bound = match &watch {
+        Watch::Bounded { .. } | Watch::Nested { .. } => watch.horizon(),
+        Watch::Deadline(_) | Watch::Elapsed(_) => {
+            time_bound(claim, scale).map_err(from_document)?
+        }
+    };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let mut meter =
         filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
@@ -4918,8 +4676,8 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             &timed,
             claim,
             binding.as_ref(),
-            &Watch::Deadline(predicate),
-            time_bound(claim, scale).map_err(from_document)?,
+            &watch,
+            clock_bound,
             scale,
             document_limits,
             cancel,
@@ -4932,8 +4690,8 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             &timed,
             claim,
             binding.as_ref(),
-            &Watch::Deadline(predicate),
-            time_bound(claim, scale).map_err(from_document)?,
+            &watch,
+            clock_bound,
             scale,
             scale,
             document_limits,
@@ -5404,15 +5162,29 @@ fn price_paths(
     Ok(Some((kept, mass)))
 }
 
-/// Whether `claim` is a timed form this module replays a witness of: FR-204's
-/// deadline form, or FR-877's elapsed quantile over a timed subject.
+/// Whether `claim` is a timed form this module replays a witness of: an
+/// independently recognized FR-204 bounded monitor or FR-877 elapsed quantile.
 pub(in crate::probability_certificate) fn is_timed_witness_claim(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
 ) -> bool {
-    deadline_event(claim).is_some()
-        || (elapsed::query(claim).is_some()
-            && TimedSystem::new(system, &claim.subject.alias).is_ok())
+    if elapsed::query(claim).is_some() {
+        return TimedSystem::new(system, &claim.subject.alias).is_ok();
+    }
+    TimedSystem::new(system, &claim.subject.alias)
+        .ok()
+        .is_some_and(|timed| {
+            let route = if region_route(&timed, claim) {
+                TimedProbabilityRoute::Region
+            } else {
+                TimedProbabilityRoute::Digital
+            };
+            certificate_scale(system, &timed, claim, route)
+                .ok()
+                .is_some_and(|scale| {
+                    deadline_event(claim).is_some() || bounded_event(claim, scale).is_some()
+                })
+        })
 }
 
 /// The clock valuation a digital timed product key names, in

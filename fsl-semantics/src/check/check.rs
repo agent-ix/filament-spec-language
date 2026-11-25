@@ -3623,6 +3623,8 @@ impl<'a> Typer<'a> {
                 },
             ));
         }
+        // FR-016: a `let` or expression binder may shadow a parameter; a name
+        // that an active binder holds, or a second parameter, refuses.
         if let Some(existing) = self.local(name) {
             if !(kind == LocalKind::Bound && existing.kind == LocalKind::Parameter) {
                 return Err(refuse(
@@ -4635,6 +4637,8 @@ impl<'a> Typer<'a> {
             | (ValueType::Composite(_), ValueType::Composite(_))
             | (ValueType::Collection(_), ValueType::Collection(_))
             | (ValueType::Reference(_), ValueType::Reference(_))
+            // FR-1040: two place ids have equality and no order.
+            | (ValueType::ClockReference, ValueType::ClockReference)
             // FR-056 "Unit-language equality on native String, UUID and
             // Timestamp": their key order is a representation order, not an
             // ordering capability.

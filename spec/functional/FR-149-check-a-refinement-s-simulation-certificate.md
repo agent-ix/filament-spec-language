@@ -102,13 +102,20 @@ The checker uses FR-338's `CertificateRejection{rule, at}`. It uses FR-338's
 the certificate position, the edge when the rule concerns one, and the failing
 `check_step` verdict for `StepFails`.
 
-`FailedStep` is `check_step`'s verdict (FR-141) restricted to the three
-alternatives that judge the relation: `Fails(RefinementFailure)`,
-`Undefined(UndefinedEvaluation)` and `Undetermined`. It excludes `Passes`,
-`Stopped` and `Fault`, which are never a rejection. A step's `Undetermined`
-carries the evaluation outcome that caused it, which is either a refusal or an
-incomplete evaluation naming the limit reached (the work units of the
-evaluation meter, for a meter that ran out), together with FR-141's
+`FailedStep` holds `check_step`'s verdict (FR-141) at an edge that did not
+pass, in four alternatives: `Fails(RefinementFailure)`,
+`NoAbstractMatch{position: u64, transition: ModelTransition}`,
+`Undefined(UndefinedEvaluation)` and `Undetermined`. For `check_step`'s
+`Fails(NoAbstractMatch{position})` the checker holds the `NoAbstractMatch`
+alternative, with that `position` (the failing edge's `post`, which the checker
+passes as the step's position) and the failing edge's concrete transition, the
+one left without an abstract match. It holds every other failure `check_step`
+returns as `Fails`. A `Fails` holding `NoAbstractMatch` does not serialize, so
+a written `NoAbstractMatch` verdict always names its transition. `FailedStep`
+excludes `Passes`, `Stopped` and `Fault`, which are never a rejection. A step's
+`Undetermined` carries the evaluation outcome that caused it, which is either a
+refusal or an incomplete evaluation naming the limit reached (the work units of
+the evaluation meter, for a meter that ran out), together with FR-141's
 `MappingUndetermined` or `UndecidedSuccessor` cause. The checker classifies a
 read as meter-only exactly when that outcome is an incomplete evaluation whose
 limit is the evaluation meter.
@@ -124,7 +131,7 @@ names, plus `UndefinedEvaluation` and `Undetermined`, and whose other members ar
 | `InitialNotAbstract` | `initial` (decimal string, the concrete initial state's index) |
 | `StutterChanged` | `position` |
 | `AbstractStepRejected` | `position`, `transition` (the transition identity encoding of FSpec FR-364, from FR-181), `cause` |
-| `NoAbstractMatch` | `position` |
+| `NoAbstractMatch` | `position`, `transition` (the failing edge's concrete transition, in the transition identity encoding of FSpec FR-364, from FR-181) |
 | `UndefinedEvaluation` | `where` and `cause` (FR-127's `UndefinedEvaluation` encoding), the step verdict `Undefined`; FSpec FR-379's `Undefined{position, row}` is the same failure as the engine writes it, and `check_step` never returns that form |
 | `Undetermined` | `cause` (`MappingUndetermined` or `UndecidedSuccessor`) and `evaluation` (`{"outcome": "refused"}` or `{"outcome": "incomplete", "limit": <limit spelling>}`, where the limit spelling is `evaluation-meter` for the evaluation meter (the `ModelCheckLimit` wire spelling) and filament-exact's `LimitKind` name for another counter of the evaluation, in snake case such as `integer_bits`) |
 
@@ -161,7 +168,9 @@ not equal the locus `position`. A `cause` is `{"kind": "Precondition",
 - **Steps.** For each edge, the checker SHALL run `check_step` (FR-141) from
   the position and SHALL reject with rule `StepFails`, carrying the verdict,
   when it returns `Fails`, `Undefined`, or an `Undetermined` that Meter stops
-  does not cover.
+  does not cover. For `Fails(NoAbstractMatch)` the carried verdict is the
+  `NoAbstractMatch` alternative (Outputs); if that edge's `transition` is
+  `None`, the checker SHALL report an internal failure.
 - **Post.** For each edge whose step passes, the checker SHALL reject with rule
   `PostDiffers`, at that position and edge, unless the step's post position and
   `Taken` equal the edge's.

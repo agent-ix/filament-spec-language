@@ -957,9 +957,11 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
         let payload = &bytes[payload_start..at];
         let valid_payload = payload.len() == digits + 2
             && payload.starts_with(b"0x")
-            && payload[2..]
-                .iter()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
+            && payload[2..].iter().all(|byte| {
+                byte.is_ascii_digit()
+                    || (b'a'..=b'f').contains(byte)
+                    || (b'A'..=b'F').contains(byte)
+            });
         skip_ascii_space(bytes, &mut at);
         let has_close = bytes.get(at) == Some(&b')');
         let valid = has_bits && has_colon && valid_payload && has_close;
