@@ -395,6 +395,15 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     };
     let record_node = node(&package, &record.node);
     assert_eq!(record_node.semantic_form.as_ref(), "operation_contract");
+    assert_eq!(
+        record.result_bound, *result_type,
+        "the record's result bound is the transition's Boolean result type"
+    );
+    assert_eq!(
+        node(&package, &record.result_bound).semantic_form.as_ref(),
+        "boolean",
+        "the operation-contract result bound is Boolean"
+    );
     assert!(!record.invariant, "Q1 is a postcondition, not an invariant");
     assert_eq!(record.operation.as_ref(), Some(&anchor.node_id));
     assert_eq!(record.model_objects, [owner.node_id.clone()]);
