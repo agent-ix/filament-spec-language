@@ -172,6 +172,11 @@ The forms this requirement adds to FR-106's grammar are these:
   for an enumeration. A missing `components` on a case that declares them is
   `missing-member`, `components` on a case that declares none
   `unknown-member`, and a wrong count `invalid-value`.
+- **Clock positions.** FR-106's clock rule applies to the run value form: a
+  record field, tuple position or union payload position that is a clock entry
+  has no entry in `fields` or `components`. A declared component, here and in
+  the two items above, is one that carries data, so a case whose payload
+  positions are all clock entries carries no `components`.
 - **Identity reference.** The payload `{"universe": U, "type": T,
   "object_identity": O}` names an object by its FSpec FR-204 identity
   triple: `U` the UniverseId, `T` the most-specific EffectiveId and `O` the
@@ -360,7 +365,7 @@ function's declared result type:
 - a Map with its entries ascending by the RFC 8785 bytes of each key's run
   value form, and a Quantity with its unit name and its normalized Rational
   magnitude;
-- a record with one `fields` entry for every exposed effective field, an
+- a record with one `fields` entry for every exposed effective data field, an
   absent optional field as `{"absent": {}}`;
 - a Reference in the identity-reference form, with the returned reference's
   own universe, most-specific type and object identity, never an input
