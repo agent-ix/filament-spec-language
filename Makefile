@@ -387,6 +387,8 @@ ci: export CARGO_PROFILE_TEST_DEBUG_ASSERTIONS := true
 # FR-760-AC-3: pin-check runs in the recipe, after validation, so no Cargo
 # process starts while a selected document is invalid (NFR-002-AC-2); as a
 # sibling prerequisite it would race validation under -j and -k.
+# FR-563: parity is a prerequisite with its own validation edge, so it runs
+# after validation and before this recipe.
 ci: check-spec-validation parity
 	@cargo run --locked --package xtask -- pin-check
 	@$(CONFORMANCE_XTASK) ci
