@@ -794,15 +794,16 @@ fn declared(graph: &CheckedGraph, index: usize) -> Declared {
     (name, shape)
 }
 
-/// The dispatch tables' candidates, by receiver type name. No function index is
-/// kept, and entries and clauses are ordered by name, so two packages that hold
-/// their functions at different positions compare by what they declare.
+/// The dispatch tables' candidates in table order, by receiver type name. No
+/// function index is kept, and each candidate's clauses are ordered by name, so
+/// two packages that hold their functions at different positions compare by what
+/// they declare.
 fn tables(graph: &CheckedGraph) -> Vec<Vec<CandidateShape<Declared>>> {
     graph
         .dispatch_tables()
         .iter()
         .map(|table| {
-            let mut entries: Vec<_> = table
+            table
                 .entries()
                 .iter()
                 .map(|(receiver, candidate)| {
@@ -826,9 +827,7 @@ fn tables(graph: &CheckedGraph) -> Vec<Vec<CandidateShape<Declared>>> {
                         clauses,
                     )
                 })
-                .collect();
-            entries.sort();
-            entries
+                .collect()
         })
         .collect()
 }

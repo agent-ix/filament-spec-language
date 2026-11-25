@@ -46,6 +46,10 @@ use crate::model::intake::member_identity_name;
 use crate::model::normalize::{EffectiveView, ModelRefusal};
 use filament_checked::key::DeclarationKey;
 
+/// The third segment of a source operation's effective-precondition function
+/// name, `[<type>, <operation>, "effective_precondition"]` (FR-569).
+const EFFECTIVE_PRECONDITION: &str = "effective_precondition";
+
 /// One family a called member name may name: the alias of the selected model
 /// that declares it, the key of its root operation (an operation that
 /// redefines none) and the member name.
@@ -306,14 +310,15 @@ impl PackageDeclarations {
                 continue;
             };
             self.resolved_signatures.insert(index, signature);
-            self.model_clauses.insert(
-                index,
-                ModelClause {
-                    declaration: key.clone(),
-                    kind: DeclaredClauseKind::Body,
-                    source_declaration: source_declarations.get(&key).cloned(),
-                },
-            );
+            let clause = ModelClause {
+                declaration: key.clone(),
+                kind: DeclaredClauseKind::Body,
+                source_declaration: source_declarations.get(&key).cloned(),
+            };
+            if let Some(span) = self.clause_declaration_span(&clause) {
+                self.clause_declaration_spans.insert(index, span);
+            }
+            self.model_clauses.insert(index, clause);
             self.functions.push(function);
         }
         refusals
@@ -475,7 +480,7 @@ impl PackageDeclarations {
                     vec![
                         type_name.clone(),
                         operation_name.clone(),
-                        "effective_precondition".to_owned(),
+                        EFFECTIVE_PRECONDITION.to_owned(),
                     ],
                 );
             }
@@ -549,6 +554,9 @@ impl PackageDeclarations {
                 .and_then(|clause| self.precondition_span(&clause.declaration))
             {
                 self.synthesized_spans.insert(index, span);
+            }
+            if let Some(span) = clause.and_then(|clause| self.clause_declaration_span(clause)) {
+                self.clause_declaration_spans.insert(index, span);
             }
             self.functions.push(function);
         }
@@ -645,6 +653,31 @@ impl PackageDeclarations {
             .into_iter()
             .find(|clause| clause.kind == StateClauseKind::Precondition)
             .map(|clause| clause.spans.declaration)
+    }
+
+    /// FR-569: where the one `declaration` occurrence of a source operation's
+    /// clause function is: a body at its `body` declaration, an effective
+    /// precondition at the candidate's `operation` member. `None` for a model
+    /// operation's clause function, whose `generated` occurrence is at its
+    /// body, and for an authored precondition, which `synthesized_spans`
+    /// already places at its `pre` declaration.
+    fn clause_declaration_span(&self, clause: &ModelClause) -> Option<Span> {
+        let path = clause.source_declaration.as_ref()?;
+        match clause.kind {
+            DeclaredClauseKind::Body => self
+                .operation_body(&clause.declaration)
+                .map(|body| body.spans.declaration),
+            DeclaredClauseKind::Precondition
+                if path
+                    .get(2)
+                    .is_some_and(|kind| kind == EFFECTIVE_PRECONDITION) =>
+            {
+                self.source_operation_spans
+                    .get(&clause.declaration)
+                    .copied()
+            }
+            _ => None,
+        }
     }
 
     /// FR-302-AC-8: a body function from `first` on whose `operation-body`

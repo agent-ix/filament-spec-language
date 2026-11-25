@@ -101,7 +101,7 @@ Variants, each one change to S (or D):
 5. **waits on QC-30.** Emit S, S-R and D. Read the object, anchor and frame
    nodes; the clause functions of `size` (`Qs`, `C`, `B`, `Order.size`'s
    effective precondition, and in S-R `Qs2` and `Sub.size`'s effective
-   precondition); the six `operation_effects` rows;
+   precondition) and where each one's occurrence is; the six `operation_effects` rows;
    and the dispatch-table row of the `self.size()` application in `Sized`. Emit
    the AC-7 variants of S, and read every package with IR's strict reader.
    (FR-569-AC-6, FR-569-AC-7, FR-105-AC-18, FR-383-AC-67)
@@ -151,7 +151,9 @@ Tag each test with the criteria it asserts and `TC-1408`, for example
   `["Order", "size", "effective_precondition"]`, `["Order", "size", "body"]`
   and `["Sub", "size", "body"]`, and in S-R `["Sub", "size", "precondition",
   "Qs2"]` and `["Sub", "size", "effective_precondition"]`, with no clause
-  function for `bump`; six `operation_effects` rows with origin
+  function for `bump`; each of these functions' one `declaration` occurrence
+  at its `pre` declaration (`Qs`, `Qs2`), its `body` declaration (`C`, `B`) or,
+  for an effective precondition, the candidate's `size` member; six `operation_effects` rows with origin
   `source_declaration_operation_frame`, `member` `<type>::<operation>` and
   `document` the unit's source identity, in `(document, declaring,
   operation)` order, `bump`'s holding the receiver `modifies` of `total`; the
