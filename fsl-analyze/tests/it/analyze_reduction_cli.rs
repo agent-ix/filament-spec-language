@@ -5,11 +5,11 @@
 //! `counters` population annotated `symmetric`.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Workspace, analyze, clause, counter_request_with, counter_snapshot, label,
-    package_selection, request_members,
+    analyze, clause, counter_request_with, counter_snapshot, label, package_selection,
+    request_members, Workspace, HANDOFF,
 };
 use crate::counter::{document, symmetric_document};
 

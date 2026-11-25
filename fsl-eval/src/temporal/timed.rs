@@ -164,11 +164,7 @@ enum Tri {
 
 impl Tri {
     fn of(value: bool) -> Self {
-        if value {
-            Self::True
-        } else {
-            Self::False
-        }
+        if value { Self::True } else { Self::False }
     }
 
     fn negate(self) -> Self {
@@ -180,11 +176,7 @@ impl Tri {
     }
 
     fn flip(self, dual: bool) -> Self {
-        if dual {
-            self.negate()
-        } else {
-            self
-        }
+        if dual { self.negate() } else { self }
     }
 }
 
@@ -451,7 +443,7 @@ impl Evaluator<'_> {
             FormulaNode::Constant(value) => Tri::of(*value),
             FormulaNode::Holds { .. } => return Err(broken("atom-read-from-letters")),
             FormulaNode::Aggregate { .. } => {
-                return Err(broken("aggregate-atom-under-timed-profile"))
+                return Err(broken("aggregate-atom-under-timed-profile"));
             }
             FormulaNode::Not(operand) => self.value(operand.index(), i)?.negate(),
             FormulaNode::And(left, right) => self
@@ -591,14 +583,29 @@ pub fn evaluate_timed_at<L: TemporalLetters>(
             profile: clause.profile(),
         });
     }
-    let formula = clause.formula();
+    evaluate_timed_formula_at(clause.formula(), trace, position, letters, meter)
+}
+
+/// Evaluate a checked timed probabilistic event formula at one position.
+///
+/// Unlike [`evaluate_timed_at`], this entry point accepts the formula owned by
+/// a checked probability claim, whose claim profile and atom binding are
+/// supplied by the caller. The same timed formula evaluator and closed-trace
+/// semantics are used.
+pub fn evaluate_timed_formula_at<L: TemporalLetters>(
+    formula: &CheckedFormula,
+    trace: &TimedTrace,
+    position: TemporalPosition,
+    letters: &mut L,
+    meter: &mut Meter,
+) -> Result<TemporalOutcome, TemporalRefusal> {
     let represented = trace.stamps.len();
     let (stamps, tail, loop_start) = match &trace.looping {
         None => (trace.stamps.clone(), None, 0),
         Some(looping) => match unrolled(trace, looping, formula, meter) {
             Ok(stamps) => (stamps, Some(looping), looping.start),
             Err(Stop::Incomplete(incomplete)) => {
-                return Ok(TemporalOutcome::Incomplete(incomplete))
+                return Ok(TemporalOutcome::Incomplete(incomplete));
             }
             Err(Stop::Refused(refusal)) => return Err(refusal),
         },

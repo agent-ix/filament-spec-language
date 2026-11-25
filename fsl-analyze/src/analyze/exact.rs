@@ -40,8 +40,8 @@ use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_route::Mode;
 use fsl_semantics::check::{
-    Bound, Capability, DeclarationFamily, Event, FormulaNode, ProbForm, ProbScheduler, ReachTarget,
-    UnaryTemporal,
+    Bound, Capability, CheckedInterval, DeclarationFamily, Event, FormulaNode, ProbForm,
+    ProbScheduler, ReachTarget, UnaryTemporal,
 };
 use num_bigint::BigInt;
 
@@ -431,6 +431,33 @@ fn broken() -> EngineReport {
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
 
+fn is_nested_timed_profile(formula: &fsl_semantics::check::CheckedTemporalFormula) -> bool {
+    let nodes = formula.formula().nodes();
+    let Some(FormulaNode::Unary {
+        operator: UnaryTemporal::Eventually,
+        interval: Some(CheckedInterval::Timed(outer)),
+        operand,
+    }) = nodes.get(formula.formula().root().index())
+    else {
+        return false;
+    };
+    let Some(FormulaNode::Unary {
+        operator: UnaryTemporal::Always,
+        interval: Some(CheckedInterval::Timed(inner)),
+        operand: atom,
+    }) = nodes.get(operand.index())
+    else {
+        return false;
+    };
+    outer.upper().is_some()
+        && outer.lower_closed()
+        && outer.upper_closed()
+        && inner.upper().is_some_and(|upper| upper == inner.lower())
+        && inner.lower_closed()
+        && inner.upper_closed()
+        && matches!(nodes.get(atom.index()), Some(FormulaNode::Holds { .. }))
+}
+
 /// A dense exact linear system that would not fit the working-storage ceiling:
 /// the run stopped at `certificate_check.max_working_bytes` before building it.
 fn working_bytes_limit(
@@ -595,10 +622,11 @@ fn run_timed(
             bound,
             event:
                 Event::Formula {
-                    timed_horizon: Some(_),
+                    formula,
+                    timed_horizon,
                     ..
                 },
-        } => bound,
+        } if timed_horizon.is_some() || is_nested_timed_profile(formula) => bound,
         _ => return not_yet(),
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
@@ -1019,10 +1047,11 @@ fn run_timed_mean(
     let ProbForm::MeanTime { bound, .. } = &claim.form else {
         return not_yet();
     };
+    let fair = !claim.fairness.is_empty();
     if !matches!(
         claim.scheduler,
         ProbScheduler::Every | ProbScheduler::Workload(_)
-    ) || !claim.fairness.is_empty()
+    ) || (fair && !matches!(claim.scheduler, ProbScheduler::Every))
     {
         return not_yet();
     }
@@ -1220,7 +1249,18 @@ fn run_timed_mean(
         policy: None,
     };
     let checked = (|| {
-        let bytes = write_probability_certificate(&document, document_limits, cancel)?;
+        let bytes = if fair {
+            fsl_replay::write_timed_fair_probability_certificate(
+                &system,
+                source_package.graph().probabilistic_model().claims(),
+                &identity,
+                &document,
+                document_limits,
+                cancel,
+            )?
+        } else {
+            write_probability_certificate(&document, document_limits, cancel)?
+        };
         check_probability_certificate_document(
             &system,
             source_package.graph().probabilistic_model().claims(),
@@ -1274,11 +1314,12 @@ fn run(
         &request.claim.form,
         ProbForm::Probability {
             event: Event::Formula {
-                timed_horizon: Some(_),
+                formula,
+                timed_horizon,
                 ..
             },
             ..
-        }
+        } if timed_horizon.is_some() || is_nested_timed_profile(formula)
     ) {
         return run_timed(request, cancel, tamper, tamper_witness);
     }

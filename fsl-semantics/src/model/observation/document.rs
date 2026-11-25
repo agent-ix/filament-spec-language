@@ -1116,7 +1116,7 @@ fn field_kind_matches(raw: &SnapshotValue, value_type: &filament_exact::ValueTyp
             )
             | (
                 RawForm::Reference(_),
-                filament_exact::ValueType::Reference(_)
+                filament_exact::ValueType::Reference(_) | filament_exact::ValueType::ClockReference
             )
             | (
                 RawForm::Absent | RawForm::Present(_),
@@ -1171,7 +1171,7 @@ fn object_field_kind_matches(
             )
             | (
                 RawForm::Reference(_),
-                filament_exact::ValueType::Reference(_)
+                filament_exact::ValueType::Reference(_) | filament_exact::ValueType::ClockReference
             )
             | (
                 RawForm::Collection(..),
@@ -1669,14 +1669,19 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
-        // FR-230-AC-71: the value is the kernel's clock-place reference, built
-        // from the snapshot's universe and place id. That admission is
-        // QSL-3002; until then the reference is refused, typed, never read as
-        // an object reference.
-        (RawForm::Reference(_), filament_exact::ValueType::ClockReference) => Err(
-            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                .with("reason", "clock-reference-admission-pending-qsl-3002"),
-        ),
+        // FR-106-AC-83: an unseeded refinement row has no route-neutral
+        // identity with which to admit raw Clock-place data. Preserve the
+        // supplied place identity and the snapshot's literal identity.
+        (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
+            let record = admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "missing-route-neutral-place-identity");
+            Err(match &references.document {
+                Some(document) => record
+                    .with("document", document.clone())
+                    .with("target", reference.key.clone()),
+                None => record,
+            })
+        }
         (RawForm::Variant(variant), filament_exact::ValueType::Enum(slot)) => {
             admit_variant(references, variant, slot)
         }
@@ -1887,14 +1892,38 @@ fn admit_native(
     value_type: &filament_exact::ValueType,
     types: &TypeEnvironment,
 ) -> Result<Value, AdmissionRecord> {
-    let kind = native_payload(native)?;
+    let float_diagnostic = matches!(
+        native.kind(),
+        RawNativeKind::Known(NativeKind::Float32 | NativeKind::Float64)
+    ) || matches!(value_type, filament_exact::ValueType::Float(_));
+    let kind = native_payload(native).map_err(|record| {
+        if float_diagnostic {
+            match record.fields.get("member").cloned() {
+                Some(member) => record.at(vec![PathStep::Field(member)]),
+                None => record,
+            }
+        } else {
+            record
+        }
+    })?;
     let invalid = |refusal: filament_exact::ConstructionRefusal, member: &'static str| {
-        admission_record(Code::InvalidRuntimeInput, "invalid-value")
+        let record = admission_record(Code::InvalidRuntimeInput, "invalid-value")
             .with("member", member)
-            .kernel_class(refusal.cause)
+            .kernel_class(refusal.cause);
+        if float_diagnostic {
+            record.at(vec![PathStep::Field(member.to_owned())])
+        } else {
+            record
+        }
     };
     let wrong = |member: &'static str| {
-        admission_record(Code::InvalidRuntimeInput, "wrong-value-kind").with("member", member)
+        let record =
+            admission_record(Code::InvalidRuntimeInput, "wrong-value-kind").with("member", member);
+        if float_diagnostic {
+            record.at(vec![PathStep::Field(member.to_owned())])
+        } else {
+            record
+        }
     };
     match (kind, value_type) {
         (NativeKind::String, filament_exact::ValueType::String) => {
@@ -2100,7 +2129,9 @@ pub(super) fn float_payload(native: RawNative<'_>) -> Option<filament_exact::Iee
 }
 
 fn invalid_float_bits() -> AdmissionRecord {
-    admission_record(Code::InvalidRuntimeInput, "invalid-value").with("member", "bits")
+    admission_record(Code::InvalidRuntimeInput, "invalid-value")
+        .with("member", "bits")
+        .at(vec![PathStep::Field("bits".to_owned())])
 }
 
 /// A Text payload admitted into `declared` (FR-106 check 7): the kernel
@@ -3450,6 +3481,16 @@ fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep>
 fn refusal_steps(form: RawForm<'_>, record: &AdmissionRecord) -> Vec<PathStep> {
     let mut steps = document_spelling(form, &record.path);
     let missing = record.catalog.cause() == "missing-member";
+    if missing
+        && record
+            .fields
+            .get("member")
+            .is_some_and(|member| steps.last() == Some(&PathStep::Field(member.clone())))
+    {
+        // The typed path can name an absent member; the document pointer
+        // must stop at the object containing it.
+        steps.pop();
+    }
     match record.fields.get("member") {
         Some(member) => {
             let named = PathStep::Field(member.clone());
@@ -5140,7 +5181,7 @@ mod tests {
         })
     }
 
-    #[trace("FR-106", "TC-464")]
+    #[trace("FR-106-AC-83", "FR-106", "TC-464")]
     #[test]
     fn raw_clock_data_refusal_keeps_its_typed_value_locus() {
         let types = TypeEnvironment::default();
@@ -5166,15 +5207,12 @@ mod tests {
             let mut references =
                 References::over(&[], &types, &[]).expect("empty declared catalog");
             let record = admit_form(&mut references, raw.form(), &slot, None)
-                .expect_err("transported Clock DATA is refused typed until QSL-3002");
+                .expect_err("raw Clock DATA has no route-neutral place identity here");
             assert_eq!(record.catalog.code(), Code::UnknownRequiredFeature.as_str());
             assert_eq!(record.catalog.cause(), "unsupported-feature");
             assert_eq!(
                 record.fields,
-                BTreeMap::from([(
-                    "reason",
-                    "clock-reference-admission-pending-qsl-3002".to_owned()
-                )])
+                BTreeMap::from([("reason", "missing-route-neutral-place-identity".to_owned())])
             );
             assert_eq!(record.path, path);
         }

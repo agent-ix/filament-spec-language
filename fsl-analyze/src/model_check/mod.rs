@@ -30,6 +30,7 @@ mod refine;
 mod relation;
 mod request;
 mod scc;
+pub mod smt;
 mod state_graph;
 
 pub use ample::{Atoms, Por};

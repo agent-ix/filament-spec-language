@@ -3,16 +3,20 @@
 //! through S1, S2 and the assembler is checked, linked and called by name.
 
 use filament_eval::FamilyOutcome;
+use filament_eval::{CallFailure, Evaluation, ExecutionBackendChoice, SessionLimits};
 use filament_exact::{
-    DivisionProfile, Integer, Meter, Outcome, ScalarLimits, Undefined, Value, ValueType,
+    Cancel, CancelCause, DivisionProfile, Integer, Meter, Outcome, ScalarLimits, Undefined, Value,
+    ValueType,
 };
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
+use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
+use fsl_eval::execution::{ExecuteLimits, ExecuteRequest, ExecuteSelection, SuppliedBackends};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{BodyTerm, CheckCause, CheckedGraph, LawRole, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{DefinitionRole, admit_integer_division};
+use fsl_semantics::value::{admit_integer_division, DefinitionRole};
 use ix_trace_rs::trace;
 
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -93,9 +97,191 @@ fn a_function_compiled_from_source_is_called_by_name() {
     );
 }
 
+/// Partial TC-1121 no-std guard: these AC-4 calls cannot return Unsupported.
+#[test]
+fn fr403_value_call_vectors_never_return_unsupported() {
+    let package = package_with_truncating_division(
+        "type Digit = Int[0, 9];\n\
+         function bottom(): Integer pure { 3 }\n\
+         function c2(): Integer pure { bottom() }\n\
+         function c1(): Integer pure { c2() }\n\
+         function countFixture(x: Digit): Integer pure { c1() }\n\
+         function plusOne(x: Digit): Integer pure { x + 1 }\n\
+         function d using v(x: Digit): Integer pure { 10 div x }\n\
+         function f(x: Digit): Boolean pure { true }",
+    );
+    let integer = |n: i64| Value::Integer(Integer::from(n));
+    let execute = |name, arguments, accounting, cancel: &Cancel| {
+        let mut run = SuppliedRun::new(SuppliedLimits::default(), Cancel::new())
+            .expect("supplied run initializes");
+        no_std_call(&package, name, arguments, accounting, &mut run, cancel)
+    };
+
+    let cancel = Cancel::new();
+    assert_no_unsupported(
+        execute("count", vec![integer(3)], UNLIMITED, &cancel),
+        "count(3)",
+    );
+    assert_no_unsupported(execute("d", vec![integer(0)], UNLIMITED, &cancel), "d(0)");
+    assert_no_unsupported(execute("f", vec![integer(10)], UNLIMITED, &cancel), "f(10)");
+    assert_no_unsupported(
+        execute("f", vec![integer(3), integer(4)], UNLIMITED, &cancel),
+        "f(3, 4)",
+    );
+
+    let cancelled = Cancel::new();
+    cancelled.cancel(CancelCause::Requested);
+    assert_no_unsupported(
+        execute("f", vec![integer(3)], UNLIMITED, &cancelled),
+        "f(3) with a cancelled meter handle",
+    );
+
+    let supplied_cancel = Cancel::new();
+    supplied_cancel.cancel(CancelCause::Requested);
+    let mut supplied = SuppliedRun::new(SuppliedLimits::default(), supplied_cancel)
+        .expect("supplied run initializes");
+    assert_no_unsupported(
+        no_std_call(
+            &package,
+            "f",
+            vec![integer(3)],
+            UNLIMITED,
+            &mut supplied,
+            &cancel,
+        ),
+        "f(3) with a cancelled supplied-value run",
+    );
+
+    let limited = ScalarLimits {
+        work_units: 3,
+        ..UNLIMITED
+    };
+    assert_no_unsupported(
+        execute("count", vec![integer(3)], limited, &cancel),
+        "count(3) one work unit below its four calls",
+    );
+
+    assert_no_unsupported(
+        execute("plusOne", vec![integer(10)], UNLIMITED, &cancel),
+        "x + 1 with x = 10",
+    );
+    assert_no_unsupported(
+        execute("plusOne", vec![integer(3)], UNLIMITED, &cancel),
+        "x + 1 with x = 3",
+    );
+    assert_no_unsupported(
+        execute(
+            "c1",
+            Vec::new(),
+            ScalarLimits {
+                work_units: 3,
+                ..UNLIMITED
+            },
+            &cancel,
+        ),
+        "three-call chain with work_units = 3",
+    );
+    assert_no_unsupported(
+        execute(
+            "c1",
+            Vec::new(),
+            ScalarLimits {
+                work_units: 2,
+                ..UNLIMITED
+            },
+            &cancel,
+        ),
+        "three-call chain with work_units = 2",
+    );
+    assert_no_unsupported(
+        super::protocol_reference::no_std_protocol_reference_call(),
+        "refers() with protocol Fill",
+    );
+    assert_no_unsupported(
+        super::model_reference_queries::no_std_all_instances_over_recorded_population(),
+        "allInstances over recorded three-member population",
+    );
+    assert_no_unsupported(
+        super::model_reference_queries::no_std_unrecorded_population_is_wrong_value_kind(),
+        "unrecorded Population argument",
+    );
+    assert_no_unsupported(
+        super::state_model_family::no_std_absent_state_model_lookup(),
+        "lookup with absent key and absent undefined",
+    );
+    assert_no_unsupported(
+        super::deep_values::no_std_recursive_count_on_small_stack(),
+        "100000-deep recursive count on a 512 KiB stack",
+    );
+    for run in 0..10 {
+        let evaluation = assert_no_unsupported(
+            super::reference_adapter::lifecycle::no_std_kernel_loss_vector(),
+            &format!("kernel-loss vector run {run}"),
+        )
+        .unwrap_or_else(|| panic!("kernel-loss vector run {run} did not evaluate"));
+        assert!(
+            !evaluation.losses.is_empty(),
+            "kernel-loss vector run {run} lost its loss record"
+        );
+    }
+}
+
+fn assert_no_unsupported<T>(result: Result<T, CallFailure>, case: &str) -> Option<T> {
+    match result {
+        Err(CallFailure::Unsupported(entry)) => {
+            panic!("{case} returned CallFailure::Unsupported({entry:?})")
+        }
+        Ok(value) => Some(value),
+        Err(_) => None,
+    }
+}
+
 /// The unit's package, checked and linked, over source `declarations`.
 fn package_of(declarations: &str) -> CheckedPackage {
     package_of_with_mode(declarations, CheckMode::Linked)
+}
+
+/// A kernel package with the profile needed by the FR-403 division vector.
+fn package_with_truncating_division(declarations: &str) -> CheckedPackage {
+    let text = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         {declarations}\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("a", "u"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the division unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the division unit");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("the assembler builds the division package");
+    for function in &mut declarations.functions {
+        if function.name == "countFixture" {
+            // `count` is a reserved source token, so the checked-package fixture
+            // gives the declaration its literal AC name after source assembly.
+            function.name = "count".to_owned();
+        }
+    }
+    declarations.integer_division = Some(admitted_integer_division(DivisionProfile::Truncating));
+    CheckedPackage::link(
+        declarations
+            .check(
+                CheckMode::Kernel,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .expect("the division package checks"),
+    )
 }
 
 fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
@@ -129,6 +315,37 @@ fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
                 &fsl_eval::value::S6aRewardEvaluator,
             )
             .expect("the package checks"),
+    )
+}
+
+fn no_std_call(
+    package: &CheckedPackage,
+    function: &str,
+    arguments: Vec<Value>,
+    accounting: ScalarLimits,
+    run: &mut SuppliedRun,
+    cancel: &Cancel,
+) -> Result<Evaluation, CallFailure> {
+    let request = ExecuteRequest {
+        selection: ExecuteSelection::Function {
+            name: QualifiedName::unqualified(function).expect("function name"),
+            arguments,
+            environment: ObjectEnvironment::default(),
+        },
+        backend: ExecutionBackendChoice::Interpreter,
+    };
+    let limits = ExecuteLimits {
+        accounting,
+        prepare: fsl_eval::execution::PrepareLimits::default(),
+        session: SessionLimits::default(),
+    };
+    fsl_eval::execution::execute(
+        package,
+        &request,
+        &SuppliedBackends::default(),
+        &limits,
+        run,
+        cancel,
     )
 }
 
@@ -365,7 +582,7 @@ fn one_check_refusal(declarations: PackageDeclarations) -> fsl_semantics::check:
     refusals.remove(0)
 }
 
-/// Trace: FR-091-AC-39, TC-394
+#[trace("FR-091-AC-39", "TC-394")]
 #[test]
 fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
     for operator in ["div", "rem"] {
@@ -381,7 +598,8 @@ fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
                 role: LawRole::IntegerDivision
             }
         ));
-        assert_eq!(refusal.location.path(), vec![0], "{refusal:?}");
+        // The authored operator is the function body's root expression.
+        assert!(refusal.location.path().is_empty(), "{refusal:?}");
     }
     integer_operator_with_mode("mod", None, "a: Integer, b: Int[1, 9]", CheckMode::Linked);
 }
@@ -687,12 +905,11 @@ fn a_source_predicate_is_called_through_the_checked_package() {
     assert!(completes_true(&package, "three"));
 }
 
-/// FR-403-AC-2 (TC-1121), the `mod` half: `-7 mod 2` through the reference
+/// The `mod` half: `-7 mod 2` through the reference
 /// evaluator returns the value, and ends with the admitted charges, that
 /// `filament_eval::modulo` returns when called directly on a fresh meter. The
 /// operation is defined once, in `filament-eval`, and `fsl_semantics::value`
 /// no longer holds it.
-#[trace("FR-403-AC-2", "TC-1121")]
 #[test]
 fn modulo_through_the_evaluator_matches_the_filament_eval_operation() {
     let package = integer_operator("mod", None);

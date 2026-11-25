@@ -350,6 +350,17 @@ impl BoundedTranslation {
             .map_err(|_| KeyRefusal::Encoding)
     }
 
+    /// Key a qualified formula monitor's complete reached automaton state.
+    /// Unlike [`Self::key`], this preserves every live temporal occurrence.
+    pub(super) fn formula_state_key(&self, state: Enc) -> Result<AutomatonStateKey, KeyRefusal> {
+        canonical_state_key(
+            &self.context,
+            Enc::Array(vec![Enc::text("qualified-formula-state/v1"), state]),
+            self.max_bytes,
+        )
+        .map_err(|_| KeyRefusal::Encoding)
+    }
+
     fn state_enc(&self, state: BoundedState) -> Enc {
         match state {
             BoundedState::Accept => Enc::Array(vec![Enc::text("accept")]),
@@ -656,4 +667,45 @@ pub(super) fn qualified_formula_shape(
         }
     }
     bounded_formula_shape(formula)
+        .or_else(|| qualified_nested_eventually_always_shape(formula, profile))
+}
+
+/// The recursively bounded shape owned by FR-186-AC-3:
+/// `eventually[0,100] always[0,10] holds(P)` under the event-position
+/// false-extension profile. The actual automaton key retains both operator
+/// occurrences; the returned horizon is the sum of the checked bounds.
+pub(super) fn qualified_nested_eventually_always_shape(
+    formula: &CheckedFormula,
+    profile: TemporalProfile,
+) -> Option<(BoundedKind, u64, FormulaNodeId)> {
+    if profile != TemporalProfile::EventPositionFalseExtension {
+        return None;
+    }
+    let FormulaNode::Unary {
+        operator: UnaryTemporal::Eventually,
+        interval: Some(CheckedInterval::Steps(outer)),
+        operand: inner_id,
+    } = formula.nodes().get(formula.root().index())?
+    else {
+        return None;
+    };
+    let FormulaNode::Unary {
+        operator: UnaryTemporal::Always,
+        interval: Some(CheckedInterval::Steps(inner)),
+        operand: atom_id,
+    } = formula.nodes().get(inner_id.index())?
+    else {
+        return None;
+    };
+    let FormulaNode::Holds { .. } = formula.nodes().get(atom_id.index())? else {
+        return None;
+    };
+    if outer.lower() != 0
+        || outer.upper() != TemporalUpper::Finite(100)
+        || inner.lower() != 0
+        || inner.upper() != TemporalUpper::Finite(10)
+    {
+        return None;
+    }
+    Some((BoundedKind::Eventually, 110, *atom_id))
 }
