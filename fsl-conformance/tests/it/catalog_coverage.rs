@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use filament_contract_model::ClockConfiguration;
+use filament_contract_model::{ClockConfiguration, ClockExactNumber};
 use filament_exact::Cancel;
 use filament_verification_contracts::operation_catalog::CHECKED_OPERATION_CATALOG_V1;
 use fsl_foundation::SourceIdentity;
@@ -34,11 +34,27 @@ struct Case {
     forms: &'static [(&'static str, &'static str)],
 }
 
-/// What a case's request supplies beyond its source and domain packages.
+/// A clock configuration a request supplies.
+#[derive(Clone, Copy)]
+enum Clock {
+    /// An event-position clock, by its sequence authority.
+    EventPosition(&'static str),
+    /// A timestamped-event clock, by its timestamp unit.
+    TimestampedEvent(&'static str),
+    /// A fixed-sample clock: its integer epoch and period, in `unit`.
+    FixedSample {
+        epoch: &'static str,
+        period: &'static str,
+        unit: &'static str,
+    },
+}
+
+/// What a case's or probe's request supplies beyond its source and domain
+/// packages.
 #[derive(Clone, Copy)]
 struct Supplies {
-    /// Event-position clocks: the clock name and its sequence authority.
-    clocks: &'static [(&'static str, &'static str)],
+    /// The clock configurations, each under its clock name.
+    clocks: &'static [(&'static str, Clock)],
     /// Dependency libraries: the identity the source imports and its source.
     libraries: &'static [(&'static str, &'static str)],
     /// Extension definitions: the identity the source selects and its document.
@@ -340,7 +356,7 @@ source_cases! {
     finite_hyper => supplied!(
         "finite-hyper",
         Supplies {
-            clocks: &[("t", "test-hyper-events")],
+            clocks: &[("t", Clock::EventPosition("test-hyper-events"))],
             ..Supplies::NOTHING
         },
         &[],
@@ -349,7 +365,7 @@ source_cases! {
     compensation => supplied!(
         "compensation",
         Supplies {
-            clocks: &[("c", "compensation-events")],
+            clocks: &[("c", Clock::EventPosition("compensation-events"))],
             ..Supplies::NOTHING
         },
         &[],
@@ -358,7 +374,7 @@ source_cases! {
     temporal_aggregate => supplied!(
         "temporal-aggregate",
         Supplies {
-            clocks: &[("events", "events")],
+            clocks: &[("events", Clock::EventPosition("events"))],
             ..Supplies::NOTHING
         },
         &["filament.op.temporal.aggregate"],
@@ -533,18 +549,35 @@ fn extension_catalog(extensions: &[(&str, &[u8])]) -> DefinitionCatalog {
     DefinitionCatalog::new(definitions).expect("a case's extension definitions are distinct")
 }
 
-/// The request clock configurations of event-position clocks.
-fn event_clocks(clocks: &[(&str, &str)]) -> RequestClocks {
+/// The request clock configurations `clocks` names.
+fn request_clocks(clocks: &[(&str, Clock)]) -> RequestClocks {
     let members = clocks
         .iter()
-        .map(|(clock, authority)| {
-            let configuration = ClockConfiguration::EventPosition {
-                sequence_authority: (*authority).into(),
+        .map(|(name, clock)| {
+            let integer = |decimal: &str| ClockExactNumber::Integer {
+                decimal: decimal.into(),
             };
-            ((*clock).to_owned(), configuration)
+            let configuration = match *clock {
+                Clock::EventPosition(authority) => ClockConfiguration::EventPosition {
+                    sequence_authority: authority.into(),
+                },
+                Clock::TimestampedEvent(unit) => ClockConfiguration::TimestampedEvent {
+                    timestamp_unit: unit.into(),
+                },
+                Clock::FixedSample {
+                    epoch,
+                    period,
+                    unit,
+                } => ClockConfiguration::FixedSample {
+                    epoch: integer(epoch),
+                    period: integer(period),
+                    unit: unit.into(),
+                },
+            };
+            ((*name).to_owned(), configuration)
         })
         .collect();
-    RequestClocks::new(members).expect("a case's clock configurations read")
+    RequestClocks::new(members).expect("a request's clock configurations read")
 }
 
 /// Compiles and reads a source over the domain packages `inputs` through the
@@ -612,7 +645,7 @@ fn try_compile_supplied(
     let emission = if supplies.clocks.is_empty() {
         fsl_package::emit_checked(checked.package(), emit_limits())
     } else {
-        let selections = event_clocks(supplies.clocks)
+        let selections = request_clocks(supplies.clocks)
             .package_selections(&checked, &[&parsed])
             .map_err(|error| Refusal::new("admit", error))?;
         fsl_package::emit_checked_with_temporal_selections(
@@ -770,6 +803,9 @@ enum Detect {
 /// What the probe source of an entry must do today.
 #[derive(Clone, Copy)]
 enum Expect {
+    /// With what its request supplies, the source is admitted and does not
+    /// emit the item.
+    Admitted(Supplies),
     /// The source is refused at this stage with this cause. The refusal is
     /// pinned: the test fails when the stage or cause changes, and when the
     /// source is admitted and emits the item.
@@ -853,7 +889,8 @@ macro_rules! float_composite_equality {
 
 /// The unproduced list. A catalog operation or node form listed here needs no
 /// source case. Entries with `Expect::Refused` have a probe whose refusal is
-/// pinned; entries with `Expect::Unprobed` have none and are guarded
+/// pinned; entries with `Expect::Admitted` have a probe that is admitted
+/// without the item; entries with `Expect::Unprobed` have none and are guarded
 /// by the corpus sweep only.
 const UNPRODUCED: &[Unproduced] = &[
     Unproduced {
@@ -987,24 +1024,30 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     // No writer emits a `clock`, `deadline` or `window` node: the window and
-    // await sources of the corpus are admitted without one when their request
-    // supplies clock selections.
+    // await sources of the corpus are admitted without one under their clock
+    // configurations.
     Unproduced {
         id: "temporal/clock",
         keys: &["QSL-3049"],
         probe: Probe {
-            source: "",
+            source: include_str!("../../../tests/corpus/temporal/event-window.native"),
             detect: Detect::Form("temporal/clock"),
-            expect: Expect::Unprobed,
+            expect: Expect::Admitted(Supplies {
+                clocks: &[("events", Clock::EventPosition("events"))],
+                ..Supplies::NOTHING
+            }),
         },
     },
     Unproduced {
         id: "temporal/deadline",
         keys: &["QSL-3049"],
         probe: Probe {
-            source: "",
+            source: include_str!("../../../tests/corpus/protocol/await.native"),
             detect: Detect::Form("temporal/deadline"),
-            expect: Expect::Unprobed,
+            expect: Expect::Admitted(Supplies {
+                clocks: &[("timer", Clock::TimestampedEvent("s"))],
+                ..Supplies::NOTHING
+            }),
         },
     },
     Unproduced {
@@ -1020,9 +1063,19 @@ const UNPRODUCED: &[Unproduced] = &[
         id: "temporal/window",
         keys: &["QSL-3049"],
         probe: Probe {
-            source: "",
+            source: include_str!("../../../tests/corpus/temporal/fixed-window.native"),
             detect: Detect::Form("temporal/window"),
-            expect: Expect::Unprobed,
+            expect: Expect::Admitted(Supplies {
+                clocks: &[(
+                    "sensor",
+                    Clock::FixedSample {
+                        epoch: "10",
+                        period: "2",
+                        unit: "ms",
+                    },
+                )],
+                ..Supplies::NOTHING
+            }),
         },
     },
     Unproduced {
@@ -1184,12 +1237,19 @@ fn detected(detect: &Detect, package: &Value) -> bool {
 /// it changed.
 fn probe_verdict(entry: &Unproduced) -> Result<(), String> {
     let probe = &entry.probe;
-    if matches!(probe.expect, Expect::Unprobed) {
-        return Ok(());
-    }
-    let outcome = try_compile_and_read(entry.id, probe.source, model_pool());
+    let supplies = match probe.expect {
+        Expect::Unprobed => return Ok(()),
+        Expect::Admitted(supplies) => supplies,
+        Expect::Refused { .. } => Supplies::NOTHING,
+    };
+    let outcome = try_compile_supplied(entry.id, probe.source, model_pool(), supplies);
     match (&probe.expect, outcome) {
         (Expect::Unprobed, _) => Ok(()),
+        (Expect::Admitted(_), Ok(package)) if !detected(&probe.detect, &package) => Ok(()),
+        (Expect::Admitted(_), Ok(_)) => Err("the probe now emits the item".to_owned()),
+        (Expect::Admitted(_), Err(refusal)) => {
+            Err(format!("the probe is now refused: {refusal:?}"))
+        }
         (Expect::Refused { .. }, Ok(package)) if detected(&probe.detect, &package) => {
             Err("the probe is now admitted and emits the item".to_owned())
         }
@@ -1498,8 +1558,9 @@ fn operation_bodies_are_emitted_from_source() {
     );
 }
 
-/// Each probe still behaves as its entry says: its pinned refusal is
-/// unchanged, and it does not emit the item. A change fails the entry by id.
+/// Each probe still behaves as its entry says: its pinned refusal or its
+/// admission is unchanged, and it does not emit the item. A change fails the
+/// entry by id.
 #[test]
 #[trace("FR-350", "FSpec-FR-322")]
 fn listed_entries_are_still_unproduced() {
@@ -1527,7 +1588,7 @@ fn a_probe_has_a_source_exactly_when_it_is_judged() {
             ),
             _ => assert!(
                 !entry.probe.source.is_empty(),
-                "{} has a pinned probe without a source",
+                "{} is judged by a probe without a source",
                 entry.id
             ),
         }
