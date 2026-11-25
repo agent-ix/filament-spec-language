@@ -235,14 +235,20 @@ fn assert_literal_float_type(
     rounding: &str,
 ) {
     let type_id = &literal["semantic_type"];
-    let ty = wire["semantic_graph"]["nodes"]
+    assert_eq!(&literal["body"]["type"], type_id);
+    let nodes = wire["semantic_graph"]["nodes"]
         .as_array()
-        .expect("semantic graph nodes are emitted")
+        .expect("semantic graph nodes are emitted");
+    let ty = nodes
         .iter()
         .find(|node| node["node_id"] == *type_id)
         .expect("literal type node is emitted");
     assert_eq!(ty["semantic_form"], "float_rounding");
-    assert_eq!(ty["semantic_type"]["path"][1], width);
+    let scalar = nodes
+        .iter()
+        .find(|node| node["node_id"] == ty["semantic_type"])
+        .expect("float rounding domain names an emitted scalar type");
+    assert_eq!(scalar["semantic_form"], width);
     assert_eq!(ty["body"]["members"].as_array().unwrap().len(), 1);
     assert_eq!(ty["body"]["members"][0]["name"], "rounding");
     assert_eq!(ty["body"]["members"][0]["value"]["value"], rounding);
@@ -324,17 +330,7 @@ fn bit_constructors_keep_expected_types_and_exact_payloads() {
     assert_eq!(literals.len(), 2);
     let wire = emitted_wire(&uncontextualized);
     for literal in &literals {
-        let type_id = &literal["semantic_type"];
-        let ty = wire["semantic_graph"]["nodes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|node| node["node_id"] == *type_id)
-            .expect("the constructor's type is emitted");
-        assert_eq!(ty["semantic_form"], "float_rounding");
-        assert_eq!(ty["semantic_type"]["path"][1], "float64");
-        assert_eq!(ty["body"]["members"][0]["name"], "rounding");
-        assert_eq!(ty["body"]["members"][0]["value"]["value"], "exact");
+        assert_literal_float_type(&wire, literal, "float64", "exact");
     }
 
     for (bits, text) in [
