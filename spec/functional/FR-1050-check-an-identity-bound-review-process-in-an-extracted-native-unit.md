@@ -19,10 +19,15 @@ relationships:
 FSL SHALL run a selected temporal clause from an `ix:native` fence embedded in
 a Markdown process document and retain the original document identity, the
 extracted body identity, the authored clause binding, and the temporal result
-in the command result (FR-031, FR-662, FR-267). The temporal clause is a
-synthetic example of a review process. Its event records carry explicit
-process, repository, case, source-revision, attempt, author, reviewer and
-assignment identities. These values are example data; the example defines no
+in the command result (FR-031, FR-662, FR-267). The selected Quire clause SHALL
+bind the embedded body containing both the checked FSL protocol `Review` and
+the temporal clause `ReviewAccepted`; the extraction body identity therefore
+names the same unit that declares both. The temporal clause is a synthetic
+example of a review process. Its event records carry explicit process,
+repository, case, source authority, active and reviewed source-revision,
+attempt, event, author, reviewer, assignment and provider-event identities.
+Provider-event identity fields are synthetic labels for GitHub, Linear, relay
+and gate facts. These values are example data; the example defines no
 production review policy or identity namespace.
 
 For this example, receipt and acknowledgement are separate event facts. A
@@ -75,11 +80,12 @@ required only when `reassigned` is true.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1050-AC-1 | A complete closed trace has one qualifying acknowledgement at tick 3. The command exits 0 with category `success` and a completed true temporal item. Its extraction record names the specified original identity, body identity and clause binding; the item retains the synthetic process, repository, case, source-revision, attempt and assignment values. Repeating the identical request produces an equal result document. | Test |
+| FR-1050-AC-1 | A complete closed trace has one qualifying acknowledgement at tick 3. The command evaluates `ReviewAccepted`; it exits 0 with category `success` and a true temporal result. The checked `Review` protocol is then analyzed from the extracted body bytes under that same body identity and model binding; its protocol result is reproduced. The extraction record names the specified original identity, body identity and clause binding; the verified body bytes retain the protocol declaration and the process, repository, case, source authority, active/reviewed source-revision, attempt, event, assignment and provider-event identity fields. Repeating the identical request produces an equal temporal result document. | Test |
 | FR-1050-AC-2 | The complete closed trace contains a receipt event at tick 2 with `acknowledged` false and no qualifying acknowledgement by tick 5. The temporal item is a violation; receipt does not satisfy the acknowledgement predicate. | Test |
 | FR-1050-AC-3 | The complete closed trace contains a qualifying acknowledgement only at tick 6. The temporal item is a violation for the 0-through-5 window. | Test |
-| FR-1050-AC-4 | The trace contains no qualifying acknowledgement and declares the relevant window incomplete or still open. The item is pending or indeterminate as specified by FR-501's progress, closure and completeness rules; it has no completed truth. | Test |
-| FR-1050-AC-5 | Each complete closed trace below has no qualifying acknowledgement by tick 5 and settles violation: (a) the reviewer equals the author; (b) the reviewed source revision differs from the active source revision; or (c) the event is reassigned but its assignment is not accepted. Changing only the failing condition to valid makes the event qualifying and the item succeeds. | Test |
+| FR-1050-AC-4 | With a receipt at tick 3, no qualifying acknowledgement, an open scope, watermark 3 and completeness through 3, the temporal result is `Pending` with deadline 5. With a receipt at tick 3, no qualifying acknowledgement, a closed scope, watermark 5 and `Incomplete` completeness, the temporal result is `Indeterminate` with reason `IncompleteInput`. Neither result has a completed truth. | Test |
+| FR-1050-AC-5 | Each complete closed trace below has no qualifying acknowledgement by tick 5 and settles violation: (a) the reviewer equals the author; (b) the reviewed source-revision identity differs from the active source-revision identity; or (c) the event is reassigned but its assignment is not accepted. Changing only the failing condition to valid makes the event qualifying and the temporal result succeeds. | Test |
+| FR-1050-AC-6 | Each identity-bearing field used by `ReviewAccepted` is evaluated, not merely copied: changing one provider-event identity from its bound synthetic value while leaving the other event data unchanged makes the complete closed temporal result a violation. | Test |
 
 ## Dependencies
 
