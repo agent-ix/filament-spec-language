@@ -47,3 +47,34 @@ Ticket QSL-3222, PR #3890 at head `17865da498b637679928ee0a9ddd4fe434651302`. Th
 - Terra `cargo check --locked -p fsl-analyze --all-targets` — passed per coder report.
 - Terra exact filtered integration test — still running at review time; not run by reviewer.
 - Strict Clippy on the full dependency graph reports two pre-existing `fsl-package` warnings outside this diff; a local no-deps Clippy attempt also surfaced existing workspace warnings. No changes requested for these per arch instruction.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test now asserts each request index and claim name, and traces FR-621-AC-19 through AC-22. |
+| FND-002 | fixed | The one-state case now asserts the exact cause kind, limit, value and setting. |
+
+After excerpt (FND-001):
+
+```rust
+for (index, (claim_name, result)) in [
+    ("ServedWithoutFairness", "refuted"),
+    ("ServedIfAcquireIsStronglyFair", "refuted"),
+    ("ServedIfEachAcquireIsStronglyFair", "proved"),
+]
+.into_iter()
+.enumerate()
+{
+    assert_eq!(items[index]["request_index"], index, "{}", items[index]);
+    assert_eq!(items[index]["claim_name"], claim_name, "{}", items[index]);
+```
+
+After excerpt (FND-002):
+
+```rust
+assert_eq!(item["record"]["cause"]["kind"], "limit-reached", "{item}");
+assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
+assert_eq!(item["record"]["cause"]["value"], 1, "{item}");
+assert_eq!(item["record"]["cause"]["setting"], "model_check.max_states", "{item}");
+```

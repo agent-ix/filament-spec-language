@@ -43,3 +43,33 @@ Planless, repository-driven gap analysis for QSL-3222 PR #3890 at head `17865da4
 | --- | --- | --- | --- |
 | FND-001 | medium | The touched public analyze test has no FR-621-AC-19..22 trace tags and does not assert each `request_index` and `claim_name`; the matrix reports all four criteria untagged, and a swap of the two refuted items passes. | tests/it/temporal_package_route/remaining_routes.rs:368-406; FR-621-AC-19..22 |
 | FND-002 | medium | The new test tagged FR-126-AC-26 checks incomplete status and state count but not `record.cause.limit == max_states` or its value, so the exact state-limit behavior can regress without this test failing. | tests/it/temporal_package_route/remaining_routes.rs:439-443; FR-126-AC-26 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test now asserts each request index and claim name, and traces FR-621-AC-19 through AC-22. |
+| FND-002 | fixed | The one-state case now asserts the exact cause kind, limit, value and setting. |
+
+After excerpt (FND-001):
+
+```rust
+#[trace(
+    "TC-1581",
+    "FR-621-AC-19",
+    "FR-621-AC-20",
+    "FR-621-AC-21",
+    "FR-621-AC-22",
+    "FR-126-AC-26",
+    "FR-330"
+)]
+```
+
+After excerpt (FND-002):
+
+```rust
+assert_eq!(item["record"]["cause"]["kind"], "limit-reached", "{item}");
+assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
+assert_eq!(item["record"]["cause"]["value"], 1, "{item}");
+assert_eq!(item["record"]["cause"]["setting"], "model_check.max_states", "{item}");
+```

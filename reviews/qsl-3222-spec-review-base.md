@@ -38,3 +38,23 @@ The TC-1581 change adds a one-state bounded fairness case and identifies FR-126-
 | --- | --- | --- | --- |
 | FND-001 | medium | Step 9 does not state that the incomplete result's cause is `LimitReached{max_states}` with value 1, as FR-126-AC-26 requires. | TC-1581 step 9; FR-126-AC-26 |
 | FND-002 | medium | Step 8 requires exact request-index and claim-name ordering, but the test bound to this TC only checks result kinds and counterexample/certificate presence. | TC-1581 step 8; FR-621-AC-19..22 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Step 9 now requires the MaxStates cause, setting and value 1. |
+| FND-002 | fixed | The source test now checks request_index and claim_name for every fairness item. |
+
+After excerpt (FND-001):
+
+```markdown
+- Step 9 (FR-126-AC-26): the limited item is `incomplete`, reports `exploration.states` `1`, has `record.cause.kind` `limit-reached`, `record.cause.limit` `max_states`, `record.cause.setting` `model_check.max_states` and `record.cause.value` `1`, has no `counterexample`, and the document exits 22.
+```
+
+After excerpt (FND-002):
+
+```rust
+assert_eq!(items[index]["request_index"], index, "{}", items[index]);
+assert_eq!(items[index]["claim_name"], claim_name, "{}", items[index]);
+```
