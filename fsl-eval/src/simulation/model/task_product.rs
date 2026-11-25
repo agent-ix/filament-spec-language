@@ -638,7 +638,10 @@ impl<'s, 'a> TaskProductSystem<'s, 'a> {
         &self,
         state: &TaskProductState,
     ) -> Result<Vec<u8>, TaskProductStateKeyRefusal> {
-        let (_, source_key) = self.source.system().state_key(state.source.discrete())?;
+        let (_, source_key) = self.source.system().state_key(
+            state.source.discrete(),
+            fsl_foundation::IdentityLimits::default(),
+        )?;
         let mut key = source_key.hex();
         for (place, value) in self
             .source
@@ -731,7 +734,10 @@ impl<'s, 'a> TaskProductSystem<'s, 'a> {
         &self,
         state: &TaskProductState,
     ) -> Result<Vec<u8>, TaskProductStateKeyRefusal> {
-        let (_, source_key) = self.source.system().state_key(state.source.discrete())?;
+        let (_, source_key) = self.source.system().state_key(
+            state.source.discrete(),
+            fsl_foundation::IdentityLimits::default(),
+        )?;
         let mut key = source_key.hex();
         for (place, value) in self
             .source

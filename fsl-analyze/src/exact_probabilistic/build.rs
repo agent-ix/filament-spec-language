@@ -805,7 +805,7 @@ impl Builder<'_, '_, '_, '_> {
                 .map_err(Halt::Key),
             None => self
                 .system
-                .state_key(state)
+                .state_key(state, fsl_foundation::IdentityLimits::default())
                 .map(|(bytes, _)| bytes)
                 .map_err(|_| fault("state-key-encodes").into()),
         }
@@ -837,7 +837,7 @@ impl Builder<'_, '_, '_, '_> {
         } else {
             let (model, key) = self
                 .system
-                .state_key(state)
+                .state_key(state, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("state-key-encodes"))?;
             (model, Some(key))
         };
