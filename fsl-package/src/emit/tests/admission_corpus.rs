@@ -1529,8 +1529,8 @@ fn refinement_node(emission: &Emission) -> Value {
 }
 
 /// FSpec FR-375: a protocol clause over the concrete model gives a
-/// row-empty model refinement its `class_catalog`, in the closed body and
-/// so in the node identity. The concrete side lists the concrete model's
+/// row-empty model refinement its `class_catalog`, in the closed body, which
+/// is not part of the node key. The concrete side lists the concrete model's
 /// operation classes and the clause's classes, the abstract side the
 /// abstract model's operation classes, each in UTF-8 byte order; every
 /// class node and binder type is a local node of the package and a
@@ -1847,7 +1847,7 @@ fn counter_model_document(package: &str, operations: &[&str]) -> Vec<u8> {
 /// a protocol subject's internal list: `[{"refinement": "R", "internal":
 /// ["A::Local::Done"]}]` writes `abstract_internal` `["Local::Done"]`; the
 /// value absent, `[]` or naming only another refinement writes no member.
-#[trace("FR-375-AC-12", "FR-147-AC-9", "TC-310", "TC-552")]
+#[trace("FSpec-TC-310", "TC-552")]
 #[test]
 fn the_internal_list_value_hosts_abstract_internal() {
     let (unit, documents) = protocol_subject();
@@ -1924,10 +1924,13 @@ fn a_protocol_refinement_writes_its_own_requirement_record() {
     assert!(graph.temporal_clauses().is_empty());
 }
 
-/// FR-147-AC-15 (TC-552): a protocol declared in an admitted dependency is
-/// selected by its structural identity, while the alias-free internal list
-/// and emitted refinement remain owned by the importing package.
-#[trace("TC-552", "FR-147-AC-15", "FR-147-AC-16")]
+/// FR-147-AC-15 (TC-552 step 15): a protocol declared in an admitted
+/// dependency is selected by its structural identity, while the alias-free
+/// internal list and emitted refinement remain owned by the importing
+/// package. In a package of the same identity, the refinement over a local
+/// `Twice` has an equal node key, and differs in its abstract side's
+/// `dependency` and in its node's `protocol` and `dependencies`.
+#[trace("TC-552", "FR-147-AC-15")]
 #[test]
 fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     let (local_unit, documents) = protocol_subject();
@@ -2110,6 +2113,17 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         requirement.requirements().property_form(),
         Some(filament_semantic_value::fairness::PropertyForm::Refinement { liveness: false })
     );
+    assert_eq!(
+        root.graph()
+            .requirements()
+            .values()
+            .filter(|record| {
+                record.requirements().kind()
+                    == fsl_semantics::check::Capability::TemporalSatisfaction
+            })
+            .count(),
+        1
+    );
     let local_unit = local_unit
         .replace(
             "model A = \"example/refinement-abstract\";",
@@ -2118,18 +2132,45 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         .replace("protocol Local", "protocol Twice")
         .replace("A::Widget", "Spec::Widget")
         .replace("abstract A::Local", "abstract Spec::Twice");
-    let local = package_with_internals(
-        &local_unit,
-        &documents,
-        Some(json!([{"refinement":"R","internal":["Spec::Twice::Done"]}])),
+    let local = CheckedPackage::link(
+        assemble_with_models_in(
+            local_unit.as_bytes(),
+            &root_models,
+            "test:local-protocol",
+            "test/root",
+        )
+        .expect("the local unit assembles")
+        .with_refinement_internals(json!([{"refinement":"R","internal":["Spec::Twice::Done"]}]))
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .expect("the local protocol refinement checks"),
     );
-    let local_occurrence = local
+    let local_checked = local
         .graph()
         .refinements()
         .first()
-        .and_then(|refinement| refinement.requirement_occurrence())
+        .expect("local checked refinement");
+    assert_eq!(
+        local_checked.abstract_side(),
+        &fsl_semantics::check::AbstractSide::Protocol {
+            clause: "Twice".to_owned(),
+            dependency: None,
+        }
+    );
+    let local_occurrence = local_checked
+        .requirement_occurrence()
         .expect("local protocol refinement requirement occurrence");
-    assert_ne!(occurrence, local_occurrence);
+    for key in [occurrence.node(), local_occurrence.node()] {
+        assert_eq!(key.package(), "test/root");
+        assert_eq!(
+            key.path(),
+            [filament_exact::PathSegment::Text("R".to_owned())]
+        );
+        assert_eq!(key.ordinal(), 0);
+    }
     let local_emission = emit_checked(&local).expect("local protocol refinement emits");
     let root_emission = emit_checked(&root).expect("root emits");
     let mut dependency_evidence = super::read_evidence(&dependency_emission);
@@ -2162,11 +2203,21 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     )
     .expect("root dependency protocol refinement reads back");
     let node = refinement_node(&root_emission);
-    assert_ne!(
-        node["node_id"],
-        refinement_node(&local_emission)["node_id"],
-        "dependency-owned protocol identity changes the refinement node id"
-    );
+    let local_node = refinement_node(&local_emission);
+    assert_eq!(node["node_id"], local_node["node_id"]);
+    let local_wire = wire(&local_emission);
+    let local_ids = fsl_semantics::check::wire_id::WireGraph::of_package_value(&local_wire)
+        .expect("local structural ids");
+    let local_protocol = local_checked
+        .abstract_protocol()
+        .expect("local protocol key");
+    assert_eq!(local_protocol.package(), "test/root");
+    let local_protocol_id = local_ids.wire_value(local_protocol).unwrap();
+    assert_eq!(local_node["body"]["protocol"], local_protocol_id);
+    assert!(local_node["dependencies"]
+        .as_array()
+        .expect("local dependencies")
+        .contains(&local_protocol_id));
     let root_wire = wire(&root_emission);
     let root_ids = fsl_semantics::check::wire_id::WireGraph::of_package_value(&root_wire)
         .expect("root structural ids");
@@ -2184,6 +2235,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         })
     );
     let protocol_key = checked.abstract_protocol().expect("protocol key");
+    assert_eq!(protocol_key.package(), "test/protocol-dependency");
     assert_eq!(
         node["body"]["protocol"],
         json!({
@@ -2326,22 +2378,36 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
                 &fsl_semantics::check::test_support::ZeroRewardEvaluator,
             )
             .expect_err("an unknown dependency clause or type refuses");
-        assert!(refusals.iter().any(|refusal| matches!(
-            refusal.cause.as_ref(),
-            fsl_semantics::check::CheckCause::Refinement(refinement)
-                if matches!(
-                    &refinement.cause,
-                    fsl_semantics::check::RefinementCause::Unresolved { name, .. } if name == absent
-                )
-        )), "{absent}: {refusals:?}");
+        let (refusal, span) = refusals
+            .iter()
+            .find_map(|refusal| match refusal.cause.as_ref() {
+                fsl_semantics::check::CheckCause::Refinement(refinement)
+                    if matches!(
+                        &refinement.cause,
+                        fsl_semantics::check::RefinementCause::Unresolved { name, .. }
+                            if name == absent
+                    ) =>
+                {
+                    Some((refusal, refinement.span))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{absent}: {refusals:?}"));
+        assert_eq!(
+            refusal.cause.code(),
+            fsl_foundation::Code::MissingDeclaration
+        );
+        assert_eq!(refusal.cause.cause(), Some("missing-name"));
+        assert_eq!(&missing_clause[span.start..span.end], absent);
+        assert!(missing_clause[..span.start].ends_with("Spec::"));
     }
+    assert_dependency_node_rows_check_the_receiver();
 }
 
-/// FR-147-AC-15 (TC-552): a dependency-owned `a1` row is checked against its
-/// admitted receiver binder, and a Boolean cannot substitute for that binder.
-#[trace("TC-552", "FR-147-AC-15", "FR-147-AC-14")]
-#[test]
-fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
+/// FR-147-AC-15's node rows over a dependency `Twice` whose attempt `a1`
+/// applies `inc`: `a1(self)` is checked against the admitted receiver binder,
+/// and a Boolean cannot substitute for that binder.
+fn assert_dependency_node_rows_check_the_receiver() {
     let dependency_model = counter_model_document("example/refinement-abstract", &["inc"]);
     let concrete_model = counter_model_document("example/refinement-concrete", &["commitA"]);
     let library = fsl_semantics::library::LibraryName::new("test/protocol-dependency")
@@ -2499,7 +2565,7 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
 /// FSpec FR-375-AC-13: reordering the value's objects or entries changes
 /// neither the refinement node nor its written internal list, nor does
 /// renaming the abstract alias with the value's spellings renamed to match.
-#[trace("FR-375-AC-13", "FR-147-AC-9", "TC-310", "TC-552")]
+#[trace("FSpec-TC-310", "TC-552")]
 #[test]
 fn the_internal_list_order_does_not_change_the_refinement_node() {
     let (unit, documents) = protocol_subject();
@@ -2534,13 +2600,14 @@ fn the_internal_list_order_does_not_change_the_refinement_node() {
         .replace("A::", "S::");
     let renamed_nodes = emit_with_internals(&renamed, &documents, Some(value("S", entries, false)));
     assert_eq!(renamed_nodes["R"]["node_id"], listed["R"]["node_id"]);
+    assert_eq!(renamed_nodes["R"]["body"], listed["R"]["body"]);
 }
 
 /// FSpec FR-375 (AC-11, AC-25): a row-empty protocol subject keeps the
 /// abstract model's root as `abstract` and names its clause as `protocol`,
 /// a local dependency. Its catalog lists the clause's classes on the
-/// abstract side, and the protocol is part of the node's meaning: the model
-/// subject over the same models is another node.
+/// abstract side. The model subject over the same models writes no
+/// `protocol` member.
 #[trace("FR-375-AC-11", "FR-375-AC-25", "FR-375-AC-23", "TC-310")]
 #[test]
 fn a_row_empty_protocol_subject_names_its_clause() {

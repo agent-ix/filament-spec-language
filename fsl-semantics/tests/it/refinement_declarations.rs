@@ -12,13 +12,15 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::ValueType;
+use filament_checked::node::NodeKind;
+use filament_contract_model::{CheckedTerm, RefinementGranularity};
+use filament_exact::{PathSegment, ValueType};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_foundation::Code;
 use fsl_semantics::check::{
     AssemblyRefusal, CheckCause, CheckRefusal, CheckedGraph, CheckedRefinement,
-    PackageDeclarations, RefinementCause, RowClass, StepClass, StepTarget,
+    PackageDeclarations, RefinementCause, RefinementV2Emission, RowClass, StepClass, StepTarget,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -703,6 +705,26 @@ pub(crate) fn only_refinement(graph: &CheckedGraph) -> &CheckedRefinement {
         panic!("one refinement: {:?}", graph.refinements());
     };
     refinement
+}
+
+/// The V2 node of `refinement`, after asserting its key: the package the unit
+/// is checked under, a path from the authored name and ordinal 0. The
+/// refinement's requirement occurrence names the same key.
+pub(crate) fn keyed_refinement_node(
+    refinement: &CheckedRefinement,
+    name: &str,
+) -> RefinementV2Emission {
+    let node = refinement
+        .v2_emission()
+        .expect("the checked refinement has a V2 node");
+    assert_eq!(node.identity.package(), "fsl-semantics-integration-tests");
+    assert_eq!(node.identity.path(), [PathSegment::Text(name.to_owned())]);
+    assert_eq!(node.identity.ordinal(), 0);
+    let occurrence = refinement
+        .requirement_occurrence()
+        .expect("the checked refinement has a requirement occurrence");
+    assert_eq!(occurrence.node(), &node.identity);
+    node
 }
 
 fn spec_key(node_name: &str) -> DeclarationKey {
@@ -1678,38 +1700,66 @@ fn mismatched_composite_reference_shapes_are_refused() {
     }
 }
 
-/// FR-135-AC-4 (TC-540 step 4): with the `value` row removed, the refinement
-/// records that abstract field as hidden and keeps no visible field rows.
-#[trace("TC-540")]
+/// FR-135-AC-4 (TC-540 step 4): with the `value` row removed the abstract
+/// field is hidden. With the row reading `self.tmpA` in place of `self.value`,
+/// in a package of the same identity, the refinement's node key is equal and
+/// its node body is not.
+#[trace("TC-540", "FR-135-AC-4")]
 #[test]
-fn an_abstract_field_with_no_row_is_hidden() {
+fn a_field_row_changes_the_refinement_node_body_and_not_its_key() {
     let base = cas_refines_counter();
-    let graph = checked_counter(&mutated(&base, "value = self.value;", ""));
+    let row = "value = self.value;";
+    let graph = checked_counter(&mutated(&base, row, ""));
     let [object] = only_refinement(&graph).objects() else {
         panic!("one object row");
     };
     assert!(object.fields.is_empty());
     assert_eq!(object.hidden, [spec_key("Counter/value")]);
-}
 
-/// FR-135-AC-4 (TC-540 step 4): changing the checked field mapping changes
-/// the refinement's V2 node identity, even though its source name is stable.
-/// The package_id half is not observable through the current checked binding.
-#[trace("TC-540")]
-#[test]
-fn changing_a_field_mapping_changes_the_refinement_node_identity() {
-    let base = cas_refines_counter();
-    let direct = checked_counter(&base);
-    let changed = checked_counter(&mutated(&base, "value = self.value;", "value = self.tmpA;"));
-    let direct_node = only_refinement(&direct)
-        .requirement_occurrence()
-        .expect("the checked refinement has a V2 occurrence")
-        .node();
-    let changed_node = only_refinement(&changed)
-        .requirement_occurrence()
-        .expect("the checked refinement has a V2 occurrence")
-        .node();
-    assert_ne!(direct_node, changed_node);
+    let checked_with = |written: &str, read: &str| -> CheckedTerm {
+        let graph = checked_counter(&mutated(&base, row, written));
+        assert_eq!(graph.package_name(), "fsl-semantics-integration-tests");
+        let refinement = only_refinement(&graph);
+        let [object] = refinement.objects() else {
+            panic!("one object row: {:?}", refinement.objects());
+        };
+        assert!(object.hidden.is_empty(), "{:?}", object.hidden);
+        let [field] = &object.fields[..] else {
+            panic!("one field row: {:?}", object.fields);
+        };
+        assert_eq!(field.field, spec_key("Counter/value"));
+        assert_eq!(field.expression.parameters()[0].0, "self");
+        let body = field.expression.body();
+        let NodeKind::Attribute {
+            reference,
+            field: attribute,
+            ..
+        } = body.kind()
+        else {
+            panic!("an attribute read: {:?}", body.kind());
+        };
+        assert!(matches!(body.at(*reference).kind(), NodeKind::Local(0)));
+        assert_eq!(attribute.name, read);
+        keyed_refinement_node(refinement, "CasRefinesCounter").body
+    };
+    let first = checked_with("value = self.value;", "value");
+    let second = checked_with("value = self.tmpA;", "tmpA");
+    assert_ne!(first, second);
+
+    let value_row = |body: &CheckedTerm| {
+        let CheckedTerm::Refinement { objects, .. } = body else {
+            panic!("a refinement body: {body:?}");
+        };
+        let [object] = &objects[..] else {
+            panic!("one object entry: {objects:?}");
+        };
+        let [field] = &object.fields[..] else {
+            panic!("one field entry: {:?}", object.fields);
+        };
+        assert_eq!(&*field.name, "value");
+        field.expression.clone()
+    };
+    assert_ne!(value_row(&first), value_row(&second));
 }
 
 /// FR-136-AC-1 (TC-541 step 1): `CasRefinesCounter` checks seven step rows,
@@ -1995,10 +2045,11 @@ fn constraints(refinement: &CheckedRefinement, concrete: bool) -> Vec<String> {
 }
 
 /// FR-137-AC-1 (TC-542 step 1): `F_C` is the six `Weak` `Each` constraints in
-/// source order and `F_A` is `[Weak Each inc]`; an `ensure` row with no
-/// granularity reads `Whole`, and with no `ensure` row `F_A` is empty. The
-/// node-identity half needs S4 emission and is not tested.
-#[trace("TC-542")]
+/// source order and `F_A` is `[Weak Each Spec::Counter::inc]`. An `ensure`
+/// row with no granularity reads `Whole`, and the refinement then has an equal
+/// node key and a node body whose `ensure` entry differs. With no `ensure` row
+/// `F_A` is empty.
+#[trace("TC-542", "FR-137-AC-1")]
 #[test]
 fn the_fairness_rows_form_the_two_sets_in_source_order() {
     let base = cas_refines_counter();
@@ -2016,6 +2067,28 @@ fn the_fairness_rows_form_the_two_sets_in_source_order() {
         ]
     );
     assert_eq!(constraints(refinement, false), ["Weak Each inc"]);
+    // Each model declares one object type, so a constraint outside the
+    // concrete one's is on `Spec::Counter`.
+    let concrete_types = refinement.concrete_object_types();
+    assert_eq!(concrete_types.len(), 1);
+    assert!(refinement
+        .concrete_operation_fairness()
+        .all(|row| concrete_types.contains(&row.operation().declaring_type())));
+    assert!(refinement
+        .abstract_operation_fairness()
+        .all(|row| !concrete_types.contains(&row.operation().declaring_type())));
+    let ensured = |refinement: &CheckedRefinement| {
+        let body = keyed_refinement_node(refinement, "CasRefinesCounter").body;
+        let CheckedTerm::Refinement { ensure, .. } = &body else {
+            panic!("a refinement body: {body:?}");
+        };
+        let [entry] = &ensure[..] else {
+            panic!("one ensure entry: {ensure:?}");
+        };
+        (entry.granularity, body.clone())
+    };
+    let (granularity, each_body) = ensured(refinement);
+    assert_eq!(granularity, RefinementGranularity::Each);
 
     let ensure = "ensure fair weak each Spec::Counter::inc;";
     let graph = checked_counter(&mutated(
@@ -2027,6 +2100,9 @@ fn the_fairness_rows_form_the_two_sets_in_source_order() {
         constraints(only_refinement(&graph), false),
         ["Weak Whole inc"]
     );
+    let (granularity, whole_body) = ensured(only_refinement(&graph));
+    assert_eq!(granularity, RefinementGranularity::Whole);
+    assert_ne!(each_body, whole_body);
     let graph = checked_counter(&mutated(&base, ensure, ""));
     assert!(only_refinement(&graph).abstract_fairness().is_empty());
 }

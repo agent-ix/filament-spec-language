@@ -7,9 +7,10 @@
 //!
 //! Not covered here, for want of the checker they need: the engine's
 //! decision of the steps and the liveness settlement (FR-148, FR-147-AC-3),
-//! the requirement record and the node identity (S4, FR-147-AC-1 and AC-9),
+//! the requirement record (S4, FR-147-AC-1)
 //! and the supplied-library value (FR-147-AC-10).
 
+use filament_contract_model::CheckedTerm;
 use filament_exact::ValueType;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
@@ -21,7 +22,9 @@ use fsl_semantics::check::{
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use super::refinement_declarations::{assemble, counters, mutated, CAS, SPEC};
+use super::refinement_declarations::{
+    assemble, counters, keyed_refinement_node, mutated, CAS, SPEC,
+};
 
 /// The protocol `Twice` over the abstract counter model `alias`: attempts
 /// `a1` and `a2` of `inc`, a `parallel` `par` of two empty branches, a
@@ -766,6 +769,53 @@ fn a_build_without_the_protocol_side_refuses_it_at_the_protocol_name() {
 
     let unit = format!("{}{}", twice("Spec"), cas_refines_counter());
     check(&unit, None, UNBUILT).unwrap_or_else(|_| panic!("a model subject checks"));
+}
+
+/// FR-147-AC-9 (TC-552 step 9): `abstract_internal` is alias-free, and
+/// renaming the abstract alias with the value's spellings to match changes
+/// neither the node key nor the node body. The empty list keeps the key and
+/// writes no `abstract_internal` member.
+#[trace("TC-552", "FR-147-AC-9")]
+#[test]
+fn the_internal_list_changes_the_node_body_and_not_its_key() {
+    let node_of = |graph: &CheckedGraph| {
+        let refinement = the_refinement(graph);
+        let node = keyed_refinement_node(refinement, "CasTwice");
+        let CheckedTerm::Refinement {
+            abstract_internal, ..
+        } = &node.body
+        else {
+            panic!("a refinement body: {:?}", node.body);
+        };
+        let written: Option<Vec<String>> = abstract_internal
+            .as_ref()
+            .map(|entries| entries.iter().map(|entry| entry.to_string()).collect());
+        (written, node.identity.clone(), node.body.clone())
+    };
+
+    let listed = checked(&cas_twice(), internal(&["Spec::Twice::Done"]));
+    assert_eq!(spellings(the_refinement(&listed)), ["Twice::Done"]);
+    let renamed = check_over(
+        "S",
+        &format!("{}{}", twice("S"), refinement("S", "Twice")),
+        internal(&["S::Twice::Done"]),
+        RefinementSupport::BUILD,
+    )
+    .unwrap_or_else(|found| panic!("the renamed alias checks: {found:?}"));
+    assert_eq!(spellings(the_refinement(&renamed)), ["Twice::Done"]);
+    let empty = checked(&cas_twice(), internal(&[]));
+    assert!(the_refinement(&empty).abstract_internal().is_empty());
+
+    let (listed_written, listed_key, listed_body) = node_of(&listed);
+    let (renamed_written, renamed_key, renamed_body) = node_of(&renamed);
+    let (empty_written, empty_key, empty_body) = node_of(&empty);
+    assert_eq!(listed_written, Some(vec!["Twice::Done".to_owned()]));
+    assert_eq!(renamed_written, listed_written);
+    assert_eq!(renamed_key, listed_key);
+    assert_eq!(renamed_body, listed_body);
+    assert_eq!(empty_written, None);
+    assert_eq!(empty_key, listed_key);
+    assert_ne!(empty_body, listed_body);
 }
 
 /// FR-147-AC-11 (TC-552 step 11): in a build omitting both features the

@@ -1199,9 +1199,10 @@ struct Support {
 
 impl CheckedGraph {
     /// FSpec FR-451, FR-306: the nodes the emitter writes for `relation`. The
-    /// relation node's key is the digest of its body, so every binding is
-    /// part of it, and its `dependencies` are the unique digest-ascending set
-    /// of every target.
+    /// relation node's key is derived from the package and the nodes its
+    /// bindings target, so a change of a bound Rust spelling changes the
+    /// node's body and not its key. Its `dependencies` are the unique set of
+    /// every target in ascending structural id order.
     ///
     /// # Errors
     ///
