@@ -1050,6 +1050,12 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             &format!("{} * {}", constant(operands[0]), constant(operands[1])),
             float_expected(vector.expected),
         )],
+        "F32" => vec![float_function(
+            32,
+            "nearest-even",
+            &format!("-{}", constant(operands[0])),
+            float_expected(vector.expected),
+        )],
         "F23" => {
             let rows: Vec<&str> = vector.expected.split(';').collect();
             vec![
