@@ -4123,6 +4123,7 @@ fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
 /// list, then the start byte of the declaration span), then each task-set
 /// schedulability claim, then the derived deadlock-freedom item of each model
 /// selection. Each item carries the published default of every setting.
+#[implements("FR-620-AC-5", "FR-620-AC-10", "FR-1044-AC-10")]
 fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     use filament_contract_model::CheckedSourceRegion;
 
