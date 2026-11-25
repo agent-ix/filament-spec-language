@@ -3200,11 +3200,19 @@ mod partial_lower_tests {
                 0,
             ),
             payoff: MeasurePayoffKind::Shifted,
-            values: vec![ExactProbabilityValue {
-                state: root.clone(),
-                value: Rational::new(Integer::from(-1_i64), Integer::from(5_i64)).unwrap(),
-            }],
-            ranking: vec![(root.clone(), 1)],
+            // `retained` is named at its decided value 0; `omitted` is not
+            // named, so it counts as `-level` (FR-1042 "Document").
+            values: vec![
+                ExactProbabilityValue {
+                    state: root.clone(),
+                    value: Rational::new(Integer::from(-1_i64), Integer::from(5_i64)).unwrap(),
+                },
+                ExactProbabilityValue {
+                    state: retained.clone(),
+                    value: Rational::from_integer(Integer::zero()),
+                },
+            ],
+            ranking: vec![(root.clone(), 1), (retained.clone(), 0)],
             objective: Objective {
                 kind: "steps",
                 window: 1,
@@ -3245,6 +3253,31 @@ mod partial_lower_tests {
         assert!(matches!(
             result,
             Err(ExactProbabilityCertificateCheck::Rejected(_))
+        ));
+        // With `retained` unnamed too, both successors count as `-level`, so
+        // `-1/5` is no longer below the sum.
+        document.values.truncate(1);
+        document.ranking.truncate(1);
+        document.values[0].value =
+            Rational::new(Integer::from(-1_i64), Integer::from(5_i64)).unwrap();
+        let mut meter = filament_exact::Meter::new(limits().accounting);
+        let result = checked_values(
+            &document,
+            &graph,
+            limits(),
+            &Cancel::new(),
+            &mut meter,
+            Some(&floor),
+        )
+        .unwrap();
+        assert!(matches!(
+            result,
+            Err(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    ..
+                }
+            ))
         ));
     }
 }
