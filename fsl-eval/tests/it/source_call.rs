@@ -210,70 +210,8 @@ fn fr403_value_call_vectors_never_return_unsupported() {
         "lookup with absent key and absent undefined",
     );
     assert_no_unsupported(
-        Ok(
-            super::reference_adapter::registration_is_decided_from_the_packages_admitted_signature(
-            ),
-        ),
-        "five no_std registry registration results",
-    );
-    assert_no_unsupported(
-        Ok(super::reference_adapter::invalid_child_requests_fault_and_a_valid_one_is_applied()),
-        "FR-262 child request admission paths",
-    );
-    assert_no_unsupported(
-        Ok(super::model_reference_queries::the_adapter_validates_a_population_request_by_its_declared_maximum()),
-        "FR-262 population child request maximum paths",
-    );
-    assert_no_unsupported(
-        Ok(super::reference_adapter::a_mixed_chain_steps_to_the_synchronous_result_and_stops_at_its_fuel()),
-        "FR-262 mixed generated/interpreted child chain",
-    );
-    assert_no_unsupported(
-        Ok(super::reference_adapter::cancelling_after_a_request_is_saved_ends_at_the_childs_call_charge()),
-        "FR-262 cancellation after saved child request",
-    );
-    assert_no_unsupported(
-        Ok(super::reference_adapter::lifecycle::registration_is_first_wins_and_a_successful_begin_seals_it()),
-        "FR-262 registry sealing behavior",
-    );
-    assert_no_unsupported(
-        Ok(super::reference_adapter::lifecycle::argument_applications_charge_left_to_right_before_the_call_and_its_body()),
-        "FR-262 argument application charge order",
-    );
-    assert_no_unsupported(
-        Ok(super::reference_adapter::lifecycle::a_charging_body_runs_each_transition_once_and_keeps_the_childs_losses()),
-        "FR-262 body transition and child loss sequence",
-    );
-    assert_no_unsupported(
-        Ok(super::reference_adapter::lifecycle::a_handle_cancelled_at_a_kernel_or_call_charge_is_a_located_incomplete_result()),
-        "FR-262 cancelled kernel/call charges",
-    );
-    assert_no_unsupported(
-        Ok(super::reference_adapter::lifecycle::a_chargeless_transition_runs_after_a_cancellation_and_the_next_charge_ends_the_session()),
-        "FR-262 chargeless transition after cancellation",
-    );
-    assert_no_unsupported(
         super::deep_values::no_std_recursive_count_on_small_stack(),
         "100000-deep recursive count on a 512 KiB stack",
-    );
-    assert_no_unsupported(
-        Ok(super::deep_values::a_100_000_deep_recursive_call_completes_and_fuel_is_exact_at_the_last_charge()),
-        "FR-262 recursive call exact-fuel vectors",
-    );
-    assert_no_unsupported(
-        Ok(super::deep_values::a_call_that_exceeds_fuel_returns_the_typed_refusal_not_a_crash()),
-        "FR-262 recursive call bounded-fuel vector",
-    );
-    assert_no_unsupported(
-        Ok(super::deep_values::a_100_000_long_list_evaluates_compares_clones_and_drops()),
-        "FR-262 deep list evaluation and state-key vector",
-    );
-    assert_no_unsupported(
-        Ok(
-            super::deep_values::a_100_000_deep_value_type_clones_compares_hashes_formats_and_drops(
-            ),
-        ),
-        "FR-262 deep ValueType vector",
     );
     for run in 0..10 {
         let evaluation = assert_no_unsupported(
@@ -966,12 +904,11 @@ fn a_source_predicate_is_called_through_the_checked_package() {
     assert!(completes_true(&package, "three"));
 }
 
-/// FR-403-AC-2 (TC-1121), the `mod` half: `-7 mod 2` through the reference
+/// The `mod` half: `-7 mod 2` through the reference
 /// evaluator returns the value, and ends with the admitted charges, that
 /// `filament_eval::modulo` returns when called directly on a fresh meter. The
 /// operation is defined once, in `filament-eval`, and `fsl_semantics::value`
 /// no longer holds it.
-#[trace("TC-1121")]
 #[test]
 fn modulo_through_the_evaluator_matches_the_filament_eval_operation() {
     let package = integer_operator("mod", None);
