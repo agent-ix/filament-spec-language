@@ -2204,7 +2204,17 @@ fn check_document_bytes(
     match dispatch {
         ProfileDispatch::Measure => {
             return measure::check(
-                system, claims, item, bytes, false, bound_side, offer.role, limits, cancel,
+                system,
+                claims,
+                item,
+                bytes,
+                measure::CheckOptions {
+                    partial_lower: false,
+                    bound_side,
+                    role: offer.role,
+                    limits,
+                    cancel,
+                },
             );
         }
         ProfileDispatch::Timed => {
@@ -2231,9 +2241,18 @@ fn check_document_bytes(
             );
         }
         ProfileDispatch::FairMdp => {
-            if let Some(side) = bound_side {
+            if bound_side.is_some() {
                 return mdp::check_with_value_bound_control(
-                    system, claims, item, bytes, offer, side, limits, cancel, control,
+                    system,
+                    claims,
+                    item,
+                    bytes,
+                    offer,
+                    mdp::ValueBoundControl {
+                        limits,
+                        cancel,
+                        reward: control,
+                    },
                 );
             }
             return mdp::check_with_reward_control(

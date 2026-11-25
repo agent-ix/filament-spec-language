@@ -358,12 +358,11 @@ fn export_shape(selection: ExportSelection) -> &'static [Entry] {
 /// The run reading of a request: a member selecting another reading of
 /// `native-run/1` than a call lacks no `call` / `clause` / `items` group.
 fn run_shape(request: &BTreeMap<String, &RawValue>) -> &'static [Entry] {
-    if SELECTORS.iter().any(|name| request.contains_key(*name)) {
-        RUN_SELECTED
-    } else if request.contains_key("program") != request.contains_key("package")
-        && !["call", "clause", "items"]
-            .iter()
-            .any(|name| request.contains_key(*name))
+    if SELECTORS.iter().any(|name| request.contains_key(*name))
+        || (request.contains_key("program") != request.contains_key("package")
+            && !["call", "clause", "items"]
+                .iter()
+                .any(|name| request.contains_key(*name)))
     {
         RUN_SELECTED
     } else {

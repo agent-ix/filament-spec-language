@@ -1,0 +1,7 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Config = "example/config-version";
+possible ReachesTwo using v over (c: Config::ConfigVersion) { c.versionNumber = 2 }
+always possible CanStillWin using v over (c: Config::ConfigVersion) from (c.versionNumber != 0) { c.versionNumber = 2 }
+unique path InOneWay using v over (c: Config::ConfigVersion) from (c.versionNumber = 0) to (c.versionNumber = 2);
+possible Anything using v { true }

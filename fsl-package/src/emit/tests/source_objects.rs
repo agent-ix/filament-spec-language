@@ -80,9 +80,7 @@ mod orders_model {
     include!("../../../../fsl-semantics/tests/fixtures/orders_model.rs");
 }
 
-#[path = "../../../../fsl-semantics/tests/support/tc235_k2.rs"]
-#[allow(dead_code, reason = "the correspondence fixture uses a small subset")]
-mod correspondence_fixture;
+use super::tc235_k2 as correspondence_fixture;
 
 /// TC-1408 variant S-M: S with `model M = "test/orders";` selecting fixture
 /// D's package and the protocol `Sell`, whose roles and `over` name the model
