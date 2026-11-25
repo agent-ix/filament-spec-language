@@ -2,7 +2,8 @@
 //! Named-reward documents are recomputed by a fresh qualified-core process.
 
 use super::bounded::{
-    alter_keys, document, key, mutate, request_with, requests_with_mode, run, run_with,
+    alter_keys, document, document_limits, key, mutate, request_with, requests_with_mode, run,
+    run_with,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
@@ -104,7 +105,7 @@ fn accepted(request: &Value, n: &str, d: &str) {
     assert_eq!(output["value"], json!({"numerator": n, "denominator": d}));
 }
 
-#[trace("FSpec-FR-1042-AC-11")]
+#[trace("TC-3151")]
 #[test]
 fn partial_reward_lower_certificate_uses_infinite_upper_bound() {
     let mut limits = ExactProbLimits::default();
@@ -176,6 +177,74 @@ fn a_partial_reward_lower_checked_either_way_refuses_a_false_document() {
             "{output}"
         );
     }
+}
+
+/// The acyclic expected-reward `upper` keeps its properness ranking through
+/// the value-bounds wrapping (FR-1042 "Conditions"): the checker accepts it,
+/// and refuses it with a changed rank, no ranking or a lowered value.
+#[trace("TC-3151")]
+#[test]
+fn an_acyclic_reward_upper_keeps_its_ranking_and_refuses_a_changed_one() {
+    let source = claim(&two_step(), "Even", "<=", "rational(4,1)", "m.delivered");
+    let exact = proof(&source);
+    let limits = document_limits(&exact);
+    let cancel = filament_exact::Cancel::new();
+    let read = fsl_replay::read_probability_proof_document(
+        exact["certificate"].as_str().unwrap().as_bytes(),
+        limits,
+        &cancel,
+    )
+    .unwrap();
+    let bytes = fsl_replay::write_value_bounds_proof_document(
+        &read,
+        fsl_replay::SubsystemBoundKind::Upper,
+        limits,
+        &cancel,
+    )
+    .unwrap();
+    let mut upper = exact.clone();
+    upper["certificate"] = json!(String::from_utf8(bytes).unwrap());
+    let emitted = document(&upper);
+    assert_eq!(emitted["kind"], "upper");
+    assert_eq!(emitted["ranking"], document(&exact)["ranking"]);
+    // `1/2 (1 + 2) + 1/2 * 4`.
+    accepted(&upper, "7", "2");
+
+    let value = json!({"numerator": "7", "denominator": "2"});
+    let initial = emitted["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["value"] == value)
+        .expect("the initial row")["state"]
+        .clone();
+    let at_initial = json!({"product_key": initial});
+    let row = |doc: &Value, list: &str| {
+        doc[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|row| row["state"] == initial)
+            .expect("the initial row")
+    };
+    let refused = |request: &Value, rule: &str, at: &Value| {
+        let (code, output) = run(request);
+        assert_eq!(code, 1, "{output}");
+        assert_eq!(output["rule"], rule, "{output}");
+        assert_eq!(output["at"], *at, "{output}");
+    };
+    let reranked = mutate(&upper, |doc| {
+        let at = row(doc, "ranking");
+        doc["ranking"][at]["rank"] = json!(0);
+    });
+    refused(&reranked, "rank-broken", &at_initial);
+    let unranked = mutate(&upper, |doc| doc["ranking"] = json!([]));
+    refused(&unranked, "malformed", &json!({"member": "ranking"}));
+    let lowered = mutate(&upper, |doc| {
+        let at = row(doc, "values");
+        doc["values"][at]["value"] = json!({"numerator": "3", "denominator": "1"});
+    });
+    refused(&lowered, "inequality-fails", &at_initial);
 }
 
 /// FR-1042-AC-20: the geometric retry reward is two; both interval bounds are

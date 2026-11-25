@@ -31,6 +31,15 @@ fn is_wrappable_base(profile: &str) -> bool {
     )
 }
 
+/// An expected-reward base, whose `upper` carries its properness ranking
+/// (FR-1042 "Conditions").
+fn is_reward_base(profile: &str) -> bool {
+    matches!(
+        profile,
+        REWARD_PROFILE | CYCLIC_REWARD_PROFILE | CYCLIC_MDP_REWARD_PROFILE
+    )
+}
+
 /// One unchecked `policy` row of a bound document: a complete product key and
 /// the FR-181 transition identity hinted there, as offered.
 #[derive(Clone, Debug)]
@@ -169,14 +178,10 @@ pub(super) fn unwrap(
         .pointer("/objective/profile")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let cyclic_mdp_reward = document
+    let reward = document
         .pointer("/objective/base/profile")
         .and_then(Value::as_str)
-        == Some(CYCLIC_MDP_REWARD_PROFILE);
-    let cyclic_reward = document
-        .pointer("/objective/base/profile")
-        .and_then(Value::as_str)
-        == Some(CYCLIC_REWARD_PROFILE);
+        .is_some_and(is_reward_base);
     let root = document
         .as_object_mut()
         .ok_or(ProbabilityDocumentError::Malformed)?;
@@ -222,16 +227,13 @@ pub(super) fn unwrap(
                         // The fair-MDP checker validates the rank against its
                         // independently reconstructed zero component for
                         // either interval endpoint.
-                    } else if root.contains_key("ranking")
-                        && !cyclic_mdp_reward
-                        && !cyclic_reward
-                    {
+                    } else if root.contains_key("ranking") && !reward {
                         return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                     } else if !root.contains_key("ranking") {
                         root.insert("ranking".into(), json!([]));
                     }
                 }
-                SubsystemBoundKind::Lower if cyclic_mdp_reward || cyclic_reward => {
+                SubsystemBoundKind::Lower if reward => {
                     root.entry("ranking").or_insert_with(|| json!([]));
                 }
                 SubsystemBoundKind::Lower => {}
@@ -281,16 +283,11 @@ pub(super) fn wrap(
         .and_then(|objective| objective.get("profile"))
         .and_then(Value::as_str)
         == Some(TIMED_PROFILE);
-    let cyclic_mdp_reward = root
+    let reward = root
         .get("objective")
         .and_then(|objective| objective.get("profile"))
         .and_then(Value::as_str)
-        == Some(CYCLIC_MDP_REWARD_PROFILE);
-    let cyclic_reward = root
-        .get("objective")
-        .and_then(|objective| objective.get("profile"))
-        .and_then(Value::as_str)
-        == Some(CYCLIC_REWARD_PROFILE);
+        .is_some_and(is_reward_base);
     if !timed {
         let base = root
             .remove("objective")
@@ -311,10 +308,7 @@ pub(super) fn wrap(
                 root.remove("ranking");
                 root.remove("policy");
             }
-        } else if side == SubsystemBoundKind::Upper
-            && !cyclic_mdp_reward
-            && !cyclic_reward
-        {
+        } else if side == SubsystemBoundKind::Upper && !reward {
             root.remove("ranking");
         }
     }

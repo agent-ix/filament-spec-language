@@ -557,7 +557,7 @@ pub(super) fn kernel_proof(source: &str, snapshot: &[u8]) -> Value {
     request.unwrap_or_else(|| panic!("Kernel fixture carries no proof: {settlement:?}"))
 }
 
-fn document_limits(request: &Value) -> fsl_replay::ProbabilityDocumentLimits {
+pub(super) fn document_limits(request: &Value) -> fsl_replay::ProbabilityDocumentLimits {
     fsl_replay::ProbabilityDocumentLimits {
         bytes: request["limits"]["bytes"].as_u64().unwrap(),
         storage_bytes: request["limits"]["storage_bytes"].as_u64().unwrap(),
