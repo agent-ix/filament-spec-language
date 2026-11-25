@@ -3,7 +3,6 @@
 //! classification of what one parse returned.
 
 use ix_trace_rs::implements;
-
 use fsl_cst::{Limits, ParsedSource, ParserContext};
 use fsl_foundation::SourceIdentity;
 
@@ -46,7 +45,7 @@ impl ParseSession {
         &self.context
     }
 
-    /// Parse  under  using this session’s context.
+    /// Parse `text` under `limits` using this session's context.
     #[implements("NFR-141-AC-10")]
     pub fn parse_with(
         &self,
@@ -204,4 +203,5 @@ mod tests {
             );
         }
     }
+
 }
