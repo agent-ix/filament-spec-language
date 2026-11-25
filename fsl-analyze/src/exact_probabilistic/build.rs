@@ -32,28 +32,22 @@ use super::{
 };
 use super::{FormulaState, MonitorState};
 
-/// Build the product of `request`'s claim over its subject. A product that
-/// `max_states` cut short is a stop, never [`ProbBuild::Partial`]: only
-/// EN-5's settlement reads that explored prefix, as partial evidence (FSpec
-/// FR-411 "Evidence on a partial product").
+/// Build the product of `request`'s claim over its subject. A product whose
+/// successor `max_states` denied is [`ProbBuild::Partial`], the explored
+/// prefix partial evidence reads (FR-196, FSpec FR-411 "Evidence on a partial
+/// product").
 ///
 /// # Errors
 ///
 /// [`ProductRefusal`] when the subject does not admit, a state does not
-/// expand or step, the event has no monitor, or a budget or the cancellation
-/// ends the build (FR-196, FR-203).
+/// expand or step, the event has no monitor, `max_states` denies an initial
+/// state, or another budget or the cancellation ends the build (FR-196,
+/// FR-203).
 pub fn build_product(
     request: ProductRequest<'_>,
     cancel: &Cancel,
 ) -> Result<ProbBuild, ProductRefusal> {
-    let max_states = request.limits.model.limits.max_states;
-    match build_retaining_monitor(request, cancel)?.0 {
-        ProbBuild::Partial { .. } => Err(ProductRefusal::Stopped(ProductStop::Limit {
-            limit: ModelCheckLimit::ExactProbMaxStates,
-            value: u64::try_from(max_states).unwrap_or(u64::MAX),
-        })),
-        build @ (ProbBuild::Built(_) | ProbBuild::Undefined(_)) => Ok(build),
-    }
+    build_retaining_monitor(request, cancel).map(|(build, _)| build)
 }
 
 /// Retain the reached semantic owner for certificate key projection. The

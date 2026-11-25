@@ -3538,8 +3538,59 @@ fn steps_and_fractions_accumulate_exactly_through_their_windows() {
     }
 }
 
-/// Checks FR-196 "Behavior": reaching `max_states`, `max_transitions` or
-/// `max_automaton_states`, or a cancellation, stops the build and names it.
+/// The explored prefix and the solver's completion of a build whose successor
+/// `max_states` denied.
+fn partial(result: Result<ProbBuild, ProductRefusal>) -> (ProbProduct, ProbProduct) {
+    match result {
+        Ok(ProbBuild::Partial {
+            product,
+            lower_product,
+        }) => (product, lower_product),
+        other => panic!("expected a partial product: {other:?}"),
+    }
+}
+
+/// FR-196 "The partial product": no edge of the prefix leaves it, and the
+/// completion keeps the prefix's states and edges, adds one rejecting state
+/// and sends each omitted edge to it with no row renormalized.
+fn assert_completion(product: &ProbProduct, lower: &ProbProduct) {
+    let (states, edges) = (product.states.len(), product.edges.len());
+    assert!(product
+        .edges
+        .iter()
+        .all(|edge| edge.from.index() < states && edge.to.index() < states));
+    assert_eq!(lower.states.len(), states + 1);
+    assert_eq!(lower.states[..states], product.states[..]);
+    assert!(lower
+        .decided
+        .iter()
+        .any(|(state, verdict)| state.index() == states && *verdict == MonitorVerdict::Reject));
+    assert!(lower.edges.len() > edges, "an edge was omitted");
+    assert_eq!(
+        format!("{:?}", &lower.edges[..edges]),
+        format!("{:?}", product.edges)
+    );
+    assert!(lower.edges[edges..]
+        .iter()
+        .all(|edge| edge.from.index() < states && edge.to.index() == states));
+    // A DTMC row is a state's; an MDP row is one action's of a state.
+    let mut rows = BTreeMap::new();
+    for edge in &lower.edges {
+        let action = (lower.kind == ProductKind::Mdp).then(|| format!("{:?}", edge.choice));
+        let mass = rows
+            .entry((edge.from, action))
+            .or_insert_with(|| ratio(0, 1));
+        *mass = mass.add(&edge.probability);
+    }
+    for (row, mass) in rows {
+        assert_eq!(mass, ratio(1, 1), "row {row:?}");
+    }
+}
+
+/// Checks FR-196 "Behavior": reaching `max_transitions` or
+/// `max_automaton_states`, an initial state's key past `max_states`, or a
+/// cancellation stops the build and names it; a successor key past
+/// `max_states` leaves the explored prefix as a partial product.
 #[trace("TC-631")]
 #[test]
 fn a_budget_or_a_cancellation_stops_the_build() {
@@ -3552,19 +3603,39 @@ fn a_budget_or_a_cancellation_stops_the_build() {
         other => panic!("expected a stop: {other:?}"),
     };
     let defaults = ModelCheckLimits::default();
+    let states = |max_states| ModelCheckLimits {
+        limits: Limits {
+            max_states,
+            ..defaults.limits
+        },
+        ..defaults
+    };
+    let (product, lower) = partial(build_product(
+        world.request("NoFault", states(5)),
+        &Cancel::new(),
+    ));
+    assert_eq!(product.states.len(), 5);
+    // The rejecting state and four positions fit. The fourth position's
+    // healthy successor is denied; its faulty one reuses the rejecting state.
+    assert_eq!((product.edges.len(), lower.edges.len()), (7, 8));
+    assert_completion(&product, &lower);
+    // Two live objects are two initial keys: the second has no state to give.
+    let pair = World::with_objects(&prob_world::process(BINDINGS), &["p", "q"]);
+    let initial_stop = match build_product(pair.request("Terminates", states(1)), &Cancel::new()) {
+        Err(ProductRefusal::Stopped(stop)) => stop,
+        other => panic!("expected a stop: {other:?}"),
+    };
     assert_eq!(
-        stopped(ModelCheckLimits {
-            limits: Limits {
-                max_states: 5,
-                ..defaults.limits
-            },
-            ..defaults
-        }),
+        initial_stop,
         ProductStop::Limit {
             limit: ModelCheckLimit::ExactProbMaxStates,
-            value: 5
+            value: 1
         }
     );
+    let ProductStop::Limit { limit, value } = initial_stop else {
+        unreachable!("matched above");
+    };
+    assert_eq!((limit.setting(), value), ("exact_prob.max_states", 1));
     assert_eq!(
         stopped(ModelCheckLimits {
             limits: Limits {
@@ -3592,16 +3663,6 @@ fn a_budget_or_a_cancellation_stops_the_build() {
         ProductStop::Limit { limit, value } => (limit.setting(), value),
         other => panic!("expected a limit stop: {other:?}"),
     };
-    assert_eq!(
-        setting_of(ModelCheckLimits {
-            limits: Limits {
-                max_states: 5,
-                ..defaults.limits
-            },
-            ..defaults
-        }),
-        ("exact_prob.max_states", 5)
-    );
     assert_eq!(
         setting_of(ModelCheckLimits {
             limits: Limits {
@@ -3966,8 +4027,9 @@ fn each_over_binding_has_its_own_initial_for_every_subject_initial() {
     }
 }
 
-/// Checks FR-196 "Behavior": reaching `max_states` or `max_transitions` stops the
-/// build, and a build of exactly that size completes.
+/// Checks FR-196 "Behavior": a build of exactly its size completes, one state
+/// fewer leaves a partial product of that many states, and one edge fewer stops
+/// the build.
 #[trace("TC-631")]
 #[test]
 fn a_budget_equal_to_the_product_size_completes() {
@@ -3985,13 +4047,13 @@ fn a_budget_equal_to_the_product_size_completes() {
     };
     let ran = |limits| build_product(world.request("NoFault", limits), &Cancel::new());
     assert!(matches!(ran(with(states, edges)), Ok(ProbBuild::Built(_))));
-    assert!(matches!(
-        ran(with(states - 1, edges)),
-        Err(ProductRefusal::Stopped(ProductStop::Limit {
-            limit: ModelCheckLimit::ExactProbMaxStates,
-            ..
-        }))
-    ));
+    let (prefix, lower) = partial(ran(with(states - 1, edges)));
+    assert_eq!(prefix.states.len(), states - 1);
+    assert_eq!(prefix.states[..], product.states[..states - 1]);
+    // Every state that has an edge is admitted, so the completion holds all of
+    // them and only those into the denied state are omitted.
+    assert_eq!(lower.edges.len(), edges);
+    assert_completion(&prefix, &lower);
     assert!(matches!(
         ran(with(states, edges - 1)),
         Err(ProductRefusal::Stopped(ProductStop::Limit {
@@ -4002,12 +4064,12 @@ fn a_budget_equal_to_the_product_size_completes() {
 }
 
 /// TC-631: an unbounded exact claim retains real None monitor and accumulator
-/// members in its key; exhausting the state budget returns a typed stop and
-/// does not manufacture a partial product. This does not cover FR-196-AC-9's
+/// members in its key; exhausting the state budget keeps the complete initial
+/// key alone and manufactures no truncated or default key. This does not cover FR-196-AC-9's
 /// timed-key clock/deadline retention or malformed-key admission negatives.
 #[trace("TC-631")]
 #[test]
-fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
+fn exact_unbounded_keys_keep_none_and_a_state_budget_keeps_only_complete_keys() {
     let world = World::new(&prob_world::process(REACH));
     let product = built(&world, "Terminates");
     let initial = &product.states[start(&product).index()];
@@ -4021,17 +4083,15 @@ fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
         },
         ..ModelCheckLimits::default()
     };
-    let result = build_product(world.request("Terminates", limits), &Cancel::new());
-    assert!(
-        matches!(
-            result,
-            Err(ProductRefusal::Stopped(ProductStop::Limit {
-                limit: ModelCheckLimit::ExactProbMaxStates,
-                value: 1,
-            }))
-        ),
-        "typed budget refusal: {result:?}"
-    );
+    let (prefix, lower) = partial(build_product(
+        world.request("Terminates", limits),
+        &Cancel::new(),
+    ));
+    assert_eq!(prefix.states, std::slice::from_ref(initial));
+    // The completion has every edge of the initial state, those to a denied
+    // successor redirected.
+    assert_eq!(lower.edges.len(), product.outgoing(start(&product)).len());
+    assert_completion(&prefix, &lower);
 }
 
 /// FR-196-AC-17: the admitted event-position profile builds its formula
@@ -4270,20 +4330,17 @@ fn untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity() {
     assert_eq!(product_construction_counts().edges, 4);
 
     // Distinct intermediate draw keys must each reserve a new slot even
-    // though none of the planned targets has been interned yet.
+    // though none of the planned targets has been interned yet. A denied key
+    // gets no target representation and no edge: the targets constructed are
+    // the initial one and one per kept edge.
     let world = loose_health();
     reset_product_construction_counts();
-    let result = build_product(world.request("Anyhow", limits), &Cancel::new());
-    assert!(
-        matches!(
-            result,
-            Err(ProductRefusal::Stopped(ProductStop::Limit {
-                limit: ModelCheckLimit::ExactProbMaxStates,
-                value: 2
-            }))
-        ),
-        "{result:?}"
-    );
+    let (product, lower) = partial(build_product(
+        world.request("Anyhow", limits),
+        &Cancel::new(),
+    ));
+    assert_eq!(product.states.len(), 2);
+    assert_completion(&product, &lower);
     let counts = product_construction_counts();
     assert_eq!(
         counts.targets, 2,
@@ -4293,23 +4350,20 @@ fn untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity() {
         counts.edges, 1,
         "the next distinct key is denied before its edge is retained"
     );
+    assert_eq!(product.edges.len(), 1);
 
     reset_product_construction_counts();
     limits.limits.max_states = 1;
-    let result = build_product(world.request("Anyhow", limits), &Cancel::new());
-    assert!(
-        matches!(
-            result,
-            Err(ProductRefusal::Stopped(ProductStop::Limit {
-                limit: ModelCheckLimit::ExactProbMaxStates,
-                value: 1
-            }))
-        ),
-        "{result:?}"
-    );
+    let (product, lower) = partial(build_product(
+        world.request("Anyhow", limits),
+        &Cancel::new(),
+    ));
+    assert_eq!((product.states.len(), product.edges.len()), (1, 0));
+    assert_completion(&product, &lower);
+    let counts = product_construction_counts();
     assert_eq!(
-        product_construction_counts().targets,
-        1,
+        (counts.targets, counts.edges),
+        (1, 0),
         "a genuinely new key cannot materialize a target at full capacity"
     );
 }
