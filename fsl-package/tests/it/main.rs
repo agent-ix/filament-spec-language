@@ -3,6 +3,7 @@
 
 mod checked_ir_surface;
 mod checked_views_surface;
+mod deep_package_document;
 mod mapping_support_surface;
 mod protocol_artifact_v1;
 mod protocol_artifact_v2;
