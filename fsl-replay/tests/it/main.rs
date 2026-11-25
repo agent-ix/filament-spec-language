@@ -43,6 +43,7 @@ mod imported_function_site;
 mod indexed_read_stage;
 mod intake_refusal_outcome;
 mod integer_division_check;
+mod large_check_node_limit;
 mod native_fence_failure;
 mod outcome_facade;
 mod parse_outcome_facade;

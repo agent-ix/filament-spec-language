@@ -771,10 +771,10 @@ fn list(declaration: NodeKey, depth: usize) -> WitnessValue {
 /// request whose source holds a function with a 100,000-term sum over a
 /// recursive list parameter, whose assignment (and witness entry) carries a
 /// 100,000-long recursive list, whose `stage_limits` carries raised `s1.*`,
-/// `s3.*` and `emit.output_bytes` settings, and whose `replay.input_bytes` is raised to fit,
+/// `s3.*` settings, and whose `replay.input_bytes` is raised to fit,
 /// replays to the proving run's verdict,  Under the default limits it refuses by the first
 /// limit it reaches.
-#[trace("TC-736", "FR-263-AC-1", "FR-277-AC-2")]
+#[trace("TC-736", "FR-263-AC-1")]
 #[test]
 fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
     on_small_stack(|| {
@@ -846,7 +846,6 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
                 "s3.nodes",
                 "s3.input_bytes",
                 "s3.work_units",
-                "emit.output_bytes",
                 "i2.input_bytes",
                 "i2.nodes",
                 "i2.edges",
