@@ -28,3 +28,9 @@ The changed NFR Statement combines multiple independently verifiable SHALL oblig
 ## Verdict
 
 CONDITIONAL: separate independently verifiable obligations to restore atomic traceability.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The combined SHALL sentence was removed and the two provenance obligations now have separate AC-20 and AC-21. |
