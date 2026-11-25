@@ -529,7 +529,10 @@ mod tests {
             .canonicalise(&state, &group)
             .expect("canonicalises")
             .0;
-        let canonical_key = system.state_key(&canonical_key).expect("canonical key").0;
+        let canonical_key = system
+            .state_key(&canonical_key, fsl_foundation::IdentityLimits::default())
+            .expect("canonical key")
+            .0;
         for images in permutations() {
             let permuted = permute(&system, &state, &group, images);
             let canonical_permuted = system
@@ -537,7 +540,10 @@ mod tests {
                 .expect("permuted state canonicalises")
                 .0;
             let shares_canonical_key = system
-                .state_key(&canonical_permuted)
+                .state_key(
+                    &canonical_permuted,
+                    fsl_foundation::IdentityLimits::default(),
+                )
                 .expect("permuted canonical key")
                 .0
                 == canonical_key;
@@ -566,8 +572,14 @@ mod tests {
                 .canonicalise(&once, &group)
                 .expect("canonical state canonicalises")
                 .0;
-            let keys_are_equal = system.state_key(&once).expect("canonical key").0
-                == system.state_key(&twice).expect("twice canonical key").0;
+            let keys_are_equal = system
+                .state_key(&once, fsl_foundation::IdentityLimits::default())
+                .expect("canonical key")
+                .0
+                == system
+                    .state_key(&twice, fsl_foundation::IdentityLimits::default())
+                    .expect("twice canonical key")
+                    .0;
             assert!(
                 keys_are_equal,
                 "canonicalising permutation {images:?} twice preserves its key",
