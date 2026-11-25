@@ -720,7 +720,26 @@ impl ModelSystem<'_> {
             }
             let candidate = ModelSimState::anchored(state, anchor.clone());
             if self.invariant_findings_at(&candidate)?.is_empty() {
-                completed.push(candidate.state);
+                let mut state = candidate.state;
+                // Evaluation uses the native ClockReference value, while
+                // completed ModelState data exposes Reference<Clock> as the
+                // ordinary reference value expected by callers.
+                for (population, key, field) in slots {
+                    let Some(value) = state
+                        .populations
+                        .get_mut(population)
+                        .and_then(|objects| objects.get_mut(key))
+                        .and_then(|object| object.fields.get_mut(field))
+                    else {
+                        continue;
+                    };
+                    if let Value::ClockReference(clock_reference) = value {
+                        let reference = super::domain::clock_reference_as_object(clock_reference)
+                            .ok_or_else(|| stop(BROKEN))?;
+                        *value = Value::Reference(reference);
+                    }
+                }
+                completed.push(state);
             }
         }
         Ok(completed)
