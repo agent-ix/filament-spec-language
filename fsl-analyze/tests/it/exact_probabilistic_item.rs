@@ -303,7 +303,10 @@ fn undefined_reexploration_spends_the_remaining_item_work() {
     let materialization = phase_cost(&checkpoints, ExactWorkPhase::UndefinedMaterialization);
     let replay = phase_cost(&checkpoints, ExactWorkPhase::UndefinedReplay);
     let reexplore_bound = proof_only + reexploration;
-    assert!(proof_only > 0 && reexploration > 0 && materialization > 0 && replay > 0);
+    assert!(
+        proof_only > 0 && reexploration > 0 && materialization > 0 && replay > 0,
+        "P={proof_only}, R={reexploration}, M={materialization}, W={replay}; {checkpoints:#?}"
+    );
 
     let (short, short_checkpoints) =
         settle_with_work_and_checkpoints(&world, "Dropped", reexplore_bound - 1);
