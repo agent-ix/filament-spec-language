@@ -26,8 +26,8 @@ use fsl_analyze::model_check::{check_model, Atoms, ModelCheckRefusal, ModelCheck
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState, ModelSystem};
-use fsl_eval::temporal::AtomReading;
 use fsl_eval::temporal::UndefinedCause;
+use fsl_eval::temporal::{AtomReading, LetterStop, TemporalPosition};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
     replay_model_trace_with_temporal_selections, settle_model_check, CertificateRequest,
@@ -142,6 +142,127 @@ fn counter_world(profile: &str, clauses: &[Clause<'_>]) -> World {
         clauses,
         &[("c", json!({"value": {"integer": "0"}}))],
     )
+}
+
+/// The production letters of one instance over the states of one behaviour,
+/// recording each position read with its reading.
+struct RecordedLetters<'b, L> {
+    letters: &'b L,
+    instance: ModelInstance,
+    states: &'b [ModelSimState],
+    reads: Vec<(u64, AtomReading)>,
+}
+
+impl<L: ModelLetters> fsl_eval::temporal::TemporalLetters for RecordedLetters<'_, L> {
+    fn atom(
+        &mut self,
+        atom: FormulaNodeId,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let index = usize::try_from(position.index()).expect("a position");
+        let reading = self
+            .letters
+            .atom(atom, &self.instance, &self.states[index], meter)?;
+        self.reads.push((position.index(), reading.clone()));
+        Ok(reading)
+    }
+
+    fn activation(
+        &mut self,
+        _position: TemporalPosition,
+        _meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        panic!("an `on origin` clause has no activation condition")
+    }
+}
+
+/// FR-125-AC-6: over the Counter subject, the letter of `always holds(q(2 -
+/// c.value) >= 0)` under infinite-trace is true at positions 0 and 1 and
+/// undefined at position 2, cause division by zero; `eventually[0,1]
+/// holds(q(2 - c.value) = 0 and c.value = 1)` under event-position
+/// false-extension, `on origin`, reads positions 0 and 1 only and is true.
+#[trace("TC-537", "FR-125-AC-6")]
+#[test]
+fn a_model_letter_is_read_up_to_its_first_undefined_position_or_its_horizon() {
+    use fsl_eval::simulation::TransitionSystem;
+    use fsl_eval::temporal::{evaluate, TemporalOutcome, TemporalTrace, UndefinedEvaluation};
+
+    let read = |profile: &str, formula: &str, trace: TemporalTrace| {
+        let world = counter_world(
+            profile,
+            &[Clause {
+                activation: ORIGIN,
+                formula,
+            }],
+        );
+        let system = ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation)
+            .expect("the subject admits");
+        let mut states = vec![system.initial_states()[0].clone()];
+        loop {
+            let expansion = system
+                .successors(&states[states.len() - 1])
+                .expect("the state expands");
+            let Some((_, next)) = expansion.successors.into_iter().next() else {
+                break;
+            };
+            states.push(next);
+        }
+        let values: Vec<_> = states
+            .iter()
+            .map(|state| world.domain.integer(state, "c", "value"))
+            .collect();
+        assert_eq!(values, [0, 1, 2, 3]);
+        let node = &world.package.graph().temporal_clauses()[0];
+        let letters = system.clause_letters(node).expect("the clause has letters");
+        let mut recorded = RecordedLetters {
+            letters: &letters,
+            instance: ModelInstance {
+                population: world.domain.key(world.domain.population),
+                key: "c".to_owned(),
+            },
+            states: &states,
+            reads: Vec::new(),
+        };
+        let outcome = evaluate(
+            node.clause(),
+            trace,
+            &mut recorded,
+            &mut Meter::new(UNLIMITED),
+        )
+        .expect("the trace is readable");
+        (outcome, recorded.reads)
+    };
+    let division = UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero);
+
+    let (outcome, reads) = read(
+        INFINITE,
+        "always holds(q(2 - c.value) >= 0)",
+        TemporalTrace::Finite { len: 4 },
+    );
+    assert_eq!(
+        outcome,
+        TemporalOutcome::Undefined(UndefinedEvaluation {
+            at: TemporalPosition::new(2),
+            cause: division.clone(),
+        })
+    );
+    assert_eq!(
+        reads,
+        [
+            (0, AtomReading::True),
+            (1, AtomReading::True),
+            (2, AtomReading::Undefined(division)),
+        ]
+    );
+
+    let (outcome, reads) = read(
+        BOUNDED,
+        "eventually[0,1] holds(q(2 - c.value) = 0 and c.value = 1)",
+        TemporalTrace::Finite { len: 4 },
+    );
+    assert_eq!(outcome, TemporalOutcome::Holds);
+    assert_eq!(reads, [(0, AtomReading::False), (1, AtomReading::True)]);
 }
 
 /// FR-125-AC-14: a key that is unused at initialization stays excluded from
@@ -725,6 +846,11 @@ fn production_letters_decide_each_guard_row_and_include_guard_only_por_visibilit
         undefined(&undefined_world, &undefined_outcome),
         (2, vec![0, 1, 2])
     );
+    let CounterexampleKind::UndefinedEvaluation(evaluation) = &violated(&undefined_outcome).kind
+    else {
+        panic!("expected an undefined evaluation");
+    };
+    assert_eq!(evaluation.site.locus, UndefinedLocus::Activation);
 
     // The atom has no reads; the activation guard alone reads Counter.value.
     let activation = format!("{} when (c.value >= 3)", each("Counter"));
