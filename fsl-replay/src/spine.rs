@@ -1485,7 +1485,6 @@ fn checked_diagnostic(
 }
 
 #[implements("FR-881-AC-1")]
-#[implements("FR-383-AC-28")]
 fn check_message_one(first: &CheckRefusal) -> String {
     let mut message = first.cause.code().as_str().to_owned();
     if let Some(cause) = first.cause.cause() {
