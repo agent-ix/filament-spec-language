@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-113's binder no-shadowing rule: a binder shadowing a model/profile
 //! alias, a native declaration of the package or an earlier binder of the
 //! same protocol.

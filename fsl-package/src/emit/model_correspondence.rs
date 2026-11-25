@@ -2,8 +2,6 @@
 //! FR-400-AC-14: carry the admitted FR-081 effective declaration preimages
 //! through the checked-package/v2 correspondence node.
 
-use std::collections::BTreeMap;
-
 use filament_contract_model::{
     CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
     CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
@@ -16,7 +14,11 @@ use fsl_semantics::model::key::EffectiveDeclarationPreimage;
 
 use super::{claim_literal, node_id, push_scalar_type, source_artifact, EmitRefusal, GRAPH_V2};
 
-/// Append one model-correspondence node per selected, admitted effective view.
+/// Append one model-correspondence node per `model_root` that has an admitted
+/// effective view, in `model_roots` order. Aliases that select one package
+/// share its root, so they share its node. The view of the unit's own `object`
+/// declarations (FR-569 "The source model") is no model selection: it has no
+/// root and no node. Any other view without a root is refused.
 /// The body is a flat, ordered sequence of typed scalar terms. Its closed
 /// grammar is documented by `append_preimage`; the strict reader rebuilds
 /// the original model preimage types without encoding identities as strings.
@@ -27,19 +29,34 @@ pub(super) fn append(
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
 ) -> Result<(), EmitRefusal> {
-    if graph.selected_model_views().is_empty() {
-        return Ok(());
+    // The source model is selected under the empty alias.
+    let views: Vec<_> = graph
+        .selected_model_views()
+        .iter()
+        .filter(|(alias, _)| !alias.is_empty())
+        .map(|(_, view)| view)
+        .collect();
+    if views.iter().any(|view| {
+        !graph
+            .model_roots()
+            .any(|(selection, _)| selection == view.model_selection())
+    }) {
+        return Err(EmitRefusal::SourceMapInvariant);
     }
-
-    let mut root_regions = BTreeMap::new();
+    let mut selected = Vec::new();
     for ((selection, _), location) in graph.model_roots().zip(graph.model_root_locations().iter()) {
+        let Some(view) = views
+            .iter()
+            .find(|view| view.model_selection() == selection)
+        else {
+            continue;
+        };
         let region = regions(location).ok_or(EmitRefusal::SourceMapInvariant)?;
-        root_regions.insert(selection.identity.as_str().to_owned(), region);
+        selected.push((selection.identity.as_str(), view, source_region(&region)));
     }
-    let first_region = root_regions
-        .values()
-        .next()
-        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    let Some((_, _, first_region)) = selected.first() else {
+        return Ok(());
+    };
     let text_type = node_id(
         ids,
         fsl_semantics::check::builtin_text_type_key(graph.package_name()).map_err(encoding)?,
@@ -48,33 +65,10 @@ pub(super) fn append(
         ids,
         fsl_semantics::check::builtin_integer_type_key(graph.package_name()).map_err(encoding)?,
     );
-    push_scalar_type(
-        nodes,
-        source_map,
-        &text_type,
-        "text",
-        &source_region(first_region),
-    );
-    push_scalar_type(
-        nodes,
-        source_map,
-        &integer_type,
-        "integer",
-        &source_region(first_region),
-    );
+    push_scalar_type(nodes, source_map, &text_type, "text", first_region);
+    push_scalar_type(nodes, source_map, &integer_type, "integer", first_region);
 
-    let mut views: Vec<_> = graph.selected_model_views().values().collect();
-    views.sort_by(|left, right| {
-        left.model_selection()
-            .identity
-            .as_bytes()
-            .cmp(right.model_selection().identity.as_bytes())
-    });
-    for view in views {
-        let identity = view.model_selection().identity.as_str();
-        let region = root_regions
-            .get(identity)
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
+    for (identity, view, region) in selected {
         let mut members = Vec::new();
         push_integer(
             &mut members,
@@ -103,7 +97,7 @@ pub(super) fn append(
             node_id: id.clone(),
             role: occurrence.role.clone(),
             ordinal: occurrence.ordinal,
-            regions: vec![source_region(region)],
+            regions: vec![region],
         });
         nodes.push(CheckedSemanticNodeV2 {
             owner_model: None,

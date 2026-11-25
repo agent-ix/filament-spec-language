@@ -2,6 +2,7 @@
 //! FR-186-AC-7: the admitted bounded timed Eventually form.
 
 use super::*;
+use fsl_analyze::exact_probabilistic::{DeadlineKind, DeadlinePhase, MonitorState};
 
 #[trace("FR-186-AC-7")]
 #[test]
@@ -77,7 +78,10 @@ fn nested_punctual_always_rejects_a_true_hop_before_a_false_same_time_hop() {
         probabilistic HopNested using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ eventually[0 ms, 1 ms] always[0 ms, 0 ms] holds(c.late) ] }\n";
     let package_document = timed_world::document(
         &["x"],
-        &[("first", &["phase", "late", "x"]), ("second", &["phase", "late", "x"])],
+        &[
+            ("first", &["phase", "late", "x"]),
+            ("second", &["phase", "late", "x"]),
+        ],
     );
     let body = format!(
         "{}\
@@ -136,10 +140,20 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
         Ok(fsl_analyze::exact_probabilistic::ProbBuild::Built(product)) => product,
         other => panic!("the zero-delay timed product closes its finite key cycle: {other:?}"),
     };
-    let repeated_history = vec![fsl_analyze::exact_probabilistic::TimedObservation {
-        time: 0,
-        values: vec![false],
-    }];
+    // FR-196's deadline monitor, which stays pending while the target is false.
+    let pending = Some(MonitorState::Deadline {
+        kind: DeadlineKind::Eventually,
+        phase: DeadlinePhase::Pending,
+    });
+    let pending_at_zero = |state: &fsl_analyze::exact_probabilistic::ProbKey| {
+        let bytes = state
+            .certificate_state
+            .as_ref()
+            .expect("a timed state has a ProductKey")
+            .as_bytes();
+        let key: Value = serde_json::from_slice(bytes).expect("canonical ProductKey");
+        state.monitor == pending && key[4][1][5] == json!(["deadline", "4", "0"])
+    };
     assert!(
         product.states.len() < 128,
         "the product closes below its state bound"
@@ -157,13 +171,11 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
     let repeated_keys = product
         .ids()
         .zip(&product.states)
-        .filter_map(|(id, state)| {
-            (state.timed_history.as_ref() == Some(&repeated_history)).then_some(id)
-        })
+        .filter_map(|(id, state)| pending_at_zero(state).then_some(id))
         .collect::<Vec<_>>();
     assert!(
         repeated_keys.len() >= 2,
-        "the retry toggle visits distinct states under the same same-time Eventually summary"
+        "the retry toggle visits distinct states under the same pending monitor at time zero"
     );
     let reaches_zero_time =
         |start: fsl_analyze::exact_probabilistic::ProbStateId,
@@ -191,23 +203,24 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
     assert!(
         product.edges.iter().any(|edge| {
             edge.elapsed == zero
-                && product.states[edge.from.index()].timed_history.as_ref()
-                    == Some(&repeated_history)
-                && product.states[edge.to.index()].timed_history.as_ref() == Some(&repeated_history)
+                && pending_at_zero(&product.states[edge.from.index()])
+                && pending_at_zero(&product.states[edge.to.index()])
                 && reaches_zero_time(edge.to, edge.from)
         }),
-        "the zero-delay cycle returns to a repeated canonical TimedTrace product key"
+        "the zero-delay cycle returns to a repeated canonical product key"
     );
 
     assert!(
         product.states.iter().all(|state| {
-            state.timed_history.as_ref().is_some_and(|history| {
-                history
-                    .iter()
-                    .all(|observation| observation.values == [false])
-            })
+            matches!(
+                state.monitor,
+                Some(MonitorState::Deadline {
+                    kind: DeadlineKind::Eventually,
+                    phase: DeadlinePhase::Pending | DeadlinePhase::Reject,
+                })
+            )
         }),
-        "the literal target is false at every reconstructed observation"
+        "the literal target is false at every observation, so no state accepts"
     );
     let exact = fsl_analyze::exact_probabilistic::decide_bounded_event(
         &product,
@@ -352,6 +365,60 @@ fn nested_positive_offset_always_checks_all_same_time_target_observations() {
     let record = settle(&world, "NestedPositiveOffset");
     assert_eq!(proved_value(&record), ratio(0, 1), "{record:#?}");
     assert!(accepted(&world, "NestedPositiveOffset", &document(&record)));
+}
+
+/// A dual nested window needs one true observation at each target time: a
+/// later false hop at that time does not retract it, and every target time of
+/// the outer window is checked.
+#[trace("FR-204-AC-21")]
+#[test]
+fn nested_eventually_inside_always_checks_every_target_time() {
+    let claims = "\
+        probabilistic FirstTarget using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ always[0 ms, 0 ms] eventually[1 ms, 1 ms] holds(c.late) ] }\n\
+        probabilistic SecondTarget using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ always[0 ms, 1 ms] eventually[1 ms, 1 ms] holds(c.late) ] }\n";
+    let world = rise_and_fall(1, claims);
+    for (claim, value) in [("FirstTarget", ratio(1, 1)), ("SecondTarget", ratio(0, 1))] {
+        let record = settle(&world, claim);
+        assert_eq!(proved_value(&record), value, "{record:#?}");
+        assert!(accepted(&world, claim, &document(&record)));
+    }
+}
+
+/// At zero offset the last position at a timestamp can witness only itself,
+/// so an earlier true hop does not satisfy a dual nested window.
+#[trace("FR-204-AC-21")]
+#[test]
+fn nested_zero_offset_eventually_is_decided_by_the_last_same_time_hop() {
+    let claims = "\
+        probabilistic LastHop using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ always[0 ms, 0 ms] eventually[0 ms, 0 ms] holds(c.late) ] }\n";
+    let world = rise_and_fall(0, claims);
+    let record = settle(&world, "LastHop");
+    assert_eq!(proved_value(&record), ratio(0, 1), "{record:#?}");
+    assert!(accepted(&world, "LastHop", &document(&record)));
+}
+
+/// `late` is false, rises after `rise_ms` and falls again at that timestamp.
+fn rise_and_fall(rise_ms: u64, claims: &str) -> World {
+    let package_document = timed_world::document(
+        &["x"],
+        &[
+            ("rise", &["phase", "late", "x"]),
+            ("fall", &["phase", "late", "x"]),
+        ],
+    );
+    let body = format!(
+        "{}\
+         pre Rise using v on M::Call::rise {{ self.phase = 0 }}\n\
+         post Risen using v on M::Call::rise {{ self.phase = 1 and self.late = true and self.x = 0 ms }}\n\
+         pre Fall using v on M::Call::fall {{ self.phase = 1 }}\n\
+         post Fallen using v on M::Call::fall {{ self.phase = 2 and self.late = false and self.x = 0 ms }}\n\
+         delay M::Call::rise ~ discrete {{ {rise_ms} ms: 1 }};\n\
+         delay M::Call::fall ~ discrete {{ 0 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    timed_world::world(&package_document, super::PROFILES, &body)
 }
 
 #[trace("FR-204-AC-21")]

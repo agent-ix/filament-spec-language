@@ -105,6 +105,17 @@ pub enum DeadlinePhase {
     Reject,
 }
 
+impl DeadlinePhase {
+    /// The phase of the negated event.
+    fn complement(self) -> Self {
+        match self {
+            Self::Pending => Self::Pending,
+            Self::Accept => Self::Reject,
+            Self::Reject => Self::Accept,
+        }
+    }
+}
+
 /// One checked timed temporal operator occurrence retained in EN-5's product.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TimedOperatorState {
@@ -122,13 +133,35 @@ pub struct TimedOperatorState {
     pub phase: DeadlinePhase,
 }
 
-/// Advance the shared Eventually/Always monitor used for a punctual nested
-/// timed formula.
+/// Advance the shared monitor of a punctual nested timed formula:
+/// `eventually` over `always`, or, when `root` is an `always` occurrence, its
+/// dual `always` over `eventually`.
 ///
-/// The nested Always result remains provisional through all ordered
-/// observations at its target timestamp. A later false observation can
-/// therefore invalidate an earlier true one before the timestamp closes.
+/// `always eventually P` is the complement of `eventually always (not P)`, so
+/// the dual runs the same monitor on the negated letter and complements both
+/// phases.
+///
+/// The nested result remains provisional through all ordered observations at
+/// its target timestamp. A later observation can therefore decide it
+/// differently before the timestamp closes.
 pub fn advance_nested_timed_deadline(
+    root: &mut TimedOperatorState,
+    nested: &mut TimedOperatorState,
+    holds: bool,
+    elapsed: u64,
+) {
+    if root.kind != DeadlineKind::Always {
+        advance_eventually_always(root, nested, holds, elapsed);
+        return;
+    }
+    root.phase = root.phase.complement();
+    nested.phase = nested.phase.complement();
+    advance_eventually_always(root, nested, !holds, elapsed);
+    root.phase = root.phase.complement();
+    nested.phase = nested.phase.complement();
+}
+
+fn advance_eventually_always(
     root: &mut TimedOperatorState,
     nested: &mut TimedOperatorState,
     holds: bool,

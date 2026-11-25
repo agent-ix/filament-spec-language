@@ -11,8 +11,21 @@
 //! echoed and written by the source route's own negotiation and writer, so
 //! an item settles with the source route's record, counterexample, replay
 //! and summary. An item whose family has no package form yet refuses the
-//! request whole, typed and naming the family, never settling `unsupported`
-//! for a fact the source route reads.
+//! request whole, typed and naming the family, rather than settle
+//! `unsupported` for a fact the source route reads.
+//!
+//! Operation-contract items fall short of that (QSL-2934): the contract check
+//! and an external provider have no evaluator over a package. Each item is
+//! negotiated first, and what negotiation settles itself is written as on the
+//! source route. A named `pre` or `post` clause over a bounded extent that is
+//! routed to the contract check then refuses the request whole. An item
+//! routed to the check over an unbounded extent settles `requires_bound`, as
+//! on the source route. These settle
+//! `unsupported`/`unsupported-requested-capability`, although the source route
+//! may evaluate them: a `pre` or `post` clause or an invariant routed to an
+//! external provider, an invariant routed to the contract check over a
+//! bounded extent, and a default `pre` or `post` item (a request with no
+//! `items`) routed to the check over a bounded extent.
 
 use std::collections::BTreeMap;
 
@@ -52,7 +65,9 @@ use super::{
 /// A `package` request (FR-850) whose item names a family the package route
 /// does not settle yet (FR-940 "Package forms of the source-checked
 /// evaluators"): the request is refused whole rather than settle that item
-/// `unsupported`.
+/// `unsupported`. Some operation-contract items settle `unsupported` all the
+/// same until their evaluators read a package (QSL-2934; the module
+/// documentation lists them).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingPackageFamily {
     /// The request index of the first such item, `None` for the default
@@ -176,8 +191,9 @@ pub enum PendingFamily {
     Declaration,
     /// A value-validity parameter or body form has no package evaluator form.
     ValueShape,
-    /// A selected operation contract needs the source requirement record,
-    /// whose operation-contract form the package wire contract does not carry.
+    /// An operation contract whose admitted requirement row and record give
+    /// no item, or a named `pre` or `post` clause over a bounded extent routed
+    /// to the contract check, which has no package evaluator yet (QSL-2934).
     OperationContractRequirementRecord,
     /// A name the package carries no row for while it holds a claim whose
     /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
@@ -395,7 +411,9 @@ enum Route<'a> {
     ProtocolAnalysis,
     SuppliedProtocol(String),
     Deadlock,
-    StateClause,
+    /// A state clause, with the refusal it gets if negotiation routes it to
+    /// the contract check (QSL-2934).
+    StateClause(Option<Box<PendingPackageFamily>>),
     StateGraph(Box<PackageStateGraphSubject<'a>>),
     Hyper(Box<PackageHyperSubject<'a>>),
     Relation(Box<PackageRelationSubject<'a>>),
@@ -625,6 +643,8 @@ fn settle_package_run_inner(
     let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
     let mut value_claims: Vec<OccurrenceKey> = Vec::new();
     let mut hyper_claims: Vec<OccurrenceKey> = Vec::new();
+    // Each alias the hyper items name, with its model's identity.
+    let mut hyper_subjects = BTreeMap::new();
     let mut relation_claims: Vec<OccurrenceKey> = Vec::new();
     let mut schedule_claims: Vec<OccurrenceKey> = Vec::new();
     let mut probability_claims: Vec<OccurrenceKey> = Vec::new();
@@ -641,6 +661,11 @@ fn settle_package_run_inner(
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, subject) => {
                     hyper_claims.push(claim.item.claim.clone());
+                    if claim.item.kind == Capability::TemporalSatisfaction {
+                        if let Some(models) = subject.subject_models() {
+                            hyper_subjects.extend(models.clone());
+                        }
+                    }
                     routes.insert(index, Route::Hyper(subject));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
@@ -775,9 +800,9 @@ fn settle_package_run_inner(
                 selection,
             } => match reads.state_clause(index, name, &declaration, ordinal, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
-                Resolution::Claim(claim, ()) => {
+                Resolution::Claim(claim, unevaluated) => {
                     invariant_claims.push(claim.item.claim.clone());
-                    routes.insert(index, Route::StateClause);
+                    routes.insert(index, Route::StateClause(unevaluated));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -847,6 +872,20 @@ fn settle_package_run_inner(
     let premises =
         super::composition_item::premise_items(&mut compositions, groups, &mut resolved, first)?;
     resolved.extend(premises);
+    // FR-173: the request writer adds the deadlock-freedom item of each
+    // distinct model subject the hyper items name, after every other item and
+    // in alias order, as the source route does.
+    for identity in hyper_subjects.values() {
+        let index = RequestIndex::new(resolved.len());
+        match reads.hyper_subject_deadlock(index, identity, &resolved)? {
+            None => {}
+            Some(Resolution::Settled(settled)) => resolved.push(settled),
+            Some(Resolution::Claim(claim, ())) => {
+                routes.insert(index, Route::Deadlock);
+                resolved.push(ResolvedItem::Claim(claim));
+            }
+        }
+    }
     let PackageCompositions {
         routes: premise_routes,
         inputs: premise_inputs,
@@ -907,6 +946,18 @@ fn settle_package_run_inner(
             family: &family,
         },
     )?;
+    // QSL-2934: the contract check reads no package yet, so a clause held
+    // for refusal that negotiation routed to it refuses the request.
+    for item in &negotiated {
+        let contract_check = item.disposition.target().is_some_and(|backend| {
+            backend.id().as_str() == crate::contract_check::manifest::BACKEND_ID
+        });
+        if let (true, Some(Route::StateClause(Some(pending)))) =
+            (contract_check, routes.get(&item.item.request_index))
+        {
+            return Err(PackageRunError::Pending((**pending).clone()));
+        }
+    }
     let mut analyzed = Vec::with_capacity(negotiated.len());
     if let (Some(input), Some(model)) = (input.as_ref(), model_input.as_ref()) {
         // FR-624: the shared subject binding is admitted before any item
@@ -3116,16 +3167,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 )),
             }));
         }
-        let root = fsl_semantics::check::model_root_key(
-            &fsl_semantics::model::domain_package::DomainPackageRef {
-                identity: name.to_owned(),
-            },
-        )
-        .map_err(|_| AnalyzeDocumentError::Fault)?;
-        let claim = OccurrenceKey::new(
-            root,
-            filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
-        );
+        let claim = model_deadlock_claim(name)?;
         // FSpec FR-368-AC-22, FR-124-AC-12: as on the source route's
         // `resolve_derived`, a subject that reads several model selections has
         // no anchor, so its item settles `unsupported` with no request item,
@@ -3160,22 +3202,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 )));
             }
             [only] if *only == name => {
-                // FR-124: a model the subject reads that declares `terminal any`
-                // opts out of the item, so the source route writes none and
-                // settles `inapplicable-kind` (`SubjectReading::opted_out`).
-                let opted_out = self
-                    .package
-                    .terminal_declarations()
-                    .map_err(|_| AnalyzeDocumentError::Fault)?
-                    .iter()
-                    .any(|terminal| {
-                        terminal.model == name
-                            && matches!(
-                                terminal.declaration,
-                                fsl_package::BareTerminalDeclaration::Any
-                            )
-                    });
-                if opted_out {
+                // FR-124: an opted-out subject has no item, so the source route
+                // writes none and settles `inapplicable-kind`
+                // (`SubjectReading::opted_out`).
+                if self.opts_out(name)? {
                     return Ok(Resolution::Settled(invalid_kind(
                         index,
                         Some(name),
@@ -3201,6 +3231,61 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 }));
             }
         }
+        self.deadlock_item(index, name, claim, selection)
+    }
+
+    /// FR-124: whether the model `identity` declares `terminal any`, which
+    /// opts its subject out of the deadlock-freedom item.
+    fn opts_out(&self, identity: &str) -> Result<bool, PackageRunError> {
+        Ok(self
+            .package
+            .terminal_declarations()
+            .map_err(|_| AnalyzeDocumentError::Fault)?
+            .iter()
+            .any(|terminal| {
+                terminal.model == identity
+                    && matches!(
+                        terminal.declaration,
+                        fsl_package::BareTerminalDeclaration::Any
+                    )
+            }))
+    }
+
+    /// FR-173's derived item of the model subject `identity` that a hyper item
+    /// names, as the source route's `append_hyper_subject_items` writes it:
+    /// none when `resolved` already holds the model's item or the model opts
+    /// out, and named by no claim.
+    fn hyper_subject_deadlock(
+        &self,
+        index: RequestIndex,
+        identity: &str,
+        resolved: &[ResolvedItem],
+    ) -> Result<Option<Resolution<()>>, PackageRunError> {
+        let claim = model_deadlock_claim(identity)?;
+        let written = resolved.iter().any(
+            |item| matches!(item, ResolvedItem::Claim(written) if written.item.claim == claim),
+        );
+        if written || self.opts_out(identity)? {
+            return Ok(None);
+        }
+        let selection = deadlock_selection(identity.to_owned());
+        let mut resolution = self.deadlock_item(index, identity, claim, &selection)?;
+        if let Resolution::Claim(derived, ()) = &mut resolution {
+            derived.claim_name.clear();
+        }
+        Ok(Some(resolution))
+    }
+
+    /// The temporal item of the model subject whose identity `name` is,
+    /// anchored at `claim`, with the settings of `selection`.
+    fn deadlock_item(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        claim: OccurrenceKey,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<()>, PackageRunError> {
+        let temporal = selection.temporal.clone().unwrap_or_default();
         let own_subject = self.own_subject(index, selection)?;
         let named = selection.backend.as_deref().map(BackendId::new);
         let backend_options = selection.options.clone().unwrap_or_default();
@@ -3261,13 +3346,16 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// FR-625's item over the `invariant` state clause `name`, whose
-    /// `claim_names` row is on `declaration`, as the source route's
-    /// `resolve_one` resolves it: at the clause's node and `claim`
-    /// occurrence, kind `operation-contract` unless the item names another,
-    /// and, over a model subject, FR-489's tie narrowed to EN-1 (FR-962). An
-    /// item with no model subject is decided by EN-2's contract check, which
-    /// has no package form yet.
+    /// FR-625's item over the state clause `name` (`invariant`, `pre` or
+    /// `post`), whose `claim_names` row is on `declaration`, as the source
+    /// route's `resolve_one` resolves it: at the clause's node and `claim`
+    /// occurrence, with the extent of its admitted requirement row, kind
+    /// `operation-contract` unless the item names another, and, for an
+    /// invariant over a model subject, FR-489's tie narrowed to EN-1
+    /// (FR-962). A named `pre` or `post` clause over a bounded extent also
+    /// returns the refusal it gets if negotiation routes it to the contract
+    /// check, which reads no package yet (QSL-2934; the module documentation).
+    /// A default item with no model subject refuses the request.
     fn state_clause(
         &self,
         index: RequestIndex,
@@ -3275,7 +3363,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         declaration: &CheckedNodeId,
         ordinal: u64,
         selection: &ItemSelection,
-    ) -> Result<Resolution<()>, PackageRunError> {
+    ) -> Result<Resolution<Option<Box<PendingPackageFamily>>>, PackageRunError> {
         let pending = |family| {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
@@ -3290,14 +3378,13 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         // state-clause input: pre/post clauses have no EN-1 form, so looking
         // them up there first turns the expected pending package record into
         // an internal fault.
-        let pending_requirement_record = || {
-            PackageRunError::Pending(PendingPackageFamily {
-                request_index: Some(index),
-                family: PendingFamily::OperationContractRequirementRecord,
-                node: Some(declaration.clone()),
-                note: Some(format!("`{name}` (claim occurrence {ordinal})")),
-            })
+        let requirement_record_family = || PendingPackageFamily {
+            request_index: Some(index),
+            family: PendingFamily::OperationContractRequirementRecord,
+            node: Some(declaration.clone()),
+            note: Some(format!("`{name}` (claim occurrence {ordinal})")),
         };
+        let pending_requirement_record = || PackageRunError::Pending(requirement_record_family());
         let row = self
             .package
             .requirement_items()
@@ -3314,11 +3401,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         else {
             return Err(pending_requirement_record());
         };
-        if !record.invariant && self.explicit_items {
-            // Named pre/post clauses have a retained requirement row, but
-            // the package route has no operation-contract form for them.
-            return Err(pending_requirement_record());
-        }
+        // FR-940: an admitted record is a request item whatever its kind of
+        // clause, so negotiation settles it before any evaluator is chosen.
         let claim = if record.invariant {
             let input = self
                 .input
@@ -3345,6 +3429,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             )
         };
         let extent = ExtentClassification::of(&extent);
+        // An unbounded extent is not held: the shared contract-check decision
+        // settles it `requires_bound` without an evaluator.
+        let unevaluated =
+            (self.explicit_items && !record.invariant && extent == ExtentClassification::Bounded)
+                .then(|| Box::new(requirement_record_family()));
         let own_subject = self.own_subject(index, selection)?;
         let kind = match selection.kind.as_deref() {
             Some(label) => match Capability::from_wire(label) {
@@ -3410,7 +3499,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: own_subject,
                 unrouted,
             }),
-            (),
+            unevaluated,
         ))
     }
 }
@@ -3693,7 +3782,7 @@ impl<'a> WorkInputs<'_, 'a> {
             }
             // FR-489's tie routed the invariant over the model subject to
             // EN-1 (FR-625, FR-951), as on the source route.
-            (_, Some(Route::StateClause))
+            (_, Some(Route::StateClause(_)))
                 if item.kind == Capability::OperationContract
                     && negotiated.disposition.target().is_some_and(|backend| {
                         backend.id().as_str() == crate::model_check::manifest::BACKEND_ID
@@ -4117,16 +4206,37 @@ fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     items.extend(
         view.model_selections()
             .into_iter()
-            .map(|selection| ItemSelection {
-                claim: Some(selection.identity),
-                temporal: Some(super::TemporalSelection {
-                    item_kind: Some(super::ItemKindSelection::DeadlockFreedom),
-                    ..super::TemporalSelection::default()
-                }),
-                ..ItemSelection::default()
-            }),
+            .map(|selection| deadlock_selection(selection.identity)),
     );
     items
+}
+
+/// The deadlock-freedom selection of the model `identity` with the published
+/// default of every setting.
+fn deadlock_selection(identity: String) -> ItemSelection {
+    ItemSelection {
+        claim: Some(identity),
+        temporal: Some(super::TemporalSelection {
+            item_kind: Some(super::ItemKindSelection::DeadlockFreedom),
+            ..super::TemporalSelection::default()
+        }),
+        ..ItemSelection::default()
+    }
+}
+
+/// The anchor of the model `identity`'s derived items: its `model_root` node
+/// with the `generated` occurrence 0.
+fn model_deadlock_claim(identity: &str) -> Result<OccurrenceKey, PackageRunError> {
+    let root = fsl_semantics::check::model_root_key(
+        &fsl_semantics::model::domain_package::DomainPackageRef {
+            identity: identity.to_owned(),
+        },
+    )
+    .map_err(|_| AnalyzeDocumentError::Fault)?;
+    Ok(OccurrenceKey::new(
+        root,
+        filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
+    ))
 }
 
 /// Whether the package node `node` is a `claim`/`schedulability` node (FR-246).

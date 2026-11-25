@@ -39,18 +39,22 @@ pub enum CounterexampleWireError {
 pub struct ProbabilisticValueSchema<'a> {
     types: &'a filament_semantic_value::declaration::TypeEnvironment,
     variants: &'a [fsl_semantics::check::VariantTypeDeclaration],
+    enums: &'a [fsl_semantics::check::EnumBinding],
     enum_members: Option<&'a filament_semantic_value::enumeration::EnumMemberIndex>,
 }
 
 impl<'a> ProbabilisticValueSchema<'a> {
-    /// Build the schema from the checked type and variant declarations.
+    /// Build the schema from the checked type, variant and source enum
+    /// declarations.
     pub fn new(
         types: &'a filament_semantic_value::declaration::TypeEnvironment,
         variants: &'a [fsl_semantics::check::VariantTypeDeclaration],
+        enums: &'a [fsl_semantics::check::EnumBinding],
     ) -> Self {
         Self {
             types,
             variants,
+            enums,
             enum_members: None,
         }
     }
@@ -73,7 +77,12 @@ impl<'a> ProbabilisticValueSchema<'a> {
                 self.variants,
                 enum_members,
             ),
-            None => fsl_eval::simulation::model::typed_value_json(value, self.types, self.variants),
+            None => fsl_eval::simulation::model::typed_value_json(
+                value,
+                self.types,
+                self.variants,
+                self.enums,
+            ),
         }
     }
 }
@@ -1156,6 +1165,7 @@ pub fn sampled_witness_wire(
     witness: &crate::statistical::SampledWitness,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
 ) -> Result<Json, super::WitnessOmission> {
     use crate::statistical::{MeasureValue, WitnessValue};
     use fsl_eval::simulation::model::TransitionId;
@@ -1183,7 +1193,7 @@ pub fn sampled_witness_wire(
         let mut random = Vec::with_capacity(step.random.len());
         for drawn in &step.random {
             random.push(
-                fsl_eval::simulation::model::typed_value_json(drawn, types, variants)
+                fsl_eval::simulation::model::typed_value_json(drawn, types, variants, enums)
                     .ok_or_else(|| witness_omission(witness))?,
             );
         }
@@ -1992,7 +2002,7 @@ pub fn assignments_wire(
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
 ) -> Result<Json, CounterexampleWireError> {
     assignments_wire_using(parameters, values, |value| {
-        fsl_eval::simulation::model::typed_value_json(value, types, variants)
+        fsl_eval::simulation::model::typed_value_json(value, types, variants, &[])
     })
 }
 

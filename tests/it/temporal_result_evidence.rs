@@ -5,8 +5,8 @@
 //! the package and the request, never from the evaluator's own output.
 
 use fsl_eval::temporal::evidence::{
-    EvidenceCounter, EvidenceIncomplete, EvidencePackage, EvidenceRef, EvidenceRequest,
-    EvidenceResult, ResultSubject, TemporalEvidenceLimits, Truth,
+    CounterKind, EvidenceCounter, EvidenceIncomplete, EvidencePackage, EvidenceRef,
+    EvidenceRequest, EvidenceResult, ResultSubject, TemporalEvidenceLimits, Truth,
 };
 use fsl_eval::temporal::Valuation;
 use fsl_package::{
@@ -92,7 +92,7 @@ fn assert_support_is_admitted(asked: &EvidenceRequest, result: &EvidenceResult) 
 /// version, clause, occurrence and occurrence source-map entry read from the
 /// package, and the request's `correspondence` member for member; a call
 /// stopped one below a counter's usage carries the same `subject`.
-#[trace("FR-526-AC-20", "TC-1321")]
+#[trace("FR-526-AC-20", "TC-1321", "NFR-008-M-3", "NFR-008-M-6")]
 #[test]
 fn every_result_names_the_checked_subject_it_was_evaluated_for() {
     let mut called = 0;
@@ -121,23 +121,98 @@ fn every_result_names_the_checked_subject_it_was_evaluated_for() {
                 "revision-7".to_owned()
             );
 
-            // One below a counter's usage stops the call; the stopped
-            // result carries the same subject.
-            let (counter, used) = [EvidenceCounter::Positions, EvidenceCounter::Valuations]
-                .into_iter()
-                .map(|counter| (counter, result.usage.get(counter)))
-                .find(|(_, used)| *used > 0)
-                .expect("a counter the call charged");
-            let mut stopped = asked.clone();
-            stopped.limits = TemporalEvidenceLimits::default().with_ceiling(counter, used - 1);
-            let (stopped, _) = run(&package, &clause, &stopped);
-            let stopped = stopped.expect("an Ok result");
-            assert!(
-                matches!(stopped.incomplete, Some(EvidenceIncomplete::Limit(_))),
-                "{kind}: {:?}",
-                stopped.incomplete
-            );
-            assert_eq!(stopped.subject, expected, "{kind}");
+            // Each charged dimension admits the exact usage, refuses the
+            // first operation one below it, and remains complete above it.
+            for counter in [
+                EvidenceCounter::Positions,
+                EvidenceCounter::Valuations,
+                EvidenceCounter::Instances,
+                EvidenceCounter::Captures,
+                EvidenceCounter::Support,
+                EvidenceCounter::HistorySpan,
+                EvidenceCounter::EvaluationSteps,
+            ] {
+                let used = result.usage.get(counter);
+                if used == 0 {
+                    let mut zero = asked.clone();
+                    zero.limits = TemporalEvidenceLimits::default().with_ceiling(counter, 0);
+                    let (zero, _) = run(&package, &clause, &zero);
+                    let zero = zero.expect("zero-use dimension remains complete at zero");
+                    assert!(zero.incomplete.is_none(), "{kind} {counter:?}=0");
+                    assert_eq!(zero.usage.get(counter), 0, "{kind} {counter:?}");
+
+                    let ceiling = TemporalEvidenceLimits::default().ceiling(counter);
+                    let mut raised = asked.clone();
+                    raised.limits = TemporalEvidenceLimits::default()
+                        .with_ceiling(counter, ceiling.saturating_add(1));
+                    let (raised, _) = run(&package, &clause, &raised);
+                    let raised = raised.expect("zero-use counter remains complete above default");
+                    assert!(raised.incomplete.is_none(), "{kind} {counter:?}");
+                    assert_eq!(raised.usage.get(counter), 0, "{kind} {counter:?}");
+                    continue;
+                }
+                let default_ceiling = TemporalEvidenceLimits::default().ceiling(counter);
+                let raised_ceiling = default_ceiling.saturating_add(1);
+                if raised_ceiling > default_ceiling {
+                    let mut raised = asked.clone();
+                    raised.limits =
+                        TemporalEvidenceLimits::default().with_ceiling(counter, raised_ceiling);
+                    let (raised, _) = run(&package, &clause, &raised);
+                    let raised = raised.expect("a cap above default yields a complete result");
+                    assert!(raised.incomplete.is_none(), "{kind} {counter:?}");
+                    assert_eq!(raised.truth, result.truth, "{kind} {counter:?}");
+                    assert_eq!(raised.support, result.support, "{kind} {counter:?}");
+                    assert_eq!(raised.subject, result.subject, "{kind} {counter:?}");
+                    assert_ne!(
+                        raised.result_identity, result.result_identity,
+                        "the changed {counter:?} ceiling participates in result identity"
+                    );
+                }
+                for ceiling in [0, used, used + 1] {
+                    let mut funded = asked.clone();
+                    funded.limits =
+                        TemporalEvidenceLimits::default().with_ceiling(counter, ceiling);
+                    let (funded, _) = run(&package, &clause, &funded);
+                    let funded = funded.expect("funded result");
+                    if ceiling == 0 {
+                        let Some(EvidenceIncomplete::Limit(reached)) = &funded.incomplete else {
+                            panic!("{kind} {counter:?}=0: expected typed stop");
+                        };
+                        assert_eq!(reached.counter, counter, "{kind}");
+                        assert_eq!(funded.usage.get(counter), 0, "{kind}");
+                        assert!(funded.truth.is_none(), "{kind}");
+                    } else {
+                        assert!(funded.incomplete.is_none(), "{kind} {counter:?}={ceiling}");
+                        assert_eq!(funded.truth, result.truth, "{kind} {counter:?}={ceiling}");
+                        assert_eq!(
+                            funded.support, result.support,
+                            "{kind} {counter:?}={ceiling}"
+                        );
+                    }
+                }
+                let mut stopped = asked.clone();
+                stopped.limits = TemporalEvidenceLimits::default().with_ceiling(counter, used - 1);
+                let (stopped, _) = run(&package, &clause, &stopped);
+                let stopped = stopped.expect("an Ok result");
+                let Some(EvidenceIncomplete::Limit(reached)) = &stopped.incomplete else {
+                    panic!(
+                        "{kind}: expected a typed counter stop, got {:?}",
+                        stopped.incomplete
+                    );
+                };
+                assert_eq!(reached.counter, counter, "{kind}");
+                assert_eq!(reached.value, used - 1, "{kind}");
+                if counter.kind() == CounterKind::Cumulative {
+                    assert_eq!(stopped.usage.get(counter), used - 1, "{kind} {counter:?}");
+                } else {
+                    assert!(
+                        stopped.usage.get(counter) <= used - 1,
+                        "{kind} {counter:?}: a denied peak charge was retained"
+                    );
+                }
+                assert!(stopped.truth.is_none(), "{kind}");
+                assert_eq!(stopped.subject, expected, "{kind}");
+            }
         }
     }
     assert!(called >= KINDS.len(), "every package answered a call");

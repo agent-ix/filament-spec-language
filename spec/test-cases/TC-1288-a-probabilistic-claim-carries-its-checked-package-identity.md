@@ -15,7 +15,7 @@ Verify that the checked-package producer emits one local
 included `CheckedProbabilisticClaim`, writes one matching
 `probabilistic_claims` row, that the checked claim exposes the same
 producer-owned identity, and that the FR-421 causes carry it. Scope:
-FR-498-AC-1 to FR-498-AC-8.
+FR-498-AC-1 to FR-498-AC-9.
 
 ## Test Procedure
 
@@ -36,10 +36,14 @@ FR-498-AC-1 to FR-498-AC-8.
    written identically.
 3. Check an elapsed-time claim and a punctual-interval claim, each sharing
    its name with another claim, and read their exact verdicts and the
-   selected claim's `{node, occurrence}` locus; check FR-498-AC-8's bounded
-   punctual claim, its nested and root `eventually[2 ms, *]` claims and a
-   `TimedFormShape` cause on the form, and read each cause's member path and
-   FR-331 wire locus.
+   selected claim's `{node, occurrence}` locus. Check FR-498-AC-8's bounded
+   nested punctual claim for an exact verdict. For FR-498-AC-9, submit both
+   the root `eventually[2 ms, *]` form and the nested
+   `always[0 ms, 4 ms] eventually[2 ms, *]` form to S3; read the refusal code,
+   cause and interval location, and verify neither proceeds to EN-5 or gets a
+   package claim identity or formula member path. Separately check FR-498-AC-3's
+   engine-produced `TimedFormShape` cause on the form and read its member path
+   and FR-331 wire locus.
 4. Read the emitted package with the strict reader and check every row names
    a node of the emitted graph with that node's own `claim` occurrence.
 5. Emit FR-498-AC-5's three claims; read each claim node's body and path;
@@ -62,7 +66,9 @@ FR-498-AC-1 to FR-498-AC-8.
 Tag the test `#[trace("FR-498-AC-1", "FR-498-AC-2", "FR-498-AC-3", "FR-498-AC-4", "TC-1288")]`
 and the step 5, 6 and 7 tests `#[trace("TC-1288", "FR-498-AC-5")]`,
 `#[trace("TC-1288", "FR-498-AC-6")]` and `#[trace("TC-1288", "FR-498-AC-7")]`;
-the step 3 test also carries `#[trace("TC-1288", "FR-498-AC-8")]`.
+the bounded nested step 3 test also carries
+`#[trace("TC-1288", "FR-498-AC-8")]`, and the two S3 profile refusals carry
+`#[trace("TC-1288", "FR-498-AC-9")]`.
 Vectors are referenced by FSpec case ID, never copied.
 
 ## Expected Results
@@ -76,11 +82,14 @@ Vectors are referenced by FSpec case ID, never copied.
   identity; moving, reformatting and commenting leave written content equal
   and a changed token makes it differ; the identical twins have distinct
   identities.
-- Step 3: the elapsed-time, punctual-interval and bounded punctual claims
-  settle exact verdicts against the selected claim's `{node, occurrence}`,
-  never `unsupported` and never `PunctualInterval`; each `TimedFormShape`
-  cause carries that locus and no other claim's, and the member paths and
-  wire loci FR-498-AC-8 states.
+- Step 3: the elapsed-time, punctual-interval and bounded nested punctual
+  claims settle exact verdicts against the selected claim's
+  `{node, occurrence}`, never `unsupported` and never `PunctualInterval`.
+  Both root and nested `[2 ms, *]` forms refuse at S3 as
+  `unsupported_construct`/`expression-form` at the unbounded interval, before
+  EN-5, and have no admitted claim identity or formula member path. The
+  engine-produced `TimedFormShape` cause on the form carries its claim locus
+  and the member path FR-498-AC-3 specifies; no other claim's locus is used.
 - Step 4: the strict reader admits the package and every row joins its node
   and occurrence.
 - Steps 5 to 7: the bindings, paths, changed and unchanged `node_id`s and

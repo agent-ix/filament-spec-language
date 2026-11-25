@@ -2322,6 +2322,17 @@ fn fair_eventual_value_bounds_are_independently_checked() {
             Ok(ExactProbabilityCertificateCheck::Accepted(_))
         ));
     }
+    for bytes in [
+        terminal.exact_certificate_document(),
+        terminal.exact_counterpart_document(),
+    ] {
+        let document: serde_json::Value =
+            serde_json::from_slice(bytes.expect("value-bound document")).expect("canonical JSON");
+        assert_eq!(
+            document["objective"]["base"]["profile"],
+            "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
+        );
+    }
     let mut forged: serde_json::Value = serde_json::from_slice(
         terminal
             .exact_certificate_document()
@@ -2449,7 +2460,7 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
         serde_json::from_slice(upper_bytes).expect("upper value-bound JSON is canonical");
     assert_eq!(
         upper["objective"]["base"]["profile"],
-        "filament.probability-objective/fair-mdp-eventual/v1"
+        "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
     );
     assert_eq!(upper["objective"]["base"]["optimization"], "minimum");
     let targets = upper["objective"]["base"]["targets"]
@@ -3622,13 +3633,12 @@ const NEGOTIATED: &str = "probabilistic Seeded using ev on M over (p: M::Proc) u
      probabilistic Unseeded using ev on M over (p: M::Proc) under Even on origin \
      { probability >= 0.9 [ always[0,3] holds(not p.done) ] }";
 
-/// Checks FR-195-AC-4, refusal half only (TC-630 step 4; the manifest and the
-/// FR-192 settlement are not built): a claim only exact evidence decides is
+/// FR-195-AC-4 (TC-630 step 4): a claim only exact evidence decides is
 /// refused at negotiation, before any sample, with the cause that names why:
 /// `EveryScheduler` for `FairTerminates`, `ExactOnlyForm` for an
 /// expected-reward claim under a workload, `MissingConfidence` for a bounded
 /// event with no confidence parameters; a statistical claim passes.
-#[trace("TC-630")]
+#[trace("TC-630", "FR-195-AC-4")]
 #[test]
 fn statistical_evidence_is_refused_for_a_claim_only_exact_evidence_decides() {
     use fsl_analyze::statistical::require_statistical;
