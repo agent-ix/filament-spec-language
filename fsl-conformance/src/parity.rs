@@ -1468,6 +1468,20 @@ fn corpus_input_value(
         value.get("kind").and_then(serde_json::Value::as_str),
         value_type,
     ) {
+        // The corpus `CallInput` scalar forms, decoded by their tag as the
+        // FR-350 adapter decodes them (FR-563 "Parity cases"); a value of
+        // another type than the parameter's is left to call admission.
+        (Some("boolean"), _) => value
+            .get("value")
+            .and_then(serde_json::Value::as_bool)
+            .map(Value::Boolean)
+            .ok_or(()),
+        (Some("integer"), _) => value
+            .get("decimal")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|spelling| spelling.parse::<Integer>().ok())
+            .map(Value::Integer)
+            .ok_or(()),
         (Some("population"), filament_exact::ValueType::Population(maximum)) => {
             let name = value
                 .get("name")

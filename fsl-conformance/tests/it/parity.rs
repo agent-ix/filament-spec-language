@@ -1246,6 +1246,30 @@ fn prepare_failure_and_all_unsupported_are_reported() {
         .any(|finding| finding.kind == FindingKind::EmptyComparison));
 }
 
+/// A coverage every construct of `let_corpus`'s entries lies in: `usesLet`
+/// narrows its sum to the declared result, so the conversion is listed too.
+fn let_coverage() -> BackendCoverage {
+    BackendCoverage {
+        expression_forms: ["literal", "name", "operator", "let"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        value_types: [CoverageValueType::Integer].into_iter().collect(),
+        operations: BTreeSet::from([
+            CoverageOperation {
+                operator: CoverageOperator::Add,
+                operand_types: vec![CoverageValueType::Integer, CoverageValueType::Integer],
+                result_type: CoverageValueType::Integer,
+            },
+            CoverageOperation {
+                operator: CoverageOperator::Other("coerce".to_owned()),
+                operand_types: vec![CoverageValueType::Integer],
+                result_type: CoverageValueType::Integer,
+            },
+        ]),
+    }
+}
+
 /// TC-1387 FR-563-AC-4: an unsupported `let` entry is a coverage gap only
 /// when the backend declares `let` in its coverage; other entries still run.
 #[trace("TC-1387", "FR-563-AC-4")]
@@ -1253,18 +1277,7 @@ fn prepare_failure_and_all_unsupported_are_reported() {
 fn coverage_gap_depends_on_declared_forms() {
     let corpus = let_corpus();
     let unsupported = LetUnsupportedBackend;
-    let mut coverage = BackendCoverage {
-        expression_forms: ["literal", "name", "operator", "let"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        value_types: [CoverageValueType::Integer].into_iter().collect(),
-        operations: BTreeSet::from([CoverageOperation {
-            operator: CoverageOperator::Add,
-            operand_types: vec![CoverageValueType::Integer, CoverageValueType::Integer],
-            result_type: CoverageValueType::Integer,
-        }]),
-    };
+    let mut coverage = let_coverage();
     let backends: [BackendEntry<'_>; 1] =
         [(ExecutionBackendChoice::Jit, &unsupported, Some(&coverage))];
     let gap = run_parity(
@@ -1318,18 +1331,7 @@ fn coverage_gap_depends_on_declared_forms() {
 #[test]
 fn coverage_gap_ignores_which_construct_the_backend_names() {
     let corpus = let_corpus();
-    let mut coverage = BackendCoverage {
-        expression_forms: ["literal", "name", "operator", "let"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        value_types: [CoverageValueType::Integer].into_iter().collect(),
-        operations: BTreeSet::from([CoverageOperation {
-            operator: CoverageOperator::Add,
-            operand_types: vec![CoverageValueType::Integer, CoverageValueType::Integer],
-            result_type: CoverageValueType::Integer,
-        }]),
-    };
+    let mut coverage = let_coverage();
     let gaps = |backend: NamingBackend, coverage: &BackendCoverage| {
         let backends: [BackendEntry<'_>; 1] =
             [(ExecutionBackendChoice::Jit, &backend, Some(coverage))];
