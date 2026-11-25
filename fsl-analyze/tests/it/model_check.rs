@@ -32,6 +32,7 @@ use fsl_replay::{
 use fsl_route::reductions::Reductions;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
+use serde_json::Value;
 
 use crate::counter::{
     document, document_with_ranged_parameter, instance, package_with_clauses,
@@ -71,8 +72,34 @@ fn world_with(document: Vec<u8>, body: &str, starts: &[&[(&str, i64)]]) -> World
 }
 
 fn temporal_worker_fixture(formula: &str) -> crate::liveness::Fixture {
+    // The expected counter path is monotone for each object. The shared
+    // counter document's type-wide `modifies value` frame also permits an
+    // operation on one receiver to change every other counter, so this
+    // fixture scopes the write to the receiver it invokes.
+    fn receiver_scope(value: &mut Value) -> usize {
+        match value {
+            Value::Object(members) => {
+                let mut changed = 0;
+                if let Some(Value::Object(frame)) = members.get_mut("frame") {
+                    if let Some(modifies) = frame.remove("modifies") {
+                        frame.insert("modifies_receiver".to_owned(), modifies);
+                        frame.insert("modifies".to_owned(), Value::Array(Vec::new()));
+                        changed += 1;
+                    }
+                }
+                changed + members.values_mut().map(receiver_scope).sum::<usize>()
+            }
+            Value::Array(items) => items.iter_mut().map(receiver_scope).sum(),
+            _ => 0,
+        }
+    }
+    let mut document: Value = serde_json::from_slice(&document(false)).expect("counter document");
+    assert!(
+        receiver_scope(&mut document) > 0,
+        "the counter frame is scoped"
+    );
     crate::liveness::fixture(
-        document(false),
+        document.to_string().into_bytes(),
         CONTRACT,
         "",
         formula,
