@@ -35,6 +35,7 @@ mod dimension_equivalence;
 mod expression_depth;
 mod intervals;
 mod leaves;
+mod member_operands;
 mod node_keys;
 mod rows;
 pub(crate) mod view;

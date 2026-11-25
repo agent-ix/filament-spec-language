@@ -7968,8 +7968,9 @@ fn is_map(content: &NodeContent) -> bool {
 /// key). A `reference`, `option` or collection type names its target; a
 /// compound unit names each `(unit, exponent)` term. A value, expression,
 /// temporal, hybrid or bounded-domain node names what its body walks: binding
-/// names, a literal's type node and text, referenced nodes, an application's operation identity, a
-/// fairness member's declaration and name, its laws' definition identities,
+/// names, a literal's type node and text, referenced nodes, an application's operation identity, its
+/// member's operands (declaring node, name, population, alias or interval,
+/// as the member kind has them), its laws' definition identities,
 /// its operator and result type, and last the node's semantic type. Every
 /// other derived node has no operands: equal content is one node, and a
 /// repeat of its path takes the next producer ordinal. Expression and temporal
@@ -8445,25 +8446,75 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                     interval: Some(interval),
                 }) => walk.text(&interval_spelling(*interval)),
                 Some(Member::TimedInterval(timed)) => walk.text(&timed_interval_spelling(timed)),
-                // FSpec FR-322 "Named type arguments": an alias is part of
-                // the application's identity, after the declaration operand.
-                Some(Member::TypeArgument {
+                // FSpec FR-322 "Named type arguments": the declaration is the
+                // member's operand, and an alias follows it.
+                Some(Member::TypeArgument { declaration, alias }) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                    if let Some(alias) = alias {
+                        walk.text(&alias.node);
+                    }
+                }
+                // FSpec FR-322: a model member is named by its declaring node
+                // and its name, and a history read's path holds both.
+                Some(
+                    Member::Operation { declaration, name } | Member::History { declaration, name },
+                ) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                    walk.text(name.as_str());
+                }
+                // FSpec FR-322 "Population link of a `reaches`": the end is
+                // named by the relationship node and its role, and the
+                // population follows when present. `destination_type` is no
+                // operand: its node may be absent from the graph.
+                Some(Member::RelationshipEnd {
                     declaration,
-                    alias: Some(alias),
+                    name,
+                    destination_type: _,
+                    population,
                 }) => {
                     walk.push(PathSegment::Node(declaration.clone()));
-                    walk.text(&alias.node);
+                    walk.text(name.as_str());
+                    if let Some(population) = population {
+                        walk.push(PathSegment::Node(population.clone()));
+                    }
                 }
+                // FSpec FR-322 states no path spelling for a position index,
+                // so the declaration is the only operand of a position.
+                Some(
+                    Member::Position {
+                        declaration,
+                        position: _,
+                    }
+                    | Member::Element { declaration },
+                ) => walk.push(PathSegment::Node(declaration.clone())),
+                // FSpec FR-322: an operator name is a string operand.
+                Some(Member::ProfileOperator { operator }) => walk.text(operator.as_str()),
+                // FSpec FR-322: a field member's operands are its declaring
+                // node and its field name, so two fields are two nodes.
                 Some(Member::Field {
-                    explicit_deref: Some(explicit_deref),
-                    ..
+                    declaration,
+                    name,
+                    explicit_deref,
+                    population,
                 }) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                    walk.text(name.as_str());
                     // FR-322 read_form is a checked semantic distinction,
                     // so equal operands and result types must not alias its
                     // bare and explicit source forms under one node key.
-                    walk.text(if *explicit_deref { "true" } else { "false" });
+                    if let Some(explicit_deref) = explicit_deref {
+                        walk.text(if *explicit_deref { "true" } else { "false" });
+                    }
+                    // FSpec FR-322 "Population link of a `reaches`": the
+                    // population is part of the path when present.
+                    if let Some(population) = population {
+                        walk.push(PathSegment::Node(population.clone()));
+                    }
                 }
-                _ => {}
+                // A state clause's path is built by `derived_operands`, and an
+                // unbounded temporal operator contributes no interval operand.
+                Some(Member::StateClause { .. } | Member::TemporalInterval { interval: None })
+                | None => {}
             }
             for law in operation.laws() {
                 walk.text(&law.definition.identity);

@@ -15,8 +15,9 @@ use super::reachability::{applications, lower_over, model_node, Lowered};
 use super::*;
 
 /// The structural key of the unbounded `reaches(self, self, trail)` node over
-/// `Order`, retaining both operand positions (TC-1047 row 3).
-const TRAIL_REACHES_KEY: &str = "NodeKey(pkg:[\"expression\",\"reachability\",node(pkg:[\"value\",\"parameter\",\"name\",node(pkg:[\"scalar_type\",\"text\",]:0),\"self\",\"level\",node(pkg:[\"scalar_type\",\"integer\",]:0),\"0\",node(pkg:[\"composite_type\",\"reference\",node(acme/orders:[\"model\",\"object_type\",\"ix://acme/orders/Order\",]:0),]:0),]:0),node(pkg:[\"value\",\"parameter\",\"name\",node(pkg:[\"scalar_type\",\"text\",]:0),\"self\",\"level\",node(pkg:[\"scalar_type\",\"integer\",]:0),\"0\",node(pkg:[\"composite_type\",\"reference\",node(acme/orders:[\"model\",\"object_type\",\"ix://acme/orders/Order\",]:0),]:0),]:0),\"filament.op.model.reaches_field\",\"reaches\",node(pkg:[\"scalar_type\",\"boolean\",]:0),node(pkg:[\"scalar_type\",\"boolean\",]:0),]:0)";
+/// `Order`: both operand positions, then FSpec FR-322's member operands, the
+/// declaring model node and the field name.
+const TRAIL_REACHES_KEY: &str = "NodeKey(pkg:[\"expression\",\"reachability\",node(pkg:[\"value\",\"parameter\",\"name\",node(pkg:[\"scalar_type\",\"text\",]:0),\"self\",\"level\",node(pkg:[\"scalar_type\",\"integer\",]:0),\"0\",node(pkg:[\"composite_type\",\"reference\",node(acme/orders:[\"model\",\"object_type\",\"ix://acme/orders/Order\",]:0),]:0),]:0),node(pkg:[\"value\",\"parameter\",\"name\",node(pkg:[\"scalar_type\",\"text\",]:0),\"self\",\"level\",node(pkg:[\"scalar_type\",\"integer\",]:0),\"0\",node(pkg:[\"composite_type\",\"reference\",node(acme/orders:[\"model\",\"object_type\",\"ix://acme/orders/Order\",]:0),]:0),]:0),\"filament.op.model.reaches_field\",node(acme/orders:[\"model\",\"object_type\",\"ix://acme/orders/Order\",]:0),\"trail\",\"reaches\",node(pkg:[\"scalar_type\",\"boolean\",]:0),node(pkg:[\"scalar_type\",\"boolean\",]:0),]:0)";
 
 const BOUND: &str = "bound OrdersBound on M::orders [4]";
 const FAV_LOOP: &str = "invariant FavLoop using v on M::Person at current \
@@ -256,9 +257,9 @@ fn an_unbounded_field_edge_keeps_its_member_and_node_identity() {
         );
         assert_eq!(population_nodes(&lowered.wire), Vec::<&Value>::new());
     }
-    // The application's node id is the one TC-1047 row 3 records: the
-    // structural key preserves both self operands and the result and semantic
-    // type positions, so an accidental change to any field member fails.
+    // The application's node id holds no population operand: the structural
+    // key preserves both self operands, the member's declaring node and field
+    // name, and the result and semantic type positions.
     let lowered = lower(&Populations::R, &loop_over("trail"));
     let wire = &lowered.wire;
     let id = &applications(wire, "filament.op.model.reaches_field")[0]["node_id"];
@@ -267,6 +268,23 @@ fn an_unbounded_field_edge_keeps_its_member_and_node_identity() {
         .key_of_value(id)
         .unwrap();
     assert_eq!(format!("{key:?}"), TRAIL_REACHES_KEY);
+}
+
+/// FSpec FR-322: the field name is a member operand, so reaches over two
+/// fields between one pair of operands have two structural keys, each its own
+/// in a package that holds only that field's clause.
+#[test]
+fn reaches_over_two_fields_are_two_nodes() {
+    let key_over = |field: &str| {
+        let lowered = lower(&Populations::R, &loop_over(field));
+        let id = &field_application(&lowered)["node_id"];
+        let key = fsl_semantics::check::wire_id::WireGraph::of_package_value(&lowered.wire)
+            .unwrap()
+            .key_of_value(id)
+            .unwrap();
+        format!("{key:?}")
+    };
+    assert_ne!(key_over("chief"), key_over("trail"));
 }
 
 /// Row 21 (FR-380-AC-14): two populations covering `T` refuse at the
