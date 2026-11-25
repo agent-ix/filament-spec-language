@@ -110,11 +110,8 @@ fn the_model_reader_cohort_admits_dimensions_and_scaled_units() {
     let errors = read_records("acme/orders", &invalid)
         .expect_err("the cohort must retain the owner's unresolved-unit refusal");
     assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].code, fsl_foundation::Code::InvalidModelBinding);
-    assert!(
-        errors[0].detail.contains("UNRESOLVED_UNIT_REF"),
-        "{errors:?}"
-    );
+    assert_eq!(errors[0].code, fsl_foundation::Code::MissingDeclaration);
+    assert_eq!(errors[0].cause.as_str(), "missing-name");
 }
 
 fn package_with_dimension_and_unit_graph() -> Value {
