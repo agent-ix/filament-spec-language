@@ -32,6 +32,7 @@ mod reaches_optional_reference;
 mod request_diagnostics;
 mod request_overrides;
 mod revision_validation;
+mod review_process_extraction;
 mod run_requirement_items;
 mod run_text_witness;
 mod selection_text;
