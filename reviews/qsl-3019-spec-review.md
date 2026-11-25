@@ -24,3 +24,12 @@ Ticket: QSL-3019. This is a base spec review (integrity and consistency) of the 
 | --- | --- | --- | --- |
 | FND-001 | low | FR-136 now requires each compensation template to have its own `cfail`, `ctimeout` and `cexpire` rows, but no FR-136 criterion states it. The only evidence, `each_compensation_outcome_class_needs_its_own_row`, is traced to FSpec FR-432-AC-25 alone, so the FSL matrix shows nothing for the new clause. | spec/functional/FR-136-check-a-refinement-s-step-rows.md:223-225 |
 | FND-002 | low | The PR records a contradiction in FSpec FR-432-AC-25. TC-380's `Pay` is `on origin`, yet the criterion requires a `step activate M::Pay` row, a class that exists only for `on each`, and its source lacks `population` and `object` rows. The PR says only that an FSpec correction "is to be filed", with no ticket id. Until the correction is filed, the AC-25 test's two-variant reading is untracked. | fsl-semantics/src/check/refinement/protocol/tests.rs:1195-1240 |
+
+## Dispositions
+
+Round 1 at `52ab15215f39a4552abc526dfb3444ce44d787b0`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 4dfd9a865c adds FR-136-AC-14 and TC-541 step 14, and tags `each_compensation_outcome_class_needs_its_own_row` with `TC-541`, `FR-136-AC-14`. The test asserts exactly what the AC states, and also the `cend` removal. |
+| FND-002 | fixed | QSL-3287 (Backlog) tracks the FSpec FR-432-AC-25 correction, and the PR body names it. |

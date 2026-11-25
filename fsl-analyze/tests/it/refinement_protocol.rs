@@ -3200,7 +3200,7 @@ fn an_internal_cexpire_entry_closes_over_expiry_only() {
 
 /// A compensation step's observation label names its class, the protocol
 /// spelled once.
-#[trace("TC-553", "FR-148-AC-11")]
+#[trace("TC-553", "FR-148", "FSpec-FR-379")]
 #[test]
 fn each_compensation_step_is_labelled_with_its_class() {
     let traces = compensated_run(

@@ -2524,6 +2524,7 @@ mod cas_fixture;
 #[cfg(test)]
 mod tests {
     use fsl_eval::model_subject::ModelInstance;
+    use fsl_eval::simulation::protocol::StepKind;
     use ix_trace_rs::trace;
 
     use super::cas_fixture::{failing_compensation, key, SPEC, UNLIMITED};
@@ -2589,6 +2590,10 @@ mod tests {
             panic!("bump passes");
         };
 
+        let Taken::ProtocolTraces(paths) = taken.as_ref().clone() else {
+            panic!("bump takes protocol traces");
+        };
+
         let ProtocolHiddenGraph::Built(_, steps) =
             protocol_hidden_graph(protocol, &[*initial, *after], &[*taken])
                 .expect("the candidate graph rebuilds")
@@ -2606,6 +2611,22 @@ mod tests {
             panic!("one class per constraint: {classes:?}");
         };
         let rows: Vec<_> = steps.iter().flatten().collect();
+        let mut failed = 0;
+        for path in paths.iter().filter(|path| {
+            path.transitions
+                .iter()
+                .any(|step| step.kind() == StepKind::CFail)
+        }) {
+            let end = path.candidate_keys.last().unwrap_or(&path.start_key);
+            assert!(
+                rows.iter().any(|row| row.1 == path.start_key
+                    && row.3 == *end
+                    && row.5.len() + 1 == path.transitions.len()),
+                "a path that fails the compensation of inc has no row"
+            );
+            failed += 1;
+        }
+        assert!(failed > 0, "some path fails the compensation of inc");
         let applied: Vec<&ModelTransition> = rows
             .iter()
             .flat_map(|row| {

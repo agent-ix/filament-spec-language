@@ -34,3 +34,11 @@ Plan completion: not assessed
 - Matrix: computed at head; FR-136 (13 ACs, 2 untagged pre-existing), FR-147 (16, 1 untagged pre-existing), FR-148 (14, all tagged).
 - Semantic review: skipped (not requested).
 - Plan completion: not assessed
+
+## Dispositions
+
+Round 1 at `52ab15215f39a4552abc526dfb3444ce44d787b0`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 4dfd9a865c tags the test `TC-657`, `FR-212-AC-5`, and the new AC-5 states the operation class that the test asserts. |

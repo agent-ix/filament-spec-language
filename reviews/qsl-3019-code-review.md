@@ -41,3 +41,19 @@ Focused runs at head: see `## Coverage`.
 
 - Re-run at head, name-filtered (log `sr-3885/tests.log`): fsl-analyze 17 selected, 14 pass, 3 fail (the three known failures; their fixtures declare no compensation template); fsl-semantics lib `check::refinement::protocol::tests` 36/36.
 - Not run: workspace or whole-crate gates (the lead's slot-B check owns these), fsl-package and fsl-eval filters (the coder reports 13/13 and 4/4), and no `on each` abstract-protocol liveness case.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | `the_replay_candidate_graph_applies_no_failed_compensation_attempt` never asserts that a rebuilt row holds a `cfail` step. It asserts that `add` is applied, that `inc` is never applied, and that `inc` is enabled at some hop. If `reaches` dropped every failing path, the `inc` assertion would pass vacuously. Only the coder's out-of-tree red run shows the test can fail. The model-check twin guards this with `failed > 0` over paths that contain a `CFail`. | fsl-replay/src/model_check/refinement_replay.rs:2606-2624 |
+| FND-004 | low | `each_compensation_step_is_labelled_with_its_class` is tagged `FR-148-AC-11`, which states how a refusal violation and a terminal-success mismatch are reported. The test builds no refusal or mismatch; it asserts only the class text that `protocol_observation_label` gives each compensation step. That evidences FR-379 label construction, so the binding is loose. | fsl-analyze/tests/it/refinement_protocol.rs:3202-3205 |
+
+## Dispositions
+
+Round 1 at `52ab15215f39a4552abc526dfb3444ce44d787b0`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 4dfd9a865c adds `ProtocolTransition::applied_application` (Attempt and CAttempt only). `AbstractClass::is_taken_by` (both protocol arms, through `is_taken_along`), `protocol_path_label`, all three replay hidden-graph reads, the replay operation row and the fsl-eval operation class now read it. Each reader has a one-step `on each` test that fails if `inc` is counted taken. |
+| FND-002 | fixed | 4dfd9a865c adds `an_internal_template_entry_closes_over_compensation_attempts_only`, `an_internal_cend_entry_closes_over_the_end_of_a_failed_thread` and `each_compensation_step_is_labelled_with_its_class`. The last asserts all five label classes spelled with the protocol once. |
