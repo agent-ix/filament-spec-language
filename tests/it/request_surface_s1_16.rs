@@ -677,15 +677,15 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
     );
 }
 
-/// FR-1038-AC-2, FSpec FR-824-AC-3: the plan is selected by declared name,
-/// an omitted name runs the only plan, and bad selections or inputs refuse at
-/// their `/verification_plan` pointers. The supplied initialization snapshot
-/// provides the finite universe its state subject requires (FR-120): one
-/// object over the narrowed domain, because an expansion holds one successor
-/// per joint valuation of every object's modified field.
+/// FR-1038-AC-2: the plan is selected by declared name, an omitted name runs
+/// the only plan, and a bad selection refuses at
+/// `/request/verification_plan/plan` with no outcome. The supplied
+/// initialization snapshot provides the finite universe its state subject
+/// requires (FR-120): one object over the narrowed domain, because an
+/// expansion holds one successor per joint valuation of every object's
+/// modified field.
 #[test]
 #[trace("TC-3018", "FR-1038-AC-2")]
-#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
     let directory = bump_directory(&one, &["c1"], true);
@@ -697,18 +697,21 @@ fn the_verification_plan_member_selects_one_plan_or_refuses() {
             "program": {"source": source("unit.native")},
             "verification_plan": {"initial": "s.json", "max_trace_length": 8}}}),
     );
-    assert_eq!(single_plan_value["verification_plan"]["plan"], "Release");
     assert_eq!(
-        single_plan_value["verification_plan"]["format"],
-        "filament.verification-plan-outcome/v1"
+        single_plan_value["verification_plan"]["plan"], "Release",
+        "{single_plan_value}"
     );
     assert_eq!(
-        single_plan_value["verification_plan"]["dispositions"]["safe"]["status"],
-        "refuted"
+        single_plan_value["verification_plan"]["format"], "filament.verification-plan-outcome/v1",
+        "{single_plan_value}"
     );
     assert_eq!(
-        single_plan_value["verification_plan"]["inputs"]["max_trace_length"],
-        8
+        single_plan_value["verification_plan"]["dispositions"]["safe"]["status"], "refuted",
+        "{single_plan_value}"
+    );
+    assert_eq!(
+        single_plan_value["verification_plan"]["inputs"]["max_trace_length"], 8,
+        "{single_plan_value}"
     );
     let (_, value) = run(
         &one,
@@ -721,33 +724,38 @@ fn the_verification_plan_member_selects_one_plan_or_refuses() {
            check sole claim Ready method model_based_test domain Config::ConfigVersion bound 5;\n\
          }}\n"
     );
-    for (unit, member, cause, pointer) in [
+    for (unit, member, code, cause) in [
         (
             two.as_str(),
             json!({}),
+            "invalid_runtime_input",
             "missing-member",
-            "/verification_plan/plan",
         ),
         (
             one.as_str(),
             json!({"plan": "Nope"}),
+            "missing_declaration",
             "missing-name",
-            "/verification_plan/plan",
         ),
         (
             one.as_str(),
             json!({"plan": "Never"}),
+            "missing_declaration",
             "missing-name",
-            "/verification_plan/plan",
         ),
     ] {
         let (exit, value) = run(unit, true, ("verification_plan", member));
         assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], code, "{value}");
         refusal_names(&value, cause);
-        refusal_names(&value, pointer);
-        assert!(
-            value["verification_plan"].get("dispositions").is_none(),
+        assert_eq!(
+            refusal_path(&value),
+            "/request/verification_plan/plan",
             "{value}"
+        );
+        assert!(
+            value.get("verification_plan").is_none(),
+            "no outcome: {value}"
         );
     }
 }
