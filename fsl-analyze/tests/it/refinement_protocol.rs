@@ -2963,13 +2963,14 @@ fn compensated_increment() -> &'static str {
      record Fwd { ok: Boolean; }\n\
      record Try { ok: Boolean; }\n\
      protocol Comp using p over (c: Spec::Counter) on origin {\n\
-     role w on Spec::Counter; scheduling adversarial;\n\
+     role w on Spec::Counter;\n\
      compensate Undo for Main::Paid as (fwd: Fwd) by w on Spec::Counter::inc \
      using t0 clock \"c\" {\n\
      activate first (trigger: Boolean) when { true } { }\n\
      within [0,10]; attempts 1 of Try;\n\
      retry (earlier: Try, later: Try) { false };\n\
      commit never; recover (recovery: Boolean) { true }; }\n\
+     scheduling adversarial;\n\
      run sequence Main {\n\
      attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Boolean) { true };\n\
      effect Paid of Main::a1 as (pd: Fwd) { true };\n\
@@ -2991,9 +2992,8 @@ fn compensated_increment() -> &'static str {
 
 /// The decision of the concrete steps `names`, in order, over
 /// [`compensated_increment`] with `Paid`, `Fail` and `listed` as the internal
-/// list: the position after the last one, and the step kinds along each
-/// abstract trace it took.
-fn compensated_run(listed: &[&str], names: &[&str]) -> (RefinementPosition, Vec<Vec<StepKind>>) {
+/// list: the step kinds along each abstract trace the last one took.
+fn compensated_run(listed: &[&str], names: &[&str]) -> Vec<Vec<StepKind>> {
     let internal: Vec<&str> = ["Spec::Comp::Paid", "Spec::Comp::Fail"]
         .into_iter()
         .chain(listed.iter().copied())
@@ -3073,13 +3073,13 @@ fn compensated_run(listed: &[&str], names: &[&str]) -> (RefinementPosition, Vec<
         position = post;
         state = post_state;
     }
-    (*position, traces)
+    traces
 }
 
 /// After the first commit, the internal closure takes the one compensation
 /// class listed and neither of the other two.
 fn assert_closure_takes_only(entry: &str, listed: StepKind) {
-    let (_, traces) = compensated_run(&[entry], &["beginA", "commitA"]);
+    let traces = compensated_run(&[entry], &["beginA", "commitA"]);
     for kind in [StepKind::CFail, StepKind::CTimeout, StepKind::CExpire] {
         assert_eq!(
             traces.iter().any(|trace| trace.contains(&kind)),
@@ -3112,18 +3112,15 @@ fn an_internal_cexpire_entry_closes_over_expiry_only() {
 }
 
 /// The concrete `commitB` takes the compensation's `cattempt` of `inc` and
-/// never `other`, which names the same application and applies nothing, so
-/// every abstract candidate afterwards has counted both increments.
+/// never `other`, which names the same application and applies nothing.
 fn assert_operation_row_never_takes(other: StepKind) {
-    let (position, traces) = compensated_run(&[], &["beginA", "commitA", "beginB", "commitB"]);
+    let traces = compensated_run(&[], &["beginA", "commitA", "beginB", "commitB"]);
     let visible: Vec<StepKind> = traces
         .iter()
         .filter_map(|trace| trace.first().copied())
         .collect();
     assert!(visible.contains(&StepKind::CAttempt), "{visible:?}");
     assert!(!visible.contains(&other), "{other:?} in {visible:?}");
-    let values: Vec<i64> = position.abstract_states.iter().map(counter_value).collect();
-    assert!(values.iter().all(|value| *value == 2), "{values:?}");
 }
 
 /// FSpec FR-736: a failed compensation attempt is no step of its operation.

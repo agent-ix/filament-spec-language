@@ -1172,22 +1172,23 @@ fn pay(activation: &str) -> String {
     )
 }
 
-/// The unit refining the abstract protocol `Spec::Req`, one attempt `Ask` and
-/// a `finish`, by the concrete protocol `pay` with the step rows `rows`.
+/// The unit refining the abstract protocol `Req` of the model `A`, one attempt
+/// `Ask` and a `finish`, by the concrete protocol `pay` with the step rows
+/// `rows`.
 fn request_unit(pay: &str, rows: &str) -> String {
-    header(true).replace("model A =", "model Spec =")
+    header(true)
         + pay
-        + "protocol Req using pp over (k: Spec::Acc) on origin {\n\
-           role r on Spec::Acc;\n\
+        + "protocol Req using pp over (k: A::Acc) on origin {\n\
+           role r on A::Acc;\n\
            run sequence S {\n\
-           attempt Ask by r on Spec::Acc::add contracts [] as (asked: Boolean) { true };\n\
+           attempt Ask by r on A::Acc::add contracts [] as (asked: Boolean) { true };\n\
            }\n\
            finish F as (f: Boolean) { true };\n\
            }\n"
         + &format!(
-            "refinement R using t abstract Spec::Req concrete M {{\n\
-             population Spec::accs from M::nodes;\n\
-             object Spec::Acc from M::Node {{ total = self.total; }}\n\
+            "refinement R using t abstract A::Req concrete M {{\n\
+             population A::accs from M::nodes;\n\
+             object A::Acc from M::Node {{ total = self.total; }}\n\
              {rows}\n\
              }}\n"
         )

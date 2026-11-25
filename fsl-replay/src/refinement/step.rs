@@ -1277,11 +1277,12 @@ pub(crate) fn protocol_class(
         }
         StepKind::Fork => format!("fork {protocol}::{}", member?),
         StepKind::Join => format!("join {protocol}::{}", member?),
-        StepKind::CAttempt => format!("{protocol}::{}", transition.template()?),
-        StepKind::CEnd => format!("cend {protocol}::{}", transition.template()?),
-        StepKind::CFail => format!("cfail {protocol}::{}", transition.template()?),
-        StepKind::CTimeout => format!("ctimeout {protocol}::{}", transition.template()?),
-        StepKind::CExpire => format!("cexpire {protocol}::{}", transition.template()?),
+        // A transition's template name already carries its protocol.
+        StepKind::CAttempt => transition.template()?.to_owned(),
+        StepKind::CEnd => format!("cend {}", transition.template()?),
+        StepKind::CFail => format!("cfail {}", transition.template()?),
+        StepKind::CTimeout => format!("ctimeout {}", transition.template()?),
+        StepKind::CExpire => format!("cexpire {}", transition.template()?),
         StepKind::Duplicate => format!("duplicate {protocol}::{}", transition.channel_queue()?.0),
         StepKind::Lose => format!("lose {protocol}::{}", transition.channel_queue()?.0),
         StepKind::Spawn => format!("spawn {protocol}::{}", transition.role_instance()?.0),
