@@ -63,6 +63,14 @@ fn link(op: &str, threshold: &str) -> String {
     )
 }
 
+/// AC-1's chain with its claim and its draws under the workload `Even`.
+fn link_under_even(op: &str, threshold: &str) -> String {
+    let chain = link(op, threshold).replace("under every scheduler", "under Even");
+    format!(
+        "{chain}workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; weight Msg::send_c = 1; }}\n"
+    )
+}
+
 /// FR-1041-AC-1's `W` with no fairness set: the undelivered `s` has `wait`
 /// (`send_a`, back to `s`) and `go` (`send_b`, `1/2` each to delivered `g`
 /// and to the undelivered terminal `f`). Maximum `1/2`, minimum 0.
@@ -310,6 +318,33 @@ fn cyclic_chain_bounds_are_checked_by_their_claim_side_role() {
         doc["policy"] = Value::Null;
     });
     rejected(&null_policy, "malformed", at_member("policy"));
+}
+
+/// AC-1's chain stopped at `max_states` 2 omits `f` before the edges of `g`.
+/// Its explored prefix bounds the value by `1/2`, which proves nothing for
+/// `>= rational(9,10)`, so the item stops naming `max_states` (FR-203): the
+/// completion's rows are ordered, and the solve reads them.
+#[trace("TC-638", "FR-203-AC-14")]
+#[test]
+fn a_partial_chain_that_settles_nothing_stops_at_max_states() {
+    let source = link_under_even(">=", "rational(9,10)");
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 2;
+    let (requests, settlement) =
+        requests_with_mode(&source, SNAPSHOT, limits, domain().as_bytes(), false);
+    assert!(requests.is_empty(), "{requests:?}");
+    let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
+        panic!("a stopped item settles terminal: {settlement:?}");
+    };
+    assert_eq!(
+        record.value(),
+        &fsl_replay::TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
+            limit: fsl_replay::ModelCheckLimit::ExactProbMaxStates,
+            value: 2,
+            required: None,
+        }),
+        "{record:?}"
+    );
 }
 
 /// FR-1042-AC-21: a one-action cyclic MDP exceeds the rational budget but its

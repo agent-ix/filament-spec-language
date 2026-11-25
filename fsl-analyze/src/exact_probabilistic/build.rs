@@ -395,19 +395,23 @@ mod tests {
             timed_history: None,
         };
         let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
+        let edge = |from, probability| ProbEdge {
+            from: ProbStateId(from),
+            choice: ProductAction::TerminalStutter,
+            action: None,
+            draw: None,
+            to: ProbStateId(1),
+            probability,
+            elapsed: Rational::from_integer(Integer::zero()),
+            rewards: Vec::new(),
+        };
         let product = ProbProduct {
             states: vec![key(0), key(1)],
             kind: ProductKind::Dtmc,
-            edges: vec![ProbEdge {
-                from: ProbStateId(0),
-                choice: ProductAction::TerminalStutter,
-                action: None,
-                draw: None,
-                to: ProbStateId(1),
-                probability: half.clone(),
-                elapsed: Rational::from_integer(Integer::zero()),
-                rewards: Vec::new(),
-            }],
+            edges: vec![
+                edge(0, half.clone()),
+                edge(1, Rational::from_integer(Integer::one())),
+            ],
             initial: vec![(0, None, ProbStateId(0))],
             decided: Vec::new(),
             labels: vec![vec![false], vec![true]],
@@ -415,6 +419,7 @@ mod tests {
             fairness: Vec::new(),
         };
         let omitted = OmittedEdge {
+            kept_before: 1,
             choice: ProductAction::TerminalStutter,
             action: None,
             draw: None,
@@ -422,10 +427,11 @@ mod tests {
             rewards: Vec::new(),
         };
         let completed = lower_completion(&product, vec![(0, omitted)]);
+        // `outgoing` reads the row, so it holds only when the omitted edge
+        // stands before state 1's edge.
         let source_mass = completed
-            .edges
+            .outgoing(ProbStateId(0))
             .iter()
-            .filter(|edge| edge.from == ProbStateId(0))
             .fold(Rational::from_integer(Integer::zero()), |mass, edge| {
                 mass.add(&edge.probability)
             });
@@ -433,7 +439,8 @@ mod tests {
         assert_eq!(completed.states.len(), 3);
         assert_eq!(completed.labels[2], vec![false]);
         assert_eq!(completed.edges[1].to, ProbStateId(2));
-        assert_eq!(completed.edges.len(), 2);
+        assert_eq!(completed.edges[2].from, ProbStateId(1));
+        assert_eq!(completed.edges.len(), 3);
     }
 }
 
@@ -526,6 +533,9 @@ struct Planned {
 
 /// The solver edge for a successor omitted from partial exploration.
 struct OmittedEdge {
+    /// How many edges the product held when this one was omitted: its place
+    /// in exploration order.
+    kept_before: usize,
     choice: ProductAction,
     action: Option<ScheduledIdentity>,
     draw: Option<Vec<Value>>,
@@ -619,18 +629,27 @@ fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, OmittedEdge)>) -
     completed
         .decided
         .push((ProbStateId(sink), super::MonitorVerdict::Reject));
-    for (from, edge) in omitted {
-        completed.edges.push(ProbEdge {
-            from: ProbStateId(from),
-            choice: edge.choice,
-            action: edge.action,
-            draw: edge.draw,
-            to: ProbStateId(sink),
-            probability: edge.probability,
-            elapsed: Rational::from_integer(Integer::from(0_i64)),
-            rewards: edge.rewards,
-        });
+    let to_sink = |(from, edge): (usize, OmittedEdge)| ProbEdge {
+        from: ProbStateId(from),
+        choice: edge.choice,
+        action: edge.action,
+        draw: edge.draw,
+        to: ProbStateId(sink),
+        probability: edge.probability,
+        elapsed: Rational::from_integer(Integer::from(0_i64)),
+        rewards: edge.rewards,
+    };
+    // Each omitted edge returns to its place in exploration order, so the
+    // edges stay ordered by source and one choice's edges stay adjacent.
+    let kept = std::mem::take(&mut completed.edges);
+    let mut omitted = omitted.into_iter().peekable();
+    for (position, edge) in kept.into_iter().enumerate() {
+        while let Some(missing) = omitted.next_if(|(_, missing)| missing.kept_before <= position) {
+            completed.edges.push(to_sink(missing));
+        }
+        completed.edges.push(edge);
     }
+    completed.edges.extend(omitted.map(to_sink));
     completed
 }
 
@@ -1166,6 +1185,7 @@ impl Builder<'_, '_, '_, '_> {
                 self.omitted.push((
                     at,
                     OmittedEdge {
+                        kept_before: self.edges.len(),
                         choice: edge.choice,
                         action: edge.action,
                         draw: edge.draw,

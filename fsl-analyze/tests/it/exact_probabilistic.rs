@@ -3552,7 +3552,8 @@ fn partial(result: Result<ProbBuild, ProductRefusal>) -> (ProbProduct, ProbProdu
 
 /// FR-196 "The partial product": no edge of the prefix leaves it, and the
 /// completion keeps the prefix's states and edges, adds one rejecting state
-/// and sends each omitted edge to it with no row renormalized.
+/// and sends each omitted edge to it with no row renormalized, each row
+/// staying together in source order.
 fn assert_completion(product: &ProbProduct, lower: &ProbProduct) {
     let (states, edges) = (product.states.len(), product.edges.len());
     assert!(product
@@ -3566,24 +3567,31 @@ fn assert_completion(product: &ProbProduct, lower: &ProbProduct) {
         .iter()
         .any(|(state, verdict)| state.index() == states && *verdict == MonitorVerdict::Reject));
     assert!(lower.edges.len() > edges, "an edge was omitted");
-    assert_eq!(
-        format!("{:?}", &lower.edges[..edges]),
-        format!("{:?}", product.edges)
-    );
-    assert!(lower.edges[edges..]
+    let (omitted, kept): (Vec<_>, Vec<_>) = lower
+        .edges
         .iter()
-        .all(|edge| edge.from.index() < states && edge.to.index() == states));
+        .partition(|edge| edge.to.index() == states);
+    assert_eq!(format!("{kept:?}"), format!("{:?}", product.edges));
+    assert!(omitted.iter().all(|edge| edge.from.index() < states));
+    assert!(
+        lower
+            .edges
+            .windows(2)
+            .all(|pair| pair[0].from <= pair[1].from),
+        "the edges are ordered by source"
+    );
     // A DTMC row is a state's; an MDP row is one action's of a state.
-    let mut rows = BTreeMap::new();
-    for edge in &lower.edges {
+    let row = |edge: &ProbEdge| {
         let action = (lower.kind == ProductKind::Mdp).then(|| format!("{:?}", edge.choice));
-        let mass = rows
-            .entry((edge.from, action))
-            .or_insert_with(|| ratio(0, 1));
-        *mass = mass.add(&edge.probability);
-    }
-    for (row, mass) in rows {
-        assert_eq!(mass, ratio(1, 1), "row {row:?}");
+        (edge.from, action)
+    };
+    let mut seen = BTreeSet::new();
+    for run in lower.edges.chunk_by(|left, right| row(left) == row(right)) {
+        let mass = run
+            .iter()
+            .fold(ratio(0, 1), |mass, edge| mass.add(&edge.probability));
+        assert_eq!(mass, ratio(1, 1), "row {:?}", row(&run[0]));
+        assert!(seen.insert(row(&run[0])), "a row is split: {:?}", run[0]);
     }
 }
 
