@@ -358,7 +358,7 @@ fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
 }
 
 #[path = "../../fsl-semantics/tests/support/variant_fields.rs"]
-#[allow(dead_code, unused_imports)]
+#[allow(unused_imports)]
 mod variant_fields;
 
 #[trace("TC-1063", "FR-383-AC-60")]

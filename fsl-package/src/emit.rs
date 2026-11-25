@@ -8061,7 +8061,7 @@ fn emit_package_nodes(
         ids,
         graph
             .model_roots()
-            .zip(graph.model_root_locations().iter().map(|location| regions(location))),
+            .zip(graph.model_root_locations().iter().map(&regions)),
         &mut nodes,
         &mut source_map,
     )?;

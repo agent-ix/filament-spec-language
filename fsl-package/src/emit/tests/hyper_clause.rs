@@ -2362,18 +2362,17 @@ fn only_a_hyper_name_row_carries_the_clauses_source_unit() {
 #[trace("TC-1327", "FR-488-AC-31")]
 #[test]
 fn a_finite_hyper_clause_resolves_its_timestamp_unit_in_its_source_unit() {
-    let source = format!(
+    let source =
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          dimension Time;\n\
          unit ms : Time = rational(1, 1);\n\
-         record Obs {{ inp: Int[0, 3]; res: Int[0, 3]; }}\n\
+         record Obs { inp: Int[0, 3]; res: Int[0, 3]; }\n\
          hyper Fast using t over t in Obs bounded 3 forall trace a forall trace b \
-         {{ (a.inp = b.inp) implies (a.res = b.res) }}"
-    );
+         { (a.inp = b.inp) implies (a.res = b.res) }";
     let emission = emit_finite_with_clock(
-        &source,
+        source,
         std::iter::empty::<&[u8]>(),
         filament_contract_model::ClockConfiguration::TimestampedEvent {
             timestamp_unit: "ms".into(),
