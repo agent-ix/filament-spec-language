@@ -41,6 +41,7 @@ use fsl_replay::value_check::ValueTarget;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
+use ix_trace_rs::implements;
 use serde_json::{Map, json};
 
 use super::super::hyper_route::PackageRelationSubject;
@@ -445,6 +446,9 @@ struct ClauseRoute<'a> {
 /// package form yet, and for a package whose model-check input meets a form
 /// it does not read yet, before any engine runs;
 /// [`PackageRunError::Document`] as [`super::settle_run`] refuses or faults.
+#[implements("FSpec-FR-348-AC-3")]
+#[implements("FSpec-FR-290-AC-14")]
+#[implements("FR-335-AC-2")]
 pub fn settle_package_run(
     run: PackageRun<'_>,
     negotiate: &dyn Negotiate,

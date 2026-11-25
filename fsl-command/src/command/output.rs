@@ -7,6 +7,7 @@ use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
 use fsl_foundation::source::SourceReadCause;
 use fsl_foundation::Diagnostic;
+use ix_trace_rs::implements;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -175,6 +176,8 @@ fn diagnostic(value: &Diagnostic) -> types::Diagnostic<'_> {
     }
 }
 
+#[implements("FR-026-AC-3")]
+#[implements("FR-026-AC-4")]
 pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_json::Error> {
     let (stage, details) = match &error.cause {
         RunCause::Io { path, error } => (
