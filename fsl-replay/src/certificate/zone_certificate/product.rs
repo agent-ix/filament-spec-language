@@ -43,9 +43,9 @@ use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::check::CaptureSite;
 
 use super::{
-    at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule, Checker,
-    CheckerFault, ComponentReason, Components, FairnessMember, Halt, ProductMark, SilentMove, Step,
-    Successor, ZoneCertificateVerdict,
+    at_edge, at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule,
+    Checker, CheckerFault, ComponentReason, Components, FairnessMember, Halt, ProductMark,
+    SilentMove, Step, Successor, ZoneCertificateVerdict,
 };
 use crate::certificate::zone::Zone;
 use crate::proof_result::IncompleteCause;
@@ -696,12 +696,7 @@ impl<O> Checker<'_, '_, O> {
                 components.numbering[edge.to],
             ) {
                 if to < from {
-                    return reject(
-                        CertificateRule::BackwardEdge,
-                        CertificateLocus::ZoneEdge {
-                            edge: u64::try_from(index).unwrap_or(u64::MAX),
-                        },
-                    );
+                    return reject(CertificateRule::BackwardEdge, at_edge(index));
                 }
             }
         }

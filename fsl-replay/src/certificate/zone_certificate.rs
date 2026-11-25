@@ -119,7 +119,7 @@ use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
 use fsl_semantics::model::state::ModelState;
 
 use super::closure::CertificateRejection;
-use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome};
+use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome, FailedStep};
 use super::zone::{LuBounds, Zone, ZoneError};
 use super::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::node_occurrence;
@@ -859,6 +859,7 @@ fn malformed_verdict(member: CertificateMember) -> ZoneCertificateVerdict {
 fn at_edge(edge: usize) -> CertificateLocus {
     CertificateLocus::ZoneEdge {
         edge: u64::try_from(edge).unwrap_or(u64::MAX),
+        verdict: None,
     }
 }
 
@@ -3117,10 +3118,10 @@ impl<O> Checker<'_, '_, O> {
         let target = &certificate.nodes[edge.to];
         let taken = part.taken.get(index).and_then(Option::as_ref);
         let entry = target.locked && target.automaton_state == reserved;
-        let rule = if source.automaton_state == reserved {
+        let failure = if source.automaton_state == reserved {
             // The locked region, on concrete steps only.
             (taken.is_some() || target.automaton_state != reserved)
-                .then_some(CertificateRule::PostDiffers)
+                .then_some((CertificateRule::PostDiffers, None))
         } else {
             let Some(pre) = self.known.get(source.automaton_state).cloned().flatten() else {
                 // A node entered by a rejected edge has no position; that
@@ -3169,29 +3170,38 @@ impl<O> Checker<'_, '_, O> {
                     if holds {
                         self.know(target.automaton_state, expected_position.clone());
                     }
-                    (!holds).then_some(CertificateRule::PostDiffers)
+                    (!holds).then_some((CertificateRule::PostDiffers, None))
                 }
                 failed => {
                     self.unsound(&failed)?;
                     if !entry {
-                        Some(CertificateRule::StepFails)
+                        let verdict =
+                            FailedStep::of(failed, Some(step.transition())).ok_or_else(|| {
+                                Halt::Refusal(ZoneCertificateRefusal::Fault(
+                                    CheckerFault::RefinementStep,
+                                ))
+                            })?;
+                        Some((CertificateRule::StepFails, Some(Box::new(verdict))))
                     } else if taken == Some(&Taken::Failing) {
                         None
                     } else {
                         // The failing edge into the entry lists
                         // `Taken::Failing` (FR-245-AC-12): `None` or any
                         // other `taken` differs.
-                        Some(CertificateRule::PostDiffers)
+                        Some((CertificateRule::PostDiffers, None))
                     }
                 }
             }
         };
-        if let Some(rule) = rule {
+        if let Some((rule, verdict)) = failure {
             self.refinement_failures
                 .entry(node)
                 .or_insert(CertificateRejection {
                     rule,
-                    at: at_edge(index),
+                    at: CertificateLocus::ZoneEdge {
+                        edge: u64::try_from(index).unwrap_or(u64::MAX),
+                        verdict,
+                    },
                 });
         }
         Ok(())

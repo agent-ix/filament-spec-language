@@ -416,7 +416,10 @@ fn zone_loci_are_written_in_their_fr331_forms() {
         (
             CertificateRule::BackwardEdge,
             "backward-edge",
-            CertificateLocus::ZoneEdge { edge: 7 },
+            CertificateLocus::ZoneEdge {
+                edge: 7,
+                verdict: None,
+            },
             "edge",
             7,
         ),

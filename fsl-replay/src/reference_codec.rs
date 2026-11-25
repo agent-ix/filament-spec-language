@@ -11,6 +11,7 @@ use fsl_package::{CheckedPackage, CheckedPackageV2, ReferenceCatalog, ReferenceD
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::PopulationBinding;
+use serde::de::IgnoredAny;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
 mod json;
@@ -180,14 +181,11 @@ impl ReferenceScope<'_, '_, '_, '_> {
         transition: &ModelTransition,
     ) -> Result<Value, ReferenceCodecError> {
         self.scope.member(name, |scope| {
-            let mut wire = self.codec.encode_transition_in(transition, scope)?;
-            let operation = wire
-                .get_mut("operation")
-                .ok_or_else(|| scope.fail(ReferenceFailure::MalformedWire))?;
-            let spelling = crate::outcome::task_source_operation(operation, transition.operation());
-            let text = scope.member("operation", |s| s.text(spelling))?;
-            *operation = Value::String(text);
-            Ok(wire)
+            self.codec.encode_transition_in(
+                transition,
+                scope,
+                crate::outcome::task_source_operation,
+            )
         })
     }
 
@@ -295,7 +293,8 @@ impl ReferenceScope<'_, '_, '_, '_> {
         &mut self,
         value: &ModelTransition,
     ) -> Result<Value, ReferenceCodecError> {
-        self.codec.encode_transition_in(value, &mut self.scope)
+        self.codec
+            .encode_transition_in(value, &mut self.scope, identity_text)
     }
 
     /// Restore native canonical values before transition construction.
@@ -318,14 +317,11 @@ impl ReferenceScope<'_, '_, '_, '_> {
         &mut self,
         value: &ModelTransition,
     ) -> Result<Value, ReferenceCodecError> {
-        let mut wire = self.encode_transition(value)?;
-        let operation = wire
-            .get_mut("operation")
-            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
-        let spelling = crate::outcome::task_source_operation(operation, value.operation());
-        let text = self.scope.member("operation", |s| s.text(spelling))?;
-        *operation = Value::String(text);
-        Ok(wire)
+        self.codec.encode_transition_in(
+            value,
+            &mut self.scope,
+            crate::outcome::task_source_operation,
+        )
     }
 
     /// Restore a task-source arm; its operation must be a string.
@@ -1381,12 +1377,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         if map["type"].as_str() != Some("transition") {
             return Err(scope.fail(ReferenceFailure::MalformedWire));
         }
-        let operation = scope.member("operation", |s| {
-            if !matches!(map["operation"], Value::String(_) | Value::Object(_)) {
-                return Err(s.fail(ReferenceFailure::MalformedWire));
+        // A string holding JSON text is the identity text itself (FSpec FR-181).
+        let operation = scope.member("operation", |s| match &map["operation"] {
+            Value::String(text) if serde_json::from_str::<IgnoredAny>(text).is_ok() => s.text(text),
+            Value::String(_) | Value::Object(_) => {
+                let operation = s.json(&map["operation"], 0)?;
+                canonical_text(&operation, s, limits)
             }
-            let operation = s.json(&map["operation"], 0)?;
-            canonical_text(&operation, s, limits)
+            _ => Err(s.fail(ReferenceFailure::MalformedWire)),
         })?;
         let receiver = scope.member("receiver", |s| {
             if map["receiver"].is_null() {
@@ -1457,21 +1455,26 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             path: String::new(),
             max_depth,
         };
-        self.encode_transition_in(transition, &mut scope)
+        self.encode_transition_in(transition, &mut scope, identity_text)
     }
 
     fn encode_transition_in(
         &self,
         transition: &ModelTransition,
         scope: &mut Scope<'_, 'm>,
+        spell: for<'a> fn(&'a Value, &'a str) -> &'a str,
     ) -> Result<Value, ReferenceCodecError> {
-        let operation = scope.member("operation", |s| parse_text(transition.operation(), s))?;
-        if !matches!(operation, Value::String(_) | Value::Object(_)) {
+        let identity = scope.member("operation", |s| parse_text(transition.operation(), s))?;
+        if !matches!(identity, Value::String(_) | Value::Object(_)) {
             return scope.member(
                 "operation",
                 |s| Err(s.fail(ReferenceFailure::MalformedWire)),
             );
         }
+        // FSpec FR-181 writes the operation as one string.
+        let operation = scope.member("operation", |s| {
+            s.text(spell(&identity, transition.operation()))
+        })?;
         let receiver = scope.member("receiver", |s| match transition.receiver() {
             None => Ok(Value::Null),
             Some(text) => {
@@ -1494,7 +1497,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let mut out = Map::new();
         let tag = Value::String(scope.text("transition")?);
         scope.put(&mut out, "type", tag)?;
-        scope.put(&mut out, "operation", operation)?;
+        scope.put(&mut out, "operation", Value::String(operation))?;
         scope.put(&mut out, "receiver", receiver)?;
         scope.put(&mut out, "arguments", Value::Array(arguments))?;
         Ok(Value::Object(out))
@@ -1610,6 +1613,11 @@ pub fn admit_native_value_bytes(
     let text =
         std::str::from_utf8(written).map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
     parse_text(text, &mut scope)
+}
+
+/// The generic transition arm's operation string: the identity text itself.
+fn identity_text<'a>(_: &'a Value, text: &'a str) -> &'a str {
+    text
 }
 
 fn parse_text(text: &str, scope: &mut Scope<'_, '_>) -> Result<Value, ReferenceCodecError> {
@@ -2526,6 +2534,7 @@ mod tests {
         let encoded = codec
             .encode_transition(&transition, &mut budget, &cancel, 64)
             .unwrap();
+        assert_eq!(encoded["operation"], transition.operation());
         assert_eq!(
             codec
                 .restore_transition(

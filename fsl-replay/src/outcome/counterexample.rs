@@ -2574,7 +2574,7 @@ mod tests {
             graph_step(&found).expect("spelled"),
             json!({
                 "type": "step",
-                "transition": {"type": "transition", "operation": {"name": "s1"}, "receiver": null, "arguments": []},
+                "transition": {"type": "transition", "operation": r#"{"name":"s1"}"#, "receiver": null, "arguments": []},
                 "post_state": key_text(&key(1)).expect("key"),
                 "delay": {"numerator": "3", "denominator": "2"},
             })

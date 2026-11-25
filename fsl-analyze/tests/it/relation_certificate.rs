@@ -601,19 +601,22 @@ fn hp1_aliases_follow_declarations_and_edge_sequences_are_exact_inputs() {
 }
 
 /// The written tuple rejection `cause` against FSpec FR-331's schema: the
-/// tuple and its State objects, with bare state strings refused.
+/// tuple, its State objects with bare state strings refused, and each edge's
+/// transition identity with its operation as written.
 ///
-/// Each edge's `transition` is replaced by a conforming identity first: FSL
-/// writes the operation and a reference receiver as objects the schema's
-/// `TransitionIdentity` does not admit, so this does not validate them.
+/// Each receiver is replaced by `null` first: FSL writes the native reference
+/// form (FR-267), whose `object_type` is not FSpec FR-181's declaration node
+/// id, so this does not validate the receiver.
 fn assert_tuple_conforms(mut cause: serde_json::Value) {
     for edge in cause["at"]["transitions"]
         .as_array_mut()
         .expect("labelled edges")
     {
-        assert_eq!(edge["transition"]["type"], "transition");
-        edge["transition"] = serde_json::json!(
-            {"type": "transition", "operation": "step", "receiver": null, "arguments": []}
+        let receiver = edge["transition"]["receiver"].take();
+        assert_eq!(receiver["type"], "reference", "{receiver}");
+        assert!(
+            receiver["object_type"].get("original").is_some(),
+            "{receiver}"
         );
     }
     let tuple = provider_definition("HyperTransitionTupleLocus");
@@ -696,6 +699,10 @@ fn hp1_false_and_undefined_rejections_keep_complete_first_tuples() {
             assert_eq!(edge["pre_state"], state_locus(&expected.pre_state));
             assert_eq!(edge["post_state"], state_locus(&expected.post_state));
             assert_eq!(edge["transition"]["type"], "transition");
+            assert_eq!(
+                edge["transition"]["operation"],
+                expected.transition.operation()
+            );
             assert!(edge["result"].is_null());
         }
         let record = fixture.settle(proof, ModelCheckLimits::default());
