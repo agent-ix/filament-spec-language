@@ -15,7 +15,7 @@ use filament_semantic_value::loss::ValueLoss;
 use filament_specification::{QualificationVector, TestCase, QUALIFICATION_VECTORS};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{AssemblyCause, CheckedGraph, PackageDeclarations, TopologyRetained};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
@@ -1609,6 +1609,70 @@ fn float_exceptional_cases(vector: &QualificationVector) -> Option<Vec<SourceCas
     let float =
         |mode: &str, body: &str, expected| function(&format!("Float32[{mode}]"), body, expected);
     Some(match vector.id {
+        "F02" => {
+            let [first, second] = operands[..] else {
+                panic!("two quiet NaNs: {operands:?}");
+            };
+            let call = |name: &str, left, right, holds| {
+                function(
+                    "Boolean",
+                    &format!(
+                        "filament::value::ieee::{name}({}, {})",
+                        bits32(left),
+                        bits32(right)
+                    ),
+                    Expected::Boolean(holds),
+                )
+            };
+            [first, second]
+                .into_iter()
+                .flat_map(|nan| {
+                    [
+                        call("numericEqual", nan, nan, false),
+                        call("bitIdentical", nan, nan, true),
+                    ]
+                })
+                .chain([
+                    call("totalOrder", first, second, true),
+                    call("totalOrder", second, first, false),
+                ])
+                .collect()
+        }
+        "F32" => {
+            let results = hexes(vector.expected);
+            assert_eq!((operands.len(), results.len()), (7, 7));
+            modes()
+                .flat_map(|mode| {
+                    operands.iter().zip(&results).enumerate().flat_map(
+                        move |(index, (operand, negated))| {
+                            // The first six patterns are binary32, the last binary64.
+                            let (ty, value) = if index < 6 {
+                                let bits = u32::try_from(*operand).expect("a binary32 pattern");
+                                (format!("Float32[{mode}]"), IeeeValue::binary32(bits))
+                            } else {
+                                (format!("Float64[{mode}]"), IeeeValue::binary64(*operand))
+                            };
+                            [("-a", *negated), ("-(-a)", *operand)].map(|(body, bits)| {
+                                let mut case = limited_function_with(
+                                    &ty,
+                                    &format!("a: {ty}"),
+                                    body,
+                                    vec![Value::Float(value.clone())],
+                                    UNLIMITED,
+                                    Expected::Float {
+                                        bits,
+                                        flags: Vec::new(),
+                                    },
+                                    &[],
+                                );
+                                case.expected_charges = None;
+                                case
+                            })
+                        },
+                    )
+                })
+                .collect()
+        }
         "F06" => {
             assert!(vector.expected.starts_with("ill-typed"));
             vec![function(
@@ -2583,10 +2647,20 @@ fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceC
 
 fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     let snippets = quoted(vector.inputs);
+    let units: Vec<&str> = snippets
+        .iter()
+        .copied()
+        .filter(|snippet| snippet.starts_with("unit "))
+        .collect();
     let source = match vector.id {
         "U11a" => format!("dimension L; {} {}", snippets[1], snippets[0]),
         "U11b" => format!("dimension L; {} {}", snippets[0], snippets[1]),
         "U11c" | "U11f" | "U11h" => format!("dimension L; unit m : L = 1; {}", snippets[0]),
+        "U06" | "U11i" => format!("dimension L; unit m : L = 1; {}", units.join(" ")),
+        "U11d" => format!(
+            "dimension L; dimension T; unit m : L = 1; unit s : T = 1; {}",
+            units.join(" ")
+        ),
         "U11g1" | "U11g2" | "U11g3" | "U11g4" | "U11n" | "U11o" | "U11w" => snippets.join("\n"),
         _ => return None,
     };
@@ -4419,6 +4493,88 @@ fn t16_direct_text_type_admission_covers_each_profile_boundary() {
             row.profile
         );
     }
+
+    // The row's own tuples: each profile refuses the length bound under the
+    // tuple, then stops at the named counter once that counter is one short.
+    let tuple = |text_input_bytes, text_scalars, normalized_scalars, work_units| ScalarLimits {
+        integer_bits: 0,
+        decimal_digits: 0,
+        scale_expansion: 0,
+        text_input_bytes,
+        text_scalars,
+        normalized_scalars,
+        unit_edges: 0,
+        value_occurrences: 1,
+        work_units,
+        result_units: 1,
+    };
+    let stop = |limit_kind, consumed, charge_point| Incomplete {
+        limit_kind,
+        limit: 1,
+        consumed,
+        next_charge: Integer::from(2_u64),
+        charge_point,
+    };
+    let legs: [(_, _, _, &[ChargePoint], _, _); 3] = [
+        (
+            Nfd,
+            "e\u{301}",
+            tuple(3, 2, 2, 5),
+            &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+            ],
+            tuple(3, 2, 1, 5),
+            stop(NormalizedScalars, 1, TextNormalizeOutput),
+        ),
+        (
+            UnicodeScalars,
+            "e\u{301}",
+            tuple(3, 2, 0, 2),
+            &[TextInputBytes, TextDecodeScalars],
+            tuple(3, 1, 0, 2),
+            stop(TextScalars, 0, TextDecodeScalars),
+        ),
+        (
+            BinaryUtf8,
+            "\u{e9}",
+            tuple(2, 0, 0, 1),
+            &[TextInputBytes],
+            tuple(1, 0, 0, 1),
+            stop(InputBytes, 0, TextInputBytes),
+        ),
+    ];
+    for (profile, input, limits, charges, short, incomplete) in legs {
+        let payload = TextPayload::from_utf8(input.as_bytes()).expect("valid UTF-8 vector");
+        let ty = TextType::new(1, 1, profile).expect("valid bounded Text type");
+        let mut meter = Meter::new(limits);
+        assert!(
+            matches!(
+                admit_text(&payload, &ty, &mut meter),
+                Outcome::Refused(Refusal::TextLengthOutOfDomain { .. })
+            ),
+            "{profile:?}"
+        );
+        assert_eq!(
+            meter
+                .admitted_charges()
+                .iter()
+                .map(|charge| charge.point)
+                .collect::<Vec<_>>(),
+            charges,
+            "{profile:?}"
+        );
+        assert!(
+            matches!(
+                admit_text(&payload, &ty, &mut Meter::new(short)),
+                Outcome::Incomplete(actual) if actual == incomplete
+            ),
+            "{profile:?}"
+        );
+    }
 }
 
 accounting_source_vectors!("FSpec-FR-140-AC-6", "FSpec-TC-185"; d09_source_accounting=>"D09", d14_source_accounting=>"D14", d15_source_accounting=>"D15", d16_source_accounting=>"D16", d17_source_accounting=>"D17", d20_source_accounting=>"D20", d21_source_accounting=>"D21", d22_source_accounting=>"D22", d23_source_accounting=>"D23");
@@ -4513,6 +4669,69 @@ fn qsl3060_members_have_explicit_source_qualification_status() {
                 }
             }
         }
+    }
+}
+
+/// TC-187 U06, U11a, U11c, U11d and U11i: each row's refusal retains the
+/// declarations the row names, in its adapted source.
+#[test]
+fn unit_graph_rows_retain_the_names_the_standard_states() {
+    use TopologyRetained::{Scale, TargetName};
+    let dimension = |name: &str| TopologyRetained::Dimension {
+        name: name.to_owned(),
+        key: None,
+    };
+    let unit = |name: &str| TopologyRetained::Unit {
+        name: name.to_owned(),
+        key: None,
+    };
+    let zero = Rational::from_integer(Integer::zero());
+    for (id, expected) in [
+        ("U06", vec![unit("zero"), Scale(zero)]),
+        ("U11a", vec![dimension("L"), unit("m"), unit("m_alt")]),
+        ("U11c", vec![unit("x"), TargetName("nothing".to_owned())]),
+        (
+            "U11d",
+            vec![
+                unit("cm"),
+                TargetName("s".to_owned()),
+                dimension("L"),
+                dimension("T"),
+            ],
+        ),
+        ("U11i", vec![unit("a"), TargetName("nothing".to_owned())]),
+    ] {
+        let cases = unit_cases(vector(id)).expect("the row has a unit adapter");
+        let [case] = cases.as_slice() else {
+            panic!("{id}: one unit graph");
+        };
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n{}",
+            case.declarations
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("qualification", "unit-names"),
+            "vector.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("source intake");
+        assert!(parsed.is_admissible(), "{id}: {:?}", parsed.diagnostics());
+        let refusal = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "qualification-source".to_owned(),
+            fsl_forms::build_unit(&parsed).expect("forms of admitted source"),
+            Vec::new(),
+            Vec::new(),
+        )
+        .map(|_| ())
+        .expect_err("the row's unit graph refuses");
+        let first = refusal.errors.first().expect("an assembly refusal");
+        let AssemblyCause::UnitGraphTopology { retained, .. } = &first.cause else {
+            panic!("{id}: a unit-graph refusal, not {:?}", first.cause);
+        };
+        assert_eq!(retained, &expected, "{id}");
     }
 }
 
@@ -4628,12 +4847,11 @@ macro_rules! evidence {
 enum Status {
     /// Named tests complete the row, alone or beside an adapter here.
     Elsewhere(&'static [Evidence]),
-    /// The row runs, here or in the named tests, except for `remainder`. An
-    /// `owner` of `None` has no open ticket.
+    /// The row runs, here or in the named tests, except for `remainder`.
     Partial {
         evidence: &'static [Evidence],
         remainder: &'static str,
-        owner: Option<&'static str>,
+        owner: &'static str,
     },
     /// The compiler disagrees with the row: `source` is refused with `code`
     /// and `cause` today.
@@ -4646,7 +4864,7 @@ enum Status {
     /// No test runs the row.
     NotRun {
         reason: &'static str,
-        owner: Option<&'static str>,
+        owner: &'static str,
     },
 }
 
@@ -4666,9 +4884,9 @@ const UNIT_CYCLE_ROWS: &[Evidence] = &[evidence!(
     "fsl-eval/tests/it/unit_diagnostic_vectors.rs":
     u11b_f_l_adapt_cycle_vectors_to_the_authored_diagnostics
 )];
-const TOPOLOGY_ROWS: &[Evidence] = &[evidence!(
-    "fsl-semantics/src/check/assemble/tests.rs":
-    each_unit_graph_topology_error_refuses_alone
+const NAMED_UNIT_ROWS: &[Evidence] = &[evidence!(
+    "fsl-eval/tests/it/qualification_vectors_from_source.rs":
+    unit_graph_rows_retain_the_names_the_standard_states
 )];
 const FIRST_DEFECT_ROWS: &[Evidence] = &[evidence!(
     "fsl-semantics/src/check/assemble/tests.rs":
@@ -4702,7 +4920,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
         Status::Partial {
             evidence: &[],
             remainder: "that provenance retains both source pairs is not asserted",
-            owner: None,
+            owner: "QSL-3306",
         },
     ),
     (
@@ -4711,7 +4929,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
         Status::NotRun {
             reason: "no source form binds the boundary value: its literal is refused at type \
                 checking and a passed value is refused as the wrong value kind",
-            owner: None,
+            owner: "QSL-3306",
         },
     ),
     (
@@ -4726,10 +4944,14 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
     (
         TestCase::Tc185,
         "D25",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/decimal_source_forms.rs":
-            the_six_d25_expressions_check_or_refuse_as_the_criterion_states
-        )]),
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/decimal_source_forms.rs":
+                the_six_d25_expressions_check_or_refuse_as_the_criterion_states
+            )],
+            remainder: "that the admitted literals are typed `P` is not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc185,
@@ -4780,7 +5002,11 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
     (
         TestCase::Tc186,
         "T09",
-        Status::Elsewhere(CROSS_DECLARATION_ROWS),
+        Status::Partial {
+            evidence: CROSS_DECLARATION_ROWS,
+            remainder: "a change of enum owner is not run",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc186,
@@ -4814,7 +5040,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
             owner: "QSL-3084",
         },
     ),
-    (TestCase::Tc187, "U06", Status::Elsewhere(TOPOLOGY_ROWS)),
+    (TestCase::Tc187, "U06", Status::Elsewhere(NAMED_UNIT_ROWS)),
     (
         TestCase::Tc187,
         "U09",
@@ -4823,17 +5049,10 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
             values_from_distinct_package_dimensions_match_u36
         )]),
     ),
-    (
-        TestCase::Tc187,
-        "U11a",
-        Status::Elsewhere(&[evidence!(
-            "fsl-semantics/src/check/assemble/tests.rs":
-            u11j_two_roots_refuse_before_a_self_cycle
-        )]),
-    ),
+    (TestCase::Tc187, "U11a", Status::Elsewhere(NAMED_UNIT_ROWS)),
     (TestCase::Tc187, "U11b", Status::Elsewhere(UNIT_CYCLE_ROWS)),
-    (TestCase::Tc187, "U11c", Status::Elsewhere(TOPOLOGY_ROWS)),
-    (TestCase::Tc187, "U11d", Status::Elsewhere(TOPOLOGY_ROWS)),
+    (TestCase::Tc187, "U11c", Status::Elsewhere(NAMED_UNIT_ROWS)),
+    (TestCase::Tc187, "U11d", Status::Elsewhere(NAMED_UNIT_ROWS)),
     (
         TestCase::Tc187,
         "U11e",
@@ -4848,11 +5067,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
         "U11h",
         Status::Elsewhere(FIRST_DEFECT_ROWS),
     ),
-    (
-        TestCase::Tc187,
-        "U11i",
-        Status::Elsewhere(FIRST_DEFECT_ROWS),
-    ),
+    (TestCase::Tc187, "U11i", Status::Elsewhere(NAMED_UNIT_ROWS)),
     (
         TestCase::Tc187,
         "U11j",
@@ -4883,7 +5098,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
         Status::Partial {
             evidence: &[],
             remainder: RETAINED_NAMES,
-            owner: None,
+            owner: "QSL-3306",
         },
     ),
     (
@@ -4892,7 +5107,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
         Status::Partial {
             evidence: &[],
             remainder: RETAINED_NAMES,
-            owner: None,
+            owner: "QSL-3306",
         },
     ),
     (TestCase::Tc187, "U11l", Status::Elsewhere(UNIT_CYCLE_ROWS)),
@@ -4935,17 +5150,29 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
     (
         TestCase::Tc187,
         "U11s",
-        Status::Elsewhere(PACKAGE_UNIT_ROWS),
+        Status::Partial {
+            evidence: PACKAGE_UNIT_ROWS,
+            remainder: "the node `L`, the retained edges and that the imported `m` is not re-checked are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U11t",
-        Status::Elsewhere(PACKAGE_UNIT_ROWS),
+        Status::Partial {
+            evidence: PACKAGE_UNIT_ROWS,
+            remainder: "the retained roots `m` and `m2` are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U11u",
-        Status::Elsewhere(PACKAGE_UNIT_ROWS),
+        Status::Partial {
+            evidence: PACKAGE_UNIT_ROWS,
+            remainder: "that the refusal is at `z` is not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
@@ -4960,17 +5187,29 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
     (
         TestCase::Tc187,
         "U11y",
-        Status::Elsewhere(PACKAGE_TURN_ROWS),
+        Status::Partial {
+            evidence: PACKAGE_TURN_ROWS,
+            remainder: "the retained `L` and `m2` are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U11z1",
-        Status::Elsewhere(PACKAGE_TURN_ROWS),
+        Status::Partial {
+            evidence: PACKAGE_TURN_ROWS,
+            remainder: "the retained `P.L` and `m2` are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U11z2",
-        Status::Elsewhere(PACKAGE_TURN_ROWS),
+        Status::Partial {
+            evidence: PACKAGE_TURN_ROWS,
+            remainder: "the retained `P.L` and `x` are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
@@ -4980,26 +5219,34 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
     (
         TestCase::Tc187,
         "U30",
-        Status::Elsewhere(&[
-            evidence!(
-                "fsl-semantics/src/check/assemble/tests.rs":
-                a_quantity_type_form_resolves_to_its_unit_and_refuses_a_non_unit_name,
-                a_quantity_argument_of_another_unit_is_a_type_mismatch,
-                a_unit_name_is_not_a_type
-            ),
-            evidence!(
-                "fsl-package/src/emit/tests/admission_corpus.rs":
-                quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits
-            ),
-        ]),
+        Status::Partial {
+            evidence: &[
+                evidence!(
+                    "fsl-semantics/src/check/assemble/tests.rs":
+                    a_quantity_type_form_resolves_to_its_unit_and_refuses_a_non_unit_name,
+                    a_quantity_argument_of_another_unit_is_a_type_mismatch,
+                    a_unit_name_is_not_a_type
+                ),
+                evidence!(
+                    "fsl-package/src/emit/tests/admission_corpus.rs":
+                    quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits
+                ),
+            ],
+            remainder: "the bare `d: ms` refusal code and location, and that no check charges, are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U31",
-        Status::Elsewhere(&[evidence!(
-            "fsl-semantics/src/check/assemble/tests.rs":
-            a_quantity_result_checks_and_a_converted_result_of_another_unit_is_a_mismatch
-        )]),
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-semantics/src/check/assemble/tests.rs":
+                a_quantity_result_checks_and_a_converted_result_of_another_unit_is_a_mismatch
+            )],
+            remainder: "that the node of `ms` types both `d` and the result is not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
@@ -5012,79 +5259,118 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
             )],
             remainder: "two units of one name are refused at both declarations; a refusal at \
                 `Quantity<ms>` is not run",
-            owner: None,
+            owner: "QSL-3306",
         },
     ),
     (
         TestCase::Tc187,
         "U33",
-        Status::Elsewhere(&[
-            evidence!(
-                "fsl-package/src/emit/tests/admission_corpus.rs":
-                quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits
-            ),
-            evidence!(
-                "fsl-semantics/tests/it/unit_typed_members.rs":
-                quantity_types_check_in_every_position_over_the_one_unit_node
-            ),
-        ]),
+        Status::Partial {
+            evidence: &[
+                evidence!(
+                    "fsl-package/src/emit/tests/admission_corpus.rs":
+                    quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits
+                ),
+                evidence!(
+                    "fsl-semantics/tests/it/unit_typed_members.rs":
+                    quantity_types_check_in_every_position_over_the_one_unit_node
+                ),
+            ],
+            remainder: "the domain-package operation parameter is compared as a checked type, not as a lowered member type",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U34",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
-            same_spelled_package_units_keep_their_identity_in_u34
-        )]),
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                same_spelled_package_units_keep_their_identity_in_u34
+            )],
+            remainder: "the unit node keys, `node_id.path`, owner and refusal locations are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U35",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
-            imported_dimensions_from_two_packages_match_u35
-        )]),
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                imported_dimensions_from_two_packages_match_u35
+            )],
+            remainder: "the `conflicting-binding` intake leg is not run; the three distinct dimensions and the refusal locations are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U36",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
-            values_from_distinct_package_dimensions_match_u36
-        )]),
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                values_from_distinct_package_dimensions_match_u36
+            )],
+            remainder: "only one argument, the sum, comparison and conversion refusals run: the admitted call, the `3 s` argument, the quotients, products, both `dsec` legs and the absence of charges do not",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U37",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
-            dimension_equivalence_declarations_match_u37
-        )]),
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                dimension_equivalence_declarations_match_u37
+            )],
+            remainder: "the `incompatible-definition`, composed-offset, derived-dimension, speed, three-cycle and reordering legs do not run, and retained names are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U38",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
-            conversions_over_equivalent_dimensions_match_u38
-        )]),
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                conversions_over_equivalent_dimensions_match_u38
+            )],
+            remainder: "only one conversion check, the sum and the unrelated-dimension refusal run: converted values, edge charges and the other legs are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U39",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/quantity_negation.rs":
-            a_quantity_negation_evaluates_to_the_exact_negation_in_its_own_unit,
-            a_negation_of_an_affine_or_non_quantity_operand_refuses_without_a_node
-        )]),
+        Status::Partial {
+            evidence: &[
+                evidence!(
+                    "fsl-eval/tests/it/quantity_negation.rs":
+                    a_quantity_negation_evaluates_to_the_exact_negation_in_its_own_unit,
+                    a_negation_of_an_affine_or_non_quantity_operand_refuses_without_a_node
+                ),
+                evidence!(
+                    "tests/it/quantity_negation_v2.rs":
+                    each_quantity_negation_package_reads_back_with_unary_negate_nodes,
+                    a_compound_negation_is_typed_by_the_quotients_compound_unit_node
+                ),
+            ],
+            remainder: "that a negation traverses no unit edge is not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc187,
         "U40",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
-            root_ratios_across_three_packages_match_u40
-        )]),
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                root_ratios_across_three_packages_match_u40
+            )],
+            remainder: "only the three spellings and a conflicting cycle run: converted values, edge charges, the quotient, product and sum legs, the admitted `F`-`G` declaration and the retained declarations are not asserted",
+            owner: "QSL-3306",
+        },
     ),
     (
         TestCase::Tc192,
@@ -5109,7 +5395,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
             )],
             remainder: "only the request and route half runs: the `requires-bound` \
                 disposition is supplied by the test",
-            owner: None,
+            owner: "QSL-3306",
         },
     ),
     (
@@ -5122,7 +5408,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
         "DIV-14",
         Status::NotRun {
             reason: "needs a real cvc5 solver, which no lane host provides",
-            owner: Some("QSL-3125"),
+            owner: "QSL-3125",
         },
     ),
     (
@@ -5135,7 +5421,7 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
                 state_core_locates_live_and_dead_division_in_each_state_clause
             )],
             remainder: FUNCTION_LOCUS,
-            owner: Some("QSL-3089"),
+            owner: "QSL-3089",
         },
     ),
     (
@@ -5156,11 +5442,10 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
                 ),
             ],
             remainder: FUNCTION_LOCUS,
-            owner: Some("QSL-3089"),
+            owner: "QSL-3089",
         },
     ),
     (TestCase::Tc193, "F01", Status::Elsewhere(ZERO_AND_NAN_ROWS)),
-    (TestCase::Tc193, "F02", Status::Elsewhere(ZERO_AND_NAN_ROWS)),
     (
         TestCase::Tc193,
         "F02b",
@@ -5192,14 +5477,6 @@ const STATUSES: &[(TestCase, &str, Status)] = &[
     ),
     (
         TestCase::Tc193,
-        "F32",
-        Status::Elsewhere(&[evidence!(
-            "fsl-eval/tests/it/qualification_vectors_from_source.rs":
-            f32_negation_source_vectors_cover_each_profile_and_meter_boundary
-        )]),
-    ),
-    (
-        TestCase::Tc193,
         "F34",
         Status::Elsewhere(&[evidence!(
             "fsl-eval/tests/it/float_callables.rs":
@@ -5214,17 +5491,101 @@ fn adapted(vector: &QualificationVector) -> bool {
         || (vector.test_case == TestCase::Tc186 && matches!(vector.id, "T04" | "T05" | "T13"))
 }
 
-/// Each named test that its file no longer defines.
+/// Whether `source` defines `name` as a test the test harness runs: a function
+/// carrying `#[test]` that is neither ignored nor conditionally compiled.
+fn is_running_test(source: &str, name: &str) -> bool {
+    let signature = format!("fn {name}(");
+    let mut attributes: Vec<String> = Vec::new();
+    // Brackets an attribute spanning lines has yet to close.
+    let mut open = 0;
+    for line in source.lines().map(str::trim) {
+        if open == 0 && (line.is_empty() || line.starts_with("//")) {
+            continue;
+        }
+        if open > 0 || line.starts_with("#[") {
+            if open == 0 {
+                attributes.push(String::new());
+            }
+            if let Some(attribute) = attributes.last_mut() {
+                attribute.push_str(line);
+            }
+            open = (open + line.matches('[').count()).saturating_sub(line.matches(']').count());
+            continue;
+        }
+        if line.starts_with(&signature) {
+            return attributes.iter().any(|attribute| attribute == "#[test]")
+                && !attributes.iter().any(|attribute| {
+                    attribute.starts_with("#[ignore") || attribute.starts_with("#[cfg")
+                });
+        }
+        attributes.clear();
+    }
+    false
+}
+
+/// Each named test that its file does not define as a running test.
 fn missing_evidence(identity: &str, evidence: &[Evidence]) -> Vec<String> {
     evidence
         .iter()
         .flat_map(|file| {
             file.tests
                 .iter()
-                .filter(|test| !file.source.contains(&format!("fn {test}(")))
+                .filter(|test| !is_running_test(file.source, test))
         })
-        .map(|test| format!("{identity}: the named test {test} is not defined"))
+        .map(|test| format!("{identity}: the named test {test} is not a running test"))
         .collect()
+}
+
+const CREDIT_CONTROL: &str = r#"
+#[allow(
+    unused
+)]
+/// A test.
+#[test]
+fn runs() {}
+
+#[test]
+#[ignore = "not run"]
+fn ignored() {}
+
+#[allow(unused)]
+fn helper() {}
+
+// #[test]
+fn commented_out() {}
+
+#[cfg(any())]
+#[test]
+fn compiled_out() {}
+"#;
+
+/// A credited name counts only when it is a running test: an ignored,
+/// conditionally compiled, helper or absent function is reported.
+#[test]
+fn a_credit_that_names_no_running_test_is_reported() {
+    let evidence = [Evidence {
+        source: CREDIT_CONTROL,
+        tests: &[
+            "runs",
+            "ignored",
+            "helper",
+            "commented_out",
+            "compiled_out",
+            "absent",
+        ],
+    }];
+    let reported = |test| format!("row: the named test {test} is not a running test");
+    assert_eq!(
+        missing_evidence("row", &evidence),
+        [
+            "ignored",
+            "helper",
+            "commented_out",
+            "compiled_out",
+            "absent"
+        ]
+        .map(reported)
+    );
 }
 
 /// Runs every adapter, and holds every published vector to exactly one status.
@@ -5266,7 +5627,6 @@ fn every_published_vector_has_an_explicit_source_qualification_status() {
             .iter()
             .find(|(test_case, id, _)| *test_case == vector.test_case && *id == vector.id)
             .map(|(_, _, status)| status);
-        let ticket = |owner: Option<&str>| owner.unwrap_or("no open ticket").to_owned();
         match status {
             None if runs_here => complete += 1,
             None => failures.push(format!("{identity} has no qualification status")),
@@ -5284,10 +5644,7 @@ fn every_published_vector_has_an_explicit_source_qualification_status() {
                     "{identity}: nothing runs this partial row"
                 );
                 failures.extend(missing_evidence(&identity, evidence));
-                short.push(format!(
-                    "{identity} partial [{}]: {remainder}",
-                    ticket(*owner)
-                ));
+                short.push(format!("{identity} partial [{owner}]: {remainder}"));
             }
             Some(Status::Deviation {
                 source,
@@ -5311,7 +5668,7 @@ fn every_published_vector_has_an_explicit_source_qualification_status() {
             }
             Some(Status::NotRun { reason, owner }) => {
                 assert!(!runs_here, "{identity}: a row not run has an adapter");
-                short.push(format!("{identity} not run [{}]: {reason}", ticket(*owner)));
+                short.push(format!("{identity} not run [{owner}]: {reason}"));
             }
         }
     }
