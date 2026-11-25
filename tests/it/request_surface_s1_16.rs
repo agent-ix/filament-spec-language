@@ -89,7 +89,9 @@ fn run_with_model(
     for (name, member) in members {
         request[name] = member;
     }
-    if request["model_based_test"]["initial"].is_string() {
+    if request["model_based_test"]["initial"].is_string()
+        || request["verification_plan"]["initial"].is_string()
+    {
         let snapshot_path = directory.path().join("spine-snapshot.json");
         let bytes = std::fs::read(&snapshot_path).expect("the spine snapshot exists");
         let mut snapshot: Value = serde_json::from_slice(&bytes).expect("a JSON snapshot");
@@ -679,7 +681,8 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
 
 /// FR-1038-AC-2, FSpec FR-824-AC-2/AC-3: the plan is selected by declared
 /// name, an omitted name runs the only plan, and bad selections or inputs
-/// refuse at their `/verification_plan` pointers.
+/// refuse at their `/verification_plan` pointers. The supplied initialization
+/// snapshot provides the finite universe its state subject requires (FR-120).
 #[test]
 #[trace("TC-3018", "FR-1038-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
@@ -689,7 +692,10 @@ fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let (_, single_plan_value) = run(
         &one,
         true,
-        ("verification_plan", json!({"max_trace_length": 8})),
+        (
+            "verification_plan",
+            json!({"initial": "spine-snapshot.json", "max_trace_length": 8}),
+        ),
     );
     assert_eq!(single_plan_value["verification_plan"]["plan"], "Release");
     assert_eq!(
