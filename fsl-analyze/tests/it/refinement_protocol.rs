@@ -3262,3 +3262,45 @@ fn a_failed_compensation_attempt_takes_no_abstract_operation_class() {
         .collect();
     assert_eq!(takes, [true, false], "add, then inc");
 }
+
+/// FR-148-AC-8 (TC-553): repeated failed compensation attempts do not make
+/// the abstract `inc` operation fair when the concrete loop never takes it.
+#[trace("TC-553", "FR-148-AC-8")]
+#[test]
+fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
+    let world = failing_compensation();
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_transitions = 1;
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits,
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+
+    assert!(
+        matches!(
+            outcome.safety,
+            SafetyOutcome::Stopped {
+                cause: fsl_replay::IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+                    value: 1
+                }),
+                ..
+            }
+        ),
+        "the tight closure budget stops as incomplete: {:?}",
+        outcome.safety
+    );
+}

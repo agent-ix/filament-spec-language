@@ -29,6 +29,7 @@ use fsl_eval::simulation::protocol::{ProtocolRefusal, StepKind};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_semantics::check::StepClass;
 use fsl_semantics::model::state::ModelState;
+use ix_trace_rs::implements;
 
 use crate::model_check::counterexample::{
     MappingSite, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
@@ -437,6 +438,31 @@ pub fn check_protocol_initial(
     index: usize,
     concrete_initial: &ModelState,
 ) -> Result<StepResult, ProtocolRefusal> {
+    check_protocol_initial_with_transition_limit(
+        refinement,
+        concrete_system,
+        abstract_system,
+        protocol,
+        index,
+        concrete_initial,
+        u64::MAX,
+        0,
+    )
+}
+
+/// FR-148: check an initial state while charging protocol closure to the
+/// caller's total transition limit.
+#[implements("FR-148-AC-8")]
+pub fn check_protocol_initial_with_transition_limit(
+    refinement: &dyn RefinementRead,
+    concrete_system: &ModelSystem<'_>,
+    abstract_system: &ModelSystem<'_>,
+    protocol: &AbstractProtocolSystem<'_>,
+    index: usize,
+    concrete_initial: &ModelState,
+    max_transitions: u64,
+    already_consumed: u64,
+) -> Result<StepResult, ProtocolRefusal> {
     let verdict = check_initial(
         refinement,
         concrete_system,
@@ -480,7 +506,13 @@ pub fn check_protocol_initial(
             roots.push(candidate);
         }
     }
-    let (candidates, abstract_successors) = match protocol_closure(refinement, protocol, roots) {
+    let (candidates, abstract_successors) = match protocol_closure(
+        refinement,
+        protocol,
+        roots,
+        max_transitions.saturating_sub(already_consumed),
+        max_transitions,
+    ) {
         Ok(closure) => closure,
         Err(verdict) => {
             return Ok(StepResult {
@@ -525,6 +557,31 @@ pub fn check_protocol_step(
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
 ) -> StepResult {
+    check_protocol_step_with_transition_limit(
+        refinement,
+        concrete_system,
+        abstract_system,
+        protocol,
+        pre,
+        step,
+        u64::MAX,
+        0,
+    )
+}
+
+/// FR-148: decide a protocol step while charging closure to the caller's
+/// total transition limit.
+#[implements("FR-148-AC-8")]
+pub fn check_protocol_step_with_transition_limit(
+    refinement: &dyn RefinementRead,
+    concrete_system: &ModelSystem<'_>,
+    abstract_system: &ModelSystem<'_>,
+    protocol: &AbstractProtocolSystem<'_>,
+    pre: &RefinementPosition,
+    step: &ConcreteStep<'_>,
+    max_transitions: u64,
+    already_consumed: u64,
+) -> StepResult {
     let row = step
         .transition
         .and_then(|transition| step_row(refinement, transition));
@@ -568,6 +625,8 @@ pub fn check_protocol_step(
             *post,
             *taken,
             model_result.abstract_successors,
+            max_transitions,
+            already_consumed,
         );
     }
     if protocol_node {
@@ -580,6 +639,8 @@ pub fn check_protocol_step(
             step,
             *post,
             model_result.abstract_successors,
+            max_transitions,
+            already_consumed,
         );
     }
     // In a protocol refinement, each protocol candidate already identifies
@@ -674,7 +735,16 @@ pub fn check_protocol_step(
             }
         }
     }
-    let (paths, closure_count) = match protocol_closure_traces(refinement, protocol, matching) {
+    let remaining_transitions = max_transitions
+        .saturating_sub(already_consumed)
+        .saturating_sub(count);
+    let (paths, closure_count) = match protocol_closure_traces(
+        refinement,
+        protocol,
+        matching,
+        remaining_transitions,
+        max_transitions,
+    ) {
         Ok(closure) => closure,
         Err(verdict) => {
             return StepResult {
@@ -732,6 +802,8 @@ fn check_protocol_any_step(
     mut post: RefinementPosition,
     taken: Taken,
     mut count: u64,
+    max_transitions: u64,
+    already_consumed: u64,
 ) -> StepResult {
     let mapped = match post.abstract_states.first() {
         Some(state) => state,
@@ -837,7 +909,16 @@ fn check_protocol_any_step(
             }
         }
     }
-    let (paths, closure_count) = match protocol_closure_traces(refinement, protocol, seeds) {
+    let remaining_transitions = max_transitions
+        .saturating_sub(already_consumed)
+        .saturating_sub(count);
+    let (paths, closure_count) = match protocol_closure_traces(
+        refinement,
+        protocol,
+        seeds,
+        remaining_transitions,
+        max_transitions,
+    ) {
         Ok(closure) => closure,
         Err(verdict) => {
             return StepResult {
@@ -905,6 +986,8 @@ fn check_protocol_node_step(
     step: &ConcreteStep<'_>,
     mut post: RefinementPosition,
     mut count: u64,
+    max_transitions: u64,
+    already_consumed: u64,
 ) -> StepResult {
     let Some(transition) = step.transition else {
         return StepResult {
@@ -1042,7 +1125,16 @@ fn check_protocol_node_step(
             }
         }
     }
-    let (paths, closure_count) = match protocol_closure_traces(refinement, protocol, matching) {
+    let remaining_transitions = max_transitions
+        .saturating_sub(already_consumed)
+        .saturating_sub(count);
+    let (paths, closure_count) = match protocol_closure_traces(
+        refinement,
+        protocol,
+        matching,
+        remaining_transitions,
+        max_transitions,
+    ) {
         Ok(closure) => closure,
         Err(verdict) => {
             return StepResult {
@@ -1156,14 +1248,22 @@ fn protocol_closure(
     refinement: &dyn RefinementRead,
     system: &AbstractProtocolSystem<'_>,
     seeds: Vec<ProtocolCandidate>,
+    remaining_transitions: u64,
+    transition_limit: u64,
 ) -> Result<(Vec<ProtocolCandidate>, u64), StepVerdict> {
     let traces = seeds
         .into_iter()
         .map(|start| make_protocol_trace(system, start, Vec::new(), Vec::new()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|verdict| *verdict)?;
-    let (traces, expanded) =
-        protocol_closure_traces(refinement, system, traces).map_err(|verdict| *verdict)?;
+    let (traces, expanded) = protocol_closure_traces(
+        refinement,
+        system,
+        traces,
+        remaining_transitions,
+        transition_limit,
+    )
+    .map_err(|verdict| *verdict)?;
     let mut keyed = Vec::new();
     for trace in traces {
         let candidate = trace.candidates.last().unwrap_or(&trace.start).clone();
@@ -1208,10 +1308,49 @@ fn make_protocol_trace(
     })
 }
 
+struct ProtocolClosurePredecessor {
+    previous: Vec<u8>,
+    transition: fsl_eval::simulation::protocol::ProtocolTransition,
+    candidate: ProtocolCandidate,
+    candidate_key: Vec<u8>,
+}
+
+fn protocol_trace_from_predecessors(
+    seed: &ProtocolTrace,
+    seed_key: &[u8],
+    target_key: &[u8],
+    known: &std::collections::BTreeMap<Vec<u8>, Option<ProtocolClosurePredecessor>>,
+) -> Result<ProtocolTrace, Box<StepVerdict>> {
+    let mut chain = Vec::new();
+    let mut current = target_key.to_vec();
+    while current != seed_key {
+        let predecessor = known
+            .get(&current)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| Box::new(fault("protocol-closure-predecessor-exists")))?;
+        chain.push((
+            predecessor.transition.clone(),
+            predecessor.candidate.clone(),
+            predecessor.candidate_key.clone(),
+        ));
+        current = predecessor.previous.clone();
+    }
+    let mut trace = seed.clone();
+    for (transition, candidate, key) in chain.into_iter().rev() {
+        trace.transitions.push(transition);
+        trace.candidates.push(candidate);
+        trace.candidate_keys.push(key);
+    }
+    Ok(trace)
+}
+
+#[implements("FR-148-AC-8")]
 fn protocol_closure_traces(
     refinement: &dyn RefinementRead,
     system: &AbstractProtocolSystem<'_>,
     seeds: Vec<ProtocolTrace>,
+    remaining_transitions: u64,
+    transition_limit: u64,
 ) -> Result<(Vec<ProtocolTrace>, u64), Box<StepVerdict>> {
     let internal: std::collections::BTreeSet<&str> = refinement
         .abstract_internal()
@@ -1220,8 +1359,11 @@ fn protocol_closure_traces(
         .collect();
     let mut expanded = 0_u64;
     let mut paths = Vec::new();
+    let mut expansions = std::collections::BTreeMap::new();
+    let mut closure_states = std::collections::BTreeMap::<Vec<u8>, ProtocolCandidate>::new();
     for seed in seeds {
-        let mut known = std::collections::BTreeMap::<Vec<u8>, ProtocolTrace>::new();
+        let mut known =
+            std::collections::BTreeMap::<Vec<u8>, Option<ProtocolClosurePredecessor>>::new();
         let mut queue = std::collections::VecDeque::new();
         let mut closure_edges = std::collections::BTreeSet::new();
         let mut closure_paths = Vec::new();
@@ -1230,16 +1372,38 @@ fn protocol_closure_traces(
             .state_key(seed_candidate)
             .map_err(|_| Box::new(fault("protocol-state-encodes")))?
             .0;
-        known.insert(seed_key.clone(), seed.clone());
-        queue.push_back(seed_key);
+        closure_states
+            .entry(seed_key.clone())
+            .or_insert_with(|| seed_candidate.clone());
+        known.insert(seed_key.clone(), None);
+        queue.push_back(seed_key.clone());
         while let Some(key) = queue.pop_front() {
-            let Some(path) = known.get(&key).cloned() else {
+            if !known.contains_key(&key) {
                 return Err(Box::new(fault("protocol-closure-queue-has-candidate")));
-            };
-            let state = path.candidates.last().unwrap_or(&path.start);
-            let expansion = system
-                .successors(state)
-                .map_err(|stop| Box::new(stop_verdict(system.model(), stop)))?;
+            }
+            let state = known
+                .get(&key)
+                .and_then(Option::as_ref)
+                .map(|predecessor| &predecessor.candidate)
+                .or_else(|| closure_states.get(&key))
+                .ok_or_else(|| Box::new(fault("protocol-closure-queue-has-candidate")))?;
+            if !expansions.contains_key(&key) {
+                let expansion = system
+                    .successors(state)
+                    .map_err(|stop| Box::new(stop_verdict(system.model(), stop)))?;
+                expanded = expanded
+                    .saturating_add(u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX));
+                if expanded > remaining_transitions {
+                    return Err(Box::new(StepVerdict::Stopped(ReachedLimit {
+                        limit: ModelCheckLimit::MaxTransitions,
+                        value: transition_limit,
+                    })));
+                }
+                expansions.insert(key.clone(), expansion);
+            }
+            let expansion = expansions
+                .get(&key)
+                .ok_or_else(|| Box::new(fault("protocol-closure-expansion-is-cached")))?;
             if let Some((transition, clause)) = expansion.findings.iter().find_map(|finding| {
                 let ModelFinding::ContractUndetermined {
                     transition, clause, ..
@@ -1249,61 +1413,72 @@ fn protocol_closure_traces(
                 };
                 Some((transition.clone(), clause.clone()))
             }) {
+                let trace = protocol_trace_from_predecessors(&seed, &seed_key, &key, &known)?;
                 return Err(Box::new(StepVerdict::ProtocolContractUndetermined {
                     candidate: Box::new(state.clone()),
                     transition,
                     clause,
-                    trace: Box::new(path),
+                    trace: Box::new(trace),
                 }));
             }
-            for (transition, post) in expansion.successors {
-                expanded = expanded.saturating_add(1);
-                let Some(class) = protocol_class(system, &transition) else {
+            for (transition, post) in &expansion.successors {
+                let Some(class) = protocol_class(system, transition) else {
                     continue;
                 };
                 if !internal.contains(class.as_str()) {
                     continue;
                 }
                 let (post_key, _) = system
-                    .state_key(&post)
+                    .state_key(post)
                     .map_err(|_| Box::new(fault("protocol-state-encodes")))?;
-                if let Some(target_path) = known.get(&post_key) {
+                if known.contains_key(&post_key) {
                     let transition_key = system
-                        .transition_key(&transition)
+                        .transition_key(transition)
                         .map_err(|_| Box::new(fault("protocol-transition-encodes")))?;
                     if !closure_edges.insert((key.clone(), transition_key, post_key.clone())) {
                         continue;
                     }
-                    let mut cycle = path.clone();
-                    cycle.transitions.push(transition);
-                    cycle.candidate_keys.push(post_key);
-                    cycle.candidates.push(
-                        target_path
-                            .candidates
-                            .last()
-                            .unwrap_or(&target_path.start)
-                            .clone(),
-                    );
-                    closure_paths.push(cycle);
+                    closure_paths.push((key.clone(), transition.clone(), post_key));
                     continue;
                 }
-                let mut next = path.clone();
-                next.transitions.push(transition);
-                next.candidate_keys.push(post_key.clone());
-                next.candidates.push(post);
-                known.insert(post_key.clone(), next);
-                if u64::try_from(known.len()).unwrap_or(u64::MAX) > system.model().max_candidates()
+                closure_states
+                    .entry(post_key.clone())
+                    .or_insert_with(|| post.clone());
+                if u64::try_from(closure_states.len()).unwrap_or(u64::MAX)
+                    > system.model().max_candidates()
                 {
                     return Err(Box::new(StepVerdict::Stopped(ReachedLimit {
                         limit: ModelCheckLimit::MaxCandidates,
                         value: system.model().max_candidates(),
                     })));
                 }
+                known.insert(
+                    post_key.clone(),
+                    Some(ProtocolClosurePredecessor {
+                        previous: key.clone(),
+                        transition: transition.clone(),
+                        candidate: post.clone(),
+                        candidate_key: post_key.clone(),
+                    }),
+                );
                 queue.push_back(post_key);
             }
         }
-        paths.extend(known.into_values());
-        paths.extend(closure_paths);
+        for key in known.keys() {
+            paths.push(protocol_trace_from_predecessors(
+                &seed, &seed_key, key, &known,
+            )?);
+        }
+        for (key, transition, post_key) in closure_paths {
+            let mut cycle = protocol_trace_from_predecessors(&seed, &seed_key, &key, &known)?;
+            let candidate = closure_states
+                .get(&post_key)
+                .ok_or_else(|| Box::new(fault("protocol-closure-target-has-candidate")))?;
+            cycle.transitions.push(transition);
+            cycle.candidate_keys.push(post_key);
+            cycle.candidates.push(candidate.clone());
+            paths.push(cycle);
+        }
     }
     paths.sort_by(|left, right| {
         let left = left.candidates.last().unwrap_or(&left.start);

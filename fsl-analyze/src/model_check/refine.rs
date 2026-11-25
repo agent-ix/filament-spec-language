@@ -52,8 +52,9 @@ use fsl_eval::simulation::{
     ExpansionLimit, ExpansionStop, InitialStateRefusal, SubjectSystem, TransitionSystem,
 };
 use fsl_replay::{
-    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
-    check_protocol_state_relations, check_protocol_step, check_step_for_model,
+    abstract_classes, candidate_lasso_has_fair_run, check_initial,
+    check_protocol_initial_with_transition_limit, check_protocol_state_relations,
+    check_protocol_step_with_transition_limit, check_step_for_model,
     open_protocol_systems_with_initial_limit, open_systems_with_initial_limit, AbstractClass,
     AbstractProtocolSystem, CandidateFairState,
     CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
@@ -1985,13 +1986,15 @@ impl Run<'_, '_> {
         for (key, index, state) in initial {
             let verdict = match self.abstract_protocol {
                 Some(protocol) => {
-                    check_protocol_initial(
+                    check_protocol_initial_with_transition_limit(
                         self.refinement,
                         self.concrete,
                         self.abstract_system,
                         protocol,
                         index,
                         state.state(),
+                        widen(self.limits.limits.max_transitions),
+                        widen(self.transitions),
                     )
                     .map_err(ModelCheckRefusal::Protocol)?
                     .verdict
@@ -2209,7 +2212,7 @@ impl Run<'_, '_> {
                 verdict,
                 abstract_successors,
             } = match self.abstract_protocol {
-                Some(protocol) => check_protocol_step(
+                Some(protocol) => check_protocol_step_with_transition_limit(
                     self.refinement,
                     self.concrete,
                     self.abstract_system,
@@ -2220,6 +2223,8 @@ impl Run<'_, '_> {
                         transition: transition.as_ref(),
                         post: &state,
                     },
+                    widen(self.limits.limits.max_transitions),
+                    widen(self.transitions),
                 ),
                 None => check_step_for_model(
                     self.refinement,
