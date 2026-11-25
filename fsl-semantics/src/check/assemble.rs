@@ -46,6 +46,7 @@ use fsl_forms::{
 use fsl_foundation::diagnostic::LimitExceeded;
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_foundation::{Code, IdentityLimits, Setting, SettingLimits, Span};
+use ix_trace_rs::implements;
 
 use super::check::{
     EnumBinding, ModelRecords, PackageDeclarations, ResolvedSignature, VariantTypeDeclaration,
@@ -4617,6 +4618,8 @@ impl PackageDeclarations {
         )
     }
 
+    #[implements("FR-104-AC-15")]
+    #[implements("FR-276-AC-2")]
     fn assemble_with_execution_points_and_cancel_and_owners(
         package_name: String,
         unit: ParsedUnit,
