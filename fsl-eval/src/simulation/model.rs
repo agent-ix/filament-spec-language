@@ -259,10 +259,20 @@ pub enum ModelStateProvenance {
 }
 
 /// A model state and its explicit provenance. Provenance is not part of its key.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ModelSimState {
     state: ModelState,
     provenance: ModelStateProvenance,
+    canonical_key: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,
+}
+
+impl std::fmt::Debug for ModelSimState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelSimState")
+            .field("state", &self.state)
+            .field("provenance", &self.provenance)
+            .finish()
+    }
 }
 
 impl ModelSimState {
@@ -273,6 +283,7 @@ impl ModelSimState {
                 anchor,
                 effect: None,
             },
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -286,7 +297,11 @@ impl ModelSimState {
                 effect: Some(effect),
             },
         };
-        Self { state, provenance }
+        Self {
+            state,
+            provenance,
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
+        }
     }
 
     fn without_effect(&self, state: ModelState) -> Self {
@@ -299,7 +314,11 @@ impl ModelSimState {
                 ModelStateProvenance::RestoredFromKey { effect: None }
             }
         };
-        Self { state, provenance }
+        Self {
+            state,
+            provenance,
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
+        }
     }
 
     /// The closed population state.
@@ -1824,11 +1843,8 @@ impl<'a> ModelSystem<'a> {
         &self,
         state: &ModelSimState,
     ) -> Result<(Vec<u8>, crate::simulation::StateKey), crate::simulation::EncodingRefusal> {
-        crate::simulation::key::state_key_of(
-            &self.canonical,
-            &encode::model_key(&self.model, &state.state, self.typing()).0,
-            identity_limits(),
-        )
+        let key = self.canonical_state_key_ref(state)?;
+        Ok((key.as_bytes().to_vec(), key.clone()))
     }
 
     /// Canonical raw model identity bytes under cumulative caller admission.
@@ -1862,11 +1878,25 @@ impl<'a> ModelSystem<'a> {
         &self,
         state: &ModelSimState,
     ) -> Result<crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
-        crate::simulation::key::canonical_state_key_of(
+        self.canonical_state_key_ref(state).map(Clone::clone)
+    }
+
+    pub(crate) fn canonical_state_key_ref<'s>(
+        &self,
+        state: &'s ModelSimState,
+    ) -> Result<&'s crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
+        if let Some(key) = state.canonical_key.get() {
+            return Ok(key.as_ref());
+        }
+        let key = crate::simulation::key::canonical_state_key_of(
             &self.canonical,
             &encode::model_key(&self.model, &state.state, self.typing()).0,
             identity_limits(),
-        )
+        )?;
+        Ok(state
+            .canonical_key
+            .get_or_init(|| std::sync::Arc::new(key))
+            .as_ref())
     }
 
     /// The canonical writer of this system's keys.

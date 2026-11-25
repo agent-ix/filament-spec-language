@@ -14,7 +14,7 @@ Verify the positive read and admission of FR-106's documents, identity
 stability, and that admission reads nothing ambient.
 
 Scope: FR-106-AC-1, FR-106-AC-2, FR-106-AC-6, FR-106-AC-8, FR-106-AC-9,
-FR-106-AC-72, FR-106-AC-73.
+FR-106-AC-72, FR-106-AC-73, FR-106-AC-84.
 
 ## Test Procedure
 
@@ -111,6 +111,22 @@ their document identity.
     declared `x: Clock` by `x: Option<Clock>`, updating its uses to be valid
     and evaluating the new reference in a state where the place is present;
     attempt raw admission of the old `x` reference in the data fields.
+11. Use FR-135-AC-13..15's `Queue`/`Ring` refinement fixture with the
+    concrete `Ring` declaration selected and a complete `Ring` population.
+    Put one object `r1` in that population with its `box`, `pair` and
+    `holder` fields. In `box`, supply a `record` value whose exact checked
+    `Box` declaration identity has `fields.target` set to the checked
+    reference value obtained for `r1`. In `pair`, supply
+    `{"tuple":{"type":"<the checked Pair declaration identity>","values":[<that reference value>,{"boolean":true}]}}`.
+    In `holder`, supply both `{"variant":{"type":"<the checked Holder
+    declaration identity>","case":"Has","values":[<that reference
+    value>]}}` and, in a separate snapshot, the existing nullary spelling
+    `{"variant":{"type":"<the checked Holder declaration
+    identity>","case":"Empty"}}`. Also try a tuple with one and three
+    positional values, a `Has` case with zero and two values, a `Holder`
+    case named `Missing`, and each carrier with an extra payload member.
+    Read the three admitted values back from the observation and read their
+    nested references as typed data.
 
 Tag the tests `#[trace("TC-464", "FR-106-AC-n")]`. Bind step 7 to
 `FR-106-AC-72` and step 8's three undeclared-place cases to
@@ -119,6 +135,7 @@ controls of steps 7 and 8 additionally to `FR-106-AC-76`; bind step 9 to
 `FR-106-AC-77`.
 Bind step 10 to `FR-230-AC-43` and `FR-230-AC-45`; these encoding controls
 are not substitutes for AC-72/AC-73.
+Bind step 11 to `FR-106-AC-84`.
 
 ## Expected Results
 
@@ -177,3 +194,9 @@ are not substitutes for AC-72/AC-73.
   `dangling_reference`/`absent-target-in-complete-population`, with the
   AC-73 nested-field loci and no observation or truth value; it is not
   admitted as the new optional place.
+- Step 11: the record, tuple, payload-bearing union and nullary union values
+  admit with their exact nominal declaration identities; tuple elements and
+  union payloads remain in declaration order, and every nested reference is
+  the same checked reference value supplied. Tuple and `Has` arity mismatches
+  and the unknown case and extra-member controls refuse before an observation
+  is produced.
