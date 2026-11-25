@@ -103,13 +103,29 @@ impl Renumbering {
         ids: &HashMap<NodeKey, CheckedNodeId>,
         data: &mut filament_contract_model::CheckedTermDataV2,
     ) {
+        let by_id = self.by_id(ids);
+        relabel_term_data(&by_id, data);
+    }
+
+    /// Relabel checked-term rows other than body locations, which are emitted
+    /// with their final occurrence order and path deltas already in sync.
+    pub(in crate::emit) fn relabel_term_data_without_body_locations(
+        &self,
+        ids: &HashMap<NodeKey, CheckedNodeId>,
+        data: &mut filament_contract_model::CheckedTermDataV2,
+    ) {
+        let by_id = self.by_id(ids);
+        relabel_term_data_without_body_locations(&by_id, data);
+    }
+
+    fn by_id(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> BTreeMap<CheckedNodeId, Mapping> {
         let mut by_id = BTreeMap::new();
         for (key, mapping) in &self.by_node {
             if let Some(id) = ids.get(key) {
                 by_id.insert(id.clone(), mapping.clone());
             }
         }
-        relabel_term_data(&by_id, data);
+        by_id
     }
 }
 
@@ -547,6 +563,21 @@ pub(in crate::emit) fn relabel_term_data(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {
+    relabel_term_data_inner(by_id, data, true);
+}
+
+fn relabel_term_data_without_body_locations(
+    by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    data: &mut filament_contract_model::CheckedTermDataV2,
+) {
+    relabel_term_data_inner(by_id, data, false);
+}
+
+fn relabel_term_data_inner(
+    by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    data: &mut filament_contract_model::CheckedTermDataV2,
+    relabel_body_locations: bool,
+) {
     if by_id.is_empty() {
         return;
     }
@@ -610,19 +641,21 @@ pub(in crate::emit) fn relabel_term_data(
             ))
         });
     }
-    let mut changed = false;
-    data.body_locations.retain_mut(|row| {
-        let moved = relabel(&row.application, &mut row.occurrence);
-        changed |= moved != Some(false);
-        moved.is_some()
-    });
-    if changed {
-        data.body_locations.sort_by(|left, right| {
-            (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
-                &right.application,
-                &right.occurrence,
-                right.term_ordinal,
-            ))
+    if relabel_body_locations {
+        let mut changed = false;
+        data.body_locations.retain_mut(|row| {
+            let moved = relabel(&row.application, &mut row.occurrence);
+            changed |= moved != Some(false);
+            moved.is_some()
         });
+        if changed {
+            data.body_locations.sort_by(|left, right| {
+                (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
+                    &right.application,
+                    &right.occurrence,
+                    right.term_ordinal,
+                ))
+            });
+        }
     }
 }

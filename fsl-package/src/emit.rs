@@ -4824,6 +4824,7 @@ fn checked_term_data(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     source_keys: &SourceDeclarationKeys,
+    renumbering: &value_validity_requirements::ordinals::Renumbering,
     meter: &mut OutputMeter,
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
@@ -4850,6 +4851,7 @@ fn checked_term_data(
         producer_node_ids,
         nodes,
         source_keys,
+        renumbering,
         meter,
     )?;
     Ok((!term_data.equality_decisions.is_empty()
@@ -8218,6 +8220,7 @@ fn emit_package_nodes(
         &nodes,
         &source_map,
         &source_keys,
+        &value_validity.renumbering,
         &mut meter,
     )?;
     if let Some(data) = &mut checked_term_data {
@@ -8228,7 +8231,9 @@ fn emit_package_nodes(
                     .iter()
                     .map(|(key, id)| (key.clone(), id.clone())),
             );
-            value_validity.renumbering.relabel_term_data(&row_ids, data);
+            value_validity
+                .renumbering
+                .relabel_term_data_without_body_locations(&row_ids, data);
         }
     }
     let selected_operation_member_rows = selected_operation_member_rows
