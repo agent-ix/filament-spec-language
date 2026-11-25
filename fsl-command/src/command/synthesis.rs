@@ -1027,12 +1027,7 @@ fn run_package_synthesis(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(|failure| {
-            refused(
-                "/request/synthesis",
-                format!("package admission: {failure:?}"),
-            )
-        })?;
+        .map_err(super::analyze::dependency_join_cause)?;
     let claim = select_claim(&admitted.package, requested.declaration.as_deref())?;
     if fsl_package::is_plan_synthesis(&admitted.package, &claim.declaration) {
         return Err(plan_not_routed());

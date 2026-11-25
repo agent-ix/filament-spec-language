@@ -2,7 +2,7 @@
 //! The replay handoff supply admits one artifact per library identity
 //! (FR-850 "Admission").
 
-use super::{HandoffSupply, ReplayRefusal};
+use super::{handoff_join_refusal, HandoffSupply, ReplayRefusal};
 use crate::execute::PackageReadRefusal;
 use filament_contract_model::{
     encode_checked_package_v2, CheckedDependencySelection, CheckedPackageSidecarsRef,
@@ -275,4 +275,30 @@ fn a_root_named_artifact_supplied_under_another_identity_refuses() {
         admit(&library(1), &[relabelled]),
         "a root-named package supplied as `other`",
     );
+}
+
+/// A join that refuses an artifact name gives a replay the refusal handoff
+/// admission gives it, and a native denial is not turned into it.
+#[trace("TC-1331", "FR-531-AC-61")]
+#[test]
+fn a_join_refusal_of_an_artifact_name_is_the_handoff_refusal() {
+    let root = library(1);
+    for (artifacts, case) in [
+        (vec![library(2)], "an artifact named as the root"),
+        (
+            vec![selecting("mid", "dep"), selecting("mid", "dep")],
+            "a repeated artifact name",
+        ),
+    ] {
+        let refusal = fsl_package::BarePackage::new(&root.package)
+            .with_dependency_artifacts(&artifacts, &mut join_budget())
+            .err()
+            .expect(case);
+        assert_refuses(Err(handoff_join_refusal(refusal)), case);
+    }
+    let denial = fsl_package::NativeJoinFailure::UnitDefinitions {
+        setting: fsl_foundation::Setting::I2WorkUnits,
+    };
+    let control = handoff_join_refusal(denial.into());
+    assert!(matches!(control, ReplayRefusal::Fault(_)), "{control:?}");
 }

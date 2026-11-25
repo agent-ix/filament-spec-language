@@ -1004,6 +1004,18 @@ fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> Re
     }
 }
 
+/// FR-531 "Dependency artifact names": a join's refusal of an artifact name is
+/// the refusal handoff admission gives that name. A native join refusal stays
+/// the internal fault.
+pub(super) fn handoff_join_refusal(refusal: fsl_package::DependencyJoinRefusal) -> ReplayRefusal {
+    match refusal {
+        fsl_package::DependencyJoinRefusal::Name { .. } => {
+            ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed)
+        }
+        fsl_package::DependencyJoinRefusal::Native(_) => fault("handoff-supply-joins"),
+    }
+}
+
 #[cfg(test)]
 mod host_allocation_admission_tests {
     use super::{HandoffSupply, ReplayRefusal};
@@ -1132,7 +1144,7 @@ pub fn replay_model_trace_from_package(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(|_| fault("handoff-supply-joins"))?;
+        .map_err(handoff_join_refusal)?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
             .map_err(|_| fault("package-route-input"))?;
@@ -1654,7 +1666,7 @@ pub fn replay_protocol_trace_from_package(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(|_| fault("handoff-supply-joins"))?;
+        .map_err(handoff_join_refusal)?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
             .map_err(|_| fault("package-route-input"))?;

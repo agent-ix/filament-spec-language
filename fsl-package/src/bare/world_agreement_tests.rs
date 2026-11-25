@@ -29,10 +29,31 @@ fn owner(name: &str, divisor: u32) -> Owner {
 
 /// [`owner`], whose derived dimension `Rate` is `Length {operator} Time`.
 fn declaring(name: &str, divisor: u32, operator: &str) -> Owner {
+    admitted(
+        name,
+        &format!(
+            "dimension Time;\ndimension Length;\ndimension Rate = Length {operator} Time;\nunit s : Time = rational(1, 1);\nunit m : Length = rational(1, 1);\nunit r : Rate = rational(1, 1);\nunit ms : Time = rational(1, {divisor}) * s;\n\
+             function in_ms_is_3000 using v(): Boolean pure {{ convert<Quantity<ms>>(3 s) = 3000 ms }}\n"
+        ),
+    )
+}
+
+/// The package `name`, whose dimension equivalence makes `1 sec` equal
+/// `{ratio} s`.
+fn equivalent(name: &str, ratio: u32) -> Owner {
+    admitted(
+        name,
+        &format!(
+            "dimension Time;\ndimension Period;\nunit s : Time = rational(1, 1);\n\
+             unit sec : Period = rational(1, 1);\ndimension Period ~ Time by 1 sec = {ratio} s;\n"
+        ),
+    )
+}
+
+/// The package `name` of `declarations`, emitted and admitted with its witnesses.
+fn admitted(name: &str, declarations: &str) -> Owner {
     let source = format!(
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n\
-         dimension Time;\ndimension Length;\ndimension Rate = Length {operator} Time;\nunit s : Time = rational(1, 1);\nunit m : Length = rational(1, 1);\nunit r : Rate = rational(1, 1);\nunit ms : Time = rational(1, {divisor}) * s;\n\
-         function in_ms_is_3000 using v(): Boolean pure {{ convert<Quantity<ms>>(3 s) = 3000 ms }}\n"
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declarations}"
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("fixture", name),
@@ -149,5 +170,26 @@ fn unequal_definitions_for_one_dimension_key_are_a_world_fault() {
         let mut bare = joined(root);
         bare.dependency_views.push(joined(view));
         assert_disagreement(&bare, "a dimension");
+    }
+}
+
+/// Dimension equivalences are held to the same agreement: two views whose
+/// equivalence under one node key has another ratio refuse, with every
+/// dimension and unit definition equal.
+#[trace("TC-1331")]
+#[test]
+fn unequal_ratios_for_one_equivalence_key_are_a_world_fault() {
+    let (one, two) = (equivalent("dep", 1), equivalent("dep", 2));
+
+    let mut equal = joined(&one);
+    equal.dependency_views.push(joined(&one));
+    for world in worlds(&equal) {
+        world.expect("equal equivalences form one world");
+    }
+
+    for (root, view) in [(&one, &two), (&two, &one)] {
+        let mut bare = joined(root);
+        bare.dependency_views.push(joined(view));
+        assert_disagreement(&bare, "an equivalence");
     }
 }
