@@ -8641,10 +8641,11 @@ impl PackageDeclarations {
             };
             let boolean = builtin_boolean_type_key(&package_name).map_err(|_| unkeyable())?;
             let mut claim_requirements = claim.requirements();
-            if checked_task_sets
-                .releases()
-                .iter()
-                .any(|release| release.task_set() == claim.task_set)
+            if matches!(&claim.claim, ScheduleClaim::Schedulable(_))
+                && checked_task_sets
+                    .releases()
+                    .iter()
+                    .any(|release| release.task_set() == claim.task_set)
             {
                 claim_requirements = claim_requirements.for_task_product();
             }
