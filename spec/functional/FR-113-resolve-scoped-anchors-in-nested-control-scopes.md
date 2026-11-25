@@ -133,6 +133,7 @@ package beside them (FR-114, ADR-012 §12.2 Package row).
 | FR-113-AC-7 | Wrong kind and channel: `effect Applied of Recovered` (an `event` node) refuses `ill_typed`/`type-mismatch` at the anchor naming site `effect-of` and kind `event`; `compensate Undo for Main::Tried` (an `attempt`) refuses naming `compensate-for` and `attempt`; `await Wait after Main ...` (a `sequence`) refuses naming `await-after` and `sequence`. With channels `C` and `D` from `R` to `R`, `send S via C ...` and `receive Got via D of S ...` refuse at the anchor naming `C` and `D`; the same receive `via C` checks. | Test (TC-512) |
 | FR-113-AC-8 | In TC-380, `activate first (f: M::Failure)` followed by `event Fail by w as (f: M::Failure) { true };` checks without `ambiguous_declaration`, because the trigger binder is out of scope at the event. | Test (TC-512) |
 | FR-113-AC-9 | In the TC-380 fixture, adding `capture f: M::Failure = f;` inside `activate first (f: M::Failure)` refuses `ambiguous_declaration`/`ambiguous-name` at the capture naming the active trigger binder. | Test (TC-512) |
+| FR-113-AC-10 | In TC-510's `RecoveryFlow`, insert `sequence Inner { event Recovered2 by R for Undo as (tried: Boolean) { true }; }` in `Main` after `attempt Tried by R on M::Actor::op contracts [] as (tried: Boolean) { true };`. The nested event binder refuses `ambiguous_declaration`/`ambiguous-name` at its declaration naming the still-active outer `Tried` binder. | Test (TC-512) |
 
 ## Dependencies
 

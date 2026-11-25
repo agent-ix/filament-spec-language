@@ -14,7 +14,7 @@ Verify the `ambiguous_declaration`/`ambiguous-name` refusals for two
 declarations of one name in one scope and for a shadowing binder, and the
 refusal order.
 
-Scope: FR-113-AC-4 to FR-113-AC-9.
+Scope: FR-113-AC-4 to FR-113-AC-10.
 
 ## Test Procedure
 
@@ -37,6 +37,10 @@ Use TC-510's `RecoveryFlow` fixture.
    `event Fail by w as (f: M::Failure) { true };` declaration. Check it.
 6. **FR-113-AC-9:** Add `capture f: M::Failure = f;` inside that activation
    and check the variant.
+7. **FR-113-AC-10:** In a fresh TC-510 `RecoveryFlow` fixture, insert
+   `sequence Inner { event Recovered2 by R for Undo as (tried: Boolean) { true }; }`
+   in `Main` after `attempt Tried by R on M::Actor::op contracts [] as
+   (tried: Boolean) { true };`. Check it.
 
 Tag the tests `#[trace("TC-512", "FR-113-AC-n")]`.
 
@@ -59,3 +63,5 @@ Tag the tests `#[trace("TC-512", "FR-113-AC-n")]`.
   `ambiguous_declaration`.
 - Step 6: the added capture refuses `ambiguous_declaration`/`ambiguous-name`
   at the capture naming the active trigger binder.
+- Step 7: the inner event refuses `ambiguous_declaration`/`ambiguous-name`
+  naming the outer attempt binder, which remains active in the nested scope.
