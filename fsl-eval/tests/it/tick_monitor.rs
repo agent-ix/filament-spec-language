@@ -333,7 +333,7 @@ fn counter_wraps_and_a_gap_fails_the_open_instance() {
     assert_eq!(monitor.now(), 10);
 }
 
-#[trace("TC-199")]
+#[trace("TC-199", "FR-160-AC-7")]
 #[test]
 fn tick_cover_vectors_decide_by_the_endpoint_rule() {
     let vectors =
