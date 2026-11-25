@@ -105,6 +105,13 @@ impl CertificateState for ProductStateKey {
     fn locus(self) -> CertificateLocus {
         CertificateLocus::HyperProductState(self.0)
     }
+
+    fn edge_locus(source: Self, target: Self) -> CertificateLocus {
+        CertificateLocus::HyperProductEdge {
+            source: source.0,
+            target: target.0,
+        }
+    }
 }
 
 /// One binding's closed product and its component witnesses.
@@ -710,7 +717,7 @@ fn check(
             let next = canonical(&product, next, group.as_ref())?;
             let target_key = product_state_key(&product.key(&next))?;
             if !members.contains(&target_key) {
-                return Ok(rejected(CertificateRule::SuccessorMissing, key));
+                return Ok(rejected(CertificateRule::SuccessorMissing, target_key));
             }
             let target = if let Some(target) = seen.get(&target_key) {
                 *target

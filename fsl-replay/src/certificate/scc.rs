@@ -34,9 +34,10 @@
 //! first in listed order, with an explicit stack, so a deep certificate
 //! cannot overflow the call stack. The first failed rule is the rejection:
 //! a duplicated, foreign or uncovered state is the `NotPartition` locus (an
-//! uncovered one is the least, by [`ProductStateRef`] order), a backward
-//! edge's source state the `BackwardEdge` locus, and a component's first
-//! listed state its `WitnessFails` locus. An empty component, which has no
+//! uncovered one is the least, by [`ProductStateRef`] order), a
+//! `BackwardEdge` is located at the source and target states of the edge,
+//! and the first listed state of a component is its `WitnessFails` locus. An
+//! empty component, which has no
 //! state of its own, rejects `NotPartition` at the first state of the
 //! component it refines, or at the least reached state at the top level.
 //!
@@ -240,11 +241,17 @@ struct Level<'c, K> {
 /// The certificate key's rejection locus, independent of the graph's domain.
 pub(crate) trait CertificateState: Clone + Ord {
     fn locus(self) -> CertificateLocus;
+
+    fn edge_locus(source: Self, target: Self) -> CertificateLocus;
 }
 
 impl CertificateState for ProductStateRef {
     fn locus(self) -> CertificateLocus {
         CertificateLocus::ProductState(self)
+    }
+
+    fn edge_locus(source: Self, target: Self) -> CertificateLocus {
+        CertificateLocus::ProductEdge { source, target }
     }
 }
 
@@ -364,7 +371,7 @@ impl<'p, K: CertificateState> Checker<'p, K> {
         Ok((owner, members))
     }
 
-    /// `BackwardEdge` at the source of the first computed edge, between two
+    /// `BackwardEdge` at both ends of the first computed edge, between two
     /// states of the scope, that goes to an earlier component.
     fn edges(
         &self,
@@ -381,7 +388,14 @@ impl<'p, K: CertificateState> Checker<'p, K> {
                             .get(&edge.target)
                             .is_some_and(|target| *target < index)
                     {
-                        return Err(reject(CertificateRule::BackwardEdge, state.clone()));
+                        let target = self
+                            .product
+                            .state(edge.target)
+                            .expect("every product edge has a target state");
+                        return Err(TemporalCertificateCheck::Rejected(CertificateRejection {
+                            rule: CertificateRule::BackwardEdge,
+                            at: K::edge_locus(state.clone(), target.clone()),
+                        }));
                     }
                 }
             }
@@ -697,7 +711,7 @@ mod tests {
     /// take; the accepting components listed before the component that
     /// reaches them; one state in two components; and a `Trivial` witness
     /// over a state with a self-edge.
-    #[trace("TC-526", "FR-339-AC-2")]
+    #[trace("TC-526", "FR-339-AC-2", "FR-282-AC-6")]
     #[test]
     fn a_tampered_partition_is_rejected_at_its_locus() {
         let example = example();
@@ -713,7 +727,13 @@ mod tests {
         backward.rotate_left(1);
         assert_eq!(
             check(&example.product, &backward, &example.constraints),
-            rejected(CertificateRule::BackwardEdge, product_state([0, 0], "q0"))
+            TemporalCertificateCheck::Rejected(CertificateRejection {
+                rule: CertificateRule::BackwardEdge,
+                at: CertificateLocus::ProductEdge {
+                    source: product_state([0, 0], "q0"),
+                    target: product_state([1, 0], "q1"),
+                },
+            })
         );
 
         let mut twice = certificate();
@@ -1028,7 +1048,7 @@ mod tests {
             },
         ];
         let certificate = single(
-            vec![s, a.clone(), b],
+            vec![s, a.clone(), b.clone()],
             ComponentWitness::UnfairStrong {
                 constraints: vec![0],
                 sub: split,
@@ -1036,7 +1056,13 @@ mod tests {
         );
         assert_eq!(
             check(&product, &certificate, &constraints),
-            rejected(CertificateRule::BackwardEdge, a)
+            TemporalCertificateCheck::Rejected(CertificateRejection {
+                rule: CertificateRule::BackwardEdge,
+                at: CertificateLocus::ProductEdge {
+                    source: a,
+                    target: b,
+                },
+            })
         );
     }
 
@@ -1226,7 +1252,13 @@ mod tests {
         );
         assert_eq!(
             check(&product, &split(), &constraints),
-            rejected(CertificateRule::BackwardEdge, q.clone())
+            TemporalCertificateCheck::Rejected(CertificateRejection {
+                rule: CertificateRule::BackwardEdge,
+                at: CertificateLocus::ProductEdge {
+                    source: q.clone(),
+                    target: r.clone(),
+                },
+            })
         );
     }
 

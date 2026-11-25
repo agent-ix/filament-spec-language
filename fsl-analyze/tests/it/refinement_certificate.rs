@@ -222,30 +222,49 @@ fn a_removed_edge_is_rejected() {
     );
 }
 
-/// Removing the target position's sole abstract relation pair makes the
-/// listed concrete edge fail, but the current checker reports only the
-/// `PostDiffers` source edge and not the missing abstract match.
-#[trace("TC-556")]
+/// FR-282-AC-7 (TC-764 step 6): the certificate of a holding safety half is
+/// accepted, and rejected with any one position's relation pair removed: for
+/// an initial position `InitialMismatch` at that position, and otherwise
+/// `PostDiffers` at the first edge in check order whose post position lost
+/// the pair.
+#[trace("TC-556", "TC-764", "FR-282-AC-7")]
 #[test]
-fn a_removed_relation_pair_reports_only_the_concrete_source_edge() {
+fn a_removed_relation_pair_is_rejected_where_its_position_is_first_compared() {
     let world = safety_only();
-    let (mut certificate, _) = certificate(&world);
-    let from = position_of(&world, &certificate, [0, 0, 1, 0, 0]);
-    let edge = edge_of(&certificate, from, "commitA");
-    let target = usize::try_from(
-        certificate.successors[usize::try_from(from).expect("a position")][edge].post,
-    )
-    .expect("a target position");
-    assert_eq!(certificate.positions[target].abstract_states.len(), 1);
-    certificate.positions[target].abstract_states.remove(0);
-
+    let (certificate, _) = certificate(&world);
     assert_eq!(
-        rejected(check(&world, &certificate)),
-        (
-            CertificateRule::PostDiffers,
-            step(from, Some(u64::try_from(edge).expect("an edge")))
-        )
+        check(&world, &certificate),
+        TemporalCertificateCheck::Accepted
     );
+
+    let (mut initial, mut stepped) = (0, 0);
+    for (lost, at) in (0_u64..).zip(0..certificate.positions.len()) {
+        let mut removed = certificate.clone();
+        assert_eq!(removed.positions[at].abstract_states.len(), 1);
+        removed.positions[at].abstract_states.remove(0);
+        let expected = if certificate.initial.contains(&lost) {
+            initial += 1;
+            (CertificateRule::InitialMismatch, step(lost, None))
+        } else {
+            stepped += 1;
+            let (from, edge) = (0_u64..)
+                .zip(&certificate.successors)
+                .find_map(|(from, edges)| {
+                    (0_u64..)
+                        .zip(edges)
+                        .find(|(_, edge)| edge.post == lost)
+                        .map(|(number, _)| (from, number))
+                })
+                .expect("a step reaches a position that is not initial");
+            (CertificateRule::PostDiffers, step(from, Some(edge)))
+        };
+        assert_eq!(
+            rejected(check(&world, &removed)),
+            expected,
+            "the pair of position {lost} removed"
+        );
+    }
+    assert!(initial > 0 && stepped > 0);
 }
 
 /// FR-149-AC-2 (TC-556 step 2): an edge's transition changed, an edge
@@ -1039,8 +1058,26 @@ fn a_rejection_serializes_its_locus_and_verdict() {
             serde_json::json!({"kind": "StutterChanged", "position": "2"}),
         ),
         (
-            FailedStep::Fails(RefinementFailure::NoAbstractMatch { position: 3 }),
-            serde_json::json!({"kind": "NoAbstractMatch", "position": "3"}),
+            FailedStep::NoAbstractMatch {
+                position: 3,
+                transition: filament_semantic_value::model_transition::ModelTransition::new(
+                    "\"commitA\"".to_owned(),
+                    None,
+                    Vec::new(),
+                    quire_canonical::Limits::new(u64::MAX),
+                )
+                .expect("the concrete transition identity is valid"),
+            },
+            serde_json::json!({
+                "kind": "NoAbstractMatch",
+                "position": "3",
+                "transition": {
+                    "type": "transition",
+                    "operation": "\"commitA\"",
+                    "receiver": null,
+                    "arguments": []
+                }
+            }),
         ),
         (
             FailedStep::Undetermined(UndeterminedStep::new(Undetermined::Mapping(Box::new(
@@ -1081,4 +1118,65 @@ fn a_rejection_serializes_its_locus_and_verdict() {
             expected
         );
     }
+}
+
+/// FR-149-AC-8 (TC-556): the checker's `NoAbstractMatch` verdict writes the
+/// step's position and the concrete transition left unmatched.
+#[trace("TC-556", "FR-149-AC-8")]
+#[test]
+fn an_unmatched_concrete_step_names_its_transition_in_the_checker_diagnostic() {
+    let refinement = lost_update_refinement()
+        .replace(
+            "step Impl::Counter::commitA -> Spec::Counter::inc(self);",
+            "step Impl::Counter::commitA -> any;",
+        )
+        .replace(
+            "step Impl::Counter::commitB -> Spec::Counter::inc(self);",
+            "step Impl::Counter::commitB -> any;",
+        );
+    let world = World::with(Variant::LOST_UPDATE, &refinement);
+    let certificate = listed(&world);
+    let (rule, at) = rejected(check(&world, &certificate));
+    assert_eq!(rule, CertificateRule::StepFails);
+    let CertificateLocus::SimulationStep {
+        position,
+        edge,
+        verdict: Some(verdict),
+    } = &at
+    else {
+        panic!("the unmatched step has a simulation verdict: {at:?}");
+    };
+    let certificate_edge = &certificate.successors[usize::try_from(*position).expect("a position")]
+        [usize::try_from(edge.expect("an edge")).expect("an edge index")];
+    let expected_transition = certificate_edge
+        .transition
+        .as_ref()
+        .expect("the rejected certificate edge names its concrete transition");
+    let expected_post = certificate_edge.post;
+    let FailedStep::NoAbstractMatch {
+        position,
+        transition,
+    } = verdict.as_ref()
+    else {
+        panic!("the checker identifies the missing abstract match: {verdict:?}");
+    };
+    assert_eq!(*position, expected_post);
+    assert_eq!(transition, expected_transition);
+
+    let expected_transition_wire: serde_json::Value = serde_json::from_slice(
+        &expected_transition
+            .canonical_bytes(quire_canonical::Limits::new(u64::MAX))
+            .expect("the concrete transition identity encodes"),
+    )
+    .expect("the concrete transition is canonical JSON");
+    let wire = serde_json::to_value(&at).expect("the checker locus serializes");
+    assert_eq!(
+        wire["verdict"],
+        serde_json::json!({
+            "kind": "NoAbstractMatch",
+            "position": expected_post.to_string(),
+            "transition": expected_transition_wire,
+        }),
+        "the serialized checker diagnostic retains the exact concrete transition"
+    );
 }
