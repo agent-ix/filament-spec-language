@@ -555,16 +555,21 @@ fn a_redelivered_review_acknowledgement_establishes_one_effect_identity() {
         "one business-effect occurrence is established"
     );
 
-    let mut effect_identities = std::collections::BTreeSet::new();
+    let mut effect_identity = None;
     for reached in &graph.states {
         for (transition, _) in &reached.steps {
             if let Some(effect) = transition.business_effect() {
                 assert_eq!(effect.ordinal(), 0);
                 let identity = fsl_eval::simulation::protocol::transition_json(transition)
                     .expect("effect identity serializes");
-                effect_identities.insert(identity["business_effect"].clone());
+                let current_identity = identity["business_effect"].clone();
+                if let Some(effect_identity) = &effect_identity {
+                    assert_eq!(effect_identity, &current_identity);
+                } else {
+                    effect_identity = Some(current_identity);
+                }
             }
         }
     }
-    assert_eq!(effect_identities.len(), 1, "one stable effect identity");
+    assert!(effect_identity.is_some(), "the effect has an identity");
 }
