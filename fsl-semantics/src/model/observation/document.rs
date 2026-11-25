@@ -11,6 +11,7 @@ use filament_exact::{
 };
 
 use fsl_foundation::diagnostic::Code;
+use ix_trace_rs::implements;
 
 use super::helpers::object_reference;
 use super::tree::{Json, Object, read_raw_value};
@@ -3571,7 +3572,7 @@ fn snapshot_field_path(population: usize, object: usize, field: &str) -> String 
     )
 }
 
-#[ix_trace_rs::implements("FR-125-AC-13")]
+#[implements("FR-125-AC-13")]
 fn object_field_values_match(
     types: &TypeEnvironment,
     record_keys: &BTreeMap<String, filament_exact::NodeKey>,
