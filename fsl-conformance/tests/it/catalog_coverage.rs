@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Source producers of published checked-operation identities and node forms.
 
-use std::collections::btree_map::Entry;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use filament_exact::Cancel;
@@ -11,7 +10,7 @@ use fsl_foundation::SourceIdentity;
 use fsl_package::{EmitLimits, V2ReadLimits};
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_semantics::library::LibraryName;
-use fsl_semantics::model::intake::PackageInput;
+use fsl_semantics::model::intake::{package_input, PackageInput};
 use ix_trace_rs::trace;
 use serde_json::Value;
 
@@ -20,6 +19,9 @@ use crate::fspec_standard::is_ticket_key;
 struct Case {
     name: &'static str,
     source: &'static str,
+    /// The domain packages the source selects, each supplied under the identity
+    /// it declares in place of any pooled document.
+    documents: &'static [&'static [u8]],
     operations: &'static [&'static str],
     forms: &'static [(&'static str, &'static str)],
 }
@@ -29,6 +31,7 @@ macro_rules! operators {
         Case {
             name: $name,
             source: include_str!(concat!("../../cases/type-operators/", $name, "-accepted.native")),
+            documents: &[],
             operations: &[$(concat!("filament.op.", $family, ".", $operation)),+],
             forms: &[],
         }
@@ -40,6 +43,22 @@ macro_rules! sourced {
         Case {
             name: $name,
             source: include_str!(concat!("../../cases/catalog-source/", $name, ".native")),
+            documents: &[],
+            operations: $operations,
+            forms: $forms,
+        }
+    };
+}
+
+/// A catalog source that names the domain package it selects, one the pool does
+/// not supply: it sits outside the pooled directories, or another checked-in
+/// document declares its identity too.
+macro_rules! selecting {
+    ($name:literal, $document:literal, $operations:expr, $forms:expr) => {
+        Case {
+            name: $name,
+            source: include_str!(concat!("../../cases/catalog-source/", $name, ".native")),
+            documents: &[include_bytes!(concat!("../../../", $document))],
             operations: $operations,
             forms: $forms,
         }
@@ -51,6 +70,7 @@ macro_rules! original {
         Case {
             name: $name,
             source: include_str!(concat!("../../../", $path)),
+            documents: &[],
             operations: $operations,
             forms: $forms,
         }
@@ -111,6 +131,7 @@ source_cases! {
     option_presence => Case {
         name: "option-presence",
         source: include_str!("../../cases/type-operators/option-presence-accepted.native"),
+        documents: &[],
         operations: &[
             "filament.op.option.present",
             "filament.op.option.value",
@@ -121,30 +142,35 @@ source_cases! {
     tuple_position => Case {
         name: "tuple-position",
         source: include_str!("../../cases/tuple-position-accepted.native"),
+        documents: &[],
         operations: &["filament.op.tuple.project"],
         forms: &[("composite_type", "tuple"), ("expression", "query")],
     },
     float_arithmetic => Case {
         name: "float-arithmetic",
         source: include_str!("../../cases/type-operators/float-arithmetic-accepted.native"),
+        documents: &[],
         operations: &["filament.op.ieee.float32.add", "filament.op.ieee.float32.sub", "filament.op.ieee.float32.mul", "filament.op.ieee.float64.add", "filament.op.ieee.float64.sub", "filament.op.ieee.float64.mul"],
         forms: &[],
     },
     float_negation => Case {
         name: "float-negation",
         source: include_str!("../../cases/type-operators/float-negation-accepted.native"),
+        documents: &[],
         operations: &["filament.op.ieee.float32.negate", "filament.op.ieee.float64.negate"],
         forms: &[],
     },
     float_division => Case {
         name: "float-division",
         source: include_str!("../../cases/type-operators/float-division-accepted.native"),
+        documents: &[],
         operations: &["filament.op.ieee.float32.div", "filament.op.ieee.float64.div"],
         forms: &[],
     },
     structural_calls => Case {
         name: "structural-calls",
         source: include_str!("../../cases/catalog-source-structural.native"),
+        documents: &[],
         operations: &["filament.op.record.project", "filament.op.function.call", "filament.op.control.let", "filament.op.integer.add"],
         forms: &[("composite_type", "record"), ("expression", "call"), ("expression", "let")],
     },
@@ -215,6 +241,16 @@ source_cases! {
     domain_model_root => original!("checked-handoff-library", "examples/checked-handoff/library.native", &[], &[("model", "model_root"), ("model", "record_value_type")]),
     domain_refinement => original!("refinement-constant-map", "tests/corpus/refinement/refinement-constant-map.native", &[], &[("relation", "refinement")]),
     source_object => sourced!("source-object", &[], &[("model", "object_type"), ("composite_type", "reference")]),
+    state_graph_claims => sourced!("state-graph-claims", &[], &[("claim", "state_graph")]),
+    domain_relationship => selecting!("domain-relationship", "tests/fixtures/spine-model-relationship.semantic-ir.json", &[], &[("relation", "relationship")]),
+    domain_protocol_reference => selecting!("protocol-reference", "tests/fixtures/spine-model.semantic-ir.json", &[], &[("protocol", "protocol_reference")]),
+    domain_systems_interface => sourced!("domain-systems-interface", &[], &[("model", "systems_interface")]),
+    domain_lifecycle => sourced!("domain-lifecycle", &[], &[("model", "process"), ("model", "state_machine"), ("model", "variant_type")]),
+    timed_urgency => sourced!("timed-urgency", &["filament.op.model.lookup"], &[("timed_model", "timed_model"), ("timed_model", "time_source"), ("timed_model", "clock_place"), ("timed_model", "urgency")]),
+    timed_clauses => sourced!("timed-clauses", &[], &[("timed_model", "clock_constraint"), ("timed_model", "clock_guard"), ("timed_model", "clock_reset"), ("timed_model", "time_invariant"), ("expression", "reference")]),
+    clock_reference => sourced!("clock-reference", &["filament.op.clock_reference.ref", "filament.op.clock_reference.eq", "filament.op.clock_reference.ne"], &[("scalar_type", "clock_reference"), ("expression", "place_reference")]),
+    reference_literal_inequality => selecting!("reference-literal-inequality", "tests/corpus/models/shop.semantic-ir.json", &["filament.op.reference.ne"], &[]),
+    delay_distribution => sourced!("delay-distribution", &[], &[("probabilistic", "delay_distribution")]),
 }
 
 fn catalog_identities() -> BTreeSet<String> {
@@ -251,37 +287,73 @@ impl Refusal {
     }
 }
 
-/// Keys each domain package among `documents` by the identity it declares. A
-/// document that is no domain package is skipped. An identity that two
-/// different documents declare is supplied by neither, so a source selecting
-/// it is refused whatever order the documents are read in.
-fn pool_of<'a>(documents: impl IntoIterator<Item = &'a [u8]>) -> PackageInput {
-    let mut pool = PackageInput::new();
-    let mut conflicting = BTreeSet::new();
+/// Every distinct domain package among `documents`, by the identity it
+/// declares. A document that is no domain package is skipped.
+fn declared_packages<'a>(
+    documents: impl IntoIterator<Item = &'a [u8]>,
+) -> BTreeMap<String, BTreeSet<Vec<u8>>> {
+    let mut declared = BTreeMap::<String, BTreeSet<Vec<u8>>>::new();
     for bytes in documents {
-        let Ok(one) = fsl_semantics::model::intake::package_input([bytes]) else {
+        let Ok(one) = package_input([bytes]) else {
             continue;
         };
         for (identity, document) in one {
-            match pool.entry(identity) {
-                Entry::Vacant(slot) => {
-                    slot.insert(document);
-                }
-                Entry::Occupied(slot) => {
-                    if *slot.get() != document {
-                        conflicting.insert(slot.key().clone());
-                    }
-                }
-            }
+            declared.entry(identity).or_default().insert(document);
         }
     }
-    pool.retain(|identity, _| !conflicting.contains(identity));
+    declared
+}
+
+/// Keys each domain package among `documents` by the identity it declares. An
+/// identity that two different documents declare is supplied by neither, so a
+/// source selecting it is refused whatever order the documents are read in.
+fn pool_of<'a>(documents: impl IntoIterator<Item = &'a [u8]>) -> PackageInput {
+    declared_packages(documents)
+        .into_iter()
+        .filter_map(|(identity, mut documents)| {
+            let document = documents.pop_first()?;
+            documents.is_empty().then_some((identity, document))
+        })
+        .collect()
+}
+
+/// The pooled packages, with each of `documents` supplied under the identity
+/// it declares.
+fn pool_with(documents: &[&[u8]]) -> PackageInput {
+    let mut pool = model_pool().clone();
+    for bytes in documents {
+        pool.extend(package_input([*bytes]).expect("a case's domain package reads"));
+    }
     pool
 }
 
-/// The domain packages the checked-in sources select by identity: the conformance
-/// packages, the example packages and the test fixtures. A source that selects
-/// none of them is unaffected.
+/// The inputs a swept `source` is compiled against: the pooled packages with
+/// each identity the source names supplied by one of its `declared` documents,
+/// one input for every such combination.
+fn inputs_for(source: &str, declared: &BTreeMap<String, BTreeSet<Vec<u8>>>) -> Vec<PackageInput> {
+    declared
+        .iter()
+        .filter(|(identity, _)| source.contains(&format!("\"{identity}\"")))
+        .fold(
+            vec![model_pool().clone()],
+            |inputs, (identity, documents)| {
+                inputs
+                    .iter()
+                    .flat_map(|input| {
+                        documents.iter().map(|document| {
+                            let mut input = input.clone();
+                            input.insert(identity.clone(), document.clone());
+                            input
+                        })
+                    })
+                    .collect()
+            },
+        )
+}
+
+/// The domain packages a case or probe may select by identity alone: the
+/// conformance packages, the example packages and the test fixtures. A source
+/// that selects none of them is unaffected.
 fn model_pool() -> &'static PackageInput {
     static POOL: std::sync::OnceLock<PackageInput> = std::sync::OnceLock::new();
     POOL.get_or_init(|| {
@@ -302,6 +374,7 @@ fn repository_root() -> PathBuf {
 }
 
 /// Every file with `extension` under `directories` of the repository, sorted.
+/// Build output (`target`) and hidden directories are skipped.
 fn checked_in_files(directories: &[&str], extension: &str) -> Vec<PathBuf> {
     let mut stack: Vec<PathBuf> = directories
         .iter()
@@ -310,9 +383,13 @@ fn checked_in_files(directories: &[&str], extension: &str) -> Vec<PathBuf> {
     let mut files = Vec::new();
     while let Some(directory) = stack.pop() {
         for entry in std::fs::read_dir(&directory).expect("a checked-in directory reads") {
-            let path = entry.expect("a checked-in directory entry reads").path();
+            let entry = entry.expect("a checked-in directory entry reads");
+            let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
+                let name = entry.file_name();
+                if name != "target" && !name.to_string_lossy().starts_with('.') {
+                    stack.push(path);
+                }
             } else if path.extension().is_some_and(|found| found == extension) {
                 files.push(path);
             }
@@ -322,9 +399,10 @@ fn checked_in_files(directories: &[&str], extension: &str) -> Vec<PathBuf> {
     files
 }
 
-/// Compiles and reads a source through the public front end and the strict
-/// reader; every refusal is returned, never raised.
-fn try_compile_and_read(name: &str, source: &str) -> Result<Value, Refusal> {
+/// Compiles and reads a source over the domain packages `inputs` through the
+/// public front end and the strict reader; every refusal is returned, never
+/// raised.
+fn try_compile_and_read(name: &str, source: &str, inputs: &PackageInput) -> Result<Value, Refusal> {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("catalog-source", name);
@@ -339,7 +417,6 @@ fn try_compile_and_read(name: &str, source: &str) -> Result<Value, Refusal> {
     )
     .map_err(|error| Refusal::new("parse", error))?
     .into_value();
-    let inputs = model_pool();
     let models = spine::select(&parsed, inputs, limits.model, &cancel)
         .map_err(|error| Refusal::new("select", error))?
         .into_value();
@@ -368,9 +445,13 @@ fn try_compile_and_read(name: &str, source: &str) -> Result<Value, Refusal> {
         .map_err(|error| Refusal::new("admit", error))
 }
 
+/// Compiles and reads a case's source over the domain packages it selects.
+fn try_compile_case(case: &Case) -> Result<Value, Refusal> {
+    try_compile_and_read(case.name, case.source, &pool_with(case.documents))
+}
+
 fn compile_and_read(case: &Case) -> Value {
-    try_compile_and_read(case.name, case.source)
-        .unwrap_or_else(|refusal| panic!("{} is refused: {refusal:?}", case.name))
+    try_compile_case(case).unwrap_or_else(|refusal| panic!("{} is refused: {refusal:?}", case.name))
 }
 
 fn operation_identities(value: &Value, found: &mut BTreeSet<String>) {
@@ -519,8 +600,8 @@ struct Probe {
     expect: Expect,
 }
 
-/// One thing the language cannot yet produce, with the tickets that own it.
-/// Keys are ticket keys only; no hashes.
+/// One item no checked-in case covers yet, with the tickets that own it. Keys
+/// are ticket keys only; no hashes.
 #[derive(Clone, Copy)]
 struct Unproduced {
     /// A catalog operation identity, a node form `tag/form`, or one of
@@ -530,7 +611,8 @@ struct Unproduced {
     probe: Probe,
 }
 
-/// The ids that name neither a catalog operation nor a node form.
+/// The ids that name neither a catalog operation nor a node form. The
+/// unproduced list must account for each.
 const FEATURES: &[&str] = &[
     "source-declared-object-navigation",
     "source-declared-object-reference-equality",
@@ -601,18 +683,6 @@ const UNPRODUCED: &[Unproduced] = &[
             expect: Expect::Refused {
                 stage: "check",
                 cause: "PopulationFormOutsideRefinement",
-            },
-        },
-    },
-    Unproduced {
-        id: "filament.op.reference.ne",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-reference-inequality"),
-            detect: Detect::Operation("filament.op.reference.ne"),
-            expect: Expect::Refused {
-                stage: "admit",
-                cause: "OperatorIneligible",
             },
         },
     },
@@ -738,74 +808,11 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "filament.op.clock_reference.eq",
-        keys: &["QSL-3046"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.clock_reference.eq"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "filament.op.clock_reference.ne",
-        keys: &["QSL-3046"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.clock_reference.ne"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "filament.op.clock_reference.ref",
-        keys: &["QSL-3046"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.clock_reference.ref"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "scalar_type/clock_reference",
-        keys: &["QSL-3046"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("scalar_type/clock_reference"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "bounded_domain/finite_trace_population",
         keys: &["QSL-3047"],
         probe: Probe {
             source: "",
             detect: Detect::Form("bounded_domain/finite_trace_population"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "expression/place_reference",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("expression/place_reference"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "expression/reference",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("expression/reference"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "filament.op.model.lookup",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.model.lookup"),
             expect: Expect::Unprobed,
         },
     },
@@ -863,15 +870,6 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: "",
             detect: Detect::Form("relation/membership"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "relation/relationship",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("relation/relationship"),
             expect: Expect::Unprobed,
         },
     },
@@ -966,92 +964,11 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "timed_model/clock_constraint",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("timed_model/clock_constraint"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "timed_model/clock_guard",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("timed_model/clock_guard"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "timed_model/clock_place",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("timed_model/clock_place"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "timed_model/clock_reset",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("timed_model/clock_reset"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "timed_model/timed_model",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("timed_model/timed_model"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "timed_model/time_invariant",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("timed_model/time_invariant"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "timed_model/time_source",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("timed_model/time_source"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "timed_model/urgency",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("timed_model/urgency"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "claim/analysis_claim",
         keys: &["QSL-3051"],
         probe: Probe {
             source: "",
             detect: Detect::Form("claim/analysis_claim"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "claim/state_graph",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("claim/state_graph"),
             expect: Expect::Unprobed,
         },
     },
@@ -1164,24 +1081,6 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "model/process",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("model/process"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "model/state_machine",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("model/state_machine"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "model/systems_allocation",
         keys: &["QSL-3053"],
         probe: Probe {
@@ -1196,15 +1095,6 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: "",
             detect: Detect::Form("model/systems_connection"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "model/systems_interface",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("model/systems_interface"),
             expect: Expect::Unprobed,
         },
     },
@@ -1241,15 +1131,6 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: "",
             detect: Detect::Form("model/value_type"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "model/variant_type",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("model/variant_type"),
             expect: Expect::Unprobed,
         },
     },
@@ -1320,15 +1201,6 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "probabilistic/delay_distribution",
-        keys: &["QSL-3056"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("probabilistic/delay_distribution"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "protocol/compensation",
         keys: &["QSL-3056"],
         probe: Probe {
@@ -1338,15 +1210,6 @@ const UNPRODUCED: &[Unproduced] = &[
                 stage: "select",
                 cause: "MissingImport",
             },
-        },
-    },
-    Unproduced {
-        id: "protocol/protocol_reference",
-        keys: &["QSL-3056"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("protocol/protocol_reference"),
-            expect: Expect::Unprobed,
         },
     },
 ];
@@ -1367,7 +1230,7 @@ fn probe_verdict(entry: &Unproduced) -> Result<(), String> {
     if matches!(probe.expect, Expect::Unprobed) {
         return Ok(());
     }
-    let outcome = try_compile_and_read(entry.id, probe.source);
+    let outcome = try_compile_and_read(entry.id, probe.source, model_pool());
     match (&probe.expect, outcome) {
         (Expect::Unprobed, _) => Ok(()),
         (Expect::Admitted, Ok(package)) if !detected(&probe.detect, &package) => Ok(()),
@@ -1418,10 +1281,12 @@ fn produced() -> BTreeSet<String> {
         .collect()
 }
 
-/// Every catalog operation identity and every node form.
+/// Every item the unproduced list accounts for: each catalog operation
+/// identity, each node form and each of `FEATURES`.
 fn published() -> BTreeSet<String> {
     let mut published = catalog_identities();
     published.extend(node_forms());
+    published.extend(FEATURES.iter().map(|feature| (*feature).to_owned()));
     published
 }
 
@@ -1437,8 +1302,7 @@ fn node_forms() -> BTreeSet<String> {
 /// Why a run over the unproduced list fails.
 #[derive(Debug, PartialEq, Eq)]
 enum ListFailure {
-    /// A published operation or node form that no case produces and no entry
-    /// lists.
+    /// A published item that no case produces and no entry lists.
     Unlisted(String),
     /// A listed operation or node form that a case produces.
     Stale(&'static str),
@@ -1448,7 +1312,7 @@ enum ListFailure {
         id: &'static str,
         key: Option<&'static str>,
     },
-    /// A listed id that names no published item and no feature.
+    /// A listed id that names no published item.
     Unknown(&'static str),
     /// An id listed more than once.
     Duplicate(&'static str),
@@ -1485,7 +1349,7 @@ fn run_list(
         if !listed.insert(id) {
             failures.push(ListFailure::Duplicate(id));
         }
-        if !published.contains(id) && !FEATURES.contains(&id) {
+        if !published.contains(id) {
             failures.push(ListFailure::Unknown(id));
         }
         if produced.contains(id) {
@@ -1532,26 +1396,39 @@ fn without_source(universe: &BTreeSet<String>) -> BTreeSet<String> {
         .collect()
 }
 
-/// Every `.native` source under the case, corpus and example directories that
-/// the strict reader admits, with its emitted package.
+/// Every checked-in `.native` source, wherever it sits in the repository, that
+/// the strict reader admits, with its emitted package: one for each
+/// combination of checked-in documents of the identities it names.
+///
+/// Not seen: source text written inline in Rust, a source whose domain package
+/// or library dependency exists only as Rust values, and a source the front
+/// end or the reader refuses.
 fn corpus_packages() -> &'static [(String, Value)] {
     static CORPUS: std::sync::OnceLock<Vec<(String, Value)>> = std::sync::OnceLock::new();
     CORPUS.get_or_init(|| {
         let root = repository_root();
-        checked_in_files(
-            &["fsl-conformance/cases", "tests/corpus", "examples"],
-            "native",
-        )
-        .into_iter()
-        .filter_map(|file| {
+        let documents: Vec<Vec<u8>> = checked_in_files(&[""], "json")
+            .iter()
+            .map(|path| std::fs::read(path).expect("a checked-in document reads"))
+            .collect();
+        let declared = declared_packages(documents.iter().map(Vec::as_slice));
+        let mut admitted = Vec::new();
+        for file in checked_in_files(&[""], "native") {
             let source = std::fs::read_to_string(&file).expect("a checked-in source reads");
-            let name = file.strip_prefix(&root).ok()?.display().to_string();
-            let package = std::panic::catch_unwind(|| try_compile_and_read(&name, &source))
-                .ok()?
-                .ok()?;
-            Some((name, package))
-        })
-        .collect()
+            let name = file
+                .strip_prefix(&root)
+                .expect("a swept source is under the root")
+                .display()
+                .to_string();
+            for inputs in inputs_for(&source, &declared) {
+                let outcome =
+                    std::panic::catch_unwind(|| try_compile_and_read(&name, &source, &inputs));
+                if let Ok(Ok(package)) = outcome {
+                    admitted.push((name.clone(), package));
+                }
+            }
+        }
+        admitted
     })
 }
 
@@ -1562,6 +1439,7 @@ fn a_wrong_expected_operation_names_the_source_case_and_identity() {
     let case = Case {
         name: "altered-boolean-expectation",
         source: CASES[0].source,
+        documents: &[],
         operations: &["filament.op.integer.add"],
         forms: &[],
     };
@@ -1618,7 +1496,7 @@ fn every_node_form_has_a_source() {
 #[trace("FR-350", "FSpec-FR-322")]
 fn emitted_packages_are_admitted() {
     for case in CASES {
-        try_compile_and_read(case.name, case.source).unwrap_or_else(|refusal| {
+        try_compile_case(case).unwrap_or_else(|refusal| {
             panic!("the strict reader refuses {}: {refusal:?}", case.name)
         });
     }
@@ -1700,9 +1578,9 @@ fn a_probe_has_a_source_exactly_when_it_is_judged() {
     }
 }
 
-/// The corpus-wide guard: no `.native` source under the case, corpus and
-/// example directories emits a listed operation or form, whether or not it is
-/// one of the cases.
+/// The repository-wide guard: no checked-in `.native` source that
+/// `corpus_packages` admits emits a listed operation or form, whether or not it
+/// is one of the cases.
 #[test]
 #[trace("FR-350", "FSpec-FR-322")]
 fn no_source_emits_a_listed_id() {
@@ -1724,6 +1602,12 @@ fn no_source_emits_a_listed_id() {
     assert!(
         corpus_packages().len() > 100,
         "the corpus sweep admitted too few sources to guard anything"
+    );
+    assert!(
+        corpus_packages()
+            .iter()
+            .any(|(name, _)| name == "fsl-replay/tests/fixtures/ieee_float/to_rational.native"),
+        "the corpus sweep reaches sources outside the case, corpus and example directories"
     );
 }
 
@@ -1838,8 +1722,8 @@ fn the_unproduced_list_shrinks_only_by_a_covering_case() {
     assert_eq!(failures(UNPRODUCED, &with_case), []);
 }
 
-/// FR-350-AC-25: removing the entry of an unproduced item, listing a produced
-/// one, and blanking or garbling a key each fail the run, naming the item.
+/// FR-350-AC-25: removing the entry of an unproduced item or feature, listing a
+/// produced one, and blanking or garbling a key each fail the run, naming it.
 #[test]
 #[trace("TC-3218", "FR-350-AC-25")]
 fn each_alteration_of_the_unproduced_list_fails_naming_the_entry() {
@@ -1850,10 +1734,10 @@ fn each_alteration_of_the_unproduced_list_fails_naming_the_entry() {
     let failures = |list: &[Unproduced]| run_list(list, &published, &produced, false).failures;
 
     assert_eq!(failures(UNPRODUCED), []);
-    for removed in [OPERATION, FORM] {
+    for removed in [OPERATION, FORM].iter().chain(FEATURES) {
         assert_eq!(
             failures(&list_without(removed)),
-            [ListFailure::Unlisted(removed.to_owned())]
+            [ListFailure::Unlisted((*removed).to_owned())]
         );
     }
     for stale in ["filament.op.boolean.not", "composite_type/option"] {
@@ -1899,18 +1783,21 @@ fn a_listed_entry_is_summarised_and_fails_only_full_qualification() {
         listed("filament.op.collection.index"),
         listed("float-record-equality"),
     ];
-    let published = BTreeSet::from(["filament.op.collection.index".to_owned()]);
-    let nothing = BTreeSet::new();
+    let published = BTreeSet::from([
+        "filament.op.collection.index".to_owned(),
+        "float-record-equality".to_owned(),
+    ]);
+    let produced = BTreeSet::new();
     let summary = [
         "pending (IR-1491): catalog-source: filament.op.collection.index",
         "pending (IR-1320, STD-654): catalog-source: float-record-equality",
     ];
 
-    let default_run = run_list(&list, &published, &nothing, false);
+    let default_run = run_list(&list, &published, &produced, false);
     assert_eq!(default_run.summary, summary);
     assert_eq!(default_run.failures, []);
 
-    let full_run = run_list(&list, &published, &nothing, true);
+    let full_run = run_list(&list, &published, &produced, true);
     assert_eq!(full_run.summary, summary);
     assert_eq!(
         full_run.failures,
@@ -1920,7 +1807,8 @@ fn a_listed_entry_is_summarised_and_fails_only_full_qualification() {
         ])]
     );
 
-    assert_eq!(run_list(&[], &nothing, &nothing, true).failures, []);
+    let empty = run_list(&[], &BTreeSet::new(), &BTreeSet::new(), true);
+    assert_eq!(empty.failures, []);
 }
 
 /// Two different documents declaring one identity leave it unsupplied, in
