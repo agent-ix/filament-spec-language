@@ -619,12 +619,18 @@ fn three_task_claim_records_and_package_rows_preserve_occurrence_order() {
     );
 }
 
-/// FR-075-AC-23: rebuilding the real schedulability registrations in either
-/// insertion order preserves candidate sets for backed and unbacked items.
+/// FR-075-AC-23 and FR-962-AC-6: rebuilding the real schedulability
+/// registrations in either insertion order preserves the final candidates,
+/// including the release-backed unnamed EN-7 tie resolution.
 #[test]
 #[trace("TC-3009", "FR-075-AC-23")]
+#[trace("TC-3009", "FR-962-AC-6")]
 fn schedulability_candidate_sets_ignore_registration_order() {
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the engines register");
+    let world = World::new();
+    let claim = world.package.graph().task_sets().claims()[0]
+        .occurrence()
+        .expect("the checked claim has an occurrence");
     let descriptors = engines
         .registrations()
         .filter(|descriptor| {
@@ -673,22 +679,50 @@ fn schedulability_candidate_sets_ignore_registration_order() {
             Some(&fsl_foundation::BackendId::new("en-6")),
         );
         let backed_all = fsl_route::request::requirement_candidates(&backed, &registry, None);
+        let backed_all_ids = candidate_ids(backed_all.clone());
+        let backed_unnamed_final = fsl_analyze::tie_rule::resolve_tie(
+            &world.package,
+            &claim,
+            Capability::Schedulability,
+            None,
+            false,
+            backed_all,
+        );
+        let CandidateOutcome::Candidates(final_set) = &backed_unnamed_final else {
+            panic!("the backed unnamed item has a candidate: {backed_unnamed_final:?}");
+        };
+        assert_eq!(
+            final_set.candidates().len(),
+            1,
+            "FR-962 leaves one backend, so negotiation is not ambiguous"
+        );
+        assert_eq!(final_set.candidates()[0].id().as_str(), "en-7");
         let backed_named = fsl_route::request::requirement_candidates(
             &backed,
             &registry,
             Some(&fsl_foundation::BackendId::new("en-6")),
         );
+        let backed_named_final = fsl_analyze::tie_rule::resolve_tie(
+            &world.package,
+            &claim,
+            Capability::Schedulability,
+            Some(&fsl_foundation::BackendId::new("en-6")),
+            false,
+            backed_named,
+        );
         outcomes.push((
             candidate_ids(ordinary_all),
             candidate_ids(ordinary_named),
-            candidate_ids(backed_all),
-            candidate_ids(backed_named),
+            backed_all_ids,
+            candidate_ids(backed_unnamed_final),
+            candidate_ids(backed_named_final),
         ));
     }
     let expected = (
         vec!["en-7".to_owned()],
         Vec::new(),
         vec!["en-6".to_owned(), "en-7".to_owned()],
+        vec!["en-7".to_owned()],
         vec!["en-6".to_owned()],
     );
     assert_eq!(outcomes, [expected.clone(), expected]);
