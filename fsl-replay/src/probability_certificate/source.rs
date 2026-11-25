@@ -13,10 +13,13 @@ use filament_exact::{Cancel, ScalarLimits};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
+use fsl_foundation::node_wire::{node_key_from_text, node_key_to_json};
 use fsl_foundation::source::{Source, SourceReadCause, SourceReadError};
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
+use serde_json::value::RawValue;
+use std::collections::BTreeMap;
 
 /// All source and subject data needed to recheck one native-source certificate.
 /// Imported library configurations are outside this initial source facade.
@@ -339,6 +342,14 @@ fn check_recompiled(
             return Err(ProbabilitySourceError::PackageMismatch);
         }
     }
+    // A held certificate and its request may agree on a model that does not
+    // own the claim: the recompiled package decides the owner.
+    if let (Some(_), Some(model)) = (&held, request.item.model()) {
+        let graph = checked.package().graph();
+        if graph.owning_model(request.item.node()) != Some(model.as_str()) {
+            return Err(ProbabilityDocumentError::IdentityMismatch.into());
+        }
+    }
     if let (Some(held), None, None) = (&held, emitted, &resolved) {
         let recompiled = spine::package(&checked, limits.spine.package, cancel)
             .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
@@ -405,16 +416,59 @@ fn refuse_foreign_claim(
     Ok(())
 }
 
-/// A certificate document whose identity names its node by index segments of
-/// an emitted package (FSpec FR-322 "Operand index segments"), the form an
-/// analyze result writes.
-struct HeldCertificate(serde_json::Value);
+/// A certificate document in the form an analyze result writes: its identity
+/// names the owning model, and its node ids are index segments of an emitted
+/// package (FSpec FR-322 "Operand index segments"), except each identity's
+/// `node_id`, which is the structural id (FSpec FR-412).
+struct HeldCertificate {
+    /// The document without its identities' `node_id` members.
+    document: serde_json::Value,
+    /// Each identity's JSON pointer and written `node_id`.
+    node_ids: Vec<(String, Box<RawValue>)>,
+}
+
+/// `written`, a certificate object, as JSON with the `node_id` of its
+/// identity moved to `node_ids`. That id nests as deeply as the claim's term,
+/// past serde_json's recursion limit, so it stays text until the iterative
+/// node reader reads it. `parts` is how many levels of conditional members
+/// below `written` hold identities of their own.
+fn detach_node_ids(
+    written: &RawValue,
+    at: &str,
+    parts: u8,
+    node_ids: &mut Vec<(String, Box<RawValue>)>,
+) -> Option<serde_json::Value> {
+    type Members = BTreeMap<String, Box<RawValue>>;
+    let members: Members = serde_json::from_str(written.get()).ok()?;
+    let mut object = serde_json::Map::new();
+    for (name, member) in members {
+        let value = match name.as_str() {
+            "identity" => {
+                let mut identity: Members = serde_json::from_str(member.get()).ok()?;
+                if let Some(node_id) = identity.remove("node_id") {
+                    node_ids.push((format!("{at}/identity"), node_id));
+                }
+                serde_json::to_value(identity).ok()?
+            }
+            "conditional" | "numerator" | "denominator" | "post" | "reset"
+                if parts > 0 && member.get().starts_with('{') =>
+            {
+                detach_node_ids(&member, &format!("{at}/{name}"), parts - 1, node_ids)?
+            }
+            _ => serde_json::from_str(member.get()).ok()?,
+        };
+        object.insert(name, value);
+    }
+    Some(serde_json::Value::Object(object))
+}
 
 impl HeldCertificate {
     /// The document, when an index segment `{"node": i}` appears anywhere in it
     /// or its identity names a model: the form an analyze result writes.
     fn read(bytes: &[u8]) -> Option<Self> {
-        let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+        let mut node_ids = Vec::new();
+        // Two levels: `conditional`, then the part it names.
+        let value = detach_node_ids(serde_json::from_slice(bytes).ok()?, "", 2, &mut node_ids)?;
         let mut held = !value["identity"]["model"].is_null();
         let mut pending = vec![&value];
         while let Some(current) = pending.pop() {
@@ -428,11 +482,15 @@ impl HeldCertificate {
                 _ => {}
             }
         }
-        held.then_some(Self(value))
+        held.then_some(Self {
+            document: value,
+            node_ids,
+        })
     }
 
-    /// The document with every node id resolved against `package`'s graph,
-    /// written as canonical structural bytes.
+    /// The document with every held node id resolved against `package`'s
+    /// graph, written as canonical structural bytes. An identity's `node_id`
+    /// is read as the structural id it is, so a held one is refused.
     /// The model the result names must be the model the request names; the
     /// checker derives the claim itself and its document names no model, so
     /// the resolved bytes carry none.
@@ -444,8 +502,18 @@ impl HeldCertificate {
         let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(package)
             .map_err(|_| ProbabilityDocumentError::Malformed)?;
         let mut structural = graph
-            .structural_value(&self.0)
+            .structural_value(&self.document)
             .map_err(|_| ProbabilityDocumentError::Malformed)?;
+        for (at, written) in &self.node_ids {
+            let node_id = node_key_from_text(written.get())
+                .and_then(|key| node_key_to_json(&key))
+                .map_err(|_| ProbabilityDocumentError::Malformed)?;
+            structural
+                .pointer_mut(at)
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or(ProbabilityDocumentError::Malformed)?
+                .insert("node_id".to_owned(), node_id);
+        }
         if structural["identity"]["model"].as_str() != item.model().map(|model| model.as_str()) {
             return Err(ProbabilityDocumentError::IdentityMismatch);
         }
@@ -462,5 +530,78 @@ fn claimed(item: &ObligationIdentity, held: bool) -> ObligationIdentity {
         ObligationIdentity::new(item.node().clone(), None, item.ordinal())
     } else {
         item.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    const PACKAGE: &[u8] = br#"{"semantic_graph":{"nodes":[
+        {"node_id":{"package":"own","path":["leaf"],"ordinal":0}},
+        {"node_id":{"package":"own","path":["wrap"],"ordinal":0}}]}}"#;
+
+    /// A structural id, `depth` operands nested, in canonical member order.
+    fn nested(depth: usize) -> String {
+        let open = r#"{"ordinal":0,"package":"own","path":["application","#.repeat(depth);
+        let leaf = r#"{"ordinal":0,"package":"own","path":["leaf"]}"#;
+        format!("{open}{leaf}{}", "]}".repeat(depth))
+    }
+
+    /// The written form of a certificate and one conditional part, both
+    /// naming the claim `node_id`, with one held operand elsewhere.
+    fn written(node_id: &str) -> String {
+        let identity = format!(r#"{{"model":"m","node_id":{node_id},"ordinal":0}}"#);
+        format!(
+            r#"{{"conditional":{{"mode":"ratio","numerator":{{"identity":{identity}}}}},"identity":{identity},"reward":{{"ordinal":0,"package":"own","path":["wrap",{{"node":0}}]}}}}"#
+        )
+    }
+
+    fn item(node_id: &str) -> ObligationIdentity {
+        ObligationIdentity::new(
+            node_key_from_text(node_id).expect("a structural id"),
+            Some(crate::ModelIdentity::new("m".to_owned())),
+            0,
+        )
+    }
+
+    /// FR-621-AC-16: a written certificate whose structural identity nests
+    /// past serde_json's recursion limit is read as the held form, its held
+    /// ids resolve and each identity's node id is kept as written.
+    #[trace("TC-3154", "FR-621-AC-16")]
+    #[test]
+    fn a_deeply_nested_certificate_identity_resolves() {
+        let node_id = nested(200);
+        let document = written(&node_id);
+        assert!(serde_json::from_str::<serde_json::Value>(&document).is_err());
+        let held = HeldCertificate::read(document.as_bytes()).expect("the held form");
+        let resolved = held
+            .resolve(PACKAGE, &item(&node_id))
+            .expect("the document resolves");
+        let resolved = String::from_utf8(resolved).expect("UTF-8");
+        assert!(resolved.contains(&format!(
+            r#""identity":{{"model":null,"node_id":{node_id},"ordinal":0}}"#
+        )));
+        assert!(resolved.contains(&format!(
+            r#""numerator":{{"identity":{{"model":"m","node_id":{node_id},"ordinal":0}}}}"#
+        )));
+        assert!(resolved.contains(&format!(
+            r#""reward":{{"ordinal":0,"package":"own","path":["wrap",{}]}}"#,
+            nested(0)
+        )));
+    }
+
+    /// FR-621-AC-16: a certificate identity is the structural id, so one
+    /// written with an index segment is refused.
+    #[trace("TC-3154", "FR-621-AC-16")]
+    #[test]
+    fn a_held_certificate_identity_is_refused() {
+        let document = written(r#"{"ordinal":0,"package":"own","path":["wrap",{"node":0}]}"#);
+        let held = HeldCertificate::read(document.as_bytes()).expect("the held form");
+        assert_eq!(
+            held.resolve(PACKAGE, &item(&nested(0))),
+            Err(ProbabilityDocumentError::Malformed)
+        );
     }
 }

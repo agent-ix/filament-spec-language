@@ -9798,7 +9798,33 @@ impl CheckedGraph {
         &self.model_selections
     }
 
-    /// FR-081/FR-400: the completed effective declaration view for each
+    /// The identity of the domain package that owns the obligation `claim`
+    /// names, FR-621's certificate `model` (FSpec FR-201, FR-412): the package
+    /// of a temporal clause's `over` object type, else the package's one model
+    /// selection. `None` when the claim names no single owning package: a
+    /// package with no model selection, or several and a claim with no `over`
+    /// object type.
+    pub fn owning_model<'a>(&'a self, claim: &'a filament_exact::NodeKey) -> Option<&'a str> {
+        let over = self
+            .temporal_clauses()
+            .iter()
+            .find(|clause| clause.identity() == *claim)
+            .and_then(|clause| match &clause.clause().over().1 {
+                ValueType::Reference(object_type) => Some(object_type.original().package()),
+                _ => None,
+            });
+        let hybrid = self
+            .hybrid_claim_sites()
+            .iter()
+            .any(|site| &site.identity == claim)
+            .then(|| claim.package());
+        over.or(hybrid).or_else(|| match self.model_selections() {
+            [selection] => Some(selection.identity.as_str()),
+            _ => None,
+        })
+    }
+
+    /// FR-081/FR-400:the completed effective declaration view for each
     /// selected model alias, as produced during S3 admission. Package
     /// emission reads these retained views rather than normalizing source
     /// documents a second time.

@@ -614,15 +614,32 @@ fn certificate_checks_independently() {
 
     let mut checker_request = proof_request(CLAIM);
     let certificate_text = serde_json::to_string(certificate).unwrap();
-    // The result holds the document-held form (FSpec FR-322): index segments
-    // and the owning model. The checker reads that document itself, unchanged.
+    // The result names the owning model and writes the identity's node id in
+    // its structural form (FSpec FR-412), while the claim locus holds index
+    // segments (FSpec FR-322). The checker reads that document itself,
+    // unchanged.
     assert_eq!(
         certificate["identity"], item["certificate"]["identity"],
         "{item}"
     );
     assert!(certificate["identity"]["model"].is_string(), "{item}");
+    let identity_path = certificate["identity"]["node_id"]["path"]
+        .as_array()
+        .unwrap();
     assert!(
-        certificate["identity"]["node_id"]["path"]
+        identity_path
+            .iter()
+            .any(|segment| segment.get("package").is_some()),
+        "{item}"
+    );
+    assert!(
+        identity_path
+            .iter()
+            .all(|segment| segment.get("node").is_none()),
+        "{item}"
+    );
+    assert!(
+        item["request"]["claim"]["node"]["path"]
             .as_array()
             .unwrap()
             .iter()
@@ -644,6 +661,14 @@ fn certificate_checks_independently() {
     assert_eq!(
         result["value"],
         json!({"numerator":"24", "denominator":"25"})
+    );
+    let mut held = certificate.clone();
+    held["identity"]["node_id"] = item["request"]["claim"]["node"].clone();
+    checker_request["certificate"] = json!(serde_json::to_string(&held).unwrap());
+    let (code, result) = run(&checker_request, &[]);
+    assert_ne!(
+        code, 0,
+        "a certificate identity is the structural id: {result}"
     );
     std::fs::remove_dir_all(scratch).unwrap();
 }
