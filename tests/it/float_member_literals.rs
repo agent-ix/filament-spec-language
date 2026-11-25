@@ -108,6 +108,15 @@ fn a_constant_unequal_to_a_member_compares_at_the_scalar_type() {
 
 #[trace("FSpec-TC-1926", "FSpec-FR-322-AC-288")]
 #[test]
+fn a_member_of_a_quantified_object_compares_at_the_scalar_type() {
+    let wire = admitted(&invariant(&format!(
+        "forall(g in allInstances<Config::Gauge>(Config::gauges): g.a = {NAN})"
+    )));
+    assert_eq!(operand_forms(&wire), [["float64", "float64"]]);
+}
+
+#[trace("FSpec-TC-1926", "FSpec-FR-322-AC-288")]
+#[test]
 fn a_single_precision_member_compares_at_its_scalar_type() {
     let wire = admitted(&invariant("self.s = float32(bits: 0x3f800000)"));
     assert_eq!(operand_forms(&wire), [["float32", "float32"]]);
