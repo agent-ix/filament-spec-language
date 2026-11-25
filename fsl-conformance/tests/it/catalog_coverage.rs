@@ -155,6 +155,7 @@ source_cases! {
     native_inequality => sourced!("native-inequality", &["filament.op.uuid.ne", "filament.op.timestamp.ne"], &[]),
     string_inequality => sourced!("string-inequality", &["filament.op.string.ne"], &[]),
     bytes_inequality => sourced!("bytes-inequality", &["filament.op.bytes.ne"], &[]),
+    bytes_length_concat => sourced!("bytes-length-concat", &["filament.op.bytes.length", "filament.op.bytes.concat"], &[]),
     json_object_inequality => sourced!("json-object-inequality", &["filament.op.json_object.ne"], &[]),
     float_sqrt => sourced!("float-sqrt", &["filament.op.ieee.float64.sqrt", "filament.op.ieee.float32.sqrt"], &[]),
     float_fma => sourced!("float-fma", &["filament.op.ieee.float64.fma", "filament.op.ieee.float32.fma"], &[]),
@@ -201,7 +202,7 @@ source_cases! {
     object_contract => sourced!("object-contract", &["filament.op.state.clause", "filament.op.state.pre", "filament.op.model.deref"], &[("state", "state_clause"), ("expression", "pre_read"), ("expression", "deref")]),
     temporal_operators => sourced!("temporal-operators", &["filament.op.temporal.and", "filament.op.temporal.or", "filament.op.temporal.historically", "filament.op.temporal.implies", "filament.op.temporal.once", "filament.op.temporal.release", "filament.op.temporal.since", "filament.op.temporal.triggered", "filament.op.temporal.true", "filament.op.temporal.false"], &[]),
     population_only => sourced!("population-only", &["filament.op.collection.only"], &[]),
-    domain_population_function => original!("population-function-explicit", "tests/corpus/collections/contexts/population-function-explicit.native", &["filament.op.model.all_instances"], &[("bounded_domain", "model_population")]),
+    domain_population_function => original!("population-function-explicit", "tests/corpus/collections/contexts/population-function-explicit.native", &["filament.op.model.all_instances"], &[("bounded_domain", "model_population"), ("correspondence", "model_correspondence")]),
     domain_population_relation => original!("population-count-clause-false", "tests/corpus/collections/contexts/population-count-clause-false.native", &[], &[("relation", "population")]),
     domain_hyperproperty => original!("hyper-single-impossible", "tests/corpus/refinement/hyper-single-impossible.native", &[], &[("claim", "hyperproperty")]),
     domain_probabilistic_claim => original!("link-unit", "fsl-conformance/cases/link-unit.native", &[], &[("claim", "probabilistic_claim"), ("temporal", "terminal")]),
@@ -605,7 +606,7 @@ const UNPRODUCED: &[Unproduced] = &[
     },
     Unproduced {
         id: "filament.op.reference.ne",
-        keys: &["QSL-1880"],
+        keys: &["QSL-3047"],
         probe: Probe {
             source: probe_source!("probe-reference-inequality"),
             detect: Detect::Operation("filament.op.reference.ne"),
@@ -617,7 +618,7 @@ const UNPRODUCED: &[Unproduced] = &[
     },
     Unproduced {
         id: "filament.op.model.dispatch_call",
-        keys: &["QSL-1880"],
+        keys: &["QSL-3047"],
         probe: Probe {
             source: probe_source!("probe-operation-call"),
             detect: Detect::Operation("filament.op.model.dispatch_call"),
@@ -629,7 +630,7 @@ const UNPRODUCED: &[Unproduced] = &[
     },
     Unproduced {
         id: "source-declared-object-navigation",
-        keys: &["QSL-1880"],
+        keys: &["QSL-3047"],
         probe: Probe {
             source: probe_source!("probe-object-navigation"),
             detect: Detect::Admitted,
@@ -644,7 +645,7 @@ const UNPRODUCED: &[Unproduced] = &[
     // reach an admitted package.
     Unproduced {
         id: "source-declared-object-reference-equality",
-        keys: &["QSL-1880"],
+        keys: &["QSL-3047"],
         probe: Probe {
             source: include_str!("../../cases/type-operators/reference-equality-accepted.native"),
             detect: Detect::Operation("filament.op.reference.eq"),
@@ -656,7 +657,7 @@ const UNPRODUCED: &[Unproduced] = &[
     },
     Unproduced {
         id: "source-declared-object-reaches-field",
-        keys: &["QSL-1880"],
+        keys: &["QSL-3047"],
         probe: Probe {
             source: probe_source!("probe-reaches-field"),
             detect: Detect::Operation("filament.op.model.reaches_field"),
@@ -691,24 +692,6 @@ const UNPRODUCED: &[Unproduced] = &[
         "type F = Float64[nearest-even];",
         "Sequence<F>[0,3]"
     ),
-    Unproduced {
-        id: "filament.op.bytes.concat",
-        keys: &["QSL-3043"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.bytes.concat"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "filament.op.bytes.length",
-        keys: &["QSL-3043"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.bytes.length"),
-            expect: Expect::Unprobed,
-        },
-    },
     Unproduced {
         id: "filament.op.collection.sum.carried_quantity",
         keys: &["QSL-3044"],
@@ -1123,15 +1106,6 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: "",
             detect: Detect::Form("correspondence/implementation_guarantee"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "correspondence/model_correspondence",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("correspondence/model_correspondence"),
             expect: Expect::Unprobed,
         },
     },

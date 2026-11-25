@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function size using v(a: Bytes): Integer pure { length(a) }
+function join using v(a: Bytes,b: Bytes): Bytes pure { concat(a, b) }
