@@ -28,7 +28,7 @@ coordinator when `execute` holds, and write FSpec FR-824's
 
 - The `verification_plan` member SHALL be the run request's one plan
   member, read by `fsl-command`'s strict reader before any stage runs for
-  its closed member list and JSON kinds. Every refusal SHALL be located at
+  its closed member list and JSON kinds. FSL SHALL locate every refusal at
   FSpec FR-824's pointer prefixed by `/request/verification_plan`, the
   member's pointer in the `native-run/1` document the caller sent, as
   FR-1015 locates `export` refusals under `/request/export` and FR-1039
@@ -71,6 +71,9 @@ coordinator when `execute` holds, and write FSpec FR-824's
   `probabilistic_statistical` step the request's `seed` (default `0`),
   and SHALL carry `max_trace_length` and `max_value_bits` in `PlanInputs`
   (FR-753) to the `model_based_test` steps FSpec FR-824 says consume them.
+  When `initial` is absent, FSL SHALL give each consuming state-subject step
+  FR-120's complete initial-state domain over its admitted finite population
+  universes and FR-752's FR-190 value domains.
 - FSL SHALL refuse `initial`, `seed`, `max_trace_length` or `max_value_bits`
   on a selected plan with no step that consumes it, `unknown-member` at its
   pointer.
@@ -80,7 +83,7 @@ coordinator when `execute` holds, and write FSpec FR-824's
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1038-AC-1 | `{"plan": "Release", "execute": true, "initial": "initial.json", "seed": 7, "max_trace_length": 8}` over FR-753-AC-4's unit writes `verification_plan.format` `filament.verification-plan-outcome/v1`, `safe` `refuted`, `tested` with `evidence` `tested`, `timely` `blocked` by `safe`, `failed_steps` `["safe"]` and `inputs` `{"initial": "initial.json", "seed": 7, "max_trace_length": 8, "max_value_bits": null}`, exit `22`, FSpec FR-301's highest-severity code of the refuted and the blocked step; `{"plan": "Release", "emit": true, "execute": false}` writes the plan document with three nodes and one `requires` edge, exit `0`. | Test (TC-3018) |
-| FR-1038-AC-2 | `{"max_trace_length": 8}` over the unit's only plan runs `Release`; with a second plan `Other` it refuses `invalid_runtime_input`/`missing-member` at `/request/verification_plan/plan`; `plan` `Nope` and `plan` `Never` (an invariant) each refuse `missing_declaration`/`missing-name` there; `seed` `"7"` refuses `wrong-value-kind` at `/request/verification_plan/seed`; each exits `20` with no `verification_plan` outcome. | Test (TC-3018) |
+| FR-1038-AC-2 | `{"max_trace_length": 8}` over the unit's only plan runs `Release`; when its state-subject step has no initial snapshot and its model has a finite domain, the FR-752 record is `tested`, its `inputs.initial` is `null`, and each case starts from FR-120's complete initial-state domain. With a second plan `Other` it refuses `invalid_runtime_input`/`missing-member` at `/request/verification_plan/plan`; `plan` `Nope` and `plan` `Never` (an invariant) each refuse `missing_declaration`/`missing-name` there; `seed` `"7"` refuses `wrong-value-kind` at `/request/verification_plan/seed`; each refusal exits `20` with no `verification_plan` outcome. | Test (TC-3018) |
 | FR-1038-AC-3 | Over FR-753-AC-4's unit, `seed` `-1`, `7.5` and `18446744073709551616` each refuse `invalid_runtime_input`/`invalid-value` with `details.path` exactly `/request/verification_plan/seed`, and `"verification_plan": null` refuses `wrong-value-kind` with `details.path` exactly `/request/verification_plan`, each exit `20` with no outcome; `{"plan": "Release", "seed": null, "emit": null, "initial": null, "max_value_bits": null, "max_trace_length": 8}` runs `Release` with `inputs` `{"initial": null, "seed": 0, "max_trace_length": 8, "max_value_bits": null}`; a `measured` disposition has exactly the members `status`, `method`, `evidence`, `blocked_by` and `result`, its decision at `result.verdict.decision.type`; `{"plan": "Release", "emit": true, "execute": false}` writes `status` `null`, exit `0`. | Test (TC-3032) |
 | FR-1038-AC-4 | Over FR-753-AC-4's unit, `{"plan": "Release"}` refuses `invalid_runtime_input`/`missing-member` with `details.path` exactly `/request/verification_plan/max_trace_length`, naming the step `tested`; `max_trace_length` 0, `-1` and `8.5` each refuse `invalid-value` and `"8"` `wrong-value-kind` there; `max_value_bits` 8 on `Release` refuses `unknown-member` at `/request/verification_plan/max_value_bits`; with a plan `Sized` whose one `model_based_test` step `s` checks a state clause over a model with a field `n: Integer`, `{"plan": "Sized", "max_trace_length": 8}` refuses `missing-member` at `/request/verification_plan/max_value_bits` naming `s`, and `max_value_bits` 65 `invalid-value` there; each exits `20` with no outcome. With `max_value_bits` 8, `s` runs with `max_trace_length` 8 and `max_value_bits` 8, its FR-752 record's `provenance.max_value_bits` is 8, and `inputs.max_value_bits` is 8. | Test (TC-3032) |
 
