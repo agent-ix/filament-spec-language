@@ -2126,6 +2126,27 @@ fn resolve_one(
         model_subject,
         candidates,
     );
+    // FR-173: no provider advertises an HP-4 form, so its item reaches the
+    // negotiator with no candidate.
+    let candidates = package
+        .graph()
+        .hyper_clauses()
+        .iter()
+        .find(|clause| clause.assembled_occurrence() == Some(&claim))
+        .and_then(|clause| clause.form())
+        .filter(|form| {
+            kind == Capability::TemporalSatisfaction && form.unsupported_reason().is_some()
+        })
+        .map_or(candidates, |form| {
+            fsl_route::request::requirement_candidates(
+                &fsl_semantics::family::Requirements::hyper_form(
+                    fsl_semantics::family::ClaimExtent::Bounded,
+                    form,
+                ),
+                registry,
+                named.as_ref(),
+            )
+        });
     let temporal = selection.temporal.clone().unwrap_or_default();
     let protocol_analysis = if protocol_analysis_kind {
         match protocol_analysis_selection(index, name, selection, kind, projection_role.clone()) {
@@ -4032,7 +4053,7 @@ pub fn settle_run_with_smt_proofs(
             return Err(AnalyzeDocumentError::Fault);
         };
         let clock_selections = super::clause_item::clock_selections(package, &provision);
-        let encoding = temporal.smt_encoding.clone().unwrap_or_default();
+        let encoding = temporal.smt_encoding.unwrap_or_default();
         if evidence.item_kind() != temporal.item_kind
             || evidence.temporal_clock_selections() != clock_selections
             || evidence.smt_encoding() != &encoding

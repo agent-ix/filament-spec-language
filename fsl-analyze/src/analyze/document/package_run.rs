@@ -643,6 +643,8 @@ fn settle_package_run_inner(
     let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
     let mut value_claims: Vec<OccurrenceKey> = Vec::new();
     let mut hyper_claims: Vec<OccurrenceKey> = Vec::new();
+    // Each alias the hyper items name, with its model's identity.
+    let mut hyper_subjects = BTreeMap::new();
     let mut relation_claims: Vec<OccurrenceKey> = Vec::new();
     let mut schedule_claims: Vec<OccurrenceKey> = Vec::new();
     let mut probability_claims: Vec<OccurrenceKey> = Vec::new();
@@ -659,6 +661,11 @@ fn settle_package_run_inner(
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, subject) => {
                     hyper_claims.push(claim.item.claim.clone());
+                    if claim.item.kind == Capability::TemporalSatisfaction {
+                        if let Some(models) = subject.subject_models() {
+                            hyper_subjects.extend(models.clone());
+                        }
+                    }
                     routes.insert(index, Route::Hyper(subject));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
@@ -865,6 +872,20 @@ fn settle_package_run_inner(
     let premises =
         super::composition_item::premise_items(&mut compositions, groups, &mut resolved, first)?;
     resolved.extend(premises);
+    // FR-173: the request writer adds the deadlock-freedom item of each
+    // distinct model subject the hyper items name, after every other item and
+    // in alias order, as the source route does.
+    for identity in hyper_subjects.values() {
+        let index = RequestIndex::new(resolved.len());
+        match reads.hyper_subject_deadlock(index, identity, &resolved)? {
+            None => {}
+            Some(Resolution::Settled(settled)) => resolved.push(settled),
+            Some(Resolution::Claim(claim, ())) => {
+                routes.insert(index, Route::Deadlock);
+                resolved.push(ResolvedItem::Claim(claim));
+            }
+        }
+    }
     let PackageCompositions {
         routes: premise_routes,
         inputs: premise_inputs,
@@ -3146,16 +3167,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 )),
             }));
         }
-        let root = fsl_semantics::check::model_root_key(
-            &fsl_semantics::model::domain_package::DomainPackageRef {
-                identity: name.to_owned(),
-            },
-        )
-        .map_err(|_| AnalyzeDocumentError::Fault)?;
-        let claim = OccurrenceKey::new(
-            root,
-            filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
-        );
+        let claim = model_deadlock_claim(name)?;
         // FSpec FR-368-AC-22, FR-124-AC-12: as on the source route's
         // `resolve_derived`, a subject that reads several model selections has
         // no anchor, so its item settles `unsupported` with no request item,
@@ -3190,22 +3202,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 )));
             }
             [only] if *only == name => {
-                // FR-124: a model the subject reads that declares `terminal any`
-                // opts out of the item, so the source route writes none and
-                // settles `inapplicable-kind` (`SubjectReading::opted_out`).
-                let opted_out = self
-                    .package
-                    .terminal_declarations()
-                    .map_err(|_| AnalyzeDocumentError::Fault)?
-                    .iter()
-                    .any(|terminal| {
-                        terminal.model == name
-                            && matches!(
-                                terminal.declaration,
-                                fsl_package::BareTerminalDeclaration::Any
-                            )
-                    });
-                if opted_out {
+                // FR-124: an opted-out subject has no item, so the source route
+                // writes none and settles `inapplicable-kind`
+                // (`SubjectReading::opted_out`).
+                if self.opts_out(name)? {
                     return Ok(Resolution::Settled(invalid_kind(
                         index,
                         Some(name),
@@ -3231,6 +3231,61 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 }));
             }
         }
+        self.deadlock_item(index, name, claim, selection)
+    }
+
+    /// FR-124: whether the model `identity` declares `terminal any`, which
+    /// opts its subject out of the deadlock-freedom item.
+    fn opts_out(&self, identity: &str) -> Result<bool, PackageRunError> {
+        Ok(self
+            .package
+            .terminal_declarations()
+            .map_err(|_| AnalyzeDocumentError::Fault)?
+            .iter()
+            .any(|terminal| {
+                terminal.model == identity
+                    && matches!(
+                        terminal.declaration,
+                        fsl_package::BareTerminalDeclaration::Any
+                    )
+            }))
+    }
+
+    /// FR-173's derived item of the model subject `identity` that a hyper item
+    /// names, as the source route's `append_hyper_subject_items` writes it:
+    /// none when `resolved` already holds the model's item or the model opts
+    /// out, and named by no claim.
+    fn hyper_subject_deadlock(
+        &self,
+        index: RequestIndex,
+        identity: &str,
+        resolved: &[ResolvedItem],
+    ) -> Result<Option<Resolution<()>>, PackageRunError> {
+        let claim = model_deadlock_claim(identity)?;
+        let written = resolved.iter().any(
+            |item| matches!(item, ResolvedItem::Claim(written) if written.item.claim == claim),
+        );
+        if written || self.opts_out(identity)? {
+            return Ok(None);
+        }
+        let selection = deadlock_selection(identity.to_owned());
+        let mut resolution = self.deadlock_item(index, identity, claim, &selection)?;
+        if let Resolution::Claim(derived, ()) = &mut resolution {
+            derived.claim_name.clear();
+        }
+        Ok(Some(resolution))
+    }
+
+    /// The temporal item of the model subject whose identity `name` is,
+    /// anchored at `claim`, with the settings of `selection`.
+    fn deadlock_item(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        claim: OccurrenceKey,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<()>, PackageRunError> {
+        let temporal = selection.temporal.clone().unwrap_or_default();
         let own_subject = self.own_subject(index, selection)?;
         let named = selection.backend.as_deref().map(BackendId::new);
         let backend_options = selection.options.clone().unwrap_or_default();
@@ -4151,16 +4206,37 @@ fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     items.extend(
         view.model_selections()
             .into_iter()
-            .map(|selection| ItemSelection {
-                claim: Some(selection.identity),
-                temporal: Some(super::TemporalSelection {
-                    item_kind: Some(super::ItemKindSelection::DeadlockFreedom),
-                    ..super::TemporalSelection::default()
-                }),
-                ..ItemSelection::default()
-            }),
+            .map(|selection| deadlock_selection(selection.identity)),
     );
     items
+}
+
+/// The deadlock-freedom selection of the model `identity` with the published
+/// default of every setting.
+fn deadlock_selection(identity: String) -> ItemSelection {
+    ItemSelection {
+        claim: Some(identity),
+        temporal: Some(super::TemporalSelection {
+            item_kind: Some(super::ItemKindSelection::DeadlockFreedom),
+            ..super::TemporalSelection::default()
+        }),
+        ..ItemSelection::default()
+    }
+}
+
+/// The anchor of the model `identity`'s derived items: its `model_root` node
+/// with the `generated` occurrence 0.
+fn model_deadlock_claim(identity: &str) -> Result<OccurrenceKey, PackageRunError> {
+    let root = fsl_semantics::check::model_root_key(
+        &fsl_semantics::model::domain_package::DomainPackageRef {
+            identity: identity.to_owned(),
+        },
+    )
+    .map_err(|_| AnalyzeDocumentError::Fault)?;
+    Ok(OccurrenceKey::new(
+        root,
+        filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
+    ))
 }
 
 /// Whether the package node `node` is a `claim`/`schedulability` node (FR-246).

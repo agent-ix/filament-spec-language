@@ -382,8 +382,9 @@ pub(super) fn run(
         Ok(built) => built,
         Err(refusal) => return build_refusal(refusal, subject),
     };
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let product = match timed_product(built, &limits, subject) {
+        Ok(product) => product,
+        Err(report) => return *report,
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();

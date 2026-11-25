@@ -606,13 +606,7 @@ fn read_inputs(
     mut request: wire::MonitorRequest,
     caller: &CommandLimits,
     package: &fsl_package::CheckedPackage,
-    target_preparer: &mut Option<
-        &mut dyn FnMut(
-            &fsl_package::CheckedPackage,
-            &fsl_replay::MonitorTarget,
-            &CommandLimits,
-        ) -> std::result::Result<(), RunCause>,
-    >,
+    target_preparer: &mut Option<&mut TargetPreparer<'_>>,
 ) -> Result<Inputs> {
     let target = request
         .target
@@ -659,7 +653,7 @@ fn read_inputs(
                 "a driver target-preparation handoff is required",
             ));
         };
-        prepare(package, target, caller)?;
+        prepare(package, target, caller).map_err(|cause| *cause)?;
     }
     let kind = match request.trace.kind {
         wire::MonitorKindWire::Finite => MonitorTraceKind::Finite,
@@ -744,13 +738,7 @@ fn drive(
     sink: &mut dyn FnMut(&MonitorEvent),
     settle: &Settle<'_>,
     cancel: &Cancel,
-    mut target_preparer: Option<
-        &mut dyn FnMut(
-            &fsl_package::CheckedPackage,
-            &fsl_replay::MonitorTarget,
-            &CommandLimits,
-        ) -> std::result::Result<(), RunCause>,
-    >,
+    mut target_preparer: Option<&mut TargetPreparer<'_>>,
 ) -> Result<MonitorSummary> {
     let DriveRequest {
         directory,
@@ -1117,6 +1105,30 @@ pub struct MonitorProviders<'a> {
     pub options: &'a ProviderOptions,
 }
 
+/// Driver callback for preparing the request's typed monitor target.
+pub type TargetPreparer<'a> = dyn FnMut(
+        &fsl_package::CheckedPackage,
+        &fsl_replay::MonitorTarget,
+        &CommandLimits,
+    ) -> std::result::Result<(), Box<RunCause>>
+    + 'a;
+
+/// Caller limits and the driver handoff for a monitor target.
+pub struct MonitorPreparation<'a> {
+    caller: &'a CommandLimits,
+    target_preparer: &'a mut TargetPreparer<'a>,
+}
+
+impl<'a> MonitorPreparation<'a> {
+    /// Construct the preparation handoff for one monitor request.
+    pub fn new(caller: &'a CommandLimits, target_preparer: &'a mut TargetPreparer<'a>) -> Self {
+        Self {
+            caller,
+            target_preparer,
+        }
+    }
+}
+
 /// FR-644: run the `native-monitor/1` request at `path` over `records`,
 /// handing each event to `sink` before the next record is read. It writes
 /// nothing to the process streams.
@@ -1157,7 +1169,16 @@ pub fn monitor(
     caller: &CommandLimits,
     cancel: &Cancel,
 ) -> std::result::Result<MonitorSummary, Box<RunError>> {
-    monitor_inner(path, records, sink, routing, limits, caller, cancel, None)
+    monitor_inner(MonitorExecution {
+        path,
+        records,
+        sink,
+        routing,
+        limits,
+        caller,
+        cancel,
+        target_preparer: None,
+    })
 }
 
 /// Run a monitor request with the driver's typed target-preparation handoff.
@@ -1170,15 +1191,14 @@ pub fn monitor_with_target_preparer(
     sink: &mut dyn FnMut(&MonitorEvent),
     routing: MonitorProviders<'_>,
     limits: RunLimits,
-    caller: &CommandLimits,
+    preparation: MonitorPreparation<'_>,
     cancel: &Cancel,
-    target_preparer: &mut dyn FnMut(
-        &fsl_package::CheckedPackage,
-        &fsl_replay::MonitorTarget,
-        &CommandLimits,
-    ) -> std::result::Result<(), RunCause>,
 ) -> std::result::Result<MonitorSummary, Box<RunError>> {
-    monitor_inner(
+    let MonitorPreparation {
+        caller,
+        target_preparer,
+    } = preparation;
+    monitor_inner(MonitorExecution {
         path,
         records,
         sink,
@@ -1186,26 +1206,37 @@ pub fn monitor_with_target_preparer(
         limits,
         caller,
         cancel,
-        Some(target_preparer),
-    )
+        target_preparer: Some(target_preparer),
+    })
 }
 
-fn monitor_inner(
-    path: &Path,
-    records: impl Iterator<Item = std::io::Result<Vec<u8>>>,
-    sink: &mut dyn FnMut(&MonitorEvent),
-    routing: MonitorProviders<'_>,
+struct MonitorExecution<'a, 'prepare, InputRecords> {
+    path: &'a Path,
+    records: InputRecords,
+    sink: &'a mut dyn FnMut(&MonitorEvent),
+    routing: MonitorProviders<'a>,
     limits: RunLimits,
-    caller: &CommandLimits,
-    cancel: &Cancel,
-    target_preparer: Option<
-        &mut dyn FnMut(
-            &fsl_package::CheckedPackage,
-            &fsl_replay::MonitorTarget,
-            &CommandLimits,
-        ) -> std::result::Result<(), RunCause>,
-    >,
-) -> std::result::Result<MonitorSummary, Box<RunError>> {
+    caller: &'a CommandLimits,
+    cancel: &'a Cancel,
+    target_preparer: Option<&'prepare mut TargetPreparer<'prepare>>,
+}
+
+fn monitor_inner<InputRecords>(
+    execution: MonitorExecution<'_, '_, InputRecords>,
+) -> std::result::Result<MonitorSummary, Box<RunError>>
+where
+    InputRecords: Iterator<Item = std::io::Result<Vec<u8>>>,
+{
+    let MonitorExecution {
+        path,
+        records,
+        sink,
+        routing,
+        limits,
+        caller,
+        cancel,
+        target_preparer,
+    } = execution;
     let MonitorProviders {
         negotiate,
         providers,

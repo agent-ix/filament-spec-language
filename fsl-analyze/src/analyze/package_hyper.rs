@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Universal hyper analysis over authenticated package facts (FR-940).
 
-use filament_exact::{Cancel, ValueType};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use filament_exact::Cancel;
 use fsl_eval::hyper::{CheckedStepMatch, ParameterBinding};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
@@ -47,6 +50,12 @@ impl<'a> PackageHyperSubject<'a> {
     pub(super) fn configured(mut self, form: TemporalItem) -> Self {
         self.form = form;
         self
+    }
+
+    /// Each subject alias of the clause with the identity of the model it
+    /// selects.
+    pub(super) fn subject_models(&self) -> Option<&BTreeMap<String, Arc<str>>> {
+        self.clause.package_subject_models()
     }
 
     pub(super) fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
@@ -182,7 +191,7 @@ impl<'a> PackageHyperSubject<'a> {
                         .and_then(|slot| owned.get(slot))
                         .ok_or_else(|| fault("parameter-alias"))?;
                     let admitted = system
-                        .instances(&ValueType::Reference(parameter.population.object()))
+                        .hyper_instances(&parameter.population)
                         .map_err(|_| fault("parameter-universe"))?;
                     let bound = admitted
                         .into_iter()

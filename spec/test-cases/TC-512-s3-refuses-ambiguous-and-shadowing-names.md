@@ -14,7 +14,7 @@ Verify the `ambiguous_declaration`/`ambiguous-name` refusals for two
 declarations of one name in one scope and for a shadowing binder, and the
 refusal order.
 
-Scope: FR-113-AC-4 to FR-113-AC-7.
+Scope: FR-113-AC-4 to FR-113-AC-13.
 
 ## Test Procedure
 
@@ -32,6 +32,27 @@ Use TC-510's `RecoveryFlow` fixture.
    `compensate Undo for Main::Tried`; an `await Wait after Main ...` in
    `Main`; channels `C` and `D` from `R` to `R` with `send S via C ...` and
    `receive Got via D of S ...`. Then change the receive to `via C`.
+5. **FR-113-AC-8:** Use the TC-380 compensation fixture with
+   `activate first (f: M::Failure)` and its later
+   `event Fail by w as (f: M::Failure) { true };` declaration. Check it.
+6. **FR-113-AC-9:** Add `capture f: M::Failure = f;` inside that activation
+   and check the variant.
+7. **FR-113-AC-10:** In a fresh TC-510 `RecoveryFlow` fixture, insert
+   `sequence Inner { event Recovered2 by R for Undo as (tried: Boolean) { true }; }`
+   in `Main` after `attempt Tried by R on M::Actor::op contracts [] as
+   (tried: Boolean) { true };`. Check it.
+8. **FR-113-AC-11:** In a fresh TC-510 `RecoveryFlow` fixture, insert
+   `sequence Inner { event Nested by R for Undo as (shared: Boolean) { true }; }`
+   followed in the enclosing sequence by
+   `event After by R for Undo as (shared: Boolean) { true };`. Check it.
+9. **FR-113-AC-12:** In a fresh TC-510 `RecoveryFlow` fixture, rename the
+   `finish` record binder to `tried`, matching `attempt Tried`'s record binder.
+   Check it.
+10. **FR-113-AC-13:** In a fresh TC-510 `RecoveryFlow` fixture, add one
+    `choice` with a `left` case containing `sequence Left { event LeftSeen by R
+    for Undo as (dup: Boolean) { true }; }` and a `right` case containing
+    `sequence Right { event RightSeen by R for Undo as (dup: Boolean) { true
+    }; }`. Check it.
 
 Tag the tests `#[trace("TC-512", "FR-113-AC-n")]`.
 
@@ -50,3 +71,16 @@ Tag the tests `#[trace("TC-512", "FR-113-AC-n")]`.
   naming `effect-of` and `event`; `compensate-for` and `attempt`;
   `await-after` and `sequence`; then channels `C` and `D`. With `via C` the
   protocol checks.
+- Step 5: the TC-380 trigger and later event binder reuse checks without
+  `ambiguous_declaration`.
+- Step 6: the added capture refuses `ambiguous_declaration`/`ambiguous-name`
+  at the capture naming the active trigger binder.
+- Step 7: the inner event refuses `ambiguous_declaration`/`ambiguous-name`
+  naming the outer attempt binder, which remains active in the nested scope.
+- Step 8: the later event refuses `ambiguous_declaration`/`ambiguous-name`
+  naming the earlier nested event binder, which remains active through the
+  enclosing sequence's output.
+- Step 9: the finish binder refuses `ambiguous_declaration`/`ambiguous-name`
+  naming the attempt binder in `Out(root)`.
+- Step 10: the protocol checks without `ambiguous_declaration`; neither
+  sibling case's binder is active at the other's declaration.

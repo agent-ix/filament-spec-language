@@ -1589,8 +1589,10 @@ fn sampled_state_graph_generates_each_initial_state_once() {
 
     let starts = [(0, 0), (1, 1), (1, 2), (2, 2)];
     let world = config_world(REACHES_TWO, &starts);
-    let mut limits = ModelCheckLimits::default();
-    limits.witness_samples = 1;
+    let limits = ModelCheckLimits {
+        witness_samples: 1,
+        ..ModelCheckLimits::default()
+    };
     let mut request = world.request(AB, vec![world.item("ReachesTwo")], limits);
     request.max_depth = Some(0);
     let before = generated_initial_states();

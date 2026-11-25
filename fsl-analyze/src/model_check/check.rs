@@ -1839,12 +1839,6 @@ fn check_reduced(
 /// The ample-set choice and the enforcing expansion of a partial-order run
 /// (FR-156, FR-155 "Read enforcement"), read by [`Run`] through [`Chooser`].
 trait Chooser<State, Transition> {
-    /// `state`'s expansion, holding every step to its footprint.
-    fn expand(
-        &self,
-        state: &State,
-    ) -> Result<Expansion<Transition, State, ModelFinding>, ExpansionStop>;
-
     /// Expand a BFS batch without sharing coordinator state. Implementors
     /// may parallelize their pure system expansion and return results in the
     /// supplied state order.
@@ -1864,6 +1858,11 @@ trait Chooser<State, Transition> {
         fresh: &dyn Fn(&Transition) -> bool,
     ) -> Result<Vec<Transition>, ExpansionStop>;
 }
+
+type IndexedExpansion<Transition, State> = (
+    usize,
+    Result<(Expansion<Transition, State, ModelFinding>, Cut), ExpansionStop>,
+);
 
 /// Map one bounded BFS batch on scoped threads, returning outcomes in input
 /// order even when a later state finishes first.
@@ -1941,8 +1940,6 @@ where
             let expand = &expand;
             #[cfg(test)]
             let hook = hook.clone();
-            #[cfg(test)]
-            let batch = batch;
             threads.push(scope.spawn(move || loop {
                     let Some((position, state)) = queue
                         .lock()
@@ -1996,13 +1993,6 @@ struct ModelAmple<'r, 'a> {
 }
 
 impl Chooser<ModelSimState, ModelTransition> for ModelAmple<'_, '_> {
-    fn expand(
-        &self,
-        state: &ModelSimState,
-    ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
-        self.system.successors_enforced(state)
-    }
-
     fn expand_batch(
         &self,
         states: Vec<ModelSimState>,
@@ -2453,13 +2443,7 @@ where
     /// Expand a bounded BFS batch on scoped workers. The coordinator consumes
     /// these indexed outcomes in queue order, so expansion completion order
     /// cannot change a finding, refusal, or budget boundary.
-    fn expand_batch(
-        &self,
-        positions: &[usize],
-    ) -> Vec<(
-        usize,
-        Result<(Expansion<S::TransitionId, S::State, ModelFinding>, Cut), ExpansionStop>,
-    )>
+    fn expand_batch(&self, positions: &[usize]) -> Vec<IndexedExpansion<S::TransitionId, S::State>>
     where
         ModelFinding: Send,
     {
@@ -2839,7 +2823,7 @@ where
             }
             Refused::Construction(InitialStateRefusal::Encoding(refusal)) => refusal.into(),
             Refused::Construction(InitialStateRefusal::Expansion(stop)) => {
-                self.expansion_stop(stop).into()
+                self.expansion_stop(stop)
             }
             Refused::Keying(halt) => halt,
         })?;
@@ -4067,6 +4051,69 @@ where
     }
 }
 
+impl Run<'_, ModelSystem<'_>> {
+    /// The canonical path to node `at`: its breadth-first tree path,
+    /// concretised under symmetry (FR-161).
+    fn model_counterexample(
+        &self,
+        mut kind: CounterexampleKind,
+        at: usize,
+        over_binding: Option<ModelInstance>,
+    ) -> Step<TemporalCounterexample> {
+        if self.group.is_trivial() {
+            return self.counterexample(kind, at, over_binding);
+        }
+        let path = self.path(at);
+        let (initial_state, prefix) = self.concretise(&path, &mut kind)?;
+        self.finished(kind, at, over_binding, initial_state, prefix)
+    }
+
+    /// ADR-021 EI-6 (FR-161 "Start", "Steps"): the subject's initial state
+    /// and the concrete steps of the canonical tree path `path`, each edge
+    /// lifted by [`Lift`] and counted against what is left of
+    /// `max_transitions`. An undefined evaluation's site is concretised at
+    /// the path's end.
+    fn concretise(
+        &self,
+        path: &[usize],
+        kind: &mut CounterexampleKind,
+    ) -> Step<(usize, Vec<ModelStep>)> {
+        let first = &self.nodes[*path.first().ok_or_else(|| fault("a-path-has-a-root"))?];
+        let budget = self
+            .limits
+            .limits
+            .max_transitions
+            .saturating_sub(self.edges);
+        let lifted = (|| {
+            let (initial, mut lift) = Lift::start(
+                self.system,
+                Some(self.system),
+                &self.group,
+                &first.state,
+                budget,
+            )?;
+            for index in path.iter().skip(1) {
+                let node = &self.nodes[*index];
+                // The terminal stutter edge is no model step.
+                if let Some((_, Some(transition))) = &node.parent {
+                    lift.edge(transition, &node.state, &node.permutation)?;
+                }
+            }
+            lift.site(kind)?;
+            Ok((initial, lift.into_steps()))
+        })();
+        lifted.map_err(|stop| match stop {
+            LiftStop::Expansion(stop) => self.expansion_stop(stop),
+            LiftStop::Transitions => Self::stopped(
+                ModelCheckLimit::MaxTransitions,
+                widen(self.limits.limits.max_transitions),
+            )
+            .into(),
+            LiftStop::Refusal(refusal) => refusal.into(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod worker_determinism_tests {
     use super::*;
@@ -4342,68 +4389,5 @@ mod worker_determinism_tests {
             frontier_fingerprint(&sequential_frontier),
             0x4af4_e346_6be5_c4e7
         );
-    }
-}
-
-impl Run<'_, ModelSystem<'_>> {
-    /// The canonical path to node `at`: its breadth-first tree path,
-    /// concretised under symmetry (FR-161).
-    fn model_counterexample(
-        &self,
-        mut kind: CounterexampleKind,
-        at: usize,
-        over_binding: Option<ModelInstance>,
-    ) -> Step<TemporalCounterexample> {
-        if self.group.is_trivial() {
-            return self.counterexample(kind, at, over_binding);
-        }
-        let path = self.path(at);
-        let (initial_state, prefix) = self.concretise(&path, &mut kind)?;
-        self.finished(kind, at, over_binding, initial_state, prefix)
-    }
-
-    /// ADR-021 EI-6 (FR-161 "Start", "Steps"): the subject's initial state
-    /// and the concrete steps of the canonical tree path `path`, each edge
-    /// lifted by [`Lift`] and counted against what is left of
-    /// `max_transitions`. An undefined evaluation's site is concretised at
-    /// the path's end.
-    fn concretise(
-        &self,
-        path: &[usize],
-        kind: &mut CounterexampleKind,
-    ) -> Step<(usize, Vec<ModelStep>)> {
-        let first = &self.nodes[*path.first().ok_or_else(|| fault("a-path-has-a-root"))?];
-        let budget = self
-            .limits
-            .limits
-            .max_transitions
-            .saturating_sub(self.edges);
-        let lifted = (|| {
-            let (initial, mut lift) = Lift::start(
-                self.system,
-                Some(self.system),
-                &self.group,
-                &first.state,
-                budget,
-            )?;
-            for index in path.iter().skip(1) {
-                let node = &self.nodes[*index];
-                // The terminal stutter edge is no model step.
-                if let Some((_, Some(transition))) = &node.parent {
-                    lift.edge(transition, &node.state, &node.permutation)?;
-                }
-            }
-            lift.site(kind)?;
-            Ok((initial, lift.into_steps()))
-        })();
-        lifted.map_err(|stop| match stop {
-            LiftStop::Expansion(stop) => self.expansion_stop(stop),
-            LiftStop::Transitions => Self::stopped(
-                ModelCheckLimit::MaxTransitions,
-                widen(self.limits.limits.max_transitions),
-            )
-            .into(),
-            LiftStop::Refusal(refusal) => refusal.into(),
-        })
     }
 }

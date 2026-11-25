@@ -83,22 +83,19 @@ package beside them (FR-114, ADR-012 §12.2 Package row).
   decides in that scope on that name SHALL also refuse
   `ambiguous_declaration`/`ambiguous-name` at the anchor, naming both
   declarations. No source order or first match picks one.
-- Every node record binder (the `as (x: T)` of an event node, a `commit`, a
-  `finish` or a `compensate` declaration), capture, the protocol's own
-  `over (p)` input parameter, its `activation on each (p)` parameter, and
-  every compensation trigger, retry or recovery parameter, SHALL be unique
-  across the whole checked protocol declaration (FSpec
-  `shared-grammar.md`: binders "are unique in their enclosing declaration"
-  -- the protocol as a whole, not merely the lexical scope, sequence,
-  choice, parallel, repeat, case, branch, await or compensate declaration
-  each one is written in). If a binder has the name of a model or profile
-  alias, a native declaration of the package, or another binder visible
-  anywhere else in the protocol, then the checker SHALL refuse
-  `ambiguous_declaration`/`ambiguous-name` at that binder, naming the
-  declaration it would shadow (FSpec `shared-grammar.md`: binders "cannot
-  shadow aliases, native declarations or another visible binding", and "the
-  same no-shadowing rule applies to binders and captures"). Two separate
-  protocols may reuse a binder name.
+- Each node record binder (the `as (x: T)` of an event node, a `commit`, a
+  `finish` or a `compensate` declaration), capture, protocol `over (p)` input,
+  `activation on each (p)` parameter, and compensation trigger, retry or
+  recovery parameter SHALL be unique among the active local binders visible
+  at its declaration site. A later binder may reuse a name after the earlier
+  binder's scope ends, including in a disjoint branch or a later protocol.
+  When two same-named binders are simultaneously active, the checker SHALL
+  refuse `ambiguous_declaration`/`ambiguous-name` at the later binder, naming
+  the earlier active binder. A binder SHALL also refuse with that cause when
+  its name is a model or profile alias or a native declaration of the package,
+  naming the declaration it conflicts with. This is the shared-grammar rule:
+  binders cannot shadow aliases, native declarations or another active local
+  binder; it does not impose uniqueness across the whole protocol.
 - The checker SHALL check the kind of node each resolved anchor names,
   by its site (FSpec `choreography-surface.md`'s node and deadline rows):
 
@@ -134,6 +131,12 @@ package beside them (FR-114, ADR-012 §12.2 Package row).
 | FR-113-AC-5 | Shadowing: a capture named `forward` inside `Undo`, where `forward` is already the template's bound parameter, refuses `ambiguous_declaration`/`ambiguous-name` at the capture naming the parameter; an event record binder named `M` where `M` is the unit's model alias refuses at the binder naming the alias. A second protocol in the same unit whose record binder is also `attempted` checks. | Test (TC-512) |
 | FR-113-AC-6 | A protocol with one missing anchor and one shadowing binder reports both refusals, ordered by builder state and then source position, and emits no checked protocol node. Checking it twice gives the same refusals in the same order. | Test (TC-512) |
 | FR-113-AC-7 | Wrong kind and channel: `effect Applied of Recovered` (an `event` node) refuses `ill_typed`/`type-mismatch` at the anchor naming site `effect-of` and kind `event`; `compensate Undo for Main::Tried` (an `attempt`) refuses naming `compensate-for` and `attempt`; `await Wait after Main ...` (a `sequence`) refuses naming `await-after` and `sequence`. With channels `C` and `D` from `R` to `R`, `send S via C ...` and `receive Got via D of S ...` refuse at the anchor naming `C` and `D`; the same receive `via C` checks. | Test (TC-512) |
+| FR-113-AC-8 | In TC-380, `activate first (f: M::Failure)` followed by `event Fail by w as (f: M::Failure) { true };` checks without `ambiguous_declaration`, because the trigger binder is out of scope at the event. | Test (TC-512) |
+| FR-113-AC-9 | In the TC-380 fixture, adding `capture f: M::Failure = f;` inside `activate first (f: M::Failure)` refuses `ambiguous_declaration`/`ambiguous-name` at the capture naming the active trigger binder. | Test (TC-512) |
+| FR-113-AC-10 | In TC-510's `RecoveryFlow`, insert `sequence Inner { event Recovered2 by R for Undo as (tried: Boolean) { true }; }` in `Main` after `attempt Tried by R on M::Actor::op contracts [] as (tried: Boolean) { true };`. The nested event binder refuses `ambiguous_declaration`/`ambiguous-name` at its declaration naming the still-active outer `Tried` binder. | Test (TC-512) |
+| FR-113-AC-11 | In TC-510's `RecoveryFlow`, insert `sequence Inner { event Nested by R for Undo as (shared: Boolean) { true }; }` followed in the enclosing sequence by `event After by R for Undo as (shared: Boolean) { true };`. Because the sequence passes `Inner`'s output to the later step, `After` refuses `ambiguous_declaration`/`ambiguous-name` at its binder declaration naming `Nested`'s still-active binder. | Test (TC-512) |
+| FR-113-AC-12 | In TC-510's `RecoveryFlow`, rename the `finish` record binder to `tried`, matching `attempt Tried`'s record binder. Since `finish` reads `Out(root)`, its binder refuses `ambiguous_declaration`/`ambiguous-name` at the finish binder declaration naming the still-active `Tried` binder. | Test (TC-512) |
+| FR-113-AC-13 | In TC-510's `RecoveryFlow`, add one `choice` with a `left` case containing `sequence Left { event LeftSeen by R for Undo as (dup: Boolean) { true }; }` and a `right` case containing `sequence Right { event RightSeen by R for Undo as (dup: Boolean) { true }; }`. The protocol checks without `ambiguous_declaration`: neither sibling case's binder is active at the other's declaration. | Test (TC-512) |
 
 ## Dependencies
 

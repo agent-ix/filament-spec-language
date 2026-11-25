@@ -26,6 +26,7 @@ use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::CheckedGraph;
 
 use super::{frames, EmitRefusal, Omitted};
+use crate::emit::location_paths::Paths;
 
 /// What the checker located a use in: the declaration index of the function
 /// whose body or measure holds it, or somewhere no walk reaches.
@@ -210,15 +211,16 @@ pub(in crate::emit) fn renumber(
         }
     }
     drop(walked);
-    // The uses the checker located, each node's by owner in the order of the
-    // body's source positions.
-    let mut located = HashMap::<&NodeKey, HashMap<Use, Vec<(Vec<usize>, u64)>>>::new();
     let by_key: HashSet<&NodeKey> = node_keys
         .iter()
         .zip(&keep)
         .filter(|(_, keep)| **keep)
         .map(|(key, _)| key)
         .collect();
+    // The uses the checker located, each node's by owner: the interned path of
+    // its position and its checker ordinal.
+    let mut paths = Paths::default();
+    let mut located = HashMap::<&NodeKey, HashMap<Use, Vec<(usize, u64)>>>::new();
     for (key, origin, location) in graph.occurrences() {
         if !crate::wire_form::is_expression_role(origin.role().as_str()) {
             continue;
@@ -231,8 +233,10 @@ pub(in crate::emit) fn renumber(
             .or_default()
             .entry(use_of(&location.origin))
             .or_default()
-            .push((location.path(), origin.ordinal()));
+            .push((paths.intern(location), origin.ordinal()));
     }
+    // A path's rank is its place in the body's source order.
+    let source_order = paths.lexicographic_ranks();
     let mut renumbering = Renumbering::default();
     let mut changed = BTreeMap::<usize, NodeMapping>::new();
     for (position, key) in node_keys.iter().enumerate() {
@@ -242,7 +246,7 @@ pub(in crate::emit) fn renumber(
         let mut mapping: Mapping = Vec::new();
         let mut kept: HashMap<Use, Vec<u64>> = HashMap::new();
         for (used, uses) in groups.iter_mut() {
-            uses.sort();
+            uses.sort_unstable_by_key(|&(path, old)| (source_order[path], old));
             let dropped = match used {
                 Use::Body(function) | Use::Measure(function) => {
                     omitted_functions.contains(function)

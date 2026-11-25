@@ -30,9 +30,6 @@ use fsl_eval::simulation::model::{
     Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
     PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
 };
-use fsl_eval::temporal::{
-    AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TimedTrace,
-};
 use fsl_replay::{
     DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
     ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
@@ -40,37 +37,19 @@ use fsl_replay::{
 };
 use fsl_semantics::check::{
     BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim,
-    ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode, FormulaNodeId, ProbForm,
-    ProbScheduler, UnaryTemporal, Workload,
+    ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler,
+    UnaryTemporal, Workload,
 };
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
 use serde_json::{Value as JsonValue, json};
 
-fn push_timed_observation(history: &mut Vec<super::TimedObservation>, time: u64, values: &[bool]) {
-    // TimedTrace is admitted only for one atomic Eventually read. At a given
-    // timestamp its semantic summary is whether any observation was true.
-    if let Some(observation) = history.iter_mut().rev().find(|entry| entry.time == time) {
-        if observation.values.len() == values.len() {
-            for (summary, value) in observation.values.iter_mut().zip(values) {
-                *summary |= *value;
-            }
-            return;
-        }
-    }
-    history.push(super::TimedObservation {
-        time,
-        values: values.to_vec(),
-    });
-}
-
 use super::unbounded::{Choice, Graph, maximal_end_components_from, same_action};
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MeasurePhase, MonitorState,
     MonitorVerdict, PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId,
-    ProductAction, ProductKind, ProductRefusal, ProductStop, TimedObservation, UndefinedPath,
-    UndefinedRead,
+    ProductAction, ProductKind, ProductRefusal, ProductStop, UndefinedPath, UndefinedRead,
 };
 
 pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
@@ -181,15 +160,21 @@ fn zero() -> Rational {
     Rational::from_integer(Integer::zero())
 }
 
+/// The operators, occurrences, bounds and reads of [`Form::NestedDeadline`].
+struct NestedDeadline<'c> {
+    outer_kind: DeadlineKind,
+    outer_occurrence: u64,
+    outer_lower: Rational,
+    outer_upper: Rational,
+    inner_kind: DeadlineKind,
+    inner_occurrence: u64,
+    inner_lower: Rational,
+    inner_upper: Rational,
+    reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
+}
+
 /// The claim forms the digital route admits (ADR-028 TA-4).
 enum Form<'c> {
-    /// Any checked timed bounded-window formula, retained as its complete
-    /// AST and evaluated over exact timestamped product observations.
-    TimedTrace {
-        formula: &'c fsl_semantics::check::CheckedTemporalFormula,
-        horizon: Rational,
-        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
-    },
     /// `eventually[0, D] holds(P)` or `holds(A) until[0, D] holds(B)`.
     Deadline {
         kind: DeadlineKind,
@@ -199,16 +184,9 @@ enum Form<'c> {
         bound: Rational,
         reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
     },
-    /// One punctual nested Always occurrence under a bounded Eventually.
-    NestedDeadline {
-        outer_occurrence: u64,
-        outer_lower: Rational,
-        outer_upper: Rational,
-        inner_occurrence: u64,
-        inner_lower: Rational,
-        inner_upper: Rational,
-        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
-    },
+    /// One punctual nested occurrence under its dual bounded operator:
+    /// `always` under `eventually`, or `eventually` under `always`.
+    NestedDeadline(Box<NestedDeadline<'c>>),
     /// Expected elapsed time until a checked state predicate holds.
     MeanTime {
         /// The expected-time comparison threshold in the model's time unit.
@@ -243,47 +221,6 @@ impl<'c> Form<'c> {
             claim: claim.occurrence().cloned(),
             member: claim.formula_member_path(chain),
         };
-        if let ProbForm::Probability {
-            event:
-                Event::Formula {
-                    formula,
-                    timed_horizon: Some(horizon),
-                    ..
-                },
-            ..
-        } = &claim.form
-        {
-            let checked = formula.formula();
-            let root = checked
-                .nodes()
-                .get(checked.root().index())
-                .ok_or_else(shape)?;
-            if let FormulaNode::Unary {
-                operator: UnaryTemporal::Eventually,
-                interval: Some(CheckedInterval::Timed(interval)),
-                operand,
-            } = root
-            {
-                if interval.lower().is_zero()
-                    && interval.lower_closed()
-                    && interval.upper_closed()
-                    && matches!(
-                        checked.nodes().get(operand.index()),
-                        Some(FormulaNode::Holds { .. })
-                    )
-                {
-                    let predicate = formula.condition(operand.index()).ok_or_else(shape)?;
-                    return Ok(Self::TimedTrace {
-                        formula,
-                        horizon: horizon.clone(),
-                        reads: vec![(
-                            UndefinedRead::Atom(FormulaNodeId::from_arena_index(operand.index())),
-                            predicate,
-                        )],
-                    });
-                }
-            }
-        }
         match &claim.form {
             ProbForm::MeanTime { bound, until } => Ok(Self::MeanTime {
                 bound: match bound {
@@ -307,63 +244,76 @@ impl<'c> Form<'c> {
                 };
                 let (kind, interval, atoms) = match root {
                     FormulaNode::Unary {
-                        operator: UnaryTemporal::Eventually,
+                        operator: operator @ (UnaryTemporal::Eventually | UnaryTemporal::Always),
                         interval: Some(CheckedInterval::Timed(interval)),
                         operand,
-                    } => match nodes.get(operand.index()) {
-                        Some(FormulaNode::Holds { .. }) => (
-                            DeadlineKind::Eventually,
-                            interval,
-                            vec![
-                                holds(*operand)
-                                    .ok_or_else(|| shape_at(&[root_at, operand.index()]))?,
-                            ],
-                        ),
-                        Some(FormulaNode::Unary {
-                            operator: UnaryTemporal::Always,
-                            interval: Some(CheckedInterval::Timed(inner)),
-                            operand: atom,
-                        }) => {
-                            let Some((id, predicate)) = holds(*atom) else {
-                                return Err(shape_at(&[root_at, operand.index(), atom.index()]));
-                            };
-                            let Some(inner_upper) = inner.upper() else {
-                                return Err(shape_at(&[root_at, operand.index()]));
-                            };
-                            if inner.lower() != inner_upper
-                                || !interval.lower_closed()
-                                || !interval.upper_closed()
-                                || !inner.lower_closed()
-                                || !inner.upper_closed()
-                            {
-                                return Err(shape_at(&[root_at]));
+                    } => {
+                        // Only the root operator's dual may nest under it.
+                        let (kind, dual, dual_kind) = if *operator == UnaryTemporal::Eventually {
+                            (
+                                DeadlineKind::Eventually,
+                                UnaryTemporal::Always,
+                                DeadlineKind::Always,
+                            )
+                        } else {
+                            (
+                                DeadlineKind::Always,
+                                UnaryTemporal::Eventually,
+                                DeadlineKind::Eventually,
+                            )
+                        };
+                        match nodes.get(operand.index()) {
+                            Some(FormulaNode::Holds { .. }) => (
+                                kind,
+                                interval,
+                                vec![
+                                    holds(*operand)
+                                        .ok_or_else(|| shape_at(&[root_at, operand.index()]))?,
+                                ],
+                            ),
+                            Some(FormulaNode::Unary {
+                                operator: inner_operator,
+                                interval: Some(CheckedInterval::Timed(inner)),
+                                operand: atom,
+                            }) if *inner_operator == dual => {
+                                let Some((id, predicate)) = holds(*atom) else {
+                                    return Err(shape_at(&[
+                                        root_at,
+                                        operand.index(),
+                                        atom.index(),
+                                    ]));
+                                };
+                                let Some(inner_upper) = inner.upper() else {
+                                    return Err(shape_at(&[root_at, operand.index()]));
+                                };
+                                if inner.lower() != inner_upper
+                                    || !interval.lower_closed()
+                                    || !interval.upper_closed()
+                                    || !inner.lower_closed()
+                                    || !inner.upper_closed()
+                                {
+                                    return Err(shape_at(&[root_at]));
+                                }
+                                return Ok(Self::NestedDeadline(Box::new(NestedDeadline {
+                                    outer_kind: kind,
+                                    outer_occurrence: u64::try_from(root_at)
+                                        .map_err(|_| shape_at(&[root_at]))?,
+                                    outer_lower: interval.lower().clone(),
+                                    outer_upper: interval
+                                        .upper()
+                                        .ok_or_else(|| shape_at(&[root_at]))?
+                                        .clone(),
+                                    inner_kind: dual_kind,
+                                    inner_occurrence: u64::try_from(operand.index())
+                                        .map_err(|_| shape_at(&[root_at, operand.index()]))?,
+                                    inner_lower: inner.lower().clone(),
+                                    inner_upper: inner_upper.clone(),
+                                    reads: vec![(UndefinedRead::Atom(id), predicate)],
+                                })));
                             }
-                            return Ok(Self::NestedDeadline {
-                                outer_occurrence: u64::try_from(root_at)
-                                    .map_err(|_| shape_at(&[root_at]))?,
-                                outer_lower: interval.lower().clone(),
-                                outer_upper: interval
-                                    .upper()
-                                    .ok_or_else(|| shape_at(&[root_at]))?
-                                    .clone(),
-                                inner_occurrence: u64::try_from(operand.index())
-                                    .map_err(|_| shape_at(&[root_at, operand.index()]))?,
-                                inner_lower: inner.lower().clone(),
-                                inner_upper: inner_upper.clone(),
-                                reads: vec![(UndefinedRead::Atom(id), predicate)],
-                            });
+                            _ => return Err(shape_at(&[root_at, operand.index()])),
                         }
-                        _ => return Err(shape_at(&[root_at, operand.index()])),
-                    },
-                    FormulaNode::Unary {
-                        operator: UnaryTemporal::Always,
-                        interval: Some(CheckedInterval::Timed(interval)),
-                        operand,
-                    } => (
-                        DeadlineKind::Always,
-                        interval,
-                        vec![holds(*operand).ok_or_else(|| shape_at(&[root_at, operand.index()]))?],
-                    ),
+                    }
                     FormulaNode::Binary {
                         operator: BinaryTemporal::Until,
                         interval: Some(CheckedInterval::Timed(interval)),
@@ -429,12 +379,11 @@ impl<'c> Form<'c> {
 
     fn reads(&self) -> &[(UndefinedRead, &'c CheckedPredicate)] {
         match self {
-            Self::TimedTrace { reads, .. }
-            | Self::Deadline { reads, .. }
-            | Self::NestedDeadline { reads, .. }
+            Self::Deadline { reads, .. }
             | Self::MeanTime { reads, .. }
             | Self::Elapsed { reads, .. }
             | Self::Labels(reads) => reads,
+            Self::NestedDeadline(deadline) => &deadline.reads,
         }
     }
 }
@@ -555,40 +504,11 @@ fn scale_of(
             note(lower);
             note(bound);
         }
-        Form::TimedTrace {
-            formula, horizon, ..
-        } => {
-            note(horizon);
-            for node in formula.formula().nodes() {
-                match node {
-                    FormulaNode::Unary {
-                        interval: Some(CheckedInterval::Timed(interval)),
-                        ..
-                    }
-                    | FormulaNode::Binary {
-                        interval: Some(CheckedInterval::Timed(interval)),
-                        ..
-                    } => {
-                        note(interval.lower());
-                        if let Some(upper) = interval.upper() {
-                            note(upper);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Form::NestedDeadline {
-            outer_lower,
-            outer_upper,
-            inner_lower,
-            inner_upper,
-            ..
-        } => {
-            note(outer_lower);
-            note(outer_upper);
-            note(inner_lower);
-            note(inner_upper);
+        Form::NestedDeadline(deadline) => {
+            note(&deadline.outer_lower);
+            note(&deadline.outer_upper);
+            note(&deadline.inner_lower);
+            note(&deadline.inner_upper);
         }
         Form::MeanTime { bound, .. } => note(bound),
         Form::Elapsed {
@@ -623,10 +543,7 @@ fn scale_of(
             .len()
             .checked_add(usize::from(matches!(
                 form,
-                Form::Deadline { .. }
-                    | Form::NestedDeadline { .. }
-                    | Form::TimedTrace { .. }
-                    | Form::Elapsed { .. }
+                Form::Deadline { .. } | Form::NestedDeadline(_) | Form::Elapsed { .. }
             )))
             .and_then(|count| count.checked_add(1))
             .and_then(|count| u64::try_from(count).ok())
@@ -726,50 +643,6 @@ struct DState {
     clocks: Vec<u64>,
     deadline: Option<u64>,
     tail: Tail,
-    timed_history: Option<Vec<TimedObservation>>,
-}
-
-struct FormulaTraceLetters<'a> {
-    formula: &'a fsl_semantics::check::CheckedTemporalFormula,
-    history: &'a [TimedObservation],
-}
-
-impl TemporalLetters for FormulaTraceLetters<'_> {
-    fn activation(
-        &mut self,
-        _position: TemporalPosition,
-        _meter: &mut filament_exact::Meter,
-    ) -> Result<AtomReading, LetterStop> {
-        Ok(AtomReading::True)
-    }
-
-    fn atom(
-        &mut self,
-        atom: FormulaNodeId,
-        position: TemporalPosition,
-        _meter: &mut filament_exact::Meter,
-    ) -> Result<AtomReading, LetterStop> {
-        let values_before = self
-            .formula
-            .formula()
-            .nodes()
-            .iter()
-            .take(atom.index())
-            .filter(|node| matches!(node, FormulaNode::Holds { .. }))
-            .count();
-        let position = usize::try_from(position.index()).map_err(|_| LetterStop::Refused)?;
-        let value = self
-            .history
-            .get(position)
-            .and_then(|observation| observation.values.get(values_before))
-            .copied()
-            .ok_or(LetterStop::Refused)?;
-        Ok(if value {
-            AtomReading::True
-        } else {
-            AtomReading::False
-        })
-    }
 }
 
 /// What a discrete model state offers, computed once per state.
@@ -1087,12 +960,9 @@ impl<'c> Builder<'_, '_, 'c> {
     fn deadline_bound(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
-            Form::TimedTrace { horizon, .. } => self.bound_units(horizon).map(Some),
-            Form::NestedDeadline {
-                outer_upper,
-                inner_upper,
-                ..
-            } => self.bound_units(&outer_upper.add(inner_upper)).map(Some),
+            Form::NestedDeadline(deadline) => self
+                .bound_units(&deadline.outer_upper.add(&deadline.inner_upper))
+                .map(Some),
             Form::Elapsed { window, .. } => self.bound_units(window).map(Some),
             Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
@@ -1101,7 +971,6 @@ impl<'c> Builder<'_, '_, 'c> {
     fn deadline_lower(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { lower, .. } => self.bound_units(lower).map(Some),
-            Form::TimedTrace { .. } => Ok(Some(0)),
             _ => Ok(None),
         }
     }
@@ -1261,7 +1130,6 @@ impl<'c> Builder<'_, '_, 'c> {
             binding: self.bindings[binding].0.clone(),
             model: certificate_state.as_bytes().to_vec(),
             monitor,
-            timed_history: state.timed_history.clone(),
             accumulator: None,
             pending,
             certificate_state: Some(certificate_state),
@@ -1359,86 +1227,54 @@ impl<'c> Builder<'_, '_, 'c> {
             }
             None => None,
         };
-        let monitor = if matches!(self.form, Form::TimedTrace { .. }) {
-            let horizon = self
-                .deadline_bound()?
-                .ok_or_else(|| fault("timed-trace-horizon-exists"))?;
-            let observations = state
-                .timed_history
-                .as_ref()
-                .ok_or_else(|| fault("timed-trace-history-exists"))?
-                .iter()
-                .map(|observation| {
-                    json!([
-                        observation.time.to_string(),
-                        observation.values.iter().copied().collect::<Vec<_>>()
-                    ])
-                })
-                .collect::<Vec<_>>();
-            let phase = match monitor {
-                Some(MonitorState::Deadline { phase, .. }) => match phase {
+        let monitor = monitor.map(|monitor| match monitor {
+            MonitorState::Deadline { kind, phase } => json!([
+                "deadline",
+                match kind {
+                    DeadlineKind::Eventually => "eventually",
+                    DeadlineKind::Always => "always",
+                    DeadlineKind::Until => "until",
+                },
+                match phase {
                     DeadlinePhase::Pending => "pending",
                     DeadlinePhase::Accept => "accept",
                     DeadlinePhase::Reject => "reject",
-                },
-                _ => return Err(fault("timed-trace-monitor-has-verdict-phase").into()),
-            };
-            Some(json!([
-                "timed-formula-trace",
-                horizon.to_string(),
-                observations,
-                phase
-            ]))
-        } else {
-            monitor.map(|monitor| match monitor {
-                MonitorState::Deadline { kind, phase } => json!([
-                    "deadline",
-                    match kind {
-                        DeadlineKind::Eventually => "eventually",
-                        DeadlineKind::Always => "always",
-                        DeadlineKind::Until => "until",
-                    },
-                    match phase {
-                        DeadlinePhase::Pending => "pending",
-                        DeadlinePhase::Accept => "accept",
-                        DeadlinePhase::Reject => "reject",
-                    }
-                ]),
-                MonitorState::TimedFormula { root, nested } => {
-                    let encode = |operator: TimedOperatorState| {
-                        json!([
-                            operator.occurrence.to_string(),
-                            match operator.kind {
-                                DeadlineKind::Eventually => "eventually",
-                                DeadlineKind::Always => "always",
-                                DeadlineKind::Until => "until",
-                            },
-                            operator.lower.to_string(),
-                            operator.upper.to_string(),
-                            operator.elapsed.to_string(),
-                            match operator.phase {
-                                DeadlinePhase::Pending => "pending",
-                                DeadlinePhase::Accept => "accept",
-                                DeadlinePhase::Reject => "reject",
-                            }
-                        ])
-                    };
-                    json!(["timed-formula", encode(root), nested.map(encode)])
                 }
-                MonitorState::Measure { phase, .. } => json!([
-                    "measure",
-                    null,
-                    match phase {
-                        MeasurePhase::Inactive => "inactive",
-                        MeasurePhase::Active => "active",
-                        MeasurePhase::Complete => "complete",
-                        MeasurePhase::Censored => "censored",
-                        MeasurePhase::Unactivated => "unactivated",
-                    }
-                ]),
-                _ => JsonValue::Null,
-            })
-        };
+            ]),
+            MonitorState::TimedFormula { root, nested } => {
+                let encode = |operator: TimedOperatorState| {
+                    json!([
+                        operator.occurrence.to_string(),
+                        match operator.kind {
+                            DeadlineKind::Eventually => "eventually",
+                            DeadlineKind::Always => "always",
+                            DeadlineKind::Until => "until",
+                        },
+                        operator.lower.to_string(),
+                        operator.upper.to_string(),
+                        operator.elapsed.to_string(),
+                        match operator.phase {
+                            DeadlinePhase::Pending => "pending",
+                            DeadlinePhase::Accept => "accept",
+                            DeadlinePhase::Reject => "reject",
+                        }
+                    ])
+                };
+                json!(["timed-formula", encode(root), nested.map(encode)])
+            }
+            MonitorState::Measure { phase, .. } => json!([
+                "measure",
+                null,
+                match phase {
+                    MeasurePhase::Inactive => "inactive",
+                    MeasurePhase::Active => "active",
+                    MeasurePhase::Complete => "complete",
+                    MeasurePhase::Censored => "censored",
+                    MeasurePhase::Unactivated => "unactivated",
+                }
+            ]),
+            _ => JsonValue::Null,
+        });
         let tail = match state.tail {
             Tail::Running => DigitalTail::Running,
             Tail::IdleReady => DigitalTail::IdleReady,
@@ -1617,19 +1453,6 @@ impl<'c> Builder<'_, '_, 'c> {
 
     fn deadline_start(&self, truths: &[bool], state: &mut DState) -> Step<Option<MonitorState>> {
         match &self.form {
-            Form::TimedTrace { .. } => {
-                let mut history = Vec::new();
-                push_timed_observation(&mut history, state.deadline.unwrap_or(0), truths);
-                state.timed_history = Some(history);
-                Ok(Some(MonitorState::Deadline {
-                    kind: DeadlineKind::Eventually,
-                    phase: if truths.first().copied().unwrap_or(false) {
-                        DeadlinePhase::Accept
-                    } else {
-                        DeadlinePhase::Pending
-                    },
-                }))
-            }
             Form::Elapsed { .. } => {
                 let mut phase = MeasurePhase::Inactive;
                 if truths.first().copied().unwrap_or(false) {
@@ -1658,28 +1481,20 @@ impl<'c> Builder<'_, '_, 'c> {
                     ),
                 }))
             }
-            Form::NestedDeadline {
-                outer_occurrence,
-                outer_lower,
-                outer_upper,
-                inner_occurrence,
-                inner_lower,
-                inner_upper,
-                ..
-            } => {
+            Form::NestedDeadline(deadline) => {
                 let mut root = TimedOperatorState {
-                    occurrence: *outer_occurrence,
-                    kind: DeadlineKind::Eventually,
-                    lower: self.bound_units(outer_lower)?,
-                    upper: self.bound_units(outer_upper)?,
+                    occurrence: deadline.outer_occurrence,
+                    kind: deadline.outer_kind,
+                    lower: self.bound_units(&deadline.outer_lower)?,
+                    upper: self.bound_units(&deadline.outer_upper)?,
                     elapsed: 0,
                     phase: DeadlinePhase::Pending,
                 };
                 let mut child = TimedOperatorState {
-                    occurrence: *inner_occurrence,
-                    kind: DeadlineKind::Always,
-                    lower: self.bound_units(inner_lower)?,
-                    upper: self.bound_units(inner_upper)?,
+                    occurrence: deadline.inner_occurrence,
+                    kind: deadline.inner_kind,
+                    lower: self.bound_units(&deadline.inner_lower)?,
+                    upper: self.bound_units(&deadline.inner_upper)?,
                     elapsed: 0,
                     phase: DeadlinePhase::Pending,
                 };
@@ -1707,97 +1522,6 @@ impl<'c> Builder<'_, '_, 'c> {
         reached: &mut DState,
         letters: &[Vec<bool>],
     ) -> Step<Option<MonitorState>> {
-        if let Form::TimedTrace {
-            formula, horizon, ..
-        } = &self.form
-        {
-            let Some(mut history) = reached.timed_history.take() else {
-                return Err(fault("timed-formula-history-started-at-origin").into());
-            };
-            let time = reached.deadline.unwrap_or(0);
-            if let Some(previous) = history.last().cloned() {
-                let mut at = previous.time.saturating_add(1);
-                while at < time {
-                    push_timed_observation(&mut history, at, &previous.values);
-                    at = at.saturating_add(1);
-                }
-                if letters
-                    .first()
-                    .map_or(true, |next| *next != previous.values)
-                {
-                    push_timed_observation(&mut history, time, &previous.values);
-                }
-            }
-            for truths in letters {
-                push_timed_observation(&mut history, time, truths);
-            }
-            reached.timed_history = Some(history);
-            let mut phase = match source {
-                Some(MonitorState::Deadline { phase, .. }) => phase,
-                _ => DeadlinePhase::Pending,
-            };
-            let horizon_units = self.bound_units(horizon)?;
-            if phase == DeadlinePhase::Pending
-                && time <= horizon_units
-                && reached.timed_history.as_ref().is_some_and(|history| {
-                    history.iter().any(|observation| {
-                        observation.time <= horizon_units
-                            && observation.values.first().copied().unwrap_or(false)
-                    })
-                })
-            {
-                phase = DeadlinePhase::Accept;
-            }
-            if phase == DeadlinePhase::Pending && time > horizon_units {
-                let limit = Rational::from_integer(Integer::from(horizon_units));
-                let scale = Rational::from_integer(Integer::from(self.scale));
-                let through = limit
-                    .div(&scale)
-                    .ok_or_else(|| fault("timed-trace-horizon-scales"))?;
-                let observations: Vec<_> = reached
-                    .timed_history
-                    .as_ref()
-                    .expect("history was set above")
-                    .iter()
-                    .filter(|observation| observation.time <= horizon_units)
-                    .collect();
-                let stamps = observations
-                    .iter()
-                    .map(|observation| {
-                        Rational::new(Integer::from(observation.time), Integer::from(self.scale))
-                            .map_err(|_| fault("timed-trace-stamp-scales"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let trace = TimedTrace::through(stamps, through)
-                    .map_err(|_| fault("timed-trace-closes-at-formula-horizon"))?;
-                let values = observations
-                    .iter()
-                    .map(|observation| (*observation).clone())
-                    .collect::<Vec<_>>();
-                let mut letters = FormulaTraceLetters {
-                    formula,
-                    history: &values,
-                };
-                let mut meter = filament_exact::Meter::new(self.system.meter_limits());
-                phase = match fsl_eval::temporal::evaluate_timed_formula_at(
-                    formula.formula(),
-                    &trace,
-                    TemporalPosition::new(0),
-                    &mut letters,
-                    &mut meter,
-                )
-                .map_err(|_| fault("timed-formula-evaluator-accepts-checked-input"))?
-                {
-                    TemporalOutcome::Holds => DeadlinePhase::Accept,
-                    TemporalOutcome::Violated { .. } => DeadlinePhase::Reject,
-                    _ => return Err(fault("timed-formula-decides-at-closed-horizon").into()),
-                };
-            }
-            return Ok(Some(MonitorState::Deadline {
-                kind: DeadlineKind::Eventually,
-                phase,
-            }));
-        }
         if matches!(self.form, Form::Elapsed { .. }) {
             let Some(MonitorState::Measure { mut phase, .. }) = source else {
                 return Ok(None);
@@ -1891,7 +1615,6 @@ impl<'c> Builder<'_, '_, 'c> {
                 clocks: self.digital(initial.clocks())?,
                 deadline,
                 tail: Tail::Running,
-                timed_history: None,
             };
             for binding in 0..self.bindings.len() {
                 let truths = match self.truths(&state.model, binding)? {
@@ -1902,11 +1625,7 @@ impl<'c> Builder<'_, '_, 'c> {
                                 kind: *kind,
                                 phase: DeadlinePhase::Pending,
                             }),
-                            Form::NestedDeadline { .. } => {
-                                let mut state = state.clone();
-                                self.deadline_start(&[], &mut state)?
-                            }
-                            Form::TimedTrace { .. } => {
+                            Form::NestedDeadline(_) => {
                                 let mut state = state.clone();
                                 self.deadline_start(&[], &mut state)?
                             }
@@ -2224,7 +1943,6 @@ impl<'c> Builder<'_, '_, 'c> {
             clocks: delayed.0,
             deadline: delayed.1,
             tail,
-            timed_history: state.timed_history.clone(),
         };
         let taken = TraceStep {
             action: None,
@@ -2572,7 +2290,6 @@ impl<'c> Builder<'_, '_, 'c> {
                 clocks: clocks.to_vec(),
                 deadline: state.deadline,
                 tail: Tail::Running,
-                timed_history: state.timed_history.clone(),
             };
             if let [(model, clocks)] = draw.posts.as_slice() {
                 let reached = post(model, clocks);
@@ -3118,7 +2835,6 @@ impl<'c> Builder<'_, '_, 'c> {
                         clocks: clocks.clone(),
                         deadline: current.deadline,
                         tail: Tail::Running,
-                        timed_history: current.timed_history.clone(),
                     });
                     next.push((
                         chain_probability.mul(&draw.probability),

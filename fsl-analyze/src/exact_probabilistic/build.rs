@@ -8,13 +8,15 @@ use fsl_foundation::IdentityLimits;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use filament_exact::{Cancel, Identifier, Integer, ObjectReference, Rational, Value, ValueType};
+use filament_exact::{
+    Cancel, Identifier, Integer, ObjectReference, Rational, Value, ValueType, WorkScope,
+};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{
-    same_rewards, Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading,
-    ScheduledIdentity, Unsteppable,
+    same_rewards, Action, ModelSimState, ModelSimulationRequest, ModelSystem, NotMarkov,
+    PredicateReading, ScheduledIdentity, Unsteppable,
 };
 use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::simulation::StateKey;
@@ -32,13 +34,17 @@ use super::{
 };
 use super::{FormulaState, MonitorState};
 
-/// Build the product of `request`'s claim over its subject.
+/// Build the product of `request`'s claim over its subject. A product whose
+/// successor `max_states` denied is [`ProbBuild::Partial`], the explored
+/// prefix partial evidence reads (FR-196, FSpec FR-411 "Evidence on a partial
+/// product").
 ///
 /// # Errors
 ///
 /// [`ProductRefusal`] when the subject does not admit, a state does not
-/// expand or step, the event has no monitor, or a budget or the cancellation
-/// ends the build.
+/// expand or step, the event has no monitor, `max_states` denies an initial
+/// state, or another budget or the cancellation ends the build (FR-196,
+/// FR-203).
 pub fn build_product(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -52,7 +58,18 @@ pub(crate) fn build_retaining_monitor(
     request: ProductRequest<'_>,
     cancel: &Cancel,
 ) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), ProductRefusal> {
-    match build_configured(request, cancel, None) {
+    let work = WorkScope::new(request.subject.simulation.meter);
+    build_retaining_monitor_in_scope(request, work, cancel)
+}
+
+/// [`build_retaining_monitor`] under the item's `work` allowance, so that a
+/// later reading of the same item spends only what the build left (FR-203).
+pub(crate) fn build_retaining_monitor_in_scope(
+    request: ProductRequest<'_>,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), ProductRefusal> {
+    match build_configured(request, work, cancel, None) {
         Ok(result) => Ok(result),
         Err(BudgetedProductError::Product(error)) => Err(error),
         Err(BudgetedProductError::Key(_) | BudgetedProductError::Undefined(_)) => {
@@ -87,11 +104,24 @@ pub(crate) fn build_retaining_monitor_with_budget(
     budget: &mut dyn ModelKeyBudget,
     cancel: &Cancel,
 ) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
+    let work = WorkScope::new(request.subject.simulation.meter);
+    build_retaining_monitor_with_budget_in_scope(request, identity, budget, work, cancel)
+}
+
+/// [`build_retaining_monitor_with_budget`] under the item's `work` allowance,
+/// as [`build_retaining_monitor_in_scope`] is for an unbudgeted build.
+pub(crate) fn build_retaining_monitor_with_budget_in_scope(
+    request: ProductRequest<'_>,
+    identity: IdentityLimits,
+    budget: &mut dyn ModelKeyBudget,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
     let policy = KeyPolicy {
         identity,
         budget: RefCell::new(budget),
     };
-    build_configured(request, cancel, Some(&policy))
+    build_configured(request, work, cancel, Some(&policy))
 }
 
 /// Exercise the production budgeted builder without changing public requests.
@@ -105,8 +135,44 @@ pub fn build_product_with_key_budget(
     build_retaining_monitor_with_budget(request, identity, budget, cancel).map(|(build, _)| build)
 }
 
+/// Admit `simulation` under the item's `work` allowance.
+///
+/// # Errors
+///
+/// [`ProductRefusal`] when the cancellation is tripped, the subject does not
+/// admit, or the allowance cannot pay a reading admission makes.
+pub(crate) fn admit_in_scope<'a>(
+    simulation: ModelSimulationRequest<'a>,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<ModelSystem<'a>, ProductRefusal> {
+    ModelSystem::new_with_work_scope(simulation, work, cancel).map_err(|failure| {
+        if let Some(cause) = cancel.tripped() {
+            ProductRefusal::Stopped(ProductStop::Cancelled(cause))
+        } else {
+            match failure {
+                fsl_eval::simulation::model::ProbabilityAdmissionFailure::Admission(failure) => {
+                    ProductRefusal::Admission(failure)
+                }
+                fsl_eval::simulation::model::ProbabilityAdmissionFailure::Evaluation(
+                    incomplete,
+                ) => ProductRefusal::Expansion(fsl_eval::simulation::ExpansionStop {
+                    cause: filament_semantic_value::catalog::CatalogCode::new(
+                        "resource_exhausted",
+                        "insufficient-next-charge",
+                    ),
+                    limit: Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                        incomplete.limit_kind,
+                    )),
+                }),
+            }
+        }
+    })
+}
+
 fn build_configured(
     request: ProductRequest<'_>,
+    work: WorkScope,
     cancel: &Cancel,
     key_policy: Option<&KeyPolicy<'_>>,
 ) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
@@ -118,30 +184,7 @@ fn build_configured(
     let limits_all = limits;
     let limits = limits_all.model;
     let probabilistic = subject.simulation.input.probabilistic;
-    let scope = filament_exact::WorkScope::new(subject.simulation.meter);
-    let system =
-        ModelSystem::new_with_work_scope(subject.simulation, scope, cancel).map_err(|failure| {
-            if let Some(cause) = cancel.tripped() {
-                ProductRefusal::Stopped(ProductStop::Cancelled(cause))
-            } else {
-                match failure {
-                    fsl_eval::simulation::model::ProbabilityAdmissionFailure::Admission(
-                        failure,
-                    ) => ProductRefusal::Admission(failure),
-                    fsl_eval::simulation::model::ProbabilityAdmissionFailure::Evaluation(
-                        incomplete,
-                    ) => ProductRefusal::Expansion(fsl_eval::simulation::ExpansionStop {
-                        cause: filament_semantic_value::catalog::CatalogCode::new(
-                            "resource_exhausted",
-                            "insufficient-next-charge",
-                        ),
-                        limit: Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
-                            incomplete.limit_kind,
-                        )),
-                    }),
-                }
-            }
-        })?;
+    let system = admit_in_scope(subject.simulation, work, cancel)?;
     match TimedSystem::new(&system, &claim.subject.alias) {
         Ok(timed) => {
             if key_policy.is_some() {
@@ -349,22 +392,25 @@ mod tests {
             accumulator: None,
             pending: None,
             certificate_state: None,
-            timed_history: None,
         };
         let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
+        let edge = |from, probability| ProbEdge {
+            from: ProbStateId(from),
+            choice: ProductAction::TerminalStutter,
+            action: None,
+            draw: None,
+            to: ProbStateId(1),
+            probability,
+            elapsed: Rational::from_integer(Integer::zero()),
+            rewards: Vec::new(),
+        };
         let product = ProbProduct {
             states: vec![key(0), key(1)],
             kind: ProductKind::Dtmc,
-            edges: vec![ProbEdge {
-                from: ProbStateId(0),
-                choice: ProductAction::TerminalStutter,
-                action: None,
-                draw: None,
-                to: ProbStateId(1),
-                probability: half.clone(),
-                elapsed: Rational::from_integer(Integer::zero()),
-                rewards: Vec::new(),
-            }],
+            edges: vec![
+                edge(0, half.clone()),
+                edge(1, Rational::from_integer(Integer::one())),
+            ],
             initial: vec![(0, None, ProbStateId(0))],
             decided: Vec::new(),
             labels: vec![vec![false], vec![true]],
@@ -372,6 +418,7 @@ mod tests {
             fairness: Vec::new(),
         };
         let omitted = OmittedEdge {
+            kept_before: 1,
             choice: ProductAction::TerminalStutter,
             action: None,
             draw: None,
@@ -379,10 +426,11 @@ mod tests {
             rewards: Vec::new(),
         };
         let completed = lower_completion(&product, vec![(0, omitted)]);
+        // `outgoing` reads the row, so it holds only when the omitted edge
+        // stands before state 1's edge.
         let source_mass = completed
-            .edges
+            .outgoing(ProbStateId(0))
             .iter()
-            .filter(|edge| edge.from == ProbStateId(0))
             .fold(Rational::from_integer(Integer::zero()), |mass, edge| {
                 mass.add(&edge.probability)
             });
@@ -390,7 +438,8 @@ mod tests {
         assert_eq!(completed.states.len(), 3);
         assert_eq!(completed.labels[2], vec![false]);
         assert_eq!(completed.edges[1].to, ProbStateId(2));
-        assert_eq!(completed.edges.len(), 2);
+        assert_eq!(completed.edges[2].from, ProbStateId(1));
+        assert_eq!(completed.edges.len(), 3);
     }
 }
 
@@ -441,11 +490,26 @@ struct Node {
 /// A target of a model step, before it is a product state.
 struct Target {
     key: ProbKey,
+    /// What numbering the key reads. None when `max_states` denied the key a
+    /// slot, so that no representation of it is constructed (FR-203-AC-14).
+    state: Option<TargetState>,
+}
+
+impl Target {
+    /// Count the planned edge to this target, if the product keeps it.
+    fn observe_edge(&self) {
+        if self.state.is_some() {
+            super::observe_edge_construction();
+        }
+    }
+}
+
+/// An admitted target's model state and control reading.
+struct TargetState {
     model: ModelSimState,
     truths: Vec<bool>,
     /// Set for an intermediate state.
     resolution: Option<Resolution>,
-    retained: bool,
 }
 
 /// Only the control and key needed to decide target admission.
@@ -468,6 +532,9 @@ struct Planned {
 
 /// The solver edge for a successor omitted from partial exploration.
 struct OmittedEdge {
+    /// How many edges the product held when this one was omitted: its place
+    /// in exploration order.
+    kept_before: usize,
     choice: ProductAction,
     action: Option<ScheduledIdentity>,
     draw: Option<Vec<Value>>,
@@ -561,18 +628,27 @@ fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, OmittedEdge)>) -
     completed
         .decided
         .push((ProbStateId(sink), super::MonitorVerdict::Reject));
-    for (from, edge) in omitted {
-        completed.edges.push(ProbEdge {
-            from: ProbStateId(from),
-            choice: edge.choice,
-            action: edge.action,
-            draw: edge.draw,
-            to: ProbStateId(sink),
-            probability: edge.probability,
-            elapsed: Rational::from_integer(Integer::from(0_i64)),
-            rewards: edge.rewards,
-        });
+    let to_sink = |(from, edge): (usize, OmittedEdge)| ProbEdge {
+        from: ProbStateId(from),
+        choice: edge.choice,
+        action: edge.action,
+        draw: edge.draw,
+        to: ProbStateId(sink),
+        probability: edge.probability,
+        elapsed: Rational::from_integer(Integer::from(0_i64)),
+        rewards: edge.rewards,
+    };
+    // Each omitted edge returns to its place in exploration order, so the
+    // edges stay ordered by source and one choice's edges stay adjacent.
+    let kept = std::mem::take(&mut completed.edges);
+    let mut omitted = omitted.into_iter().peekable();
+    for (position, edge) in kept.into_iter().enumerate() {
+        while let Some(missing) = omitted.next_if(|(_, missing)| missing.kept_before <= position) {
+            completed.edges.push(to_sink(missing));
+        }
+        completed.edges.push(edge);
     }
+    completed.edges.extend(omitted.map(to_sink));
     completed
 }
 
@@ -626,7 +702,6 @@ impl Builder<'_, '_, '_, '_> {
                             binding: self.bindings[binding].0.clone(),
                             model: hit.model.clone(),
                             monitor,
-                            timed_history: None,
                             accumulator,
                             pending: None,
                             certificate_state: None,
@@ -638,14 +713,12 @@ impl Builder<'_, '_, '_, '_> {
                 let key = self.key_of(&state, binding, monitor, accumulator, None)?;
                 self.admit_state(&key)?;
                 super::observe_target_construction();
-                let target = Target {
-                    key,
+                let admitted = TargetState {
                     model: state.clone(),
                     truths,
                     resolution: None,
-                    retained: true,
                 };
-                let id = self.intern(target, None, None, at)?;
+                let id = self.intern(key, admitted, None, None, at)?;
                 starts.push((at, self.bindings[binding].0.clone(), ProbStateId(id)));
             }
         }
@@ -830,7 +903,6 @@ impl Builder<'_, '_, '_, '_> {
             binding: self.bindings[binding].0.clone(),
             model,
             monitor,
-            timed_history: None,
             accumulator,
             pending,
             certificate_state: None,
@@ -863,14 +935,17 @@ impl Builder<'_, '_, '_, '_> {
 
     fn target(&mut self, arrival: Arrival, model: &ModelSimState, pending: usize) -> Step<Target> {
         self.admit_edge(pending)?;
-        let retained = self.admit_partial_state(&arrival.key)?;
-        super::observe_target_construction();
+        let state = self.admit_partial_state(&arrival.key)?.then(|| {
+            super::observe_target_construction();
+            TargetState {
+                model: model.clone(),
+                truths: arrival.truths,
+                resolution: None,
+            }
+        });
         Ok(Target {
             key: arrival.key,
-            model: model.clone(),
-            truths: arrival.truths,
-            resolution: None,
-            retained,
+            state,
         })
     }
 
@@ -886,16 +961,17 @@ impl Builder<'_, '_, '_, '_> {
         Ok(true)
     }
 
-    /// The state of `target`, numbered at its first discovery. A state with
+    /// The state of `key`, numbered at its first discovery. A state with
     /// decided control is never expanded.
     fn intern(
         &mut self,
-        target: Target,
+        key: ProbKey,
+        target: TargetState,
         parent: Option<usize>,
         step: Option<TraceStep>,
         initial: u32,
     ) -> Step<usize> {
-        if let Some(known) = self.index.get(&target.key) {
+        if let Some(known) = self.index.get(&key) {
             return Ok(*known);
         }
         if self.nodes.len() >= self.max_states {
@@ -908,22 +984,20 @@ impl Builder<'_, '_, '_, '_> {
         let initial = parent
             .map(|parent| self.nodes[parent].initial)
             .unwrap_or(initial);
-        let decided = target.key.monitor.is_some_and(MonitorState::is_decided)
+        let decided = key.monitor.is_some_and(MonitorState::is_decided)
             || (self.target_mode != CandidateTargetMode::Continue
                 && target.truths.first() == Some(&true));
         self.reserve_key(
-            target
-                .key
-                .model
+            key.model
                 .len()
                 .saturating_add(std::mem::size_of::<ProbKey>())
                 .saturating_add(std::mem::size_of::<Node>())
                 .saturating_add(std::mem::size_of::<usize>()),
         )?;
-        self.index.insert(target.key.clone(), id);
-        self.pending_keys.remove(&target.key);
+        self.index.insert(key.clone(), id);
+        self.pending_keys.remove(&key);
         self.nodes.push(Node {
-            key: target.key,
+            key,
             model: target.model,
             truths: target.truths,
             parent: parent.map(|parent| (parent, step)),
@@ -1103,11 +1177,12 @@ impl Builder<'_, '_, '_, '_> {
             }
         };
         for edge in planned {
-            if !edge.target.retained {
+            let Some(target) = edge.target.state else {
                 self.partial = true;
                 self.omitted.push((
                     at,
                     OmittedEdge {
+                        kept_before: self.edges.len(),
                         choice: edge.choice,
                         action: edge.action,
                         draw: edge.draw,
@@ -1116,14 +1191,15 @@ impl Builder<'_, '_, '_, '_> {
                     },
                 ));
                 continue;
-            }
+            };
             if self.edges.len() >= self.max_transitions {
                 return Err(Self::stopped(
                     ModelCheckLimit::ExactProbMaxTransitions,
                     self.max_transitions,
                 ));
             }
-            let to = self.intern(edge.target, Some(at), edge.step, self.nodes[at].initial)?;
+            let initial = self.nodes[at].initial;
+            let to = self.intern(edge.target.key, target, Some(at), edge.step, initial)?;
             self.edges.push(ProbEdge {
                 from: ProbStateId(at),
                 choice: edge.choice,
@@ -1146,7 +1222,7 @@ impl Builder<'_, '_, '_, '_> {
             self.admit_edge(planned.len())?;
             let arrival = self.advance(at, post, &resolution.rewards, None)?;
             let target = self.target(arrival, post, planned.len())?;
-            super::observe_edge_construction();
+            target.observe_edge();
             planned.push(Planned {
                 choice: ProductAction::PostState(Box::new(target.key.clone())),
                 action: None,
@@ -1206,7 +1282,7 @@ impl Builder<'_, '_, '_, '_> {
             };
             let arrival = self.advance(at, &step.post, &step.rewards, Some(&taken))?;
             let target = self.target(arrival, &step.post, planned.len())?;
-            super::observe_edge_construction();
+            target.observe_edge();
             planned.push(Planned {
                 choice: ProductAction::Identity(identity.clone()),
                 action: Some(identity),
@@ -1305,7 +1381,7 @@ impl Builder<'_, '_, '_, '_> {
                         continue;
                     }
                     let target = self.target(arrival, &post, planned.len())?;
-                    super::observe_edge_construction();
+                    target.observe_edge();
                     planned.push(Planned {
                         choice: ProductAction::Identity(action.identity.clone()),
                         action: Some(action.identity.clone()),
@@ -1341,19 +1417,19 @@ impl Builder<'_, '_, '_, '_> {
                     // predicates read as the source's; the monitor and the
                     // accumulator advance at the resolution, once.
                     self.admit_edge(planned.len())?;
-                    let retained = self.admit_partial_state(&key)?;
-                    super::observe_target_construction();
-                    let target = Target {
-                        key,
-                        model: model.clone(),
-                        truths: self.nodes[at].truths.clone(),
-                        resolution: Some(Resolution {
-                            successors: successors.into_iter().map(|(_, post)| post).collect(),
-                            rewards: draw.rewards.clone(),
-                        }),
-                        retained,
-                    };
-                    super::observe_edge_construction();
+                    let state = self.admit_partial_state(&key)?.then(|| {
+                        super::observe_target_construction();
+                        TargetState {
+                            model: model.clone(),
+                            truths: self.nodes[at].truths.clone(),
+                            resolution: Some(Resolution {
+                                successors: successors.into_iter().map(|(_, post)| post).collect(),
+                                rewards: draw.rewards.clone(),
+                            }),
+                        }
+                    });
+                    let target = Target { key, state };
+                    target.observe_edge();
                     planned.push(Planned {
                         choice: ProductAction::Identity(action.identity.clone()),
                         action: Some(action.identity.clone()),
@@ -1412,7 +1488,7 @@ impl Builder<'_, '_, '_, '_> {
             let arrival = self.advance(at, model, &rewards, Some(&taken))?;
             self.target(arrival, model, pending)?
         };
-        super::observe_edge_construction();
+        target.observe_edge();
         Ok(Planned {
             choice: ProductAction::TerminalStutter,
             action: None,

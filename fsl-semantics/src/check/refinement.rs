@@ -892,23 +892,9 @@ impl CheckedRefinement {
         .map_err(RefinementV2EncodingError::Identity)
     }
 
-    /// Whether every history row's initial value has a FSpec FR-322
-    /// `literal` form: a present `Option` payload has none, so a refinement
-    /// holding one is not written.
-    pub(crate) fn history_initials_have_literals(&self) -> bool {
-        self.history.iter().all(|row| {
-            !matches!(
-                &row.initial,
-                filament_exact::Value::Option(option) if option.payload().is_some()
-            )
-        })
-    }
-
     /// Whether this declaration is in the current V2 emission slice: its
     /// rows and its class catalog, when it has one, lowered to node keys and
-    /// a protocol subject's clause keyed, and every history row's initial
-    /// value one FSpec FR-322 has a `literal` form for (a present `Option`
-    /// payload has none).
+    /// a protocol subject's clause keyed.
     pub fn v2_emittable(&self) -> bool {
         let subject = match &self.abstract_side {
             AbstractSide::Model => self.abstract_internal.is_empty(),
@@ -916,7 +902,6 @@ impl CheckedRefinement {
         };
         subject
             && self.row_keys.is_some()
-            && self.history_initials_have_literals()
             && self.class_catalog.is_some() == self.class_catalog_keys.is_some()
             && self.abstract_subject_node.is_some()
             && self.concrete_subject_node.is_some()
