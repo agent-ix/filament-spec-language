@@ -1527,7 +1527,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
 
 /// FR-1042-AC-22: the fair cyclic interval honors the one-bit rational cap,
 /// and both independent proof-role documents enclose the exact value 1/2.
-#[trace("FR-1042-AC-22")]
+#[trace("TC-3212", "FR-1042-AC-22")]
 #[test]
 fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
     const CLAIM: &str = "probabilistic FairHalf using inf on M over (w: M::W) under every scheduler fair strong W::go on origin { probability >= 0.4 [ eventually holds(w.g) ] }";
@@ -1572,7 +1572,7 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
 
 /// FR-1042-AC-22: increasing the fair `lower` value to reverse
 /// `L <= T(L)` is rejected by the independent replay checker.
-#[trace("FR-1042-AC-22")]
+#[trace("TC-3212", "FR-1042-AC-22")]
 #[test]
 fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
     const CLAIM: &str = "probabilistic FairHalf using inf on M over (w: M::W) under every scheduler fair strong W::go on origin { probability >= 0.4 [ eventually holds(w.g) ] }";
