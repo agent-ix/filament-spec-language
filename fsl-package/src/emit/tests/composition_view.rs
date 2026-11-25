@@ -389,8 +389,9 @@ fn declared_composites_builds_one_wire_graph_and_preserves_declared_records() {
         let actual = bare.declared_composites();
         assert_eq!(wire_graph_build_count(), 1, "N = {count}");
         assert_eq!(actual.len(), count, "every declared record is returned");
-        for (index, composite) in actual.iter().enumerate() {
-            let name = format!("R{index}");
+        let mut expected_names: Vec<_> = (0..count).map(|index| format!("R{index}")).collect();
+        expected_names.sort_unstable();
+        for (index, (composite, name)) in actual.iter().zip(expected_names).enumerate() {
             assert_eq!(
                 composite.shape,
                 crate::bare_term::DeclaredShape::Record(vec!["amount".to_owned()]),
@@ -401,17 +402,12 @@ fn declared_composites_builds_one_wire_graph_and_preserves_declared_records() {
                 "pkg",
                 "key package at index {index}"
             );
-            assert!(
-                composite.key.to_string().contains(&name),
-                "structural key {key} identifies {name} at N = {count}, index = {index}",
-                key = composite.key
+            let expected_key = format!("pkg:[{name:?},]:0");
+            assert_eq!(
+                composite.key.to_string(),
+                expected_key,
+                "structural key at N = {count}, index = {index}"
             );
-            if let Some(previous) = index.checked_sub(1).and_then(|i| actual.get(i)) {
-                assert_ne!(
-                    composite.key, previous.key,
-                    "distinct declarations retain distinct structural keys at index {index}"
-                );
-            }
         }
     }
 }
