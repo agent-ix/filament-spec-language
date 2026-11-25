@@ -424,11 +424,11 @@ fn refusal_names(value: &Value, member: &str) {
 }
 
 const RELEASE_PLAN: &str = "invariant Never using v on Config::ConfigVersion at current { false }\n\
-     invariant Always using v on Config::ConfigVersion at current { true }\n\
+     invariant Ready using v on Config::ConfigVersion at current { true }\n\
      verify Release using v {\n\
        check safe claim Never method model_based_test domain Config::ConfigVersion bound 20;\n\
-       check tested claim Always method model_based_test domain Config::ConfigVersion bound 20;\n\
-       check timely claim Always method model_based_test domain Config::ConfigVersion depends [safe];\n\
+       check tested claim Ready method model_based_test domain Config::ConfigVersion bound 20;\n\
+       check timely claim Ready method model_based_test domain Config::ConfigVersion depends [safe];\n\
      }\n";
 
 fn compile_bytes(unit: &str) -> Result<Vec<u8>, Value> {
@@ -686,6 +686,17 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
+    let (single_plan_exit, single_plan_value) = run(
+        &one,
+        true,
+        ("verification_plan", json!({"max_trace_length": 8})),
+    );
+    assert_ne!(single_plan_exit, 20, "{single_plan_value}");
+    assert_eq!(single_plan_value["verification_plan"]["plan"], "Release");
+    assert_eq!(
+        single_plan_value["verification_plan"]["inputs"]["max_trace_length"],
+        8
+    );
     let (_, value) = run(
         &one,
         true,
@@ -694,7 +705,7 @@ fn the_verification_plan_member_selects_one_plan_or_refuses() {
     assert_eq!(value["verification_plan"]["plan"], "Release", "{value}");
     let two = format!(
         "{one}verify Other using v {{\n\
-           check only claim Always method model_based_test domain Config::ConfigVersion bound 5;\n\
+           check only claim Ready method model_based_test domain Config::ConfigVersion bound 5;\n\
          }}\n"
     );
     for (unit, member, cause, pointer) in [
