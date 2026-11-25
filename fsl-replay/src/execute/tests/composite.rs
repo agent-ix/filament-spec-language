@@ -570,7 +570,7 @@ fn tc_921_an_accounting_stage_limit_stops_execution_without_a_value() {
             "setting": "accounting.work_units",
             "consumed": "1",
             "next_charge": "1",
-            "charge_point": "ordering_operands"
+            "charge_point": "ordering.operands"
         })
     );
 }
