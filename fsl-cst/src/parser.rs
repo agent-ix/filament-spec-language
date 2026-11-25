@@ -890,7 +890,7 @@ fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Spa
 /// Bit constructors have a closed, width-specific hexadecimal token shape.
 /// If a constructor-shaped call violates that shape, report the spelling
 /// failure at the constructor instead of exposing a later parser-recovery token.
-#[implements("FR-397-AC-11")]
+#[implements("FR-397-AC-11", "FR-091-AC-49")]
 fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic> {
     let text = source.text();
     let bytes = text.as_bytes();
