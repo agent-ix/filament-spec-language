@@ -303,7 +303,7 @@ fn a_clause_that_is_its_groups_only_declaration_reads_back() {
     let wire_graph = WireGraph::of_package_value(&wire).expect("the emitted wire graph parses");
     let path = |node: &Value| {
         let key = wire_graph.key_of_value(&node["node_id"]).expect("a key");
-        format!("{:?}", key.view().path().collect::<Vec<_>>())
+        key.path()
     };
     for member in &members {
         assert_eq!(path(member), path(clause), "{member}");
