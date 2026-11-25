@@ -406,7 +406,11 @@ fn a_failing_workload_long_run_fraction_is_refuted_by_its_replayed_long_run_cert
     assert!(spelled.get("scheduler").is_none());
     assert_eq!(
         spelled["bound"],
-        json!({"comparison": ">=", "threshold": q(199, 200)})
+        json!({
+            "type": "long-run-fraction",
+            "comparison": "greater-or-equal",
+            "threshold": q(199, 200),
+        })
     );
 
     // Equality at the bound proves; its proof-side document is not a
@@ -1578,7 +1582,7 @@ fn failing_witness(world: &World, name: &str) -> ProbabilisticCounterexample {
     }
 }
 
-#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FSpec-FR-411-AC-18")]
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FSpec-FR-411-AC-18", "FR-200")]
 #[test]
 fn a_fairness_set_accepts_a_deterministic_witness_only_when_every_bottom_component_is_fair() {
     let world = World::new(&toggling(&format!(
@@ -1615,16 +1619,50 @@ fn a_fairness_set_accepts_a_deterministic_witness_only_when_every_bottom_compone
         ProbabilityCertificateRule::InequalityFails,
         &up,
     );
-    // The fair infimum is not attained by a deterministic policy here, so the
-    // analyzer produces no witness and does not settle the claim refuted.
-    let record = settle(&world, "Weak", ModelCheckLimits::default());
-    assert_ne!(
-        record.terminal().map(|terminal| terminal.value()),
-        Some(&TerminalValue::Refuted)
-    );
+    // The deterministic optimum, failing forever, is unfair, so the analyzer
+    // refutes with FR-200's randomized witness: `repair`, which the optimum
+    // leaves out, has probability 2^-k, and k = 2 is the first k whose chain
+    // value (1/4) is below 1/2 (k = 1 gives exactly 1/2).
+    let record = refuted(&world, "Weak");
+    let found = evidence(&record);
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let binding = claim_binding(&system, world.claim("Weak"))
+        .unwrap()
+        .unwrap();
+    let key = |state: &fsl_eval::simulation::model::ModelSimState| {
+        let raw = system.state_key(state).unwrap().0;
+        ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
+    };
+    let start = system.initial()[0].clone();
+    let (fail_at_start, down) = take(&world, &start, "fail");
+    let (repair_at_start, _) = take(&world, &start, "repair");
+    let (fail_at_down, _) = take(&world, &down, "fail");
+    let (repair_at_down, _) = take(&world, &down, "repair");
+    let mut scheduler = vec![
+        (key(&start), mixed(fail_at_start, repair_at_start)),
+        (key(&down), mixed(fail_at_down, repair_at_down)),
+    ];
+    scheduler.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(found.initial_key, up);
+    assert_eq!(found.scheduler, scheduler);
+    let doc = document(&found);
+    assert_eq!(doc["kind"], "long-run");
+    assert_eq!(doc["objective"]["optimization"], "minimum");
+    assert_eq!(doc["objective"]["fairness"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["components"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["components"][0]["value"], q(1, 4));
+    reproduced(replay(&world, &found));
 }
 
-#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FSpec-FR-411-AC-18")]
+/// FR-200's randomized fair choice at k = 2: the optimum's action has
+/// probability 3/4 and the one action it leaves out 1/4.
+fn mixed(optimum: ProductAction, omitted: ProductAction) -> ProbabilisticSchedulerChoice {
+    let quarters =
+        |numerator: i64| Rational::new(Integer::from(numerator), Integer::from(4_i64)).unwrap();
+    ProbabilisticSchedulerChoice::Randomized(vec![(optimum, quarters(3)), (omitted, quarters(1))])
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FSpec-FR-411-AC-18", "FR-200")]
 #[test]
 fn an_every_scheduler_long_run_claim_settles_refuted_with_its_scheduler_witness() {
     let world = World::new(&architecture(
@@ -1643,30 +1681,38 @@ fn an_every_scheduler_long_run_claim_settles_refuted_with_its_scheduler_witness(
             ),
         ),
     ));
-    let (down, _) = keys(&world, "Fails");
-    for name in ["Fails", "FairFails"] {
+    let (down, up) = keys(&world, "Fails");
+    // With no fairness set the scheduler keeps the service down. With one, it
+    // mixes in `call(true)`, which the optimum leaves out, at 2^-k: k = 2 is
+    // the first k whose chain value (1/4) is below 1/2.
+    let kept_down = vec![(
+        down.clone(),
+        ProbabilisticSchedulerChoice::Deterministic(call(&world, false)),
+    )];
+    let mut fair = vec![
+        (down.clone(), mixed(call(&world, false), call(&world, true))),
+        (up, mixed(call(&world, false), call(&world, true))),
+    ];
+    fair.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, scheduler, value, constraints) in [
+        ("Fails", kept_down, q(0, 1), 0),
+        ("FairFails", fair, q(1, 4), 1),
+    ] {
         let record = refuted(&world, name);
         let found = evidence(&record);
         assert_eq!(found.initial_key, down, "{name}");
-        // The scheduler keeps the service down, the document is the minimum
-        // over every scheduler and the replay reproduced it.
-        assert_eq!(
-            found.scheduler,
-            vec![(
-                down.clone(),
-                ProbabilisticSchedulerChoice::Deterministic(call(&world, false))
-            )],
-            "{name}"
-        );
+        // The document is the long-run value over the witness's chain and the
+        // replay reproduced it.
+        assert_eq!(found.scheduler, scheduler, "{name}");
         let doc = document(&found);
         assert_eq!(doc["kind"], "long-run", "{name}");
         assert_eq!(doc["objective"]["optimization"], "minimum", "{name}");
         assert_eq!(
             doc["objective"]["fairness"].as_array().unwrap().len(),
-            usize::from(name == "FairFails"),
+            constraints,
             "{name}"
         );
-        assert_eq!(doc["components"][0]["value"], q(0, 1), "{name}");
+        assert_eq!(doc["components"][0]["value"], value, "{name}");
         reproduced(replay(&world, &found));
     }
 }
