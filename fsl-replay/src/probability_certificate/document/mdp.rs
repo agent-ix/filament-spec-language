@@ -25,16 +25,26 @@ impl ProbabilityProofDocument {
         }
     }
 
-    /// Make this whole stopped graph's rows those of a `lower` document
-    /// (FR-1042 "Document"): it names only states of that graph, whose keys
-    /// are the ranking's, and ranks only the states it names. An explored part
-    /// continues past a target, so it can offer values the graph does not hold.
-    pub(super) fn name_lower_rows(&mut self) {
+    /// Keep the values of this whole stopped graph's states, whose keys are
+    /// the ranking's. An explored part continues past a target, so it can
+    /// offer values the graph does not hold.
+    pub(super) fn keep_graph_values(&mut self) {
         let ProbabilityCertificateDocument {
             values, ranking, ..
         } = &mut self.document;
         let graph: BTreeSet<_> = ranking.iter().map(|(key, _)| key).collect();
         values.retain(|row| graph.contains(&row.state));
+    }
+
+    /// Rank the named states alone, as a `lower` document does (FR-1042
+    /// "Document"). The cyclic and fair MDP routes keep their own ranks.
+    pub(super) fn rank_named_rows(&mut self) {
+        if self.cyclic_mdp || self.fair_mdp {
+            return;
+        }
+        let ProbabilityCertificateDocument {
+            values, ranking, ..
+        } = &mut self.document;
         let named: BTreeSet<_> = values.iter().map(|row| &row.state).collect();
         ranking.retain(|(key, _)| named.contains(key));
     }

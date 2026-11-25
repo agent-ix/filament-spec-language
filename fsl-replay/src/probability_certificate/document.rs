@@ -2430,8 +2430,9 @@ fn check_document_bytes(
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
-    // Over the explored part, a ranking has rows for named states only.
-    if explored && ranks.keys().any(|key| !named.contains(key)) {
+    // FR-1042 "Document": over the explored part, or a subset of the whole
+    // graph, a ranking has rows for named states only.
+    if (explored || partial) && ranks.keys().any(|key| !named.contains(key)) {
         return Ok(malformed_ranking());
     }
     let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
@@ -2458,16 +2459,20 @@ fn check_document_bytes(
     if ranked && !partial && ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
-    // The derived ranks are a whole graph's. A cyclic reward ranks progress
-    // instead, and so does a partial `lower` over a chain; a partial expected
-    // reward `lower` needs no ranking to be sound (FR-1042 "Conditions"). No
-    // height is derivable past a state the document does not name.
+    // The derived ranks are a whole graph's, and a subset `lower` carries
+    // those of its named states. A cyclic reward ranks progress instead, and
+    // so does a partial `lower` over a chain; a partial expected reward
+    // `lower` needs no ranking to be sound (FR-1042 "Conditions"). No height
+    // is derivable past a state the document does not name.
     let progress_ranked = reward.is_some() && document.cyclic_dtmc;
     let partial_unbounded = partial && (reward.is_some() || document.cyclic_dtmc);
     if let Some(expected) =
         bounded_ranks.filter(|_| ranked && !progress_ranked && !partial_unbounded)
     {
-        for (key, actual) in &expected {
+        for (key, actual) in expected
+            .iter()
+            .filter(|(key, _)| !partial || named.contains(*key))
+        {
             poll(cancel)?;
             if ranks.get(key) != Some(actual) {
                 return Ok(rejected(
