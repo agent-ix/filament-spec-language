@@ -17,6 +17,7 @@ ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" 
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-analyze = { path = "../fsl-analyze" }
 fsl-conformance = { path = "../fsl-conformance" }
+fsl-jit = { path = "../fsl-jit" }
 # FR-567-AC-5: the report names this package's own `CARGO_PKG_VERSION`.
 filament-spec-language = { path = ".." }
 fsl-cst = { path = "../fsl-cst" }
@@ -28,6 +29,9 @@ fsl-semantics = { path = "../fsl-semantics" }
 filament-exact = { workspace = true }
 quire-canonical = { workspace = true, features = ["serde_json"] }
 filament-semantic-value = { workspace = true }
+filament-eval = { workspace = true }
+fsl-eval = { path = "../fsl-eval" }
+fsl-package = { path = "../fsl-package" }
 # FR-064: `xtask string-edge` calls the one standalone scanner with FSL's roots.
 fsl-string-edge = { path = "../fsl-string-edge" }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -42,7 +46,7 @@ tempfile = "3.27.0"
 
 [features]
 # FR-567: a test may replace the matrix cell set; the command line cannot.
-test-support = []
+test-support = ["fsl-conformance/test-support"]
 
 # FR-765-AC-3: needs the sibling driver and examples checkouts; run by
 # `make examples-check` after the gate itself.

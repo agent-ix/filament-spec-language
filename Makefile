@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint checked-input canonical-types refinement-versioning refinement-layering qualify cargo-deny-bans fuzz-deep-input test-deep-format test-deep-measurements ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
+.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint checked-input canonical-types refinement-versioning refinement-layering qualify parity cargo-deny-bans fuzz-deep-input test-deep-format test-deep-measurements ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
 
 # Fail when a tracked file is executable/binary content or exceeds
 # the size ceiling. See the script's own header for the detection method and
@@ -387,7 +387,7 @@ ci: export CARGO_PROFILE_TEST_DEBUG_ASSERTIONS := true
 # FR-760-AC-3: pin-check runs in the recipe, after validation, so no Cargo
 # process starts while a selected document is invalid (NFR-002-AC-2); as a
 # sibling prerequisite it would race validation under -j and -k.
-ci: check-spec-validation
+ci: check-spec-validation parity
 	@cargo run --locked --package xtask -- pin-check
 	@$(CONFORMANCE_XTASK) ci
 
@@ -404,6 +404,12 @@ CONFORMANCE_XTASK = cargo run --locked --package xtask --
 
 conformance:
 	@$(CONFORMANCE_XTASK) conformance
+
+# FR-563: compare the linked JIT backend with the interpreter over the pinned
+# complete-V1 corpus and FR-295's default generated units.
+.PHONY: parity
+parity: check-spec-validation
+	@$(CONFORMANCE_XTASK) parity
 
 # FR-912: compare the pinned consumer-fact inventory with live public-API tests.
 .PHONY: facade-tests
