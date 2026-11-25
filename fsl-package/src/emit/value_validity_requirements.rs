@@ -562,7 +562,6 @@ pub(super) fn append(
     source_map: &mut Vec<CheckedSourceMapEntry>,
     regions: &impl Fn(&OccurrenceKey) -> Option<fsl_foundation::source::provenance::SourceRegion>,
     omitted: &Omitted,
-    meter: &mut super::OutputMeter,
 ) -> Result<Appended, EmitRefusal> {
     let mut records = HashMap::new();
     let mut operation_records = HashMap::new();
@@ -585,12 +584,12 @@ pub(super) fn append(
         });
     }
     let renumbering = if has_value_validity {
-        ordinals::renumber(ids, graph, nodes, source_map, omitted, meter)?
+        ordinals::renumber(ids, graph, nodes, source_map, omitted)?
     } else {
         ordinals::Renumbering::default()
     };
     let frames = if has_value_validity {
-        frames::derive(ids, graph, nodes, source_map, omitted, &renumbering, meter)?
+        frames::derive(ids, graph, nodes, source_map, omitted, &renumbering)?
     } else {
         frames::Frames::default()
     };
@@ -1158,7 +1157,6 @@ pub(super) fn carry_rows(
     base: &filament_contract_model::CheckedPackageV2,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
-    meter: &mut super::OutputMeter,
 ) -> Result<CarriedRows, EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
@@ -1238,7 +1236,6 @@ pub(super) fn carry_rows(
         base.source_map(),
         nodes,
         source_map,
-        meter,
     )?;
     relabel_rows(&mut rows, &renumbered);
     // A rename changes the structural key of every node holding the renamed
@@ -1259,7 +1256,7 @@ pub(super) fn carry_rows(
         })
         .collect::<Result<Vec<_>, EmitRefusal>>()?;
     let mut rows = package_order(keyed);
-    frames = rederived_frames(frames, &mut rows, nodes, source_map, meter)?;
+    frames = rederived_frames(frames, &mut rows, nodes, source_map)?;
     renumber_records(&rows, nodes, source_map)?;
     Ok((rows, frames, renumbered))
 }
@@ -1273,7 +1270,6 @@ fn rederived_frames(
     rows: &mut [RequirementItemRow],
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
-    meter: &mut super::OutputMeter,
 ) -> Result<Vec<PathConditionFrame>, EmitRefusal> {
     let guarded: Vec<&ValueValidityRecord> = rows
         .iter()
@@ -1295,7 +1291,7 @@ fn rederived_frames(
             occurrence: record.occurrence,
         })
         .collect();
-    let (table, terminals) = frames::rederive(nodes, source_map, &carried, meter)?;
+    let (table, terminals) = frames::rederive(nodes, source_map, &carried)?;
     let refuse = |reason| EmitRefusal::RequirementRowCarry(reason);
     let mut new_ids = vec![usize::MAX; frames.len()];
     for (record, terminal) in guarded.iter().zip(&terminals) {
