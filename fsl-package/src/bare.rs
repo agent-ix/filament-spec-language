@@ -25,6 +25,7 @@ use filament_exact::{
     EffectiveId, MemberId, MemberOwner, NodeKey, Origin, OriginalDeclarationKey, Role, UnitId,
 };
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 use crate::checked_v2::wire_graph;
@@ -35,6 +36,8 @@ mod model_tuple;
 mod model_union;
 mod observation;
 mod source_enum;
+#[cfg(test)]
+mod world_agreement_tests;
 use crate::equality_file::OriginalValueType;
 use carried::{SourceRecordJson, SourceTupleJson, SourceUnionJson};
 use filament_exact::Presence;
@@ -140,12 +143,30 @@ impl<'p> BarePackage<'p> {
     /// shares its one admitted artifact rather than copying subtrees.
     ///
     /// # Errors
-    /// Returns the original native join denial without a partially joined view.
+    /// [`crate::DependencyJoinRefusal::Name`] when an artifact's package name
+    /// is this package's or an attached library's, before anything is joined;
+    /// otherwise the original native join denial, without a partially joined
+    /// view.
+    #[implements("FR-531-AC-61")]
     pub fn with_dependency_artifacts(
         mut self,
         artifacts: &'p [crate::DependencyArtifact],
         budget: &mut NativeJoinBudget,
-    ) -> Result<Self, crate::NativeJoinFailure> {
+    ) -> Result<Self, crate::DependencyJoinRefusal> {
+        // A package's name keys its node ids, so two packages of one name
+        // would define the same keys.
+        let mut names: BTreeSet<&str> = std::iter::once(self.package)
+            .chain(self.dependency_views.iter().map(|view| view.package))
+            .map(CheckedPackageV2::name)
+            .collect();
+        if let Some(artifact) = artifacts
+            .iter()
+            .find(|artifact| !names.insert(artifact.package.name()))
+        {
+            return Err(crate::DependencyJoinRefusal::Name {
+                package: artifact.package.name().to_owned(),
+            });
+        }
         for artifact in artifacts {
             self.dependency_views
                 .push(Self::new(&artifact.package).with_supply(

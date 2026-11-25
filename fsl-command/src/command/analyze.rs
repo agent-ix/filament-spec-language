@@ -17,6 +17,7 @@ use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, Sourc
 use fsl_analyze::provider::ProviderOptions;
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_semantics::model::observation::DocumentProvision;
+use ix_trace_rs::implements;
 
 use super::limits::CommandLimits;
 use super::settle::Settle;
@@ -65,6 +66,48 @@ fn receipt_identity(
         value.insert(name.to_owned(), serde_json::Value::String(text.to_owned()));
     }
     serde_json::from_value(serde_json::Value::Object(value)).map_err(|_| malformed())
+}
+
+#[cfg(test)]
+mod dependency_join_cause_tests {
+    use super::*;
+    use fsl_foundation::{Code, Setting};
+    use ix_trace_rs::trace;
+
+    /// A refused artifact name is `invalid_package` with no cause and no stage
+    /// limit; a native denial stays the stage limit.
+    #[test]
+    #[trace("TC-1331", "FR-531-AC-61")]
+    fn a_refused_artifact_name_is_never_a_stage_limit() {
+        let name = fsl_package::DependencyJoinRefusal::Name {
+            package: "dep".to_owned(),
+        };
+        let RunCause::AnalyzePackage {
+            code,
+            cause,
+            pointer,
+            message,
+        } = dependency_join_cause(name)
+        else {
+            panic!("a refused name is a package refusal");
+        };
+        assert_eq!(code, Code::InvalidPackage);
+        assert_eq!((cause, pointer), (None, None));
+        assert!(message.contains("`dep`"), "{message}");
+        assert!(!message.contains("stage_limit_exceeded"), "{message}");
+
+        let denial = fsl_package::NativeJoinFailure::UnitDefinitions {
+            setting: Setting::I2WorkUnits,
+        };
+        let control = dependency_join_cause(denial.into());
+        assert!(matches!(
+            control,
+            RunCause::AnalyzePackage {
+                code: Code::StageLimitExceeded,
+                ..
+            }
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -348,6 +391,22 @@ fn native_join_cause(failure: fsl_package::NativeJoinFailure) -> RunCause {
     }
 }
 
+/// FR-531 "Dependency artifact names": a refused artifact name is
+/// `invalid_package` with no cause, never a stage limit. A native join
+/// refusal is [`native_join_cause`]'s.
+#[implements("FR-531-AC-61")]
+pub(super) fn dependency_join_cause(refusal: fsl_package::DependencyJoinRefusal) -> RunCause {
+    match refusal {
+        fsl_package::DependencyJoinRefusal::Native(failure) => native_join_cause(failure),
+        name @ fsl_package::DependencyJoinRefusal::Name { .. } => RunCause::AnalyzePackage {
+            code: fsl_foundation::Code::InvalidPackage,
+            cause: None,
+            pointer: None,
+            message: name.to_string(),
+        },
+    }
+}
+
 /// FR-1044: a composition whose admitted facts could not be read. A denied
 /// native charge names its `i2.*` setting (FR-531); any other refusal of an
 /// admitted package's own rows is an internal fault.
@@ -406,15 +465,17 @@ fn run_package(
         .with_canonical_bytes(&package_bytes)
         .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
-            package.with_supply(
-                fsl_package::BareSupply {
-                    identities: &identities,
-                    equality: equality.as_ref(),
-                },
-                &mut budget,
-            )
+            package
+                .with_supply(
+                    fsl_package::BareSupply {
+                        identities: &identities,
+                        equality: equality.as_ref(),
+                    },
+                    &mut budget,
+                )
+                .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(native_join_cause)?;
+        .map_err(dependency_join_cause)?;
     let RunMembers {
         documents,
         mut subject,

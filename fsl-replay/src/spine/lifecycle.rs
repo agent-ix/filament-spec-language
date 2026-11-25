@@ -110,6 +110,7 @@ use fsl_semantics::model::intake::{
     admit_unit_with_cancel, admit_units_with_cancel, SelectedModel, SelectedModels, UnitIntakeCause,
 };
 use fsl_semantics::value::identity_limit;
+use ix_trace_rs::implements;
 
 use super::subject::StaticSubjectInput;
 use super::{
@@ -3246,6 +3247,9 @@ fn forms_protocol_results(
         .collect()
 }
 
+#[implements("FR-503-AC-4")]
+#[implements("FR-503-AC-5")]
+#[implements("FR-503-AC-6")]
 fn protocol_check_outcome(
     parsed: &ParsedUnitSource,
     graph: &fsl_semantics::check::CheckedGraph,
@@ -4516,7 +4520,7 @@ impl<'a> Resolution<'a> {
             if let Some(import) = frame.unit.selections().imports.get(frame.next).cloned() {
                 let raw = frame.raw.clone();
                 match self
-                    .select_import(&raw, &import)
+                    .select_import(&raw, &root.package_name, &import)
                     .map_err(|refusal| unwind(&libraries, refusal))?
                 {
                     Selected::Reused(identity, library) => {
@@ -4631,11 +4635,13 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    /// ADR-015 D-1's steps for one `import` of the unit `raw` names:
-    /// cycle, reuse, selection.
+    /// ADR-015 D-1's steps for one `import` of the unit `raw` names, in the
+    /// closure of the unit named `unit_name`: cycle, reuse, selection.
+    #[implements("FR-099-AC-10")]
     fn select_import(
         &mut self,
         raw: &RawSourceRef,
+        unit_name: &str,
         import: &ImportSelection,
     ) -> Result<Selected<'a>, Box<CompileRefusal>> {
         let at_identity = || region(raw, import.identity_span);
@@ -4665,7 +4671,13 @@ impl<'a> Resolution<'a> {
         let Ok(identity) = LibraryName::new(import.identity.as_str()) else {
             return Err(refuse(ImportRefusal::UnnamedImport, at_identity()));
         };
-        // 1. Cycle.
+        // 1. Cycle. The unit's own name heads every import path.
+        if identity.as_str() == unit_name {
+            let mut path = vec![identity.clone()];
+            path.extend_from_slice(&self.active);
+            path.push(identity);
+            return Err(refuse(ImportRefusal::Cycle { path }, at_identity()));
+        }
         if let Some(start) = self.active.iter().position(|active| *active == identity) {
             let mut path = self.active[start..].to_vec();
             path.push(identity);
