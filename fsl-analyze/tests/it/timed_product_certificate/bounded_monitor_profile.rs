@@ -2,6 +2,7 @@
 //! FR-186-AC-7: the admitted bounded timed Eventually form.
 
 use super::*;
+use fsl_analyze::exact_probabilistic::{DeadlineKind, DeadlinePhase, MonitorState};
 
 #[trace("FR-186-AC-7")]
 #[test]
@@ -139,10 +140,20 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
         Ok(fsl_analyze::exact_probabilistic::ProbBuild::Built(product)) => product,
         other => panic!("the zero-delay timed product closes its finite key cycle: {other:?}"),
     };
-    let repeated_history = vec![fsl_analyze::exact_probabilistic::TimedObservation {
-        time: 0,
-        values: vec![false],
-    }];
+    // FR-196's deadline monitor, which stays pending while the target is false.
+    let pending = Some(MonitorState::Deadline {
+        kind: DeadlineKind::Eventually,
+        phase: DeadlinePhase::Pending,
+    });
+    let pending_at_zero = |state: &fsl_analyze::exact_probabilistic::ProbKey| {
+        let bytes = state
+            .certificate_state
+            .as_ref()
+            .expect("a timed state has a ProductKey")
+            .as_bytes();
+        let key: Value = serde_json::from_slice(bytes).expect("canonical ProductKey");
+        state.monitor == pending && key[4][1][5] == json!(["deadline", "4", "0"])
+    };
     assert!(
         product.states.len() < 128,
         "the product closes below its state bound"
@@ -160,13 +171,11 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
     let repeated_keys = product
         .ids()
         .zip(&product.states)
-        .filter_map(|(id, state)| {
-            (state.timed_history.as_ref() == Some(&repeated_history)).then_some(id)
-        })
+        .filter_map(|(id, state)| pending_at_zero(state).then_some(id))
         .collect::<Vec<_>>();
     assert!(
         repeated_keys.len() >= 2,
-        "the retry toggle visits distinct states under the same same-time Eventually summary"
+        "the retry toggle visits distinct states under the same pending monitor at time zero"
     );
     let reaches_zero_time =
         |start: fsl_analyze::exact_probabilistic::ProbStateId,
@@ -194,23 +203,24 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
     assert!(
         product.edges.iter().any(|edge| {
             edge.elapsed == zero
-                && product.states[edge.from.index()].timed_history.as_ref()
-                    == Some(&repeated_history)
-                && product.states[edge.to.index()].timed_history.as_ref() == Some(&repeated_history)
+                && pending_at_zero(&product.states[edge.from.index()])
+                && pending_at_zero(&product.states[edge.to.index()])
                 && reaches_zero_time(edge.to, edge.from)
         }),
-        "the zero-delay cycle returns to a repeated canonical TimedTrace product key"
+        "the zero-delay cycle returns to a repeated canonical product key"
     );
 
     assert!(
         product.states.iter().all(|state| {
-            state.timed_history.as_ref().is_some_and(|history| {
-                history
-                    .iter()
-                    .all(|observation| observation.values == [false])
-            })
+            matches!(
+                state.monitor,
+                Some(MonitorState::Deadline {
+                    kind: DeadlineKind::Eventually,
+                    phase: DeadlinePhase::Pending | DeadlinePhase::Reject,
+                })
+            )
         }),
-        "the literal target is false at every reconstructed observation"
+        "the literal target is false at every observation, so no state accepts"
     );
     let exact = fsl_analyze::exact_probabilistic::decide_bounded_event(
         &product,

@@ -555,17 +555,6 @@ pub(super) fn admit_parts(
                 return Err(ProbabilityDocumentError::Malformed);
             }
         }
-        Node::Array(mut monitor) if monitor.len() == 4 => {
-            let tag = monitor.next().map(|part| part.node());
-            let horizon = monitor.next();
-            let observations = monitor.next().map(|part| part.node());
-            let phase = monitor.next().map(|part| part.node());
-            if !matches!(tag, Some(Node::String("timed-formula-trace")))
-                || !matches!((horizon, observations, phase), (Some(horizon), Some(observations), Some(phase)) if timed_formula_trace_key(horizon, observations.clone(), phase.clone()))
-            {
-                return Err(ProbabilityDocumentError::Malformed);
-            }
-        }
         _ => return Err(ProbabilityDocumentError::Unsupported),
     }
     if parts[6..]
@@ -575,50 +564,6 @@ pub(super) fn admit_parts(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     Ok(())
-}
-
-fn timed_formula_trace_key(
-    horizon: NodeRef<'_>,
-    observations_node: Node<'_>,
-    phase: Node<'_>,
-) -> bool {
-    if canonical_count(horizon).is_none() {
-        return false;
-    }
-    let Node::Array(observations) = observations_node else {
-        return false;
-    };
-    let mut previous_time = None;
-    let mut value_count = None;
-    for observation in observations {
-        let Node::Array(mut parts) = observation.node() else {
-            return false;
-        };
-        if parts.len() != 2 {
-            return false;
-        }
-        let Some(time_node) = parts.next() else {
-            return false;
-        };
-        let Some(time) = canonical_count(time_node) else {
-            return false;
-        };
-        if previous_time.is_some_and(|previous| previous > time) {
-            return false;
-        }
-        previous_time = Some(time);
-        let Some(Node::Array(mut values)) = parts.next().map(|part| part.node()) else {
-            return false;
-        };
-        if value_count.is_some_and(|previous| previous != values.len()) {
-            return false;
-        }
-        value_count = Some(values.len());
-        if values.any(|part| !matches!(part.node(), Node::Bool(_))) {
-            return false;
-        }
-    }
-    matches!(phase, Node::String("pending" | "accept" | "reject"))
 }
 
 #[cfg(test)]
