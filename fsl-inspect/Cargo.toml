@@ -6,6 +6,10 @@ rust-version = "1.98"
 license = "AGPL-3.0-or-later"
 description = "Typed, bounded inspection views for FSL results"
 
+[features]
+default = []
+quire-extraction = ["fsl-replay/quire-extraction"]
+
 [dependencies]
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-package = { path = "../fsl-package" }
