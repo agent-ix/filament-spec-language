@@ -70,8 +70,8 @@ do not establish any external acceptance or live workflow state.
 ## Acceptance Criteria
 
 The example uses only synthetic identity values. Let its owned clause be
-`review_acceptance`, its original identity be `synthetic:review-process`, its
-body identity be `synthetic:review-process#review_acceptance`, its clause
+`review_acceptance`, its original identity be `ix://synthetic/review-process`, its
+body identity be `ix://synthetic/review-process#review_acceptance`, its clause
 binding name the same clause, and its temporal window be ticks 0 through 5.
 Each event carries process, repository, case, source authority, active and
 reviewed source-revision, attempt, event, author, reviewer, assignment and
@@ -81,7 +81,7 @@ an accepted assignment when it is reassigned.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1050-AC-1 | A complete closed trace has one qualifying acknowledgement at tick 3. The command evaluates `ReviewAccepted`; it exits 0 with category `success` and a true temporal result. The checked `Review` protocol is then analyzed from the extracted body bytes under that same body identity and model binding; its protocol result is reproduced. The extraction record names the specified original identity, body identity and clause binding; the verified body bytes retain the protocol declaration and the process, repository, case, source authority, active/reviewed source-revision, attempt, event, assignment and provider-event identity fields. Repeating the identical request produces an equal temporal result document. | Test |
+| FR-1050-AC-1 | A complete closed trace has a receipt at tick 0 and one qualifying acknowledgement at tick 3. The command evaluates `ReviewAccepted`; it exits 0 with category `success` and a true temporal result. The checked `Review` protocol is then analyzed from the extracted body bytes under that same body identity and model binding; the protocol result is `proved` with an accepted certificate. The extraction record names the specified original identity, body identity and clause binding; the verified body bytes retain the protocol declaration and the process, repository, case, source authority, active/reviewed source-revision, attempt, event, assignment and provider-event identity fields. Repeating the identical request produces an equal temporal result document. | Test |
 | FR-1050-AC-2 | The complete closed trace contains a receipt event at tick 2 with `acknowledged` false and no qualifying acknowledgement by tick 5. The temporal item is a violation; receipt does not satisfy the acknowledgement predicate. | Test |
 | FR-1050-AC-3 | The complete closed trace contains a qualifying acknowledgement only at tick 6. The temporal item is a violation for the 0-through-5 window. | Test |
 | FR-1050-AC-4 | With a receipt at tick 3, no qualifying acknowledgement, an open scope, watermark 3 and completeness through 3, the temporal result is `Pending` with deadline 5. With a receipt at tick 3, no qualifying acknowledgement, a closed scope, watermark 5 and `Incomplete` completeness, the temporal result is `Indeterminate` with reason `IncompleteInput`. Neither result has a completed truth. | Test |
