@@ -225,7 +225,7 @@ fn reconstruct(
     let mut initials = BTreeMap::new();
     for state in system.initial() {
         let (_, key) = system
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ProductClosureRefusal::Recompute("state-key"))?;
         initials.entry(key).or_insert(state);
     }
@@ -274,7 +274,7 @@ fn reconstruct(
         for (labelled, next) in expansion.successors {
             poll(cancel)?;
             let (_, target) = system
-                .state_key(&next)
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| ProductClosureRefusal::Recompute("successor-key"))?;
             let order = quire_canonical::to_vec(
                 &labelled,

@@ -387,7 +387,7 @@ fn mapped_initial(
         };
         if max_states.is_some() {
             let (key, _) = concrete
-                .state_key(&initial)
+                .state_key(&initial, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| SubjectRefusal::InitialEncoding)?;
             if !admitted_roots.insert(key) {
                 continue;

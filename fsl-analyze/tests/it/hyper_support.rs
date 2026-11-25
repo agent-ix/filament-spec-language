@@ -77,7 +77,11 @@ pub(crate) fn positions(
             .into_iter()
             .find(|(transition, next)| {
                 *transition == step.transition
-                    && system.state_key(next).expect("a key").0.as_slice()
+                    && system
+                        .state_key(next, fsl_foundation::IdentityLimits::default())
+                        .expect("a key")
+                        .0
+                        .as_slice()
                         == step.post_state.as_bytes()
             })
             .unwrap_or_else(|| panic!("{step:?} is not a step of the vault"))

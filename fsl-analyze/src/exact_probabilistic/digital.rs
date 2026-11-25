@@ -978,7 +978,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn local(&mut self, model: &ModelSimState) -> Step<Rc<Local>> {
         let (key, _) = self
             .system
-            .state_key(model)
+            .state_key(model, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("state-key-encodes"))?;
         if let Some(known) = self.locals.get(&key) {
             return Ok(Rc::clone(known));
@@ -1078,7 +1078,7 @@ impl<'c> Builder<'_, '_, 'c> {
             if let Some(blocked) = draws.iter().find(|draw| draw.posts.is_empty()) {
                 let (_, state) = self
                     .system
-                    .state_key(model)
+                    .state_key(model, fsl_foundation::IdentityLimits::default())
                     .map_err(|_| fault("state-key-encodes"))?;
                 return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                     state,
@@ -1106,7 +1106,7 @@ impl<'c> Builder<'_, '_, 'c> {
             self.poll()?;
             let (_, key) = self
                 .system
-                .state_key(model)
+                .state_key(model, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("state-key-encodes"))?;
             if keys.last().is_some_and(|previous| previous >= &key) {
                 return Err(fault("filtered-post-model-keys-are-distinct-and-ordered").into());
@@ -1148,7 +1148,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
         let (discrete, _) = self
             .system
-            .state_key(&state.model)
+            .state_key(&state.model, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("certificate-discrete-state-key-encodes"))?;
         let discrete: JsonValue = serde_json::from_slice(&discrete)
             .map_err(|_| fault("certificate-discrete-state-key-is-json"))?;
@@ -1374,7 +1374,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn truths(&mut self, state: &ModelSimState, binding: usize) -> Step<Result<Vec<bool>, Hit>> {
         let (model, state_key) = self
             .system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("state-key-encodes"))?;
         if let Some(known) = self.readings.get(&(binding, model.clone())) {
             return Ok(Ok(known.clone()));
@@ -2816,7 +2816,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     let [(model, clocks)] = draw.posts.as_slice() else {
                         let (_, state) = self
                             .system
-                            .state_key(&current.model)
+                            .state_key(&current.model, fsl_foundation::IdentityLimits::default())
                             .map_err(|_| fault("state-key-encodes"))?;
                         return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                             state,

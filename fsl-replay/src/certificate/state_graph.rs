@@ -315,7 +315,9 @@ impl Check<'_, '_> {
         self.poll()?;
         let mut initial = BTreeMap::new();
         for state in self.system.initial() {
-            let (bytes, _) = self.system.state_key(&state)?;
+            let (bytes, _) = self
+                .system
+                .state_key(&state, fsl_foundation::IdentityLimits::default())?;
             let key = StateKey::from_canonical_bytes(bytes);
             initial.entry(key).or_insert(state);
         }
@@ -410,7 +412,9 @@ impl Check<'_, '_> {
                     ));
                 }
                 edges = edges.saturating_add(1);
-                let (bytes, _) = self.system.state_key(&next)?;
+                let (bytes, _) = self
+                    .system
+                    .state_key(&next, fsl_foundation::IdentityLimits::default())?;
                 let key = StateKey::from_canonical_bytes(bytes);
                 successors.push(key.clone());
                 if !self.member(&key) {
