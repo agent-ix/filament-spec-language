@@ -33,3 +33,11 @@ Reverse gap and stubs: none. The new `EdgeWire`/`wire` helper is used by both se
 - Criteria examined: 8. Tagged: 6. Untagged: 2 (FR-338-AC-12 in scope; FR-338-AC-13 belongs to QSL-967).
 - Semantic review: skipped (not requested). Intent was checked by hand for the six changed tests only.
 - Plan completion: not assessed
+
+## Dispositions
+
+Round 1, head `c2b7d10ab8bb90231e42f578a2fcda7c62648849`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `outcome::tests::certificate_rejection_spellings_conform_to_fr331` (fsl-replay/src/outcome.rs:4718-4823, fn at :4722) is tagged `FR-338-AC-12`. It writes all six spellings through `OutcomeDocument`, including `{RankMissing, ModelState(d)}` as `{"key": …}`, and checks each against `CertificateRejected`. It passes. |

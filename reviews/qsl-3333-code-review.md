@@ -37,3 +37,20 @@ Spec split (question a): no conflict between the spec and the code. FSpec define
 | FND-001 | medium | The written `HyperTransitionTupleLocus` still fails the FR-331 schema on `transition`. `TimedTransitionWire` writes `operation` as the canonical `{node, package}` object (schema `Nonempty` string) and a reference receiver in the engine spelling. The new test `assert_tuple_conforms` replaces every edge's `transition` before validating, so only the State members are proven. Separate cause, in the writer shared with counterexample and not-markov transitions (`TaskSourceTransitionWire` already maps to a string). Pre-existing; separate ticket. | fsl-replay/src/outcome.rs:600-606,724-737; fsl-analyze/tests/it/relation_certificate.rs:603-629 |
 | FND-002 | high | `ZoneNode`/`ZoneEdge`/`ZoneComponent` loci serialize `node`/`edge`/`component` as decimal strings. FSL FR-245 ("FSpec FR-331 writes them as its zone node, zone edge, zone component … forms") and the schema (`Count`, integer) require integers. `zone_loci_are_written_in_their_fr331_forms` asserts the non-conforming strings. Pre-existing on main; separate cause; separate ticket. | fsl-replay/src/certificate.rs:296-310; fsl-analyze/tests/it/zone_certificate.rs:409-431 |
 | FND-003 | low | The comment says "Encode the complete canonical octets independently of the locus serializer", but the expected value is still produced by `CertificateLocus::ModelKey`'s serializer, now indexed `["key"]`. Use the independent `state_locus`/base64 encoding instead. | fsl-analyze/tests/it/exact_probabilistic_item.rs:368-376 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | `each_tampering_is_rejected_at_its_rule_and_locus` now asserts FR-245-AC-7's last clause: `InitialMissing` at the initial discrete state's `ModelState`, written in FR-331's State form and schema-validated. Its trace is only `TC-700`, `TC-1197`, so `quire trace` reports it for FR-245-AC-7 as `evidence_near_miss`. Add `FR-245-AC-7` to its `#[trace]`. | fsl-analyze/tests/it/zone_certificate.rs:158-160,232-241 |
+
+## Dispositions
+
+Round 1, head `c2b7d10ab8bb90231e42f578a2fcda7c62648849`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred: QSL-3400 | Separate cause in the shared `TimedTransitionWire`. It predates this PR (the writer is unchanged since base `d9888e39fc`), and QSL-3400 carries the failing test. |
+| FND-002 | fixed | aef78aa02d writes `node`/`edge`/`component` as integers, and `zone_loci_are_written_in_their_fr331_forms` validates each cause against `CertificateRejected` and refuses the decimal string. |
+| FND-003 | fixed | exact_probabilistic_item.rs now encodes the expected key with base64 directly. |
+| FND-004 | still-open: add `FR-245-AC-7` to the test's `#[trace]` | Found this round; low. |

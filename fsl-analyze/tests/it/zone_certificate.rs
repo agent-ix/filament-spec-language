@@ -155,7 +155,7 @@ fn the_search_certificates_are_accepted() {
 /// initial state is `InitialMissing` at that state. The backward edge and
 /// the component reason are tampered in `crate::zone_live_certificate`;
 /// the bad node is FR-245-AC-5's, over `Lock`.
-#[trace("TC-700", "TC-1197")]
+#[trace("TC-700", "TC-1197", "FR-245-AC-7")]
 #[test]
 fn each_tampering_is_rejected_at_its_rule_and_locus() {
     let (world, certificate) = no_late_reply();
