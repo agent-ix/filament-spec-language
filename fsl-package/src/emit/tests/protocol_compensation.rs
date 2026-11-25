@@ -620,24 +620,26 @@ fn a_timed_protocol_clock_selection_is_checked_and_writes_no_row() {
         .collect();
     assert_eq!(spans.len(), 3, "two templates and one await");
     let package = CheckedPackage::link(graph);
-    let emit = |clock: Option<filament_contract_model::ClockConfiguration>| {
-        let selections: Vec<_> = clock
-            .iter()
-            .flat_map(|clock| {
-                spans.iter().map(|span| {
-                    crate::emit::TemporalClockSelection::new(source.clone(), *span, clock.clone())
-                })
-            })
-            .collect();
+    let select = |span, clock: &filament_contract_model::ClockConfiguration| {
+        crate::emit::TemporalClockSelection::new(source.clone(), span, clock.clone())
+    };
+    let emit_selected = |selections: &[crate::emit::TemporalClockSelection]| {
         crate::emit::emit_checked_with_temporal_selections(
             &package,
-            &selections,
+            selections,
             crate::EmitLimits::fixture(),
         )
     };
+    let emit = |clock: Option<filament_contract_model::ClockConfiguration>| {
+        let selections: Vec<_> = clock
+            .iter()
+            .flat_map(|clock| spans.iter().map(|span| select(*span, clock)))
+            .collect();
+        emit_selected(&selections)
+    };
 
     let timed = filament_contract_model::ClockConfiguration::Timed { unit: "s".into() };
-    for clock in [Some(timed), None] {
+    for clock in [Some(timed.clone()), None] {
         let emission = emit(clock).expect("a timed protocol emits");
         assert_eq!(emission.omitted, []);
         assert_eq!(wire(&emission).get("temporal_bindings"), None);
@@ -662,12 +664,11 @@ fn a_timed_protocol_clock_selection_is_checked_and_writes_no_row() {
         assert!(matches!(read, Read::Verified { .. }), "{read:?}");
     }
 
-    let refusal = emit(Some(
-        filament_contract_model::ClockConfiguration::EventPosition {
-            sequence_authority: "compensation-events".into(),
-        },
-    ))
-    .expect_err("an event-position clock under the timed profile");
+    let event_position = filament_contract_model::ClockConfiguration::EventPosition {
+        sequence_authority: "compensation-events".into(),
+    };
+    let refusal = emit(Some(event_position.clone()))
+        .expect_err("an event-position clock under the timed profile");
     assert!(
         matches!(
             refusal,
@@ -675,4 +676,25 @@ fn a_timed_protocol_clock_selection_is_checked_and_writes_no_row() {
         ),
         "{refusal:?}"
     );
+
+    // Each declaration's selection is checked although it takes no row: the
+    // other selections stay valid and the refusal names the one at fault.
+    for (at, span) in spans.iter().enumerate() {
+        let valid: Vec<_> = spans.iter().map(|span| select(*span, &timed)).collect();
+        let mut empty_unit = valid.clone();
+        empty_unit[at].clock =
+            filament_contract_model::ClockConfiguration::Timed { unit: "".into() };
+        let mut other_definition = valid;
+        other_definition[at].definition = select(*span, &event_position).definition;
+        for (selections, field) in [(empty_unit, "unit"), (other_definition, "definition")] {
+            assert_eq!(
+                emit_selected(&selections).expect_err("an invalid timed selection"),
+                crate::emit::EmitRefusal::InvalidTemporalClockValue {
+                    source_ref: source.clone(),
+                    span: *span,
+                    field,
+                }
+            );
+        }
+    }
 }

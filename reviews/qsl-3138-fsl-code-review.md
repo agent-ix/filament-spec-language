@@ -55,3 +55,15 @@ Not mergeable. The producer key rule is right for local clauses. Two high defect
 | FND-002 | fixed | c395ec3a6e merges main, which carries #3800. The contract-ir pin is now b81baf144 (IR-1614), which admits the operand path and compares the owner edge against it. The coder's gate at 433078677c is green apart from reds that are identical on main 85450e4179. |
 | FND-003 | fixed | `a_clause_that_is_its_groups_only_declaration_reads_back` is not among the gate's reds at 433078677c. 33b0b4e105 compares `NodeKey::path()` structurally (`Vec<PathSegment>`) instead of comparing Debug strings. |
 | FND-005 | fixed | e660e5b668 asserts the written key against an independent oracle taken from the dependency's own emitted wire. The oracle finds the clause by path `["Twice", {"operand": slot}]`, reads `owner = operand_rows[clause][slot]`, and expects `{"package": "test/protocol-dependency", "node": {"package": "test/protocol-dependency", "path": ["Twice", {"node": owner}], "ordinal": 0}}`. The root read-back with the dependency supplied stays in place. |
+
+## New findings (disposition pass 4)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | low | The new AC-15 test covers a `timed` selection, no selection, and an event-position selection (profile mismatch). The new branch also runs `validate_temporal_clock` and `check_selected_definition`'s definition check on a timed protocol selection, but no test covers a `timed` selection that fails them: an invalid clock name, an empty `unit`, or a wrong `definition`. A regression that skipped those checks for the `timed` arm, before its `continue`, would pass every test. Fix: add one such case to `a_timed_protocol_clock_selection_is_checked_and_writes_no_row`. | fsl-package/src/emit/tests/protocol_compensation.rs:588-678; fsl-package/src/emit.rs:10606-10615,10694-10701 |
+
+## Dispositions (pass 4)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-006 | still-open | New this pass. |
