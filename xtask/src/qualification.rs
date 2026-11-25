@@ -1288,6 +1288,27 @@ impl Drop for DeepValue {
 mod tests {
     use super::{json_bytes, json_equal, parse_unique_json, DeepValue};
     use ix_trace_rs::trace;
+
+    /// Qualification as the command runs it. With `test-support` the
+    /// generated parity units are few, because no test here asserts anything
+    /// about them.
+    fn qualify(
+        fspec: &std::path::Path,
+        operands: &[std::ffi::OsString],
+    ) -> crate::error::Result<super::Execution> {
+        #[cfg(feature = "test-support")]
+        let execution = crate::qualify::execute(&crate::qualify::QualifyInputs {
+            fspec: fspec.to_path_buf(),
+            operands: operands.to_vec(),
+            matrix: None,
+            parity: None,
+            parity_count: Some(8),
+        });
+        #[cfg(not(feature = "test-support"))]
+        let execution = super::execute_with_fspec(fspec, operands);
+        execution
+    }
+
     #[test]
     fn rejects_duplicate_object_members() {
         assert!(parse_unique_json(br#"{"a":1,"a":2}"#)
@@ -1401,7 +1422,7 @@ mod tests {
                     let arguments = [
                         "--corpus".into(), corpus_root.as_os_str().to_owned(),
                     ];
-                    let execution = super::execute_with_fspec(fspec.path(), &arguments)
+                    let execution = qualify(fspec.path(), &arguments)
                         .expect("a mismatching deep oracle settles rather than aborting");
                     assert_eq!(execution.outcome.code, 1);
                     let report = DeepValue::new(parse_unique_json(execution.outcome.stdout.as_bytes()).unwrap());
@@ -1414,7 +1435,7 @@ mod tests {
                     let expected = &report["capabilities"][0]["vectors"][0]["expected"];
                     let retained = if refusal { &expected["details"]["deep"] } else { &expected["value"] };
                     assert!(json_equal(&oracle, retained), "the complete oracle is retained in the report");
-                    let repeated = super::execute_with_fspec(fspec.path(), &arguments)
+                    let repeated = qualify(fspec.path(), &arguments)
                         .expect("the repeated complete qualification remains admitted");
                     assert_eq!(execution.outcome.stdout, repeated.outcome.stdout);
 
@@ -1427,7 +1448,7 @@ mod tests {
                         corpus_root.join("complete-v1.json"),
                         json_bytes(&corpus).unwrap(),
                     ).unwrap();
-                    let failure = match super::execute_with_fspec(fspec.path(), &arguments) {
+                    let failure = match qualify(fspec.path(), &arguments) {
                         Err(failure) => failure,
                         Ok(_) => panic!("an invalid deep oracle refuses before execution"),
                     };

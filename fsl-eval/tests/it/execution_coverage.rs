@@ -53,11 +53,19 @@ fn coverage(with_let: bool) -> BackendCoverage {
     BackendCoverage {
         expression_forms,
         value_types: [CoverageValueType::Integer].into_iter().collect(),
-        operations: [CoverageOperation {
-            operator: CoverageOperator::Add,
-            operand_types: vec![CoverageValueType::Integer, CoverageValueType::Integer],
-            result_type: CoverageValueType::Integer,
-        }]
+        operations: [
+            CoverageOperation {
+                operator: CoverageOperator::Add,
+                operand_types: vec![CoverageValueType::Integer, CoverageValueType::Integer],
+                result_type: CoverageValueType::Integer,
+            },
+            // `y + 1` is narrowed to the declared result range.
+            CoverageOperation {
+                operator: CoverageOperator::Other("coerce".to_owned()),
+                operand_types: vec![CoverageValueType::Integer],
+                result_type: CoverageValueType::Integer,
+            },
+        ]
         .into_iter()
         .collect(),
     }

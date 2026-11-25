@@ -41,13 +41,17 @@ pub fn run_with_corpus(corpus: &Path) -> Result<Outcome> {
 
 /// Return the typed parity report for a corpus directory.
 pub fn report_with_corpus(corpus: &Path) -> Result<fsl_conformance::ParityReport> {
-    let inputs = ParityInputs::new(corpus);
+    report_with_inputs(&ParityInputs::new(corpus))
+}
+
+/// Compare the linked backends over `inputs`.
+pub(crate) fn report_with_inputs(inputs: &ParityInputs) -> Result<fsl_conformance::ParityReport> {
     let backends: [BackendEntry<'_>; 1] = [(
         ExecutionBackendChoice::Jit,
         &fsl_jit::Jit,
         Some(fsl_jit::coverage()),
     )];
-    run_parity(&backends, &inputs, &ParityLimits::default(), &Cancel::new())
+    run_parity(&backends, inputs, &ParityLimits::default(), &Cancel::new())
         .map_err(|refusal| Error::QualificationRefusal(refusal_message(refusal)))
 }
 
@@ -79,9 +83,6 @@ fn refusal_message(refusal: ParityRefusal) -> String {
         ParityRefusal::EmptyScope => "empty-scope".to_owned(),
         ParityRefusal::UnreadableCorpus(path) => format!("unreadable-corpus: {}", path.display()),
         ParityRefusal::Cancelled => "cancelled".to_owned(),
-        ParityRefusal::ReferencePrepareLimit(limit) => {
-            format!("reference-prepare-limit: {limit:?}")
-        }
     }
 }
 
@@ -90,14 +91,20 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    /// TC-1387 FR-563-AC-8: parity rejects an unknown CLI option by name.
+    /// TC-1387 FR-563-AC-8: parity rejects an unknown CLI option by name, and
+    /// no option sets a parity limit.
     #[trace("TC-1387", "FR-563-AC-8")]
     #[test]
     fn unknown_option_is_a_named_refusal() {
-        let error = match run(&[OsString::from("--no-such-option")]) {
-            Ok(_) => panic!("unknown option is refused"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("--no-such-option"));
+        for operands in [&["--no-such-option"][..], &["--max-discarded", "1"]] {
+            let operands = operands.iter().map(OsString::from).collect::<Vec<_>>();
+            let error = match run(&operands) {
+                Ok(_) => panic!("unknown option is refused"),
+                Err(error) => error,
+            };
+            assert_eq!(error.exit_code(), 2);
+            let option = operands[0].to_str().expect("a UTF-8 option");
+            assert!(error.to_string().contains(option), "{error}");
+        }
     }
 }

@@ -74,6 +74,11 @@ pub struct QualifyInputs<'a> {
     /// backend.
     #[cfg(feature = "test-support")]
     pub parity: Option<ParityTestOverride<'a>>,
+    /// A replacement generated-unit count for the `parity` part. A test that
+    /// asserts nothing about generated coverage sets a small one; the command
+    /// line offers none.
+    #[cfg(feature = "test-support")]
+    pub parity_count: Option<u64>,
     /// Keep the test-support lifetime well-formed in normal builds.
     #[cfg(not(feature = "test-support"))]
     pub _marker: std::marker::PhantomData<&'a ()>,
@@ -86,10 +91,6 @@ pub struct ParityTestOverride<'a> {
     pub reference: &'a dyn fsl_eval::execution::SuppliedBackend,
     /// The non-interpreter backends to qualify.
     pub backends: Vec<fsl_conformance::BackendEntry<'a>>,
-    /// Corpus and generated-unit inputs.
-    pub inputs: fsl_conformance::ParityInputs,
-    /// Parity limits.
-    pub limits: fsl_conformance::ParityLimits,
 }
 
 /// The `lifecycle-matrix` part: every `Case` gives a document or item whose
@@ -131,7 +132,6 @@ pub(crate) fn parity_part_with_reference(
     reference: &dyn fsl_eval::execution::SuppliedBackend,
     backends: &[fsl_conformance::BackendEntry<'_>],
     inputs: &fsl_conformance::ParityInputs,
-    limits: &fsl_conformance::ParityLimits,
 ) -> Result<PartReport> {
     if backends.is_empty() {
         return Ok(PartReport {
@@ -144,7 +144,7 @@ pub(crate) fn parity_part_with_reference(
         reference,
         backends,
         inputs,
-        limits,
+        &fsl_conformance::ParityLimits::default(),
         &filament_exact::Cancel::new(),
     )
     .map_err(|refusal| crate::error::Error::QualificationRefusal(refusal.to_string()))?;
@@ -195,32 +195,40 @@ pub(crate) fn lifecycle_part(replacement: Option<&[MatrixCell]>) -> PartReport {
 /// [`crate::error::Error::QualificationRefusal`] for a refusal before any
 /// verdict.
 pub fn run(inputs: &QualifyInputs<'_>) -> Result<Outcome> {
+    execute(inputs).map(|execution| execution.outcome)
+}
+
+/// [`run`], keeping the operation bytes of the passed corpus vectors as
+/// [`qualification::execute`] does.
+///
+/// # Errors
+///
+/// As [`run`].
+pub fn execute(inputs: &QualifyInputs<'_>) -> Result<qualification::Execution> {
     #[cfg(feature = "test-support")]
     let replacement = inputs.matrix.as_deref();
     #[cfg(not(feature = "test-support"))]
     let replacement = None;
     #[cfg(feature = "test-support")]
-    if let Some(parity) = &inputs.parity {
+    if inputs.parity.is_some() || inputs.parity_count.is_some() {
         let run_parity = |corpus: &Path| {
-            let mut parity_inputs = parity.inputs.clone();
-            if parity_inputs.corpus.as_os_str().is_empty() {
-                parity_inputs.corpus = corpus.to_path_buf();
+            let mut parity_inputs = fsl_conformance::ParityInputs::new(corpus);
+            if let Some(count) = inputs.parity_count {
+                parity_inputs.count = count;
             }
-            parity_part_with_reference(
-                parity.reference,
-                &parity.backends,
-                &parity_inputs,
-                &parity.limits,
-            )
+            match &inputs.parity {
+                Some(parity) => {
+                    parity_part_with_reference(parity.reference, &parity.backends, &parity_inputs)
+                }
+                None => crate::parity::report_with_inputs(&parity_inputs).map(parity_report_part),
+            }
         };
         return qualification::execute_with_parts_and_parity(
             &inputs.fspec,
             &inputs.operands,
             replacement,
             Some(&run_parity),
-        )
-        .map(|execution| execution.outcome);
+        );
     }
     qualification::execute_with_parts(&inputs.fspec, &inputs.operands, replacement)
-        .map(|execution| execution.outcome)
 }

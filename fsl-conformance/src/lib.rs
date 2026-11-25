@@ -19,6 +19,7 @@
     doc = "```\nuse fsl_conformance::{run_parity_with_reference, BackendEntry, ParityInputs, ParityLimits};\nuse fsl_eval::execution::SuppliedBackend;\nuse filament_exact::Cancel;\nfn control(reference: &dyn SuppliedBackend, backends: &[BackendEntry<'_>], inputs: &ParityInputs, limits: &ParityLimits, cancel: &Cancel) {\n    let _ = run_parity_with_reference(reference, backends, inputs, limits, cancel);\n}\n```"
 )]
 
+mod call_input;
 mod cases;
 mod fault_backend;
 mod deep_json;
@@ -40,5 +41,6 @@ pub use fault_backend::FaultInjectingBackend;
 pub use parity::{run_parity_with_reference, ParityClauseCase};
 pub use parity::{
     run_parity, BackendEntry, BackendReport, Finding, FindingKind, ParityInputs, ParityLimits,
-    ParityMember, ParityRefusal, ParityReport, SourceFile, UnsupportedRecord, DEFAULT_PARITY_SEED,
+    ParityMember, ParityRefusal, ParityReport, SourceFile, UnbuildableCase, UnbuildableCause,
+    UnsupportedRecord, DEFAULT_PARITY_SEED,
 };

@@ -14,6 +14,12 @@ fn fspec_dir() -> TempDir {
     xtask::published_fspec::directory("proposals/")
 }
 
+/// Generated parity units for a test that asserts nothing about them.
+#[cfg(feature = "test-support")]
+const FEW_UNITS: u64 = 8;
+
+/// The command's inputs over the published fixtures. With `test-support` the
+/// generated parity units are [`FEW_UNITS`].
 fn inputs<'a>() -> (TempDir, QualifyInputs<'a>) {
     let fspec = fspec_dir();
     let fixtures = fspec
@@ -26,6 +32,8 @@ fn inputs<'a>() -> (TempDir, QualifyInputs<'a>) {
         matrix: None,
         #[cfg(feature = "test-support")]
         parity: None,
+        #[cfg(feature = "test-support")]
+        parity_count: Some(FEW_UNITS),
         #[cfg(not(feature = "test-support"))]
         _marker: std::marker::PhantomData,
     };
@@ -39,29 +47,50 @@ fn decimal_parity_fixture() -> TempDir {
     let directory = tempfile::tempdir().expect("decimal parity fixture");
     fs::write(
         directory.path().join("unit.native"),
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction echo using v(x: Decimal[-100, 100; 0, 2; nearest-even]): Decimal[-100, 100; 0, 2; nearest-even] pure { x }\n",
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction half using v(): Decimal[-100, 100; 0, 2; nearest-even] pure { 1.5 }\n",
     )
     .expect("decimal source");
     fs::write(
         directory.path().join("call.json"),
-        r#"{"function":"echo","arguments":[{"kind":"decimal","coefficient":"15","scale":1}]}"#,
+        r#"{"function":"half","arguments":[],"accounting":{}}"#,
     )
     .expect("decimal call");
-    let corpus = serde_json::json!({"vectors":[{
-        "id":"rounding-run",
-        "applicability":{"consumer_types":["runtime"]},
-        "subject":{"consumer_type":"runtime","operation":"run"},
-        "input":{"files":[
-            {"kind":"source","path":"unit.native"},
-            {"kind":"call","path":"call.json"}
-        ]}
-    }]});
-    fs::write(
-        directory.path().join("complete-v1.json"),
-        serde_json::to_vec(&corpus).expect("corpus document"),
+    let corpus = serde_json::json!({
+        "contract_version":"filament.conformance-corpus/v1",
+        "vectors":[{
+            "id":"rounding-run",
+            "capability_id":"V1-TOOL-004",
+            "class":"positive",
+            "applicability":{"consumer_types":["runtime"]},
+            "subject":{"consumer_type":"runtime","operation":"run"},
+            "input":{"files":[
+                {"kind":"source","path":"unit.native"},
+                {"kind":"call","path":"call.json"}
+            ]},
+            "expected":{"disposition":"value","value":null}
+        }],
+        "results":[],
+        "coverage":{
+            "primary":[{"capability_id":"V1-TOOL-004","applicability":{
+                "consumer_types":["runtime"],
+                "semantic_profiles":["filament.value.complete/v1"]
+            }}],
+            "criteria_rollups":[],
+            "consumer_rollups":[]
+        }
+    });
+    write_corpus(directory.path(), &corpus);
+    directory
+}
+
+/// Writes `document` as the canonical corpus document in `directory`.
+#[cfg(feature = "test-support")]
+fn write_corpus(directory: &Path, document: &Value) {
+    std::fs::write(
+        directory.join("complete-v1.json"),
+        serde_json_canonicalizer::to_vec(document).expect("canonical corpus"),
     )
     .expect("corpus document");
-    directory
 }
 
 fn report(outcome: &xtask::Outcome) -> Value {
@@ -179,12 +208,9 @@ fn a_parity_backed_run_names_the_three_parts_and_qualifies() {
     use fsl_eval::execution::Interpreter;
     let (_fspec, mut inputs) = inputs();
     let interpreter = Interpreter;
-    let corpus = Path::new(&inputs.operands[1]);
     inputs.parity = Some(xtask::qualify::ParityTestOverride {
         reference: &interpreter,
         backends: vec![(ExecutionBackendChoice::Jit, &interpreter, None)],
-        inputs: fsl_conformance::ParityInputs::new(corpus),
-        limits: fsl_conformance::ParityLimits::default(),
     });
     let outcome = qualify::run(&inputs).expect("the gate runs");
     assert_eq!(outcome.code, 0, "{}", outcome.stdout);
@@ -221,7 +247,6 @@ fn a_failing_matrix_case_fails_the_gate_by_name() {
     let (_fspec, mut gate) = inputs();
     gate.matrix = Some(cells);
     let interpreter = fsl_eval::execution::Interpreter;
-    let corpus = Path::new(&gate.operands[1]);
     gate.parity = Some(xtask::qualify::ParityTestOverride {
         reference: &interpreter,
         backends: vec![(
@@ -229,8 +254,6 @@ fn a_failing_matrix_case_fails_the_gate_by_name() {
             &interpreter,
             None,
         )],
-        inputs: fsl_conformance::ParityInputs::new(corpus),
-        limits: fsl_conformance::ParityLimits::default(),
     });
     let outcome = qualify::run(&gate).expect("the gate runs");
     assert_eq!(outcome.code, 1, "{}", outcome.stdout);
@@ -253,13 +276,10 @@ fn a_wrong_jit_backend_fails_qualification_with_finding_detail() {
     let interpreter = fsl_eval::execution::Interpreter;
     let backend = RoundingBackend;
     let corpus = decimal_parity_fixture();
-    let mut parity_inputs = fsl_conformance::ParityInputs::new(corpus.path());
-    parity_inputs.count = 0;
+    inputs.operands[1] = corpus.path().into();
     inputs.parity = Some(xtask::qualify::ParityTestOverride {
         reference: &interpreter,
         backends: vec![(filament_eval::ExecutionBackendChoice::Jit, &backend, None)],
-        inputs: parity_inputs,
-        limits: fsl_conformance::ParityLimits::default(),
     });
     let outcome = qualify::run(&inputs).expect("the gate runs");
     assert_eq!(outcome.code, 1, "{}", outcome.stdout);
@@ -289,8 +309,6 @@ fn no_linked_backend_is_a_passing_no_backend_part() {
     inputs.parity = Some(xtask::qualify::ParityTestOverride {
         reference: &interpreter,
         backends: Vec::new(),
-        inputs: fsl_conformance::ParityInputs::new("unused"),
-        limits: fsl_conformance::ParityLimits::default(),
     });
     let outcome = qualify::run(&inputs).expect("the gate runs");
     assert_eq!(outcome.code, 0, "{}", outcome.stdout);
@@ -309,9 +327,6 @@ fn reference_fault_fails_qualification_by_finding() {
     let (_fspec, mut inputs) = inputs();
     let fault = fsl_conformance::FaultInjectingBackend;
     let interpreter = Interpreter;
-    let corpus = Path::new(&inputs.operands[1]);
-    let mut parity_inputs = fsl_conformance::ParityInputs::new(corpus);
-    parity_inputs.count = 1;
     inputs.parity = Some(xtask::qualify::ParityTestOverride {
         reference: &fault,
         backends: vec![(
@@ -319,8 +334,6 @@ fn reference_fault_fails_qualification_by_finding() {
             &interpreter,
             None,
         )],
-        inputs: parity_inputs,
-        limits: fsl_conformance::ParityLimits::default(),
     });
     let outcome = qualify::run(&inputs).expect("the gate runs");
     assert_eq!(outcome.code, 1, "{}", outcome.stdout);
@@ -336,6 +349,175 @@ fn reference_fault_fails_qualification_by_finding() {
                 .is_some_and(|text| text.contains("parity/jit") && text.contains("ReferenceFault"))
         }),
         "parity failures: {failures:#?}"
+    );
+}
+
+/// An interpreter that counts the units it was asked to prepare.
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+struct CountingBackend {
+    prepares: std::sync::atomic::AtomicU64,
+}
+
+#[cfg(feature = "test-support")]
+impl fsl_eval::execution::ExecutionBackend for CountingBackend {
+    type Prepared<'p> = fsl_eval::execution::InterpreterPrepared<'p>;
+
+    fn prepare<'p>(
+        &self,
+        package: &'p fsl_package::CheckedPackage,
+        entries: &[fsl_eval::execution::EntrySelection],
+        limits: &fsl_eval::execution::PrepareLimits,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Self::Prepared<'p>, fsl_eval::execution::PrepareFailure> {
+        self.prepares
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        fsl_eval::execution::Interpreter.prepare(package, entries, limits, cancel)
+    }
+}
+
+/// FR-567-AC-7: a replacement generated-unit count sets how many units the
+/// parity part generates, and the command line offers no such setting.
+#[cfg(feature = "test-support")]
+#[trace("TC-1396", "FR-567-AC-7")]
+#[test]
+fn a_replacement_unit_count_sets_the_generated_units_and_has_no_option() {
+    let (_fspec, mut inputs) = inputs();
+    let corpus = std::path::PathBuf::from(&inputs.operands[1]);
+    let interpreter = fsl_eval::execution::Interpreter;
+    let mut corpus_only = fsl_conformance::ParityInputs::new(&corpus);
+    corpus_only.count = 0;
+    let corpus_cases = fsl_conformance::run_parity(
+        &[(
+            filament_eval::ExecutionBackendChoice::Jit,
+            &interpreter,
+            None,
+        )],
+        &corpus_only,
+        &fsl_conformance::ParityLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the fixture corpus is readable")
+    .units;
+
+    let counting = CountingBackend::default();
+    inputs.parity_count = Some(3);
+    inputs.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &interpreter,
+        backends: vec![(filament_eval::ExecutionBackendChoice::Jit, &counting, None)],
+    });
+    let outcome = qualify::run(&inputs).expect("the gate runs");
+    assert_eq!(outcome.code, 0, "{}", outcome.stdout);
+    assert_eq!(
+        counting.prepares.load(std::sync::atomic::Ordering::Relaxed),
+        corpus_cases + 3
+    );
+
+    let refused = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["qualify", "--corpus"])
+        .arg(&corpus)
+        .args(["--count", "3"])
+        .output()
+        .expect("xtask starts");
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(refused.stdout.is_empty(), "no verdict is given");
+}
+
+/// FR-567-AC-8: one vector that cannot be built fails the `parity` part and
+/// refuses nothing; a corpus with two vectors of one id, or with a
+/// parent-traversing input path, refuses before any part runs.
+#[cfg(feature = "test-support")]
+#[trace("TC-1396", "FR-567-AC-8")]
+#[test]
+fn an_unbuildable_vector_fails_parity_and_a_duplicate_id_refuses() {
+    let (fspec, mut inputs) = inputs();
+    let fixtures = fspec
+        .path()
+        .join("proposals/conformance-corpus-v1/fixtures");
+    let corpus = TempDir::new().expect("corpus directory");
+    std::fs::create_dir_all(corpus.path().join("inputs")).expect("input directory");
+    std::fs::copy(
+        fixtures.join("inputs/native.native"),
+        corpus.path().join("inputs/native.native"),
+    )
+    .expect("fixture source");
+    let mut document: Value = serde_json::from_slice(
+        &std::fs::read(fixtures.join("complete-v1.json")).expect("fixture corpus"),
+    )
+    .expect("fixture corpus JSON");
+    let mut absent = document["vectors"][0].clone();
+    absent["id"] = serde_json::json!("parity-absent-source");
+    absent["class"] = serde_json::json!("positive");
+    absent
+        .as_object_mut()
+        .expect("a vector object")
+        .remove("mutation_of");
+    absent["subject"] = serde_json::json!({"consumer_type":"runtime","operation":"run"});
+    absent["applicability"] = serde_json::json!({"consumer_types":["runtime"]});
+    absent["input"] =
+        serde_json::json!({"files":[{"kind":"source","path":"inputs/absent.native"}]});
+    absent["expected"] = serde_json::json!({"disposition":"value","value":null});
+    let mut traversing = absent.clone();
+    traversing["id"] = serde_json::json!("parity-traversing-source");
+    traversing["input"]["files"][0]["path"] = serde_json::json!("../outside.native");
+    let vectors = document["vectors"].as_array_mut().expect("vectors");
+    vectors.push(absent);
+    write_corpus(corpus.path(), &document);
+
+    inputs.operands[1] = corpus.path().into();
+    let interpreter = fsl_eval::execution::Interpreter;
+    inputs.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &interpreter,
+        backends: vec![(
+            filament_eval::ExecutionBackendChoice::Jit,
+            &interpreter,
+            None,
+        )],
+    });
+    let outcome = qualify::run(&inputs).expect("one unbuildable vector refuses nothing");
+    assert_eq!(outcome.code, 1, "{}", outcome.stdout);
+    let report = report(&outcome);
+    assert_eq!(report["verdict"], "not-qualified");
+    let failures = part(&report, "parity")["failures"]
+        .as_array()
+        .expect("parity findings are reported");
+    assert_eq!(failures.len(), 1, "{failures:#?}");
+    let failure = failures[0].as_str().expect("a failure name");
+    assert!(
+        failure.starts_with("parity/jit: UnbuildableCase(")
+            && failure.contains("unit=parity-absent-source"),
+        "{failure}"
+    );
+
+    let mut duplicated = document.clone();
+    let vectors = duplicated["vectors"].as_array_mut().expect("vectors");
+    let duplicate = vectors[0].clone();
+    vectors.push(duplicate);
+    let mut traversed = document;
+    traversed["vectors"]
+        .as_array_mut()
+        .expect("vectors")
+        .push(traversing);
+    let counting = CountingBackend::default();
+    inputs.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &interpreter,
+        backends: vec![(filament_eval::ExecutionBackendChoice::Jit, &counting, None)],
+    });
+    for refused in [duplicated, traversed] {
+        write_corpus(corpus.path(), &refused);
+        let refusal = match qualify::run(&inputs) {
+            Err(refusal) => refusal,
+            Ok(outcome) => panic!("the preflight refuses: {}", outcome.stdout),
+        };
+        assert!(matches!(
+            refusal,
+            xtask::error::Error::QualificationRefusal(_)
+        ));
+        assert_eq!(refusal.exit_code(), 2);
+    }
+    assert_eq!(
+        counting.prepares.load(std::sync::atomic::Ordering::Relaxed),
+        0
     );
 }
 fn digits_end(value: &str, from: usize) -> usize {
@@ -578,7 +760,13 @@ fn every_staging_row_names_its_owner_and_deletion_condition() {
 #[trace("TC-1396")]
 #[test]
 fn a_passing_run_names_the_three_parts_and_qualifies() {
-    let (_fspec, inputs) = inputs();
+    #[allow(unused_mut)]
+    let (_fspec, mut inputs) = inputs();
+    // The default run keeps the command's generated-unit count.
+    #[cfg(feature = "test-support")]
+    {
+        inputs.parity_count = None;
+    }
     let outcome = qualify::run(&inputs).expect("the gate runs");
     assert_eq!(outcome.code, 0, "{}", outcome.stdout);
     let report = report(&outcome);
@@ -713,15 +901,17 @@ fn a_scratch_build_reports_its_changed_root_package_version() {
     );
     std::fs::write(&lock_path, changed_lock).expect("scratch lockfile is written");
 
+    // The scratch build has this build's features, so its run is as small.
+    let features: &[&str] = if cfg!(feature = "test-support") {
+        &["--features", "test-support"]
+    } else {
+        &[]
+    };
     let output = Command::new("cargo")
         .current_dir(scratch.path())
+        .args(["test", "--locked", "-j", "8", "-p", "xtask"])
+        .args(features)
         .args([
-            "test",
-            "--locked",
-            "-j",
-            "8",
-            "-p",
-            "xtask",
             "--test",
             "qualify_parts",
             "a_scratch_build_reports_its_changed_root_package_version",

@@ -11,6 +11,7 @@ use filament_exact::{Cancel, Integer, Outcome, ScalarLimits, Value};
 use filament_semantic_value::supplied_stop::SuppliedRun;
 use fsl_conformance::{
     run_parity, BackendEntry, FindingKind, ParityInputs, ParityLimits, ParityMember, ParityRefusal,
+    ParityReport, UnbuildableCause,
 };
 use fsl_eval::execution::{
     BackendCoverage, CallLimits, CoverageOperation, CoverageOperator, CoverageValueType,
@@ -46,7 +47,7 @@ fn inc_corpus_with_count(count: usize) -> tempfile::TempDir {
     .expect("source input");
     fs::write(
         directory.path().join("call.json"),
-        r#"{"function":"inc","arguments":[{"kind":"integer","decimal":"4"}]}"#,
+        r#"{"function":"inc","arguments":[{"kind":"integer","decimal":"4"}],"accounting":{}}"#,
     )
     .expect("call input");
     let vector = |id: &str, operation: &str| {
@@ -77,78 +78,6 @@ fn inc_corpus_with_count(count: usize) -> tempfile::TempDir {
     directory
 }
 
-fn bytes_corpus() -> tempfile::TempDir {
-    let directory = tempfile::tempdir().expect("corpus directory");
-    fs::write(
-        directory.path().join("unit.native"),
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction acceptBytes using v(x: Bytes): Boolean pure { true }\n",
-    )
-    .expect("source input");
-    fs::write(
-        directory.path().join("call.json"),
-        r#"{"function":"acceptBytes","arguments":[{"kind":"bytes","text":"00ff"}]}"#,
-    )
-    .expect("call input");
-    fs::write(
-        directory.path().join("complete-v1.json"),
-        r#"{"vectors":[{"id":"bytes-identity","applicability":{"consumer_types":["runtime"]},"subject":{"consumer_type":"runtime","operation":"run"},"input":{"files":[{"kind":"source","path":"unit.native"},{"kind":"call","path":"call.json"}]}}]}"#,
-    )
-    .expect("corpus file");
-    directory
-}
-
-fn aggregate_corpus() -> tempfile::TempDir {
-    let directory = tempfile::tempdir().expect("corpus directory");
-    fs::write(
-        directory.path().join("unit.native"),
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nrecord Pair { x: Integer; }\nfunction acceptSequence using v(s: Sequence<Integer>[1, 2]): Boolean pure { true }\nfunction acceptPair using v(p: Pair): Boolean pure { true }\nfunction acceptMap using v(m: Map<Integer, Text[0, 8; nfc]>[1, 2]): Boolean pure { true }\n",
-    )
-    .expect("source input");
-    let calls = [
-        (
-            "sequence",
-            "acceptSequence",
-            r#"{"sequence":[{"integer":"7"}]}"#,
-        ),
-        (
-            "record",
-            "acceptPair",
-            r#"{"record":{"type":"Pair","fields":{"x":{"integer":"1"}}}}"#,
-        ),
-        (
-            "map",
-            "acceptMap",
-            r#"{"map":[{"key":{"integer":"1"},"value":{"kind":"text","text":"x"}}]}"#,
-        ),
-    ];
-    let vectors = calls
-        .iter()
-        .map(|(id, function, argument)| {
-            let call_path = format!("{id}.json");
-            fs::write(
-                directory.path().join(&call_path),
-                format!(r#"{{"function":"{function}","arguments":[{argument}]}}"#),
-            )
-            .expect("call input");
-            serde_json::json!({
-                "id": format!("{id}-value"),
-                "applicability": {"consumer_types":["runtime"]},
-                "subject": {"consumer_type":"runtime", "operation":"run"},
-                "input": {"files":[
-                    {"kind":"source", "path":"unit.native"},
-                    {"kind":"call", "path":call_path}
-                ]}
-            })
-        })
-        .collect::<Vec<_>>();
-    fs::write(
-        directory.path().join("complete-v1.json"),
-        serde_json::to_vec(&serde_json::json!({"vectors": vectors})).expect("corpus JSON"),
-    )
-    .expect("corpus file");
-    directory
-}
-
 fn let_corpus() -> tempfile::TempDir {
     let directory = tempfile::tempdir().expect("corpus directory");
     fs::write(
@@ -159,7 +88,9 @@ fn let_corpus() -> tempfile::TempDir {
     for name in ["usesLet", "simple"] {
         fs::write(
             directory.path().join(format!("{name}.json")),
-            format!(r#"{{"function":"{name}","arguments":[{{"kind":"integer","decimal":"4"}}]}}"#),
+            format!(
+                r#"{{"function":"{name}","arguments":[{{"kind":"integer","decimal":"4"}}],"accounting":{{}}}}"#
+            ),
         )
         .expect("call input");
     }
@@ -199,7 +130,7 @@ fn two_source_corpus() -> tempfile::TempDir {
     .expect("consumer source");
     fs::write(
         directory.path().join("call.json"),
-        r#"{"function":"twice","arguments":[{"kind":"integer","decimal":"4"}]}"#,
+        r#"{"function":"twice","arguments":[{"kind":"integer","decimal":"4"}],"accounting":{}}"#,
     )
     .expect("call input");
     let corpus = serde_json::json!({"vectors":[{
@@ -224,7 +155,7 @@ fn invalid_argument_corpus() -> tempfile::TempDir {
     let directory = inc_corpus();
     fs::write(
         directory.path().join("call.json"),
-        r#"{"function":"inc","arguments":[{"kind":"boolean","value":true}]}"#,
+        r#"{"function":"inc","arguments":[{"kind":"boolean","value":true}],"accounting":{}}"#,
     )
     .expect("invalid argument input");
     directory
@@ -706,29 +637,6 @@ impl ExecutionBackend for NamingBackend {
     }
 }
 
-/// Refuses every preparation with an internal fault.
-#[derive(Clone, Copy)]
-struct PrepareFaultBackend;
-
-impl ExecutionBackend for PrepareFaultBackend {
-    type Prepared<'p> = InterpreterPrepared<'p>;
-
-    fn prepare<'p>(
-        &self,
-        _package: &'p CheckedPackage,
-        _entries: &[EntrySelection],
-        _limits: &PrepareLimits,
-        _cancel: &Cancel,
-    ) -> Result<Self::Prepared<'p>, PrepareFailure> {
-        Err(PrepareFailure::Fault(
-            filament_semantic_value::catalog::InternalFault::new(
-                "parity-test",
-                "injected prepare fault",
-            ),
-        ))
-    }
-}
-
 /// The interpreter with no work bound on a call, whatever the runner supplies.
 #[derive(Clone, Copy)]
 struct UnmeteredCallBackend;
@@ -920,13 +828,19 @@ fn interpreter_backend_passes_a_selected_corpus_vector() {
     assert_eq!(report.exit_code(), 0);
 }
 
-/// A generator whose draws checking keeps refusing stops at the discard bound
-/// and fails the gate by name; a run that stays within the bound does not.
+/// TC-1387 FR-563-AC-13: a generator whose draws checking keeps refusing stops
+/// at the discard bound and fails every backend by name; a run that stays within
+/// the bound does not.
+#[trace("TC-1387", "FR-563-AC-13")]
 #[test]
 fn refused_draws_beyond_the_bound_fail_the_gate() {
+    assert_eq!(ParityLimits::default().max_discarded, 10_000);
     let corpus = empty_corpus();
     let interpreter = Interpreter;
-    let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &interpreter, None)];
+    let backends: [BackendEntry<'_>; 2] = [
+        (ExecutionBackendChoice::Jit, &interpreter, None),
+        (ExecutionBackendChoice::Jit, &interpreter, None),
+    ];
     let inputs = ParityInputs {
         count: 100,
         ..ParityInputs::new(corpus.path())
@@ -941,20 +855,38 @@ fn refused_draws_beyond_the_bound_fail_the_gate() {
     };
 
     let unbounded = run(u64::MAX);
-    assert!(unbounded.discarded > 0, "the control needs a refused draw");
-    let within = run(unbounded.discarded);
+    let refused = unbounded.discarded;
+    assert!(refused > 0, "the control needs a refused draw");
+    let within = run(refused);
     assert_eq!(within.units, 100);
+    assert!(within
+        .backends
+        .iter()
+        .all(|backend| backend.total_findings == 0));
     assert_eq!(within.exit_code(), 0);
 
-    let exhausted = run(unbounded.discarded - 1);
+    let exhausted = run(refused - 1);
     assert!(exhausted.units < 100);
-    assert_eq!(exhausted.discarded, unbounded.discarded);
-    let finding = exhausted.backends[0]
-        .findings
-        .iter()
-        .find(|finding| finding.kind == FindingKind::GeneratorExhausted)
-        .expect("the exhausted generator is named");
-    assert!(!finding.source.is_empty());
+    assert_eq!(exhausted.discarded, refused);
+    // Draws are indexed from zero: those before the last refused one were the
+    // admitted units and the other refused draws.
+    let index = exhausted.units + refused - 1;
+    let mut sources = Vec::new();
+    for backend in &exhausted.backends {
+        assert_eq!(backend.total_findings, 1);
+        let finding = &backend.findings[0];
+        assert_eq!(finding.kind, FindingKind::GeneratorExhausted);
+        assert_eq!(finding.unit, index.to_string());
+        assert!(
+            String::from_utf8_lossy(&finding.source)
+                .contains(&format!("function parity_{index}_base")),
+            "the finding carries the source of draw {index}"
+        );
+        assert!(finding.entry.is_empty() && finding.arguments.is_empty());
+        assert!(finding.reference.is_none() && finding.result.is_none());
+        sources.push(&finding.source);
+    }
+    assert_eq!(sources[0], sources[1]);
     assert_eq!(exhausted.exit_code(), 1);
 }
 
@@ -1126,66 +1058,6 @@ fn comparison_member_differences_are_named_and_reproducible() {
         assert!(finding.reference.is_some());
         assert!(finding.result.is_some());
     }
-}
-
-/// FR-563's corpus adapter reads the FR-350 `bytes` input form as raw octets.
-#[trace("TC-1386", "FR-563-AC-9")]
-#[test]
-fn corpus_bytes_argument_is_decoded_for_selected_runtime_vector() {
-    let corpus = bytes_corpus();
-    let backend = UnsupportedBackend;
-    let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &backend, None)];
-    let report = run_parity(
-        &backends,
-        &ParityInputs {
-            corpus: corpus.path().to_path_buf(),
-            seed: fsl_conformance::DEFAULT_PARITY_SEED,
-            count: 0,
-            #[cfg(feature = "test-support")]
-            clauses: Vec::new(),
-        },
-        &ParityLimits::default(),
-        &Cancel::new(),
-    )
-    .expect("a selected bytes argument is decoded and compared");
-    assert_eq!(report.units, 1);
-    assert_eq!(report.not_selected, 0);
-    assert_eq!(report.backends[0].unsupported.len(), 1);
-    assert_eq!(report.backends[0].unsupported[0].unit, "bytes-identity");
-    assert_eq!(report.backends[0].unsupported[0].entry, "acceptBytes");
-}
-
-/// TC-1386 FR-563-AC-9: the shared FR-350 adapter decodes native aggregate
-/// value forms using the selected function's declared parameter type.
-#[trace("TC-1386", "FR-563-AC-9")]
-#[test]
-fn corpus_aggregate_arguments_use_the_shared_fr350_value_adapter() {
-    let corpus = aggregate_corpus();
-    let backend = UnsupportedBackend;
-    let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &backend, None)];
-    let report = run_parity(
-        &backends,
-        &ParityInputs {
-            corpus: corpus.path().to_path_buf(),
-            seed: fsl_conformance::DEFAULT_PARITY_SEED,
-            count: 0,
-            #[cfg(feature = "test-support")]
-            clauses: Vec::new(),
-        },
-        &ParityLimits::default(),
-        &Cancel::new(),
-    )
-    .expect("native aggregate arguments are decoded and compared");
-    assert_eq!(report.units, 3);
-    let unsupported = &report.backends[0].unsupported;
-    assert_eq!(unsupported.len(), 3);
-    assert_eq!(
-        unsupported
-            .iter()
-            .map(|row| row.unit.as_str())
-            .collect::<Vec<_>>(),
-        ["sequence-value", "record-value", "map-value"]
-    );
 }
 
 /// TC-1387 FR-563-AC-5: a prepare limit is a finding; an all-unsupported
@@ -1368,54 +1240,138 @@ fn coverage_gap_ignores_which_construct_the_backend_names() {
     assert!(gaps(uncovered_entry, &coverage).is_empty());
 }
 
-/// TC-1387 FR-563-AC-6: a reference that faults while preparing a unit gives a
-/// `reference-fault` for its entry and the later units still run; a reference
-/// preparation limit refuses.
-#[trace("TC-1387", "FR-563-AC-6")]
+/// A reference whose first preparation fails, with a fault or with a reached
+/// limit, and whose later ones are the interpreter's.
+struct FirstPrepareFails {
+    fault: bool,
+    prepares: AtomicUsize,
+}
+
+impl FirstPrepareFails {
+    fn new(fault: bool) -> Self {
+        Self {
+            fault,
+            prepares: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ExecutionBackend for FirstPrepareFails {
+    type Prepared<'p> = InterpreterPrepared<'p>;
+
+    fn prepare<'p>(
+        &self,
+        package: &'p CheckedPackage,
+        entries: &[EntrySelection],
+        limits: &PrepareLimits,
+        cancel: &Cancel,
+    ) -> Result<Self::Prepared<'p>, PrepareFailure> {
+        if self.prepares.fetch_add(1, Ordering::Relaxed) > 0 {
+            return Interpreter.prepare(package, entries, limits, cancel);
+        }
+        Err(if self.fault {
+            PrepareFailure::Fault(filament_semantic_value::catalog::InternalFault::new(
+                "parity-test",
+                "injected prepare fault",
+            ))
+        } else {
+            PrepareFailure::Limit(fsl_foundation::diagnostic::LimitExceeded::new(
+                fsl_foundation::Setting::PrepareCompileWorkUnits,
+                0,
+                1,
+            ))
+        })
+    }
+}
+
+/// TC-1387 FR-563-AC-14: a reference preparation limit or fault is a finding on
+/// every backend for each entry of its unit, and the later units still run.
+#[trace("TC-1387", "FR-563-AC-14")]
 #[test]
-fn reference_preparation_failures_are_a_finding_or_a_refusal() {
-    let corpus = inc_corpus_with_count(3);
+fn reference_preparation_failures_are_findings() {
+    let corpus = inc_corpus_with_count(2);
     let interpreter = Interpreter;
-    let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &interpreter, None)];
+    let backends: [BackendEntry<'_>; 2] = [
+        (ExecutionBackendChoice::Jit, &interpreter, None),
+        (ExecutionBackendChoice::Jit, &interpreter, None),
+    ];
+    for fault in [false, true] {
+        let report = fsl_conformance::run_parity_with_reference(
+            &FirstPrepareFails::new(fault),
+            &backends,
+            &corpus_only(corpus.path()),
+            &ParityLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("a reference preparation failure is a reported result");
+        assert_eq!(report.units, 2);
+        for backend in &report.backends {
+            assert_eq!(backend.compared, 1, "the second vector is compared");
+            assert_eq!(backend.total_findings, 1);
+            let finding = &backend.findings[0];
+            assert_eq!(
+                (finding.unit.as_str(), finding.entry.as_str()),
+                ("run-inc-0", "inc")
+            );
+            assert_eq!(format!("{:?}", finding.arguments), "[Integer(Integer(4))]");
+            assert!(finding.result.is_none());
+            match &finding.kind {
+                FindingKind::ReferenceFault => assert!(fault),
+                FindingKind::ReferencePrepareLimit(limit) => {
+                    assert!(!fault);
+                    assert!(finding.reference.is_none());
+                    assert_eq!(
+                        limit.setting(),
+                        fsl_foundation::Setting::PrepareCompileWorkUnits
+                    );
+                }
+                other => panic!("unexpected finding {other:?}"),
+            }
+        }
+        assert_eq!(report.exit_code(), 1);
+    }
+
+    // A generated unit has several entries: one finding for each.
+    let generated = empty_corpus();
     let report = fsl_conformance::run_parity_with_reference(
-        &PrepareFaultBackend,
+        &FirstPrepareFails::new(false),
         &backends,
-        &corpus_only(corpus.path()),
+        &ParityInputs {
+            count: 1,
+            ..ParityInputs::new(generated.path())
+        },
         &ParityLimits::default(),
         &Cancel::new(),
     )
-    .expect("a reference prepare fault is a reported result");
-    assert_eq!(report.units, 3);
-    assert_eq!(report.backends[0].compared, 0);
-    assert_eq!(
-        report.backends[0]
+    .expect("a reference preparation limit is a reported result");
+    for backend in &report.backends {
+        let limited = backend
             .findings
             .iter()
-            .filter(|finding| finding.kind == FindingKind::ReferenceFault)
-            .map(|finding| (finding.unit.as_str(), finding.entry.as_str()))
-            .collect::<Vec<_>>(),
-        [
-            ("run-inc-0", "inc"),
-            ("run-inc-1", "inc"),
-            ("run-inc-2", "inc")
-        ]
-    );
+            .filter(|finding| matches!(finding.kind, FindingKind::ReferencePrepareLimit(_)))
+            .map(|finding| finding.entry.as_str())
+            .collect::<Vec<_>>();
+        assert!(backend
+            .findings
+            .iter()
+            .filter(|finding| matches!(finding.kind, FindingKind::ReferencePrepareLimit(_)))
+            .all(|finding| finding.reference.is_none() && finding.result.is_none()));
+        let entries = limited.iter().collect::<BTreeSet<_>>();
+        assert!(entries.len() >= 2, "{limited:?}");
+        assert_eq!(entries.len(), limited.len());
+        assert_eq!(backend.compared, 0);
+        let typed = backend
+            .findings
+            .iter()
+            .find(|finding| finding.entry == "parity_0_0")
+            .expect("the typed entry");
+        assert!(
+            matches!(typed.arguments.as_slice(), [Value::Decimal(_)]),
+            "the entry's first argument tuple: {:?}",
+            typed.arguments
+        );
+    }
     assert_eq!(report.exit_code(), 1);
-
-    let refusal = fsl_conformance::run_parity_with_reference(
-        &PrepareLimitBackend,
-        &backends,
-        &corpus_only(corpus.path()),
-        &ParityLimits::default(),
-        &Cancel::new(),
-    )
-    .expect_err("a reference prepare limit refuses");
-    assert!(matches!(
-        refusal,
-        ParityRefusal::ReferencePrepareLimit(ref limit)
-            if limit.setting() == fsl_foundation::Setting::PrepareCompileWorkUnits
-    ));
-    assert_eq!(refusal.exit_code(), 2);
 }
 
 /// Comparing two completed values draws on no call budget, so a run with an
@@ -1440,40 +1396,675 @@ fn comparison_is_not_charged_to_the_call_budget() {
     assert_eq!(report.exit_code(), 0);
 }
 
-/// TC-1387 FR-563-AC-6: a selected vector whose source does not compile refuses
-/// before any unit runs, the ones ahead of it included.
-#[trace("TC-1387", "FR-563-AC-6")]
-#[test]
-fn an_uncompilable_selected_vector_refuses_before_any_unit_runs() {
-    let corpus = inc_corpus_with_count(2);
+/// A `runtime`/`run` corpus vector over `files`, given as kind and path.
+fn run_vector(id: &str, files: &[(&str, &str)]) -> serde_json::Value {
+    let files = files
+        .iter()
+        .map(|(kind, path)| serde_json::json!({"kind":kind, "path":path}))
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "id":id,
+        "class":"positive",
+        "applicability":{"consumer_types":["runtime"]},
+        "subject":{"consumer_type":"runtime", "operation":"run"},
+        "input":{"files":files},
+        "expected":{"disposition":"value", "value":null}
+    })
+}
+
+fn write_vectors(corpus: &std::path::Path, vectors: &[serde_json::Value]) {
     fs::write(
-        corpus.path().join("broken.native"),
-        "language \"ix:native\" edition \"1-draft\";\nfunction broken using missing(x: Integer): Integer pure { x }\n",
-    )
-    .expect("broken source");
-    let document_path = corpus.path().join("complete-v1.json");
-    let mut document: serde_json::Value =
-        serde_json::from_slice(&fs::read(&document_path).expect("corpus file"))
-            .expect("corpus JSON");
-    document["vectors"][1]["input"]["files"][0]["path"] = serde_json::json!("broken.native");
-    fs::write(
-        &document_path,
-        serde_json::to_vec(&document).expect("corpus JSON"),
+        corpus.join("complete-v1.json"),
+        serde_json::to_vec(&serde_json::json!({"vectors":vectors})).expect("corpus JSON"),
     )
     .expect("corpus file");
+}
 
+/// AC-9's `inc` vector, then sixteen vectors with one defect each, in the
+/// corpus directory `corpus` below a root that also holds a valid source.
+struct DefectiveCorpus {
+    _root: tempfile::TempDir,
+    corpus: std::path::PathBuf,
+    /// The `inc` vector.
+    inc: serde_json::Value,
+    /// Each defective vector with the cause the report gives it.
+    defective: Vec<(serde_json::Value, UnbuildableCause)>,
+}
+
+const INC_SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction inc using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }\n";
+
+const SEEN_SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = \"acme/orders\";\nfunction seen using v(p: Population<M::Gadget>[1], ok: Boolean): Boolean pure { ok }\n";
+
+/// A call file naming `function` with the `arguments` list.
+fn call_file(function: &str, arguments: &str) -> String {
+    format!(r#"{{"function":"{function}","arguments":[{arguments}],"accounting":{{}}}}"#)
+}
+
+/// The domain package `acme/orders` with a population `Fleet` of `extent`.
+fn fleet_model(extent: &str) -> String {
+    let mut model: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../tests/fixtures/spine-model.semantic-ir.json"
+    ))
+    .expect("the model fixture");
+    model["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(serde_json::json!({
+            "kind":{"module":"acme/orders", "name":"population"}, "moduleVersion":"1.0.0",
+            "construct":{"identity":"none", "shape":"record", "members":{}, "meaning":"filament.meaning.model.population/v1"}
+        }));
+    model["populations"] = serde_json::json!([{
+        "identity":"ix://acme/orders/Fleet", "displayName":"Fleet", "kind":{"module":"acme/orders", "name":"population"},
+        "members":["ix://acme/orders/Gadget"], "extent":extent,
+        "origin":{"generated":{"generatorIdentity":"ix://acme/orders/Fleet", "generatorVersion":"1.0.0", "inputIdentities":["ix://acme/orders/Fleet"]}}
+    }]);
+    model.to_string()
+}
+
+/// A current state snapshot listing one `Fleet` object of `object_type`.
+fn fleet_snapshot(object_type: &str) -> String {
+    serde_json::json!({
+        "format":"filament.state.snapshot/v1", "identity":{"authority":"fixture", "identity":"current"}, "observation":"current",
+        "model":{"identity":"acme/orders"},
+        "populations":[{"population":"ix://acme/orders/Fleet", "complete":true,
+            "objects":[{"key":"g1", "type":object_type, "fields":{"code":{"integer":"7"}}}]}]
+    })
+    .to_string()
+}
+
+fn defective_corpus() -> DefectiveCorpus {
+    let root = tempfile::tempdir().expect("fixture root");
+    let corpus = root.path().join("corpus");
+    fs::create_dir(&corpus).expect("corpus directory");
+    let outside = root.path().join("outside.native");
+    fs::write(&outside, INC_SOURCE).expect("source outside the corpus");
+    let outside = outside.to_str().expect("a UTF-8 path").to_owned();
+    let four = r#"{"kind":"integer","decimal":"4"}"#;
+    let fleet =
+        r#"{"kind":"population","name":"ix://acme/orders/Fleet"},{"kind":"boolean","value":true}"#;
+    for (name, text) in [
+        ("unit.native", INC_SOURCE.to_owned()),
+        ("call.json", call_file("inc", four)),
+        ("bad-call.json", "not JSON".to_owned()),
+        (
+            "extra-member.json",
+            r#"{"function":"inc","arguments":[],"accounting":{},"extra":1}"#.to_owned(),
+        ),
+        (
+            "broken.native",
+            "language \"ix:native\" edition \"1-draft\";\nfunction broken using missing(x: Integer): Integer pure { x }\n".to_owned(),
+        ),
+        ("model.json", "not a model document".to_owned()),
+        ("context.json", "not JSON".to_owned()),
+        ("unknown.json", call_file("absent", four)),
+        ("two.json", call_file("inc", &format!("{four},{four}"))),
+        (
+            "spelling.json",
+            call_file("inc", r#"{"kind":"integer","decimal":"four"}"#),
+        ),
+        ("seen.native", SEEN_SOURCE.to_owned()),
+        ("seen-call.json", call_file("seen", fleet)),
+        ("closed.json", fleet_model("closed")),
+        ("open.json", fleet_model("open")),
+        (
+            "listed.json",
+            fleet_snapshot("ix://acme/orders/Gadget"),
+        ),
+        (
+            "undeclared.json",
+            fleet_snapshot("ix://acme/orders/Absent"),
+        ),
+    ] {
+        fs::write(corpus.join(name), text).expect("fixture input");
+    }
+    let unit = ("source", "unit.native");
+    let good = ("call", "call.json");
+    let seen = ("source", "seen.native");
+    let seen_call = ("call", "seen-call.json");
+    let owned = |path: &str| path.to_owned();
+    let defective = vec![
+        (
+            run_vector("absent-source", &[("source", "absent.native"), good]),
+            UnbuildableCause::UnreadableFile(owned("absent.native")),
+        ),
+        (
+            run_vector("absent-call", &[unit, ("call", "absent.json")]),
+            UnbuildableCause::UnreadableFile(owned("absent.json")),
+        ),
+        (
+            run_vector("parent-path", &[("source", "../outside.native"), good]),
+            UnbuildableCause::UnsafePath(owned("../outside.native")),
+        ),
+        (
+            run_vector("absolute-path", &[("source", &outside), good]),
+            UnbuildableCause::UnsafePath(outside.clone()),
+        ),
+        (
+            run_vector("no-call", &[unit]),
+            UnbuildableCause::MissingMember("call file"),
+        ),
+        (
+            run_vector("two-calls", &[unit, good, good]),
+            UnbuildableCause::DuplicateFile,
+        ),
+        (
+            run_vector("call-not-json", &[unit, ("call", "bad-call.json")]),
+            UnbuildableCause::InvalidCall(owned("bad-call.json")),
+        ),
+        (
+            run_vector("unknown-member", &[unit, ("call", "extra-member.json")]),
+            UnbuildableCause::InvalidCall(owned("extra-member.json")),
+        ),
+        (
+            run_vector(
+                "bad-context",
+                &[unit, ("object-context", "context.json"), good],
+            ),
+            UnbuildableCause::InvalidObservations,
+        ),
+        (
+            run_vector("bad-integer", &[unit, ("call", "spelling.json")]),
+            UnbuildableCause::UndecodableArgument(0),
+        ),
+        (
+            run_vector("two-arguments", &[unit, ("call", "two.json")]),
+            UnbuildableCause::ExtraArgument(1),
+        ),
+        (
+            run_vector("broken-source", &[("source", "broken.native"), good]),
+            UnbuildableCause::Uncompilable,
+        ),
+        (
+            run_vector("bad-model", &[unit, ("model", "model.json"), good]),
+            UnbuildableCause::Uncompilable,
+        ),
+        (
+            run_vector(
+                "refused-snapshot",
+                &[
+                    seen,
+                    ("model", "closed.json"),
+                    ("population", "undeclared.json"),
+                    seen_call,
+                ],
+            ),
+            UnbuildableCause::RefusedObservations,
+        ),
+        (
+            run_vector("unknown-function", &[unit, ("call", "unknown.json")]),
+            UnbuildableCause::UnknownFunction(owned("absent")),
+        ),
+        (
+            run_vector(
+                "open-population",
+                &[
+                    seen,
+                    ("model", "open.json"),
+                    ("population", "listed.json"),
+                    seen_call,
+                ],
+            ),
+            UnbuildableCause::RefusedArgument(0),
+        ),
+    ];
+    DefectiveCorpus {
+        inc: run_vector("inc", &[unit, good]),
+        corpus,
+        defective,
+        _root: root,
+    }
+}
+
+fn expecting_refusal(mut vector: serde_json::Value) -> serde_json::Value {
+    vector["expected"] = serde_json::json!({"disposition":"refusal"});
+    vector
+}
+
+/// The vector ids of one backend's findings, all of them `unbuildable-case`
+/// findings carrying the cause the report lists for that vector.
+fn unbuildable_findings<'a>(report: &'a ParityReport, backend: usize) -> Vec<&'a str> {
+    report.backends[backend]
+        .findings
+        .iter()
+        .map(|finding| {
+            let listed = report
+                .unbuildable
+                .iter()
+                .find(|case| case.id == finding.unit)
+                .expect("the finding's vector is listed");
+            assert_eq!(
+                finding.kind,
+                FindingKind::UnbuildableCase(listed.cause.clone())
+            );
+            finding.unit.as_str()
+        })
+        .collect()
+}
+
+/// TC-1387 FR-563-AC-10: only a defect of the corpus document refuses the run,
+/// before any unit is prepared.
+#[trace("TC-1387", "FR-563-AC-10")]
+#[test]
+fn a_document_level_defect_refuses_before_any_unit_runs() {
     let counting = CountingBackend::default();
     let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &counting, None)];
-    let refusal = run_parity(
+    let run = |corpus: &std::path::Path| {
+        run_parity(
+            &backends,
+            &ParityInputs {
+                count: 1,
+                ..ParityInputs::new(corpus)
+            },
+            &ParityLimits::default(),
+            &Cancel::new(),
+        )
+    };
+    let valid = inc_corpus_with_count(2);
+    let document_path = valid.path().join("complete-v1.json");
+    let document: serde_json::Value =
+        serde_json::from_slice(&fs::read(&document_path).expect("corpus file"))
+            .expect("corpus JSON");
+    let mut unidentified = document.clone();
+    unidentified["vectors"][1]
+        .as_object_mut()
+        .expect("a vector object")
+        .remove("id");
+    let mut duplicated = document.clone();
+    duplicated["vectors"][1]["id"] = duplicated["vectors"][0]["id"].clone();
+    let defects = [
+        None,
+        Some("not JSON".to_owned()),
+        Some("{}".to_owned()),
+        Some(unidentified.to_string()),
+        Some(duplicated.to_string()),
+    ];
+    for defect in defects {
+        match &defect {
+            Some(text) => fs::write(&document_path, text).expect("defective corpus"),
+            None => fs::remove_file(&document_path).expect("remove the corpus"),
+        }
+        let refusal = run(valid.path()).expect_err("a document-level defect refuses");
+        assert_eq!(
+            refusal,
+            ParityRefusal::UnreadableCorpus(document_path.clone()),
+            "{defect:?}"
+        );
+        assert_eq!(refusal.exit_code(), 2);
+    }
+    fs::remove_file(&document_path).expect("remove the corpus");
+    fs::create_dir(&document_path).expect("a directory in the corpus's place");
+    let refusal = run(valid.path()).expect_err("a directory is no corpus");
+    assert_eq!(
+        refusal,
+        ParityRefusal::UnreadableCorpus(document_path.clone())
+    );
+    assert_eq!(counting.prepares.load(Ordering::Relaxed), 0);
+
+    fs::remove_dir(&document_path).expect("remove the directory");
+    fs::write(&document_path, document.to_string()).expect("the valid corpus");
+    let report = run(valid.path()).expect("the valid corpus gives a report");
+    assert_eq!(report.units, 3);
+}
+
+/// TC-1387 FR-563-AC-11: a vector no case can be built from is listed with its
+/// cause and found on every backend, and every other case still runs.
+#[trace("TC-1387", "FR-563-AC-11")]
+#[test]
+fn unbuildable_vectors_are_listed_and_found_while_the_rest_run() {
+    let fixture = defective_corpus();
+    let mut vectors = vec![fixture.inc.clone()];
+    vectors.extend(fixture.defective.iter().map(|(vector, _)| vector.clone()));
+    write_vectors(&fixture.corpus, &vectors);
+    let interpreter = Interpreter;
+    let backends: [BackendEntry<'_>; 2] = [
+        (ExecutionBackendChoice::Jit, &interpreter, None),
+        (ExecutionBackendChoice::Jit, &interpreter, None),
+    ];
+    let report = run_parity(
         &backends,
+        &ParityInputs {
+            count: 3,
+            ..ParityInputs::new(&fixture.corpus)
+        },
+        &ParityLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("a defective vector refuses nothing");
+    let expected = fixture
+        .defective
+        .iter()
+        .map(|(vector, cause)| (vector["id"].as_str().expect("an id"), cause))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        report
+            .unbuildable
+            .iter()
+            .map(|case| (case.id.as_str(), &case.cause))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(report.not_selected, 0);
+    assert_eq!(report.units, 4, "inc and the three generated units");
+    let ids = expected.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    for backend in 0..2 {
+        assert_eq!(unbuildable_findings(&report, backend), ids);
+        assert_eq!(report.backends[backend].total_findings, 16);
+        assert!(report.backends[backend].compared > 1);
+        for finding in &report.backends[backend].findings {
+            assert_eq!(finding.seed, fsl_conformance::DEFAULT_PARITY_SEED);
+            assert!(finding.arguments.is_empty());
+            assert!(finding.reference.is_none() && finding.result.is_none());
+        }
+        let finding = |id: &str| {
+            report.backends[backend]
+                .findings
+                .iter()
+                .find(|finding| finding.unit == id)
+                .expect("a finding for the vector")
+        };
+        let broken = finding("broken-source");
+        assert!(String::from_utf8_lossy(&broken.source).contains("function broken"));
+        assert_eq!(broken.entry, "inc");
+        let absent = finding("absent-source");
+        assert!(absent.source.is_empty() && absent.entry.is_empty());
+    }
+    assert_eq!(report.exit_code(), 1);
+}
+
+/// TC-1387 FR-563-AC-12: an expected refusal excuses only what FSL itself
+/// refuses; a vector's missing, unsafe, unreadable or undecodable input is a
+/// finding whatever it expects.
+#[trace("TC-1387", "FR-563-AC-12")]
+#[test]
+fn an_expected_refusal_excuses_only_what_fsl_refuses() {
+    let fixture = defective_corpus();
+    let interpreter = Interpreter;
+    let backends: [BackendEntry<'_>; 2] = [
+        (ExecutionBackendChoice::Jit, &interpreter, None),
+        (ExecutionBackendChoice::Jit, &interpreter, None),
+    ];
+    let run = |vectors: &[serde_json::Value]| {
+        write_vectors(&fixture.corpus, vectors);
+        run_parity(
+            &backends,
+            &corpus_only(&fixture.corpus),
+            &ParityLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("a defective vector refuses nothing")
+    };
+    let refused_by_fsl = [
+        "broken-source",
+        "bad-model",
+        "refused-snapshot",
+        "unknown-function",
+        "open-population",
+    ];
+
+    let mut every = vec![fixture.inc.clone()];
+    every.extend(
+        fixture
+            .defective
+            .iter()
+            .map(|(vector, _)| expecting_refusal(vector.clone())),
+    );
+    let report = run(&every);
+    assert_eq!(report.unbuildable.len(), 16);
+    for backend in 0..2 {
+        assert_eq!(
+            unbuildable_findings(&report, backend),
+            [
+                "absent-source",
+                "absent-call",
+                "parent-path",
+                "absolute-path",
+                "no-call",
+                "two-calls",
+                "call-not-json",
+                "unknown-member",
+                "bad-context",
+                "bad-integer",
+                "two-arguments",
+            ]
+        );
+    }
+    assert_eq!(report.exit_code(), 1);
+
+    let mut excused = vec![fixture.inc.clone()];
+    excused.extend(
+        fixture
+            .defective
+            .iter()
+            .filter(|(vector, _)| {
+                refused_by_fsl
+                    .iter()
+                    .any(|id| vector["id"].as_str() == Some(id))
+            })
+            .map(|(vector, _)| expecting_refusal(vector.clone())),
+    );
+    let report = run(&excused);
+    assert_eq!(report.unbuildable.len(), 5);
+    assert_eq!(report.backends[0].total_findings, 0);
+    assert_eq!(report.backends[1].total_findings, 0);
+    assert_eq!(report.exit_code(), 0);
+
+    // The expected disposition decides, not the vector's class.
+    excused[1]["class"] = serde_json::json!("refusal");
+    excused[1]["expected"] = serde_json::json!({"disposition":"value", "value":null});
+    let report = run(&excused);
+    assert_eq!(unbuildable_findings(&report, 0), ["broken-source"]);
+
+    // The first defect met gives the cause: a malformed argument before
+    // compilation, and a second source file in place of a later step's cause.
+    let first_cause = [
+        expecting_refusal(run_vector(
+            "malformed-and-broken",
+            &[("source", "broken.native"), ("call", "spelling.json")],
+        )),
+        expecting_refusal(run_vector(
+            "one-of-two-sources-broken",
+            &[
+                ("source", "unit.native"),
+                ("source", "broken.native"),
+                ("call", "call.json"),
+            ],
+        )),
+    ];
+    let report = run(&first_cause);
+    assert_eq!(
+        report
+            .unbuildable
+            .iter()
+            .map(|case| &case.cause)
+            .collect::<Vec<_>>(),
+        [
+            &UnbuildableCause::UndecodableArgument(0),
+            &UnbuildableCause::DuplicateFile,
+        ]
+    );
+    assert_eq!(report.backends[0].total_findings, 2);
+
+    // A vector that expects a refusal and builds is compared.
+    let wrong = WrongValueBackend;
+    write_vectors(&fixture.corpus, &[expecting_refusal(fixture.inc.clone())]);
+    let report = run_parity(
+        &[(ExecutionBackendChoice::Jit, &wrong, None)],
+        &corpus_only(&fixture.corpus),
+        &ParityLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("a built vector is compared");
+    assert_eq!(
+        report.backends[0].findings[0].kind,
+        FindingKind::Difference(ParityMember::CompletedValue)
+    );
+    assert_eq!(report.exit_code(), 1);
+}
+
+/// The interpreter, completing every call it makes, whatever it was given.
+#[derive(Clone, Copy)]
+struct CompletingBackend;
+
+struct CompletingPrepared<'p>(InterpreterPrepared<'p>);
+
+impl ExecutionBackend for CompletingBackend {
+    type Prepared<'p> = CompletingPrepared<'p>;
+
+    fn prepare<'p>(
+        &self,
+        package: &'p CheckedPackage,
+        entries: &[EntrySelection],
+        limits: &PrepareLimits,
+        cancel: &Cancel,
+    ) -> Result<Self::Prepared<'p>, PrepareFailure> {
+        Interpreter
+            .prepare(package, entries, limits, cancel)
+            .map(CompletingPrepared)
+    }
+}
+
+impl PreparedEntries for CompletingPrepared<'_> {
+    fn unsupported(&self) -> &[(EntrySelection, filament_eval::UnsupportedEntry)] {
+        self.0.unsupported()
+    }
+
+    fn call(
+        &self,
+        entry: &QualifiedName,
+        _arguments: &[Value],
+        environment: &ObjectEnvironment,
+        limits: &CallLimits,
+        run: &mut SuppliedRun,
+        cancel: &Cancel,
+    ) -> Result<Evaluation, CallFailure> {
+        let arguments = [1_i64, 2].map(|value| Value::Integer(Integer::from(value)));
+        self.0
+            .call(entry, &arguments, environment, limits, run, cancel)
+    }
+
+    fn evaluate(
+        &self,
+        clause: &QualifiedName,
+        input: &AdmittedObservations,
+        accounting: &ScalarLimits,
+        cancel: &Cancel,
+    ) -> Result<Evaluation, CallFailure> {
+        self.0.evaluate(clause, input, accounting, cancel)
+    }
+}
+
+/// TC-1387 FR-563-AC-15: a call supplying a leading part of the parameters is
+/// no unbuildable vector: both sides are called with that prefix.
+#[trace("TC-1387", "FR-563-AC-15")]
+#[test]
+fn a_prefix_call_is_compared() {
+    let corpus = inc_corpus();
+    fs::write(
+        corpus.path().join("unit.native"),
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction inc using v(x: Int[0, 9], y: Int[0, 9]): Int[0, 18] pure { x + y }\n",
+    )
+    .expect("a two-parameter source");
+    let interpreter = Interpreter;
+    let completing = CompletingBackend;
+    let report = run_parity(
+        &[
+            (ExecutionBackendChoice::Jit, &interpreter, None),
+            (ExecutionBackendChoice::Jit, &completing, None),
+        ],
         &corpus_only(corpus.path()),
         &ParityLimits::default(),
         &Cancel::new(),
     )
-    .expect_err("an uncompilable selected vector refuses");
-    assert!(matches!(refusal, ParityRefusal::UnreadableCorpus(_)));
-    assert_eq!(refusal.exit_code(), 2);
+    .expect("a prefix call is a parity case");
+    assert!(report.unbuildable.is_empty(), "{:?}", report.unbuildable);
+    assert_eq!(report.backends[0].compared, 1);
+    assert_eq!(report.backends[0].total_findings, 0);
+    assert_eq!(report.backends[1].total_findings, 1);
+    let finding = &report.backends[1].findings[0];
+    assert_eq!(
+        finding.kind,
+        FindingKind::Difference(ParityMember::OkAgainstErr)
+    );
+    assert_eq!(format!("{:?}", finding.arguments), "[Integer(Integer(4))]");
+    let reference = format!("{:?}", finding.reference);
+    assert!(
+        reference.contains("Arity { declared: 2, supplied: 1 }"),
+        "{reference}"
+    );
+}
+
+/// TC-1387 FR-563-AC-16: a cancellation while a vector is built stops the run
+/// with no report.
+#[trace("TC-1387", "FR-563-AC-16")]
+#[test]
+fn cancellation_while_a_case_is_built_gives_no_report() {
+    let fixture = defective_corpus();
+    write_vectors(
+        &fixture.corpus,
+        &[run_vector(
+            "broken-source",
+            &[("source", "broken.native"), ("call", "call.json")],
+        )],
+    );
+    let handle = std::sync::Arc::new(std::sync::OnceLock::<Cancel>::new());
+    let charges = std::sync::Arc::new(AtomicUsize::new(0));
+    let (observed, counted) = (handle.clone(), charges.clone());
+    let cancel = Cancel::observing(move || {
+        counted.fetch_add(1, Ordering::Relaxed);
+        if let Some(cancel) = observed.get() {
+            cancel.cancel(filament_exact::CancelCause::Requested);
+        }
+    });
+    assert!(handle.set(cancel.clone()).is_ok(), "the handle is unset");
+    let counting = CountingBackend::default();
+    let refusal = run_parity(
+        &[(ExecutionBackendChoice::Jit, &counting, None)],
+        &corpus_only(&fixture.corpus),
+        &ParityLimits::default(),
+        &cancel,
+    )
+    .expect_err("a cancelled run gives no report");
+    assert_eq!(refusal, ParityRefusal::Cancelled);
+    assert!(charges.load(Ordering::Relaxed) > 0);
     assert_eq!(counting.prepares.load(Ordering::Relaxed), 0);
+}
+
+/// TC-1387: a vector whose readable call file names a clause is not selected,
+/// whatever else it names; a path with a leading `./` is read.
+#[trace("TC-1387")]
+#[test]
+fn a_clause_call_is_unselected_and_a_current_directory_path_is_read() {
+    let corpus = inc_corpus();
+    fs::write(corpus.path().join("clause.json"), r#"{"kind":"clause"}"#).expect("clause call");
+    write_vectors(
+        corpus.path(),
+        &[
+            run_vector(
+                "dotted",
+                &[("source", "./unit.native"), ("call", "./call.json")],
+            ),
+            run_vector(
+                "clause",
+                &[
+                    ("source", "absent.native"),
+                    ("model", "../outside.json"),
+                    ("call", "clause.json"),
+                ],
+            ),
+        ],
+    );
+    let interpreter = Interpreter;
+    let report = run_parity(
+        &[(ExecutionBackendChoice::Jit, &interpreter, None)],
+        &corpus_only(corpus.path()),
+        &ParityLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the corpus document is valid");
+    assert_eq!(report.units, 1);
+    assert_eq!(report.not_selected, 1);
+    assert!(report.unbuildable.is_empty(), "{:?}", report.unbuildable);
+    assert_eq!(report.exit_code(), 0);
 }
 
 /// TC-1387 FR-563-AC-6: reference faults are reported, while an empty backend
