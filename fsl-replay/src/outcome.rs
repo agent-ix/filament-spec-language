@@ -56,9 +56,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
-    Certification, DeclineCode, IncompleteCause, InconclusiveCause, InstanceBound, ProofBasis,
-    ReportedInconclusiveCause, StaleIdentity, SymmetryBrokenCause, TerminalRecord, TerminalValue,
-    UnavailabilityCause, WeakAccessFailure,
+    Certification, CrossCheck, CrossCheckVerdict, DeclineCode, IncompleteCause, InconclusiveCause,
+    InstanceBound, ProofBasis, RecordedWarning, ReportedInconclusiveCause, StaleIdentity,
+    SymmetryBrokenCause, TerminalRecord, TerminalValue, UnavailabilityCause, WeakAccessFailure,
 };
 use crate::result::{DisagreementCause, ReplayResult};
 use crate::spine::kernel_undefined_reason;
@@ -556,6 +556,15 @@ pub struct ItemCause {
     /// The current tagged identity of `stale-dependency`.
     #[serde(skip_serializing_if = "Option::is_none")]
     recompiled: Option<StaleIdentityWire>,
+    /// A `cross-check-disagreement` cause's cross-checking tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool: Option<String>,
+    /// A `cross-check-disagreement` cause's primary solver result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    primary: Option<CrossCheckVerdict>,
+    /// A `cross-check-disagreement` cause's cross-check result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cross_check: Option<CrossCheckVerdict>,
     /// The model state named by FR-331's probabilistic refusal causes.
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<TimedStateWire>,
@@ -877,6 +886,9 @@ impl ItemCause {
             transition: None,
             post_state_count: None,
             post_states: None,
+            tool: None,
+            primary: None,
+            cross_check: None,
             reason: None,
         }
     }
@@ -904,6 +916,15 @@ impl ItemCause {
     fn inconclusive(cause: &ReportedInconclusiveCause) -> Self {
         let mut item = Self::kind(cause.as_str());
         match cause {
+            ReportedInconclusiveCause::Cause(InconclusiveCause::CrossCheckDisagreement {
+                tool,
+                primary,
+                cross_check,
+            }) => {
+                item.tool = Some(tool.clone());
+                item.primary = Some(*primary);
+                item.cross_check = Some(*cross_check);
+            }
             ReportedInconclusiveCause::Cause(InconclusiveCause::CertificateRejected {
                 rule,
                 at,
@@ -1104,6 +1125,14 @@ pub struct OutcomeItem {
     basis: Option<ProofBasis>,
     #[serde(skip_serializing_if = "Option::is_none")]
     certification: Option<Certification>,
+    /// A `proved` item's FSpec FR-331 `cross_check`: the SMT backend's
+    /// independent solver result, when it ran (FR-290).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cross_check: Option<CrossCheck>,
+    /// The warnings the item's terminal record keeps (FSpec FR-331
+    /// `warnings`): FR-290's absent cross-check.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<RecordedWarning>,
     /// A `measured` item's FSpec FR-409 decision: `accepted`, `rejected` or
     /// `undecided`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1568,6 +1597,8 @@ impl OutcomeItem {
             diagnostic,
             basis,
             certification,
+            cross_check: record.cross_check().cloned(),
+            warnings: record.cross_check_warning().into_iter().collect(),
             measured,
             verdict,
             method: None,
@@ -1688,6 +1719,8 @@ impl OutcomeItem {
             diagnostic: None,
             basis: None,
             certification: None,
+            cross_check: None,
+            warnings: Vec::new(),
             measured: None,
             verdict: None,
             method: None,
@@ -1765,6 +1798,8 @@ impl OutcomeItem {
             min_count: record.min_count,
             basis: None,
             certification: None,
+            cross_check: None,
+            warnings: Vec::new(),
             measured: None,
             verdict: None,
             method: None,

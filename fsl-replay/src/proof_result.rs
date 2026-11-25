@@ -39,10 +39,14 @@ use fsl_semantics::model::observation::AdmissionFailure;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
+mod cross_check;
 mod plugin;
 mod plugin_read;
 mod plugin_replay;
 mod tool_failure;
+pub use cross_check::{
+    CrossCheck, CrossCheckRefusal, CrossCheckRun, CrossCheckVerdict, RecordedWarning,
+};
 pub use plugin::{read_plugin_cause_kind, FslOnlyCause, PluginResultRefusal, ValueFault};
 pub(crate) use plugin_read::{child, first_undefined, name_order};
 pub use plugin_read::{
@@ -441,27 +445,6 @@ impl Certification {
             Self::Trusted => "trusted",
         }
     }
-}
-
-/// Verdict reported by the independent SMT cross-check (FSpec FR-349).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CrossCheckVerdict {
-    /// The query is valid.
-    Proved,
-    /// A counterexample exists.
-    Refuted,
-    /// The solver did not decide.
-    Inconclusive,
-}
-
-/// The result of an independent solver run on the same SMT query.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
-pub struct CrossCheck {
-    /// The cross-checking tool, for example `z3`.
-    pub tool: String,
-    /// The tool's verdict.
-    pub verdict: CrossCheckVerdict,
 }
 
 /// FSpec FR-243's settlement basis: the closed vocabulary every truth
@@ -1640,8 +1623,9 @@ pub struct TerminalRecord {
     /// and are completed with the envelope's manifest identity on read.
     backend: Option<BackendId>,
     value: TerminalValue,
-    /// FR-331's independent solver result, defined only for `proved`.
-    cross_check: Option<CrossCheck>,
+    /// What the SMT backend reported of its independent cross-check: a run
+    /// on a `proved` record alone, or the warning that none ran (FR-290).
+    cross_check: Option<CrossCheckRun>,
     replay: Option<ReplayResult>,
     protocol_analysis_key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
     protocol_analysis_root: Option<crate::RuntimeValuePath>,
@@ -1749,6 +1733,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: false,
+            cross_check: None,
         })
     }
 
@@ -2197,6 +2182,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2245,6 +2231,7 @@ impl TerminalRecord {
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2274,6 +2261,7 @@ impl TerminalRecord {
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2294,6 +2282,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2471,6 +2460,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: Some(detail),
             disposed: false,
+            cross_check: None,
         }
     }
 
@@ -2500,6 +2490,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: Some(detail),
             disposed: false,
+            cross_check: None,
         }
     }
 
@@ -2527,6 +2518,7 @@ impl TerminalRecord {
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2567,6 +2559,7 @@ impl TerminalRecord {
             disposition_detail: disposed.then(serde_json::Map::new),
             diagnostic_detail: None,
             disposed,
+            cross_check: None,
             exact_certificate: None,
             exact_certificate_document: None,
             exact_counterpart_document: None,
@@ -2601,6 +2594,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: false,
+            cross_check: None,
         }
     }
 
@@ -2798,8 +2792,8 @@ pub struct BackendProviderSource {
 /// The reader's own measurement of `source`'s encoded size (FR-069-AC-4):
 /// the provider and record backend identities' byte lengths, a fixed
 /// per-item allowance for the index and terminal value, and the retained
-/// replay and nested cause bytes. No caller-declared number can understate
-/// an oversized item list past the bound (B3).
+/// replay, cross-check and nested cause bytes. No caller-declared number can
+/// understate an oversized item list past the bound (B3).
 fn measured_encoded_bytes(source: &BackendProviderSource) -> usize {
     source.backend_identity.len()
         + source
@@ -2810,6 +2804,7 @@ fn measured_encoded_bytes(source: &BackendProviderSource) -> usize {
                     + std::mem::size_of::<TerminalValue>()
                     + record.value().measured_bytes()
                     + record.backend().map_or(0, |backend| backend.as_str().len())
+                    + record.cross_check_bytes()
                     + record
                         .replay_result()
                         .map_or(0, crate::result::measured_encoded_bytes)

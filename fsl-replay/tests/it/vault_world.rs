@@ -732,17 +732,20 @@ mod tp4 {
     use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_replay::ClauseIdentity;
     use fsl_replay::{
-        check_components, check_smt_proof, settle_smt_proof, CertificateCheckLimits,
-        CertificateLocus, CertificateRequest, CertificateRule, ClosureCertificate,
-        ComponentCertificate, ModelCheckItem, ModelCheckLimits, ProofBasis, ProofFormat,
-        RefutedQuery, SmtProofBasis, SmtProofCertificate, SmtProofOutcome,
-        TemporalCertificateCheck, TerminalValue,
+        check_components, check_smt_proof, settle_smt_proof, settle_smt_proof_with_evidence,
+        BackendId, CertificateCheckLimits, CertificateLocus, CertificateRequest, CertificateRule,
+        ClosureCertificate, ComponentCertificate, CrossCheck, CrossCheckRefusal, CrossCheckRun,
+        CrossCheckVerdict, InconclusiveCause, ModelCheckItem, ModelCheckLimits, OutcomeItem,
+        ProofBasis, ProofFormat, RecordedWarning, RefutedQuery, ReplayResult, RequestIndex,
+        SmtProofBasis, SmtProofCertificate, SmtProofOutcome, TemporalCertificateCheck,
+        TerminalRecord, TerminalValue, WitnessArmResult,
     };
     use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
     use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, TemporalProfile};
     use ix_trace_rs::trace;
+    use serde_json::json;
 
-    use super::{World, FORALL_EXISTS};
+    use super::{Json, World, FORALL_EXISTS};
 
     /// Every `holds` atom is true at every position, so the engine walks a
     /// path whose states differ by the past history it has retained.
@@ -1039,6 +1042,322 @@ mod tp4 {
     /// FR-127-AC-14: absence of an SMT certificate performs no checker work
     /// and remains an uncertified proof, even with zero checker budgets.
     #[trace("TC-1199", "FR-127-AC-14")]
+    /// FR-290-AC-16: the SMT settlement of an accepted bounded certificate,
+    /// the same proof without it, a reproduced counterexample and an
+    /// inconclusive cvc5 run, each beside every cross-check verdict and
+    /// beside none, serializes as the cross-check table states and reads back.
+    #[trace("TC-774", "FR-290-AC-16")]
+    #[test]
+    fn an_smt_result_settles_beside_its_cross_check_by_the_table() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let clause = match request.item {
+            ModelCheckItem::Clause { clause, .. } => clause,
+            _ => unreachable!("fixture is a clause"),
+        };
+        let query = encode_smt_query(
+            &request.subject,
+            SmtItem::Clause(clause),
+            SmtQueryKind::Unrolling { depth: 3 },
+            &request.smt_encoding,
+        )
+        .expect("depth 3 reaches the TP-2 horizon");
+        let certificate = SmtProofCertificate::BoundedComplete {
+            format: ProofFormat::Alethe,
+            unrolling: RefutedQuery {
+                proof: bounded_always_refutation(&query, &[0, 1, 2, 3]),
+                query,
+            },
+        };
+        let index = RequestIndex::new(0);
+        let proved = |certificate| {
+            let settlement = settle_smt_proof_with_evidence(
+                &request,
+                &SmtProofOutcome {
+                    basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                    certificate,
+                },
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            );
+            TerminalRecord::from_smt_settlement(index, BackendId::new("cvc5"), &settlement)
+        };
+        let certified = proved(Some(certificate));
+        let uncertified = proved(None);
+        let refuted = TerminalRecord::new(
+            index,
+            BackendId::new("cvc5"),
+            &ReplayResult::Witness(WitnessArmResult::settle_range_violation(
+                None,
+                Vec::new(),
+                fsl_replay::spine::default_accounting(0),
+            )),
+        )
+        .expect("a reproduced counterexample refutes");
+        let undecided = TerminalRecord::inconclusive(
+            index,
+            BackendId::new("cvc5"),
+            InconclusiveCause::SolverInconclusive {
+                trace: None,
+                replay: None,
+            },
+        );
+
+        let ran = |verdict| {
+            CrossCheckRun::Ran(CrossCheck {
+                tool: "z3".to_owned(),
+                verdict,
+            })
+        };
+        let z3_proved = || ran(CrossCheckVerdict::Proved);
+        let z3_refuted = || ran(CrossCheckVerdict::Refuted);
+        let z3_inconclusive = || ran(CrossCheckVerdict::Inconclusive);
+        let absent = || CrossCheckRun::Absent {
+            tool: "z3".to_owned(),
+        };
+        // The members of the outcome item the table speaks of.
+        let proof = |certification: &str, cross_check: &str| {
+            json!({
+                "result": "proved",
+                "basis": {"type": "bounded-complete", "depth": 3},
+                "certification": certification,
+                "cross_check": {"tool": "z3", "verdict": cross_check},
+                "cause": null,
+            })
+        };
+        let unchecked_proof = |certification: &str| {
+            json!({
+                "result": "proved",
+                "basis": {"type": "bounded-complete", "depth": 3},
+                "certification": certification,
+                "warnings": [{"code": "cross-check-absent", "tool": "z3"}],
+                "cause": null,
+            })
+        };
+        let disagreement = |primary: &str, cross_check: &str| {
+            json!({
+                "result": "inconclusive",
+                "cause": {
+                    "kind": "cross-check-disagreement",
+                    "tool": "z3",
+                    "primary": primary,
+                    "cross_check": cross_check,
+                },
+            })
+        };
+        let refutation = json!({"result": "refuted", "cause": null});
+        let unchecked_refutation = json!({
+            "result": "refuted",
+            "warnings": [{"code": "cross-check-absent", "tool": "z3"}],
+            "cause": null,
+        });
+        let solver_inconclusive = json!({
+            "result": "inconclusive",
+            "cause": {"kind": "solver-inconclusive"},
+        });
+        let unchecked_solver_inconclusive = json!({
+            "result": "inconclusive",
+            "warnings": [{"code": "cross-check-absent", "tool": "z3"}],
+            "cause": {"kind": "solver-inconclusive"},
+        });
+
+        let table = [
+            (&certified, z3_proved(), proof("certified", "proved")),
+            (&certified, z3_refuted(), proof("certified", "refuted")),
+            (
+                &certified,
+                z3_inconclusive(),
+                proof("certified", "inconclusive"),
+            ),
+            (&certified, absent(), unchecked_proof("certified")),
+            (&uncertified, z3_proved(), proof("uncertified", "proved")),
+            (
+                &uncertified,
+                z3_refuted(),
+                disagreement("proved", "refuted"),
+            ),
+            (
+                &uncertified,
+                z3_inconclusive(),
+                disagreement("proved", "inconclusive"),
+            ),
+            (&uncertified, absent(), unchecked_proof("uncertified")),
+            (&refuted, z3_proved(), disagreement("refuted", "proved")),
+            (&refuted, z3_refuted(), refutation),
+            (
+                &refuted,
+                z3_inconclusive(),
+                disagreement("refuted", "inconclusive"),
+            ),
+            (&refuted, absent(), unchecked_refutation),
+            (
+                &undecided,
+                z3_proved(),
+                disagreement("inconclusive", "proved"),
+            ),
+            (
+                &undecided,
+                z3_refuted(),
+                disagreement("inconclusive", "refuted"),
+            ),
+            (&undecided, z3_inconclusive(), solver_inconclusive),
+            (&undecided, absent(), unchecked_solver_inconclusive),
+        ];
+        let published = |path: &str| -> Json {
+            let bytes = filament_specification::published_file(path).expect("FSpec publishes it");
+            serde_json::from_slice(bytes).expect("the schema is JSON")
+        };
+        let schema = published("proposals/backend-provider-v1/schema.json");
+        let validator = |reference: &str| {
+            jsonschema::JSONSchema::options()
+                .with_draft(jsonschema::Draft::Draft202012)
+                .with_document(
+                    "urn:filament:checked-package:v2".to_owned(),
+                    published("proposals/checked-package-v2/schema.json"),
+                )
+                .compile(&json!({
+                    "$schema": schema["$schema"],
+                    "$defs": schema["$defs"],
+                    "$ref": reference,
+                }))
+                .expect("the schema compiles")
+        };
+        let check_schema = validator("#/$defs/Result/properties/cross_check");
+        let warning_schema = validator("#/$defs/Warning");
+        let cause_schema = validator("#/$defs/InconclusiveCause");
+
+        for (row, (primary, run, expected)) in table.into_iter().enumerate() {
+            let settled = primary
+                .clone()
+                .with_cross_check(run)
+                .expect("the table has a row for the pair");
+            assert_eq!(settled.backend(), Some(&BackendId::new("cvc5")), "{row}");
+            assert_eq!(
+                settled.replay_result().is_some(),
+                expected["result"] == "refuted",
+                "row {row}"
+            );
+            let item = serde_json::to_value(OutcomeItem::from_terminal(&settled))
+                .expect("the item serializes");
+            let members: serde_json::Map<String, Json> = [
+                "result",
+                "basis",
+                "certification",
+                "cross_check",
+                "warnings",
+                "cause",
+            ]
+            .into_iter()
+            .filter_map(|name| Some((name.to_owned(), item.get(name)?.clone())))
+            .collect();
+            assert_eq!(Json::Object(members), expected, "row {row}");
+
+            let read_check = item.get("cross_check").map(|check| {
+                assert!(check_schema.is_valid(check), "row {row}: {check}");
+                serde_json::from_value::<CrossCheck>(check.clone()).expect("cross_check reads")
+            });
+            assert_eq!(read_check.as_ref(), settled.cross_check(), "row {row}");
+            let read_warnings = item.get("warnings").map_or_else(Vec::new, |warnings| {
+                for warning in warnings.as_array().expect("warnings is an array") {
+                    assert!(warning_schema.is_valid(warning), "row {row}: {warning}");
+                }
+                serde_json::from_value::<Vec<RecordedWarning>>(warnings.clone())
+                    .expect("warnings read")
+            });
+            assert_eq!(
+                read_warnings,
+                Vec::from_iter(settled.cross_check_warning()),
+                "row {row}"
+            );
+            // FSpec FR-331's provider entry tags a cause `type`, FR-286 `kind`.
+            if let Some(mut cause) = item["cause"].as_object().cloned() {
+                let kind = cause.remove("kind").expect("a cause has a kind");
+                cause.insert("type".to_owned(), kind);
+                let cause = Json::Object(cause);
+                assert!(cause_schema.is_valid(&cause), "row {row}: {cause}");
+            }
+            let settled_disagreement = match settled.value() {
+                TerminalValue::Inconclusive(
+                    cause @ InconclusiveCause::CrossCheckDisagreement { .. },
+                ) => Some(cause),
+                _ => None,
+            };
+            assert_eq!(
+                InconclusiveCause::read_cross_check_disagreement(&item["cause"]).as_ref(),
+                settled_disagreement,
+                "row {row}"
+            );
+        }
+    }
+
+    /// A report the cross-check table cannot settle, and a serialized member
+    /// outside FSpec FR-331's spelling, are refused.
+    #[trace("TC-774")]
+    #[test]
+    fn an_unsettleable_cross_check_and_a_malformed_member_are_refused() {
+        let index = RequestIndex::new(0);
+        let z3 = |tool: &str| {
+            CrossCheckRun::Ran(CrossCheck {
+                tool: tool.to_owned(),
+                verdict: CrossCheckVerdict::Proved,
+            })
+        };
+        let tested = TerminalRecord::tested(index, BackendId::new("cvc5"));
+        assert_eq!(
+            tested.clone().with_cross_check(z3("z3")),
+            Err(CrossCheckRefusal::NoTableRow)
+        );
+        assert_eq!(
+            tested.clone().with_cross_check(z3("")),
+            Err(CrossCheckRefusal::EmptyTool)
+        );
+        assert_eq!(
+            tested.with_cross_check(CrossCheckRun::Absent {
+                tool: String::new()
+            }),
+            Err(CrossCheckRefusal::EmptyTool)
+        );
+        let checks_proof = TerminalRecord::proved(index, BackendId::new("kani"), 1);
+        assert_eq!(
+            checks_proof.with_cross_check(z3("z3")),
+            Err(CrossCheckRefusal::NotAnSmtProof)
+        );
+
+        for cause in [
+            json!({"kind": "solver-inconclusive", "tool": "z3", "primary": "proved", "cross_check": "refuted"}),
+            json!({"kind": "cross-check-disagreement", "tool": "", "primary": "proved", "cross_check": "refuted"}),
+            json!({"kind": "cross-check-disagreement", "tool": "z3", "primary": "unknown", "cross_check": "refuted"}),
+            json!({"kind": "cross-check-disagreement", "tool": "z3", "primary": "proved"}),
+            json!({"kind": "cross-check-disagreement", "tool": "z3", "primary": "proved", "cross_check": "refuted", "extra": 1}),
+        ] {
+            assert_eq!(
+                InconclusiveCause::read_cross_check_disagreement(&cause),
+                None,
+                "{cause}"
+            );
+        }
+        for check in [
+            json!({"tool": "", "verdict": "proved"}),
+            json!({"tool": "z3", "verdict": "Proved"}),
+            json!({"tool": "z3", "verdict": "proved", "extra": 1}),
+        ] {
+            assert!(
+                serde_json::from_value::<CrossCheck>(check.clone()).is_err(),
+                "{check}"
+            );
+        }
+        for warning in [
+            json!({"code": "cross-check-absent", "tool": ""}),
+            json!({"code": "cross-check-missing", "tool": "z3"}),
+            json!({"code": "cross-check-absent", "tool": "z3", "extra": 1}),
+        ] {
+            assert!(
+                serde_json::from_value::<RecordedWarning>(warning.clone()).is_err(),
+                "{warning}"
+            );
+        }
+    }
+
     #[test]
     fn temporal_smt_without_certificate_is_uncertified_without_checking() {
         let world = tp2_world();
