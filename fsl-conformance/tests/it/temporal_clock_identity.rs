@@ -187,13 +187,16 @@ fn timestamped_role_readback_identity_and_selection_refusals_are_exact() {
     .expect("the temporal name row identifies its clause");
     let subject = fsl_package::checked_views::temporal_subject(read, &clause_id)
         .expect("the temporal formula reader resolves the clause");
-    let clause = wire_node(&wire, &wire["temporal_clause_names"][0]["declaration"]);
-    let over = wire_node(&wire, &clause["body"]["arguments"][0]["target"]);
+    let mut resolved = wire.clone();
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut resolved)
+        .expect("every operand slot names its emitted node");
+    let clause = wire_node(&resolved, &resolved["temporal_clause_names"][0]["declaration"]);
+    let over = wire_node(&resolved, &clause["body"]["arguments"][0]["target"]);
     assert_eq!(over["semantic_form"], "parameter");
     let over_id = serde_json::from_value::<CheckedNodeId>(over["node_id"].clone())
         .expect("the over parameter has a node id");
     assert_eq!(subject.over(), &over_id);
-    let event = wire_node(&wire, &over["semantic_type"]);
+    let event = wire_node(&resolved, &over["semantic_type"]);
     assert_eq!(event["node_tag"], "model");
     assert_eq!(event["semantic_form"], "event_type");
     assert_eq!(event["owner"]["kind"], "model");
