@@ -49,6 +49,7 @@ use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::source::{SourceLabel, SourceReadCause};
 use fsl_foundation::{LocatedSpan, RequestIndex};
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
@@ -913,6 +914,7 @@ impl ItemCause {
         }
     }
 
+    #[implements("FR-290-AC-16")]
     fn inconclusive(cause: &ReportedInconclusiveCause) -> Self {
         let mut item = Self::kind(cause.as_str());
         match cause {
@@ -1377,6 +1379,7 @@ fn measured(verdict: &StatisticalVerdict) -> (&'static str, Option<ItemCause>) {
 impl OutcomeItem {
     /// The item an FR-331 terminal record settles. A vacuous proof is
     /// `inconclusive` with its vacuity cause, never `proved`.
+    #[implements("FR-290-AC-16")]
     pub fn from_terminal(record: &TerminalRecord) -> Self {
         let value = record.value();
         let result = ItemLabel::of(value);

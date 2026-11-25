@@ -4,6 +4,7 @@
 //! backend runs both solvers; this module settles what they reported.
 
 use fsl_foundation::{BackendId, RequestIndex};
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -88,6 +89,7 @@ impl InconclusiveCause {
     /// cross_check}` cause (FR-286, `kind` spelling) back into its variant.
     /// `None` for another `kind`, a missing or unknown member, an empty
     /// `tool` or a result outside FSpec FR-331's three.
+    #[implements("FR-290-AC-16")]
     pub fn read_cross_check_disagreement(cause: &Value) -> Option<Self> {
         #[derive(Deserialize)]
         enum Kind {
@@ -121,6 +123,7 @@ impl InconclusiveCause {
 impl TerminalRecord {
     /// The record of the SMT backend's proof settlement: its value, with the
     /// certification FR-314's check alone gave it, under `backend`.
+    #[implements("FR-290-AC-16", "FR-290-AC-17")]
     pub fn from_smt_settlement(
         request_index: RequestIndex,
         backend: BackendId,
@@ -145,6 +148,7 @@ impl TerminalRecord {
     /// [`CrossCheckRefusal`] for an unnamed tool, for a verdict beside a
     /// proof FSpec FR-331 gives no `cross_check`, and for a verdict beside a
     /// result the table has no row for.
+    #[implements("FR-290-AC-16")]
     pub fn with_cross_check(mut self, run: CrossCheckRun) -> Result<Self, CrossCheckRefusal> {
         let (CrossCheckRun::Ran(CrossCheck { tool, .. }) | CrossCheckRun::Absent { tool }) = &run;
         if tool.is_empty() {

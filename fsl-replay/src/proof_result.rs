@@ -36,6 +36,7 @@ use fsl_foundation::RequestIndex;
 use fsl_semantics::check::HyperUnsupported;
 use fsl_semantics::family::UnsupportedItem;
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -1264,6 +1265,7 @@ impl InconclusiveCause {
     }
 
     /// The cause's FR-331 wire spelling.
+    #[implements("FR-290-AC-16")]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::CrossCheckDisagreement { .. } => "cross-check-disagreement",
@@ -1310,6 +1312,7 @@ impl InconclusiveCause {
 
     /// Bytes this cause adds to an encoded record beyond its fixed size:
     /// the nested witness records and failure of a parity disagreement.
+    #[implements("FR-069-AC-4")]
     fn measured_bytes(&self) -> usize {
         match self {
             Self::CrossCheckDisagreement { tool, .. } => tool.len(),
@@ -2794,6 +2797,7 @@ pub struct BackendProviderSource {
 /// per-item allowance for the index and terminal value, and the retained
 /// replay, cross-check and nested cause bytes. No caller-declared number can
 /// understate an oversized item list past the bound (B3).
+#[implements("FR-069-AC-4")]
 fn measured_encoded_bytes(source: &BackendProviderSource) -> usize {
     source.backend_identity.len()
         + source
