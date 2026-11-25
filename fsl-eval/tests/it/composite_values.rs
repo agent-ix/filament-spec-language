@@ -1297,6 +1297,7 @@ mod library_import {
             } else {
                 Vec::new()
             },
+            model_correspondence: Vec::new(),
         }
     }
 
