@@ -4095,22 +4095,19 @@ fn replay_timed_refutation(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    use crate::exact_probabilistic::{produce_witness, WitnessScope};
-    use fsl_eval::probabilistic::{DeadlinePhase, MonitorState};
+    use crate::exact_probabilistic::{produce_witness, MonitorVerdict, WitnessScope};
     let forbidden = match bound {
-        Bound::AtMost(_) => DeadlinePhase::Accept,
-        Bound::AtLeast(_) => DeadlinePhase::Reject,
+        Bound::AtMost(_) => MonitorVerdict::Accept,
+        Bound::AtLeast(_) => MonitorVerdict::Reject,
     };
-    let accepting = product
-        .states
-        .iter()
-        .map(|state| {
-            matches!(
-                state.monitor,
-                Some(MonitorState::Deadline { phase, .. }) if phase == forbidden
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut accepting = vec![false; product.states.len()];
+    for (state, verdict) in &product.decided {
+        if *verdict == forbidden {
+            if let Some(target) = accepting.get_mut(state.index()) {
+                *target = true;
+            }
+        }
+    }
     let past = match bound {
         Bound::AtMost(threshold) => threshold.clone(),
         Bound::AtLeast(threshold) => Rational::from_integer(1_i64.into()).sub(threshold),
