@@ -217,8 +217,7 @@ impl ModelSystem<'_> {
                         );
                 }
             }
-            let permutation = if let Some(group) = symmetry.filter(|group| !group.is_trivial())
-            {
+            let permutation = if let Some(group) = symmetry.filter(|group| !group.is_trivial()) {
                 let limits = quire_canonical::Limits::new(identity_limits().input_bytes);
                 let mut placeholders = Vec::new();
                 for class in &group.classes {
@@ -253,8 +252,7 @@ impl ModelSystem<'_> {
                     let objects = base.state.populations.get(&class.population);
                     let mut sorted = Vec::with_capacity(class.keys.len());
                     for key in &class.keys {
-                        let Some(original) = objects.and_then(|objects| objects.get(key))
-                        else {
+                        let Some(original) = objects.and_then(|objects| objects.get(key)) else {
                             sorted.push((Vec::new(), key));
                             continue;
                         };

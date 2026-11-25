@@ -3962,28 +3962,20 @@ fn finish_replay(
             let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
                 system.state_key(state).ok().map(|(_, key)| key)
             };
-            let value_schema = fsl_replay::ProbabilisticValueSchema::new(
-                input.types,
-                input.variant_types,
-            );
-            let wire = match input.enum_members {
-                Some(enum_members) => fsl_replay::probabilistic_wire_with_enum_members(
-                    witness,
-                    bound,
-                    claim_type,
-                    &value_schema.with_enum_members(enum_members),
-                    &state_key,
-                    spelled_scheduler,
-                ),
-                None => fsl_replay::probabilistic_wire(
-                    witness,
-                    bound,
-                    claim_type,
-                    &value_schema,
-                    &state_key,
-                    spelled_scheduler,
-                ),
+            let value_schema =
+                fsl_replay::ProbabilisticValueSchema::new(input.types, input.variant_types);
+            let value_schema = match input.enum_members {
+                Some(enum_members) => value_schema.with_enum_members(enum_members),
+                None => value_schema,
             };
+            let wire = fsl_replay::probabilistic_wire(
+                witness,
+                bound,
+                claim_type,
+                &value_schema,
+                &state_key,
+                spelled_scheduler,
+            );
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }
         Ok(ProbabilityWitnessReplay::Parity) => {

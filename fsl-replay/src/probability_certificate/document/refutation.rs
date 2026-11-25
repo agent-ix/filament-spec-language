@@ -1038,8 +1038,7 @@ pub(super) fn randomized_scheduled_choices(
     mut enabled: Option<
         &mut BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
     >,
-) -> Result<Option<RandomizedSchedule>, ProbabilityDocumentError>
-{
+) -> Result<Option<RandomizedSchedule>, ProbabilityDocumentError> {
     let ScheduleEvidence {
         graph,
         reference,

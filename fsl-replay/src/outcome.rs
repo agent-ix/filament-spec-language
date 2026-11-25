@@ -29,13 +29,12 @@ pub mod hint;
 pub use counterexample::{
     assignments_wire, assignments_wire_with_enum_members, graph_evidence_wire,
     hyper_counterexample_wire, probabilistic_undefined_wire, probabilistic_wire,
-    probabilistic_wire_with_enum_members, protocol_temporal_wire,
-    read_task_temporal_counterexample, read_task_temporal_document, read_temporal_counterexample,
-    replay_model_trace_document, replay_task_product_trace, sampled_witness_wire, state_key_wire,
-    task_product_transition_wire, task_source_transition_wire, task_temporal_wire,
-    task_temporal_wire_with_queue_growth, task_transition_wire, temporal_wire,
-    CounterexampleWireError, ProbabilisticValueSchema, ProtocolWire, ReadCounterexample,
-    TaskProductCounterexampleDocument,
+    protocol_temporal_wire, read_task_temporal_counterexample, read_task_temporal_document,
+    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
+    sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
+    task_transition_wire, temporal_wire, CounterexampleWireError, ProbabilisticValueSchema,
+    ProtocolWire, ReadCounterexample, TaskProductCounterexampleDocument,
     TaskProductTraceReplayRefusal, TemporalCounterexampleReadRefusal, TraceAlphabet,
 };
 

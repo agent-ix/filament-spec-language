@@ -2362,8 +2362,7 @@ fn only_a_hyper_name_row_carries_the_clauses_source_unit() {
 #[trace("TC-1327", "FR-488-AC-31")]
 #[test]
 fn a_finite_hyper_clause_resolves_its_timestamp_unit_in_its_source_unit() {
-    let source =
-        "language \"ix:native\" edition \"1-draft\";\n\
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          dimension Time;\n\

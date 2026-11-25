@@ -1297,10 +1297,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
 
     /// LU bounds laid out for a zone's concrete clocks, candidate clock
     /// blocks, and optional horizon clock.
-    pub(super) fn bounds_for(
-        &self,
-        dim: usize,
-    ) -> Result<ClockBounds, Halt> {
+    pub(super) fn bounds_for(&self, dim: usize) -> Result<ClockBounds, Halt> {
         let concrete = self.timed.places().len();
         let abstract_clocks = self.auxiliary_timed.map_or(0, |timed| timed.places().len());
         let horizon = usize::from(self.window.is_some());

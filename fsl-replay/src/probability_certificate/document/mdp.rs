@@ -954,7 +954,8 @@ fn progress_failure_with_fair_zero(
         let mut any = false;
         let mut all = true;
         for (index, choice) in state.choices.iter().enumerate() {
-            if fair.selected_policy
+            if fair
+                .selected_policy
                 .and_then(|policy| policy.get(key))
                 .is_some_and(|selected| *selected != index)
             {

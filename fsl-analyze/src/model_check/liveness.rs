@@ -132,8 +132,8 @@ use super::check::{
 use super::concretise::{Lift, LiftStop, PermuterOf};
 use super::fair_walk::{FairModel, fairness_constraints, tree_path};
 use super::graph::{
-    retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
-    RetainConfig, RetainHooks, RetainedGraph,
+    retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainConfig,
+    RetainHooks, RetainedEdge, RetainedGraph,
 };
 use super::product::{ProductKey, ProductTransition};
 use super::quotient::{

@@ -1476,17 +1476,15 @@ impl Run<'_, '_, '_> {
                 // a broken internal invariant.
                 return Err(stop(BROKEN));
             };
-            self.complete(
-                CompletionContext {
-                    candidate: self.collection_writes(candidate, &delta)?,
-                    delta: &delta,
-                    post_references: &post_references,
-                    budget,
-                    contract,
-                    successors,
-                    result_independent: plan.result_independent,
-                },
-            )?;
+            self.complete(CompletionContext {
+                candidate: self.collection_writes(candidate, &delta)?,
+                delta: &delta,
+                post_references: &post_references,
+                budget,
+                contract,
+                successors,
+                result_independent: plan.result_independent,
+            })?;
             if plan.stop_after_first && successors.len() > initial {
                 return Ok(true);
             }

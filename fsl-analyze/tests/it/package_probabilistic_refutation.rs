@@ -475,7 +475,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         &scheduler,
     )
     .expect("source declarations spell the actual evidence");
-    let actual = fsl_replay::probabilistic_wire_with_enum_members(
+    let actual = fsl_replay::probabilistic_wire(
         witness,
         bound,
         "probability",

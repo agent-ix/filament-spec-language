@@ -212,13 +212,7 @@ fn run_with_workers_and_reductions(
     item: ModelCheckItem<'_>,
     config: WorkerConfig,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-    run_in_with_workers(
-        world,
-        &world.package,
-        keys,
-        item,
-        config,
-    )
+    run_in_with_workers(world, &world.package, keys, item, config)
 }
 
 fn run_temporal_fixture_with_workers(

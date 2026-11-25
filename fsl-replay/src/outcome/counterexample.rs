@@ -67,19 +67,13 @@ impl<'a> ProbabilisticValueSchema<'a> {
 
     fn encode(&self, value: &Value) -> Option<Json> {
         match self.enum_members {
-            Some(enum_members) => {
-                fsl_eval::simulation::model::typed_value_json_with_enum_members(
-                    value,
-                    self.types,
-                    self.variants,
-                    enum_members,
-                )
-            }
-            None => fsl_eval::simulation::model::typed_value_json(
+            Some(enum_members) => fsl_eval::simulation::model::typed_value_json_with_enum_members(
                 value,
                 self.types,
                 self.variants,
+                enum_members,
             ),
+            None => fsl_eval::simulation::model::typed_value_json(value, self.types, self.variants),
         }
     }
 }
@@ -2057,7 +2051,7 @@ fn assignments_wire_using(
 /// # Errors
 ///
 /// [`CounterexampleWireError::Unspelled`] when a state or value has no
-/// encoding.
+/// encoding, including a value absent from `value_schema`'s enum-member index.
 pub fn probabilistic_wire(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
@@ -2074,30 +2068,6 @@ pub fn probabilistic_wire(
     probabilistic_wire_using(witness, bound, claim_type, state_key, scheduler, |value| {
         value_schema.encode(value)
     })
-}
-
-/// A probabilistic path set with enum identities from its authenticated owner.
-///
-/// # Errors
-///
-/// As [`probabilistic_wire`], including values absent from the owner's enum index.
-pub fn probabilistic_wire_with_enum_members(
-    witness: &crate::ProbabilisticCounterexample,
-    bound: &fsl_semantics::check::Bound,
-    claim_type: &str,
-    value_schema: &ProbabilisticValueSchema<'_>,
-    state_key: &dyn Fn(
-        &fsl_eval::simulation::model::ModelSimState,
-    ) -> Option<fsl_eval::simulation::StateKey>,
-    scheduler: &[(
-        fsl_eval::simulation::StateKey,
-        fsl_eval::simulation::model::ScheduledIdentity,
-    )],
-) -> Result<Json, CounterexampleWireError> {
-    if value_schema.enum_members.is_none() {
-        return Err(CounterexampleWireError::Unspelled("enum member index"));
-    }
-    probabilistic_wire(witness, bound, claim_type, value_schema, state_key, scheduler)
 }
 
 fn probabilistic_wire_using(

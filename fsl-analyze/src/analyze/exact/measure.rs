@@ -1057,10 +1057,7 @@ fn refute_mean(
                 token.evidence(),
                 bound,
                 claim_type,
-                &fsl_replay::ProbabilisticValueSchema::new(
-                    scope.types(),
-                    scope.variant_types(),
-                ),
+                &fsl_replay::ProbabilisticValueSchema::new(scope.types(), scope.variant_types()),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
                 &spelled,
             );

@@ -2443,10 +2443,7 @@ where
     /// Expand a bounded BFS batch on scoped workers. The coordinator consumes
     /// these indexed outcomes in queue order, so expansion completion order
     /// cannot change a finding, refusal, or budget boundary.
-    fn expand_batch(
-        &self,
-        positions: &[usize],
-    ) -> Vec<IndexedExpansion<S::TransitionId, S::State>>
+    fn expand_batch(&self, positions: &[usize]) -> Vec<IndexedExpansion<S::TransitionId, S::State>>
     where
         ModelFinding: Send,
     {

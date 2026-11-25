@@ -1364,10 +1364,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 .ok_or_else(|| fault("timed-trace-history-exists"))?
                 .iter()
                 .map(|observation| {
-                    json!([
-                        observation.time.to_string(),
-                        observation.values.to_vec()
-                    ])
+                    json!([observation.time.to_string(), observation.values.to_vec()])
                 })
                 .collect::<Vec<_>>();
             let phase = match monitor {
@@ -1708,10 +1705,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     push_timed_observation(&mut history, at, &previous.values);
                     at = at.saturating_add(1);
                 }
-                if letters
-                    .first()
-                    .is_none_or(|next| *next != previous.values)
-                {
+                if letters.first().is_none_or(|next| *next != previous.values) {
                     push_timed_observation(&mut history, time, &previous.values);
                 }
             }
