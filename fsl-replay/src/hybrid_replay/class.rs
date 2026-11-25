@@ -654,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    #[trace("NFR-141-AC-22", "FR-1019")]
+    #[trace("NFR-141-AC-27", "FR-1019")]
     fn bounded_branch_conditional_and_call_walks_match_the_prior_oracle() {
         let graph = super::super::tests::graph_for_class_walk();
         let div = || {
@@ -757,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    #[trace("NFR-141-AC-22", "FR-1019")]
+    #[trace("NFR-141-AC-27", "FR-1019")]
     fn hybrid_class_walks_scale_and_support_one_hundred_thousand_depth() {
         let graph = super::super::tests::graph_for_class_walk();
         for depth in [5_000, 10_000, 20_000] {
@@ -798,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    #[trace("NFR-141-AC-22", "FR-1019")]
+    #[trace("NFR-141-AC-27", "FR-1019")]
     fn prior_recursive_class_walk_fails_only_in_a_child_process() {
         const CHILD: &str = "FSL_RECURSIVE_CLASS_WALK_CHILD";
         if std::env::var_os(CHILD).is_some() {

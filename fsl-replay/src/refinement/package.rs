@@ -5,8 +5,8 @@ use filament_checked::key::DeclarationKey;
 use filament_contract_model::{CheckedNodeId, CheckedTerm, RefinementKey, RefinementStepTarget};
 use filament_exact::{NodeKey, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
-use fsl_eval::simulation::ExpansionStop;
 use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
+use fsl_eval::simulation::ExpansionStop;
 use fsl_package::{
     BarePackage, BareWorld, ReaderProtocolProjection, RefinementRowRefusal, RefinementView,
 };
@@ -580,7 +580,7 @@ mod tests {
         hidden
     }
 
-    #[trace("NFR-141-AC-21")]
+    #[trace("NFR-141-AC-26")]
     #[test]
     fn hidden_field_key_comparisons_are_bounded_and_preserve_declaration_order() {
         for count in [512, 1_024, 2_048] {

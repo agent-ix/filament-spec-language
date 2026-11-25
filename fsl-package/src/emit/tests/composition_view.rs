@@ -361,9 +361,9 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
     ));
 }
 
-/// NFR-141-AC-20 (QSL-2854): one graph build per call at increasing numbers
+/// NFR-141-AC-25 (QSL-2854): one graph build per call at increasing numbers
 /// of admitted composite nodes, with output equal to the pre-change projection.
-#[trace("NFR-141-AC-20", "FR-931", "FR-322")]
+#[trace("NFR-141-AC-25", "FR-931", "FR-322")]
 #[test]
 fn declared_composites_builds_one_wire_graph_and_preserves_the_projection() {
     use crate::bare_term::{DeclaredComposite, DeclaredShape};
@@ -414,7 +414,7 @@ fn declared_composites_builds_one_wire_graph_and_preserves_the_projection() {
 
     for count in [5_000, 10_000, 20_000] {
         let declarations = (0..count)
-            .map(|index| format!("record R{index} {{ value: Integer; }}\n"))
+            .map(|index| format!("record R{index} {{ amount: Integer; }}\n"))
             .collect::<String>();
         let source = format!(
             "language \"ix:native\" edition \"1-draft\";\n\
