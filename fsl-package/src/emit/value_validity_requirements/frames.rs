@@ -14,8 +14,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use filament_contract_model::{
     CheckedBindingNameKind, CheckedNodeId, CheckedOccurrenceRole, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm, LiteralKind, PathConditionFrame,
-    PathConditionFrameId,
+    CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm, PathConditionFrame, PathConditionFrameId,
 };
 use filament_exact::NodeKey;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -179,23 +178,6 @@ impl<'a> Walk<'a> {
             .map(|occurrence| occurrence.ordinal)
     }
 
-    /// The Boolean literal a guard reference names, if it names one.
-    fn literal(&self, term: &CheckedTerm) -> Option<bool> {
-        let position = *self.index.get(reference(term)?)?;
-        let node = &self.nodes[position];
-        if node.node_tag.as_ref() != "value" {
-            return None;
-        }
-        match &node.body {
-            CheckedTerm::Literal {
-                value_kind: LiteralKind::Boolean,
-                value,
-                ..
-            } => value.as_bool(),
-            _ => None,
-        }
-    }
-
     /// The guard of `term` as its node position and the expression occurrence
     /// the walk reads next at it.
     fn guard(&self, term: &CheckedTerm, visits: &HashMap<usize, usize>) -> Option<(usize, u64)> {
@@ -295,22 +277,10 @@ impl<'a> Walk<'a> {
                                 }
                                 continue;
                             };
-                            match self.literal(&arguments[0]) {
-                                Some(true) => {
-                                    let then = table.intern(terminal, guard, occurrence, true);
-                                    pending.push(Task::Term(&arguments[1], Some(then), syntax));
-                                }
-                                Some(false) => {
-                                    let other = table.intern(terminal, guard, occurrence, false);
-                                    pending.push(Task::Term(&arguments[2], Some(other), syntax));
-                                }
-                                None => {
-                                    let then = table.intern(terminal, guard, occurrence, true);
-                                    let other = table.intern(terminal, guard, occurrence, false);
-                                    pending.push(Task::Term(&arguments[2], Some(other), syntax));
-                                    pending.push(Task::Term(&arguments[1], Some(then), syntax));
-                                }
-                            }
+                            let then = table.intern(terminal, guard, occurrence, true);
+                            let other = table.intern(terminal, guard, occurrence, false);
+                            pending.push(Task::Term(&arguments[2], Some(other), syntax));
+                            pending.push(Task::Term(&arguments[1], Some(then), syntax));
                             pending.push(Task::Term(&arguments[0], terminal, syntax));
                         } else if derive
                             && matches!(
@@ -324,26 +294,13 @@ impl<'a> Walk<'a> {
                             && arguments.len() == 2
                         {
                             let holds = identity != Some("filament.op.boolean.or");
-                            let literal = self.literal(&arguments[0]);
-                            let short_circuited = match identity {
-                                Some("filament.op.boolean.and" | "filament.op.boolean.implies") => {
-                                    literal == Some(false)
+                            let right = match self.guard(&arguments[0], visits) {
+                                Some((guard, occurrence)) => {
+                                    Some(table.intern(terminal, guard, occurrence, holds))
                                 }
-                                Some("filament.op.boolean.or") => literal == Some(true),
-                                _ => false,
+                                None => terminal,
                             };
-                            let right = if short_circuited {
-                                terminal
-                            } else if let Some((guard, occurrence)) =
-                                self.guard(&arguments[0], visits)
-                            {
-                                Some(table.intern(terminal, guard, occurrence, holds))
-                            } else {
-                                terminal
-                            };
-                            if !short_circuited {
-                                pending.push(Task::Term(&arguments[1], right, syntax));
-                            }
+                            pending.push(Task::Term(&arguments[1], right, syntax));
                             pending.push(Task::Term(&arguments[0], terminal, syntax));
                         } else {
                             for argument in arguments.iter().rev() {
@@ -431,7 +388,7 @@ pub(super) struct Visit {
 
 /// Every visit of the package-wide owner walk over `nodes`, in walk order: the
 /// function owners in FR-322's order, each owner's body and then its
-/// termination measure, with the guard-literal pruning of FSpec FR-825.
+/// termination measure.
 pub(super) fn visits(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],

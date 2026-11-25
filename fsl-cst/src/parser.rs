@@ -18,6 +18,7 @@ use fsl_foundation::selection::{
     valid_selection_identity, ImportSelection, ModelSelection, ProfileSelection, SourceSelections,
 };
 use fsl_foundation::{Phase, Source, Span, SyntaxLimit};
+use ix_trace_rs::implements;
 
 #[derive(Clone, Debug)]
 struct Significant {
@@ -887,9 +888,9 @@ fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Spa
 }
 
 /// Bit constructors have a closed, width-specific hexadecimal token shape.
-/// If a constructor-shaped call violates that shape, report the malformed
-/// spelling at the constructor instead of exposing parser recovery's later
-/// `)`/identifier as an unrelated unexpected token (FR-397-AC-11).
+/// If a constructor-shaped call violates that shape, report the spelling
+/// failure at the constructor instead of exposing a later parser-recovery token.
+#[implements("FR-397-AC-11", "FR-091-AC-49")]
 fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic> {
     let text = source.text();
     let bytes = text.as_bytes();
@@ -955,13 +956,15 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
             at += 1;
         }
         let payload = &bytes[payload_start..at];
+        let uppercase_hex = payload.starts_with(b"0x")
+            && payload
+                .get(2..)
+                .is_some_and(|hex| hex.iter().any(|byte| (b'A'..=b'F').contains(byte)));
         let valid_payload = payload.len() == digits + 2
             && payload.starts_with(b"0x")
-            && payload[2..].iter().all(|byte| {
-                byte.is_ascii_digit()
-                    || (b'a'..=b'f').contains(byte)
-                    || (b'A'..=b'F').contains(byte)
-            });
+            && payload[2..]
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
         skip_ascii_space(bytes, &mut at);
         let has_close = bytes.get(at) == Some(&b')');
         let valid = has_bits && has_colon && valid_payload && has_close;
@@ -971,6 +974,11 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
             } else {
                 at.max(payload_start)
             };
+            let message = if uppercase_hex {
+                "expected a lowercase hex digit".to_owned()
+            } else {
+                format!("malformed {name:?} bit constructor")
+            };
             diagnostics.push(*super::diagnostic::error(
                 source,
                 CompleteCode::InvalidSyntax,
@@ -978,7 +986,7 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
                 Phase::Parse,
                 start,
                 end.max(start + name.len()),
-                format!("malformed {name:?} bit constructor"),
+                message,
             ));
         }
         cursor = (at + usize::from(has_close)).max(start + name.len());
