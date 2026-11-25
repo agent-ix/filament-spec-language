@@ -14,6 +14,7 @@ use filament_exact::{Integer, NodeKey, PathSegment, Rational};
 use fsl_forms::{DimensionEquivalenceForm, NameForm, RatioNumberForm, RatioNumberKind};
 use fsl_foundation::diagnostic::LimitExceeded;
 use fsl_foundation::{Setting, Span};
+use ix_trace_rs::implements;
 
 use super::units::{Assembled, Provisional, UnitDimension};
 use super::{AssemblyCause, AssemblyError, AssemblyLimits};
@@ -533,6 +534,7 @@ pub(super) struct Ownership<'a> {
 /// The unit's dimension equivalences decided in `phase`: in
 /// [`Phase::Base`] no equivalence and every error of that phase, in
 /// [`Phase::All`] the admitted equivalences or every error found.
+#[implements("FR-091-AC-60", "FR-091-AC-68")]
 pub(super) fn assemble(
     forms: &[DimensionEquivalenceForm],
     source: SourceView<'_>,
