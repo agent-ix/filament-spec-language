@@ -846,7 +846,8 @@ fn located_causes(source: &str) -> Vec<(ProtocolAnchorCause, String)> {
     "FR-218-AC-17",
     "FR-218-AC-18",
     "FR-884-AC-1",
-    "FR-884-AC-5"
+    "FR-884-AC-5",
+    "FR-513-AC-12"
 )]
 #[test]
 fn a_decision_reads_only_listed_facts_of_its_owner() {
@@ -984,6 +985,34 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
             at == "rx" && matches!(cause, ProtocolAnchorCause::Shadow { name, .. } if name == "rx")
         }),
         "the duplicate same-spelled binder is refused before guard checking: {same_name_refusals:?}"
+    );
+    let right_binder = same_spelled_other_owner
+        .rfind("rx: Plain")
+        .expect("the receive in the right branch declares rx");
+    assert!(
+        same_name_refusals.iter().any(|(cause, _)| {
+            matches!(cause,
+                ProtocolAnchorCause::Shadow {
+                    name,
+                    shadowed: crate::check::refusal::ShadowedDeclaration::Binder(_),
+                    span,
+                } if name == "rx" && span.start == right_binder)
+        }),
+        "the later right-branch binder owns the shadow refusal: {same_name_refusals:?}"
+    );
+    assert!(
+        !same_name_refusals.iter().any(|(cause, at)| {
+            at == "true"
+                && matches!(cause,
+                    ProtocolAnchorCause::SlotClause {
+                        node,
+                        slot: SlotKind::Finish,
+                        cause,
+                        ..
+                    } if node == "End"
+                        && matches!(cause.as_ref(), crate::check::CheckCause::AmbiguousName { name, .. } if name == "rx"))
+        }),
+        "a literal finish predicate does not carry the duplicate-name refusal: {same_name_refusals:?}"
     );
     for (binder, node) in [
         (
