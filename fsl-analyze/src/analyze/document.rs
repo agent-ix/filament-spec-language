@@ -27,6 +27,7 @@ use fsl_route::routing::Disposition;
 use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
+use ix_trace_rs::implements;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -1827,6 +1828,7 @@ fn requirement_items(
     fsl_route::request::items_from_requirements(package.graph().requirements(), registry, named)
 }
 
+#[implements("FR-940-AC-10")]
 fn resolve_one(
     package: &CheckedPackage,
     subject: &SubjectSelection,
