@@ -299,7 +299,7 @@ impl<'a> Run<'_, 'a> {
                         .iter()
                         .map(|state| {
                             self.system
-                                .state_key(state)
+                                .state_key(state, fsl_foundation::IdentityLimits::default())
                                 .map(|(bytes, _)| {
                                     fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
                                 })
@@ -471,7 +471,10 @@ impl<'a> Run<'_, 'a> {
                     stop = Some(Ok(halt));
                     return true;
                 }
-                let key = match self.system.state_key(state) {
+                let key = match self
+                    .system
+                    .state_key(state, fsl_foundation::IdentityLimits::default())
+                {
                     Ok((key, _)) => key,
                     Err(refusal) => {
                         stop = Some(Err(ModelCheckRefusal::Encoding(refusal)));
@@ -955,7 +958,7 @@ impl<'a> Decision<'_, '_, 'a> {
             .ok_or_else(|| fault("a-product-state-has-its-component"))?;
         self.run
             .system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map(|(bytes, _)| fsl_eval::simulation::StateKey::from_canonical_bytes(bytes))
             .map_err(ModelCheckRefusal::Encoding)
     }
