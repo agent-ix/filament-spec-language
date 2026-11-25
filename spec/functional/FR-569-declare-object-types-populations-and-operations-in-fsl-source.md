@@ -112,8 +112,8 @@ author declares in a model unit (FR-710) and selects with `model`.
 ### Surface syntax
 
 S1 SHALL parse these productions as declarations of a complete-V1 unit,
-written in the shared-grammar notation; `field` and `parameter` are the
-existing productions:
+written in the shared-grammar notation; `field` is the existing production,
+and this block defines the object-operation parameter form:
 
 ```ebnf
 object-decl       = [ 'abstract' ], 'object', ident,
@@ -122,8 +122,10 @@ object-decl       = [ 'abstract' ], 'object', ident,
                     '{', { object-member }, '}' ;
 object-member     = field | population-member | operation-member ;
 population-member = [ 'symmetric' ], 'population', ident, ';' ;
+operation-parameter = ( ident | 'by' ), ':', type-ref ;
 operation-member  = 'operation', ident,
-                    '(', [ parameter, { ',', parameter } ], ')',
+                    '(', [ operation-parameter,
+                           { ',', operation-parameter } ], ')',
                     [ ':', type-ref ],
                     [ 'redefines', ident, '::', member-name ],
                     { frame-clause }, ';' ;
@@ -147,7 +149,10 @@ today, `identity` already is reserved, and S1 SHALL treat `extends`, `symmetric`
 productions replace `TypeName = ModelName` and `OperationName = TypeName ::
 member` and extend the population positions (`PopulationBinder`,
 `PopulationBound`, `PopulationRow` and FR-391's population positions) to a
-single identifier. The assembler SHALL resolve a one-segment type name,
+single identifier. The `operation-parameter` name position admits `by` as its
+one reserved-spelling exception; no other reserved word is admitted in that
+position, and all other native binder positions are unchanged. The assembler
+SHALL resolve a one-segment type name,
 operation type or population name to a source declaration and a two-segment
 model name to a model declaration, as before. Everything that takes a
 `TypeName`, `OperationName` or population name today takes the source form

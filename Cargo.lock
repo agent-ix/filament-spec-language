@@ -1165,6 +1165,7 @@ dependencies = [
  "filament-verification-contracts",
  "fsl-analyze",
  "fsl-command",
+ "fsl-conformance",
  "fsl-cst",
  "fsl-eval",
  "fsl-forms",

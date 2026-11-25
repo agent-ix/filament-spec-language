@@ -128,25 +128,73 @@ fn decimal_conversion(
     store_value(values, Value::Decimal(result.value().clone()))
 }
 
-/// Run `op` on the operands `a` and `b` under `meter`.
-pub(crate) fn run(
-    op: &Op,
-    a: i64,
-    b: i64,
-    meter: &mut Meter,
-    types: &TypeEnvironment,
-    graph: &CheckedGraph,
-    environment: Option<&ObjectEnvironment>,
-    values: &mut Vec<Value>,
-    builders: &mut Vec<Vec<Value>>,
-    call_arguments: &mut Vec<Vec<Value>>,
-    call_frames: &mut Vec<(usize, u64)>,
-    frame_depth: &mut u32,
-    live_occurrences: &mut u64,
-    peak_live_occurrences: &mut u64,
-    iterations: &mut Vec<Option<Iteration>>,
-    losses: &mut Vec<LocatedLoss>,
-) -> Result<i64, Halt> {
+/// What the kernel operations of one run read and write: the meter, the
+/// checked context, and the values and stacks the operations share.
+pub(crate) struct KernelState<'a> {
+    meter: &'a mut Meter,
+    types: &'a TypeEnvironment,
+    graph: &'a CheckedGraph,
+    environment: Option<&'a ObjectEnvironment>,
+    /// The exact values register handles index.
+    pub(crate) values: Vec<Value>,
+    builders: Vec<Vec<Value>>,
+    call_arguments: Vec<Vec<Value>>,
+    call_frames: Vec<(usize, u64)>,
+    /// The calls entered and not yet left.
+    pub(crate) frame_depth: u32,
+    live_occurrences: u64,
+    /// The most value occurrences live at once.
+    pub(crate) peak_live_occurrences: u64,
+    iterations: Vec<Option<Iteration>>,
+    /// The loss records produced by completed kernel operations.
+    pub(crate) losses: Vec<LocatedLoss>,
+}
+
+impl<'a> KernelState<'a> {
+    /// The state before any operation, metering into `meter`.
+    pub(crate) fn new(
+        meter: &'a mut Meter,
+        graph: &'a CheckedGraph,
+        environment: Option<&'a ObjectEnvironment>,
+        initial_live_occurrences: u64,
+    ) -> Self {
+        Self {
+            meter,
+            types: graph.scope().types(),
+            graph,
+            environment,
+            values: Vec::new(),
+            builders: Vec::new(),
+            call_arguments: Vec::new(),
+            call_frames: Vec::new(),
+            frame_depth: 0,
+            live_occurrences: initial_live_occurrences,
+            peak_live_occurrences: initial_live_occurrences,
+            iterations: Vec::new(),
+            losses: Vec::new(),
+        }
+    }
+}
+
+/// Run `op` on the operands `a` and `b` over `state`.
+pub(crate) fn run(op: &Op, a: i64, b: i64, state: &mut KernelState<'_>) -> Result<i64, Halt> {
+    let KernelState {
+        meter,
+        types,
+        graph,
+        environment,
+        values,
+        builders,
+        call_arguments,
+        call_frames,
+        frame_depth,
+        live_occurrences,
+        peak_live_occurrences,
+        iterations,
+        losses,
+    } = state;
+    let meter: &mut Meter = meter;
+    let (types, graph, environment) = (*types, *graph, *environment);
     match &op.kind {
         OpKind::Literal(value) => store_value(values, value.clone()),
         OpKind::FrameStart => {
@@ -286,7 +334,7 @@ pub(crate) fn run(
             Ok(a)
         }
         OpKind::ChargeElement => {
-            fsl_eval::value::collections::charge_element(meter).map_err(Stop::from)?;
+            fsl_eval::value::collections::charge_element(meter)?;
             Ok(0)
         }
         OpKind::BuildRecord { declaration, slots } => {
@@ -411,8 +459,7 @@ pub(crate) fn run(
         OpKind::ConvertText { target } => {
             let source = value(values, a)?;
             let (converted, loss) =
-                fsl_eval::value::convert_text_value(types, target, &source, meter)
-                    .map_err(Stop::from)?;
+                fsl_eval::value::convert_text_value(types, target, &source, meter)?;
             if let Some(loss) = loss {
                 losses.push(LocatedLoss {
                     location: op.location.clone(),
@@ -654,8 +701,7 @@ pub(crate) fn run(
             let Value::Collection(collection) = value(values, a)? else {
                 return Err(Halt::Fault("jit-contains-collection-is-covered"));
             };
-            let result = fsl_eval::value::collections::contains(&item, &collection, meter)
-                .map_err(Stop::from)?;
+            let result = fsl_eval::value::collections::contains(&item, &collection, meter)?;
             match result {
                 Value::Boolean(found) => Ok(i64::from(found)),
                 _ => Err(Halt::Fault("jit-contains-result-is-boolean")),
@@ -693,9 +739,8 @@ pub(crate) fn run(
             let Some(value) = collection.elements().get(position).cloned() else {
                 return Err(Halt::Stop(Stop::Undefined(Undefined::NoElement)));
             };
-            fsl_eval::value::collections::charge_element(meter).map_err(Stop::from)?;
-            let value =
-                fsl_eval::value::collections::retain_scalar(value, meter).map_err(Stop::from)?;
+            fsl_eval::value::collections::charge_element(meter)?;
+            let value = fsl_eval::value::collections::retain_scalar(value, meter)?;
             match value {
                 Value::Boolean(value) => Ok(i64::from(value)),
                 value => store_value(values, value),
