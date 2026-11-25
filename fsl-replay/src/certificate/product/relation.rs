@@ -12,6 +12,7 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::{ExpansionLimit, StateKey, TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::value::ModelRelationEvaluation;
 use fsl_semantics::check::HyperForm;
+use ix_trace_rs::implements;
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use super::{
@@ -47,6 +48,7 @@ struct EdgeWire<K> {
 }
 
 impl HyperTransitionEdge {
+    #[implements("FR-163-AC-12")]
     fn wire<K>(&self, state: impl Fn(&StateKey) -> K) -> serde_json::Result<EdgeWire<K>> {
         Ok(EdgeWire {
             pre_state: state(&self.pre_state),
@@ -111,6 +113,7 @@ pub struct HyperTransitionTuple {
 /// FSpec FR-331's rejection tuple: unlike a certificate edge, each edge's
 /// `pre_state` and `post_state` is a State object `{key}`.
 impl Serialize for HyperTransitionTuple {
+    #[implements("FR-163-AC-12")]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let transitions = self
             .transitions

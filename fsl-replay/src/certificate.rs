@@ -14,6 +14,7 @@
 //! implementation.
 
 pub use filament_contract_model::CertificateMember;
+use ix_trace_rs::implements;
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use fsl_eval::simulation::StateKey;
@@ -218,6 +219,7 @@ fn write_state_loci(tuple: &mut serde_json::Value) {
 }
 
 impl Serialize for CertificateLocus {
+    #[implements("FR-169-AC-14", "FR-245-AC-7", "FR-338-AC-12")]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::ProbabilityProductState(state) => {
