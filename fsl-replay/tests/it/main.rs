@@ -66,12 +66,15 @@ mod refinement_ring;
 mod refinement_smt;
 mod refinement_step;
 mod refinement_unmapped;
+mod replay_accounting_limit;
+mod replay_cancellation_boundary;
 mod replay_result_rows;
 mod request_clocks_for_replay;
 #[path = "../../../tests/support/ring_world.rs"]
 mod ring_world;
 mod run_axes;
 mod script_search;
+mod smt_setting_operation;
 mod source_diagnostic_outcome;
 mod stage_limit_named_root_only;
 mod static_subject;
