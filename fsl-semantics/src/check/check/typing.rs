@@ -53,7 +53,7 @@ use fsl_forms::{
     FieldInitializer, NameForm, PopulationForm, TypeForm,
 };
 use fsl_foundation::Span;
-use ix_trace_rs::string_edge;
+use ix_trace_rs::{implements, string_edge};
 
 /// An operand's expected type or hint: borrowed from the declarations or
 /// the caller, or owned when an operand typed before it formed it.
@@ -1510,6 +1510,7 @@ impl<'a> Typer<'a> {
     /// instead of deleting the corresponding variant.
     #[deny(clippy::wildcard_enum_match_arm)]
     #[deny(clippy::match_wildcard_for_single_variants)]
+    #[implements("FR-063-AC-7")]
     fn infer_form<'e, 'r>(
         &mut self,
         expression: ExprRef<'e>,
