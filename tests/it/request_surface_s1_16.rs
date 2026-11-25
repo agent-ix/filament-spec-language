@@ -679,13 +679,12 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
     );
 }
 
-/// FR-1038-AC-2, FSpec FR-824-AC-2/AC-3: the plan is selected by declared
-/// name, an omitted name runs the only plan, and bad selections or inputs
-/// refuse at their `/verification_plan` pointers. The supplied initialization
-/// snapshot provides the finite universe its state subject requires (FR-120).
+/// FR-1038-AC-2, FSpec FR-824-AC-3: the plan is selected by declared name,
+/// an omitted name runs the only plan, and bad selections or inputs refuse at
+/// their `/verification_plan` pointers. The supplied initialization snapshot
+/// provides the finite universe its state subject requires (FR-120).
 #[test]
 #[trace("TC-3018", "FR-1038-AC-2")]
-#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
