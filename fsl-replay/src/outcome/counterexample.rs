@@ -33,6 +33,57 @@ pub enum CounterexampleWireError {
     Unspelled(&'static str),
 }
 
+/// The checked type and enum declarations used to spell probabilistic values.
+/// This keeps one coherent value schema together at the counterexample wire
+/// boundary.
+pub struct ProbabilisticValueSchema<'a> {
+    types: &'a filament_semantic_value::declaration::TypeEnvironment,
+    variants: &'a [fsl_semantics::check::VariantTypeDeclaration],
+    enum_members: Option<&'a filament_semantic_value::enumeration::EnumMemberIndex>,
+}
+
+impl<'a> ProbabilisticValueSchema<'a> {
+    /// Build the schema from the checked type and variant declarations.
+    pub fn new(
+        types: &'a filament_semantic_value::declaration::TypeEnvironment,
+        variants: &'a [fsl_semantics::check::VariantTypeDeclaration],
+    ) -> Self {
+        Self {
+            types,
+            variants,
+            enum_members: None,
+        }
+    }
+
+    /// Add the authenticated enum-member index for values that use enums.
+    #[must_use]
+    pub fn with_enum_members(
+        mut self,
+        enum_members: &'a filament_semantic_value::enumeration::EnumMemberIndex,
+    ) -> Self {
+        self.enum_members = Some(enum_members);
+        self
+    }
+
+    fn encode(&self, value: &Value) -> Option<Json> {
+        match self.enum_members {
+            Some(enum_members) => {
+                fsl_eval::simulation::model::typed_value_json_with_enum_members(
+                    value,
+                    self.types,
+                    self.variants,
+                    enum_members,
+                )
+            }
+            None => fsl_eval::simulation::model::typed_value_json(
+                value,
+                self.types,
+                self.variants,
+            ),
+        }
+    }
+}
+
 /// Why a temporal counterexample document failed its typed FR-364 readback.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum TemporalCounterexampleReadRefusal {
@@ -2011,8 +2062,7 @@ pub fn probabilistic_wire(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
     claim_type: &str,
-    types: &filament_semantic_value::declaration::TypeEnvironment,
-    variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    value_schema: &ProbabilisticValueSchema<'_>,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2022,7 +2072,7 @@ pub fn probabilistic_wire(
     )],
 ) -> Result<Json, CounterexampleWireError> {
     probabilistic_wire_using(witness, bound, claim_type, state_key, scheduler, |value| {
-        fsl_eval::simulation::model::typed_value_json(value, types, variants)
+        value_schema.encode(value)
     })
 }
 
@@ -2035,9 +2085,7 @@ pub fn probabilistic_wire_with_enum_members(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
     claim_type: &str,
-    types: &filament_semantic_value::declaration::TypeEnvironment,
-    variants: &[fsl_semantics::check::VariantTypeDeclaration],
-    enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
+    value_schema: &ProbabilisticValueSchema<'_>,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2046,14 +2094,10 @@ pub fn probabilistic_wire_with_enum_members(
         fsl_eval::simulation::model::ScheduledIdentity,
     )],
 ) -> Result<Json, CounterexampleWireError> {
-    probabilistic_wire_using(witness, bound, claim_type, state_key, scheduler, |value| {
-        fsl_eval::simulation::model::typed_value_json_with_enum_members(
-            value,
-            types,
-            variants,
-            enum_members,
-        )
-    })
+    if value_schema.enum_members.is_none() {
+        return Err(CounterexampleWireError::Unspelled("enum member index"));
+    }
+    probabilistic_wire(witness, bound, claim_type, value_schema, state_key, scheduler)
 }
 
 fn probabilistic_wire_using(
@@ -2235,8 +2279,7 @@ pub fn probabilistic_undefined_wire(
     claim: &OccurrenceKey,
     bound: &fsl_semantics::check::Bound,
     claim_type: &str,
-    types: &filament_semantic_value::declaration::TypeEnvironment,
-    variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    value_schema: &ProbabilisticValueSchema<'_>,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2250,8 +2293,7 @@ pub fn probabilistic_undefined_wire(
         &witness.path,
         bound,
         claim_type,
-        types,
-        variants,
+        value_schema,
         state_key,
         scheduler,
     )?;

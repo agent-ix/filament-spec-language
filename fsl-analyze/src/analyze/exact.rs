@@ -3962,14 +3962,16 @@ fn finish_replay(
             let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
                 system.state_key(state).ok().map(|(_, key)| key)
             };
+            let value_schema = fsl_replay::ProbabilisticValueSchema::new(
+                input.types,
+                input.variant_types,
+            );
             let wire = match input.enum_members {
                 Some(enum_members) => fsl_replay::probabilistic_wire_with_enum_members(
                     witness,
                     bound,
                     claim_type,
-                    input.types,
-                    input.variant_types,
-                    enum_members,
+                    &value_schema.with_enum_members(enum_members),
                     &state_key,
                     spelled_scheduler,
                 ),
@@ -3977,8 +3979,7 @@ fn finish_replay(
                     witness,
                     bound,
                     claim_type,
-                    input.types,
-                    input.variant_types,
+                    &value_schema,
                     &state_key,
                     spelled_scheduler,
                 ),

@@ -767,7 +767,7 @@ mod tp4 {
         let assertion = script
             .lines()
             .filter_map(|line| line.strip_prefix("(assert ")?.strip_suffix(')'))
-            .last()
+            .next_back()
             .expect("query has a final assertion");
         let mut proof = format!("(assume a0 {assertion})");
         let mut ids = Vec::with_capacity(positions.len() + 1);

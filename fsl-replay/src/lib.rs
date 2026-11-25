@@ -466,6 +466,7 @@ pub use outcome::{
     ConformanceGlobalOutput, ConformanceMessageBoundOutput, ConformanceObligationOutput,
     ConformancePrefixOutput, ConformanceProjectionOutput, ConformanceRecordingIdentity,
     ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
+    ProbabilisticValueSchema,
     OmittedWitness, Operation, OutcomeDiagnostic, OutcomeDiagnosticRead, OutcomeDocument,
     OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason,
     ProtocolConformanceOutput, ProtocolWire, ReadCounterexample, ResultLimit, ResultValue,

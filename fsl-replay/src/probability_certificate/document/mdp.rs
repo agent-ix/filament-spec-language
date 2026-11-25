@@ -300,6 +300,17 @@ struct Context<'a, 'control> {
     observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
 }
 
+struct FairProgress<'a> {
+    zero: Option<&'a BTreeSet<ProbabilityProductKey>>,
+    selected_policy: Option<&'a BTreeMap<ProbabilityProductKey, usize>>,
+}
+
+pub(super) struct ValueBoundControl<'a, 'control> {
+    pub(super) limits: ProbabilityDocumentLimits,
+    pub(super) cancel: &'a Cancel,
+    pub(super) reward: &'a super::super::reward::RewardControl<'control>,
+}
+
 /// Independently reconstruct the unbounded fair eventual MDP and verify that
 /// the offered deterministic scheduler has no unfair bottom component.
 pub(super) fn fair_scheduler_is_fair(
@@ -864,7 +875,18 @@ fn progress_failure(
     objective: ProbabilityObjective,
     cx: &mut Context<'_, '_>,
 ) -> Result<Option<(ProbabilityCertificateRule, ProbabilityProductKey)>, ProbabilityDocumentError> {
-    progress_failure_with_fair_zero(graph, values, sums, ranks, objective, None, None, cx)
+    progress_failure_with_fair_zero(
+        graph,
+        values,
+        sums,
+        ranks,
+        objective,
+        FairProgress {
+            zero: None,
+            selected_policy: None,
+        },
+        cx,
+    )
 }
 
 fn progress_failure_with_fair_zero(
@@ -873,8 +895,7 @@ fn progress_failure_with_fair_zero(
     sums: &Sums,
     ranks: &BTreeMap<ProbabilityProductKey, u64>,
     objective: ProbabilityObjective,
-    fair_zero: Option<&BTreeSet<ProbabilityProductKey>>,
-    selected_policy: Option<&BTreeMap<ProbabilityProductKey, usize>>,
+    fair: FairProgress<'_>,
     cx: &mut Context<'_, '_>,
 ) -> Result<Option<(ProbabilityCertificateRule, ProbabilityProductKey)>, ProbabilityDocumentError> {
     for (key, state) in &graph.states {
@@ -883,7 +904,7 @@ fn progress_failure_with_fair_zero(
         cx.tick(CyclicMdpProbabilityPhase::Progress)?;
         let certified_zero = !cx.reward
             && *value == rational(0)
-            && (!cx.fair_mdp || fair_zero.is_some_and(|states| states.contains(key)));
+            && (!cx.fair_mdp || fair.zero.is_some_and(|states| states.contains(key)));
         if state.terminal == Some(true) || certified_zero {
             if *rank != 0 {
                 return Ok(Some((ProbabilityCertificateRule::RankBroken, key.clone())));
@@ -933,7 +954,7 @@ fn progress_failure_with_fair_zero(
         let mut any = false;
         let mut all = true;
         for (index, choice) in state.choices.iter().enumerate() {
-            if selected_policy
+            if fair.selected_policy
                 .and_then(|policy| policy.get(key))
                 .is_some_and(|selected| *selected != index)
             {
@@ -953,7 +974,7 @@ fn progress_failure_with_fair_zero(
                 any |= lower;
             }
         }
-        let progress = if let Some(policy) = selected_policy.filter(|_| cx.fair_mdp) {
+        let progress = if let Some(policy) = fair.selected_policy.filter(|_| cx.fair_mdp) {
             let progresses = |index: usize| {
                 state.choices.get(index).is_some_and(|choice| {
                     choice.iter().any(|edge| {
@@ -1261,14 +1282,11 @@ pub(super) fn check_with_value_bound_control<'a, 'control>(
     item: &ObligationIdentity,
     bytes: &[u8],
     offer: Offer<'_>,
-    side: SubsystemBoundKind,
-    limits: ProbabilityDocumentLimits,
-    cancel: &'a Cancel,
-    control: &'a super::super::reward::RewardControl<'control>,
+    control: ValueBoundControl<'a, 'control>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let mut cx = Context::new(limits, cancel, None);
-    cx.reward_control = Some(control);
-    cx.bound_side = Some(side);
+    let mut cx = Context::new(control.limits, control.cancel, None);
+    cx.reward_control = Some(control.reward);
+    cx.bound_side = offer.side;
     check_with_context(system, claims, item, bytes, offer, cx)
 }
 
@@ -1542,7 +1560,7 @@ fn check_with_context(
         )?;
         for key in &states {
             cx.tick(CyclicMdpProbabilityPhase::Rows)?;
-            if values.get(&key) != Some(&rational(0)) {
+            if values.get(key) != Some(&rational(0)) {
                 return Ok(rejected(
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
@@ -1585,11 +1603,13 @@ fn check_with_context(
             &action_sums,
             &ranks,
             objective,
-            fair_zero.as_ref(),
-            if fair_upper_bound || (fair_mdp && !policy.is_empty()) {
-                Some(&policy)
-            } else {
-                None
+            FairProgress {
+                zero: fair_zero.as_ref(),
+                selected_policy: if fair_upper_bound || (fair_mdp && !policy.is_empty()) {
+                    Some(&policy)
+                } else {
+                    None
+                },
             },
             &mut cx,
         )? {

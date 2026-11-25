@@ -209,13 +209,11 @@ pub(super) fn unwrap(
             if root.remove("policy").is_some() {
                 policy = Some(policy_hints(bytes)?);
             }
-            if fair {
-                if !existential.expect("fair objective has a role") {
-                    if root.contains_key("ranking") || policy.is_some() {
-                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
-                    }
-                    root.insert("ranking".into(), json!([]));
+            if fair && !existential.expect("fair objective has a role") {
+                if root.contains_key("ranking") || policy.is_some() {
+                    return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                 }
+                root.insert("ranking".into(), json!([]));
             }
             match side {
                 SubsystemBoundKind::Upper => {

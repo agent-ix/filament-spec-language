@@ -34,7 +34,8 @@ pub use counterexample::{
     replay_model_trace_document, replay_task_product_trace, sampled_witness_wire, state_key_wire,
     task_product_transition_wire, task_source_transition_wire, task_temporal_wire,
     task_temporal_wire_with_queue_growth, task_transition_wire, temporal_wire,
-    CounterexampleWireError, ProtocolWire, ReadCounterexample, TaskProductCounterexampleDocument,
+    CounterexampleWireError, ProbabilisticValueSchema, ProtocolWire, ReadCounterexample,
+    TaskProductCounterexampleDocument,
     TaskProductTraceReplayRefusal, TemporalCounterexampleReadRefusal, TraceAlphabet,
 };
 
