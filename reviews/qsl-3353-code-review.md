@@ -51,3 +51,16 @@ The PR is mergeable at 8c4787bfd8f41e634840d81ac3f5473283bdaf1a.
 - fsl-analyze model_check/state_graph.rs `check_state_graph`, `instances`, `no_initial_state` (examined); analyze/state_graph_item.rs `run_digital`, `run_timed` (examined); fsl-replay model_check/graph_settle.rs (context_only).
 - Tests: `the_checker_refuses_no_initial_state_before_no_instance`, `a_clause_over_no_initial_state_is_refused_before_no_instance`, `certificates_reject_the_other_forms_list_and_accept_an_empty_one` (examined).
 - FR-169 Check and AC-14, AC-15; FR-125 Instancing and AC-13 (examined); FR-339 refusals (context_only); FSpec FR-361-AC-16 (context_only).
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | The closure checker now refuses `NoInitialState` before `NotLiveness`. For the one case where both apply, a component certificate offered for the deadlock-freedom item (one instance whatever the initial list holds) over a subject with no initial state, the settlement changes from `failed` (`NotLiveness`, via settle.rs `Row::of_check` `Err(_)`) to `inconclusive`/`no-initial-state`. Neither outcome proves anything. FR-125 Instancing orders only the instancing outcomes, and FR-339 does not order its form refusals against `NoInitialState`, so the spec does not decide this. No test covers it. It does not block. A one-sentence ruling in FR-339 would settle it. | fsl-replay/src/certificate/closure.rs:664-685, fsl-replay/src/model_check/item.rs:263, fsl-replay/src/model_check/settle.rs:973-977 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | Moved to QSL-3333 (comment on QSL-3333 confirms), which edits the same FR-169 paragraph; pre-existing on main, outside this diff. |
+| FND-002 | deferred | Not blocking: refusal against refusal, never `proved`; the spec leaves the order open, so the ruling belongs in FR-339 under its own ticket or QSL-3333's spec pass. The code lead decides whether to file it. |

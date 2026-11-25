@@ -164,6 +164,12 @@ certificate check cannot use that selection to omit any memory constraint.
   check; FR-127 settles the refusal `failed`, never `proved`.
 - The component checks SHALL refuse an item that is not a TP-4 clause with
   the typed refusal `NotLiveness`.
+- The closure and component checks SHALL refuse a subject with no initial
+  state `NoInitialState`, after an unbounded root and before `NoInstance`
+  (the order of FR-125 "Instancing") and also before
+  `LivenessNeedsComponents` and `NotLiveness`, so a component certificate
+  offered for the deadlock-freedom item over such a subject settles
+  `inconclusive`, `no-initial-state` (FR-127), never `failed`.
 - The checker SHALL run FR-338's check on the certificate's closure,
   without the monitor-rejection part of `BadState`; a deadlocked state is
   not bad for a TP-4 item, whose terminal state reads by its stutter edge
