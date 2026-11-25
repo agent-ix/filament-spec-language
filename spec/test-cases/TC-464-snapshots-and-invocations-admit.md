@@ -123,8 +123,9 @@ their document identity.
     value>]}}` and, in a separate snapshot, the nullary spelling
     `{"variant":{"type":"<the checked Holder declaration
     identity>","case":"Empty"}}`. Also try a tuple with one and three
-    components, a `Has` case with zero and two components, a `Holder`
-    case named `Missing`, and each carrier with an extra payload member.
+    components, a `Has` case with `"components":[]` and with two
+    components, a `Holder` case named `Missing`, and each carrier (record,
+    tuple, `Has` and `Empty`) with an extra payload member.
     Read the three admitted values back from the observation and read their
     nested references as typed data.
 
@@ -197,9 +198,9 @@ Bind step 11 to `FR-106-AC-84`.
 - Step 11: the record, tuple, payload-bearing union and nullary union values
   admit with their exact nominal declaration identities; tuple and union
   components remain in declaration order, and every nested reference is the
-  same checked reference value supplied. The tuple and `Has` component count
-  mismatches and the `Missing` case refuse
-  `invalid_runtime_input`/`invalid-value`; an extra tuple or variant payload
-  member refuses `invalid_runtime_input`/`unknown-member`. Each of these
-  controls, and the record's extra-member control, refuses before an
-  observation is produced.
+  same checked reference value supplied. The tuple component count
+  mismatches, the `Has` case with `"components":[]` and with two components,
+  and the `Missing` case refuse `invalid_runtime_input`/`invalid-value`; each
+  carrier's extra payload member, the record's included, refuses
+  `invalid_runtime_input`/`unknown-member`. Each of these controls refuses
+  before an observation is produced.
