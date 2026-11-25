@@ -177,14 +177,17 @@ impl SourceEnumCatalog {
         budget: &mut NativeJoinBudget,
     ) -> Result<Self, SourceEnumCatalogError> {
         let at = locus(0, "source_enum_catalog");
-        work(budget, at)?;
-        charge(budget, at, NativeJoinChargeKind::Storage, 1)?;
+        let has_enum_rows = joined.source_enum_rows().next().is_some() || !model_rows.is_empty();
+        if has_enum_rows {
+            work(budget, at)?;
+            charge(budget, at, NativeJoinChargeKind::Storage, 1)?;
+        }
         let mut sources = Vec::new();
         let mut rows = joined.source_enum_rows();
         loop {
+            let Some(row) = rows.next() else { break };
             let at = locus(sources.len(), "source_enum_catalog_source");
             work(budget, at)?;
-            let Some(row) = rows.next() else { break };
             native_row::enum_declaration(budget, at, &row.declaration)?;
             native_row::items(budget, at, row.members.len())?;
             for member in &row.members {
@@ -235,10 +238,16 @@ impl SourceEnumCatalog {
         }
         // This builder returns one fresh, uniquely owned index. It is never
         // extended after a shallow clone, which would copy the index's map.
-        let index_at = locus(0, "source_enum_catalog_index");
-        work(budget, index_at)?;
-        charge(budget, index_at, NativeJoinChargeKind::Storage, 1)?;
-        let mut members = Self::model_runtime_members(&models, budget)?;
+        // An identity-only catalog with no enum rows needs only the empty
+        // index value; it has no index entries to inspect or own.
+        let mut members = if sources.is_empty() && models.is_empty() {
+            filament_semantic_value::enumeration::EnumMemberIndex::default()
+        } else {
+            let index_at = locus(0, "source_enum_catalog_index");
+            work(budget, index_at)?;
+            charge(budget, index_at, NativeJoinChargeKind::Storage, 1)?;
+            Self::model_runtime_members(&models, budget)?
+        };
         for (index, row) in sources.iter().enumerate() {
             let at = locus(index, "source_enum_catalog_members");
             let mut cases = Vec::new();
@@ -841,10 +850,17 @@ mod tests {
     fn source_enum_catalog_native_allowances_keep_one_cumulative_prefix_and_first_denial() {
         let fixture = fixture(ENUMS, false);
         let mut measured = NativeJoinBudget::new(u64::MAX, u64::MAX);
-        build(&fixture, &mut measured).unwrap();
+        let catalog = build(&fixture, &mut measured).unwrap();
+        assert!(
+            !catalog.0.sources.is_empty(),
+            "the measured catalog contains actual source enum rows"
+        );
         let spent = measured.consumed();
+        assert!(spent.work > 0, "source enum rows consume work");
+        assert!(spent.storage > 0, "source enum rows consume storage");
         let mut exact = NativeJoinBudget::new(spent.work, spent.storage);
-        build(&fixture, &mut exact).unwrap();
+        let admitted = build(&fixture, &mut exact).unwrap();
+        assert!(!admitted.0.sources.is_empty());
         assert_eq!(exact.consumed(), spent);
         for (work_limit, storage_limit, kind) in [
             (0, spent.storage, NativeJoinChargeKind::Work),
