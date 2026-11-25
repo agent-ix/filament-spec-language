@@ -1,0 +1,60 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model Parts = "example/parts";
+
+// A machine is reserved only when it is free.
+pre MachineFree using v on Parts::MachiningStation::reserve { not self.reserved }
+
+// Releasing a machine leaves it free and idle.
+post MachineReleased using v on Parts::MachiningStation::release { not self.reserved and not self.busy }
+
+// A work order releases a part to machining; machining reserves a machine,
+// processes the part and hands it to inspection. Inspection passes the part
+// to assembly, sends it back for rework (at most twice), or scraps it.
+// Defect on purpose: the pass and rework guards can both be true.
+protocol PartFlow using p over (job: Parts::Job) on origin {
+  role Planning on Parts::PlanningService;
+  role Machining on Parts::MachiningStation;
+  role Inspection on Parts::InspectionStation;
+  role Assembly on Parts::AssemblyStation;
+  channel Release from Planning to Machining carries Parts::WorkOrder
+    ordering fifo by (m: Parts::WorkOrder) { m.part } delivery at-least-once capacity 4 overflow block;
+  channel ToInspect from Machining to Inspection carries Parts::Handoff
+    ordering fifo by (m: Parts::Handoff) { m.part } delivery at-least-once capacity 4 overflow block;
+  channel ToAssemble from Inspection to Assembly carries Parts::Handoff
+    ordering fifo by (m: Parts::Handoff) { m.part } delivery at-least-once capacity 4 overflow block;
+  run sequence Main {
+    send Released via Release as (order: Parts::WorkOrder) { order.part = job.part };
+    receive Received via Release of Released as (got: Parts::WorkOrder) { got.ok };
+    attempt Reserved by Machining on Parts::MachiningStation::reserve contracts [MachineFree]
+      as (reserved: Boolean) { reserved };
+    attempt Processed by Machining on Parts::MachiningStation::process contracts []
+      as (processed: Boolean) { processed };
+    effect Machined of Processed as (machined: Parts::EffectView) { machined.ok };
+    send Handed via ToInspect as (handed: Parts::Handoff) { handed.part = job.part };
+    receive Inspected via ToInspect of Handed as (inspected: Parts::Handoff) { inspected.ok };
+    choice Verdict by Inspection visible (inspected.pass, inspected.rework) {
+      case pass when { inspected.pass } sequence Pass {
+        send ToAssembly via ToAssemble as (onward: Parts::Handoff) { onward.part = job.part };
+        receive AtAssembly via ToAssemble of ToAssembly as (arrived: Parts::Handoff) { arrived.ok };
+        attempt Assembled by Assembly on Parts::AssemblyStation::assemble contracts []
+          as (assembled: Boolean) { assembled };
+      }
+      case rework when { inspected.rework } sequence Rework {
+        repeat Again by Inspection visible (inspected.rework) max 2 while { inspected.rework }
+          sequence Remachine {
+            attempt Remachined by Machining on Parts::MachiningStation::process contracts []
+              as (again: Boolean) { again };
+          }
+          exhausted sequence GiveUp {}
+      }
+      case scrap when { not inspected.pass and not inspected.rework } sequence Scrap {
+        attempt Freed by Machining on Parts::MachiningStation::release contracts [MachineReleased]
+          as (freed: Boolean) { freed };
+      }
+    }
+    commit Done by Planning as (done: Parts::CommitView) { done.ok };
+  }
+  finish Over as (closing: Parts::ClosureView) { closing.complete };
+}

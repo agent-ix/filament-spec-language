@@ -14,7 +14,7 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::simulation::model::ModelSystem;
 
@@ -23,6 +23,8 @@ use crate::refinement::failure::Taken;
 /// One hidden abstract candidate at one position of a concrete lasso.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CandidateFairState {
+    /// Stable ordinal of this candidate in the position's canonical block order.
+    pub ordinal: usize,
     /// The canonical key of this candidate state.
     pub key: Vec<u8>,
     /// Abstract transitions enabled by this candidate alone.
@@ -32,10 +34,14 @@ pub struct CandidateFairState {
 /// One candidate-preserving edge of a concrete lasso.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CandidateFairStep {
+    /// Candidate ordinal at the source position.
+    pub pre_candidate: usize,
     /// Candidate key at the source position.
     pub pre_state: Vec<u8>,
     /// Abstract transition taken, or `None` for candidate stutter.
     pub transition: Option<Identity>,
+    /// Candidate ordinal at the next lasso position.
+    pub post_candidate: usize,
     /// Candidate key at the next lasso position.
     pub post_state: Vec<u8>,
     /// The steps after `transition` when the edge runs through intermediate
@@ -63,6 +69,65 @@ pub enum CandidateLivenessError {
     Fairness(FairnessError),
 }
 
+/// Resolve a candidate row's destination ordinal from its occurrence among
+/// ordered relation rows with the same post-state. Duplicate keys retain
+/// destination order even when distinct source keys converge to them.
+pub fn candidate_edge_target_ordinal(
+    source: &[CandidateFairState],
+    target: &[CandidateFairState],
+    pre_candidate: usize,
+    post_state: &[u8],
+    post_occurrence: usize,
+) -> Result<usize, CandidateLivenessError> {
+    source
+        .iter()
+        .find(|candidate| candidate.ordinal == pre_candidate)
+        .ok_or(CandidateLivenessError::InvalidGraph)?;
+    let matches: Vec<usize> = target
+        .iter()
+        .filter(|candidate| candidate.key == post_state)
+        .map(|candidate| candidate.ordinal)
+        .collect();
+    if matches.len() == 1 {
+        return Ok(matches[0]);
+    }
+    matches
+        .get(post_occurrence)
+        .copied()
+        .ok_or(CandidateLivenessError::InvalidGraph)
+}
+
+/// Resolve the destination block of a stutter row. Stuttering preserves a
+/// candidate's key, so its occurrence is counted among prior source rows
+/// with that same key that also survive at the target.
+pub fn candidate_stutter_target_ordinal(
+    source: &[CandidateFairState],
+    target: &[CandidateFairState],
+    pre_candidate: usize,
+    surviving_candidates: &[usize],
+) -> Result<usize, CandidateLivenessError> {
+    let source_index = source
+        .iter()
+        .position(|candidate| candidate.ordinal == pre_candidate)
+        .ok_or(CandidateLivenessError::InvalidGraph)?;
+    let source_candidate = &source[source_index];
+    let post_occurrence = source[..=source_index]
+        .iter()
+        .filter(|candidate| {
+            candidate.key == source_candidate.key
+                && surviving_candidates.contains(&candidate.ordinal)
+        })
+        .count()
+        .saturating_sub(1);
+    candidate_edge_target_ordinal(
+        source,
+        target,
+        pre_candidate,
+        &source_candidate.key,
+        post_occurrence,
+    )
+}
+
 /// Check whether a concrete lasso has a coherent fair hidden-candidate run.
 ///
 /// `positions` contains the candidate states and per-candidate enabled sets
@@ -76,27 +141,74 @@ pub fn candidate_lasso_has_fair_run(
     constraints: &[Constraint],
     cancel: &Cancel,
 ) -> Result<bool, CandidateLivenessError> {
+    candidate_lasso_has_fair_run_inner(positions, steps, None, constraints, cancel)
+}
+
+/// Check a fair candidate run that also traverses at least one marked edge
+/// infinitely often.
+pub fn candidate_lasso_has_fair_run_with_recurring_edge(
+    positions: &[Vec<CandidateFairState>],
+    steps: &[Vec<CandidateFairStep>],
+    recurring: &[Vec<bool>],
+    constraints: &[Constraint],
+    cancel: &Cancel,
+) -> Result<bool, CandidateLivenessError> {
+    candidate_lasso_has_fair_run_inner(positions, steps, Some(recurring), constraints, cancel)
+}
+
+fn candidate_lasso_has_fair_run_inner(
+    positions: &[Vec<CandidateFairState>],
+    steps: &[Vec<CandidateFairStep>],
+    recurring: Option<&[Vec<bool>]>,
+    constraints: &[Constraint],
+    cancel: &Cancel,
+) -> Result<bool, CandidateLivenessError> {
     if positions.is_empty() || positions.len() != steps.len() {
         return Err(CandidateLivenessError::InvalidGraph);
     }
+    if recurring.is_some_and(|edges| {
+        edges.len() != steps.len()
+            || edges
+                .iter()
+                .zip(steps)
+                .any(|(marked, rows)| marked.len() != rows.len())
+    }) {
+        return Err(CandidateLivenessError::InvalidGraph);
+    }
+    let recurring_identity = Identity::new(u64::MAX);
     let mut graph = Graph::new();
-    let mut vertices = BTreeMap::<(usize, Vec<u8>), Vertex>::new();
+    let mut vertices = BTreeMap::<(usize, usize), (Vec<u8>, Vertex)>::new();
     for (position, candidates) in positions.iter().enumerate() {
         for candidate in candidates {
-            let vertex = graph.add_vertex(candidate.enabled.iter().copied());
-            vertices.insert((position, candidate.key.clone()), vertex);
+            let enabled = candidate
+                .enabled
+                .iter()
+                .copied()
+                .chain(recurring.is_some().then_some(recurring_identity));
+            let vertex = graph.add_vertex(enabled);
+            if vertices
+                .insert(
+                    (position, candidate.ordinal),
+                    (candidate.key.clone(), vertex),
+                )
+                .is_some()
+            {
+                return Err(CandidateLivenessError::InvalidGraph);
+            }
         }
     }
     for (position, rows) in steps.iter().enumerate() {
         let next_position = (position + 1) % positions.len();
-        for row in rows {
+        for (row_index, row) in rows.iter().enumerate() {
             let from = vertices
-                .get(&(position, row.pre_state.clone()))
-                .copied()
+                .get(&(position, row.pre_candidate))
+                .filter(|(key, _)| *key == row.pre_state)
+                .map(|(_, vertex)| *vertex)
                 .ok_or(CandidateLivenessError::InvalidGraph)?;
             let to = vertices
-                .get(&(next_position, row.post_state.clone()))
-                .copied()
+                .get(&(next_position, row.post_candidate))
+                .filter(|(key, _)| *key == row.post_state)
+                .map(|(_, vertex)| *vertex)
                 .ok_or(CandidateLivenessError::InvalidGraph)?;
             // The edge runs through its intermediate configurations, each a
             // vertex enabling what the protocol enables there.
@@ -113,14 +225,37 @@ pub fn candidate_lasso_has_fair_run(
                 source = middle;
                 leaving = label(hop.transition);
             }
-            graph
-                .add_edge(source, to, leaving)
-                .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+            let is_recurring = recurring
+                .and_then(|edges| edges.get(position))
+                .and_then(|edges| edges.get(row_index))
+                .copied()
+                .unwrap_or(false);
+            if recurring.is_some() {
+                let middle = graph.add_vertex([recurring_identity]);
+                graph
+                    .add_edge(source, middle, leaving)
+                    .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+                graph
+                    .add_edge(
+                        middle,
+                        to,
+                        if is_recurring {
+                            EdgeLabel::Transition(recurring_identity)
+                        } else {
+                            EdgeLabel::Stutter
+                        },
+                    )
+                    .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+            } else {
+                graph
+                    .add_edge(source, to, leaving)
+                    .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+            }
         }
     }
     let initial = vertices
         .iter()
-        .filter_map(|((position, _), vertex)| (*position == 0).then_some(*vertex));
+        .filter_map(|((position, _), (_, vertex))| (*position == 0).then_some(*vertex));
     let mut reachable = BTreeSet::new();
     let mut queue: VecDeque<_> = initial.collect();
     while let Some(vertex) = queue.pop_front() {
@@ -129,7 +264,11 @@ pub fn candidate_lasso_has_fair_run(
         }
         queue.extend(graph.edges_from(vertex).iter().map(|edge| edge.target));
     }
-    let analyses = analyze(&graph, &reachable, constraints, cancel)
+    let mut constraints = constraints.to_vec();
+    if recurring.is_some() {
+        constraints.push(Constraint::new(Strength::Strong, [recurring_identity]));
+    }
+    let analyses = analyze(&graph, &reachable, &constraints, cancel)
         .map_err(CandidateLivenessError::Fairness)?;
     Ok(Analysis::first_fair_in(&analyses).is_some())
 }
@@ -239,23 +378,34 @@ pub fn abstract_classes(
 #[cfg(test)]
 mod candidate_tests {
     use super::{
-        candidate_lasso_has_fair_run, CandidateFairHop, CandidateFairState, CandidateFairStep,
+        candidate_edge_target_ordinal, candidate_lasso_has_fair_run,
+        candidate_lasso_has_fair_run_with_recurring_edge, candidate_stutter_target_ordinal,
+        CandidateFairHop, CandidateFairState, CandidateFairStep,
     };
     use filament_exact::Cancel;
     use fsl_eval::fairness::{Constraint, Identity};
     use ix_trace_rs::trace;
 
-    fn state(key: &[u8], enabled: &[Identity]) -> CandidateFairState {
+    fn state(ordinal: usize, key: &[u8], enabled: &[Identity]) -> CandidateFairState {
         CandidateFairState {
+            ordinal,
             key: key.to_vec(),
             enabled: enabled.to_vec(),
         }
     }
 
-    fn step(pre: &[u8], transition: Option<Identity>, post: &[u8]) -> CandidateFairStep {
+    fn step(
+        pre_candidate: usize,
+        pre: &[u8],
+        transition: Option<Identity>,
+        post_candidate: usize,
+        post: &[u8],
+    ) -> CandidateFairStep {
         CandidateFairStep {
+            pre_candidate,
             pre_state: pre.to_vec(),
             transition,
+            post_candidate,
             post_state: post.to_vec(),
             interior: Vec::new(),
         }
@@ -265,8 +415,10 @@ mod candidate_tests {
     /// configuration enabling `middle`, the second hop taking `taken`.
     fn through(middle: &[Identity], taken: Option<Identity>) -> Vec<Vec<CandidateFairStep>> {
         vec![vec![CandidateFairStep {
+            pre_candidate: 0,
             pre_state: b"c".to_vec(),
             transition: None,
+            post_candidate: 0,
             post_state: b"c".to_vec(),
             interior: vec![CandidateFairHop {
                 enabled: middle.to_vec(),
@@ -275,20 +427,89 @@ mod candidate_tests {
         }]]
     }
 
+    #[trace("FSpec-FR-740-AC-5")]
+    #[test]
+    fn timed_candidate_liveness_requires_a_recurring_abstract_tick_edge() {
+        let positions = vec![vec![state(0, b"c", &[])]];
+        let steps = vec![vec![step(0, b"c", None, 0, b"c")]];
+        let constraints: Vec<Constraint> = Vec::new();
+        let cancel = Cancel::new();
+        assert!(!candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &steps,
+            &[vec![false]],
+            &constraints,
+            &cancel,
+        )
+        .expect("candidate graph checks"));
+        assert!(candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &steps,
+            &[vec![true]],
+            &constraints,
+            &cancel,
+        )
+        .expect("candidate graph checks"));
+        let tick = Identity::new(7);
+        let interior = through(&[], Some(tick));
+        assert!(candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &interior,
+            &[vec![true]],
+            &[Constraint::strong([tick])],
+            &cancel,
+        )
+        .expect("the interior tick hop witnesses both fairness and recurring liveness"));
+        let no_interior_tick = through(&[tick], None);
+        assert!(!candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &no_interior_tick,
+            &[vec![true]],
+            &[Constraint::strong([tick])],
+            &cancel,
+        )
+        .expect("the candidate graph is closed"));
+    }
+
+    /// Equal state keys do not make two timed candidate blocks one run. The
+    /// first block has the recurring tick but never takes the enabled strong
+    /// fairness class; the second takes the class but has no recurring tick.
+    #[trace("FSpec-FR-740-AC-5")]
+    #[test]
+    fn duplicate_candidate_keys_cannot_union_tick_and_fairness_witnesses() {
+        let tick = Identity::new(7);
+        let positions = vec![vec![state(0, b"same", &[tick]), state(1, b"same", &[tick])]];
+        let steps = vec![vec![
+            step(0, b"same", None, 0, b"same"),
+            step(1, b"same", Some(tick), 1, b"same"),
+        ]];
+        let constraints = [Constraint::strong([tick])];
+        let recurring = [vec![true, false]];
+
+        assert!(!candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &steps,
+            &recurring,
+            &constraints,
+            &Cancel::new(),
+        )
+        .expect("candidate blocks are checked independently"));
+    }
+
     #[test]
     #[trace("TC-2536", "FR-899-AC-6")]
     fn cx1_rejects_a_candidate_graph_with_no_fair_loop() {
         let advance = Identity::new(0);
         let fire = Identity::new(1);
         let positions = vec![vec![
-            state(b"0", &[]),
-            state(b"1", &[fire]),
-            state(b"2", &[fire]),
+            state(0, b"0", &[]),
+            state(1, b"1", &[fire]),
+            state(2, b"2", &[fire]),
         ]];
         let steps = vec![vec![
-            step(b"0", Some(advance), b"1"),
-            step(b"1", Some(fire), b"2"),
-            step(b"2", None, b"2"),
+            step(0, b"0", Some(advance), 1, b"1"),
+            step(1, b"1", Some(fire), 2, b"2"),
+            step(2, b"2", None, 2, b"2"),
         ]];
         assert!(!candidate_lasso_has_fair_run(
             &positions,
@@ -305,12 +526,12 @@ mod candidate_tests {
         let fire1 = Identity::new(1);
         let fire2 = Identity::new(2);
         let positions = vec![vec![
-            state(b"A", &[fire1, fire2]),
-            state(b"B", &[fire1, fire2]),
+            state(0, b"A", &[fire1, fire2]),
+            state(1, b"B", &[fire1, fire2]),
         ]];
         let steps = vec![vec![
-            step(b"A", Some(fire1), b"A"),
-            step(b"B", Some(fire2), b"B"),
+            step(0, b"A", Some(fire1), 0, b"A"),
+            step(1, b"B", Some(fire2), 1, b"B"),
         ]];
         assert!(!candidate_lasso_has_fair_run(
             &positions,
@@ -325,8 +546,11 @@ mod candidate_tests {
     #[trace("TC-2536", "FR-899-AC-8")]
     fn cx3_keeps_a_candidate_that_never_enables_the_fair_operation() {
         let fire = Identity::new(1);
-        let positions = vec![vec![state(b"A", &[fire]), state(b"B", &[])]];
-        let steps = vec![vec![step(b"A", None, b"A"), step(b"B", None, b"B")]];
+        let positions = vec![vec![state(0, b"A", &[fire]), state(1, b"B", &[])]];
+        let steps = vec![vec![
+            step(0, b"A", None, 0, b"A"),
+            step(1, b"B", None, 1, b"B"),
+        ]];
         assert!(candidate_lasso_has_fair_run(
             &positions,
             &steps,
@@ -337,12 +561,112 @@ mod candidate_tests {
     }
 
     #[test]
+    #[trace("FSpec-FR-740-AC-5", "FR-899-AC-6")]
+    fn duplicate_candidate_keys_keep_enabled_and_taken_rows_separate() {
+        let first = Identity::new(11);
+        let owed = Identity::new(12);
+        let other = Identity::new(13);
+        let positions = vec![vec![
+            state(0, b"same", &[first]),
+            state(1, b"same", &[owed, other]),
+        ]];
+        let steps = vec![vec![
+            step(0, b"same", Some(first), 0, b"same"),
+            step(1, b"same", Some(other), 1, b"same"),
+        ]];
+        assert!(candidate_lasso_has_fair_run(
+            &positions,
+            &steps,
+            &[Constraint::strong([first]), Constraint::strong([owed])],
+            &Cancel::new(),
+        )
+        .expect("duplicate-key candidate graph is closed"));
+    }
+
+    #[trace("FSpec-FR-740-AC-5", "FR-899-AC-6")]
+    #[test]
+    fn converging_candidate_rows_keep_ordered_duplicate_post_blocks() {
+        let owed = Identity::new(21);
+        let source = vec![state(0, b"A", &[owed]), state(1, b"B", &[])];
+        let target = vec![
+            state(0, b"same", &[]),
+            state(1, b"same", &[]),
+            state(2, b"same", &[]),
+        ];
+        // Candidate A has two transition alternatives into equal-key post
+        // blocks; candidate B converges into the third block. The target
+        // ordinal follows relation row order, including row multiplicity.
+        let ordered = [(1, b"same".as_slice()), (0, b"same"), (0, b"same")];
+        let forward = ordered
+            .iter()
+            .enumerate()
+            .map(|(row_index, (pre_candidate, post_state))| {
+                let occurrence = ordered
+                    .iter()
+                    .enumerate()
+                    .filter(|(prior_index, (prior_candidate, prior_post))| {
+                        prior_post == post_state
+                            && (*prior_candidate, *prior_index) <= (*pre_candidate, row_index)
+                    })
+                    .count()
+                    - 1;
+                let post_candidate = candidate_edge_target_ordinal(
+                    &source,
+                    &target,
+                    *pre_candidate,
+                    post_state,
+                    occurrence,
+                )
+                .expect("row maps to its ordered duplicate target");
+                step(
+                    *pre_candidate,
+                    if *pre_candidate == 0 { b"A" } else { b"B" },
+                    None,
+                    post_candidate,
+                    post_state,
+                )
+            })
+            .collect();
+        let reverse = vec![
+            step(0, b"same", None, 0, b"A"),
+            step(1, b"same", None, 0, b"A"),
+            step(2, b"same", None, 1, b"B"),
+        ];
+        assert!(candidate_lasso_has_fair_run(
+            &[source, target],
+            &[forward, reverse],
+            &[Constraint::strong([owed])],
+            &Cancel::new(),
+        )
+        .expect("converging duplicate-key candidate graph is closed"));
+    }
+
+    #[trace("FSpec-FR-740-AC-5", "FR-899-AC-6")]
+    #[test]
+    fn stutter_rows_rank_duplicate_keys_across_mixed_candidate_keys() {
+        let source = vec![
+            state(0, b"A", &[]),
+            state(1, b"B", &[]),
+            state(2, b"A", &[]),
+        ];
+        let target = vec![state(0, b"A", &[]), state(1, b"A", &[])];
+        assert_eq!(
+            candidate_stutter_target_ordinal(&source, &target, 0, &[0, 2]),
+            Ok(0)
+        );
+        assert_eq!(
+            candidate_stutter_target_ordinal(&source, &target, 2, &[0, 2]),
+            Ok(1)
+        );
+    }
+
+    #[test]
     #[trace("TC-2536", "FR-899-AC-10")]
     fn a_strong_class_enabled_only_inside_a_trace_edge_is_owed() {
         // The class is enabled at the intermediate configuration of every
         // loop iteration and no hop takes it: strong fairness is violated.
         let owed = Identity::new(1);
-        let positions = vec![vec![state(b"c", &[])]];
+        let positions = vec![vec![state(0, b"c", &[])]];
         let steps = through(&[owed], None);
         assert!(!candidate_lasso_has_fair_run(
             &positions,
@@ -368,7 +692,7 @@ mod candidate_tests {
         let owed = Identity::new(1);
         // Enabled at the start and the intermediate configuration, never
         // taken: weak fairness is violated.
-        let positions = vec![vec![state(b"c", &[owed])]];
+        let positions = vec![vec![state(0, b"c", &[owed])]];
         let steps = through(&[owed], None);
         assert!(!candidate_lasso_has_fair_run(
             &positions,

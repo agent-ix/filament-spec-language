@@ -3,11 +3,14 @@
 //! clause it names, and no stage evaluates a protocol clause, so evaluating a
 //! function whose body is a reference refuses, typed, with a catalog cause.
 
+use filament_eval::{CallFailure, Evaluation, ExecutionBackendChoice, SessionLimits};
 use filament_eval::{FamilyOutcome, FamilyResult};
-use filament_exact::{Meter, ScalarLimits};
+use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
+use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
+use fsl_eval::execution::{ExecuteLimits, ExecuteRequest, ExecuteSelection, SuppliedBackends};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
@@ -27,6 +30,65 @@ fn unit() -> String {
     run sequence Main { }\n\
     finish End as (outcome: Boolean) { true };\n\
     }\n",
+    )
+}
+
+/// TC-1121's FR-403-AC-14 runtime vector through the explicit no_std entry.
+pub(super) fn no_std_protocol_reference_call() -> Result<Evaluation, CallFailure> {
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("a", "u"),
+        "unit.native",
+        unit().as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let packages = fsl_semantics::model::intake::package_input([MODEL]).unwrap();
+    let models = fsl_semantics::model::intake::admit_unit(
+        &unit.selections().models,
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("I1 admits the model");
+    let package = CheckedPackage::link(
+        PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "fixture".to_owned(),
+            unit,
+            models,
+            Vec::new(),
+        )
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect("the package checks"),
+    );
+    let request = ExecuteRequest {
+        selection: ExecuteSelection::Function {
+            name: QualifiedName::unqualified("refers").expect("function name"),
+            arguments: Vec::new(),
+            environment: ObjectEnvironment::default(),
+        },
+        backend: ExecutionBackendChoice::Interpreter,
+    };
+    let limits = ExecuteLimits {
+        accounting: UNLIMITED,
+        prepare: fsl_eval::execution::PrepareLimits::default(),
+        session: SessionLimits::default(),
+    };
+    let mut run = SuppliedRun::new(SuppliedLimits::default(), Cancel::new())
+        .expect("supplied run initializes");
+    fsl_eval::execution::execute(
+        &package,
+        &request,
+        &SuppliedBackends::default(),
+        &limits,
+        &mut run,
+        &Cancel::new(),
     )
 }
 

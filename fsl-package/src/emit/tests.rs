@@ -43,6 +43,7 @@ mod admission_corpus;
 mod bare_world;
 mod bytes_operations;
 mod carried_quantity_paths;
+mod class_c;
 mod check_mode;
 mod checked_views;
 mod child_composite;
@@ -3187,13 +3188,22 @@ fn assemble_with_models(
     unit: &[u8],
     packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<PackageDeclarations, String> {
+    assemble_with_models_as(unit, packages, "test:spine-model")
+}
+
+/// Assemble the spine-model fixture with a caller-selected source identity.
+fn assemble_with_models_as(
+    unit: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    source_identity: &str,
+) -> Result<PackageDeclarations, String> {
     // S1's size and work limits are raised to fit a unit past their defaults.
     let mut limits = fsl_cst::Limits::default();
     limits.source_bytes = limits.source_bytes.max(unit.len());
     limits.tokens = limits.tokens.max(unit.len());
     limits.nodes = limits.nodes.max(unit.len().saturating_mul(16));
     let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
+        fsl_foundation::SourceIdentity::new("agent-ix", source_identity),
         "program.native",
         unit,
         limits,

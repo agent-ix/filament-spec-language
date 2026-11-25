@@ -257,7 +257,7 @@ impl<T, F> Store<T, F> {
 /// # Errors
 ///
 /// [`NotSimulated`] as `explore_request` returns it.
-pub fn enumerate_request<S: TransitionSystem, R: Root>(
+pub fn enumerate_request<S: TransitionSystem<InitialError = std::convert::Infallible>, R: Root>(
     system: &S,
     request: EnumerationRequest<'_, R>,
     meter: &mut Meter,
@@ -442,7 +442,7 @@ fn index(key: &StateKey, keys: &mut HashMap<StateKey, usize>) -> usize {
 /// [`EncodingRefusal`] when a state or transition identity has no RFC 8785
 /// encoding; a trace that names no initial state or no successor of `system`
 /// counts only the prefix that re-walks.
-pub fn sampled_coverage<S: TransitionSystem, F>(
+pub fn sampled_coverage<S: TransitionSystem<InitialError = std::convert::Infallible>, F>(
     system: &S,
     traces: &[Trace<S::TransitionId, F>],
     identity: IdentityLimits,

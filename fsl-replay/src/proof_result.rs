@@ -1731,6 +1731,33 @@ impl TerminalRecord {
         )
     }
 
+    /// A temporal SMT proof accepted by FR-314's certificate checker.
+    ///
+    /// A record is produced only from the matching certified settlement;
+    /// callers cannot label an uncertified result as an accepted SMT proof.
+    pub fn proved_by_smt_proof(
+        request_index: RequestIndex,
+        backend: BackendId,
+        settlement: &crate::SmtProofSettlement,
+    ) -> Option<Self> {
+        if settlement.checker() != Some(crate::CertificateChecker::SmtProof)
+            || !matches!(
+                settlement.value(),
+                TerminalValue::Proved {
+                    certification: Certification::Certified,
+                    ..
+                }
+            )
+        {
+            return None;
+        }
+        Some(Self::with_backend(
+            request_index,
+            backend,
+            settlement.value().clone(),
+        ))
+    }
+
     /// A `proved` record for a supplied finite trace that replayed step by step
     /// (FR-636): its basis is the completed replay depth, the trace's length.
     pub fn proved_by_replay(request_index: RequestIndex, backend: BackendId, steps: u64) -> Self {
@@ -1740,6 +1767,20 @@ impl TerminalRecord {
             TerminalValue::Proved {
                 basis: ProofBasis::BoundedComplete { depth: steps },
                 certification: Certification::Certified,
+            },
+        )
+    }
+
+    /// A proof established by a first-party engine after it fully explored
+    /// its finite closed decision product, without an independently checked
+    /// certificate.
+    pub fn proved_by_exhaustive_engine(request_index: RequestIndex, backend: BackendId) -> Self {
+        Self::with_backend(
+            request_index,
+            backend,
+            TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                certification: Certification::Uncertified,
             },
         )
     }

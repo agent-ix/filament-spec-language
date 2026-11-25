@@ -86,38 +86,39 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Charge, ChargePoint, Meter, ScalarLimits};
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    translate, Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind,
+    Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind, translate,
 };
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
-use fsl_eval::simulation::protocol::{
-    protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
-    ProtocolTransition,
-};
 use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
+use fsl_eval::simulation::protocol::{
+    FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem, ProtocolTransition,
+    protocol_constraints,
+};
 use fsl_eval::simulation::{
-    Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint, Limit,
-    Limits, OfferedReductions, Outcome, Permutation, SubjectSystem, SubjectTransition,
-    SymmetryGroup, TransitionSystem,
+    Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint,
+    InitialStateRefusal, Limit, Limits, OfferedReductions, Outcome, Permutation, SubjectSystem,
+    SubjectTransition, SymmetryGroup, TransitionSystem,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
-    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
-    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
-    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
-    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
+    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
+    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
+    Proviso, ReachedLimit, ReductionCause, RunStats, StepSite, TemporalCounterexample,
+    UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use quire_canonical::{Encode, Sink, Writer};
@@ -125,14 +126,14 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
-    ModelCheckRequest, BOUND_POSITIONS,
+    Admitted, BOUND_POSITIONS, ModelCheckRefusal, ModelCheckRequest, atom_refusal, not_simulated,
+    precheck, refuse_capture_read,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
-use super::fair_walk::{fairness_constraints, tree_path, FairModel};
+use super::fair_walk::{FairModel, fairness_constraints, tree_path};
 use super::graph::{
-    retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
-    RetainConfig, RetainedGraph,
+    Ample, Choice, GraphExploration, ProductStateId, RetainConfig, RetainedEdge, RetainedGraph,
+    retain_reduced_with_key,
 };
 use super::product::{ProductKey, ProductTransition};
 use super::quotient::{
@@ -209,7 +210,12 @@ pub(super) fn check(
     let group = if request.reductions.is_empty() {
         SymmetryGroup::default()
     } else {
-        match precheck(&request.reductions, &request.item, &system)? {
+        match precheck(
+            &request.reductions,
+            &request.item,
+            &system,
+            request.limits.limits.max_states,
+        )? {
             Admitted::Group(group) => group,
             Admitted::Settled(outcome) => return Ok(outcome),
         }
@@ -274,6 +280,7 @@ pub(super) fn check(
         },
         RunRequest {
             max_depth: request.max_depth,
+            workers: request.workers,
             partial_order: request.reductions.partial_order,
             stutter_closure,
             limits: request.limits,
@@ -297,6 +304,7 @@ pub(super) fn check(
 /// [`ModelCheckRefusal`] as [`check`] returns it.
 #[derive(Clone, Copy)]
 pub(super) struct ProtocolLivenessOptions<'c> {
+    pub(super) workers: usize,
     pub(super) limits: fsl_replay::ModelCheckLimits,
     pub(super) ignore_memory_constraints: bool,
     pub(super) instance_bound: Option<InstanceBound>,
@@ -308,7 +316,7 @@ pub(super) struct ProtocolLivenessOptions<'c> {
     clippy::too_many_arguments,
     reason = "protocol liveness inputs plus the explicit clock selection table"
 )]
-pub(super) fn check_protocol<M: MemoryModel>(
+pub(super) fn check_protocol<M>(
     subject: &ProtocolSubject<'_>,
     system: &ProtocolSystem<'_, M>,
     memory_bound: Option<MemoryBound>,
@@ -317,7 +325,11 @@ pub(super) fn check_protocol<M: MemoryModel>(
     max_depth: Option<usize>,
     options: ProtocolLivenessOptions<'_>,
     cancel: &Cancel,
-) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal>
+where
+    M: MemoryModel + Sync,
+    M::Component: Send + Sync,
+{
     let ModelCheckItem::Clause { clause, letters } = item else {
         return Err(fault("a-liveness-item-is-a-clause"));
     };
@@ -400,6 +412,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
         },
         RunRequest {
             max_depth,
+            workers: options.workers,
             partial_order: false,
             stutter_closure: false,
             limits: options.limits,
@@ -521,6 +534,15 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         stutter_closure: bool,
     ) -> Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>;
 
+    /// Expand a bounded batch concurrently, preserving its input order.
+    fn expand_live_batch(
+        &self,
+        states: Vec<Self::State>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>>;
+
     /// How the state constraint `name` reads at `state` (FR-158).
     fn constraint_value(
         &self,
@@ -582,12 +604,12 @@ fn retained<'l, S: LiveSubject>(
             identity,
             max_depth: None,
         },
+        run.request.workers,
+        |product, states, workers| product.prefetch_expansions(states, workers),
         || run.cancel.poll() && run.cancel.cause().is_some(),
         |state| product.encoded_key(state, identity),
     )
-    .map_err(|error| {
-        ModelCheckRefusal::Encoding(EncodingRefusal::of(&error, IdentityLimits::default()))
-    })
+    .map_err(|error| error.model_refusal(IdentityLimits::default()))
 }
 
 impl<'a> LiveSubject for ModelSystem<'a> {
@@ -611,6 +633,18 @@ impl<'a> LiveSubject for ModelSystem<'a> {
             self.successors(state)
         }
         .map(|expansion| (expansion, Cut::default()))
+    }
+
+    fn expand_live_batch(
+        &self,
+        states: Vec<ModelSimState>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<ModelTransition, ModelSimState>, ExpansionStop>> {
+        parallel_map(states, workers, |state| {
+            self.expand_live(state, enforce, stutter_closure)
+        })
     }
 
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
@@ -660,7 +694,11 @@ impl<'a> LiveSubject for ModelSystem<'a> {
     }
 }
 
-impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
+impl<M> LiveSubject for ProtocolSystem<'_, M>
+where
+    M: MemoryModel + Sync,
+    M::Component: Send + Sync,
+{
     fn cut_steps(cut: &Cut) -> Vec<ProtocolTransition> {
         cut.steps.clone()
     }
@@ -680,6 +718,18 @@ impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
         _stutter_closure: bool,
     ) -> Result<Bounded<ProtocolTransition, Self::State>, ExpansionStop> {
         self.successors_bounded(state)
+    }
+
+    fn expand_live_batch(
+        &self,
+        states: Vec<Self::State>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<ProtocolTransition, Self::State>, ExpansionStop>> {
+        parallel_map(states, workers, |state| {
+            self.expand_live(state, enforce, stutter_closure)
+        })
     }
 
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
@@ -729,6 +779,33 @@ struct Binding {
 
 fn widen(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn parallel_map<State, Output>(
+    states: Vec<State>,
+    workers: usize,
+    expand: impl Fn(&State) -> Output + Sync,
+) -> Vec<Output>
+where
+    State: Send,
+    Output: Send,
+{
+    if workers <= 1 || states.len() <= 1 {
+        return states.iter().map(expand).collect();
+    }
+    std::thread::scope(|scope| {
+        states
+            .into_iter()
+            .map(|state| {
+                let expand = &expand;
+                scope.spawn(move || expand(&state))
+            })
+            .map(|worker| match worker.join() {
+                Ok(output) => output,
+                Err(panic) => std::panic::resume_unwind(panic),
+            })
+            .collect()
+    })
 }
 
 fn stopped<T: SubjectTransition>(
@@ -819,6 +896,7 @@ impl Totals {
 /// What a run needs of the request beyond the subject and the item.
 struct RunRequest {
     max_depth: Option<usize>,
+    workers: usize,
     /// Whether partial-order reduction is selected (FR-156).
     partial_order: bool,
     /// Add an unfair self-loop at every model state (FR-380).
@@ -853,7 +931,7 @@ enum Property {
 }
 
 /// A product state's canonical property key.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 enum PropertyKey {
     After(usize),
     Undefined,
@@ -898,6 +976,7 @@ impl canonical_api::Encode for PropertyKey {
 #[derive(Clone)]
 struct LState<State> {
     model: State,
+    /// FR-101's exact key, computed when the model state's letter was read.
     model_key: StateKey,
     property: Property,
     depth: usize,
@@ -952,6 +1031,8 @@ enum Halt {
     Cancelled(CancelCause),
     /// The automaton reached `max_automaton_states`.
     Automaton(u64),
+    /// Another distinct initial product state would exceed the remaining budget.
+    InitialStates,
     /// An identity has no canonical encoding, or an invariant broke.
     Refusal(ModelCheckRefusal),
 }
@@ -972,6 +1053,256 @@ struct DeadRoot<State, T> {
     depth: usize,
 }
 
+const LASSO_CACHE_BYTES_PER_MAP: usize = 24 * 1024 * 1024;
+const CACHE_ENTRY_OVERHEAD_BYTES: usize = 128;
+
+struct Cached<V> {
+    value: V,
+    bytes: usize,
+    sequence: u64,
+}
+
+/// FIFO cache whose retained allocation estimate never exceeds its byte cap.
+struct ByteCache<K, V> {
+    entries: BTreeMap<K, Cached<V>>,
+    order: BTreeMap<u64, K>,
+    bytes: usize,
+    limit: usize,
+    next_sequence: u64,
+}
+
+impl<K: Clone + Ord, V> ByteCache<K, V> {
+    fn new(limit: usize) -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            order: BTreeMap::new(),
+            bytes: 0,
+            limit,
+            next_sequence: 0,
+        }
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        self.entries.get(key).map(|entry| &entry.value)
+    }
+
+    #[cfg(test)]
+    fn used_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    fn remove(&mut self, key: &K) -> Option<V> {
+        let removed = self.entries.remove(key)?;
+        self.bytes = self.bytes.saturating_sub(removed.bytes);
+        self.order.remove(&removed.sequence);
+        Some(removed.value)
+    }
+
+    fn insert(&mut self, key: K, value: V, bytes: usize) -> bool {
+        if bytes > self.limit {
+            return false;
+        }
+        self.remove(&key);
+        while self.bytes.saturating_add(bytes) > self.limit {
+            let Some((sequence, oldest)) = self.order.pop_first() else {
+                return false;
+            };
+            let Some(removed) = self.entries.remove(&oldest) else {
+                continue;
+            };
+            debug_assert_eq!(removed.sequence, sequence);
+            self.bytes = self.bytes.saturating_sub(removed.bytes);
+        }
+        let mut sequence = self.next_sequence;
+        while self.order.contains_key(&sequence) {
+            sequence = sequence.wrapping_add(1);
+        }
+        self.next_sequence = sequence.wrapping_add(1);
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.order.insert(sequence, key.clone());
+        self.entries.insert(
+            key,
+            Cached {
+                value,
+                bytes,
+                sequence,
+            },
+        );
+        true
+    }
+}
+
+fn product_key_cache_bytes(key: &(StateKey, PropertyKey, u64), value_bytes: usize) -> usize {
+    CACHE_ENTRY_OVERHEAD_BYTES
+        .saturating_add(std::mem::size_of_val(key).saturating_mul(2))
+        // The state key is owned by both the lookup tree and FIFO order; a
+        // factor of four covers both byte buffers plus spare Vec capacity.
+        .saturating_add(key.0.as_bytes().len().saturating_mul(4))
+        .saturating_add(value_bytes)
+}
+
+fn cache_product_key(
+    cache: &mut ByteCache<(StateKey, PropertyKey, u64), Arc<[u8]>>,
+    key: (StateKey, PropertyKey, u64),
+    bytes: &[u8],
+) {
+    let cached: Arc<[u8]> = Arc::from(bytes.to_vec());
+    let charge = product_key_cache_bytes(&key, cached.len());
+    cache.insert(key, cached, charge);
+}
+
+fn successor_keys_cache_bytes(
+    key: &StateKey,
+    successors: &[StateKey],
+    successor_capacity: usize,
+) -> usize {
+    successors.iter().fold(
+        CACHE_ENTRY_OVERHEAD_BYTES
+            .saturating_add(std::mem::size_of::<(StateKey, Vec<StateKey>)>())
+            .saturating_add(std::mem::size_of::<StateKey>())
+            .saturating_add(key.as_bytes().len().saturating_mul(4))
+            .saturating_add(successor_capacity.saturating_mul(std::mem::size_of::<StateKey>())),
+        |bytes, successor| bytes.saturating_add(successor.as_bytes().len().saturating_mul(2)),
+    )
+}
+
+fn cache_successor_keys(
+    cache: &mut ByteCache<StateKey, Vec<StateKey>>,
+    key: StateKey,
+    successors: Vec<StateKey>,
+) {
+    let charge = successor_keys_cache_bytes(&key, &successors, successors.capacity());
+    cache.insert(key, successors, charge);
+}
+
+#[cfg(test)]
+mod prefetch_window_tests {
+    use super::prefetch_window;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn overlapping_worker_windows_reuse_expansions_within_worker_bound() {
+        let mut prefetched = BTreeMap::new();
+        let mut expanded = Vec::new();
+
+        prefetch_window(&mut prefetched, [(1, 10), (2, 20), (3, 30)], 3, |states| {
+            expanded.extend(states.iter().copied());
+            states.into_iter().map(|state| state + 1).collect()
+        });
+        assert_eq!(prefetched.len(), 3);
+        assert!(prefetched.len() <= 3);
+
+        prefetch_window(&mut prefetched, [(2, 20), (3, 30), (4, 40)], 3, |states| {
+            expanded.extend(states.iter().copied());
+            states.into_iter().map(|state| state + 1).collect()
+        });
+        assert_eq!(prefetched.len(), 3);
+        assert!(prefetched.len() <= 3);
+
+        prefetch_window(&mut prefetched, [(3, 30), (4, 40), (5, 50)], 3, |states| {
+            expanded.extend(states.iter().copied());
+            states.into_iter().map(|state| state + 1).collect()
+        });
+        assert_eq!(prefetched.len(), 3);
+        assert!(prefetched.len() <= 3);
+        assert_eq!(expanded, [10, 20, 30, 40, 50]);
+        assert_eq!(prefetched.get(&3), Some(&31));
+        assert_eq!(prefetched.get(&4), Some(&41));
+        assert_eq!(prefetched.get(&5), Some(&51));
+    }
+}
+
+#[cfg(test)]
+mod cache_budget_tests {
+    use super::{ByteCache, PropertyKey, StateKey, cache_product_key, cache_successor_keys};
+
+    #[test]
+    fn byte_cache_evicts_and_releases_charged_bytes() {
+        let mut cache = ByteCache::new(10);
+        assert!(cache.insert("first", 1, 6));
+        assert!(cache.insert("second", 2, 6));
+        assert_eq!(cache.used_bytes(), 6);
+        assert_eq!(cache.get(&"first"), None);
+        assert_eq!(cache.get(&"second"), Some(&2));
+
+        assert_eq!(cache.remove(&"second"), Some(2));
+        assert_eq!(cache.used_bytes(), 0);
+        assert!(!cache.insert("oversized", 3, 11));
+        assert_eq!(cache.used_bytes(), 0);
+    }
+
+    #[test]
+    fn key_caches_evict_at_their_production_byte_estimates() {
+        let first_key = (
+            StateKey::from_canonical_bytes(b"model-a".to_vec()),
+            PropertyKey::After(0),
+            256,
+        );
+        let first_value = b"[model,property]";
+        let mut product_cache = ByteCache::new(10_000);
+        cache_product_key(&mut product_cache, first_key.clone(), first_value);
+        let charged = product_cache.used_bytes();
+        assert!(charged > first_value.len());
+        assert!(product_cache.used_bytes() <= product_cache.limit);
+
+        let mut capped_product_cache = ByteCache::new(charged - 1);
+        cache_product_key(&mut capped_product_cache, first_key.clone(), first_value);
+        assert_eq!(capped_product_cache.used_bytes(), 0);
+
+        let second_key = (
+            StateKey::from_canonical_bytes(b"model-b".to_vec()),
+            PropertyKey::After(0),
+            256,
+        );
+        let mut product_cache = ByteCache::new(charged);
+        cache_product_key(&mut product_cache, first_key.clone(), first_value);
+        cache_product_key(&mut product_cache, second_key.clone(), first_value);
+        assert!(product_cache.get(&first_key).is_none());
+        assert!(
+            product_cache
+                .get(&second_key)
+                .is_some_and(|value| value.as_ref() == first_value)
+        );
+        assert!(product_cache.used_bytes() <= charged);
+
+        let root = StateKey::from_canonical_bytes(b"root".to_vec());
+        let successors = vec![
+            StateKey::from_canonical_bytes(b"successor-1".to_vec()),
+            StateKey::from_canonical_bytes(b"successor-2".to_vec()),
+        ];
+        let mut successor_cache = ByteCache::new(10_000);
+        cache_successor_keys(&mut successor_cache, root.clone(), successors.clone());
+        let charged = successor_cache.used_bytes();
+        assert!(charged > successors.iter().map(|key| key.as_bytes().len()).sum());
+
+        let mut capped_successor_cache = ByteCache::new(charged - 1);
+        cache_successor_keys(
+            &mut capped_successor_cache,
+            root.clone(),
+            successors.clone(),
+        );
+        assert_eq!(capped_successor_cache.used_bytes(), 0);
+
+        let replacement = StateKey::from_canonical_bytes(b"rrot".to_vec());
+        let mut successor_cache = ByteCache::new(charged);
+        cache_successor_keys(&mut successor_cache, root.clone(), successors.clone());
+        cache_successor_keys(
+            &mut successor_cache,
+            replacement.clone(),
+            successors.clone(),
+        );
+        assert!(successor_cache.get(&root).is_none());
+        assert_eq!(successor_cache.get(&replacement), Some(&successors));
+        assert!(successor_cache.used_bytes() <= charged);
+    }
+}
+
+/// An expansion returned to a caller, with successor keys reused separately.
+struct ExpansionReuse<T, State> {
+    expansion: Bounded<T, State>,
+    successor_keys: Option<Vec<StateKey>>,
+}
+
 /// One binding's product as a `TransitionSystem`.
 struct LassoSystem<'r, S: LiveSubject> {
     system: &'r S,
@@ -981,6 +1312,14 @@ struct LassoSystem<'r, S: LiveSubject> {
     automaton: RefCell<PropertyAutomaton>,
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
+    /// One worker batch of raw expansions, consumed by model-state identity.
+    prefetched: RefCell<BTreeMap<RawExpansionKey, Result<Bounded<Tr<S>, S::State>, ExpansionStop>>>,
+    /// Complete product keys reused for repeated model/property pairs in this
+    /// pass. The exact bytes remain the FR-101 identity.
+    product_keys: RefCell<ByteCache<(StateKey, PropertyKey, u64), Arc<[u8]>>>,
+    /// Exact successor keys reused within this product pass. Expansion values
+    /// are not retained because their generic payloads have no deep-size API.
+    successor_keys: RefCell<ByteCache<StateKey, Vec<StateKey>>>,
     /// Where the clause fixes its captures (FR-337).
     captured: CaptureSite,
     initial: Vec<LState<S::State>>,
@@ -1002,25 +1341,67 @@ struct LassoSystem<'r, S: LiveSubject> {
     halt: RefCell<Option<Halt>>,
 }
 
+type RawExpansionKey = (StateKey, usize);
+
+/// Expand missing entries from the current worker window, retaining cached
+/// entries only while their keys remain in that window.
+fn prefetch_window<K, State, Value>(
+    prefetched: &mut BTreeMap<K, Value>,
+    candidates: impl IntoIterator<Item = (K, State)>,
+    workers: usize,
+    expand: impl FnOnce(Vec<State>) -> Vec<Value>,
+) where
+    K: Clone + Ord,
+{
+    let worker_batch = workers.max(1);
+    let window: Vec<_> = candidates.into_iter().take(worker_batch).collect();
+    let window_keys: BTreeSet<_> = window.iter().map(|(key, _)| key.clone()).collect();
+    prefetched.retain(|key, _| window_keys.contains(key));
+
+    let mut jobs = Vec::new();
+    let mut scheduled = BTreeSet::new();
+    for (key, state) in window {
+        if !prefetched.contains_key(&key) && scheduled.insert(key.clone()) {
+            jobs.push((key, state));
+        }
+    }
+    if jobs.is_empty() {
+        return;
+    }
+    let (keys, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+    let values = expand(states);
+    debug_assert_eq!(keys.len(), values.len());
+    prefetched.extend(keys.into_iter().zip(values));
+    debug_assert!(prefetched.len() <= worker_batch);
+}
+
 impl<S: LiveSubject> LassoSystem<'_, S> {
     fn encoded_key(
         &self,
         state: &LState<S::State>,
         identity: IdentityLimits,
     ) -> Result<Vec<u8>, quire_canonical::Error> {
-        let model = ProductKey::<canonical_api::CanonicalValue, PropertyKey>::read_model_value(
-            state.model_key.as_bytes(),
-            identity.input_bytes,
-        )?;
         let property = match &state.property {
             Property::After(state) => PropertyKey::After(state.index()),
             Property::Undefined { .. } => PropertyKey::Undefined,
         };
-        ProductKey::<canonical_api::CanonicalValue, _>::canonical_bytes_with_model_value(
-            &model,
-            property,
+        let key = (state.model_key.clone(), property, identity.input_bytes);
+        let cached_key = self.product_keys.borrow().get(&key).cloned();
+        if let Some(cached_key) = cached_key {
+            return copy_product_key(&cached_key);
+        }
+        let model = ProductKey::<canonical_api::CanonicalValue, PropertyKey>::read_model_value(
+            state.model_key.as_bytes(),
             identity.input_bytes,
-        )
+        )?;
+        let bytes =
+            ProductKey::<canonical_api::CanonicalValue, _>::canonical_bytes_with_model_value(
+                &model,
+                property,
+                identity.input_bytes,
+            )?;
+        cache_product_key(&mut self.product_keys.borrow_mut(), key, &bytes);
+        Ok(bytes)
     }
 
     /// Record why the run stops, keeping the first reason, and return the
@@ -1054,12 +1435,83 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The subject's expansion of `state`, and what the memory bound left of
     /// it unexpanded, recording why when it stops.
-    fn expand(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
-        self.system
-            .expand_live(state, self.enforce, self.stutter_closure)
+    fn expand(
+        &self,
+        state: &LState<S::State>,
+    ) -> Result<ExpansionReuse<Tr<S>, S::State>, ExpansionStop> {
+        self.poll()?;
+        let expansion = self
+            .prefetched
+            .borrow_mut()
+            .remove(&Self::raw_expansion_key(state))
+            .unwrap_or_else(|| self.expand_raw(&state.model))
             .inspect_err(|&stop| {
                 self.record(Halt::Expansion(stop));
-            })
+            })?;
+        let successor_keys = self.successor_keys.borrow().get(&state.model_key).cloned();
+        Ok(ExpansionReuse {
+            expansion,
+            successor_keys,
+        })
+    }
+
+    /// Expand in the model-only finding pass without retaining opaque states.
+    fn expand_model_only(
+        &self,
+        state: &S::State,
+        prefetched: Option<Result<Bounded<Tr<S>, S::State>, ExpansionStop>>,
+    ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        self.poll()?;
+        let expansion = prefetched
+            .unwrap_or_else(|| self.expand_raw(state))
+            .inspect_err(|&stop| {
+                self.record(Halt::Expansion(stop));
+            })?;
+        Ok(expansion)
+    }
+
+    /// Retain exact successor keys; generic expansion payloads are not cached.
+    fn retain_successor_keys(&self, key: &StateKey, successor_keys: Vec<StateKey>) {
+        cache_successor_keys(
+            &mut self.successor_keys.borrow_mut(),
+            key.clone(),
+            successor_keys,
+        );
+    }
+
+    /// Expand a raw model state outside the product cache. The dead-root
+    /// second pass has no automaton state to key, but still commits its result
+    /// on the coordinator.
+    fn expand_raw(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        self.system
+            .expand_live(state, self.enforce, self.stutter_closure)
+    }
+
+    fn prefetch_expansions(&self, states: &[LState<S::State>], workers: usize) {
+        let worker_batch = workers.max(1);
+        prefetch_window(
+            &mut self.prefetched.borrow_mut(),
+            states
+                .iter()
+                .map(|state| (Self::raw_expansion_key(state), state.model.clone())),
+            worker_batch,
+            |states| {
+                self.system.expand_live_batch(
+                    states,
+                    self.enforce,
+                    self.stutter_closure,
+                    worker_batch,
+                )
+            },
+        );
+    }
+
+    fn raw_expansion_key(state: &LState<S::State>) -> RawExpansionKey {
+        let property = match &state.property {
+            Property::After(at) => at.index(),
+            Property::Undefined { .. } => usize::MAX,
+        };
+        (state.model_key.clone(), property)
     }
 
     fn state_key_of(&self, state: &S::State) -> Result<StateKey, ExpansionStop> {
@@ -1069,11 +1521,6 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             .map_err(|refusal| self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal))))
     }
 
-    /// The letter of `state` for this binding, read once per model state.
-    fn reading(&self, state: &S::State) -> Result<Reading, ExpansionStop> {
-        self.reading_at(state, false).map(|(_, reading)| reading)
-    }
-
     /// The letter of `state`, `initial` when it is position 0 of the trace.
     /// Only an `on origin` clause's captures read differently there.
     fn reading_at(
@@ -1081,13 +1528,22 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         state: &S::State,
         initial: bool,
     ) -> Result<(StateKey, Reading), ExpansionStop> {
-        let state_key = self.state_key_of(state)?;
-        let key = (
-            state_key.clone(),
-            initial && self.captured == CaptureSite::Origin,
-        );
+        self.reading_at_with_key(state, initial, None)
+    }
+
+    fn reading_at_with_key(
+        &self,
+        state: &S::State,
+        initial: bool,
+        known_key: Option<&StateKey>,
+    ) -> Result<(StateKey, Reading), ExpansionStop> {
+        let state_key = match known_key {
+            Some(state_key) => state_key.clone(),
+            None => self.state_key_of(state)?,
+        };
+        let key = (state_key, initial && self.captured == CaptureSite::Origin);
         if let Some(known) = self.readings.borrow().get(&key) {
-            return Ok((state_key, known.clone()));
+            return Ok((key.0.clone(), known.clone()));
         }
         let state = self.system.atom_state(state);
         let state = state.as_ref();
@@ -1169,8 +1625,10 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             }
         }
         let reading = reading.unwrap_or(Reading::Defined(letter));
-        self.readings.borrow_mut().insert(key, reading.clone());
-        Ok((state_key, reading))
+        self.readings
+            .borrow_mut()
+            .insert(key.clone(), reading.clone());
+        Ok((key.0, reading))
     }
 
     /// The property states a position reads into, from `before`; none when
@@ -1181,7 +1639,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 return Ok(vec![Property::Undefined {
                     locus: locus.clone(),
                     cause: cause.clone(),
-                }])
+                }]);
             }
             Reading::Defined(letter) => *letter,
         };
@@ -1202,9 +1660,27 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The initial product states: each initial model state paired with each
     /// property state its letter reads into.
-    fn start_states(&mut self) -> Result<(), ExpansionStop> {
-        let mut initial = Vec::new();
-        for model in self.system.initial() {
+    fn start_states(
+        &mut self,
+        group: &SymmetryGroup,
+        max_states: usize,
+    ) -> Result<(), ExpansionStop> {
+        let mut initial = BTreeMap::new();
+        let identity = IdentityLimits::default();
+        for model in self
+            .system
+            .initial_for_check_with_symmetry(max_states, group)
+        {
+            let model = model.map_err(|refusal| match refusal {
+                InitialStateRefusal::OverBudget(_) => self.record(Halt::InitialStates),
+                InitialStateRefusal::Encoding(refusal) => {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal)))
+                }
+                InitialStateRefusal::Expansion(stop) => self.record(Halt::Expansion(stop)),
+                InitialStateRefusal::Construction(refusal) => {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal)))
+                }
+            })?;
             let (model_key, reading) = self.reading_at(&model, true)?;
             let properties = self.step(Before::Start, &reading)?;
             if properties.is_empty() {
@@ -1215,15 +1691,37 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 });
             }
             for property in properties {
-                initial.push(LState {
+                let state = LState {
                     model: model.clone(),
                     model_key: model_key.clone(),
                     property,
                     depth: 0,
-                });
+                };
+                let canonical;
+                let keyed = if group.is_trivial() {
+                    &state
+                } else {
+                    (canonical, _) = self.canonical(&state, group).ok_or_else(|| {
+                        self.record(Halt::Refusal(fault("a-reduced-product-offers-symmetry")))
+                    })??;
+                    &canonical
+                };
+                let key = quire_canonical::to_vec(
+                    &self.key(keyed),
+                    quire_canonical::Limits::new(identity.input_bytes),
+                )
+                .map_err(|error| {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(
+                        EncodingRefusal::of(&error, identity),
+                    )))
+                })?;
+                initial.entry(key).or_insert(state);
+                if initial.len() > max_states {
+                    return Err(self.record(Halt::InitialStates));
+                }
             }
         }
-        self.initial = initial;
+        self.initial = initial.into_values().collect();
         Ok(())
     }
 }
@@ -1342,8 +1840,10 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
     type Key = ProductKey<S::Key, PropertyKey>;
     type Finding = Finding<Tr<S>>;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.initial.iter().cloned().map(Ok)
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -1367,7 +1867,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 return Ok(Expansion {
                     successors: Vec::new(),
                     findings: Vec::new(),
-                })
+                });
             }
             Property::After(at) => Before::At(*at),
         };
@@ -1393,7 +1893,8 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 Err(stop) => return Err(self.record(Halt::Expansion(stop))),
             }
         }
-        let (expansion, cut) = self.expand(&state.model)?;
+        let reuse = self.expand(state)?;
+        let (expansion, cut) = reuse.expansion;
         let mut findings: Vec<Self::Finding> = expansion
             .findings
             .into_iter()
@@ -1449,21 +1950,47 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
             });
         }
         let has_model_successors = !expansion.successors.is_empty();
-        let mut steps: Vec<(Self::TransitionId, S::State)> = if !has_model_successors {
-            vec![(ProductTransition::TerminalStutter, state.model.clone())]
-        } else {
-            expansion
-                .successors
-                .into_iter()
-                .map(|(transition, model)| (ProductTransition::Model(transition), model))
-                .collect()
-        };
+        let model_successor_count = expansion.successors.len();
+        let mut steps: Vec<(Self::TransitionId, S::State, Option<StateKey>)> =
+            if !has_model_successors {
+                vec![(
+                    ProductTransition::TerminalStutter,
+                    state.model.clone(),
+                    Some(state.model_key.clone()),
+                )]
+            } else {
+                expansion
+                    .successors
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (transition, model))| {
+                        (
+                            ProductTransition::Model(transition),
+                            model,
+                            reuse
+                                .successor_keys
+                                .as_ref()
+                                .and_then(|keys| keys.get(index))
+                                .cloned(),
+                        )
+                    })
+                    .collect()
+            };
         if has_model_successors && self.stutter_closure {
-            steps.push((ProductTransition::StutterClosure, state.model.clone()));
+            steps.push((
+                ProductTransition::StutterClosure,
+                state.model.clone(),
+                Some(state.model_key.clone()),
+            ));
         }
         let mut successors = Vec::new();
-        for (transition, model) in steps {
-            let (model_key, reading) = self.reading_at(&model, false)?;
+        let mut observed_keys = Vec::with_capacity(model_successor_count);
+        for (transition, model, known_key) in steps {
+            let (model_key, reading) =
+                self.reading_at_with_key(&model, false, known_key.as_ref())?;
+            if matches!(transition, ProductTransition::Model(_)) {
+                observed_keys.push(model_key.clone());
+            }
             let properties = self.step(before, &reading)?;
             if let (true, Before::At(at)) = (properties.is_empty(), before) {
                 self.dead.borrow_mut().push(DeadRoot {
@@ -1490,6 +2017,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 ));
             }
         }
+        self.retain_successor_keys(&state.model_key, observed_keys);
         Ok(Expansion {
             successors,
             findings,
@@ -1545,6 +2073,19 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 }),
         )
     }
+}
+
+/// Copy a cached product key. The cache key includes the caller's canonical
+/// byte limit, so the canonical encoder already admitted these exact bytes.
+fn copy_product_key(bytes: &[u8]) -> Result<Vec<u8>, quire_canonical::Error> {
+    let mut copied = Vec::new();
+    copied
+        .try_reserve_exact(bytes.len())
+        .map_err(|_| quire_canonical::Error::Allocation {
+            requested: bytes.len(),
+        })?;
+    copied.extend_from_slice(bytes);
+    Ok(copied)
 }
 
 /// FR-156: the ample sets of one binding's product, chosen at the model
@@ -1874,7 +2415,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         IncompleteCause::Cancelled { source },
                         None,
                         totals.stats(),
-                    ))
+                    ));
                 }
                 Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
                 Second::NoneFair => {}
@@ -2038,7 +2579,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     ModelCheckLimit::MaxAutomatonStates,
                     limit,
                     totals.stats(),
-                )))
+                )));
             }
             Err(other) => return Err(LivenessRefusal::from(other).into()),
         };
@@ -2051,6 +2592,9 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             automaton: RefCell::new(automaton),
             start,
             readings: RefCell::new(BTreeMap::new()),
+            prefetched: RefCell::new(BTreeMap::new()),
+            product_keys: RefCell::new(ByteCache::new(LASSO_CACHE_BYTES_PER_MAP)),
+            successor_keys: RefCell::new(ByteCache::new(LASSO_CACHE_BYTES_PER_MAP)),
             captured: self.clause.capture_site(),
             initial: Vec::new(),
             dead: RefCell::new(Vec::new()),
@@ -2063,12 +2607,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             found: Cell::new(None),
             halt: RefCell::new(None),
         };
-        if product.start_states().is_err() {
-            return self.halted(&product, totals).map(Err);
-        }
         // The budgets are the run's, shared by every binding.
         let spent = self.request.limits.limits;
         let (max_states, max_transitions) = totals.remaining(spent);
+        if product.start_states(&binding.group, max_states).is_err() {
+            return self.halted(&product, totals).map(Err);
+        }
         let remaining = Limits {
             max_states,
             max_transitions,
@@ -2117,7 +2661,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
             },
             Outcome::BoundReached { .. } => {
-                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"))
+                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
             }
         };
         Ok(Ok(Explored {
@@ -2167,6 +2711,10 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             ),
             Halt::Cancelled(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
             Halt::Automaton(limit) => reached(ModelCheckLimit::MaxAutomatonStates, limit),
+            Halt::InitialStates => reached(
+                ModelCheckLimit::MaxStates,
+                widen(self.request.limits.limits.max_states),
+            ),
             Halt::Refusal(refusal) => return Err(refusal),
             Halt::Expansion(stop) => match stop.limit {
                 Some(ExpansionLimit::EvaluationMeter(counter)) => reached(
@@ -2177,7 +2725,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     reached(ModelCheckLimit::MaxCandidates, self.request.max_candidates)
                 }
                 None if stop.is_internal_failure() => {
-                    return Err(fault("model-expansion-invariant"))
+                    return Err(fault("model-expansion-invariant"));
                 }
                 None => Ending::Stopped(IncompleteCause::ResourceExhausted, None),
             },
@@ -2354,6 +2902,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
         }
         let mut found: Option<usize> = None;
+        let mut prefetched = BTreeMap::new();
         let stop = |phase: &mut DeadPhase<Tr<S>>| -> Result<(), ModelCheckRefusal> {
             phase.stopped = self.halt_ending(&run.product)?;
             Ok(())
@@ -2365,11 +2914,34 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             let Some(model) = nodes.get(index).map(|node| node.model.clone()) else {
                 return Err(fault("a-frontier-index-names-a-node"));
             };
+            if self.request.workers > 1 && !prefetched.contains_key(&index) {
+                let mut jobs = vec![(index, model.clone())];
+                jobs.extend(
+                    frontier
+                        .iter()
+                        .filter(|(next_depth, next)| {
+                            !bound.is_some_and(|bound| *next_depth >= bound)
+                                && !prefetched.contains_key(next)
+                        })
+                        .take(self.request.workers.saturating_sub(1))
+                        .filter_map(|(_, next)| {
+                            nodes.get(*next).map(|node| (*next, node.model.clone()))
+                        }),
+                );
+                let (indices, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+                let expansions = run.product.system.expand_live_batch(
+                    states,
+                    run.product.enforce,
+                    run.product.stutter_closure,
+                    self.request.workers,
+                );
+                prefetched.extend(indices.into_iter().zip(expansions));
+            }
             if run.product.poll().is_err() {
                 stop(&mut phase)?;
                 return Ok(phase);
             }
-            let reading = match run.product.reading(&model) {
+            let (_, reading) = match run.product.reading_at(&model, false) {
                 Ok(reading) => reading,
                 Err(_) => {
                     stop(&mut phase)?;
@@ -2411,8 +2983,11 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     Cut::default(),
                 )
             } else {
-                match run.product.expand(&model) {
-                    Ok(expanded) => expanded,
+                match run
+                    .product
+                    .expand_model_only(&model, prefetched.remove(&index))
+                {
+                    Ok((expanded, cut)) => (expanded, cut),
                     Err(_) => {
                         stop(&mut phase)?;
                         return Ok(phase);
@@ -2497,19 +3072,24 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     return Ok(phase);
                 }
                 *edges_left -= 1;
-                if examined.reach(self.state_key(&next)?, depth.saturating_add(1)) {
+                let next_key = self.state_key(&next)?;
+                if examined.reach(next_key.clone(), depth.saturating_add(1)) {
                     if *states_left == 0 {
                         phase.stopped = out_of(ModelCheckLimit::MaxStates, limits.max_states);
                         return Ok(phase);
                     }
                     *states_left -= 1;
-                    let undefined = match run.product.reading(&next) {
-                        Ok(reading) => matches!(reading, Reading::Undefined { .. }),
-                        Err(_) => {
-                            stop(&mut phase)?;
-                            return Ok(phase);
-                        }
-                    };
+                    let undefined =
+                        match run
+                            .product
+                            .reading_at_with_key(&next, false, Some(&next_key))
+                        {
+                            Ok((_, reading)) => matches!(reading, Reading::Undefined { .. }),
+                            Err(_) => {
+                                stop(&mut phase)?;
+                                return Ok(phase);
+                            }
+                        };
                     frontier.insert((depth.saturating_add(1), nodes.len()));
                     nodes.push(DeadNode {
                         model: next,
@@ -2737,7 +3317,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             Ok(analyses) => analyses,
             Err(FairnessError::Cancelled) => return self.cancelled(),
             Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                return Err(fault("the-fairness-graph-is-built-from-retained-states"));
             }
         };
         let Some(passing) = Analysis::first_fair_in(&analyses) else {
@@ -2755,7 +3335,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Ok(analyses) => analyses,
                 Err(FairnessError::Cancelled) => return self.cancelled(),
                 Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                    return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                    return Err(fault("the-fairness-graph-is-built-from-retained-states"));
                 }
             };
             let Some(full_passing) = Analysis::first_fair_in(&full_analyses) else {

@@ -17,9 +17,10 @@ fn post_state(instance: &str, phase: &str) -> String {
 #[trace("TC-3060", "FR-196-AC-15")]
 #[test]
 fn an_on_each_key_carries_its_instance_and_phase() {
+    // FR-196-AC-15's Link start has m active and n waiting at one model key.
     let waiting = post_state(INSTANCE_M, r#""waiting""#);
     let active = post_state(INSTANCE_M, r#""active""#);
-    let other = post_state(INSTANCE_N, r#""active""#);
+    let other = post_state(INSTANCE_N, r#""waiting""#);
     let origin = post_state("null", "null");
     let mut written = Vec::new();
     for text in [&waiting, &active, &other, &origin] {
@@ -32,7 +33,14 @@ fn an_on_each_key_carries_its_instance_and_phase() {
         written[0], written[1],
         "waiting and active are distinct states"
     );
-    assert_ne!(written[1], written[2], "two instances are distinct states");
+    assert_ne!(
+        written[0], written[2],
+        "m and n waiting at one model state have distinct keys"
+    );
+    assert_ne!(
+        written[1], written[2],
+        "the AC initial keys m active and n waiting are distinct"
+    );
 }
 
 #[trace("TC-3060", "FR-196-AC-15")]

@@ -223,6 +223,7 @@ fn a_related_by_clause_enables_only_related_steps_and_refuses_an_unrelated_repla
     // replaced by the free protocol's `Pick` of the unrelated peer `c`.
     let outcome = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(&related, &documents, &start),
             item: ModelCheckItem::DeadlockFreedom,
@@ -302,6 +303,7 @@ fn replay_does_not_call_a_false_node_constraint_a_related_by_failure() {
     let related_subject = subject(&related, &documents, &start);
     let outcome = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(&related, &documents, &start),
             item: ModelCheckItem::DeadlockFreedom,
@@ -385,6 +387,7 @@ fn replay_names_a_failed_relation_on_an_attempt_result_binder() {
     let free = package_over(model.clone(), "package", "", &free_body);
     let outcome = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(&free, &documents, &start),
             item: ModelCheckItem::DeadlockFreedom,

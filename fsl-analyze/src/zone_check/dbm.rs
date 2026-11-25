@@ -148,6 +148,9 @@ pub enum DbmError {
         /// The higher.
         second: usize,
     },
+    /// A clock reindexing omitted the reference clock.
+    #[error("clock reindexing must start with the reference clock")]
+    MissingReferenceClock,
     /// A carry or reset assignment to the reference clock.
     #[error("the reference clock cannot be reassigned")]
     ReassignReferenceClock,
@@ -201,6 +204,97 @@ impl Dbm {
     /// The dimension: the clock count plus the reference clock.
     pub fn dim(&self) -> usize {
         self.dim
+    }
+
+    /// Reindex this closed zone to a list of clocks in the old zone. The
+    /// reference clock must remain first; repeated indices deliberately
+    /// identify clocks that have the same valuation in the resulting zone.
+    pub fn reindex(&self, clocks: &[usize]) -> Result<Self, DbmError> {
+        if clocks.first() != Some(&0) {
+            return Err(DbmError::MissingReferenceClock);
+        }
+        for &clock in clocks {
+            self.in_range(clock)?;
+        }
+        let dim = clocks.len();
+        let mut result = Self {
+            dim,
+            bounds: vec![Bound::Infinite; dim * dim],
+        };
+        if self.is_empty() {
+            result.set_empty();
+            return Ok(result);
+        }
+        for (i, &old_i) in clocks.iter().enumerate() {
+            for (j, &old_j) in clocks.iter().enumerate() {
+                let bound = if old_i == old_j {
+                    Bound::zero_le()
+                } else {
+                    self.at(old_i, old_j).clone()
+                };
+                result.set(i, j, bound);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Add clocks fixed at zero, preserving every existing relation.
+    pub fn append_zero_clocks(&self, count: usize) -> Self {
+        let mut clocks: Vec<_> = (0..self.dim).collect();
+        clocks.extend(std::iter::repeat_n(0, count));
+        self.reindex(&clocks)
+            .expect("the generated clock indices belong to this DBM")
+    }
+
+    /// Translate selected clocks by one shared amount, preserving all
+    /// difference relations exactly.
+    pub fn translate_clocks(&mut self, clocks: &[usize], amount: &BigInt) -> Result<(), DbmError> {
+        let mut selected = vec![false; self.dim];
+        for &clock in clocks {
+            self.in_range(clock)?;
+            if clock == 0 {
+                return Err(DbmError::ReassignReferenceClock);
+            }
+            selected[clock] = true;
+        }
+        let before = self.clone();
+        for i in 0..self.dim {
+            for j in 0..self.dim {
+                let delta = match (selected[i], selected[j]) {
+                    (true, false) => amount.clone(),
+                    (false, true) => -amount,
+                    _ => BigInt::zero(),
+                };
+                self.set(i, j, shift(&before.at(i, j), &delta));
+            }
+        }
+        Ok(())
+    }
+
+    /// Let the selected clocks elapse together while all other clocks stay
+    /// fixed, retaining their exact cross-clock correlation.
+    pub fn up_clocks(&mut self, clocks: &[usize]) -> Result<(), DbmError> {
+        let mut selected = vec![false; self.dim];
+        for &clock in clocks {
+            self.in_range(clock)?;
+            if clock == 0 {
+                return Err(DbmError::SubtractReferenceClock);
+            }
+            selected[clock] = true;
+        }
+        for i in 0..self.dim {
+            if !selected[i] {
+                continue;
+            }
+            self.set(i, 0, Bound::Infinite);
+            for j in 0..self.dim {
+                if !selected[j] {
+                    self.set(i, j, Bound::Infinite);
+                }
+            }
+        }
+        self.close();
+        Ok(())
     }
 
     /// The bound on `x_i - x_j`.

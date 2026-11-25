@@ -177,14 +177,15 @@ impl SourceEnumCatalog {
         budget: &mut NativeJoinBudget,
     ) -> Result<Self, SourceEnumCatalogError> {
         let at = locus(0, "source_enum_catalog");
-        work(budget, at)?;
-        charge(budget, at, NativeJoinChargeKind::Storage, 1)?;
+        let has_enum_rows = joined.source_enum_rows().next().is_some() || !model_rows.is_empty();
+        if has_enum_rows {
+            work(budget, at)?;
+            charge(budget, at, NativeJoinChargeKind::Storage, 1)?;
+        }
         let mut sources = Vec::new();
-        let mut rows = joined.source_enum_rows();
-        loop {
+        for row in joined.source_enum_rows() {
             let at = locus(sources.len(), "source_enum_catalog_source");
             work(budget, at)?;
-            let Some(row) = rows.next() else { break };
             native_row::enum_declaration(budget, at, &row.declaration)?;
             native_row::items(budget, at, row.members.len())?;
             for member in &row.members {
@@ -235,9 +236,11 @@ impl SourceEnumCatalog {
         }
         // This builder returns one fresh, uniquely owned index. It is never
         // extended after a shallow clone, which would copy the index's map.
-        let index_at = locus(0, "source_enum_catalog_index");
-        work(budget, index_at)?;
-        charge(budget, index_at, NativeJoinChargeKind::Storage, 1)?;
+        if has_enum_rows {
+            let index_at = locus(0, "source_enum_catalog_index");
+            work(budget, index_at)?;
+            charge(budget, index_at, NativeJoinChargeKind::Storage, 1)?;
+        }
         let mut members = Self::model_runtime_members(&models, budget)?;
         for (index, row) in sources.iter().enumerate() {
             let at = locus(index, "source_enum_catalog_members");
@@ -544,7 +547,10 @@ mod tests {
             let document = serde_json::to_vec(&model_fixture::document()).unwrap();
             let packages =
                 fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-            let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = {:?};\n{body}", model_fixture::PACKAGE);
+            let text = format!(
+                "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = {:?};\n{body}",
+                model_fixture::PACKAGE
+            );
             let parsed = fsl_cst::parse(
                 fsl_foundation::SourceIdentity::new("test", "enum-catalog"),
                 "catalog.native",
@@ -701,7 +707,7 @@ mod tests {
             .unwrap();
         let bytes = original.to_bytes(&fixture.admitted).unwrap();
         let file: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(file["format"], "filament.checked-handoff.identities/6");
+        assert_eq!(file["format"], "filament.checked-handoff.identities/7");
         let rows = file["source_enums"]
             .as_array()
             .expect("real source enum carrier");
@@ -838,10 +844,17 @@ mod tests {
     fn source_enum_catalog_native_allowances_keep_one_cumulative_prefix_and_first_denial() {
         let fixture = fixture(ENUMS, false);
         let mut measured = NativeJoinBudget::new(u64::MAX, u64::MAX);
-        build(&fixture, &mut measured).unwrap();
+        let catalog = build(&fixture, &mut measured).unwrap();
+        assert!(
+            !catalog.0.sources.is_empty(),
+            "the measured catalog contains actual source enum rows"
+        );
         let spent = measured.consumed();
+        assert!(spent.work > 0, "source enum rows consume work");
+        assert!(spent.storage > 0, "source enum rows consume storage");
         let mut exact = NativeJoinBudget::new(spent.work, spent.storage);
-        build(&fixture, &mut exact).unwrap();
+        let admitted = build(&fixture, &mut exact).unwrap();
+        assert!(!admitted.0.sources.is_empty());
         assert_eq!(exact.consumed(), spent);
         for (work_limit, storage_limit, kind) in [
             (0, spent.storage, NativeJoinChargeKind::Work),
@@ -877,6 +890,63 @@ mod tests {
             if work_limit != 0 && storage_limit != 0 {
                 assert!(budget.consumed().work > 0);
             }
+        }
+    }
+
+    #[trace("TC-1331", "FR-531-AC-30", "FR-531-AC-44")]
+    #[test]
+    fn source_enum_catalog_charges_already_joined_source_rows() {
+        let fixture = fixture(ENUMS, false);
+        let mut setup = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let source_rows = fixture
+            .emission
+            .selected_source_enum_rows(&mut setup)
+            .expect("source rows materialize");
+        let joined = SelectedExactIdentities::empty()
+            .with_source_enum_rows(&fixture.admitted, source_rows, &mut setup)
+            .expect("actual source enum rows join");
+
+        let mut measured = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let catalog = SourceEnumCatalog::from_joined(&joined, &[], &mut measured)
+            .expect("catalog materializes the already-joined rows");
+        assert!(!catalog.0.sources.is_empty());
+        let last_source_row = catalog.0.sources.len() - 1;
+        let need = measured.consumed();
+        assert!(need.work > 0, "catalog materialization consumes work");
+        assert!(need.storage > 0, "catalog materialization owns storage");
+
+        let mut exact = NativeJoinBudget::new(need.work, need.storage);
+        SourceEnumCatalog::from_joined(&joined, &[], &mut exact)
+            .expect("exact catalog-only budget admits");
+        assert_eq!(exact.consumed(), need);
+
+        for (work_limit, storage_limit, kind) in [
+            (need.work - 1, need.storage, NativeJoinChargeKind::Work),
+            (need.work, need.storage - 1, NativeJoinChargeKind::Storage),
+        ] {
+            let mut short = NativeJoinBudget::new(work_limit, storage_limit);
+            let error = SourceEnumCatalog::from_joined(&joined, &[], &mut short)
+                .expect_err("one-short catalog-only budget refuses");
+            let SourceEnumCatalogError::Native(error) = error else {
+                panic!("budget denial retains its native owner error")
+            };
+            let denied = short
+                .first_unpaid()
+                .expect("first unpaid source-row charge");
+            let at = short
+                .first_unpaid_locus()
+                .expect("first unpaid source-row locus");
+            assert_eq!(denied.kind, kind);
+            assert_eq!(error.denied(), Some(denied));
+            assert_eq!(error.locus(), Some(at));
+            let NativeJoinLocusSource::AdapterRow(index) = at.source else {
+                panic!("catalog denial retains its source-row index: {at:?}")
+            };
+            assert_eq!(
+                index, last_source_row,
+                "the last source row owns the denial"
+            );
+            assert_eq!(at.form, "source_enum_catalog_members");
         }
     }
 

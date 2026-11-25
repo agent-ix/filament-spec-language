@@ -209,7 +209,7 @@ fn has_reachable_non_atomic_access<M: MemoryModel>(
     memory: M,
 ) -> bool {
     let system = case.concrete_system(selection, memory).expect("protocol system");
-    let mut queue: VecDeque<_> = system.initial().into();
+    let mut queue: VecDeque<_> = system.try_initial().expect("initial states settle").into();
     let mut seen = BTreeSet::new();
     while let Some(state) = queue.pop_front() {
         let (key, _) = system.state_key(&state).expect("state key");
@@ -410,7 +410,10 @@ fn forged_race_under<M: MemoryModel>(
     later: u64,
 ) -> TemporalCounterexample<ProtocolTransition> {
     let system = case.concrete_system(selection, memory).expect("builds");
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut prefix = Vec::new();
     for hop in path {
         let (transition, next) = system
@@ -705,11 +708,14 @@ fn the_race_freedom_item_over_a_model_subject_is_refused() {
     let subject = model_subject(&package, &documents, vec![start], &["c"], UNLIMITED);
     let refusal = fsl_analyze::model_check::check_model(
         fsl_analyze::model_check::ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: model_subject(&package, &documents, vec![second], &["c"], UNLIMITED),
             item: ModelCheckItem::RaceFreedom,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -1054,8 +1060,13 @@ fn a_forged_race_settles_inconclusive_under_tso() {
 /// Walk `case`'s `tso` system along `path` and return the JSON of the state
 /// key after each hop.
 fn tso_keys_after(case: &Case, path: &[Hop]) -> Vec<Json> {
-    let system = case.concrete_system(&tso(), Tso::default()).expect("builds");
-    let mut state = system.initial().remove(0);
+    let system = case
+        .concrete_system(&tso(), Tso::default())
+        .expect("builds");
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut keys = Vec::new();
     for hop in path {
         let (_, next) = system
@@ -1811,6 +1822,7 @@ fn protocol_run<'c>(
     let race = matches!(item, ModelCheckItem::RaceFreedom);
     ProtocolItem {
         request: ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: case.temporal_clock_selections(),
             subject: case.subject(selection),
             item,

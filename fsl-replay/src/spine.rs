@@ -747,6 +747,7 @@ impl CompileRefusal {
                 | Setting::MonitorMaxWindowValues
                 | Setting::MonitorRetainedPositions
                 | Setting::MonitorRetainedIdentities
+                | Setting::MonitorMaxActivations
                 | Setting::MonitorPreparationWorkUnits
                 | Setting::MonitorPreparationStorage
                 | Setting::TemporalEvidenceFormulaNodes

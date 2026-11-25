@@ -656,6 +656,32 @@ fn wire_without_member(package: &CheckedPackageV2) -> Value {
             |claim| filament_contract_model::CheckedSchedulabilityClaimRow {
                 declaration: claim.declaration().clone(),
                 occurrence: claim.occurrence().ordinal,
+                task_set: claim.task_set().into(),
+                release_bindings: claim
+                    .release_bindings()
+                    .map(
+                        |binding| filament_contract_model::CheckedSchedulabilityReleaseBinding {
+                            task_name: binding.task_name().into(),
+                            selected_model_identity: binding.selected_model_identity().into(),
+                            operation_declaring_identity: binding
+                                .operation_declaring_identity()
+                                .clone(),
+                            operation_member: binding.operation_member().into(),
+                        },
+                    )
+                    .collect(),
+                mode_switch_bindings: claim
+                    .mode_switch_bindings()
+                    .map(|binding| {
+                        filament_contract_model::CheckedSchedulabilityModeSwitchBinding {
+                            selected_model_identity: binding.selected_model_identity().into(),
+                            operation_declaring_identity: binding
+                                .operation_declaring_identity()
+                                .clone(),
+                            operation_member: binding.operation_member().into(),
+                        }
+                    })
+                    .collect(),
             },
         )
         .collect();

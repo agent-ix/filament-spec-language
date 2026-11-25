@@ -211,6 +211,7 @@ impl Chatter {
     fn check(&self) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(),
                 item: self.item(),
@@ -430,7 +431,10 @@ fn scheduling_adversarial_admits_the_lasso_that_starves_a_branch() {
     let subject = adversarial.subject();
     let system = concrete_sc_system(&subject);
     let s = ThreadPath::root(0).child("Both", "s", 0);
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut loop_states = Vec::new();
     for (index, step) in counterexample.prefix.iter().enumerate() {
         if index >= lasso.entry {
@@ -1022,6 +1026,7 @@ fn liveness_over_an_ra_parallel_is_decided_under_visibility_fairness() {
     .expect("the selection resolves");
     let outcome = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject,
             item: chatter.item(),

@@ -162,6 +162,7 @@ impl Bounded {
         let fixture = &self.fixture;
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &fixture.temporal_clock_selections,
                 subject: subject(
                     &fixture.package,
@@ -173,6 +174,8 @@ impl Bounded {
                 item: self.item(),
                 max_depth,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -538,6 +541,7 @@ fn a_formula_product_embeds_the_real_complete_monitor_without_inner_transport() 
             value: filament_exact::Rational::from_integer(filament_exact::Integer::one()),
         }],
         ranking: vec![(key, 0)],
+        policy: None,
     };
     let limits = fsl_replay::ProbabilityDocumentLimits {
         bytes: 1_000_000,

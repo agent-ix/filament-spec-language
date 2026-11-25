@@ -138,6 +138,39 @@ fn a_time_lock_proof_carries_a_divergence_part() {
     );
 }
 
+/// FR-282-AC-3: a zone certificate produced by ADR-026 zone search for the
+/// dense-time `Rpc` is accepted; removing one zone makes that same proof
+/// incomplete and the checker rejects it.
+#[trace("TC-700", "FR-282-AC-3")]
+#[test]
+fn a_dense_zone_certificate_is_rejected_when_a_zone_is_removed() {
+    let dense_rpc = crate::zone_search::rpc_claim(
+        4,
+        crate::zone_search::TIMED,
+        "temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
+         { always holds(not c.late) }\n",
+    );
+    let certificate = proved(crate::zone_search::claim(
+        &dense_rpc,
+        ZoneCheckLimits::default(),
+        &Cancel::new(),
+    ));
+    assert_eq!(
+        verdict(&dense_rpc, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+
+    let mut one_zone_removed = certificate.clone();
+    one_zone_removed
+        .nodes
+        .pop()
+        .expect("the proof contains a zone");
+    assert!(matches!(
+        verdict(&dense_rpc, &one_zone_removed),
+        ZoneCertificateVerdict::Rejected(_)
+    ));
+}
+
 /// FR-245-AC-2 and AC-7 over a liveness certificate: an edge pointing to a
 /// node of smaller component index is rejected `BackwardEdge` at that
 /// `ZoneEdge`; a component reason naming a fairness constraint that an

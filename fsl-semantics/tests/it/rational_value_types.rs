@@ -7,13 +7,16 @@
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{AssemblyRefusal, CheckedGraph};
+use fsl_semantics::check::{
+    AggregateTerm, AssemblyRefusal, BindingValue, BodyTerm, CheckedGraph, LeafTerm, MemberTerm,
+    Owner,
+};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::model_operations::{
-    admit_and_assemble_with_body, config_version_document, empty_frame, operation, wire_field,
-    wire_type, PACKAGE_IDENTITY,
+    PACKAGE_IDENTITY, admit_and_assemble_with_body, config_version_document, empty_frame,
+    operation, wire_field, wire_type,
 };
 use fsl_foundation::IntakeLimits;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -22,7 +25,7 @@ use fsl_semantics::model::domain_package::{
 };
 use fsl_semantics::model::intake::{admit, meaning, package_input, read_domain_package};
 use fsl_semantics::model::normalize::{
-    normalize_with_meter, ModelRefusal, ModelRefusalCause, NormalizeOutcome,
+    ModelRefusal, ModelRefusalCause, NormalizeOutcome, normalize_with_meter,
 };
 
 fn identity(path: &str) -> String {
@@ -103,7 +106,7 @@ fn assemble(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<(Code, Opti
                         Some(error.cause.catalog_code().cause().to_owned()),
                     )
                 })
-                .collect())
+                .collect());
         }
     };
     declarations
@@ -230,6 +233,61 @@ fn positions_document(bounded: bool, via_alias: bool) -> Value {
     })
 }
 
+fn positions_with_unbounded_field() -> Value {
+    let mut document = positions_document(false, false);
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(wire_type(
+            &identity("ConfigVersion"),
+            "object_type",
+            json!({
+                "identityFields": [identity("ConfigVersion/id")],
+                "fields": [wire_field(
+                    &identity("ConfigVersion/id"),
+                    "id",
+                    "ix://filament/native/Boolean",
+                    "required",
+                    1,
+                )],
+                "operations": [],
+                "relationships": [],
+                "supertypes": [],
+            }),
+        ));
+    document["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(json!({
+            "kind": {"module": PACKAGE_IDENTITY, "name": "object_type"},
+            "moduleVersion": "1.0.0",
+            "construct": {
+                "identity": "none",
+                "shape": "record",
+                "members": {"identityFields": "required", "fields": "optional"},
+                "meaning": meaning::OBJECT_TYPE,
+            },
+        }));
+    let field = wire_field(
+        &identity("ConfigVersion/ratio"),
+        "ratio",
+        &identity("Ratio"),
+        "required",
+        1,
+    );
+    let owner = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == identity("ConfigVersion"))
+        .expect("ConfigVersion");
+    owner["fields"]
+        .as_array_mut()
+        .expect("ConfigVersion fields")
+        .push(field);
+    document
+}
+
 fn read_positions(document: &Value) -> Result<DomainPackage, Vec<ModelRefusal>> {
     let bytes = serde_json::to_vec(document).expect("authored document serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
@@ -250,7 +308,7 @@ fn key(node: &str) -> filament_checked::key::DeclarationKey {
 /// one `Ratio` declaration whose domain is `Rational[-3, 7; 1, 12]`. The
 /// checked type and the `rational_range` node of the two are not asserted
 /// here, so the test is not tagged with the criterion.
-#[trace("TC-1300")]
+#[trace("FR-505-AC-11", "TC-1300")]
 #[test]
 fn a_bounded_ratio_admits_as_a_tuple_position_and_a_variant_payload() {
     let package = read_positions(&positions_document(true, false)).expect("the package reads");
@@ -299,19 +357,38 @@ fn a_bounded_ratio_admits_as_a_tuple_position_and_a_variant_payload() {
 
 /// TC-1300 row 25 (FR-505-AC-10, refusal half): with `Ratio`'s `constraints`
 /// empty, a tuple position and a variant payload that name `Ratio` or an
-/// alias of it refuse at the package read: the position
-/// `invalid_model_binding`/`malformed-declaration` at the position's
-/// `typeRef`, the payload `unsupported_construct`/`declaration-form` at
-/// `Variant.payloadType`. Both are intake-reader causes raised by
-/// `read_domain_package`, before any assembly. The "field admits with no
-/// checked type" clause is not carried by the spine, so the test is not
-/// tagged with the criterion.
-#[trace("TC-1300")]
+/// alias of it refuse: the position is `invalid_model_binding`/
+/// `malformed-declaration` at its `typeRef`, and the payload is
+/// `unsupported_construct`/`declaration-form` at `Variant.payloadType`. An
+/// unbounded field remains admitted as the package `Ratio` reference without
+/// a bounded checked type.
+#[trace("FR-505-AC-10", "TC-1300")]
 #[test]
 fn an_unbounded_ratio_refuses_as_a_tuple_position_and_a_variant_payload() {
     for via_alias in [false, true] {
-        let package =
-            read_positions(&positions_document(false, via_alias)).expect("the package reads");
+        let document = if via_alias {
+            positions_document(false, true)
+        } else {
+            positions_with_unbounded_field()
+        };
+        let package = read_positions(&document).expect("the package reads");
+        if !via_alias {
+            assert!(
+                package.records.iter().any(|record| matches!(
+                    record,
+                    DomainPackageRecord::FieldMember(field)
+                        if field.key == key("ConfigVersion/ratio")
+                            && field.value_type == ValueTypeRef::Package(key("Ratio"))
+                )),
+                "the unbounded Ratio field is retained without adding a checked type"
+            );
+            assert!(package.records.iter().any(|record| matches!(
+                record,
+                DomainPackageRecord::ScalarType(scalar)
+                    if scalar.key == key("Ratio")
+                        && scalar.domain == (ScalarValueDomain::Rational { domain: None, unit: None })
+            )), "the field's exact declared carrier is unbounded Rational");
+        }
         assert!(
             package.records.iter().all(|record| !matches!(
                 record,
@@ -329,6 +406,10 @@ fn an_unbounded_ratio_refuses_as_a_tuple_position_and_a_variant_payload() {
             .iter()
             .find(|refusal| refusal.code == Code::InvalidModelBinding)
             .expect("the tuple position refuses malformed-declaration");
+        assert_eq!(
+            position.cause.catalog_code().cause(),
+            "malformed-declaration"
+        );
         assert!(
             matches!(&position.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
                 if node == &identity("P/p0")
@@ -339,6 +420,7 @@ fn an_unbounded_ratio_refuses_as_a_tuple_position_and_a_variant_payload() {
             .iter()
             .find(|refusal| refusal.code == Code::UnsupportedConstruct)
             .expect("the variant payload refuses declaration-form");
+        assert_eq!(payload.cause.catalog_code().cause(), "declaration-form");
         assert!(
             matches!(&payload.cause, ModelRefusalCause::UnsupportedDeclarationForm { node, member, .. }
                 if node == &identity("variant/V-c") && member.to_string() == "Variant.payloadType"),
@@ -378,7 +460,7 @@ fn source_refusals(declarations: &str) -> Result<(), Vec<(Code, Option<String>)>
                         Some(error.cause.catalog_code().cause().to_owned()),
                     )
                 })
-                .collect())
+                .collect());
         }
     };
     declarations
@@ -526,6 +608,57 @@ fn with_length_units(document: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&value).expect("fixture encoding")
 }
 
+fn references_in_node(node: &fsl_semantics::check::SemanticNode) -> Vec<filament_exact::NodeKey> {
+    fn leaf_target(leaf: &LeafTerm) -> Option<filament_exact::NodeKey> {
+        match leaf {
+            LeafTerm::Reference { target } => target.admitted().cloned(),
+            _ => None,
+        }
+    }
+    let BodyTerm::Aggregate(AggregateTerm { members, .. }) = node.body() else {
+        return Vec::new();
+    };
+    members
+        .iter()
+        .filter_map(|member| match member {
+            MemberTerm::Binding(binding) => match &binding.value {
+                BindingValue::Leaf(leaf) => leaf_target(leaf),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+fn assert_rational_carrier_uses_unit(
+    graph: &CheckedGraph,
+    unit: &fsl_semantics::check::SemanticNode,
+) {
+    let carriers: Vec<_> = graph
+        .semantic_graph()
+        .nodes()
+        .filter(|node| {
+            node.semantic_form() == "carried_quantity"
+                && references_in_node(node).contains(&unit.key())
+        })
+        .collect();
+    assert_eq!(
+        carriers.len(),
+        1,
+        "Ratio's carried quantity names the selected m unit node {:#?}; actual carriers: {:#?}",
+        unit.key(),
+        graph
+            .semantic_graph()
+            .nodes()
+            .filter(|node| node.semantic_form() == "carried_quantity")
+            .collect::<Vec<_>>()
+    );
+}
+
+fn with_ratio_parameter(body: &str) -> String {
+    format!("{body}\nfunction keepRatio using v(x: Config::Ratio): Config::Ratio pure {{ x }}\n")
+}
+
 /// FR-505-AC-9 (TC-1300 row 19): over a unit-bearing `Ratio` whose unit `m` is
 /// declared in the type's own model document, which also declares an object
 /// type, two fields `a` and `b` of `Ratio`: the invariants
@@ -643,14 +776,13 @@ fn a_bare_unit_name_never_reaches_the_document_unit() {
     );
 }
 
-/// A source unit `m` of another dimension takes the name from the model
-/// document's `m` (the compiling unit's own unit wins), so the document's
-/// `Ratio` carries the source `m` (Time): `convert<Quantity<Config::cm>>(self.a)`,
-/// a conversion to the document's Length unit, checks without the source `m`
-/// and is refused `ill_typed`/`type-mismatch` with it.
+/// TC-1300: the model unit resolves without a source `m`; a source Length `m`
+/// becomes the carrier's exact `SourceOwner`; and a source Time `m` also wins
+/// name resolution, so converting the Ratio member to the model Length `cm`
+/// refuses `ill_typed`/`type-mismatch`.
 #[trace("TC-1300")]
 #[test]
-fn a_source_unit_named_like_the_document_unit_wins_the_name() {
+fn rational_unit_references_resolve_to_the_literal_owner() {
     let ratio = identity("Ratio");
     let document = with_length_units(&document(
         vec![rational_type(
@@ -663,12 +795,84 @@ fn a_source_unit_named_like_the_document_unit_wins_the_name() {
     ));
     let clause = "invariant I using v on Config::ConfigVersion at current { \
         convert<Quantity<Config::cm>>(self.a) = 100 Config::cm }\n";
-    assert_eq!(assemble(&document, clause).map(|_| ()), Ok(()));
+
+    let model_body = with_ratio_parameter(clause);
+    let model_graph = assemble(&document, &model_body).expect("the model's m conversion checks");
+    let model_m = model_graph
+        .semantic_graph()
+        .nodes()
+        .find(|node| {
+            node.semantic_form() == "unit"
+                && matches!(node.owner(), Some(Owner::Model(owner)) if owner.node() == identity("unit/m"))
+        })
+        .expect("the model document's m unit node is present");
+    assert_rational_carrier_uses_unit(&model_graph, model_m);
+
+    let source_length = "dimension Length;\nunit m : Length = rational(1, 1);\n\
+        invariant I using v on Config::ConfigVersion at current { true }\n";
+    let source_length_body = with_ratio_parameter(source_length);
+    let source_length_graph = assemble(&document, &source_length_body)
+        .expect("a same-name source Length m is admitted and its Ratio type resolves");
+    let source_m = source_length_graph
+        .semantic_graph()
+        .nodes()
+        .find(|node| {
+            node.semantic_form() == "unit"
+                && node
+                    .declaration()
+                    .is_some_and(|name| name.len() == 1 && name[0].as_str() == "m")
+                && matches!(node.owner(), Some(Owner::Source(_)))
+        })
+        .expect("the compiling unit's m is source-owned");
+    assert_rational_carrier_uses_unit(&source_length_graph, source_m);
+
     let shadowed = format!("dimension Time;\nunit m : Time = rational(1, 1);\n{clause}");
+    let shadowed_declarations = admit_and_assemble_with_body(&document, &shadowed)
+        .expect("the source Time unit assembles before the conversion is checked");
+    let shadowed_refusals = shadowed_declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect_err("the Time-owned m cannot convert to the model Length cm");
+    assert_eq!(shadowed_refusals.len(), 1);
+    assert_eq!(shadowed_refusals[0].cause.code(), Code::IllTyped);
     assert_eq!(
-        assemble(&document, &shadowed).map(|_| ()),
-        Err(vec![(Code::IllTyped, Some("type-mismatch".to_owned()))])
+        shadowed_refusals[0].cause.cause(),
+        Some("type-mismatch"),
+        "the conversion refuses with its typed mismatch cause"
     );
+    assert_eq!(
+        shadowed_refusals[0].location.origin,
+        filament_semantic_value::location::ExpressionOwner::StateClause {
+            clause: "I".to_owned(),
+            index: 0,
+        },
+        "the refusal belongs to the authored invariant"
+    );
+    assert_eq!(
+        shadowed_refusals[0].location.path(),
+        vec![0],
+        "the mismatch is located at the left-hand conversion, not the whole invariant"
+    );
+    let source_time = "dimension Time;\nunit m : Time = rational(1, 1);\n\
+        invariant I using v on Config::ConfigVersion at current { true }\n";
+    let source_time_body = with_ratio_parameter(source_time);
+    let source_time_graph = assemble(&document, &source_time_body)
+        .expect("the package with a source Time m admits and checks without conversion");
+    let time_m = source_time_graph
+        .semantic_graph()
+        .nodes()
+        .find(|node| {
+            node.semantic_form() == "unit"
+                && node
+                    .declaration()
+                    .is_some_and(|name| name.len() == 1 && name[0].as_str() == "m")
+                && matches!(node.owner(), Some(Owner::Source(_)))
+        })
+        .expect("the compiling unit's Time m is source-owned");
+    assert_rational_carrier_uses_unit(&source_time_graph, time_m);
 }
 
 /// The unit selecting `packages` with the source `body` after a source `Time`,

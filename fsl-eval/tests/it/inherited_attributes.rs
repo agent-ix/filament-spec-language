@@ -251,6 +251,7 @@ fn an_attribute_read_of_an_object_absent_from_the_current_state_is_a_fault() {
 /// `A.x` is inherited by `B`: `deref(r).x` resolves for `r: Reference<B>`
 /// and reads the `B` object's inherited slot, beside its own `y`. `A`'s
 /// view does not see `B`'s own `y`.
+#[trace("TC-790", "FR-300-AC-2")]
 #[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
 #[test]
 fn deref_reads_an_inherited_field_through_the_subtype() {
@@ -333,6 +334,7 @@ fn deref_reads_the_most_derived_redefinition() {
 
 /// A renamed redefinition: `B.y` redefines `A.x`. Through `Reference<B>`
 /// the name is `y`, and `x` no longer resolves: refused at check time.
+#[trace("TC-790", "FR-300-AC-2")]
 #[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
 #[trace("FSpec-TC-196", "FSpec-FR-151-AC-1")]
 #[test]

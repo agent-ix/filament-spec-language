@@ -126,6 +126,7 @@ impl Fixture {
         let letters = self.letters(atom);
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: subject(
                     &self.package,
@@ -140,6 +141,8 @@ impl Fixture {
                 },
                 max_depth,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             cancel,
@@ -665,7 +668,7 @@ fn each_needs_every_transition_of_the_operation_and_whole_needs_one() {
 /// the prefix `0 -inc-> 1 -inc-> 2` with no lasso, not the terminal stutter
 /// lasso. The same holds for an undefined precondition guard (ADR-018 UE-6):
 /// the item is refuted at the expanded state, naming the guarded transition.
-#[trace("TC-537")]
+#[trace("TC-537", "FR-126-AC-9")]
 #[test]
 fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
     let helper = "function undefined_remainder using v(x: Integer): Integer pure { 6 mod x }\n";
@@ -868,6 +871,7 @@ fn the_model_only_pass_spends_the_budget_the_next_instance_gets() {
         limits.limits.max_states = budget;
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &fixture.temporal_clock_selections,
                 subject: subject(
                     &fixture.package,
@@ -882,6 +886,8 @@ fn the_model_only_pass_spends_the_budget_the_next_instance_gets() {
                 },
                 max_depth: None,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1038,8 +1044,8 @@ impl<M: TransitionSystem> PropertyComponent<M> for Silent {
     type Key = usize;
     type Finding = ();
 
-    fn initial(&self, _model: &M::State) -> Vec<usize> {
-        vec![0]
+    fn initial(&self, _model: &M::State) -> impl Iterator<Item = usize> + use<M> {
+        std::iter::once(0)
     }
 
     fn key(&self, state: &usize) -> usize {

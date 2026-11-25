@@ -57,11 +57,15 @@ compiles, and only this item finds it.
   `Reference<T_C>` inside an option, collection or map value lifts
   each nested reference to the `Reference<T_A>` of the object row that maps
   `T_A` from `T_C`, element by element at every depth, as a top-level
-  reference is lifted (FR-135). A reference nested inside a record, tuple or
-  union is lifted by the same rule once QSL-2959 settles the pairing rule for
-  the abstract composite; until then such a row refuses at S3
-  `ill_typed`/`type-mismatch`. A nested reference whose concrete type no
-  object row maps refuses at S3 as a top-level one does.
+  reference is lifted (FR-135). A record component is paired by field name,
+  a tuple component by position after equal arity is checked, and an active
+  union component by variant tag. The rule recurses through each paired
+  component, including nested options, collections and maps. A missing or
+  extra record field, unequal tuple arity, or active union tag without a
+  paired case refuses at S3 with `ill_typed`/`type-mismatch` at the first
+  mismatched component path, before an analyze item is created. A nested
+  reference whose concrete type no object row maps refuses at S3 as a
+  top-level one does.
 - **With no `abstract_subject`, the abstract initial states are the
   admissible completions of each mapped concrete initial state.** An FSL
   model has no initial clause and no constructor: a snapshot is the only
@@ -163,6 +167,12 @@ compiles, and only this item finds it.
 | FR-630-AC-4 | Over the Counter fixture with a field `chain: Sequence<Reference<Counter>>[0, 2]` on the concrete model and on the abstract `Spec::Counter`, a refinement whose object row maps `chain = self.chain` (a `Sequence<Reference<M::Counter>>[0, 2]` row for a `Sequence<Reference<Spec::Counter>>[0, 2]` field, the Ring-to-Queue shape of FR-135-AC-6 on the fixture this requirement's other criteria use) checks and its refinement item settles `proved`, `certified`. | Test (TC-1590) |
 | FR-630-AC-5 | Over the Counter fixture (`value: Int[0, 3]`) refined by the abstract `Spec::Counter`, with no `abstract_subject`: the refinement `Hidden`, whose object row fixes no field (`object Spec::Counter from M::Counter { }`) and maps `inc` to `stutter`, over the concrete snapshot with counter `a` at 0, settles `proved`, its initial candidate set holding exactly the four abstract states `value` 0, 1, 2 and 3; the same item with `temporal.limits.max_candidates` 3 settles `incomplete`, `resource-incomplete`, cause `limit-reached` naming `max_candidates`; over the two concrete snapshots `a` at 0 and `a` at 1 it settles `incomplete` naming `max_candidates` with `max_candidates` 4 and `proved` with 8, the cap counting completions across both initial states; the refinement `Shifted` (`value = self.value + 3`, `inc` mapped to `stutter`) is refused at S3 `ill_typed`/`type-mismatch` at `self.value + 3`, because its type `Int[3, 6]` does not conform to the abstract field type `Int[0, 3]` (ADR-016 SC-2), so no item is analyzed for it; the empty completion set is FR-630-AC-6's. | Test (TC-2964) |
 | FR-630-AC-6 | Over the Counter fixture with a field `elapsed: Quantity<ms>` on both sides, the abstract side's under the unit bound `max 3` (FSpec FR-154 "Unit bounds"), with no `abstract_subject`, the refinement `Late` (`value = self.value; elapsed = self.elapsed + 2 ms;`, `inc` mapped to the abstract `Spec::Counter::inc(self)`, so a concrete step that changes the image is a matching abstract step) checks, since a `Quantity<ms>` expression is admitted at a bounded quantity position and left to the bound as an invariant; over the concrete snapshot with counter `a` at `value` 0 and `elapsed` 2 ms, whose image `elapsed` 4 ms violates the bound, it settles `refuted` with `InitialNotAbstract{initial: 0}` at position 0 and a one-state counterexample that replays, never `declined`, `invalid-input` or `mapping-undefined`; with `elapsed` 1 ms (image 3 ms, the bound itself) it settles `proved`. | Test (TC-2971) |
+| FR-630-AC-7 | Over the `Box` record fixture of FR-135-AC-13 and FR-140-AC-19, with `Ring a` holding `box.target = Reference<Ring>(b)` and the concrete/abstract transition rows preserving that value, the `RingIsQueue` refinement item settles `proved`, `certified`; the checked simulation certificate maps `a.box.target` to `Reference<Queue>(b)`. | Test (TC-1590) |
+| FR-630-AC-8 | Over the `Pair` tuple fixture of FR-135-AC-14 and FR-140-AC-20, with `Ring a` holding `pair = Pair(Reference<Ring>(b), true)` and the concrete/abstract transition rows preserving it, the `RingIsQueue` refinement item settles `proved`, `certified`; the checked simulation certificate maps it to `Pair(Reference<Queue>(b), true)`. | Test (TC-1590) |
+| FR-630-AC-9 | Over the `Holder` union fixture of FR-135-AC-15 and FR-140-AC-21, with `Ring a` holding `holder = Holder::Has(Reference<Ring>(b))` and the concrete/abstract transition rows preserving it, the `RingIsQueue` refinement item settles `proved`, `certified`; the checked simulation certificate maps it to `Holder::Has(Reference<Queue>(b))` with the same active tag. | Test (TC-1590) |
+| FR-630-AC-10 | Over the nested `Parcel` fixture of FR-135-AC-16 and FR-140-AC-22, with `Ring a` holding `parcel.owners = [Some(Reference<Ring>(b)), None]` and the concrete/abstract transition rows preserving it, the `RingIsQueue` refinement item settles `proved`, `certified`; the checked simulation certificate maps it to `[Some(Reference<Queue>(b)), None]` in the same order. | Test (TC-1590) |
+
+| FR-630-AC-11 | For the `native-analyze/1` source request `tests/corpus/refinement/refinement-identity.analyze.json`, with its `program` file `tests/corpus/refinement/refinement-identity.native`, selected model `fsl-conformance/cases/counter-step-package.json`, abstract document `fsl-conformance/cases/counter-step-v0.json` and initial state and universe `test`/`v0`, the source route's first item has `claim_name` `CounterIdentity` and settles `proved`, `certified`, using backend `en-1`, and exits 0. | Test (TC-1590) |
 
 ## Dependencies
 

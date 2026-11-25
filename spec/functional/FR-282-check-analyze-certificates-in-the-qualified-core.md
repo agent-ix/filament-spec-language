@@ -29,6 +29,7 @@ relationships:
 | EN-5 certificate checker | exact probability bounds | ADR-028 CE-1 to CE-5 | `probability-certificate` |
 | EN-1 closure checker | safety: the reached product states are closed and none is bad | ADR-018 PC-3 | `en-1-closure` |
 | SCC and ranking checker | liveness and fairness: every cycle lies in one component whose witness holds | ADR-018 PC-4 | `scc-ranking` |
+| SMT proof checker | bounded-complete and inductive temporal model-check certificates | FR-314 | `smt-proof` |
 | Simulation-relation checker | refinement: the mapping is a simulation of the abstract model | ADR-020 | none yet |
 | Product-closure checker | hyperproperties and state-graph claims | ADR-023 HX-7 | none yet |
 

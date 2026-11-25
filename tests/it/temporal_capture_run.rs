@@ -635,12 +635,9 @@ fn false_guard_deliveries_create_no_capture_obligation_on_both_routes() {
 /// through the library package entry over the same admitted snapshot.
 #[test]
 #[trace("FSpec-FR-093-AC-5", "FSpec-FR-093-AC-6")]
-#[ignore = "make examples-check: requires the authoritative filament-examples corpus via FSL_EXAMPLES_DIR"]
+#[ignore = "make examples-check: requires the authoritative filament-examples corpus"]
 fn the_canonical_false_guard_capture_example_is_inactive() {
-    let root = PathBuf::from(
-        std::env::var_os("FSL_EXAMPLES_DIR")
-            .expect("set FSL_EXAMPLES_DIR to the authoritative filament-examples checkout"),
-    );
+    let root = crate::examples::examples_root();
     let request = root.join("examples/docs-captures/requests/false-guard-inactive.json");
     let source_run = fsl_command::command::run(&request, &crate::negotiation::Fr290).unwrap();
     assert_eq!(source_run.exit_code, 0);

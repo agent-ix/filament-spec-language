@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! AMC-rtb (ADR-026 RT-6; Baruah, Burns and Davis).
 
-use filament_exact::{Cancel, Identifier, Rational};
+use filament_exact::{Identifier, Rational};
 use fsl_replay::{
     AmcEvidence, ClosedFormEvidence, ClosedFormOutcome, Criticality, HighModeMiss, MissEvidence,
     ScheduleSubject, Task, TaskFixpoint,
@@ -9,7 +9,7 @@ use fsl_replay::{
 
 use super::arith::{ceil, int, quotient};
 use super::busy_period::{jobs, Jobs, Level, Term};
-use super::Analysed;
+use super::{Analysed, Pace};
 
 /// Low mode: every budget is `C(LO)`.
 fn low_level<'a>(subject: &'a ScheduleSubject, task: &'a Task) -> Level<'a> {
@@ -62,11 +62,14 @@ fn high_level<'a>(
     }
 }
 
-pub(super) fn analyse(subject: &ScheduleSubject, cancel: &Cancel) -> Analysed<ClosedFormOutcome> {
+pub(super) fn analyse(
+    subject: &ScheduleSubject,
+    pace: &mut Pace<'_>,
+) -> Analysed<ClosedFormOutcome> {
     let mut low = Vec::new();
     let mut low_responses: Vec<(&Identifier, Rational)> = Vec::new();
     for task in subject.by_priority() {
-        match jobs(task, &low_level(subject, task), &task.deadline, cancel)? {
+        match jobs(task, &low_level(subject, task), &task.deadline, pace)? {
             Jobs::Met(jobs) => {
                 if let Some(fixpoint) = jobs.first().and_then(|job| job.last()) {
                     low_responses.push((&task.name, fixpoint.clone()));
@@ -99,7 +102,7 @@ pub(super) fn analyse(subject: &ScheduleSubject, cancel: &Cancel) -> Analysed<Cl
             task,
             &high_level(subject, task, &low_response),
             &task.deadline,
-            cancel,
+            pace,
         )? {
             Jobs::Met(jobs) => high.push(TaskFixpoint {
                 task: task.name.clone(),

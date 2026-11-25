@@ -972,6 +972,8 @@ pub(super) fn time_source_owner(index: usize) -> String {
 
 /// The unit's declarations, split by kind, and the names they bind.
 struct Unit {
+    /// The source span of each selected model alias, used for generated roots.
+    model_selection_spans: BTreeMap<String, Span>,
     /// Original source type forms, including clock components omitted from data.
     source_types: Vec<DeclarationForm>,
     aliases: Vec<AliasForm>,
@@ -1041,9 +1043,14 @@ struct Unit {
 }
 
 impl Unit {
-    fn new(forms: Vec<fsl_forms::ParsedForm>, package_bearing: BTreeSet<String>) -> Self {
+    fn new(
+        forms: Vec<fsl_forms::ParsedForm>,
+        package_bearing: BTreeSet<String>,
+        model_selection_spans: BTreeMap<String, Span>,
+    ) -> Self {
         let mut clock_forms = clock_forms::classify(&forms, package_bearing);
         let mut unit = Self {
+            model_selection_spans,
             source_types: forms
                 .iter()
                 .filter_map(|form| match form.form() {
@@ -4663,7 +4670,12 @@ impl PackageDeclarations {
             })
             .flatten()
             .collect();
-        let mut unit = Unit::new(forms, package_bearing);
+        let model_selection_spans = selections
+            .models
+            .iter()
+            .map(|selection| (selection.alias.clone(), selection.span))
+            .collect();
+        let mut unit = Unit::new(forms, package_bearing, model_selection_spans);
         // FR-393: retain the parsed timed forms through S2. FR-230 checks
         // their meaning, including the facet gate, at S3.
         let owner = SourceOwner::from(&source);
@@ -5640,6 +5652,9 @@ impl PackageDeclarations {
                 .iter()
                 .map(|object| (object.name.name.clone(), object.name.span)),
         );
+        // FR-094: generated roots for selected model declarations are located
+        // at the source `model` selection that admits their package.
+        declared_type_spans.extend(unit.model_selection_spans.clone());
         // A dimension's and a unit's declaration occurrence is located at its
         // name, under the namespace it is declared in (FR-094), so a record
         // named like a unit does not share its position.

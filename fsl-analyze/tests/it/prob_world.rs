@@ -29,6 +29,37 @@ use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use serde_json::{json, Value as Json};
 
+/// Cancel a request at its first dense elimination poll, after row conversion.
+pub(crate) fn assert_dense_elimination_cancelled(request: ProductRequest<'_>) {
+    use filament_exact::{Cancel, CancelCause};
+    use fsl_analyze::analyze::settle_exact_engine_report;
+    use fsl_analyze::exact_probabilistic::polling_dense_elimination;
+    use fsl_replay::{IncompleteCause, TerminalValue};
+    use std::sync::{Arc, OnceLock};
+
+    let slot = Arc::new(OnceLock::<Cancel>::new());
+    let observer = Arc::downgrade(&slot);
+    let cancel = Cancel::observing(move || {
+        if polling_dense_elimination() {
+            if let Some(handle) = observer.upgrade().and_then(|slot| slot.get().cloned()) {
+                handle.cancel(CancelCause::Requested);
+            }
+        }
+    });
+    slot.set(cancel.clone()).expect("the handle is set once");
+    let record = settle_exact_engine_report(request, &cancel);
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("cancellation must settle: {:?}", record.settlement));
+    assert_eq!(cancel.tripped(), Some(CancelCause::Requested));
+    assert_eq!(
+        terminal.value(),
+        &TerminalValue::Incomplete(IncompleteCause::Cancelled {
+            source: CancelCause::Requested,
+        })
+    );
+}
+
 /// The native Boolean type reference.
 pub(crate) const BOOLEAN: &str = "ix://filament/native/Boolean";
 
@@ -1028,6 +1059,86 @@ pub(crate) fn process_coin2(extra: &str) -> Model {
              workload Even on M {{ weight Proc::flip = 1; weight Proc::wait = 1; weight Proc::stall = 1; }}\n{extra}"
         ),
         initial: json!({"done": {"boolean": false}, "stuck": {"boolean": false}}),
+    }
+}
+
+/// FR-1041/FR-412 fair-minimum witness model: `drift` reaches `u`, where the
+/// only action loops and `go` is disabled; `wait` instead exposes an unfair
+/// live cycle at `s`.
+pub(crate) fn fair_bounds_w(extra: &str) -> Model {
+    Model {
+        package: "test/fair-bounds-w",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+            ("f", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "g", "f"], deletes: false },
+        ],
+        body: format!(concat!(
+            "pre WaitAtS using v on M::W::wait {{ self.s }}\n",
+            "post Waited using v on M::W::wait {{ self.s = true }}\n",
+            "pre GoAtS using v on M::W::go {{ self.s }}\n",
+            "post Went using v on M::W::go {{ self.s = false and self.g = success and self.f = not success }}\n",
+            "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
+            "terminal Stop using v on M when {{ self.g or self.f }};\n",
+            "workload Equal on M {{ weight W::wait = 1; weight W::go = 1; }}\n",
+            "{}"
+        ), extra),
+        initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),
+    }
+}
+
+/// FR-1041/FR-412 fair-minimum witness model: `drift` reaches `u`, where the
+/// only action loops and `go` is disabled; `wait` instead exposes an unfair
+/// live cycle at `s`.
+pub(crate) fn fair_drift(extra: &str) -> Model {
+    Model {
+        package: "test/fair-drift",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("u", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+            ("f", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![], modifies: vec!["s", "g"], deletes: false },
+            Operation { name: "drift", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
+            Operation { name: "loop", parameters: vec![], modifies: vec!["u"], deletes: false },
+            Operation { name: "fail", parameters: vec![], modifies: vec!["s", "f"], deletes: false },
+        ],
+        body: format!(
+            "pre WaitAtS using v on M::W::wait {{ self.s }}\n\
+             post Waited using v on M::W::wait {{ self.s = true }}\n\
+             pre GoAtS using v on M::W::go {{ self.s }}\n\
+             post Good using v on M::W::go {{ self.s = false and self.g = true }}\n\
+             pre DriftAtS using v on M::W::drift {{ self.s }}\n\
+             post Drifted using v on M::W::drift {{ self.s = false and self.u = true }}\n\
+             pre LoopAtU using v on M::W::loop {{ self.u }}\n\
+             post Looped using v on M::W::loop {{ self.u = true }}\n\
+             pre FailAtS using v on M::W::fail {{ self.s }}\n\
+             post Failed using v on M::W::fail {{ self.s = false and self.f = true }}\n\
+             terminal Good using v on M when {{ self.g }};\n\
+             workload Equal on M {{ weight W::wait = 1; weight W::go = 1; weight W::drift = 1; weight W::loop = 1; weight W::fail = 1; }}\n\
+             {extra}"
+        ),
+        initial: json!({
+            "s": {"boolean": true},
+            "u": {"boolean": false},
+            "g": {"boolean": false},
+            "f": {"boolean": false},
+        }),
     }
 }
 

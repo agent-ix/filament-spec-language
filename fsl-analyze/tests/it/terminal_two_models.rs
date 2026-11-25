@@ -1243,6 +1243,7 @@ fn an_uncovered_identitys_invariant_is_refused_and_its_snapshot_admitted() {
         .expect("the invariant is checked");
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: ModelSubject {
                 simulation: covered,
@@ -1253,6 +1254,8 @@ fn an_uncovered_identitys_invariant_is_refused_and_its_snapshot_admitted() {
             },
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),

@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function s using v(): Sequence<Int[0, 9]> pure { sequence[1, 2, 3] }
+function f using v(): Boolean pure { forall(x in s(): x <= 9) }

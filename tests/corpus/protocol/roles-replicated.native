@@ -1,0 +1,13 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model Parts = "example/parts";
+
+protocol PartFlow using p over (job: Parts::Job) on origin {
+  role Planning on Parts::PlanningService;
+  role Worker each Parts::MachiningStation from machining max 2 lifetime workflow;
+  channel Release from Planning to Worker carries Parts::WorkOrder
+    ordering unordered delivery unknown capacity 2 overflow reject;
+  run sequence Main {}
+  finish Over as (closing: Parts::ClosureView) { closing.complete };
+}

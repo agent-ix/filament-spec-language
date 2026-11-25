@@ -208,6 +208,7 @@ fn a_step_argument_nesting_references_reaches_the_abstract_operation_lifted() {
             concrete: pre.clone(),
             history: HistoryValues::default(),
             abstract_states: vec![abstract_pre],
+            candidate_clock_blocks: vec![0],
             abstract_protocol_states: Vec::new(),
         },
         &ConcreteStep {
@@ -343,6 +344,7 @@ fn the_receiver_lifts_against_the_type_that_declares_the_operation() {
             concrete: pre.clone(),
             history: HistoryValues::default(),
             abstract_states: vec![mapped(&pre)],
+            candidate_clock_blocks: vec![0],
             abstract_protocol_states: Vec::new(),
         },
         &ConcreteStep {
@@ -435,6 +437,7 @@ fn a_step_argument_naming_an_unmapped_type_is_undetermined_at_the_argument() {
             concrete: pre.clone(),
             history: HistoryValues::default(),
             abstract_states: vec![clean],
+            candidate_clock_blocks: vec![0],
             abstract_protocol_states: Vec::new(),
         },
         &ConcreteStep {
@@ -1158,6 +1161,7 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
                     concrete: pre.clone(),
                     history: HistoryValues::default(),
                     abstract_states: vec![mapped(&pre)],
+                    candidate_clock_blocks: vec![0],
                     abstract_protocol_states: Vec::new(),
                 },
                 &ConcreteStep {

@@ -11,9 +11,7 @@ use fsl_eval::simulation::model::{
     check_model_bounds, ModelEvaluator, ModelFinding, ModelKey, ModelRelationDescriptor,
     ModelRelationTransition as RelationTransition, ModelRelationTuple, ModelSimState, ModelSystem,
 };
-use fsl_eval::simulation::{
-    EncodingRefusal, Expansion, ExpansionStop, Outcome, StateKey, TransitionSystem,
-};
+use fsl_eval::simulation::{Expansion, ExpansionStop, Outcome, StateKey, TransitionSystem};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperStep, HyperTrace,
@@ -39,8 +37,10 @@ impl TransitionSystem for RelationSystem<'_, '_> {
     type Key = ModelKey;
     type Finding = ModelFinding;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.system.initial_states().to_vec()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.system.initial_states().to_vec().into_iter().map(Ok)
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -257,10 +257,9 @@ pub fn check_model_relation_input(
             || cancel.poll() && cancel.cause().is_some(),
         )
         .map_err(|error| {
-            ModelRelationRefusal::Model(ModelCheckRefusal::Encoding(EncodingRefusal::of(
-                &error,
-                fsl_foundation::IdentityLimits::default(),
-            )))
+            ModelRelationRefusal::Model(
+                error.model_refusal(fsl_foundation::IdentityLimits::default()),
+            )
         })?;
         stats.states = stats
             .states

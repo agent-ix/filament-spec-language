@@ -13,20 +13,20 @@
 
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest};
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
     CertificateRequest, ModelCheckItem, QualifiedName, ReplayTargetMembers, RequestTargetWire,
     TemporalCounterexample,
 };
 use fsl_semantics::check::DeclarationFamily;
 
-use super::clause_item::{replay_over, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
+use super::clause_item::{CLAUSE_TRANSCRIPT, ReplayInputs, ReplayShape, replay_over};
 use super::derived_item::NoLetters;
-use super::items::{run_model_item, CounterexampleReplayFn, ModelItem};
+use super::items::{CounterexampleReplayFn, ModelItem, run_model_item};
 use super::{AnalyzeItem, AnalyzeLimits, SourceProvision, SubjectBinding, TemporalItem};
-use crate::model_check::manifest as en1;
 use crate::model_check::ModelCheckRequest;
+use crate::model_check::manifest as en1;
 
 /// The EN-1 item that decides the `invariant` state clause at `claim` (its
 /// `state_clause` node and `claim` occurrence) over the binding, with the
@@ -71,12 +71,15 @@ pub(super) fn invariant_item<'a>(
         clause: fsl_replay::InvariantClause::of(clause),
     };
     let request = ModelCheckRequest {
+        workers: 1,
         temporal_clock_selections: &[],
         subject: subject(binding),
         item,
         max_depth: form.max_depth,
         limits: form.limits,
         reductions: form.reductions.clone(),
+        smt_encoding: form.smt_encoding.unwrap_or_default(),
+        smt_run: Default::default(),
     };
     let certificate = CertificateRequest {
         temporal_clock_selections: &[],
@@ -211,12 +214,15 @@ impl<'a> PackageInvariantSubject<'a> {
             proof_bounds: self.form.proof_bounds.clone(),
         };
         let request = ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(),
             item: ModelCheckItem::Invariant { clause },
             max_depth: self.form.max_depth,
             limits: self.form.limits,
             reductions: self.form.reductions.clone(),
+            smt_encoding: self.form.smt_encoding.unwrap_or_default(),
+            smt_run: Default::default(),
         };
         let certificate = CertificateRequest {
             temporal_clock_selections: &[],

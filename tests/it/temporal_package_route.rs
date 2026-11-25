@@ -44,9 +44,7 @@ mod source_journeys {
     use std::path::{Path, PathBuf};
 
     pub(super) fn rover_root() -> PathBuf {
-        let directory = std::env::var_os("FSL_EXAMPLES_DIR")
-            .expect("set FSL_EXAMPLES_DIR to the authoritative filament-examples checkout");
-        let root = PathBuf::from(directory).join("examples/rover");
+        let root = crate::examples::examples_root().join("examples/rover");
         assert!(
             root.join("example.toml").is_file(),
             "{} is not the rover example",
@@ -1061,6 +1059,26 @@ pub(super) fn twins() -> Built {
         if entry["node_id"] == node && entry["role"] == "claim" {
             entry["ordinal"] = renumber(&entry["ordinal"]);
         }
+    }
+    // The requirement index repeats each claim occurrence key independently
+    // of the semantic graph and source map. Keep its pair of rows aligned
+    // with the renamed occurrences, then restore their ordinal order.
+    let rows = wire["requirement_items"].as_array_mut().unwrap();
+    let matching: Vec<_> = rows
+        .iter_mut()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            (row["claim"]["node"] == node).then(|| {
+                row["claim"]["occurrence"]["ordinal"] =
+                    renumber(&row["claim"]["occurrence"]["ordinal"]);
+                index
+            })
+        })
+        .collect();
+    let mut reordered: Vec<_> = matching.iter().map(|&index| rows[index].take()).collect();
+    reordered.sort_by_key(|row| row["claim"]["occurrence"]["ordinal"].as_u64());
+    for (index, row) in matching.into_iter().zip(reordered) {
+        rows[index] = row;
     }
     for member in ["temporal_bindings", "temporal_clause_names"] {
         let rows = wire[member].as_array_mut().unwrap();

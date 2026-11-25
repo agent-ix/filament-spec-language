@@ -9,12 +9,16 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_eval::simulation::protocol::ProtocolRefusal;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    ExpansionStop, Limit, Limits, Outcome, Permutation, Stats, SymmetryGroup, TransitionSystem,
+    EncodingRefusal, ExpansionStop, Limit, Limits, Outcome, Permutation, Stats, SymmetryGroup,
+    TransitionSystem,
 };
 use fsl_foundation::IdentityLimits;
 use quire_canonical::Encode;
+
+use super::ModelCheckRefusal;
 
 /// The successors a state is expanded through under partial-order reduction.
 pub enum Choice<T> {
@@ -173,8 +177,30 @@ type RetainResult<S> = Result<
         <S as TransitionSystem>::TransitionId,
         <S as TransitionSystem>::Finding,
     >,
-    quire_canonical::Error,
+    RetainError,
 >;
+
+/// Why a graph could not be retained.
+#[derive(Debug, thiserror::Error)]
+pub enum RetainError {
+    /// An initial state failed while it settled.
+    #[error(transparent)]
+    Initial(ProtocolRefusal),
+    /// A state or transition identity has no canonical encoding.
+    #[error(transparent)]
+    Encoding(#[from] quire_canonical::Error),
+}
+
+impl RetainError {
+    pub(super) fn model_refusal(self, identity: IdentityLimits) -> ModelCheckRefusal {
+        match self {
+            Self::Initial(error) => ModelCheckRefusal::Protocol(error),
+            Self::Encoding(error) => {
+                ModelCheckRefusal::Encoding(EncodingRefusal::of(&error, identity))
+            }
+        }
+    }
+}
 
 pub(super) struct RetainConfig {
     pub(super) limits: Limits,
@@ -200,15 +226,18 @@ fn encode(
 /// retained because it has no admitted target. Findings require a full expansion.
 ///
 /// # Errors
-/// The shared encoder's typed error when a state or transition identity has no
-/// canonical encoding, exceeds `identity.input_bytes`, or allocation fails.
+/// The original construction refusal, or the encoder's typed error when a
+/// state or transition identity cannot be encoded within `identity` limits.
 pub fn retain<S: TransitionSystem>(
     system: &S,
     limits: Limits,
     identity: IdentityLimits,
     max_depth: Option<usize>,
     poll: impl FnMut() -> bool,
-) -> RetainResult<S> {
+) -> RetainResult<S>
+where
+    S::State: Clone,
+{
     retain_reduced(
         system,
         &SymmetryGroup::default(),
@@ -258,7 +287,10 @@ pub fn retain_reduced<S: TransitionSystem>(
     identity: IdentityLimits,
     max_depth: Option<usize>,
     poll: impl FnMut() -> bool,
-) -> RetainResult<S> {
+) -> RetainResult<S>
+where
+    S::State: Clone,
+{
     retain_reduced_with_key(
         system,
         group,
@@ -268,6 +300,8 @@ pub fn retain_reduced<S: TransitionSystem>(
             identity,
             max_depth,
         },
+        1,
+        |_, _, _| {},
         poll,
         |state| encode(&system.key(state), identity),
     )
@@ -280,9 +314,14 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
     group: &SymmetryGroup,
     ample: Option<&dyn Ample<S>>,
     config: RetainConfig,
+    workers: usize,
+    mut prefetch: impl FnMut(&S, &[S::State], usize),
     mut poll: impl FnMut() -> bool,
     key: impl Fn(&S::State) -> Result<Vec<u8>, quire_canonical::Error>,
-) -> RetainResult<S> {
+) -> RetainResult<S>
+where
+    S::State: Clone,
+{
     let RetainConfig {
         limits,
         identity,
@@ -295,7 +334,8 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
         initial: Vec::new(),
     };
     let mut initial = Vec::new();
-    for state in system.initial() {
+    for state in system.initial_iter() {
+        let state = state.map_err(|error| RetainError::Initial(error.into()))?;
         let state = match canonical(system, group, state) {
             Ok((state, _)) => state,
             Err(cause) => {
@@ -351,6 +391,22 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                 cause: CatalogCode::new("cancelled", "caller-cancelled"),
             };
         }
+        if workers > 1 {
+            let batch_capacity = workers.min(queue.len().saturating_add(1));
+            let mut batch = Vec::with_capacity(batch_capacity);
+            batch.push(graph.states[source.0].state.clone());
+            batch.extend(
+                queue
+                    .iter()
+                    .take(workers.saturating_sub(1))
+                    .filter_map(|id| {
+                        let state = &graph.states[id.0];
+                        (!max_depth.is_some_and(|horizon| state.depth >= horizon))
+                            .then(|| state.state.clone())
+                    }),
+            );
+            prefetch(system, &batch, workers);
+        }
         let expansion = match system.successors(&graph.states[source.0].state) {
             Ok(expansion) => expansion,
             Err(stop) => {
@@ -358,7 +414,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                     stats: graph.stats(transitions),
                     frontier: graph.frontier(source, &queue),
                     cause: stop.cause,
-                }
+                };
             }
         };
         let mut successors = Vec::with_capacity(expansion.successors.len());
@@ -370,7 +426,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                         stats: graph.stats(transitions),
                         frontier: graph.frontier(source, &queue),
                         cause,
-                    }
+                    };
                 }
             };
             let order = encode(&transition, identity)?;
@@ -398,7 +454,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                         stats: graph.stats(transitions),
                         frontier: graph.frontier(source, &queue),
                         cause: stop.cause,
-                    }
+                    };
                 }
             }
         }
@@ -442,4 +498,73 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
         graph.states[source.0].expanded = true;
     };
     Ok(GraphExploration { graph, outcome })
+}
+
+#[cfg(test)]
+mod worker_capacity_tests {
+    use super::*;
+    use fsl_eval::simulation::Expansion;
+    use ix_trace_rs::trace;
+
+    struct OneState;
+
+    impl TransitionSystem for OneState {
+        type State = u8;
+        type TransitionId = u8;
+        type Key = u8;
+        type Finding = ();
+        type InitialError = std::convert::Infallible;
+
+        fn initial_iter(
+            &self,
+        ) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+            std::iter::once(Ok(0))
+        }
+
+        fn key(&self, state: &Self::State) -> Self::Key {
+            *state
+        }
+
+        fn successors(
+            &self,
+            _state: &Self::State,
+        ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop>
+        {
+            Ok(Expansion {
+                successors: Vec::new(),
+                findings: Vec::new(),
+            })
+        }
+    }
+
+    /// A valid maximal worker count is bounded by the available frontier.
+    #[trace("TC-1417", "FR-126-AC-20")]
+    #[test]
+    fn usize_max_workers_on_a_one_state_frontier_exhausts_without_panicking() {
+        let exploration = retain_reduced_with_key(
+            &OneState,
+            &SymmetryGroup::default(),
+            None,
+            RetainConfig {
+                limits: Limits::default(),
+                identity: IdentityLimits::default(),
+                max_depth: None,
+            },
+            usize::MAX,
+            |_, _, _| {},
+            || false,
+            |state| encode(state, IdentityLimits::default()),
+        )
+        .expect("the one-state graph has encodable identities");
+
+        assert_eq!(exploration.graph.states().len(), 1);
+        assert!(matches!(
+            exploration.outcome,
+            Outcome::Exhaustive(Stats {
+                states: 1,
+                transitions: 0,
+                depth: 0,
+            })
+        ));
+    }
 }

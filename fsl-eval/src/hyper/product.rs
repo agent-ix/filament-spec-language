@@ -723,8 +723,10 @@ impl TransitionSystem for HyperProduct<'_, '_> {
     type Key = HyperKey;
     type Finding = HyperFinding;
 
-    fn initial(&self) -> Vec<HyperState> {
-        self.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.initial.iter().cloned().map(Ok)
     }
 
     fn key(&self, state: &HyperState) -> HyperKey {

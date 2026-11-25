@@ -123,8 +123,8 @@ pub(crate) fn formula_product_key_with_budget(
     budget: &mut dyn fsl_eval::simulation::model::ModelKeyBudget,
     cancel: &Cancel,
 ) -> Result<ProbabilityProductKey, fsl_eval::simulation::model::ModelKeyError> {
-    use fsl_eval::simulation::model::ModelKeyError;
     use fsl_eval::simulation::EncodingRefusal;
+    use fsl_eval::simulation::model::ModelKeyError;
     use quire_canonical::{Reservation, ReservationDenied};
     struct Reserve<'a>(&'a mut dyn fsl_eval::simulation::model::ModelKeyBudget);
     impl Reservation for Reserve<'_> {
@@ -373,6 +373,50 @@ fn canonical_count(node: NodeRef<'_>) -> Option<u64> {
     (value.to_string() == text).then_some(value)
 }
 
+fn timed_operator_key(node: NodeRef<'_>) -> Option<(u64, &'static str, u64, u64)> {
+    let Node::Array(record) = node.node() else {
+        return None;
+    };
+    if record.len() != 6 {
+        return None;
+    }
+    let record = record.collect::<Vec<_>>();
+    let occurrence = canonical_count(record[0])?;
+    let kind = match record[1].node() {
+        Node::String("eventually") => "eventually",
+        Node::String("always") => "always",
+        Node::String("until") => "until",
+        _ => return None,
+    };
+    let lower = canonical_count(record[2])?;
+    let upper = canonical_count(record[3])?;
+    canonical_count(record[4])?;
+    if lower > upper
+        || !matches!(
+            record[5].node(),
+            Node::String("pending" | "accept" | "reject")
+        )
+    {
+        return None;
+    }
+    Some((occurrence, kind, lower, upper))
+}
+
+fn nested_timed_formula_key(root: NodeRef<'_>, nested: NodeRef<'_>) -> bool {
+    let Some((root_occurrence, root_kind, _, _)) = timed_operator_key(root) else {
+        return false;
+    };
+    let Some((nested_occurrence, nested_kind, nested_lower, nested_upper)) =
+        timed_operator_key(nested)
+    else {
+        return false;
+    };
+    root_occurrence != nested_occurrence
+        && root_kind == "eventually"
+        && nested_kind == "always"
+        && nested_lower == nested_upper
+}
+
 fn automaton_key(node: NodeRef<'_>) -> bool {
     let Node::Array(mut parts) = node.node() else {
         return false;
@@ -485,24 +529,40 @@ pub(super) fn admit_parts(
         }
         Node::Array(mut monitor) if monitor.len() == 3 => {
             let tag = monitor.next().map(|part| part.node());
-            let second = monitor.next().map(|part| part.node());
-            let third = monitor.next().map(|part| part.node());
+            let second = monitor.next();
+            let third = monitor.next();
             let deadline = matches!(tag, Some(Node::String("deadline")))
                 && matches!(
-                    second,
+                    second.map(|part| part.node()),
                     Some(Node::String("eventually" | "always" | "until"))
                 )
-                && matches!(third, Some(Node::String("pending" | "accept" | "reject")));
+                && matches!(
+                    third.map(|part| part.node()),
+                    Some(Node::String("pending" | "accept" | "reject"))
+                );
             // FR-920: an elapsed measure's `["measure",null,phase]`.
             let measure = matches!(tag, Some(Node::String("measure")))
-                && matches!(second, Some(Node::Null))
+                && matches!(second.map(|part| part.node()), Some(Node::Null))
                 && matches!(
-                    third,
+                    third.map(|part| part.node()),
                     Some(Node::String(
                         "inactive" | "active" | "complete" | "censored"
                     ))
                 );
-            if !(deadline || measure) {
+            let timed_formula = matches!(tag, Some(Node::String("timed-formula")))
+                && matches!((second, third), (Some(root), Some(nested)) if nested_timed_formula_key(root, nested));
+            if !(deadline || measure || timed_formula) {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+        }
+        Node::Array(mut monitor) if monitor.len() == 4 => {
+            let tag = monitor.next().map(|part| part.node());
+            let horizon = monitor.next();
+            let observations = monitor.next().map(|part| part.node());
+            let phase = monitor.next().map(|part| part.node());
+            if !matches!(tag, Some(Node::String("timed-formula-trace")))
+                || !matches!((horizon, observations, phase), (Some(horizon), Some(observations), Some(phase)) if timed_formula_trace_key(horizon, observations.clone(), phase.clone()))
+            {
                 return Err(ProbabilityDocumentError::Malformed);
             }
         }
@@ -515,6 +575,50 @@ pub(super) fn admit_parts(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     Ok(())
+}
+
+fn timed_formula_trace_key(
+    horizon: NodeRef<'_>,
+    observations_node: Node<'_>,
+    phase: Node<'_>,
+) -> bool {
+    if canonical_count(horizon).is_none() {
+        return false;
+    }
+    let Node::Array(observations) = observations_node else {
+        return false;
+    };
+    let mut previous_time = None;
+    let mut value_count = None;
+    for observation in observations {
+        let Node::Array(mut parts) = observation.node() else {
+            return false;
+        };
+        if parts.len() != 2 {
+            return false;
+        }
+        let Some(time_node) = parts.next() else {
+            return false;
+        };
+        let Some(time) = canonical_count(time_node) else {
+            return false;
+        };
+        if previous_time.is_some_and(|previous| previous > time) {
+            return false;
+        }
+        previous_time = Some(time);
+        let Some(Node::Array(mut values)) = parts.next().map(|part| part.node()) else {
+            return false;
+        };
+        if value_count.is_some_and(|previous| previous != values.len()) {
+            return false;
+        }
+        value_count = Some(values.len());
+        if values.any(|part| !matches!(part.node(), Node::Bool(_))) {
+            return false;
+        }
+    }
+    matches!(phase, Node::String("pending" | "accept" | "reject"))
 }
 
 #[cfg(test)]
@@ -576,17 +680,19 @@ mod tests {
             }
         }
         for model in models {
-            assert!(model_product_key(
-                None,
-                model,
-                None,
-                ProbabilityDocumentIoLimits {
-                    storage_bytes: individual,
-                    ..defaults
-                },
-                &cancel,
-            )
-            .is_ok());
+            assert!(
+                model_product_key(
+                    None,
+                    model,
+                    None,
+                    ProbabilityDocumentIoLimits {
+                        storage_bytes: individual,
+                        ..defaults
+                    },
+                    &cancel,
+                )
+                .is_ok()
+            );
         }
     }
 

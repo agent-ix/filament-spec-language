@@ -76,6 +76,9 @@ pub struct StatisticalRequest<'a> {
     pub method: StatisticalMethod,
     /// The seed.
     pub seed: u64,
+    /// Number of concurrent sample workers requested (FR-191); zero is
+    /// refused before admission or sampling.
+    pub workers: usize,
     /// The sampler, checked by identity: `filament.simulation.sampler/v1`.
     pub sampler: DefinitionRef,
     /// The budgets (FR-191).
@@ -113,7 +116,8 @@ fn fault(invariant: &'static str) -> StatisticalRefusal {
 /// evidence decides; [`StatisticalRefusal::NotStatistical`];
 /// [`StatisticalRefusal::Admission`] when the subject does not admit;
 /// [`StatisticalRefusal::RequiresBound`] when the `over` type's population has
-/// no universe; [`StatisticalRefusal::GeneratorMismatch`]; and every refusal
+/// no universe; [`StatisticalRefusal::Workers`] for zero workers;
+/// [`StatisticalRefusal::GeneratorMismatch`]; and every refusal
 /// of [`check_sampled`].
 pub fn check_statistical(
     request: StatisticalRequest<'_>,
@@ -124,12 +128,16 @@ pub fn check_statistical(
         claim,
         method,
         seed,
+        workers,
         sampler,
         limits,
         max_witnesses,
         symmetry,
         timed_sampling,
     } = request;
+    if workers == 0 {
+        return Err(StatisticalRefusal::Workers);
+    }
     require_statistical(claim)?;
     let (statistical, reading) = reduce(claim)?;
     let scalar_limits = subject.simulation.meter;
@@ -182,6 +190,7 @@ pub fn check_statistical(
             tests: &tests,
             method,
             seed,
+            workers,
             sampler: &sampler,
             limits,
             max_witnesses,
@@ -1527,8 +1536,21 @@ impl<'c> Shared<'_, '_, 'c> {
 impl<'s, 'a, 'c> BehaviourSampler for ModelSampler<'s, 'a, 'c> {
     type Walk = ModelWalk<'s, 'a, 'c>;
 
+    fn sample_batch_width(&self) -> usize {
+        1
+    }
+
     fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt> {
         self.shared.borrow_mut().sample(test, seed, trace)
+    }
+
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+        super::serial_sample_batch(self, test, seed, traces)
     }
 
     fn walk(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Self::Walk {

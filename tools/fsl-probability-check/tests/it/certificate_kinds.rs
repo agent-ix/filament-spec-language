@@ -46,6 +46,27 @@ fn model() -> String {
     )
 }
 
+/// FR-1041-AC-5's cyclic Link model: `send_b` is the live wait self-loop;
+/// fair strong `send_a` is sampled once and reaches either delivered or the
+/// stopped terminal with probability one half.
+fn fair_link_model() -> String {
+    format!(
+        "{}\n\
+        pre Ready_send_a using v on M::Msg::send_a {{ not self.delivered and self.attempts = 0 }}\n\
+        post Sent_send_a using v on M::Msg::send_a {{ self.attempts = 1 and self.delivered = lost }}\n\
+        pre Ready_send_b using v on M::Msg::send_b {{ not self.delivered and self.attempts = 0 }}\n\
+        post Sent_send_b using v on M::Msg::send_b {{ self.attempts = 0 and not self.delivered }}\n\
+        random Msg::send_a(lost) ~ {{ true: 1, false: 1 }};\n\
+        random Msg::send_b(lost) ~ {{ true: 1, false: 1 }};\n\
+        terminal Stop using v on M when {{ self.delivered or self.attempts = 1 }};\n",
+        include_str!("../fixtures/link.native")
+            .lines()
+            .take(4)
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
 fn likely(profile: &str, scheduler: &str, form: &str) -> String {
     format!(
         "{}\nprobabilistic Likely using {profile} on M over (m: M::Msg) under {scheduler} on origin {{ {form} }}\n",
@@ -85,16 +106,74 @@ fn accepted_then_rejected(request: &Value, kinds: &[&str]) {
 
 /// Unbounded fair eventual reachability over every scheduler with a
 /// fairness set: an `exact` certificate the checker accepts.
-#[trace("TC-2065", "FR-201-AC-51")]
+#[trace("TC-2065", "FR-201-AC-51", "FR-1041-AC-5")]
 #[test]
-#[ignore = "QSL-2903: FR-1041 (unbounded fair eventual) not implemented yet"]
 fn an_unbounded_fair_eventual_certificate_is_accepted() {
-    let source = likely(
-        "inf",
-        "every scheduler fair strong Msg::send_a",
-        "probability >= rational(1,2) [ eventually holds(m.delivered) ]",
+    let source = format!(
+        "{}\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler fair strong Msg::send_a on origin {{ probability >= rational(1,2) [ eventually holds(m.delivered) ] }}\n",
+        fair_link_model()
     );
-    accepted_then_rejected(&certified(&source, ExactProbLimits::default()), &["exact"]);
+    let (request, settlement) = request_with(
+        &source,
+        SNAPSHOT,
+        ExactProbLimits::default(),
+        domain().as_bytes(),
+    );
+    let request = request.unwrap_or_else(|| panic!("expected fair certificate: {settlement:?}"));
+    assert!(
+        matches!(&settlement, fsl_analyze::analyze::Settlement::Terminal(record)
+            if matches!(record.value(), fsl_replay::TerminalValue::Proved {
+                basis: fsl_replay::ProofBasis::ExactValue { value, .. }, ..
+            } if value.value().numerator() == &filament_exact::Integer::from(1_i64)
+                && value.value().denominator() == &filament_exact::Integer::from(2_i64))),
+        "AC-5 settles proved with exact value 1/2: {settlement:?}"
+    );
+    let doc = document(&request);
+    assert_eq!(doc["kind"], "exact");
+    let values = doc["values"].as_array().expect("certificate values");
+    assert_eq!(values.len(), 3);
+    for (delivered, attempts, value, state_name) in [
+        (
+            false,
+            "0",
+            json!({"numerator":"1","denominator":"2"}),
+            "undelivered live state",
+        ),
+        (
+            true,
+            "1",
+            json!({"numerator":"1","denominator":"1"}),
+            "delivered terminal",
+        ),
+        (
+            false,
+            "1",
+            json!({"numerator":"0","denominator":"1"}),
+            "stopped terminal",
+        ),
+    ] {
+        let row = values
+            .iter()
+            .find(|row| {
+                let state = key(&row["state"]);
+                let fields = &state[4][1]["semantic"]["entries"][0]["value"]["entries"][0]["value"]
+                    ["fields"];
+                fields[0]["value"]["value"] == json!(delivered)
+                    && fields[1]["value"]["value"] == attempts
+            })
+            .unwrap_or_else(|| panic!("missing state delivered={delivered}, attempts={attempts}"));
+        assert_eq!(row["value"], value, "AC-5 {state_name}");
+    }
+    let ranks = doc["ranking"].as_array().expect("fair progress ranks");
+    assert_eq!(ranks.len(), 3);
+    assert_eq!(ranks.iter().filter(|row| row["rank"] == 1).count(), 1);
+    assert_eq!(ranks.iter().filter(|row| row["rank"] == 0).count(), 2);
+
+    // The later checker request names the emitted package, then independently
+    // rejects a certificate whose one literal value is changed.
+    let later = package_request(&source);
+    assert_eq!(later["certificate"], request["certificate"]);
+    accepted_then_rejected(&later, &["exact"]);
 }
 
 /// A value-bounds proof under a tight rational budget: `lower` and `upper`
