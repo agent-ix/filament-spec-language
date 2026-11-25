@@ -1681,17 +1681,13 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                     break 'models;
                 }
                 Err(InitialStateRefusal::Encoding(refusal)) => {
-                    return Err(self.record(Halt::Refusal(ModelCheckRefusal::Encoding(
-                        refusal,
-                    ))));
+                    return Err(self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal))));
                 }
                 Err(InitialStateRefusal::Expansion(stop)) => {
                     return Err(self.record(Halt::Expansion(stop)));
                 }
                 Err(InitialStateRefusal::Construction(refusal)) => {
-                    return Err(self.record(Halt::Refusal(ModelCheckRefusal::Protocol(
-                        refusal,
-                    ))));
+                    return Err(self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal))));
                 }
             };
             let (model_key, reading) = self.reading_at(&model, true)?;
@@ -2651,10 +2647,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
         }
         self.charge_lifted(totals);
-        let initial_limit = matches!(
-            product.halt.borrow().as_ref(),
-            Some(Halt::InitialStates)
-        );
+        let initial_limit = matches!(product.halt.borrow().as_ref(), Some(Halt::InitialStates));
         let ending = if initial_limit {
             self.ending(Halt::InitialStates)?
         } else {
@@ -2662,9 +2655,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Outcome::Exhaustive(_) => Ending::Complete,
                 Outcome::Bounded { limit, .. } => {
                     let (limit, value) = match limit {
-                        Limit::States(_) => {
-                            (ModelCheckLimit::MaxStates, widen(spent.max_states))
-                        }
+                        Limit::States(_) => (ModelCheckLimit::MaxStates, widen(spent.max_states)),
                         Limit::Transitions(_) => (
                             ModelCheckLimit::MaxTransitions,
                             widen(spent.max_transitions),
