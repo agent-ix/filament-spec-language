@@ -10,11 +10,13 @@ relationships:
 
 ## Description
 
-Verify the failure policy: coverage gaps, prepare failures and empty
-comparisons fail; a faulting reference, an empty scope and an unreadable
-corpus refuse; and no setting excuses a finding.
+Verify the failure policy: coverage gaps, prepare failures, empty
+comparisons, a faulting or limit-reaching reference, generator exhaustion and
+unbuildable corpus cases fail; an empty scope and an unreadable corpus refuse;
+and no setting excuses a finding.
 
-Scope: FR-563-AC-4, FR-563-AC-5, FR-563-AC-6 and FR-563-AC-8.
+Scope: FR-563-AC-4, FR-563-AC-5, FR-563-AC-6, FR-563-AC-8 and FR-563-AC-10
+to FR-563-AC-14.
 
 ## Test Procedure
 
@@ -32,6 +34,20 @@ Scope: FR-563-AC-4, FR-563-AC-5, FR-563-AC-6 and FR-563-AC-8.
    a reference; build the `compile_fail` doctest naming
    `run_parity_with_reference` without the feature and its control with it;
    run `cargo xtask parity --no-such-option`.
+5. Run it over the FR-563-AC-10 valid corpus and over each of its five
+   corpus-level defects, counting backend `prepare` calls.
+6. Run it, with two delegating backends and count 3, over the FR-563-AC-11
+   corpus.
+7. Repeat step 6 with the six defective vectors expecting a refusal; run the
+   two class-against-disposition unbuildable vectors, and a refusal-expecting
+   vector that builds, with a delegating and with an altering backend.
+8. Run one seed and count with `max_discarded` at `u64::MAX`, then at the
+   discard count N and at N − 1, with two delegating backends; read the
+   default `max_discarded`.
+9. Under `test-support`, with two delegating backends, run a reference whose
+   `prepare` returns `PrepareFailure::Limit` for the first of two corpus
+   units, then for one generated unit of two or more entries, and a reference
+   whose `prepare` returns `Fault` for the first corpus unit.
 
 Tag the tests `#[trace("TC-1387", "<AC id>")]`.
 
@@ -46,3 +62,19 @@ Tag the tests `#[trace("TC-1387", "<AC id>")]`.
 - Step 4: no such member exists; the doctest fails to compile without the
   feature and the control compiles with it; the unknown option refuses,
   exit 2, naming it.
+- Step 5: a report for the valid corpus; each defect refuses the corpus as
+  unreadable, exit 2, with no `prepare` call.
+- Step 6: six vectors listed by id and cause and counted, none of them counted
+  not selected; six `unbuildable-case` findings per backend and no other;
+  `inc` and the generated units compared; exit 1.
+- Step 7: the six listed and counted, no finding, exit 0; the class `refusal`
+  vector expecting a value is a finding and the class `positive` vector
+  expecting a refusal is not; the built refusal vector passes with the
+  delegating backend and is a `difference` with the altering one.
+- Step 8: no finding at N; at N − 1 one `generator-exhausted` finding per
+  backend naming the N-th refused draw, fewer units than a full run, exit 1;
+  the default is 10,000.
+- Step 9: one `reference-prepare-limit` finding per entry per backend, naming
+  the limit's setting, with the other unit compared and exit 1; then one
+  `reference-fault` per entry per backend with the second unit compared. No
+  run refuses.
