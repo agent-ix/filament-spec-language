@@ -6,7 +6,13 @@ use crate::{AnalysisView, BarePackage, CompositionMemberValue, CompositionViewRe
 
 /// Source read-back and independently admitted bytes preserve the declaration,
 /// canonical member attribution, authored ordering and foreign target owners.
-#[trace("FR-940-AC-1", "FR-530-AC-1", "FSpec-FR-491-AC-6", "FSpec-FR-491-AC-7")]
+#[trace(
+    "FR-940-AC-1",
+    "FR-530-AC-1",
+    "FSpec-FR-491-AC-6",
+    "FSpec-FR-491-AC-7",
+    "NFR-141-AC-20"
+)]
 #[test]
 fn composition_views_keep_member_regions_and_owner_bound_targets() {
     let world = World::new();
@@ -58,6 +64,14 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
         panic!("the independently admitted byte artifact");
     };
     let bare = BarePackage::new(&admitted);
+    let expected_composites = bare.declared_composites();
+    let graph_builds = std::cell::Cell::new(0);
+    let measured_composites = bare.declared_composites_with_graph(|package| {
+        graph_builds.set(graph_builds.get() + 1);
+        crate::checked_v2::wire_graph(package).ok()
+    });
+    assert_eq!(graph_builds.get(), 1);
+    assert_eq!(measured_composites, expected_composites);
     let selected = read.claim_name("Sys").expect("source read-back names Sys");
     let byte_selected = bare.claim_name("Sys").expect("bytes name Sys");
     let source_view = read

@@ -1842,8 +1842,21 @@ impl BarePackage<'_> {
     /// atom reads these names when no identity row selects the declaration
     /// (FR-931 "The lowering input"). Charges nothing.
     pub fn declared_composites(&self) -> Vec<DeclaredComposite> {
+        self.declared_composites_with_graph(|package| wire_graph(package).ok())
+    }
+
+    pub(crate) fn declared_composites_with_graph(
+        &self,
+        build_graph: impl FnOnce(
+            &filament_contract_model::CheckedPackageV2,
+        ) -> Option<fsl_semantics::check::wire_id::WireGraph>,
+    ) -> Vec<DeclaredComposite> {
         use crate::wire_form::{WireForm, WireTag, has_form};
         use filament_contract_model::CheckedBindingNameKind;
+
+        let Some(graph) = build_graph(self.package()) else {
+            return Vec::new();
+        };
 
         let names = |node: &CheckedSemanticNodeV2| -> Vec<String> {
             let CheckedTerm::Aggregate { members, .. } = &node.body else {
@@ -1875,7 +1888,7 @@ impl BarePackage<'_> {
                     return None;
                 };
                 Some(DeclaredComposite {
-                    key: self.node_key(&node.node_id)?,
+                    key: graph.key(&node.node_id).ok()?,
                     shape,
                 })
             })
