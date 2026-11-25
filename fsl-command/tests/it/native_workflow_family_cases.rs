@@ -62,6 +62,15 @@ fn run(path: &Path) -> command::RunResult {
         .unwrap_or_else(|error| panic!("{}", error.value().expect("error document")))
 }
 
+fn object_keys(value: &Value) -> Vec<&str> {
+    value
+        .as_object()
+        .expect("a wire record is an object")
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
 fn markdown(body: &str, newline: &str) -> String {
     format!("# Original\n\n## Invariants\n\n### parent_order\n```ix:native\n{body}```\n")
         .replace('\n', newline)
@@ -99,23 +108,57 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(document["disposition"]["category"], category, "{document}");
             assert_eq!(document["disposition"]["truth"], truth, "{document}");
             let extraction = &document["extraction"];
-            let mut extraction_members = extraction
-                .as_object()
-                .expect("extraction is an object")
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>();
-            extraction_members.sort_unstable();
-            let expected_members = ["binding", "body", "map", "original", "outcome"];
-            assert_eq!(extraction_members, expected_members);
+            assert_eq!(
+                object_keys(extraction),
+                vec!["binding", "body", "map", "original", "outcome"]
+            );
+            assert_eq!(
+                object_keys(&extraction["original"]),
+                vec!["authority", "bytes", "identity", "path"]
+            );
+            assert_eq!(
+                object_keys(&extraction["body"]),
+                vec!["authority", "bytes", "document", "identity"]
+            );
+            assert_eq!(
+                object_keys(&extraction["binding"]),
+                vec!["clause", "package"]
+            );
+            assert_eq!(object_keys(&extraction["map"]), vec!["region", "segments"]);
+            assert_eq!(
+                object_keys(&extraction["map"]["region"]),
+                vec!["end", "start"]
+            );
+            assert_eq!(
+                object_keys(&extraction["map"]["segments"][0]),
+                vec!["body_end", "body_start", "original_end", "original_start"]
+            );
+            let original_text = markdown(&body(), newline);
+            assert_eq!(extraction["original"]["authority"], "agent-ix");
             assert_eq!(
                 extraction["original"]["identity"],
                 "ix://agent-ix/native-workflow/original"
             );
+            assert_eq!(extraction["original"]["path"], "spec.md");
+            assert_eq!(
+                extraction["original"]["bytes"],
+                json!(original_text.as_bytes())
+            );
             assert_eq!(extraction["body"]["authority"], "agent-ix");
             assert_eq!(extraction["body"]["identity"], "body");
+            assert_eq!(extraction["body"]["document"], "Body");
+            assert_eq!(extraction["body"]["bytes"], json!(body().as_bytes()));
             assert_eq!(extraction["binding"]["clause"], "parent_order");
+            assert_eq!(extraction["binding"]["package"], "example/config-version");
             assert_eq!(extraction["outcome"], upstream);
+            assert_eq!(
+                extraction["map"]["region"],
+                if newline == "\n" {
+                    json!({"start":57,"end":340})
+                } else {
+                    json!({"start":63,"end":352})
+                }
+            );
             assert_eq!(extraction["map"]["segments"], expected_segments);
 
             let read = fsl_replay::spine::read_native_run_result(
