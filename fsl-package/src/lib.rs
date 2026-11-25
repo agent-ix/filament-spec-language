@@ -147,9 +147,7 @@ pub use bare::{
     IdentityMember, IdentityWitnessRefusal, ReadIdentityRows, IDENTITIES_FORMAT,
 };
 #[cfg(feature = "std")]
-pub use bare_slot::{
-    BareSelectionFailure, BareSlot, BareSource, BareSourceOperationFailure, SourceOperationClause,
-};
+pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource, BareSourceOperationFailure};
 #[cfg(feature = "std")]
 #[cfg(feature = "std")]
 pub use bare_state_graph::BareStatePredicate;
@@ -234,7 +232,7 @@ pub use protocol_occurrence::{
 pub use protocol_occurrence_key::{
     OccurrenceKeyError, ProtocolOccurrenceKey, WorkflowInstanceIdentity,
 };
-pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
+pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure, SourceOperationClause};
 #[cfg(feature = "std")]
 pub use reader_protocol_projection::{
     MissingLocation, ReaderFunctionBody, ReaderProtocolFunction, ReaderProtocolParameter,

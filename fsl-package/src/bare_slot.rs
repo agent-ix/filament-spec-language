@@ -24,7 +24,9 @@ use fsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
 use crate::bare::{BarePackage, IdentityWitnessRefusal};
 use crate::checked_v2::wire_graph;
 use crate::equality_file::EqualityWitnessRefusal;
-use crate::protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
+use crate::protocol_selection::{
+    ProtocolSlotDescriptor, SlotSelectionFailure, SourceOperationClause,
+};
 use crate::protocol_view::{
     argument, control_operation, control_site_path, group_member, integer, reference, text,
     ControlOperation, ViewRefusal,
@@ -128,37 +130,6 @@ impl From<SlotSelectionFailure> for BareSourceOperationFailure {
 impl From<crate::native_row::NativeRowError> for BareSourceOperationFailure {
     fn from(failure: crate::native_row::NativeRowError) -> Self {
         Self::NativeJoin(crate::NativeJoinFailure::Rows(failure))
-    }
-}
-
-/// An authored source operation contract clause selected by its checked
-/// operation anchor, never by a synthesized function name.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceOperationClause {
-    /// The operation's precondition clause function.
-    Precondition {
-        /// Authored clause identity in this operation's checked declaration.
-        name: String,
-    },
-    /// The operation's postcondition clause function.
-    Postcondition {
-        /// Authored clause identity in this operation's checked declaration.
-        name: String,
-    },
-}
-
-impl SourceOperationClause {
-    const fn declaration_kind(&self) -> &'static str {
-        match self {
-            Self::Precondition { .. } => "precondition",
-            Self::Postcondition { .. } => "postcondition",
-        }
-    }
-
-    fn authored_name(&self) -> &str {
-        match self {
-            Self::Precondition { name } | Self::Postcondition { name } => name,
-        }
     }
 }
 
@@ -645,13 +616,10 @@ impl<'p> BarePackage<'p> {
                     Some(CheckedNodeKind::Function(_))
                 )
                 && node.declaration.as_ref().is_some_and(|declaration| {
-                    matches!(
-                        declaration.qualified_name.as_slice(),
-                        [declaring, operation, kind, authored_name]
-                            if declaring.as_ref() == type_name
-                                && operation.as_ref() == operation_name
-                                && kind.as_ref() == clause.declaration_kind()
-                                && authored_name.as_ref() == clause.authored_name()
+                    clause.is_declared_by(
+                        type_name,
+                        operation_name,
+                        declaration.qualified_name.iter().map(AsRef::as_ref),
                     )
                 })
         });

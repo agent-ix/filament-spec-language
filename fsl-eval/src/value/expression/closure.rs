@@ -42,14 +42,13 @@ use filament_exact::{Meter, NodeKey, Value, ValueType};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::location::ExpressionLocation as Location;
-use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
 use fsl_semantics::check::CheckedExpression;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::evaluate::Machine;
 use super::family::EvaluationEnv;
 use super::s6a::S6aFamilyKind;
-use super::{admit_arguments, evaluate_declaration, EvaluationTarget};
+use super::{admit_arguments_under_meter, evaluate_declaration, EvaluationTarget};
 use filament_eval::CallFailure;
 use fsl_package::CheckedPackage;
 
@@ -154,16 +153,12 @@ where
     ) -> Result<(), CallFailure> {
         // The meter's installed handle is the session's: a handle cancelled
         // before `Begin` ends it as `Cancelled`, before any charge.
-        let cancel = meter.cancel().cloned().unwrap_or_default();
-        let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel).map_err(|stop| {
-            CallFailure::from(filament_semantic_value::supplied_stop::SuppliedFailure::Stop(stop))
-        })?;
-        admit_arguments(
+        admit_arguments_under_meter(
             parameters,
             arguments,
             environment,
             self.package.graph().scope().types(),
-            &mut run,
+            meter,
         )
     }
 }
