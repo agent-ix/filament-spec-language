@@ -7,13 +7,12 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_package::ObligationIdentity;
 use fsl_replay::{
-    check_claim_exact_reachability, check_probability_certificate_package,
-    ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
+    check_claim_exact_reachability, check_probability_certificate_package, ByteProvision,
+    CertificateRole, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
     ExactProbabilityGraphError, ExactProbabilityValue, ProbabilityBoundSide,
     ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
-    ProbabilityProductKey, ByteProvision, CertificateRole, ProbabilityDocumentError,
-    ProbabilityDocumentLimits, ProbabilityPackageRequest, ProbabilitySourceError,
-    ProbabilitySourceLimits,
+    ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityPackageRequest,
+    ProbabilityProductKey, ProbabilitySourceError, ProbabilitySourceLimits,
 };
 use fsl_semantics::check::{Bound, CheckedProbabilisticClaim, ProbForm, ReachTarget};
 use ix_trace_rs::trace;
@@ -315,12 +314,19 @@ fn package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_
     }
     package.push_str("]}}");
     assert_eq!(depth, DEEPEST_DEFAULT_CHAIN_NODES);
-    assert!(package.len() <= 1 << 20, "the 10,000-node chain fits i2's default 1 MiB byte limit");
+    assert!(
+        package.len() <= 1 << 20,
+        "the 10,000-node chain fits i2's default 1 MiB byte limit"
+    );
     assert!(u64::try_from(package.len()).unwrap_or(u64::MAX) <= package_ceiling);
 
     let item = ObligationIdentity::new(
-        NodeKey::new("p", vec![filament_exact::PathSegment::Text("claim".to_owned())], 0)
-            .expect("claim identity"),
+        NodeKey::new(
+            "p",
+            vec![filament_exact::PathSegment::Text("claim".to_owned())],
+            0,
+        )
+        .expect("claim identity"),
         None,
         0,
     );
@@ -357,12 +363,15 @@ fn package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_
         .expect("spawn the bounded-stack checker")
         .join()
         .expect("the certificate checker must not overflow the 512 KiB stack");
-    assert!(matches!(
-        result,
-        Err(ProbabilitySourceError::Document(
-            ProbabilityDocumentError::Malformed
-        ))
-    ), "unexpected checker result: {result:?}");
+    assert!(
+        matches!(
+            result,
+            Err(ProbabilitySourceError::Document(
+                ProbabilityDocumentError::Malformed
+            ))
+        ),
+        "unexpected checker result: {result:?}"
+    );
 }
 
 #[trace("TC-636")]
