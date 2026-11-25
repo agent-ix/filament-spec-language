@@ -978,9 +978,9 @@ A package whose dependency closure holds its own name, directly or through a
 library, is an import cycle and is never admitted, so no `BarePackage` exists
 for it. `read_checked_package`, supplied the packages the closure selects,
 refuses it as `invalid_package`/`definition-cycle` at the full selection path to
-the entry that names it (FSpec FR-322-AC-550; Contract IR FR-038-AC-637), and
+the entry that names it (FSpec FR-322-AC-551; Contract IR FR-038-AC-637), and
 reports the first failing entry in depth-first lock order (FSpec
-FR-322-AC-551). It checks supply first: a direct entry naming the package with
+FR-322-AC-552). It checks supply first: a direct entry naming the package with
 no package supplied under that name refuses `missing_import`/`missing-selection`
 at that entry. The FR-850 directory loader finds the cycle before admission and
 refuses `invalid_package`/`definition-cycle` at the location FR-850 states, for
