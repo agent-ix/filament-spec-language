@@ -910,14 +910,10 @@ fn enumerate(
                             }))
                         })?;
                     action_labels.push(None);
-                    vec![
-                        steps
-                            .into_iter()
-                            .map(|step| {
-                                Successor::Position(step.probability, step.post, step.rewards)
-                            })
-                            .collect::<Vec<_>>(),
-                    ]
+                    vec![steps
+                        .into_iter()
+                        .map(|step| Successor::Position(step.probability, step.post, step.rewards))
+                        .collect::<Vec<_>>()]
                 } else {
                     let actions = system
                         .actions_with_budget(
@@ -1563,7 +1559,7 @@ pub fn read_measure_probability_certificate(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let document =
         decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut 0)?;
     validate_ranges(&document, cancel, &mut meter)?;
@@ -1578,7 +1574,7 @@ pub(super) fn identity(
         bytes,
         limits,
         cancel,
-        &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+        &mut limits.accounting_meter(cancel),
         &mut 0,
     )?
     .identity)
@@ -1841,7 +1837,7 @@ pub fn measure_probability_certificate_document(
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     let claim = bind_claim(claims, item, cancel)?;
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     let plan = plan(
         system,
@@ -1895,7 +1891,7 @@ pub fn vacuous_measure_probability_certificate_document(
     if !matches!(claim.form, ProbForm::Quantile { .. }) {
         return Err(ProbabilityDocumentError::MalformedMember("mode"));
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     let selected = plan(
         system,
@@ -2217,7 +2213,7 @@ pub(super) fn check(
         limits,
         cancel,
     } = options;
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     let document = match decode_measure_probability_certificate(
         bytes,
@@ -2986,7 +2982,7 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
     if bounds::is_bound(bytes)? {
         return bounds::check(system, claim, item, bytes, scheduler, limits, cancel);
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     let document =
         decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut storage)?;
@@ -3131,6 +3127,7 @@ mod partial_lower_tests {
             edges: 100,
             scalar_bits: 128,
             accounting: crate::AccountingLimits::default().0,
+            work_scope: None,
         }
     }
 

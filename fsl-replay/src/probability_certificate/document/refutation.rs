@@ -152,7 +152,7 @@ pub(in crate::probability_certificate) fn admit(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<(), ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     decode(bytes, limits, cancel, &mut meter).map(|_| ())
 }
 
@@ -460,7 +460,7 @@ pub(in crate::probability_certificate) fn write(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     let subject = subject(
         system,
@@ -529,7 +529,7 @@ pub(in crate::probability_certificate) fn check(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<SubsystemRefutationCheck, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     let decoded = decode(bytes, limits, cancel, &mut meter)?;
     if &decoded.identity != item {

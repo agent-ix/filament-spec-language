@@ -3,6 +3,7 @@
 
 use super::*;
 use fsl_replay::ProbabilityKeyAdmission;
+use ix_trace_rs::implements;
 
 pub(super) fn rational_bytes(value: &Rational) -> usize {
     usize::try_from(
@@ -25,7 +26,7 @@ pub(super) struct CandidateBudget<'a> {
 impl<'a> CandidateBudget<'a> {
     pub(super) fn new(limits: ProbabilityDocumentLimits, cancel: &'a Cancel) -> Self {
         Self {
-            meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+            meter: limits.accounting_meter(cancel),
             retained: 0,
             storage_bound: limits.storage_bytes,
             identity: fsl_foundation::IdentityLimits::default(),
@@ -86,6 +87,7 @@ impl<'a> CandidateBudget<'a> {
     }
 }
 
+#[implements("FR-203-AC-29")]
 pub(super) fn values(
     product: &ProbProduct,
     binding: Option<&ObjectReference>,

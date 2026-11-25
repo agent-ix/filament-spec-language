@@ -99,7 +99,7 @@ pub fn replay_probabilistic_undefined(
     };
     let mut control: Option<StateId> = None;
     let mut storage = 0;
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(system.meter_limits());
     let deterministic = super::deterministic_scheduler_rows(&evidence.scheduler)?;
     let scheduler = step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let mut transition_count = 0;

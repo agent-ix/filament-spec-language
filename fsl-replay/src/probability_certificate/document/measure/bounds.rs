@@ -102,7 +102,7 @@ pub(in crate::probability_certificate) fn admit_subsystem(
     if wire.objective.profile != PROFILE {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let document = read_wire(
         WireDocument {
             identity: wire.identity,
@@ -173,7 +173,7 @@ pub(super) fn check(
         "upper" => false,
         _ => return Err(ProbabilityDocumentError::MalformedMember("kind")),
     };
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let selected = plan(
         system,
         claim,

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -10,45 +11,45 @@ use crate::ExactProbLimits;
 
 pub(super) mod measure;
 pub use measure::{
-    MeasurePayoffKind, MeasureProbabilityDocument, conditional_measure_probability_certificate,
-    measure_probability_certificate_document, measure_probability_objective,
-    measure_probability_product_key, read_measure_probability_certificate,
-    vacuous_measure_probability_certificate_document, write_measure_probability_certificate,
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_objective, measure_probability_product_key,
+    read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
+    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
 };
 mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
-pub use instances::{OnEachOutcome, on_each_has_instance, on_each_outcome, replay_on_each_witness};
+pub use instances::{on_each_has_instance, on_each_outcome, replay_on_each_witness, OnEachOutcome};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity,
+    check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
 };
 pub use mdp::{
-    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
+    cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
     read_probability_proof_document, write_probability_proof_document,
-    write_value_bounds_proof_document,
+    write_value_bounds_proof_document, ProbabilityProofDocument,
 };
 pub(super) mod long_run;
 mod partial;
 pub use partial::partial_lower_probability_proof_document;
 pub(super) mod refutation;
+#[cfg(feature = "test-support")]
 pub use long_run::{
-    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
+    check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
+};
+pub use long_run::{
     long_run_probability_certificate_document, read_long_run_probability_certificate,
     read_weighted_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate,
-};
-#[cfg(feature = "test-support")]
-pub use long_run::{
-    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity,
+    write_weighted_long_run_probability_certificate, LongRunOptimization, LongRunPolicyChoice,
+    LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
+    WeightedLongRunProbabilityDocument,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
@@ -227,7 +228,7 @@ pub struct ProbabilityRewardObjective {
 }
 
 /// Caller ceilings for certificate admission and independent graph checking.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ProbabilityDocumentLimits {
     /// Maximum document bytes, for both reading and writing.
     pub bytes: u64,
@@ -241,6 +242,8 @@ pub struct ProbabilityDocumentLimits {
     pub scalar_bits: u64,
     /// Shared exact-arithmetic accounting ceilings, including work and storage.
     pub accounting: filament_exact::ScalarLimits,
+    /// Shared item work entitlement for producer and independent checker.
+    pub work_scope: Option<filament_exact::WorkScope>,
 }
 
 /// The scalar bits a document may carry per bit of interval precision. A
@@ -261,6 +264,7 @@ impl ProbabilityDocumentLimits {
             edges: limits.model.limits.max_transitions,
             scalar_bits: limits.max_rational_bits,
             accounting,
+            work_scope: limits.work_scope.clone(),
         }
     }
 
@@ -296,6 +300,14 @@ impl ProbabilityDocumentLimits {
                 crate::ModelCheckLimit::ExactProbMaxRationalBits,
                 limits.max_rational_bits,
             )
+        }
+    }
+
+    /// Create a meter that debits this item's shared work scope when present.
+    pub fn accounting_meter(&self, cancel: &Cancel) -> filament_exact::Meter {
+        match &self.work_scope {
+            Some(scope) => scope.meter().with_cancel(cancel.clone()),
+            None => filament_exact::Meter::new(self.accounting).with_cancel(cancel.clone()),
         }
     }
 }
@@ -889,7 +901,7 @@ pub fn read_probability_certificate(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityCertificateDocument, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     read_document(bytes, limits, cancel, &mut meter)
 }
 
@@ -1341,7 +1353,7 @@ pub fn write_value_bounds_measure_certificate(
         &exact,
         limits,
         cancel,
-        &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+        &mut limits.accounting_meter(cancel),
         &mut 0,
     )?;
     value_bounds::wrap(&exact, side, limits)
@@ -1375,7 +1387,7 @@ pub fn write_timed_fair_probability_certificate(
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     let fairness = fairness::checked(system, claim, limits, cancel, &mut meter, &mut storage)?;
     if fairness.is_empty() {
@@ -1743,7 +1755,7 @@ fn admit_reward_with_identity(
     cancel: &Cancel,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<(), ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     match subject_graph_with_identity(
         system,
@@ -1836,7 +1848,7 @@ pub fn admit_cyclic_eventual_certificate_subject_with_identity(
     cancel: &Cancel,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<(), ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     subject_graph_with_identity(
         system,
         claims,
@@ -1864,7 +1876,7 @@ pub fn probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityCertificateDocument, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     construct_document(
         system,
@@ -2050,6 +2062,7 @@ pub fn check_probability_certificate_document(
 /// claim's threshold, and one of the wrong kind is rejected `Malformed` at
 /// `kind`; a counterpart is a `lower` or `upper` document that meets its
 /// conditions and no threshold.
+#[implements("FR-203-AC-30")]
 pub fn check_probability_certificate_document_as(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2278,7 +2291,7 @@ fn check_document_bytes(
         }
         ProfileDispatch::Exact | ProfileDispatch::BoundedFair => {}
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     fair_control.phase(fairness::BoundedFairProbabilityPhase::Intake)?;
     let mut fairness_records = Vec::new();
     let mut storage = 0;
@@ -2952,6 +2965,7 @@ mod tests {
             edges: 100,
             scalar_bits: 128,
             accounting: crate::AccountingLimits::default().0,
+            work_scope: None,
         }
     }
     #[trace("TC-636", "FR-201-AC-21", "FR-201-AC-22")]
@@ -3247,8 +3261,7 @@ mod tests {
         let values = BTreeMap::from([(root.clone(), rational(1)), (target.clone(), rational(1))]);
         let check = |limits: ProbabilityDocumentLimits| {
             let cancel = Cancel::new();
-            let mut meter =
-                filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+            let mut meter = limits.accounting_meter(cancel);
             check_document_equalities(
                 &graph,
                 &values,

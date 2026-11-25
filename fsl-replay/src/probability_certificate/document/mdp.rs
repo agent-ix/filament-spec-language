@@ -73,7 +73,7 @@ pub fn read_probability_proof_document(
         profile_dispatch(bytes, limits, cancel)?,
         ProfileDispatch::FairMdp
     );
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut fairness = Vec::new();
     let document = read_document_profile(
         bytes,
@@ -406,7 +406,7 @@ impl<'a, 'control> Context<'a, 'control> {
             cancel,
             fair_mdp: false,
             bound_side: None,
-            meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+            meter: limits.accounting_meter(cancel),
             storage: 0,
             reward: false,
             reward_control: None,
@@ -1474,10 +1474,12 @@ fn check_with_context(
         } else if cx.reward {
             match side {
                 SubsystemBoundKind::Lower => BTreeMap::new(),
-                SubsystemBoundKind::Upper => match offered_ranks(&graph, document.ranking, &mut cx)? {
-                    Some(ranks) => ranks,
-                    None => return Ok(malformed_ranking()),
-                },
+                SubsystemBoundKind::Upper => {
+                    match offered_ranks(&graph, document.ranking, &mut cx)? {
+                        Some(ranks) => ranks,
+                        None => return Ok(malformed_ranking()),
+                    }
+                }
             }
         } else {
             match side {
@@ -2230,18 +2232,16 @@ mod tests {
         let values = BTreeMap::from([(key(0), rational(1)), (key(1), rational(1))]);
         let action_sums = sums(&graph, &values, None, &mut cx).unwrap();
         for objective in [ProbabilityObjective::Minimum, ProbabilityObjective::Maximum] {
-            assert!(
-                progress_failure(
-                    &graph,
-                    &values,
-                    &action_sums,
-                    &BTreeMap::from([(key(0), 1), (key(1), 0)]),
-                    objective,
-                    &mut cx
-                )
-                .unwrap()
-                .is_some()
-            );
+            assert!(progress_failure(
+                &graph,
+                &values,
+                &action_sums,
+                &BTreeMap::from([(key(0), 1), (key(1), 0)]),
+                objective,
+                &mut cx
+            )
+            .unwrap()
+            .is_some());
         }
         let mut graph = graph;
         graph.states.get_mut(&key(0)).unwrap().choices[0] = vec![ProbabilityEdge {
@@ -2262,18 +2262,16 @@ mod tests {
                 .unwrap(),
                 None
             );
-            assert!(
-                progress_failure(
-                    &graph,
-                    &values,
-                    &action_sums,
-                    &BTreeMap::from([(key(0), 0), (key(1), 0)]),
-                    objective,
-                    &mut cx
-                )
-                .unwrap()
-                .is_some()
-            );
+            assert!(progress_failure(
+                &graph,
+                &values,
+                &action_sums,
+                &BTreeMap::from([(key(0), 0), (key(1), 0)]),
+                objective,
+                &mut cx
+            )
+            .unwrap()
+            .is_some());
         }
     }
 }

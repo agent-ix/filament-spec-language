@@ -198,7 +198,7 @@ pub(super) fn replay(
         _ => return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into()),
     };
     let document_limits = limits_of(system, limits);
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(system.meter_limits());
     let mut storage = 0;
     let selected = replay_control(
         system,
@@ -598,7 +598,7 @@ pub(super) fn replay_undefined(
         });
     }
     let document_limits = limits_of(system, limits);
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(system.meter_limits());
     let mut storage = 0;
     let kind = match &claim.form {
         ProbForm::Quantile { .. } => MeasurePayoffKind::Satisfied,
@@ -919,7 +919,7 @@ pub(super) fn replay_subsystem(
         .as_ref()
         .ok_or(ProbabilityWitnessError::Refused)?;
     let document_limits = limits_of(system, limits);
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(system.meter_limits());
     let mut storage = 0;
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|binding| &binding.reference);

@@ -47,7 +47,9 @@ pub(super) fn run(
     let Some(package) = simulation.source_package() else {
         return not_yet();
     };
-    let limits = request.limits;
+    let limits = request
+        .limits
+        .with_work_scope(WorkScope::new(request.subject.simulation.meter));
     let subject = SubjectLimits {
         expansion: simulation.expansion,
         meter: &simulation.meter,
@@ -80,6 +82,7 @@ pub(super) fn run(
         edges: limits.model.limits.max_transitions,
         scalar_bits: limits.max_rational_bits,
         accounting: simulation.meter,
+        work_scope: limits.work_scope.clone(),
     };
     let claims = package.graph().probabilistic_model().claims();
     let mut candidate = CandidateBudget::new(document_limits, cancel);
@@ -115,7 +118,7 @@ pub(super) fn run(
                     claim,
                     limits,
                 };
-                match build_retaining_monitor(undefined_request, cancel) {
+                match super::build_retaining_monitor_for_item(undefined_request, cancel) {
                     Ok((ProbBuild::Undefined(path), monitor)) => {
                         return undefined::run(
                             simulation.clone(),

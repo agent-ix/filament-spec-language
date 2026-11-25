@@ -114,7 +114,7 @@ pub(super) fn replay(
     let mut visited_choices = BTreeSet::new();
     let mut transition_count = 0usize;
     let mut storage = 0u64;
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(system.meter_limits());
     let mut mass = rational(0);
     // A cylinder includes its semantic choice and draw, even when several
     // disjoint draws produce exactly the same model and monitor state.

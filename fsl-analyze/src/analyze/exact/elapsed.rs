@@ -219,7 +219,7 @@ struct Refutation<'a> {
 }
 
 fn refute(request: Refutation<'_>) -> EngineReport {
-    use crate::exact_probabilistic::{WitnessError, WitnessScope, produce_quantile_witness};
+    use crate::exact_probabilistic::{produce_quantile_witness, WitnessError, WitnessScope};
     let Refutation {
         system,
         claim,
@@ -336,7 +336,9 @@ pub(super) fn run(
     let Some(source_package) = simulation.source_package() else {
         return not_yet();
     };
-    let limits = request.limits;
+    let limits = request
+        .limits
+        .with_work_scope(WorkScope::new(simulation.meter));
     let meter = simulation.meter;
     let subject = SubjectLimits {
         expansion: simulation.expansion,
@@ -349,6 +351,7 @@ pub(super) fn run(
         edges: limits.model.limits.max_transitions,
         scalar_bits: limits.max_rational_bits,
         accounting: meter,
+        work_scope: limits.work_scope.clone(),
     };
     let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
     if let Some(cause) = cancel.tripped() {
@@ -378,7 +381,7 @@ pub(super) fn run(
         claim,
         limits,
     };
-    let (built, _) = match build_retaining_monitor(product_request, cancel) {
+    let (built, _) = match super::build_retaining_monitor_for_item(product_request, cancel) {
         Ok(built) => built,
         Err(refusal) => return build_refusal(refusal, subject),
     };

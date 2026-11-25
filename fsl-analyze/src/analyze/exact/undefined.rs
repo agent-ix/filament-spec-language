@@ -5,9 +5,11 @@ use super::*;
 use crate::exact_probabilistic::{PredicateRole, UndefinedPath, UndefinedRead};
 use fsl_eval::automaton::{Monitor, PropertyAutomaton, QualifiedBoundedMonitor};
 use fsl_eval::simulation::model::{ModelSimulationRequest, PredicateReading};
-use fsl_replay::{ProbabilityUndefinedWitness, replay_probabilistic_undefined};
+use fsl_replay::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
+use ix_trace_rs::implements;
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-33")]
 pub(super) fn run(
     simulation: ModelSimulationRequest<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -155,8 +157,7 @@ fn materialize_inner(
     let reference = binding.as_ref().map(|binding| &binding.reference);
     let measured = claim.bounded_measure();
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut measure_meter =
-        filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut measure_meter = limits.accounting_meter(system.meter_limits());
     let mut measure_storage = 0;
     let reward = if measured {
         let kind = match claim.form {

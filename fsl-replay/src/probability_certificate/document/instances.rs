@@ -763,7 +763,7 @@ pub fn on_each_outcome(
     }
     let subject = admit(system, claim)?;
     let found = roots_over(system, &subject, &instances, limits, cancel)?;
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut arith = Arith {
         meter: &mut meter,
         cancel,
@@ -1063,7 +1063,7 @@ pub fn replay_on_each_witness(
     }) else {
         return Ok(ProbabilityWitnessReplay::Parity);
     };
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut arith = Arith {
         meter: &mut meter,
         cancel,
@@ -1436,7 +1436,7 @@ pub(super) fn identity(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ObligationIdentity, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     Ok(decode(bytes, limits, cancel, &mut meter)?.identity)
 }
 
@@ -1690,7 +1690,7 @@ pub(super) fn check(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let document = decode(bytes, limits, cancel, &mut meter)?;
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);

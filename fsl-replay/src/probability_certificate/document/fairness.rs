@@ -4,7 +4,7 @@
 use super::*;
 use filament_exact::{Identifier, NodeKey, NodePathIter};
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
-use fsl_foundation::node_wire::{NodeIdentitySink, project_node_key};
+use fsl_foundation::node_wire::{project_node_key, NodeIdentitySink};
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 /// Actual bounded fair-proof checking stages, for default-off observation.
@@ -923,7 +923,7 @@ pub(super) fn admit_encoding(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<(), ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let mut storage = 0;
     let mut cx = Admission {
         limits,
@@ -1002,6 +1002,7 @@ mod tests {
             edges: 1024,
             scalar_bits: 128,
             accounting,
+            work_scope: None,
         }
     }
 

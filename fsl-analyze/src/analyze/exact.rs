@@ -17,6 +17,7 @@ mod subsystem;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational, WorkScope};
+use fsl_eval::automaton::{Monitor, PropertyAutomaton};
 use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
@@ -44,13 +45,14 @@ use fsl_semantics::check::{
     Bound, Capability, CheckedInterval, DeclarationFamily, Event, FormulaNode, ProbForm,
     ProbScheduler, ReachTarget, UnaryTemporal,
 };
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 
 use super::items::{admission, BROKEN, NOT_YET};
 use super::timed_item::subject_refusal;
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    admit_in_scope, build_retaining_monitor, build_retaining_monitor_in_scope, decide_always,
+    admit_in_scope, build_retaining_monitor_in_scope, decide_always,
     decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
     manifest as en5, settle_product_refusal, ExtRational, FhError, FhResult, ProbBuild,
     ProbProduct, ProductRefusal, ProductRequest, UnboundedError, UnboundedObjective,
@@ -642,7 +644,9 @@ fn run_timed(
     let Some(source_package) = simulation.source_package() else {
         return not_yet();
     };
-    let limits = request.limits;
+    let limits = request
+        .limits
+        .with_work_scope(WorkScope::new(simulation.meter));
     let meter = simulation.meter;
     let subject = SubjectLimits {
         expansion: simulation.expansion,
@@ -692,7 +696,7 @@ fn run_timed(
         claim,
         limits,
     };
-    let built = match build_retaining_monitor(product_request, cancel) {
+    let built = match build_retaining_monitor_for_item(product_request, cancel) {
         Ok(built) => built,
         Err(refusal) => return build_refusal(refusal, subject),
     };
@@ -1091,7 +1095,9 @@ fn run_timed_mean(
     let Some(source_package) = simulation.source_package() else {
         return not_yet();
     };
-    let limits = request.limits;
+    let limits = request
+        .limits
+        .with_work_scope(WorkScope::new(simulation.meter));
     let meter = simulation.meter;
     let subject = SubjectLimits {
         expansion: simulation.expansion,
@@ -1120,7 +1126,7 @@ fn run_timed_mean(
             return build_refusal(refusal, subject);
         }
     };
-    let built = match build_retaining_monitor(
+    let built = match build_retaining_monitor_for_item(
         ProductRequest {
             subject: request.subject,
             claim,
@@ -1314,6 +1320,13 @@ pub(super) fn run_package_exact(request: ProductRequest<'_>, cancel: &Cancel) ->
     run(request, cancel, None, None)
 }
 
+#[implements(
+    "FR-203-AC-29",
+    "FR-203-AC-30",
+    "FR-203-AC-31",
+    "FR-203-AC-32",
+    "FR-203-AC-33"
+)]
 fn run(
     mut request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -1359,6 +1372,8 @@ fn run(
     if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
         return long_run::run(request, cancel, tamper, tamper_witness);
     }
+    let item_work = WorkScope::new(request.subject.simulation.meter);
+    request.limits = request.limits.with_work_scope(item_work.clone());
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
     let probabilistic = simulation.input.probabilistic;
@@ -1366,7 +1381,7 @@ fn run(
     let meter = simulation.meter;
     // The item's cumulative work allowance (FR-120, FR-203), which the product
     // build and each cyclic-subject check below spend.
-    let work = WorkScope::new(meter);
+    let work = item_work;
     let subject = SubjectLimits {
         expansion: simulation.expansion,
         meter: &meter,
@@ -1545,7 +1560,7 @@ fn run(
                     claim,
                     limits,
                 };
-                match build_retaining_monitor(undefined_request, cancel) {
+                match build_retaining_monitor_in_scope(undefined_request, work.clone(), cancel) {
                     Ok(built) => built,
                     Err(error) => return build_refusal(error, subject),
                 }
@@ -2458,6 +2473,19 @@ fn run(
     checked_report(checked, certificate, binding, extremum, subject)
 }
 
+#[implements("FR-203-AC-29")]
+fn build_retaining_monitor_for_item(
+    request: ProductRequest<'_>,
+    cancel: &Cancel,
+) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), ProductRefusal> {
+    let work = request
+        .limits
+        .work_scope
+        .clone()
+        .unwrap_or_else(|| WorkScope::new(request.subject.simulation.meter));
+    build_retaining_monitor_in_scope(request, work, cancel)
+}
+
 /// Whether the subject's model graph is acyclic. The reading admits the model
 /// and enumerates its graph under the item's `work` allowance, so it spends
 /// only what the item's build left (FR-120, FR-203).
@@ -3230,6 +3258,7 @@ fn witness_charge(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-31")]
 fn replay_refutation(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -3247,8 +3276,7 @@ fn replay_refutation(
     use crate::exact_probabilistic::{
         produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
     };
-    let mut producer_meter =
-        filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut producer_meter = limits.accounting_meter(system.meter_limits());
     let mut producer_storage = 0u64;
     // Classify direct state boundaries in one pass over the source-labelled
     // product. The replay core independently derives the same outcomes.
@@ -3526,6 +3554,7 @@ fn reach_accepting(product: &ProbProduct, bound: &Bound, target: &[bool]) -> (Ve
 /// set (FR-200, FR-413): a memoryless randomized fair witness over an acyclic
 /// subject, replayed independently, including the fairness check (FS-9).
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-31")]
 fn replay_fair_refutation(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -3543,8 +3572,7 @@ fn replay_fair_refutation(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     let (accepting, past) = reach_accepting(product, bound, target);
-    let mut producer_meter =
-        filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut producer_meter = limits.accounting_meter(system.meter_limits());
     let mut producer_storage = 0u64;
     let mut producer_issue = None;
     let mut control = |work: crate::exact_probabilistic::WitnessWork<'_>| {
@@ -3646,6 +3674,7 @@ fn replay_fair_refutation(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-32")]
 fn replay_produced_witness(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,

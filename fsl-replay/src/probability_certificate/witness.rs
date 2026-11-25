@@ -11,6 +11,7 @@ use fsl_eval::simulation::model::{
     TimedSystem, TransitionId,
 };
 use fsl_package::CheckedPackage;
+use ix_trace_rs::implements;
 
 mod bounded;
 mod measure;
@@ -464,6 +465,7 @@ pub enum ProbabilityWitnessSemanticPhase {
 /// `eventually[0,h] holds(P)`. The latter uses qualified monitor keys and
 /// terminal false extension and permits raw model cycles within its horizon.
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-32")]
 pub fn replay_probabilistic_witness(
     package: &CheckedPackage,
     system: &ModelSystem<'_>,
@@ -533,6 +535,7 @@ fn authenticate_source(
 /// Refuses a foreign or mixed owner and otherwise preserves the source
 /// entry's semantic, cancellation, resource and parity results.
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-32")]
 pub fn replay_probabilistic_witness_from_package(
     owner: &PackageModelInput<'_>,
     system: &ModelSystem<'_>,
@@ -627,7 +630,7 @@ fn replay_probabilistic_witness_impl(
     }
     let mut model_states = BTreeMap::new();
     let graph_storage = std::cell::RefCell::new(0u64);
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(system.meter_limits());
     let key_error = std::cell::RefCell::new(None);
     let mut issue = None;
     let graph = enumerate_model_graph_with_keys_and_reservation(

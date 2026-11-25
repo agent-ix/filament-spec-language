@@ -774,7 +774,7 @@ impl<'a> Context<'a> {
         Self {
             limits,
             cancel,
-            meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+            meter: limits.accounting_meter(cancel),
             storage: 0,
             identity: fsl_foundation::IdentityLimits::default(),
             refutation: false,
@@ -904,8 +904,7 @@ fn subject(
     ) || !matches!(
         TimedSystem::new(system, &claim.subject.alias),
         Err(TimedSubjectRefusal::NoTimedModel { .. })
-    )
-    {
+    ) {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let binding = claim_binding(system, claim)?;

@@ -278,8 +278,7 @@ pub(super) fn replay(
         return Err(Error::Refused);
     }
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut meter =
-        filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
+    let mut meter = document_limits.accounting_meter(cancel);
     let mut storage = 0;
     let (graph, terminals, _) = enumerate(
         system,

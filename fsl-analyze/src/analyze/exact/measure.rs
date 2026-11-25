@@ -18,7 +18,9 @@ pub(super) fn run(
 ) -> EngineReport {
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
-    let limits = request.limits;
+    let limits = request
+        .limits
+        .with_work_scope(WorkScope::new(simulation.meter));
     let scalar = simulation.meter;
     let subject = SubjectLimits {
         expansion: simulation.expansion,
@@ -46,7 +48,7 @@ pub(super) fn run(
     };
     let reference = binding.as_ref().map(|binding| &binding.reference);
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, scalar);
-    let mut meter = filament_exact::Meter::new(scalar).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(scalar);
     let mut storage = 0;
     let kind = match &claim.form {
         ProbForm::Probability {
@@ -72,36 +74,37 @@ pub(super) fn run(
         Ok(selected) => selected,
         Err(error) => return document_failure(error, subject),
     };
-    let (mut product, lower_product) = match build_retaining_monitor(request, cancel) {
-        Ok((ProbBuild::Built(product), _)) => (product, None),
-        Ok((
-            ProbBuild::Partial {
-                product,
-                lower_product,
-            },
-            _,
-        )) => {
-            if matches!(claim.form, ProbForm::MeanOfFraction { .. })
-                && matches!(claim.scheduler, ProbScheduler::Workload(_))
-            {
-                return max_states_limit(&limits, subject);
+    let (mut product, lower_product) =
+        match super::build_retaining_monitor_for_item(request, cancel) {
+            Ok((ProbBuild::Built(product), _)) => (product, None),
+            Ok((
+                ProbBuild::Partial {
+                    product,
+                    lower_product,
+                },
+                _,
+            )) => {
+                if matches!(claim.form, ProbForm::MeanOfFraction { .. })
+                    && matches!(claim.scheduler, ProbScheduler::Workload(_))
+                {
+                    return max_states_limit(&limits, subject);
+                }
+                (product, Some(lower_product))
             }
-            (product, Some(lower_product))
-        }
-        Ok((ProbBuild::Undefined(path), monitor)) => {
-            return undefined::run(
-                simulation,
-                claim,
-                path,
-                monitor,
-                &limits,
-                cancel,
-                subject,
-                tamper_witness,
-            );
-        }
-        Err(error) => return build_refusal(error, subject),
-    };
+            Ok((ProbBuild::Undefined(path), monitor)) => {
+                return undefined::run(
+                    simulation,
+                    claim,
+                    path,
+                    monitor,
+                    &limits,
+                    cancel,
+                    subject,
+                    tamper_witness,
+                );
+            }
+            Err(error) => return build_refusal(error, subject),
+        };
     let Some((_, _, initial)) = product.initial.first() else {
         return broken();
     };
