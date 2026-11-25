@@ -97,8 +97,11 @@ SHALL carry the existing `pre_state`, `transition`, `post_state` and typed
 post-states or results even for equal pre-states and arguments.
 Two executions over one alias share that entry; two different aliases keep
 separate entries even when their state-key bytes are equal. Each key SHALL
-serialize in the existing unpadded base64url StateKey spelling. No HP-1
-entry carries an automaton key. This is the HP-1 representation of the
+serialize in the existing unpadded base64url StateKey spelling. A
+certificate edge's `pre_state` and `post_state` SHALL each be that
+base64url StateKey string, not the State object `{key}` that FSpec FR-331's
+`HyperTransitionTuple` carries; a rejection locus writes State objects. No
+HP-1 entry carries an automaton key. This is the HP-1 representation of the
 existing `closure` member; the other forms' representation is unchanged.
 The one-alias case uses this same sequence shape with one entry, for example
 `[{"alias":"V","states":[...],"executions":[{"execution":"x","transitions":[...]},{"execution":"y","transitions":[...]}]}]`;
@@ -224,7 +227,9 @@ spellings").
   post-state or result differs. A tuple rejection SHALL serialize as FSpec
   FR-331's existing `HyperTransitionTuple`: exactly `transitions`, one edge
   per execution binding, each with `pre_state`, `transition`, `post_state`
-  and `result`. The result uses the existing typed canonical value; JSON
+  and `result`. In the rejection, `pre_state` and `post_state` SHALL each be
+  a State object `{key}`, unlike the certificate edge's base64url StateKey
+  string. The result uses the existing typed canonical value; JSON
   `null` denotes an operation with no result, separately from a typed null
   result. A state-member rejection SHALL use the existing hyper state
   locus with `states` containing the actual offending state key and no

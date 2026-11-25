@@ -366,10 +366,9 @@ fn a_rejected_certificate_never_settles_proved() {
     let locus = CertificateLocus::ProbabilityProductState(expected.clone());
     let wire = serde_json::to_value(&locus).unwrap();
     // Encode the complete canonical octets independently of the locus serializer.
-    let expected_wire = serde_json::to_value(fsl_replay::CertificateLocus::ModelKey(
-        fsl_eval::simulation::StateKey::from_canonical_bytes(expected.as_bytes().to_vec()),
-    ))
-    .unwrap();
+    use base64::Engine as _;
+    let expected_wire =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(expected.as_bytes());
     assert_eq!(wire, serde_json::json!({"product_key": expected_wire}));
     let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal)).unwrap();
     assert_eq!(outcome["result"], "inconclusive");
@@ -1536,8 +1535,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
-    let fsl_replay::ExactBound::Finite(upper) = upper
-    else {
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("complete product interval has a finite upper endpoint");
     };
     let exact = ratio(9_999_999, 10_000_000)

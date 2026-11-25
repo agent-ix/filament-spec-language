@@ -772,6 +772,7 @@ fn function_state<'a>(
 ) -> FunctionState<'a> {
     FunctionState {
         name: &signature.name,
+        parameters: &signature.parameters,
         body: function.body.root(),
         slots: function.slots,
         formed_units: &function.formed_units,
@@ -1795,14 +1796,16 @@ impl CheckedExpression {
     }
 }
 
-/// One admitted function's evaluation-visible state: exactly what
-/// `value::expression`'s evaluator needs (name, checked body, slot count --
-/// FR-068's own Description names these as the accessor surface), without
-/// exposing `CheckedFunction`'s private representation.
+/// One admitted function's evaluation-visible state: what `value::expression`'s
+/// evaluator needs (name, parameters, checked body, slot count, formed units),
+/// read through FR-068's public accessors without exposing `CheckedFunction`'s
+/// private representation.
 #[non_exhaustive]
 pub struct FunctionState<'a> {
     /// The declared name.
     pub name: &'a str,
+    /// The declared parameters, for argument admission.
+    pub parameters: &'a [(String, ValueType)],
     /// The checked body.
     pub body: CheckedNode<'a>,
     /// The evaluation slot count.
