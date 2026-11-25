@@ -1515,15 +1515,23 @@ const GHOST: &str = "probabilistic Ghost using ev on M over (c: M::Coin) under E
      probabilistic GhostTarget using inf on M over (c: M::Coin) under Even on origin \
      { probability >= 0.5 [ eventually holds(c.v = 0) ] }";
 
-/// Checks FR-196 "Behavior": the claim's `over` instances are the subject's
-/// universe, in order, and a state at which a predicate is undefined for an
-/// instance ends the build. The second instance has no object in the initial
-/// snapshot, so its predicate is undefined at position 0, with no step to
-/// it.
+/// Checks FR-196 "Behavior": the claim's `over` instances are the keys some
+/// initial state holds (FR-125), and a state at which a predicate is undefined
+/// for an instance ends the build. The first initial snapshot has no object at
+/// the second instance's key, which only the second snapshot holds, so its
+/// predicate is undefined at position 0 of the first, with no step to it.
 #[trace("TC-641", "FR-196-AC-13")]
 #[test]
 fn an_instance_undefined_at_an_initial_state_ends_at_position_zero() {
-    let world = World::with_universe(&prob_world::coin(GHOST), &["c", "ghost"]);
+    let model = prob_world::coin(GHOST);
+    let world = World::with_object_initials(
+        &model,
+        &["c", "ghost"],
+        &[
+            serde_json::json!({"objects": {"c": model.initial, "ghost": null}}),
+            model.initial.clone(),
+        ],
+    );
     let ProbBuild::Undefined(path) = build_product(
         world.request("Ghost", ModelCheckLimits::default()),
         &Cancel::new(),

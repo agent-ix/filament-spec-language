@@ -430,7 +430,8 @@ impl World {
     }
 
     /// `model`, over live `keys`, with one initial snapshot per field set of
-    /// `initials`, in order.
+    /// `initials`, in order. An entry `{"objects": {key: null}}` gives that
+    /// snapshot no object at `key`; it then names every other key's fields.
     pub(crate) fn with_object_initials(model: &Model, keys: &[&str], initials: &[Json]) -> Self {
         let initials: Vec<&Json> = initials.iter().collect();
         Self::build(model, keys, keys, &initials, false, false)
@@ -589,10 +590,12 @@ impl World {
                 "observation": "current", "model": header,
                 "anchor": {"kind": "initialization", "name": "start"},
                 "populations": [{"population": model.ident(model.population), "complete": true,
-                    "objects": live.iter().map(|key| json!({"key": key,
-                        "type": model.ident(model.object),
-                        "fields": fields.get("objects").and_then(|each| each.get(key))
-                            .unwrap_or(fields)}))
+                    "objects": live.iter().filter_map(|key| {
+                        let fields = fields.get("objects").and_then(|each| each.get(key))
+                            .unwrap_or(fields);
+                        (!fields.is_null()).then(|| json!({"key": key,
+                            "type": model.ident(model.object), "fields": fields}))
+                    })
                         .collect::<Vec<_>>()}],
             })
             .to_string()
