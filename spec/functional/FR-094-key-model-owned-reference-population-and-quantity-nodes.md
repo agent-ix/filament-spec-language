@@ -426,16 +426,21 @@ FR-094-AC-11 identifies the quotient of a division by a literal.
 - **Dimension equivalence.** The unit table holds each dimension equivalence the
   unit declares (FR-091). `check` builds one
   `scalar_type`/`dimension_equivalence` node for each, in source order, as
-  FSpec FR-322 spells it (FR-322-AC-118): self-typed, with no
+  FSpec FR-322's "Dimension equivalence" contract specifies: self-typed, with no
   `declaration`, relating the two dimension nodes in ascending node-key order
   (the derived `Ord`), with the root ratio the unit table holds (FR-091
   step 6) as `root_scale`, stated for the node listed first, depending on
-  exactly those two dimension nodes, and carrying one `anchor` occurrence whose
-  ordinal is the declaration's place among the unit's equivalence declarations
-  and whose region is the declaration's. It builds the node whether or not a
-  quantity type names either dimension, together with the two dimension nodes
-  it depends on as the declared-unit bullet builds a dimension node, and it
-  changes no dimension node's key. The two spellings `A ~ B by x U = y V` and
+  the local operands only: a local dimension operand appears in `dependencies`,
+  while a Package operand is represented and validated in its ordered
+  `dimension_node_ids` through lookup in its selected direct dependency's
+  admitted package, joined by `dependency_selections`, not as a locally minted
+  dependency. The node carries one `anchor` occurrence
+  whose ordinal is the declaration's place among the unit's equivalence
+  declarations in source order and whose region is the declaration's. It
+  builds the node whether or not a quantity type names either dimension,
+  together with the local dimension nodes its dependencies name as the
+  declared-unit bullet builds a dimension node, and it changes no dimension
+  node's key. The two spellings `A ~ B by x U = y V` and
   `B ~ A by y V = x U` build one node, and so do two statements of one ratio
   through different units.
 
