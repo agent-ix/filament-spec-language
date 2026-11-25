@@ -20,32 +20,31 @@ use filament_exact::{Cancel, CancelCause, Meter, ScalarLimits};
 use fsl_analyze::model_check::{check_model, ModelCheckRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
-use fsl_eval::simulation::{StateKey, TransitionSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
-use fsl_foundation::BackendId;
 use fsl_replay::{
     check_closure, check_components, settle_hyper_check, settle_model_check, CertificateLocus,
     CertificateRejection, CertificateRequest, CertificateRule, Certification, ClosureCertificate,
     ClosureRefusal, Component, ComponentCertificate, ComponentWitness, Execution, HyperOutcome,
     IncompleteCause, InconclusiveCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, Operation, OutcomeDocument, OutcomeItem, OutcomeStage, ProductClosureClause,
-    ProductClosureRequest, ProductStateRef, ProofBasis, ProofCertificate, RequestIndex,
-    ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits, TemporalCertificateCheck,
-    TerminalRecord, TerminalValue,
+    ModelCheckOutcome, ProductClosureClause, ProductClosureRequest, ProductStateRef, ProofBasis,
+    ProofCertificate, ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits,
+    TemporalCertificateCheck, TerminalValue,
 };
 use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use ix_trace_rs::trace;
 use serde_json::json;
 
+use crate::certificate_rejection_support::written_cause;
 use crate::counter::{UNLIMITED, ZERO};
 use crate::example_units::{config, decide, reaches_two, EACH};
 use crate::hyper_world::{self, non_interference, Vault, EQUAL_INPUTS, STARTS};
-use crate::liveness::{self, counter, is_three};
+use crate::liveness_support::{self, counter, is_three};
 use crate::por_world::{
     field, integer, level, number, object_type, operation, type_ref, writes, Atom, Fixture, Obj,
     Temporal,
 };
-use crate::probability_from_source::{assert_valid, provider_definition};
+use crate::provider_schema_support::{assert_valid, provider_definition};
 use crate::units::World;
 
 const ACCEPTED: TemporalCertificateCheck = TemporalCertificateCheck::Accepted;
@@ -222,7 +221,7 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
 
 /// FR-282-AC-6's claim, `always eventually q` under `fair weak inc`, over the
 /// finite Counter.
-fn weakly_fair_counter() -> liveness::Fixture {
+fn weakly_fair_counter() -> liveness_support::Fixture {
     counter(
         crate::counter::document(false),
         "fair weak M::Counter::inc;",
@@ -301,36 +300,6 @@ fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
         at, source,
         "the cause names the source state of the backward edge"
     );
-}
-
-/// The `cause` the outcome writer writes for an item settled `value`, under
-/// FR-331's member name `type` for the writer's `kind`.
-pub(crate) fn written_cause(value: TerminalValue) -> serde_json::Value {
-    let TerminalValue::Inconclusive(cause) = value else {
-        panic!("a rejected certificate settles inconclusive: {value:?}");
-    };
-    let item = OutcomeItem::from_terminal(&TerminalRecord::inconclusive(
-        RequestIndex::new(0),
-        BackendId::new("en-1"),
-        cause,
-    ));
-    let bytes = OutcomeDocument::settled(Operation::Analyze, Some(OutcomeStage::S6c), vec![item])
-        .to_bytes()
-        .expect("the outcome encodes");
-    let document: serde_json::Value = serde_json::from_slice(&bytes).expect("the outcome is JSON");
-    let mut cause = document["items"][0]["cause"].clone();
-    let kind = cause
-        .as_object_mut()
-        .and_then(|members| members.remove("kind"))
-        .expect("the cause names its kind");
-    cause["type"] = kind;
-    cause
-}
-
-/// The State locus FSpec FR-331 spells for the state key `key`.
-pub(crate) fn state_locus(key: &StateKey) -> serde_json::Value {
-    use base64::Engine as _;
-    json!({"key": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes())})
 }
 
 /// `value` is written as a `certificate-rejected` cause under `rule` at

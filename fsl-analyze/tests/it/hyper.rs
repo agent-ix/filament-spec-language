@@ -19,10 +19,10 @@
 //! quotient by the swap (FR-174, `crate::hyper_swap`), so the counts the engine
 //! reports are the quotient's; `World::explore` reads the unreduced product.
 
-use filament_exact::{Cancel, CancelCause, Charge, ChargePoint, Meter, Undefined};
+use crate::hyper_support::{inputs, positions, refuted, Exhausted, Refusing};
+use filament_exact::{Cancel, CancelCause, Meter, Undefined};
 use fsl_eval::hyper::{HyperLetters, MatchReading, ParameterBinding, StepLabel, StepMatch};
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
-use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::ModelSimState;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_replay::{
     BoundCovers, HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperStep,
@@ -31,10 +31,9 @@ use fsl_replay::{
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
-use crate::counter::ZERO;
 use crate::hyper_world::{
-    assert_hyper_division_refused, high, low, low_of, non_interference, Vault, World, EQUAL_INPUTS,
-    KEY, STARTS,
+    assert_hyper_division_refused, low, low_of, non_interference, Vault, World, EQUAL_INPUTS, KEY,
+    STARTS,
 };
 
 /// The engine's outcome of `world` under the default limits.
@@ -85,75 +84,6 @@ fn an_unreachable_asymmetric_disjunct_keeps_truth_but_changes_proof_reduction() 
             _ => unreachable!("only the secure and leaky vaults are selected"),
         }
     }
-}
-
-/// The counterexample of a violated run.
-pub(crate) fn refuted(outcome: HyperOutcome) -> HyperCounterexample {
-    match outcome {
-        HyperOutcome::Violated { counterexample, .. } => *counterexample,
-        other => panic!("expected a violation, got {other:?}"),
-    }
-}
-
-/// The input `i` of the model step `step`, which must be a `step(i)`.
-pub(crate) fn input(step: &HyperStep) -> i64 {
-    match step {
-        HyperStep::Model(step) => {
-            let [argument] = step.transition.arguments() else {
-                panic!("step takes one input");
-            };
-            argument
-                .split("\"value\":\"")
-                .nth(1)
-                .and_then(|rest| rest.split('"').next())
-                .expect("an integer argument")
-                .parse()
-                .expect("a small input")
-        }
-        HyperStep::TerminalStutter => panic!("the vault has no terminal state"),
-    }
-}
-
-/// The inputs `step(i)` a trace's steps take, by `i`; the steps must all be
-/// model steps of `step`.
-pub(crate) fn inputs(counterexample: &HyperCounterexample, trace: usize) -> Vec<i64> {
-    counterexample.traces[trace]
-        .steps
-        .iter()
-        .map(input)
-        .collect()
-}
-
-/// The `(h, l)` of each position of trace `trace`, read by re-executing its
-/// steps through the vault from its initial state (the oracle).
-pub(crate) fn positions(
-    world: &World,
-    counterexample: &HyperCounterexample,
-    trace: usize,
-) -> Vec<(i64, i64)> {
-    let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
-    let trace = &counterexample.traces[trace];
-    let mut state = system.initial()[trace.initial as usize].clone();
-    let mut seen = vec![(high(&state), low(&state))];
-    for step in &trace.steps {
-        let HyperStep::Model(step) = step else {
-            panic!("the vault has no terminal state");
-        };
-        state = system
-            .successors(&state)
-            .expect("the vault expands")
-            .successors
-            .into_iter()
-            .find(|(transition, next)| {
-                *transition == step.transition
-                    && system.state_key(next).expect("a key").0.as_slice()
-                        == step.post_state.as_bytes()
-            })
-            .unwrap_or_else(|| panic!("{step:?} is not a step of the vault"))
-            .1;
-        seen.push((high(&state), low(&state)));
-    }
-    seen
 }
 
 /// ADR-023 section 8.1: `NonInterference` over the leaky vault is refuted by a
@@ -483,62 +413,6 @@ fn a_subject_without_an_initial_state_or_an_instance_decides_nothing() {
     };
     assert_eq!(cause, UndecidedCause::NoInstance);
     assert_eq!(stats.product_states, 0);
-}
-
-/// A `match` that refuses: the reading of every joint step is `Refused`.
-pub(crate) struct Refusing;
-
-impl StepMatch for Refusing {
-    fn universal(
-        &self,
-        _instance: &[ParameterBinding],
-        _steps: &[StepLabel<'_>],
-        _meter: &mut Meter,
-    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
-        Ok(MatchReading::Refused {
-            conjunct: 0,
-            outcome: fsl_eval::simulation::model::ClauseOutcome::NotBoolean,
-        })
-    }
-
-    fn existential(
-        &self,
-        _instance: &[ParameterBinding],
-        _steps: &[StepLabel<'_>],
-        _meter: &mut Meter,
-    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
-        panic!("an HP-2 clause has no existential conjunct")
-    }
-}
-
-/// A `match` whose evaluation exhausts its meter: it charges a meter that
-/// admits no work.
-pub(crate) struct Exhausted;
-
-impl StepMatch for Exhausted {
-    fn universal(
-        &self,
-        _instance: &[ParameterBinding],
-        _steps: &[StepLabel<'_>],
-        _meter: &mut Meter,
-    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
-        Meter::new(ZERO)
-            .charge(Charge::new(ChargePoint::GraphExpand))
-            .map_err(|incomplete| fsl_eval::hyper::MatchIncomplete {
-                conjunct: 0,
-                incomplete,
-            })?;
-        Ok(MatchReading::Holds)
-    }
-
-    fn existential(
-        &self,
-        _instance: &[ParameterBinding],
-        _steps: &[StepLabel<'_>],
-        _meter: &mut Meter,
-    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
-        panic!("an HP-2 clause has no existential conjunct")
-    }
 }
 
 /// FR-176 "Product": a `μ_U` that is refused or incomplete at a reachable

@@ -25,7 +25,7 @@ use crate::analyze_cli_support::{
 };
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{self, request_files_over_starts, Vault, STARTS};
-use crate::relation_claims::{initial_world, step_with_result_document, DETERMINISTIC};
+use crate::relation_claims_support::{initial_world, step_with_result_document, DETERMINISTIC};
 
 fn analyze_package(ws: &Workspace, name: &str, members: &Value) -> crate::analyze_cli_support::Run {
     analyze(

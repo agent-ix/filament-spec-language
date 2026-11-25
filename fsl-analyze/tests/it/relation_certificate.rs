@@ -19,11 +19,11 @@ use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use ix_trace_rs::trace;
 
-use crate::component_certificate::{state_locus, written_cause};
+use crate::certificate_rejection_support::{state_locus, written_cause};
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{self, Vault};
-use crate::probability_from_source::{assert_valid, provider_definition};
-use crate::relation_claims::{
+use crate::provider_schema_support::{assert_valid, provider_definition};
+use crate::relation_claims_support::{
     initial_world, package_and_relation, package_and_relation_with_document,
     step_with_result_document, subjects, DETERMINISTIC,
 };

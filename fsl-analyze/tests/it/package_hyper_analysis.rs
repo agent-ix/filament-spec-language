@@ -386,7 +386,7 @@ fn prepare_hp1_production_cli_fixture() {
         crate::hyper_world::Vault::Secure,
         false,
         &crate::hyper_world::STARTS,
-        crate::relation_claims::DETERMINISTIC,
+        crate::relation_claims_support::DETERMINISTIC,
     );
     let path = crate::analyze_cli_support::request_over(
         &ws,

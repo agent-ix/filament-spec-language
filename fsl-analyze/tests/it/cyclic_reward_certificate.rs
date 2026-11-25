@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Finite first-target reward proofs with cyclic continuations.
 
-use super::long_run_certificate::{limits, produce};
+use super::long_run_certificate::produce;
+use crate::long_run_support::limits;
 use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::checking::CheckMode;

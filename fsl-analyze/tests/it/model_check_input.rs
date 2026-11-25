@@ -381,7 +381,7 @@ fn dense_replay_rejects_incomplete_certificate_coverage() {
             },
         )
         .with_zone_certificate(certificate);
-        let mut wire = crate::model_settle::request(
+        let mut wire = crate::model_settle_support::request(
             &world.package,
             &[],
             &world.document,
@@ -1067,7 +1067,7 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
         PackageDeadlockSubject, RunInput, TemporalItem,
     };
     use fsl_route::request::{DerivedLimits, ItemKind};
-    let written = crate::derived_request::written(
+    let written = crate::derived_request_support::written(
         &world.subject(&["c"], UNLIMITED),
         &DerivedLimits::default(),
     );
@@ -1194,7 +1194,7 @@ fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_sourc
         "{CONTRACT}terminal Done using v on M when {{ self.value = 3 }};\n"
     ));
     let none = counter_with(CONTRACT);
-    let written = crate::derived_request::written(
+    let written = crate::derived_request_support::written(
         &when.subject(&["c"], UNLIMITED),
         &DerivedLimits::default(),
     );

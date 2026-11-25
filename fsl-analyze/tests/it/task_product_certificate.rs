@@ -475,7 +475,7 @@ fn a_member_that_differs_from_its_recomputation_is_malformed() {
             "SFp",
             Box::new(|c| {
                 let row = &mut c.task_product.as_mut().unwrap().queue_bounds[0];
-                row.work_lower = crate::zone_search::exact(1, 4000);
+                row.work_lower = crate::zone_support::exact(1, 4000);
             }),
         ),
         (

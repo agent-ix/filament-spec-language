@@ -31,7 +31,8 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
-use crate::component_certificate::{assert_written_rejection, state_locus};
+use crate::certificate_rejection_support::state_locus;
+use crate::component_certificate::assert_written_rejection;
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
     config_kernel_world, config_kernel_world_over, config_version, config_world, config_world_over,
@@ -232,7 +233,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
     let error = check_and_settle_state_graph(request(), &Cancel::new(), |instance| {
         assert!(instance.over.is_some(), "a real population instance");
         calls.set(calls.get() + 1);
-        Err(crate::model_settle::allocation_refusal(7333))
+        Err(crate::model_settle_support::allocation_refusal(7333))
     })
     .unwrap_err();
     assert_eq!(

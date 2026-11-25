@@ -19,7 +19,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
-use crate::analyze_family_cli::{rpc_snapshot, rpc_unit, rpc_unit_with};
+use crate::analyze_family_support::{rpc_snapshot, rpc_unit, rpc_unit_with};
 
 /// ADR-026 section 11's `Settles`: every `Waiting` position is followed within
 /// `interval` by a position that is not `Waiting`.
