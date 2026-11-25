@@ -197,7 +197,7 @@ impl<'a> ModelSystem<'a> {
             .ok_or_else(|| fault("smt-encoding-reads-source-forms"))?;
         let first = self.initial_base.first().ok_or(Refusal::NoInitialState)?;
         let mut rows: Vec<(DeclarationKey, String, DeclarationKey)> = Vec::new();
-        for (population, objects) in &first.state.populations {
+        for (population, objects) in &first.state().populations {
             for (key, object) in objects {
                 rows.push((
                     population.clone(),
@@ -223,7 +223,7 @@ impl<'a> ModelSystem<'a> {
                 .iter()
                 .find(|(population, key, type_key)| {
                     !state
-                        .state
+                        .state()
                         .populations
                         .get(population)
                         .and_then(|objects| objects.get(key))
@@ -232,7 +232,7 @@ impl<'a> ModelSystem<'a> {
                 .map(|row| row.1.clone())
                 .or_else(|| {
                     state
-                        .state
+                        .state()
                         .populations
                         .iter()
                         .find_map(|(population, objects)| {
@@ -326,7 +326,7 @@ impl<'a> ModelSystem<'a> {
                     .iter()
                     .map(|object| {
                         let held = state
-                            .state
+                            .state()
                             .populations
                             .get(&object.population)
                             .and_then(|held| held.get(&object.key));

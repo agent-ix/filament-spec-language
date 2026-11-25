@@ -204,12 +204,22 @@ fn run_in(
         package,
         keys,
         item,
-        max_depth,
-        limits,
-        meter,
-        1,
-        Reductions::default(),
+        WorkerConfig {
+            max_depth,
+            limits,
+            meter,
+            workers: 1,
+            reductions: Reductions::default(),
+        },
     )
+}
+
+struct WorkerConfig {
+    max_depth: Option<usize>,
+    limits: ModelCheckLimits,
+    meter: ScalarLimits,
+    workers: usize,
+    reductions: Reductions,
 }
 
 fn run_in_with_workers(
@@ -217,12 +227,15 @@ fn run_in_with_workers(
     package: &CheckedPackage,
     keys: &[&str],
     item: ModelCheckItem<'_>,
-    max_depth: Option<usize>,
-    limits: ModelCheckLimits,
-    meter: ScalarLimits,
-    workers: usize,
-    reductions: Reductions,
+    config: WorkerConfig,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    let WorkerConfig {
+        max_depth,
+        limits,
+        meter,
+        workers,
+        reductions,
+    } = config;
     check_model(
         ModelCheckRequest {
             workers,
@@ -258,11 +271,13 @@ fn run_with_workers(
         world,
         keys,
         item,
-        max_depth,
-        limits,
-        meter,
-        workers,
-        Reductions::default(),
+        WorkerConfig {
+            max_depth,
+            limits,
+            meter,
+            workers,
+            reductions: Reductions::default(),
+        },
     )
 }
 
@@ -270,23 +285,9 @@ fn run_with_workers_and_reductions(
     world: &World,
     keys: &[&str],
     item: ModelCheckItem<'_>,
-    max_depth: Option<usize>,
-    limits: ModelCheckLimits,
-    meter: ScalarLimits,
-    workers: usize,
-    reductions: Reductions,
+    config: WorkerConfig,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-    run_in_with_workers(
-        world,
-        &world.package,
-        keys,
-        item,
-        max_depth,
-        limits,
-        meter,
-        workers,
-        reductions,
-    )
+    run_in_with_workers(world, &world.package, keys, item, config)
 }
 
 fn run_temporal_fixture_with_workers(
@@ -505,19 +506,23 @@ fn model_safety_worker_modes_preserve_results() {
     }
 
     let reduced_world = self::world("", &[&[("a", 0), ("b", 0), ("c", 0)]]);
-    let mut reductions = Reductions::default();
-    reductions.partial_order = true;
+    let reductions = Reductions {
+        partial_order: true,
+        ..Reductions::default()
+    };
     let mut expected_reduced = None;
     for workers in [1, 2, 4, 64] {
         let outcome = run_with_workers_and_reductions(
             &reduced_world,
             &["a", "b", "c"],
             ModelCheckItem::DeadlockFreedom,
-            None,
-            ModelCheckLimits::default(),
-            UNLIMITED,
-            workers,
-            reductions.clone(),
+            WorkerConfig {
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                meter: UNLIMITED,
+                workers,
+                reductions: reductions.clone(),
+            },
         )
         .expect("the reduced worker request is admitted");
         if let Some(expected) = &expected_reduced {

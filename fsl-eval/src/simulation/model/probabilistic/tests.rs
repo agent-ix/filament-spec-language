@@ -1308,10 +1308,7 @@ fn model_state_key_memo_tracks_clones_and_cell_mutation() {
     let system = world.system();
     let state = initial(&system);
     let cloned = state.clone();
-    assert!(std::sync::Arc::ptr_eq(
-        &state.canonical_key,
-        &cloned.canonical_key
-    ));
+    assert!(state.shares_key_memo(&cloned));
     let cold_debug = format!("{state:?}");
     let original = system.state_key(&state).expect("key").0;
     assert_eq!(format!("{state:?}"), cold_debug);
@@ -1333,10 +1330,7 @@ fn model_state_key_memo_tracks_clones_and_cell_mutation() {
     };
     let mut changed = cloned;
     changed.set_cell(&cell, None);
-    assert!(!std::sync::Arc::ptr_eq(
-        &state.canonical_key,
-        &changed.canonical_key
-    ));
+    assert!(!state.shares_key_memo(&changed));
     let changed_key = system.state_key(&changed).expect("changed key").0;
     assert_ne!(changed_key, original);
     let mut freshly_changed = initial(&system);

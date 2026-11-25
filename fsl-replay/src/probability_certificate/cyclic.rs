@@ -139,6 +139,41 @@ pub(super) fn enumerate_graph_capturing<P: StatePredicate>(
     full_key: bool,
     capture: Option<&CapturedStates>,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
+    enumerate_graph_expanding(
+        system,
+        target,
+        binding,
+        workload,
+        limits,
+        cancel,
+        identity,
+        meter,
+        storage,
+        stop_at_target,
+        full_key,
+        capture,
+        None,
+    )
+}
+
+/// [`enumerate_graph_capturing`], expanding only the keys in `expand` where it
+/// is given: the other states those reach are kept with no choices.
+#[allow(clippy::too_many_arguments)]
+fn enumerate_graph_expanding<P: StatePredicate>(
+    system: &ModelSystem<'_>,
+    target: Option<&P>,
+    binding: Option<&ObjectReference>,
+    workload: Option<&Workload>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    identity: fsl_foundation::IdentityLimits,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    stop_at_target: bool,
+    full_key: bool,
+    capture: Option<&CapturedStates>,
+    expand: Option<&BTreeSet<ProbabilityProductKey>>,
+) -> Result<CheckerGraph, ProbabilityDocumentError> {
     let scope = std::cell::RefCell::new((meter, storage));
     let stopped = std::cell::RefCell::new(None);
     let mut issue = None;
@@ -176,6 +211,7 @@ pub(super) fn enumerate_graph_capturing<P: StatePredicate>(
         limits.edges,
         cancel,
         stop_at_target,
+        expand,
         &key_of,
         &mut |bytes| {
             let mut borrowed = scope.borrow_mut();
@@ -280,7 +316,8 @@ pub(super) fn charge(
 }
 
 /// Rebuild the original graph before absorbing targets; a choice after an
-/// early target still prevents DTMC admission.
+/// early target still prevents DTMC admission. With `expand`, the graph is the
+/// explored part of a partial product: those states and their successors.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn enumerate<P: StatePredicate>(
     system: &ModelSystem<'_>,
@@ -292,10 +329,11 @@ pub(super) fn enumerate<P: StatePredicate>(
     identity: fsl_foundation::IdentityLimits,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
+    expand: Option<&BTreeSet<ProbabilityProductKey>>,
 ) -> Result<(CheckerGraph, BTreeMap<ProbabilityProductKey, u64>), ProbabilityDocumentError> {
     let meter = std::cell::RefCell::new(meter);
     let used = std::cell::RefCell::new(storage);
-    let mut graph = enumerate_graph(
+    let mut graph = enumerate_graph_expanding(
         system,
         Some(target),
         binding,
@@ -307,6 +345,8 @@ pub(super) fn enumerate<P: StatePredicate>(
         &mut used.borrow_mut(),
         false,
         true,
+        None,
+        expand,
     )?;
     for state in graph.states.values() {
         visit(cancel, &mut meter.borrow_mut())?;

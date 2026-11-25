@@ -12,13 +12,7 @@ use fsl_semantics::model::intake::meaning;
 
 use super::*;
 
-#[path = "../../../../fsl-semantics/tests/support/tc235_k2.rs"]
-#[allow(dead_code, reason = "this fixture uses part of the shared K2 builder")]
-#[allow(
-    clippy::duplicate_mod,
-    reason = "a test binary also loads the K2 builder directly"
-)]
-mod base;
+use super::tc235_k2 as base;
 
 const NATIVE_BOOLEAN: &str = "ix://filament/native/Boolean";
 const NATIVE_INTEGER: &str = "ix://filament/native/Integer";

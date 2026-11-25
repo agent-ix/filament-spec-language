@@ -29,12 +29,12 @@ pub mod hint;
 pub use counterexample::{
     assignments_wire, assignments_wire_with_enum_members, graph_evidence_wire,
     hyper_counterexample_wire, probabilistic_undefined_wire, probabilistic_wire,
-    probabilistic_wire_with_enum_members, protocol_temporal_wire,
-    read_task_temporal_counterexample, read_task_temporal_document, read_temporal_counterexample,
-    replay_model_trace_document, replay_task_product_trace, sampled_witness_wire, state_key_wire,
-    task_product_transition_wire, task_source_transition_wire, task_temporal_wire,
-    task_temporal_wire_with_queue_growth, task_transition_wire, temporal_wire,
-    CounterexampleWireError, ProtocolWire, ReadCounterexample, TaskProductCounterexampleDocument,
+    protocol_temporal_wire, read_task_temporal_counterexample, read_task_temporal_document,
+    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
+    sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
+    task_transition_wire, temporal_wire, CounterexampleWireError, ProbabilisticValueSchema,
+    ProtocolWire, ReadCounterexample, TaskProductCounterexampleDocument,
     TaskProductTraceReplayRefusal, TemporalCounterexampleReadRefusal, TraceAlphabet,
 };
 
@@ -4380,7 +4380,9 @@ mod tests {
     }
 
     /// FR-286-AC-2: the `check` outcome of the `inv` source refuses with one
-    /// diagnostic equal to the refusal's code, cause, locus and message.
+    /// diagnostic equal to the refusal's code, cause, locus and message. The
+    /// integer `/` in a body that expects no rational refuses `type-mismatch`
+    /// (FR-495-AC-9), and that pair has a catalog hint (FR-286 "Fix hints").
     #[trace("TC-770", "FR-286-AC-2")]
     #[test]
     fn check_refusal_document_carries_the_refusals_diagnostic() {
@@ -4399,9 +4401,10 @@ mod tests {
                 "category": "refusal",
                 "items": [],
                 "diagnostics": [{
-                    "cause": "ambiguous-literal",
+                    "cause": "type-mismatch",
                     "code": "ill_typed",
                     "details": null,
+                    "hint": hint::hint_for(Code::IllTyped, Some("type-mismatch"), None),
                     "locus": {
                         "kind": "region",
                         "source": serde_json::to_value(region.source()).expect("a source ref"),

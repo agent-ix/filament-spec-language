@@ -50,14 +50,16 @@ use crate::refinement::RefinementRead;
 use crate::refinement::{
     abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run, check_initial,
     check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    initial_history, loop_segments, map_state, row_clock_step, step_history, stop_verdict,
-    AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
-    ConcreteStep, InvariantReading, ProtocolAssumptionReason, ProtocolAssumptionWitness,
-    ProtocolRelationError, ProtocolStateRelation, RefinementFailure, RefinementPosition,
-    RefinementSystems, RowClockStep, StepVerdict, Taken,
+    check_step_for_model, initial_history, loop_segments, map_state, row_clock_step, step_history,
+    stop_verdict, AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState,
+    CandidateFairStep, ConcreteStep, InvariantReading, ProtocolAssumptionReason,
+    ProtocolAssumptionWitness, ProtocolRelationError, ProtocolStateRelation, RefinementFailure,
+    RefinementPosition, RefinementSystems, RowClockStep, StepVerdict, Taken,
 };
 use crate::result::DisagreementCause;
 use crate::timed::explore::{explore, widen, Closure};
+
+type TimedPosition = (usize, Vec<u8>, Vec<ModelTransition>);
 
 /// FR-145's settlement of a refinement counterexample's replay.
 #[derive(Clone, Debug)]
@@ -765,7 +767,7 @@ pub fn replay_refinement_trace(
     if let Some(lasso) = payload.lasso.as_ref() {
         close_loop(&systems.concrete, &positions, lasso.clone())?;
     }
-    settle_positions(refinement, systems, payload, recorded, &positions)
+    settle_positions(refinement, systems, payload, recorded, &positions, true)
 }
 
 /// FSpec FR-430: replay `payload`, a refinement counterexample of
@@ -853,7 +855,7 @@ fn replay_refinement_trace_with_time_source(
             _ => RefinementTraceSettlement::Inconclusive(disagreement(Category::Success)),
         });
     }
-    let settlement = settle_positions(refinement, systems, payload, recorded, &positions)?;
+    let settlement = settle_positions(refinement, systems, payload, recorded, &positions, false)?;
     let RefinementTraceSettlement::Reproduced { failure, .. } = &settlement else {
         return Ok(settlement);
     };
@@ -1128,6 +1130,7 @@ fn settle_positions(
     payload: &TemporalCounterexample,
     recorded: &RefinementFailure,
     positions: &[Position],
+    merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     let mut mapped = Vec::new();
     let mut previous: Option<RefinementPosition> = None;
@@ -1159,7 +1162,12 @@ fn settle_positions(
                         .verdict
                     }
                     None => {
-                        check_step(
+                        let check = if merge_candidate_states {
+                            check_step_for_model
+                        } else {
+                            check_step
+                        };
+                        check(
                             refinement,
                             &systems.concrete,
                             &systems.abstract_system,
@@ -1316,6 +1324,7 @@ fn settle_positions(
             positions,
             trail,
             taken_by,
+            mapped,
         };
         return replay_lasso(
             refinement,
@@ -1324,7 +1333,7 @@ fn settle_positions(
             lasso.clone(),
             walk,
             found,
-            mapped,
+            merge_candidate_states,
         );
     }
     Ok(match found {
@@ -1438,6 +1447,8 @@ struct Walk<'p> {
     trail: Vec<RefinementPosition>,
     /// The abstract steps the step leaving each position took.
     taken_by: Vec<Taken>,
+    /// The abstract state each position maps to, as far as the checks ran.
+    mapped: Vec<ModelState>,
 }
 
 /// The settlement of a lasso whose prefix and loop `check_step` has run along:
@@ -1449,7 +1460,7 @@ fn replay_lasso(
     lasso: Lasso,
     mut walk: Walk<'_>,
     found: Found,
-    mapped: Vec<ModelState>,
+    merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     match found {
         Found::Nothing => {}
@@ -1478,7 +1489,12 @@ fn replay_lasso(
         let (Some(last), Some(position)) = (walk.trail.last(), walk.positions.last()) else {
             return Err(fault("a-lasso-has-a-position"));
         };
-        let verdict = check_step(
+        let check = if merge_candidate_states {
+            check_step_for_model
+        } else {
+            check_step
+        };
+        let verdict = check(
             refinement,
             &systems.concrete,
             &systems.abstract_system,
@@ -1639,7 +1655,7 @@ fn replay_lasso(
             // run along the loop, FR-900 "Delay"); the step's rows leave the
             // last, from the candidates alive there, to those alive when the
             // next delay starts.
-            let mut timed_positions: Vec<Vec<(usize, Vec<u8>, Vec<ModelTransition>)>> = Vec::new();
+            let mut timed_positions: Vec<Vec<TimedPosition>> = Vec::new();
             let mut timed_rows: Vec<Vec<CandidateRow>> = Vec::new();
             for (index, step_segments) in segments.iter().enumerate() {
                 let known: Vec<(usize, &Vec<u8>)> = positions[index]
@@ -1951,7 +1967,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (Some(RefinementFailure::HiddenUnfair { .. }), true, _) => {
@@ -1960,7 +1976,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (Some(RefinementFailure::AbstractUnfair { .. }), true, unfair_loop)
@@ -1971,7 +1987,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (_, true, _) => RefinementTraceSettlement::Inconclusive(disagreement(Category::Violation)),

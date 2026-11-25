@@ -6,7 +6,8 @@
 //! reads each id field of each row back.
 
 use filament_contract_model::{
-    CheckedNodeId, ClockConfiguration, SelectedTupleDeclarationRow, TemporalBinding,
+    CheckedNodeId, CheckedNodePathSegment, ClockConfiguration, SelectedTupleDeclarationRow,
+    TemporalBinding,
 };
 use filament_semantic_value::checking::CheckMode;
 
@@ -549,6 +550,7 @@ fn the_writers_renames_reach_the_rows_it_carries() {
         record Result { lab: String; }\n\
         record Pair { fst: Integer; }\n\
         function mkPair using v(): Pair pure { Pair { fst: 1 } }\n\
+        function pick using v(p: Pair): Integer pure { p.fst }\n\
         function results using v(): Sequence<Result> pure { sequence[Result { lab: \"a\" }] }\n\
         function e0 using v(s: State): State pure { s }\n\
         function e1 using v(s: State, i: Inputs): State pure { s }\n\
@@ -599,9 +601,19 @@ fn the_writers_renames_reach_the_rows_it_carries() {
             .find(|n| n["semantic_form"] == "record_value" && n["semantic_type"] == pair["node_id"])
             .expect("the renamed record's value node"),
     );
+    let projected = |found: &&Value| {
+        found["body"]["operation"]["identity"] == "filament.op.record.project"
+            && found["body"]["operation"]["member"]["declaration"] == pair["node_id"]
+    };
+    let projection_before = id_of(
+        nodes_before
+            .iter()
+            .find(projected)
+            .expect("the renamed record's field projection"),
+    );
     emission.omitted = entries_before
         .iter()
-        .chain([&value_before])
+        .chain([&value_before, &projection_before])
         .map(|node| OmittedNode {
             node: node.clone(),
             cause: OmissionCause::DeclarationOccurrenceMismatch,
@@ -658,11 +670,13 @@ fn the_writers_renames_reach_the_rows_it_carries() {
     let after_ids = typed_node_ids(&rooted);
     let after: Vec<&CheckedNodeId> = after_ids.iter().collect();
     let carried: Vec<&CheckedNodeId> = rooted.omitted().iter().map(|row| &row.node).collect();
-    assert_eq!(carried.len(), 5);
-    for (carried, before) in carried
-        .iter()
-        .zip(entries_before.iter().chain([&value_before]))
-    {
+    // Four entries, the record value and the field projection.
+    assert_eq!(carried.len(), 6);
+    for (carried, before) in carried.iter().zip(
+        entries_before
+            .iter()
+            .chain([&value_before, &projection_before]),
+    ) {
         assert_ne!(
             *carried, before,
             "the row names the new id, not the base id"
@@ -676,4 +690,23 @@ fn the_writers_renames_reach_the_rows_it_carries() {
             "the base id is gone from the package"
         );
     }
+
+    // The projection's body and its id name the field by one spelling.
+    let wire_after = wire(&rooted);
+    let projection = nodes(&wire_after)
+        .iter()
+        .find(projected)
+        .expect("the renamed record's field projection");
+    assert_eq!(projection["body"]["operation"]["member"]["name"], "one");
+    let spelled = id_of(projection)
+        .path
+        .iter()
+        .filter_map(|segment| match segment {
+            CheckedNodePathSegment::Name(name) if matches!(name.as_ref(), "fst" | "one") => {
+                Some(name.to_string())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(spelled, ["one"]);
 }

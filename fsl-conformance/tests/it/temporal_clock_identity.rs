@@ -186,7 +186,7 @@ fn timestamped_role_readback_identity_and_selection_refusals_are_exact() {
         wire["temporal_clause_names"][0]["declaration"].clone(),
     )
     .expect("the temporal name row identifies its clause");
-    let subject = fsl_package::checked_views::temporal_subject(&read, &clause_id)
+    let subject = fsl_package::checked_views::temporal_subject(read, &clause_id)
         .expect("the temporal formula reader resolves the clause");
     let binding = subject
         .clock()

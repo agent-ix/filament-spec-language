@@ -32,6 +32,13 @@ use serde_json::{json, Value};
 
 use super::*;
 
+#[path = "../../../fsl-semantics/tests/support/tc235_k2.rs"]
+#[expect(
+    dead_code,
+    reason = "the shared K2 builder is used by multiple emitter test modules"
+)]
+mod tc235_k2;
+
 /// [`super::node_id`] for a test's one id.
 fn node_id(key: impl std::borrow::Borrow<NodeKey>) -> CheckedNodeId {
     fsl_semantics::check::wire_id::structural_id(key.borrow())
@@ -3197,6 +3204,16 @@ fn assemble_with_models_as(
     packages: &fsl_semantics::model::intake::PackageInput,
     source_identity: &str,
 ) -> Result<PackageDeclarations, String> {
+    assemble_with_models_in(unit, packages, source_identity, "pkg")
+}
+
+/// [`assemble_with_models_as`] under the package name `package_name`.
+fn assemble_with_models_in(
+    unit: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    source_identity: &str,
+    package_name: &str,
+) -> Result<PackageDeclarations, String> {
     // S1's size and work limits are raised to fit a unit past their defaults.
     let mut limits = fsl_cst::Limits::default();
     limits.source_bytes = limits.source_bytes.max(unit.len());
@@ -3218,7 +3235,7 @@ fn assemble_with_models_as(
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .map_err(|refusal| format!("intake: {refusal:?}"))?;
-    PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, models, Vec::new())
+    PackageDeclarations::assemble(raw, package_name.to_owned(), unit, models, Vec::new())
         .map_err(|refusal| format!("{refusal:?}"))
 }
 

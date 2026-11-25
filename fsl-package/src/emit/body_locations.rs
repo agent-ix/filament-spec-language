@@ -11,9 +11,7 @@ use filament_contract_model::{
     CheckedTerm,
 };
 use filament_exact::NodeKey;
-use filament_semantic_value::location::{
-    ExpressionLocation as Location, ExpressionOwner as Origin,
-};
+use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_semantics::check::CheckedGraph;
 
 use super::location_paths::Paths;
@@ -176,19 +174,15 @@ pub(super) fn checked_body_locations(
             }
             let mut visits: BTreeMap<&CheckedNodeId, usize> = BTreeMap::new();
             let mut previous = 0;
-            let mut walk = nodes
-                .get(id)
-                .and_then(|node| body(node))
-                .and_then(|body| match body {
-                    CheckedTerm::Reference { target }
-                        if target.package.as_ref() == graph.package_name() =>
-                    {
-                        nodes.get(target).copied()
-                    }
-                    _ => None,
-                })
-                .into_iter()
-                .collect::<Vec<_>>();
+            // The body binding is a reference leaf, so the walk starts only
+            // at a node it would follow from anywhere else (FSpec FR-322
+            // "body walk").
+            let mut walk = match nodes.get(id).and_then(|node| body(node)) {
+                Some(root @ CheckedTerm::Reference { .. }) => {
+                    references(root, &nodes, graph.package_name())
+                }
+                _ => Vec::new(),
+            };
             while let Some(node) = walk.pop() {
                 if is_term(node) {
                     let rank = visits.entry(&node.node_id).or_default();
@@ -264,6 +258,7 @@ pub(super) fn checked_body_locations(
 mod tests {
     use super::*;
     use filament_contract_model::{read_checked_package, CheckedPackageDispatchResult};
+    use filament_semantic_value::location::ExpressionLocation as Location;
     use ix_trace_rs::trace;
 
     #[ix_trace_rs::trace("FSpec-FR-322-AC-510")]
@@ -448,6 +443,50 @@ mod tests {
             ]
         );
     }
+
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-490")]
+    #[test]
+    fn an_option_value_body_root_gets_no_body_location_row() {
+        let (_, checked) = super::super::tests::package_from_text(
+            "function literal using v(): Option<Int[0, 9]> pure { Some(3) }\n\
+             function plus using v(x: Integer): Option<Integer> pure { Some(x + 1) }\n",
+        );
+        let emission =
+            super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("an option-value body root must read back: {other:?}"),
+        };
+        let data = package.checked_term_data();
+        assert!(
+            data.is_none_or(|data| data.body_locations.is_empty()),
+            "the walk ends at each root: {data:?}"
+        );
+        let nodes = &package.resolved_graph().nodes;
+        let functions: Vec<_> = nodes
+            .iter()
+            .filter(|node| node.node_tag.as_ref() == "function")
+            .collect();
+        assert_eq!(functions.len(), 2);
+        for function in functions {
+            let Some(CheckedTerm::Reference { target }) = body(function) else {
+                panic!("a function body is a reference: {function:?}");
+            };
+            let root = nodes
+                .iter()
+                .find(|node| node.node_id == *target)
+                .expect("the body root is local");
+            assert!(
+                has_form(root, WireTag::Value, WireForm::OptionValue),
+                "{root:?}"
+            );
+        }
+    }
+
     #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
     #[test]
     fn compact_deep_body_stores_linear_delta_entries() {

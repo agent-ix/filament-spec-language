@@ -1,0 +1,21 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+profile t = "filament.temporal.event-position.false-extension/v1";
+model M = "catalog/compensation";
+protocol Flow using p over (input: M::Ledger) on origin {
+  role R on M::Ledger;
+  compensate Full for Main::Applied as (fwd: M::Money) by R on M::Ledger::pay using t clock "c" {
+    capture saved: M::Money = fwd;
+    activate first (trigA: M::Money) when { trigA = saved } { capture activatedA: M::Money = trigA; }
+    within [0, 10]; attempts 1 of M::Money;
+    retry (earlyA: M::Money, lateA: M::Money) { false };
+    commit Main::Finalized; recover (recA: M::Money) { recA = saved };
+  }
+  run sequence Main {
+    attempt Update by R on M::Ledger::pay contracts [] as (tried: M::Money) { true };
+    effect Applied of Update as (applied: M::Money) { true };
+    commit Finalized by R as (committed: Boolean) { true };
+  }
+  finish End as (outcome: Boolean) { true };
+}

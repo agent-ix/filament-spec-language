@@ -1,0 +1,9 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile mdl = "filament.model.complete/v1";
+object Order identity (total) {
+  total: Int[0, 9];
+  population orders;
+  operation size(): Integer;
+}
+function keep using mdl(o: Reference<Order>): Boolean pure { true }

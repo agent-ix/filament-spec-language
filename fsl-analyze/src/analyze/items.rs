@@ -151,7 +151,10 @@ pub(super) fn run_model_item(
     family: Option<DeclarationFamily>,
     mut item: ModelItem<'_>,
 ) -> AnalyzeItem<'_> {
-    item.certificate = item.request.certificate_request();
+    // FR-315, FR-338: the certificate request records the encoding limits of
+    // the run. Its subject and item stay the caller's, which the core
+    // checker judges (FR-281-AC-4).
+    item.certificate.smt_encoding = item.request.smt_encoding;
     let kind = match item.request.item {
         ModelCheckItem::Invariant { .. } => Capability::OperationContract,
         ModelCheckItem::Clause { .. }

@@ -19,8 +19,8 @@ pub(crate) use expression::{
     evaluate_hyper_holds_with_component_bindings, evaluate_model_relation_tuple,
 };
 pub use expression::{
-    evaluate_model_relation, evaluate_model_relation_transitions, ModelRelationEvaluation,
-    S6aRewardEvaluator,
+    convert_text_value, evaluate_model_relation, evaluate_model_relation_transitions,
+    ModelRelationEvaluation, S6aRewardEvaluator,
 };
 
 /// FSpec FR-144 canonical key order of two map keys. Float keys use their

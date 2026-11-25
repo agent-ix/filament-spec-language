@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile inf = "filament.temporal.infinite-trace/v1";
+model M = "example/config-version";
+refinement Rows using inf abstract M concrete M {
+  population M::config_history from M::config_history;
+  object M::ConfigVersion from M::ConfigVersion { versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber; parent = self.parent; }
+  step M::ConfigVersion::attemptUpdate -> M::ConfigVersion::attemptUpdate(self);
+  history M::ConfigVersion.last : Int[0, 1] = 0 { on M::ConfigVersion::attemptUpdate : self.last; }
+}
