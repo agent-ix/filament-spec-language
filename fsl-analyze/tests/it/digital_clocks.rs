@@ -1624,40 +1624,11 @@ fn timed_form_shape(
     }
 }
 
-fn formula_root(world: &World, claim: &str) -> filament_exact::NodeKey {
-    use fsl_semantics::check::Statement;
-    let claim = world
-        .package
-        .graph()
-        .probabilistic_model()
-        .claim(claim)
-        .expect("the claim checks");
-    let Some(Statement::Aggregate(claim)) = claim.statement() else {
-        panic!("a lowered statement");
-    };
-    let find = |members: &[(&'static str, Statement)], name: &str| {
-        members
-            .iter()
-            .find(|(held, _)| *held == name)
-            .map(|(_, value)| value.clone())
-    };
-    let Some(Statement::Aggregate(form)) = find(claim, "form") else {
-        panic!("a form binding");
-    };
-    let Some(Statement::Aggregate(event)) = find(&form, "event") else {
-        panic!("an event binding");
-    };
-    let Some(Statement::Formula { root, .. }) = find(&event, "formula") else {
-        panic!("a formula binding");
-    };
-    root
-}
-
-/// FR-498-AC-8 (TC-1288 step 3): a `TimedFormShape` cause of a claim with an
+/// FR-498-AC-3 (TC-1288 step 3): a `TimedFormShape` cause of a claim with an
 /// identity carries the member path of the part it refuses: `[form]` and no
 /// formulas for a form with no timed reading. An elapsed measure under a
 /// quantile has one (FR-877), so it is no longer refused.
-#[trace("FR-498-AC-8", "TC-1288")]
+#[trace("FR-498-AC-3", "TC-1288")]
 #[test]
 fn a_timed_form_shape_cause_carries_the_claim_member_path() {
     let claims = "probabilistic LongRun using ev on M over (c: M::Call) under every scheduler \
@@ -1680,35 +1651,61 @@ fn a_timed_form_shape_cause_carries_the_claim_member_path() {
     assert!(member.formulas.is_empty());
 }
 
-/// FR-498-AC-8 (TC-1288 step 3): the member path of an event formula names
-/// the formula nodes from the one the `formula` binding references down to
-/// the node whose interval is refused, outermost first; with the refused
-/// operator as the whole event it is that one node.
-#[trace("FR-498-AC-8", "TC-1288")]
+/// FR-498-AC-8 (TC-1288 step 3) and FR-204-AC-21: a punctual `eventually`
+/// inside a bounded `always` window settles an exact verdict for the selected
+/// claim, whose wire locus is exactly `{node, occurrence}`. Every scheduler
+/// that sends first at 2 ms delivers by 2 ms only on that send, so the minimum
+/// is `9/10`: `>= 0.99` is refuted on it and `>= 0.9` is proved by it.
+#[trace("TC-1288", "FR-498-AC-8", "FR-204-AC-21")]
 #[test]
-fn a_timed_form_shape_member_path_names_the_nested_formula_nodes() {
-    let claims = "probabilistic Nested using ev on M over (c: M::Call) under every scheduler \
-                  on origin { probability >= 0.99 \
-                  [ always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(c.late) ] }\n\
-                  probabilistic Whole using ev on M over (c: M::Call) under every scheduler \
-                  on origin { probability >= 0.99 [ eventually[2 ms, 2 ms] holds(c.late) ] }\n";
-    let world = retx(GUARD, true, "", claims);
-
-    let (_, member) = timed_form_shape(&world, "Nested");
-    let member = member.expect("a member path");
-    assert_eq!(member.body, ["form", "event", "formula"]);
-    assert_eq!(
-        member.formulas.len(),
-        2,
-        "the always node, then its operand"
+fn a_bounded_nested_punctual_claim_settles_an_exact_verdict() {
+    let claim = |name: &str, bound: &str| {
+        format!(
+            "probabilistic {name} using ev on M over (c: M::Call) under every scheduler \
+             on origin {{ probability {bound} \
+             [ always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(c.late) ] }}\n"
+        )
+    };
+    let claims = format!(
+        "{}{}",
+        claim("Nested", ">= 0.99"),
+        claim("NestedMinimum", ">= 0.9")
     );
-    assert_eq!(member.formulas[0], formula_root(&world, "Nested"));
-    assert_ne!(member.formulas[0], member.formulas[1]);
+    let world = retx(GUARD, true, "", &claims);
 
-    let (_, member) = timed_form_shape(&world, "Whole");
-    let member = member.expect("a member path");
-    assert_eq!(member.body, ["form", "event", "formula"]);
-    assert_eq!(member.formulas, [formula_root(&world, "Whole")]);
+    assert_eq!(
+        exact_value(&settle_trio(&world, "NestedMinimum", None)),
+        ratio(9, 10)
+    );
+    let refuted = settle_trio(&world, "Nested", None);
+    assert!(
+        matches!(
+            refuted.terminal().expect("a terminal record").value(),
+            TerminalValue::Refuted
+        ),
+        "{refuted:#?}"
+    );
+
+    let identity = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Nested")
+        .and_then(|claim| claim.occurrence().cloned())
+        .expect("the claim has a package identity");
+    let locus = fsl_replay::claim_locus_wire(&identity).expect("a wire locus");
+    let mut members: Vec<&str> = locus
+        .as_object()
+        .expect("a locus object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    members.sort_unstable();
+    assert_eq!(members, ["node", "occurrence"]);
+    assert_eq!(
+        locus["occurrence"],
+        json!({"role": "claim", "ordinal": identity.origin().ordinal()})
+    );
 }
 
 /// `Trio` of FR-204's worked example over the timed fixture's `Call`: its

@@ -4291,6 +4291,34 @@ fn a_timed_profile_refuses_unbounded_event_operators() {
     checked_timed_service(&source(&format!("eventually[0 ms,4 ms] {holds}")));
 }
 
+/// FR-498-AC-9 (TC-1288 step 3): an open-ended window, at the root or inside
+/// a bounded one, is refused at S3 at its interval and nowhere else, so no
+/// claim reaches EN-5.
+#[trace("TC-1288", "FR-498-AC-9")]
+#[test]
+fn a_timed_profile_refuses_an_open_window_at_any_depth() {
+    let holds = format!("holds({IDLE})");
+    for formula in [
+        format!("eventually[2 ms,*] {holds}"),
+        format!("always[0 ms,4 ms] eventually[2 ms,*] {holds}"),
+    ] {
+        let source = format!(
+            "time Service dense unit ms;\n{STEADY}\n\
+             probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ {formula} ] }}"
+        );
+        assert_eq!(
+            located_over(&timed_service_document(), &source),
+            [(
+                Code::UnsupportedConstruct,
+                Some("expression-form"),
+                "[2 ms,*]".to_owned()
+            )],
+            "{formula}"
+        );
+    }
+}
+
 /// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the
 /// position's dimension checks, a length is a unit mismatch, and a
 /// dimensionless position refuses a quantity as a type mismatch.

@@ -171,11 +171,14 @@ enum Form<'c> {
         bound: Rational,
         reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
     },
-    /// One punctual nested Always occurrence under a bounded Eventually.
+    /// One punctual nested occurrence under its dual bounded operator:
+    /// `always` under `eventually`, or `eventually` under `always`.
     NestedDeadline {
+        outer_kind: DeadlineKind,
         outer_occurrence: u64,
         outer_lower: Rational,
         outer_upper: Rational,
+        inner_kind: DeadlineKind,
         inner_occurrence: u64,
         inner_lower: Rational,
         inner_upper: Rational,
@@ -238,63 +241,76 @@ impl<'c> Form<'c> {
                 };
                 let (kind, interval, atoms) = match root {
                     FormulaNode::Unary {
-                        operator: UnaryTemporal::Eventually,
+                        operator: operator @ (UnaryTemporal::Eventually | UnaryTemporal::Always),
                         interval: Some(CheckedInterval::Timed(interval)),
                         operand,
-                    } => match nodes.get(operand.index()) {
-                        Some(FormulaNode::Holds { .. }) => (
-                            DeadlineKind::Eventually,
-                            interval,
-                            vec![
-                                holds(*operand)
-                                    .ok_or_else(|| shape_at(&[root_at, operand.index()]))?,
-                            ],
-                        ),
-                        Some(FormulaNode::Unary {
-                            operator: UnaryTemporal::Always,
-                            interval: Some(CheckedInterval::Timed(inner)),
-                            operand: atom,
-                        }) => {
-                            let Some((id, predicate)) = holds(*atom) else {
-                                return Err(shape_at(&[root_at, operand.index(), atom.index()]));
-                            };
-                            let Some(inner_upper) = inner.upper() else {
-                                return Err(shape_at(&[root_at, operand.index()]));
-                            };
-                            if inner.lower() != inner_upper
-                                || !interval.lower_closed()
-                                || !interval.upper_closed()
-                                || !inner.lower_closed()
-                                || !inner.upper_closed()
-                            {
-                                return Err(shape_at(&[root_at]));
+                    } => {
+                        // Only the root operator's dual may nest under it.
+                        let (kind, dual, dual_kind) = if *operator == UnaryTemporal::Eventually {
+                            (
+                                DeadlineKind::Eventually,
+                                UnaryTemporal::Always,
+                                DeadlineKind::Always,
+                            )
+                        } else {
+                            (
+                                DeadlineKind::Always,
+                                UnaryTemporal::Eventually,
+                                DeadlineKind::Eventually,
+                            )
+                        };
+                        match nodes.get(operand.index()) {
+                            Some(FormulaNode::Holds { .. }) => (
+                                kind,
+                                interval,
+                                vec![
+                                    holds(*operand)
+                                        .ok_or_else(|| shape_at(&[root_at, operand.index()]))?,
+                                ],
+                            ),
+                            Some(FormulaNode::Unary {
+                                operator: inner_operator,
+                                interval: Some(CheckedInterval::Timed(inner)),
+                                operand: atom,
+                            }) if *inner_operator == dual => {
+                                let Some((id, predicate)) = holds(*atom) else {
+                                    return Err(shape_at(&[
+                                        root_at,
+                                        operand.index(),
+                                        atom.index(),
+                                    ]));
+                                };
+                                let Some(inner_upper) = inner.upper() else {
+                                    return Err(shape_at(&[root_at, operand.index()]));
+                                };
+                                if inner.lower() != inner_upper
+                                    || !interval.lower_closed()
+                                    || !interval.upper_closed()
+                                    || !inner.lower_closed()
+                                    || !inner.upper_closed()
+                                {
+                                    return Err(shape_at(&[root_at]));
+                                }
+                                return Ok(Self::NestedDeadline {
+                                    outer_kind: kind,
+                                    outer_occurrence: u64::try_from(root_at)
+                                        .map_err(|_| shape_at(&[root_at]))?,
+                                    outer_lower: interval.lower().clone(),
+                                    outer_upper: interval
+                                        .upper()
+                                        .ok_or_else(|| shape_at(&[root_at]))?
+                                        .clone(),
+                                    inner_kind: dual_kind,
+                                    inner_occurrence: u64::try_from(operand.index())
+                                        .map_err(|_| shape_at(&[root_at, operand.index()]))?,
+                                    inner_lower: inner.lower().clone(),
+                                    inner_upper: inner_upper.clone(),
+                                    reads: vec![(UndefinedRead::Atom(id), predicate)],
+                                });
                             }
-                            return Ok(Self::NestedDeadline {
-                                outer_occurrence: u64::try_from(root_at)
-                                    .map_err(|_| shape_at(&[root_at]))?,
-                                outer_lower: interval.lower().clone(),
-                                outer_upper: interval
-                                    .upper()
-                                    .ok_or_else(|| shape_at(&[root_at]))?
-                                    .clone(),
-                                inner_occurrence: u64::try_from(operand.index())
-                                    .map_err(|_| shape_at(&[root_at, operand.index()]))?,
-                                inner_lower: inner.lower().clone(),
-                                inner_upper: inner_upper.clone(),
-                                reads: vec![(UndefinedRead::Atom(id), predicate)],
-                            });
+                            _ => return Err(shape_at(&[root_at, operand.index()])),
                         }
-                        _ => return Err(shape_at(&[root_at, operand.index()])),
-                    },
-                    FormulaNode::Unary {
-                        operator: UnaryTemporal::Always,
-                        interval: Some(CheckedInterval::Timed(interval)),
-                        operand,
-                    } => (
-                        DeadlineKind::Always,
-                        interval,
-                        vec![holds(*operand).ok_or_else(|| shape_at(&[root_at, operand.index()]))?],
-                    ),
+                    }
                     FormulaNode::Binary {
                         operator: BinaryTemporal::Until,
                         interval: Some(CheckedInterval::Timed(interval)),
@@ -1471,9 +1487,11 @@ impl<'c> Builder<'_, '_, 'c> {
                 }))
             }
             Form::NestedDeadline {
+                outer_kind,
                 outer_occurrence,
                 outer_lower,
                 outer_upper,
+                inner_kind,
                 inner_occurrence,
                 inner_lower,
                 inner_upper,
@@ -1481,7 +1499,7 @@ impl<'c> Builder<'_, '_, 'c> {
             } => {
                 let mut root = TimedOperatorState {
                     occurrence: *outer_occurrence,
-                    kind: DeadlineKind::Eventually,
+                    kind: *outer_kind,
                     lower: self.bound_units(outer_lower)?,
                     upper: self.bound_units(outer_upper)?,
                     elapsed: 0,
@@ -1489,7 +1507,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 };
                 let mut child = TimedOperatorState {
                     occurrence: *inner_occurrence,
-                    kind: DeadlineKind::Always,
+                    kind: *inner_kind,
                     lower: self.bound_units(inner_lower)?,
                     upper: self.bound_units(inner_upper)?,
                     elapsed: 0,

@@ -412,8 +412,10 @@ fn nested_timed_formula_key(root: NodeRef<'_>, nested: NodeRef<'_>) -> bool {
         return false;
     };
     root_occurrence != nested_occurrence
-        && root_kind == "eventually"
-        && nested_kind == "always"
+        && matches!(
+            (root_kind, nested_kind),
+            ("eventually", "always") | ("always", "eventually")
+        )
         && nested_lower == nested_upper
 }
 

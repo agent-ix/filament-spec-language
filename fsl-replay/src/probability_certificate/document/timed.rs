@@ -1398,7 +1398,7 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
 
     let (kind, interval, predicates) = match root {
         FormulaNode::Unary {
-            operator: UnaryTemporal::Eventually,
+            operator: operator @ (UnaryTemporal::Eventually | UnaryTemporal::Always),
             interval: Some(CheckedInterval::Timed(outer)),
             operand,
         } if !matches!(
@@ -1407,12 +1407,22 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
         ) =>
         {
             let FormulaNode::Unary {
-                operator: UnaryTemporal::Always,
+                operator: inner_operator,
                 interval: Some(CheckedInterval::Timed(inner)),
                 operand: atom,
             } = checked.nodes().get(operand.index())?
             else {
                 return None;
+            };
+            // Only the root operator's dual may nest under it.
+            let (root_kind, nested_kind) = match (operator, inner_operator) {
+                (UnaryTemporal::Eventually, UnaryTemporal::Always) => {
+                    (DeadlineKind::Eventually, DeadlineKind::Always)
+                }
+                (UnaryTemporal::Always, UnaryTemporal::Eventually) => {
+                    (DeadlineKind::Always, DeadlineKind::Eventually)
+                }
+                _ => return None,
             };
             if inner.lower() != inner.upper()?
                 || !outer.lower_closed()
@@ -1426,8 +1436,8 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
             return Some((
                 bound.clone(),
                 Watch::Nested {
-                    root: timed_operator(root_index, DeadlineKind::Eventually, outer)?,
-                    nested: timed_operator(operand.index(), DeadlineKind::Always, inner)?,
+                    root: timed_operator(root_index, root_kind, outer)?,
+                    nested: timed_operator(operand.index(), nested_kind, inner)?,
                     predicate,
                     horizon,
                 },
