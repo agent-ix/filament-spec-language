@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! ADR-025 §10's store-buffering model as a fixture: the `test/litmus`
 //! domain package, a population `cells` of `Cell` (fields `id`, `v` and `w`,
 //! each `Int[0, 3]`) with operations `set` (`v`), `add` (`v`) and `both`

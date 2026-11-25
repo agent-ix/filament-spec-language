@@ -20,9 +20,11 @@ Scope: FR-167-AC-1 to FR-167-AC-7.
 ## Test Procedure
 
 Fixtures: ADR-022 §7.1, §7.2 and §7.3's units; the undecided subject,
-§7.1's subject with universe `{a}` and the postcondition clause `post Half
-using v on Config::ConfigVersion::attemptUpdate { 2 div (2 -
-self.versionNumber) >= 0 }`, undecided at the expansion of `va = 1`,
+§7.1's subject with universe `{a}` and the postcondition clause `post Guard
+using v on Config::ConfigVersion::attemptUpdate { quotient(2 -
+self.versionNumber) >= 1 }`, calling `function quotient using
+v(divisor: Integer): Integer pure { 2 div divisor }`, whose body is checked
+under `Kernel` (FR-495-AC-3), undecided at the expansion of `va = 1`,
 whose candidate post-state has `va = 2`; an
 undefined guard is not this fixture, because it refutes (FR-168); a subject with no initial
 state; a subject with an unbounded population root.

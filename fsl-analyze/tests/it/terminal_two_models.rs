@@ -1132,7 +1132,7 @@ fn settled_records(world: &Two) -> [fsl_analyze::analyze::AnalyzeRecord; 2] {
     ];
     items.map(|item| {
         let identity = fsl_replay::SubjectIdentity::of(&item.request.subject);
-        let derived = crate::derived_request::derived_items(
+        let derived = crate::derived_request_support::derived_items(
             &[],
             &[],
             &[ModelStateGraphItem {
@@ -1166,7 +1166,7 @@ fn a_vault_only_deadlock_item_settles_refuted_and_replays_on_both_routes() {
     let terminals = format!("terminal Stop using v on V when {{ false }};\n{OTHER_ANY}");
     let world = two_models(&terminals).reading_vault_only();
     for record in settled_records(&world) {
-        let (_, value) = crate::derived_request::settled(&record);
+        let (_, value) = crate::derived_request_support::settled(&record);
         assert_eq!(value, fsl_replay::TerminalValue::Refuted, "{record:?}");
         let found = record.model_check.expect("EN-1's record");
         let counterexample = found
@@ -1192,7 +1192,7 @@ fn a_vault_only_deadlock_item_proves_with_an_admitted_certificate_on_both_routes
     let terminals = format!("terminal Done using v on V when {{ self.l = 1 }};\n{OTHER_FALSE}");
     let world = two_models(&terminals).reading_vault_only();
     for record in settled_records(&world) {
-        let (_, value) = crate::derived_request::settled(&record);
+        let (_, value) = crate::derived_request_support::settled(&record);
         assert!(
             matches!(
                 value,

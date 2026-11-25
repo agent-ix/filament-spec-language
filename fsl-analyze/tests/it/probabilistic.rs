@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! probabilistic integration tests.
+
+mod analyze_cli_support;
+#[allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
+mod counter;
+mod fill;
+mod fixture_ids;
+mod graph_world;
+mod hyper_parameters;
+mod hyper_projected_support;
+mod hyper_support;
+mod hyper_world;
+mod lasso_support;
+mod letters;
+mod litmus;
+mod liveness_support;
+mod long_run_support;
+mod prob_world;
+mod probabilistic_request_support;
+mod provider_schema_support;
+mod relation_claims_support;
+mod source_value_support;
+mod statistical_witness_support;
+mod timed_world;
+mod units;
+
+mod bounded_closure;
+mod bounded_fair_certificate;
+mod bounded_probabilistic_replay;
+mod bounded_successors;
+mod cyclic_key_admission;
+mod cyclic_mdp_certificate;
+mod cyclic_mdp_reward_certificate;
+mod cyclic_reward_certificate;
+mod cyclic_state_certificate;
+mod exact_mdp_avoidance;
+mod exact_probabilistic;
+mod exact_probabilistic_fr196;
+mod exact_probabilistic_item;
+mod exact_probabilistic_zero_binding;
+mod exact_route;
+mod finite_hyper_request;
+mod hyper_closed;
+mod hyper_lowering;
+mod hyper_object_free;
+mod hyper_reductions;
+mod hyper_replay;
+mod hyper_settle;
+mod hyper_single;
+mod hyper_swap;
+mod hyper_wire;
+mod hyper_witness;
+mod long_run_certificate;
+mod long_run_key_admission;
+mod package_hyper_analysis;
+mod package_hyper_models;
+mod package_probabilistic_parity;
+mod package_probabilistic_refutation;
+mod package_probabilistic_source;
+mod probabilistic_replay;
+mod probabilistic_request_items;
+mod probability_from_source;
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
+mod reward_evaluator_port;
+mod state_probabilistic_replay;
+mod statistical_coverage;
+mod statistical_fr192;
+mod statistical_manifest;
+mod statistical_model;
+mod weighted_long_run_certificate;
