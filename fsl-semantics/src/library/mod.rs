@@ -21,6 +21,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::model::key::EffectiveDeclarationPreimage;
 use crate::value::semantic_node::is_qualified_name;
 use filament_exact::NodeKey;
 use fsl_foundation::diagnostic::{Code, ALLOCATION_FAILED};
@@ -306,6 +307,7 @@ pub(crate) fn verify_package(
 #[derive(Clone, Eq, PartialEq)]
 pub struct ImportView {
     exports: BTreeMap<NodeKey, String>,
+    model_correspondence: Vec<EffectiveDeclarationPreimage>,
 }
 
 /// Debug writes each export's node once, in the enclosing [`scoped`] table, so
@@ -314,6 +316,7 @@ impl DebugWith for ImportView {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
         f.debug_struct("ImportView")
             .field("exports", &NodeMap(self.exports.iter(), table))
+            .field("model_correspondence", &self.model_correspondence)
             .finish()
     }
 }
@@ -334,7 +337,24 @@ impl ImportView {
     pub fn of(package: &LibraryPackage) -> Result<Self, LibraryRefusal> {
         Ok(Self {
             exports: verify_package(package)?,
+            model_correspondence: Vec::new(),
         })
+    }
+
+    /// Add the strict reader's typed FR-081 model correspondence to this
+    /// package view. The rows reuse the model normalizer's exact preimage
+    /// type, so their identities are computed by `EffectiveDeclarationPreimage::identity`.
+    #[must_use]
+    pub fn with_model_correspondence(mut self, rows: Vec<EffectiveDeclarationPreimage>) -> Self {
+        self.model_correspondence = rows;
+        self
+    }
+
+    /// Every admitted effective declaration preimage carried by the
+    /// checked-package/v2 `model_correspondence` nodes, in structural identity
+    /// order. An ordinary in-memory library package has no correspondence.
+    pub fn model_correspondence(&self) -> &[EffectiveDeclarationPreimage] {
+        &self.model_correspondence
     }
 
     /// The exported declarations as `(name, NodeKey)` entries, in ascending
@@ -515,6 +535,7 @@ mod import_view_debug_tests {
         .unwrap();
         let view = ImportView {
             exports: BTreeMap::from([(inner, "f".to_owned()), (outer, "g".to_owned())]),
+            model_correspondence: Vec::new(),
         };
         let text = format!("{view:?}");
         assert_eq!(
