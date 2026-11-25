@@ -55,9 +55,9 @@ the equal-content, new-identity case of FR-944-AC-4.
    valuation, one sample, one instance valuation and one label, each alone;
    add a position equal to another in all but its `EvidenceRef` identity;
    repeat step 4 with that position. Inspect a spine position of step 1.
-6. Over FR-327-AC-5's closed `Counter` trace (`c.value` 0, 1, 2), evaluate
-   `always[0,2] holds(3 mod (2 - c.value) >= 0)` `on origin`, whose atom `p`
-   is undefined at position 2, and derive the partial facts.
+6. Over the three positions of FR-327-AC-5's closed trace, supply the owner
+   the valuations of its first clause's atom `p`: `true`, `true` and kernel
+   `division-by-zero` `Undefined` at position 2; derive the partial facts.
 7. Admit FR-501-AC-13's request (clock unit `ms`) and an event-position
    request; derive every partial fact; read the FSL report.
 
