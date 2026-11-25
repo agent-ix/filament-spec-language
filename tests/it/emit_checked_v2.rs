@@ -435,7 +435,32 @@ fn encode(read: &CheckedPackageV2) -> Vec<u8> {
             |claim| filament_contract_model::CheckedSchedulabilityClaimRow {
                 declaration: claim.declaration().clone(),
                 occurrence: claim.occurrence().ordinal,
-                release_backed: claim.release_backed(),
+                task_set: claim.task_set().into(),
+                release_bindings: claim
+                    .release_bindings()
+                    .map(
+                        |binding| filament_contract_model::CheckedSchedulabilityReleaseBinding {
+                            task_name: binding.task_name().into(),
+                            selected_model_identity: binding.selected_model_identity().into(),
+                            operation_declaring_identity: binding
+                                .operation_declaring_identity()
+                                .clone(),
+                            operation_member: binding.operation_member().into(),
+                        },
+                    )
+                    .collect(),
+                mode_switch_bindings: claim
+                    .mode_switch_bindings()
+                    .map(|binding| {
+                        filament_contract_model::CheckedSchedulabilityModeSwitchBinding {
+                            selected_model_identity: binding.selected_model_identity().into(),
+                            operation_declaring_identity: binding
+                                .operation_declaring_identity()
+                                .clone(),
+                            operation_member: binding.operation_member().into(),
+                        }
+                    })
+                    .collect(),
             },
         )
         .collect::<Vec<_>>();

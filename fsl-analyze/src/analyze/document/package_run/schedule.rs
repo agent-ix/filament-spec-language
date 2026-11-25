@@ -84,7 +84,7 @@ fn read(
         })
         .ok_or(Unread::Absent)?;
     let claim = root.claim();
-    let release_backed = claim.release_backed();
+    let release_backed = claim.release_bindings().next().is_some();
     let mut unit = String::new();
     let mut tasks = Vec::new();
     for task in claim.tasks() {

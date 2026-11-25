@@ -172,7 +172,7 @@ fn package_schedulability_items_keep_the_requests_order() {
 
 /// FR-246-AC-4: a named backend outside the claim's requirement candidates
 /// stays excluded on the package route, as it is on the source route.
-#[trace("TC-2961", "FR-246-AC-4")]
+#[trace("TC-2961", "FR-246-AC-4", "FR-075-AC-23")]
 #[trace("TC-3009", "FR-246-AC-5", "FR-075-AC-23")]
 #[test]
 fn a_package_schedulability_claim_rejects_a_backend_outside_its_requirements() {
@@ -187,7 +187,7 @@ fn a_package_schedulability_claim_rejects_a_backend_outside_its_requirements() {
     assert_eq!(item["request"]["candidates"]["backends"], json!([]), "{item}");
 }
 
-/// FR-246-AC-5, FR-075-AC-23: the package's admitted release-backed marker
+/// FR-246-AC-5, FR-075-AC-23: the package's admitted release relation
 /// reaches candidate resolution, admitting EN-6 for a named task-product
 /// request; a response claim remains unbacked.
 #[trace("TC-3009", "FR-246-AC-5")]
@@ -200,6 +200,7 @@ fn package_release_backing_admits_task_product_candidates() {
         model M = \"test/counter\";\n\
         dimension Time;\n\
         unit ms : Time = rational(1, 1);\n\
+        time M dense unit ms;\n\
         taskset Pair {\n\
         task a periodic 4 ms deadline 3 ms wcet 1 ms priority 1 lo;\n\
         }\n\
@@ -222,7 +223,7 @@ fn package_release_backing_admits_task_product_candidates() {
         .as_array()
         .expect("schedulability claim rows");
     let names = package["claim_names"].as_array().expect("claim names");
-    let mut markers = rows
+    let mut relations = rows
         .iter()
         .map(|row| {
             let name = names
@@ -234,12 +235,19 @@ fn package_release_backing_admits_task_product_candidates() {
                 .expect("the package names the schedulability claim");
             (
                 name["name"].as_str().expect("claim name"),
-                row["release_backed"].as_bool().expect("release-backed flag"),
+                row["task_set"].as_str().expect("task set"),
+                row["release_bindings"]
+                    .as_array()
+                    .expect("release bindings")
+                    .len(),
             )
         })
         .collect::<Vec<_>>();
-    markers.sort_unstable_by_key(|(name, _)| *name);
-    assert_eq!(markers, [("PairAResponse", false), ("PairFp", true)]);
+    relations.sort_unstable_by_key(|(name, _, _)| *name);
+    assert_eq!(
+        relations,
+        [("PairAResponse", "Pair", 0), ("PairFp", "Pair", 1)]
+    );
 
     selected["items"] = json!([{"claim": "PairFp", "backend": "en-6"}]);
     let model_bytes = crate::counter::document(false);
@@ -284,12 +292,48 @@ fn package_release_backing_admits_task_product_candidates() {
         .expect("the package supply joins");
     let admitted_claims = fsl_package::schedulability_roots(bare.package())
         .expect("the admitted package has schedulability roots");
-    assert!(
-        admitted_claims
-            .iter()
-            .any(|claim| claim.claim().release_backed()),
-        "the admitted package preserves the release-backed claim marker"
+    let release_claim = admitted_claims
+        .iter()
+        .find(|claim| {
+            claim.claim().kind() == filament_contract_model::CheckedSchedulabilityKind::Schedulable
+        })
+        .expect("the package admits the schedulable claim");
+    assert_eq!(release_claim.claim().task_set(), "Pair");
+    let release_bindings = release_claim.claim().release_bindings().collect::<Vec<_>>();
+    assert_eq!(release_bindings.len(), 1);
+    assert_eq!(release_bindings[0].task_name(), "a");
+    assert_eq!(
+        release_bindings[0].selected_model_identity(),
+        "test/counter"
     );
+    assert_eq!(release_bindings[0].operation_member(), "inc");
+    let operation_declarer = checked
+        .graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            matches!(
+                node.owner.as_ref(),
+                Some(filament_contract_model::CheckedNodeOwner::Model { identity, node })
+                    if identity.as_ref() == "test/counter"
+                        && node.as_ref() == "ix://test/counter/Counter"
+            )
+        })
+        .expect("the checked model graph carries Counter's structural identity")
+        .node_id
+        .clone();
+    assert_eq!(
+        release_bindings[0].operation_declaring_identity(),
+        &operation_declarer
+    );
+    let response_claim = admitted_claims
+        .iter()
+        .find(|claim| {
+            claim.claim().kind() == filament_contract_model::CheckedSchedulabilityKind::Response
+        })
+        .expect("the package admits the response claim");
+    assert_eq!(response_claim.claim().task_set(), "Pair");
+    assert_eq!(response_claim.claim().release_bindings().len(), 0);
     let snapshots = fsl_semantics::model::observation::DocumentProvision::new();
     let binding = fsl_analyze::analyze::SubjectBinding {
         packages: &packages,
@@ -305,7 +349,7 @@ fn package_release_backing_admits_task_product_candidates() {
     let capture = CandidateCapture::default();
     // The callback captures the package route's candidate output before the
     // item proceeds to package task-product execution.
-    let _result = fsl_analyze::analyze::document::settle_package_run(
+    let result = fsl_analyze::analyze::document::settle_package_run(
         fsl_analyze::analyze::document::PackageRun {
             package: &bare,
             package_bytes: &bytes,
@@ -324,10 +368,14 @@ fn package_release_backing_admits_task_product_candidates() {
         &capture,
         &filament_exact::Cancel::new(),
     );
+    let settled = match &result {
+        Ok(run) => format!("settled exit={} items={:?}", run.exit_code, run.items),
+        Err(error) => format!("refused {error:?}"),
+    };
     assert_eq!(
         *capture.candidates.borrow(),
         ["en-6"],
-        "the package route resolved claim {:?} for named backend {:?}",
+        "release_bindings={release_bindings:?}; package_run={settled}; captured claim {:?}, backend {:?}",
         capture.claim.borrow(),
         capture.backend.borrow()
     );
