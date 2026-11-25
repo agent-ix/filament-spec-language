@@ -718,7 +718,7 @@ fn the_verification_plan_member_selects_one_plan_or_refuses() {
     assert_eq!(value["verification_plan"]["plan"], "Release", "{value}");
     let two = format!(
         "{one}verify Other using v {{\n\
-           check only claim Ready method model_based_test domain Config::ConfigVersion bound 5;\n\
+           check sole claim Ready method model_based_test domain Config::ConfigVersion bound 5;\n\
          }}\n"
     );
     for (unit, member, cause, pointer) in [
