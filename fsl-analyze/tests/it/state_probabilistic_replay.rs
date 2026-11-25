@@ -203,7 +203,7 @@ fn empty(world: &World) -> ProbabilisticCounterexample {
     let binding = fsl_replay::claim_binding(&system, world.claim("Claim")).unwrap();
     let reference = binding.as_ref().map(|binding| binding.reference.clone());
     let initial = system.initial().remove(0);
-    let bytes = system.state_key(&initial).unwrap().0;
+    let bytes = system.state_key(&initial, fsl_foundation::IdentityLimits::default()).unwrap().0;
     ProbabilisticCounterexample {
         item: fsl_replay::probabilistic_claim_identity(world.claim("Claim")).unwrap(),
         binding: reference.clone(),

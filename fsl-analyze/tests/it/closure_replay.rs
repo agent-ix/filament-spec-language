@@ -50,7 +50,7 @@ fn system(fixture: &Fixture) -> ModelSystem<'_> {
 }
 
 fn key_of(system: &ModelSystem<'_>, state: &ModelSimState) -> StateKey {
-    StateKey::from_canonical_bytes(system.state_key(state).expect("the state encodes").0)
+    StateKey::from_canonical_bytes(system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("the state encodes").0)
 }
 
 /// The model steps that take `Counter` from its initial state through each

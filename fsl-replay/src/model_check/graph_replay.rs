@@ -1219,7 +1219,7 @@ fn replay_steps(
     steps: &[ModelStep],
 ) -> Result<Vec<Position>, ReplayRefusal> {
     let (bytes, _) = system
-        .state_key(&start)
+        .state_key(&start, fsl_foundation::IdentityLimits::default())
         .map_err(|_| fault("state-graph-state-key"))?;
     let key = StateKey::from_canonical_bytes(bytes);
     let mut positions = vec![(start, key)];
@@ -1243,7 +1243,7 @@ fn replay_steps(
             }
             enabled = true;
             let (bytes, _) = system
-                .state_key(&next)
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("state-graph-state-key"))?;
             let key = StateKey::from_canonical_bytes(bytes);
             reached.push(key.clone());
@@ -1319,7 +1319,7 @@ fn explore_closure(
     evaluated: &mut Vec<(PredicateRole, bool)>,
 ) -> Result<(u64, Option<StateKey>, Option<ReachedLimit>), ReplayRefusal> {
     let (bytes, _) = system
-        .state_key(initial)
+        .state_key(initial, fsl_foundation::IdentityLimits::default())
         .map_err(|_| fault("state-graph-state-key"))?;
     let key = StateKey::from_canonical_bytes(bytes);
     let mut seen = BTreeMap::from([(key.clone(), initial.clone())]);
@@ -1355,7 +1355,7 @@ fn explore_closure(
                 ));
             }
             let (bytes, _) = system
-                .state_key(&next)
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("state-graph-state-key"))?;
             let key = StateKey::from_canonical_bytes(bytes);
             let transition_key = system

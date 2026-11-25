@@ -283,7 +283,7 @@ fn phase_key(
         storage_bytes: limits.storage_bytes,
     };
     let (model, _) = system
-        .state_key(state)
+        .state_key(state, fsl_foundation::IdentityLimits::default())
         .map_err(|_| ProbabilityDocumentError::Malformed)?;
     ProbabilityProductKey::for_model_state_with_limits(over, &model, io, cancel)
         .and_then(|key| key.with_activation(instance, phase, io, cancel))
@@ -1055,9 +1055,9 @@ pub fn replay_on_each_witness(
         &root.reference == named
             && root.walk.root == evidence.initial_key
             && root.over.as_ref().map(|(_, reference)| reference) == evidence.binding.as_ref()
-            && system.state_key(&root.start).ok().map(|(model, _)| model)
+            && system.state_key(&root.start, fsl_foundation::IdentityLimits::default()).ok().map(|(model, _)| model)
                 == system
-                    .state_key(&evidence.initial)
+                    .state_key(&evidence.initial, fsl_foundation::IdentityLimits::default())
                     .ok()
                     .map(|(model, _)| model)
     }) else {
@@ -1096,12 +1096,12 @@ pub fn replay_on_each_witness(
             }) else {
                 return Ok(ProbabilityWitnessReplay::Parity);
             };
-            let named_state = system.state_key(&step.post).map(|(model, _)| model);
+            let named_state = system.state_key(&step.post, fsl_foundation::IdentityLimits::default()).map(|(model, _)| model);
             let walked = root
                 .walk
                 .models
                 .get(&edge.to)
-                .map(|model| system.state_key(model).map(|(model, _)| model));
+                .map(|model| system.state_key(model, fsl_foundation::IdentityLimits::default()).map(|(model, _)| model));
             if !matches!((named_state, walked), (Ok(left), Some(Ok(right))) if left == right) {
                 return Ok(ProbabilityWitnessReplay::Parity);
             }

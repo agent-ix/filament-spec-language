@@ -488,7 +488,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
                     fsl_eval::simulation::model::ModelSystem::new(request.subject.simulation)
                         .expect("the model admits");
                 let (bytes, _) = system
-                    .state_key(&system.initial_states()[0])
+                    .state_key(&system.initial_states()[0], fsl_foundation::IdentityLimits::default())
                     .expect("encodes");
                 fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
             },

@@ -314,7 +314,7 @@ fn dense_replay_rejects_incomplete_certificate_coverage() {
         .iter()
         .map(|node| fsl_replay::CertNode {
             state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(
-                system.state_key(&node.state).expect("state key").0,
+                system.state_key(&node.state, fsl_foundation::IdentityLimits::default()).expect("state key").0,
             ),
             automaton_state: 0,
             zone: fsl_replay::Zone::universe(2),
@@ -536,7 +536,7 @@ fn initial_keys(system: &ModelSystem<'_>) -> Vec<Vec<u8>> {
     system
         .initial()
         .iter()
-        .map(|state| system.state_key(state).expect("a state key").0)
+        .map(|state| system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("a state key").0)
         .collect()
 }
 
@@ -637,7 +637,7 @@ fn terminal_classes(
     let mut seen: Vec<Vec<u8>> = Vec::new();
     let mut classes = Vec::new();
     while let Some(state) = queue.pop_front() {
-        let key = system.state_key(&state).expect("a state key").0;
+        let key = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("a state key").0;
         if seen.contains(&key) {
             continue;
         }
@@ -766,7 +766,7 @@ fn a_package_route_input_reads_a_terminal_declaration_as_the_source_does() {
 /// states, in breadth-first order, with each state's successor keys.
 fn reachable(system: &ModelSystem<'_>) -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
     let key = |state: &<ModelSystem<'_> as TransitionSystem>::State| {
-        system.state_key(state).expect("a state key").0
+        system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("a state key").0
     };
     let mut queue: std::collections::VecDeque<_> = system.initial().into_iter().collect();
     let mut seen = Vec::new();

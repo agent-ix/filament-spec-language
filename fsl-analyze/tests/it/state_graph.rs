@@ -177,7 +177,7 @@ pub(crate) fn reachable(
     let mut edges = 0;
     let mut queue: VecDeque<ModelSimState> = system.initial().into();
     while let Some(state) = queue.pop_front() {
-        let (bytes, _) = system.state_key(&state).expect("encodes");
+        let (bytes, _) = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("encodes");
         let state_key = StateKey::from_canonical_bytes(bytes);
         if seen.contains_key(&state_key) {
             continue;
@@ -789,7 +789,7 @@ fn positions(world: &World, keys: &[&str], path: &ModelPath) -> Vec<ModelSimStat
             .into_iter()
             .find(|(transition, state)| {
                 *transition == step.transition
-                    && system.state_key(state).expect("encodes").0.as_slice()
+                    && system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("encodes").0.as_slice()
                         == step.post_state.as_bytes()
             })
             .map(|(_, state)| state)
@@ -963,7 +963,7 @@ fn expected_steps(
             .find(|(transition, _)| {
                 let step = ModelStep {
                     transition: transition.clone(),
-                    post_state: system.state_key(&current).expect("encodes").0.into(),
+                    post_state: system.state_key(&current, fsl_foundation::IdentityLimits::default()).expect("encodes").0.into(),
                     delay: None,
                 };
                 operation(&step) == *name && receiver(&step) == *key
@@ -971,7 +971,7 @@ fn expected_steps(
             .expect("the operation is enabled");
         steps.push(ModelStep {
             transition,
-            post_state: system.state_key(&next).expect("encodes").0.into(),
+            post_state: system.state_key(&next, fsl_foundation::IdentityLimits::default()).expect("encodes").0.into(),
             delay: None,
         });
         current = next;

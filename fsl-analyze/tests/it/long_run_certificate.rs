@@ -1147,7 +1147,7 @@ fn product_key(
     let binding = fsl_replay::claim_binding(&system, world.claim(name))
         .unwrap()
         .unwrap();
-    let raw = system.state_key(state).unwrap().0;
+    let raw = system.state_key(state, fsl_foundation::IdentityLimits::default()).unwrap().0;
     fsl_replay::ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
 }
 

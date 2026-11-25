@@ -1075,7 +1075,7 @@ fn refute_mean(
                     scope.variant_types(),
                     scope.enums(),
                 ),
-                &|state| system.state_key(state).ok().map(|(_, key)| key),
+                &|state| system.state_key(state, fsl_foundation::IdentityLimits::default()).ok().map(|(_, key)| key),
                 &spelled,
             );
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))

@@ -127,7 +127,7 @@ pub fn replay_probabilistic_undefined(
             }
         }
         let (raw, state_key) = system
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
         let pre_key = match monitor.as_ref() {
             Some(monitor) => {

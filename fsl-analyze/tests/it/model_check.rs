@@ -587,7 +587,7 @@ fn positions(
             .into_iter()
             .find(|(transition, state)| {
                 *transition == step.transition
-                    && system.state_key(state).expect("encodes").0.as_slice()
+                    && system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("encodes").0.as_slice()
                         == step.post_state.as_bytes()
             })
             .map(|(_, state)| state)
@@ -742,7 +742,7 @@ fn terminal_when_quantifies_two_populations_at_the_reachable_terminal_state() {
     let mut seen = std::collections::BTreeSet::new();
     let mut terminals = 0;
     while let Some(state) = queue.pop_front() {
-        if !seen.insert(system.state_key(&state).expect("key").0) {
+        if !seen.insert(system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("key").0) {
             continue;
         }
         let expansion = system.successors(&state).expect("expands");
@@ -1116,7 +1116,10 @@ fn an_undefined_atom_refutes_at_the_first_position_it_is_undefined() {
     );
     let last = positions(&world, &["c"], counterexample);
     let state_key = system(&world, &["c"])
-        .state_key(last.last().expect("a state"))
+        .state_key(
+            last.last().expect("a state"),
+            fsl_foundation::IdentityLimits::default(),
+        )
         .expect("encodes")
         .1;
     assert_eq!(evaluation.site.state_key, state_key);

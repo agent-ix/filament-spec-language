@@ -80,7 +80,7 @@ impl Initial {
                     .canonicalise(&start, symmetry)
                     .map_err(Keying::Stop)?;
                 let (key, _) = system
-                    .state_key(&state)
+                    .state_key(&state, fsl_foundation::IdentityLimits::default())
                     .map_err(|refused| Keying::Refused(refused.into()))?;
                 keys.push(key.clone());
                 if retain_starts {
@@ -340,7 +340,7 @@ impl Exploration<'_, '_, '_> {
                 Ok(canonical) => canonical,
                 Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
             };
-            let (key, _) = self.system.state_key(&state)?;
+            let (key, _) = self.system.state_key(&state, fsl_foundation::IdentityLimits::default())?;
             successors.push((order, key, transition, state, permutation));
         }
         successors.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));

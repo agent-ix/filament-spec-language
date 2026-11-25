@@ -881,7 +881,7 @@ fn probabilistic_on_each_product_preserves_multi_initial_keys() {
         .into_iter()
         .next()
         .expect("initial state");
-    let (model_key, _) = system.state_key(&initial).expect("initial model key");
+    let (model_key, _) = system.state_key(&initial, fsl_foundation::IdentityLimits::default()).expect("initial model key");
     let model_product = ProbabilityProductKey::for_model_state(None, &model_key)
         .expect("the initial model key forms a product key");
     let fsl_semantics::check::ClaimActivation::Each { value_type, .. } =

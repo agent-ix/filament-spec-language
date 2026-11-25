@@ -136,7 +136,7 @@ fn conditional_workload_has_literal_three_fifths_value() {
         .initial_states()
         .first()
         .expect("the model has its literal initial state");
-    let (initial_model, _) = system.state_key(initial).expect("initial model key");
+    let (initial_model, _) = system.state_key(initial, fsl_foundation::IdentityLimits::default()).expect("initial model key");
     let instance = system
         .reference_model()
         .object_reference(

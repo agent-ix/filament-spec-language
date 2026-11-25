@@ -75,7 +75,7 @@ fn keys(world: &World, name: &str) -> (ProbabilityProductKey, ProbabilityProduct
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let binding = claim_binding(&system, world.claim(name)).unwrap().unwrap();
     let key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        let raw = system.state_key(state).unwrap().0;
+        let raw = system.state_key(state, fsl_foundation::IdentityLimits::default()).unwrap().0;
         ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
     };
     let initial = &system.initial()[0];
@@ -105,7 +105,7 @@ fn call(world: &World, ok: bool) -> ProductAction {
         .find(|action| {
             action.draws.iter().any(|draw| {
                 draw.successors.iter().any(|(_, post)| {
-                    system.state_key(post).unwrap().0 != system.state_key(initial).unwrap().0
+                    system.state_key(post, fsl_foundation::IdentityLimits::default()).unwrap().0 != system.state_key(initial, fsl_foundation::IdentityLimits::default()).unwrap().0
                 }) == ok
             })
         })
@@ -126,9 +126,9 @@ fn call_named(world: &World, name: &str) -> ProductAction {
             }
         }
     }
-    states.sort_by_key(|state| system.state_key(state).unwrap().0);
+    states.sort_by_key(|state| system.state_key(state, fsl_foundation::IdentityLimits::default()).unwrap().0);
     states.dedup_by(|left, right| {
-        system.state_key(left).unwrap().0 == system.state_key(right).unwrap().0
+        system.state_key(left, fsl_foundation::IdentityLimits::default()).unwrap().0 == system.state_key(right, fsl_foundation::IdentityLimits::default()).unwrap().0
     });
     for state in states {
         if let Ok(actions) = system.actions(&state).unwrap() {
@@ -849,7 +849,7 @@ fn event_avoidance_derives_the_event_free_bottom_component_itself() {
         .flat_map(|action| action.draws)
         .flat_map(|draw| draw.successors)
         .map(|(_, post)| {
-            let raw = system.state_key(&post).unwrap().0;
+            let raw = system.state_key(&post, fsl_foundation::IdentityLimits::default()).unwrap().0;
             ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
         })
         .collect::<Vec<_>>();
@@ -1340,7 +1340,7 @@ fn scheduled_long_run(
 fn call_staying_up(world: &World) -> ProductAction {
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let initial = &system.initial()[0];
-    let start = system.state_key(initial).unwrap().0;
+    let start = system.state_key(initial, fsl_foundation::IdentityLimits::default()).unwrap().0;
     let up = system
         .actions(initial)
         .unwrap()
@@ -1349,9 +1349,9 @@ fn call_staying_up(world: &World) -> ProductAction {
         .flat_map(|action| action.draws)
         .flat_map(|draw| draw.successors)
         .map(|(_, post)| post)
-        .find(|post| system.state_key(post).unwrap().0 != start)
+        .find(|post| system.state_key(post, fsl_foundation::IdentityLimits::default()).unwrap().0 != start)
         .expect("one call reaches the up state");
-    let up_key = system.state_key(&up).unwrap().0;
+    let up_key = system.state_key(&up, fsl_foundation::IdentityLimits::default()).unwrap().0;
     let action = system
         .actions(&up)
         .unwrap()
@@ -1361,7 +1361,7 @@ fn call_staying_up(world: &World) -> ProductAction {
             action.draws.iter().all(|draw| {
                 draw.successors
                     .iter()
-                    .all(|(_, post)| system.state_key(post).unwrap().0 == up_key)
+                    .all(|(_, post)| system.state_key(post, fsl_foundation::IdentityLimits::default()).unwrap().0 == up_key)
             })
         })
         .expect("a call keeps the service up");
@@ -1521,7 +1521,7 @@ fn failing_witness(world: &World, name: &str) -> ProbabilisticCounterexample {
     let claims = world.package.graph().probabilistic_model().claims();
     let binding = claim_binding(&system, world.claim(name)).unwrap().unwrap();
     let key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        let raw = system.state_key(state).unwrap().0;
+        let raw = system.state_key(state, fsl_foundation::IdentityLimits::default()).unwrap().0;
         ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
     };
     let start = system.initial()[0].clone();
@@ -1608,7 +1608,7 @@ fn a_fairness_set_accepts_a_deterministic_witness_only_when_every_bottom_compone
         let binding = claim_binding(&system, world.claim("Weak"))
             .unwrap()
             .unwrap();
-        let raw = system.state_key(&system.initial()[0]).unwrap().0;
+        let raw = system.state_key(&system.initial()[0], fsl_foundation::IdentityLimits::default()).unwrap().0;
         (
             ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap(),
             (),
@@ -1630,7 +1630,7 @@ fn a_fairness_set_accepts_a_deterministic_witness_only_when_every_bottom_compone
         .unwrap()
         .unwrap();
     let key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        let raw = system.state_key(state).unwrap().0;
+        let raw = system.state_key(state, fsl_foundation::IdentityLimits::default()).unwrap().0;
         ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
     };
     let start = system.initial()[0].clone();

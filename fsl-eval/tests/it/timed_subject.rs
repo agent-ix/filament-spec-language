@@ -6346,7 +6346,12 @@ fn a_sequence_of_option_clocks_holds_one_bit_per_element() {
         .map(|state| super::model_simulation::admitted_raw_key(&held, state.discrete()))
         .collect();
     assert_eq!(keys.len(), 7);
-    let (mixed, _) = held.state_key(initial[5].discrete()).expect("a key");
+    let (mixed, _) = held
+        .state_key(
+            initial[5].discrete(),
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .expect("a key");
     let text = String::from_utf8(mixed).expect("UTF-8");
     assert_eq!(
         (
@@ -6661,10 +6666,22 @@ fn a_bare_clock_collection_ranges_its_initial_count() {
     // shell per element.
     let keys: std::collections::BTreeSet<Vec<u8>> = initial
         .iter()
-        .map(|state| held.state_key(state.discrete()).expect("a key").0)
+        .map(|state| {
+            held.state_key(
+                state.discrete(),
+                fsl_foundation::IdentityLimits::default(),
+            )
+            .expect("a key")
+            .0
+        })
         .collect();
     assert_eq!(keys.len(), 4);
-    let (two, _) = held.state_key(initial[2].discrete()).expect("a key");
+    let (two, _) = held
+        .state_key(
+            initial[2].discrete(),
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .expect("a key");
     let text = String::from_utf8(two).expect("UTF-8");
     let shell = r#"{"components":[],"name":"Clock","type":"tuple"}"#;
     assert_eq!(text.matches(shell).count(), 2, "{text}");
@@ -7165,7 +7182,15 @@ fn absent_drops_an_option_clock() {
         assert!(!timed.live(&timed.places()[v], next.discrete()));
         assert_eq!(timed.live_clocks(next.discrete()), 1);
         let key =
-            String::from_utf8(held.state_key(next.discrete()).expect("a key").0).expect("UTF-8");
+            String::from_utf8(
+                held.state_key(
+                    next.discrete(),
+                    fsl_foundation::IdentityLimits::default(),
+                )
+                .expect("a key")
+                .0,
+            )
+            .expect("UTF-8");
         assert!(key.contains(r#"{"name":"v","value":{"type":"option","value":null}}"#));
     }
 }

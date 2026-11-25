@@ -60,7 +60,7 @@ fn terminal_predicates_do_not_turn_enabled_states_into_early_terminal_states() {
             assert_eq!(&witness.prefix[0].transition, transition);
             assert_eq!(
                 witness.prefix[0].post_state,
-                StateKey::from_canonical_bytes(system.state_key(state).expect("a key").0)
+                StateKey::from_canonical_bytes(system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("a key").0)
             );
             assert_eq!(settled.counterexample.as_ref(), Some(&witness));
             assert!(matches!(
@@ -104,7 +104,7 @@ fn a_returned_counterexample_rejects_a_different_real_post_state_as_content_mism
     let initial = system.initial();
     let mut wrong_target = returned;
     wrong_target.prefix[0].post_state =
-        StateKey::from_canonical_bytes(system.state_key(&initial[0]).expect("initial key").0);
+        StateKey::from_canonical_bytes(system.state_key(&initial[0], fsl_foundation::IdentityLimits::default()).expect("initial key").0);
     let error = replay(&case, wrong_target).expect_err("inc cannot remain at value2");
     assert_eq!(error.code(), Code::StaleDependency);
     assert_eq!(error.cause(), Some("content-mismatch"));
@@ -192,7 +192,7 @@ fn a_recorded_post_state_selects_among_the_successors_of_one_transition_identity
     let other = expansion
         .successors
         .iter()
-        .map(|(_, state)| StateKey::from_canonical_bytes(system.state_key(state).expect("a key").0))
+        .map(|(_, state)| StateKey::from_canonical_bytes(system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("a key").0))
         .find(|key| *key != returned.prefix[0].post_state)
         .expect("a second successor");
     let mut chosen = returned;

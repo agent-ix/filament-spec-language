@@ -317,7 +317,7 @@ fn classes(system: &ModelSystem<'_>) -> Vec<(Vec<u8>, TerminalClass)> {
     let mut seen: Vec<Vec<u8>> = Vec::new();
     let mut classes = Vec::new();
     while let Some(state) = queue.pop_front() {
-        let key = system.state_key(&state).expect("a state key").0;
+        let key = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("a state key").0;
         if seen.contains(&key) {
             continue;
         }

@@ -1011,7 +1011,7 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
     let at = StateKey::from_canonical_bytes(b"at".to_vec());
     let scheduler = [(at.clone(), identity)];
     let system = ModelSystem::new(world.subject().simulation).unwrap();
-    let state_key = |state: &ModelSimState| system.state_key(state).ok().map(|(_, key)| key);
+    let state_key = |state: &ModelSimState| system.state_key(state, fsl_foundation::IdentityLimits::default()).ok().map(|(_, key)| key);
     let bound = Bound::AtMost(ratio(1, 2));
     let scope = world.package.graph().scope();
     let color = |member: &str| {

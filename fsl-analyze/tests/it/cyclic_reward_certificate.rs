@@ -141,7 +141,7 @@ fn zero_reward_still_requires_properness_and_initial_target_is_zero() {
     let binding = fsl_replay::claim_binding(&system, closed.claim("Cost"))
         .unwrap()
         .unwrap();
-    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    let raw = system.state_key(&system.initial()[0], fsl_foundation::IdentityLimits::default()).unwrap().0;
     let key = ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap();
     let item = fsl_replay::probabilistic_claim_identity(closed.claim("Cost")).unwrap();
     let certificate = ExactProbabilityCertificate {

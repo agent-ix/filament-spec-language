@@ -190,7 +190,7 @@ impl World {
         let mut seen: Vec<(fsl_eval::simulation::StateKey, Vec<i64>)> = Vec::new();
         let mut queue: Vec<ModelSimState> = system.initial();
         while let Some(state) = queue.pop() {
-            let (bytes, _) = system.state_key(&state).expect("encodes");
+            let (bytes, _) = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("encodes");
             let state_key = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
             if seen.iter().any(|(known, _)| known == &state_key) {
                 continue;

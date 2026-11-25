@@ -1262,7 +1262,7 @@ fn the_support_graph_is_the_state_graph() {
     let mut seen = BTreeSet::new();
     let mut queue = VecDeque::from([initial(&system)]);
     while let Some(state) = queue.pop_front() {
-        let (key, _) = system.state_key(&state).expect("a key");
+        let (key, _) = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("a key");
         if !seen.insert(key) {
             continue;
         }
@@ -1274,7 +1274,7 @@ fn the_support_graph_is_the_state_graph() {
             .map(|(transition, post)| {
                 (
                     system.transition_key(transition).expect("bytes"),
-                    system.state_key(post).expect("key").0,
+                    system.state_key(post, fsl_foundation::IdentityLimits::default()).expect("key").0,
                 )
             })
             .collect();
@@ -1288,7 +1288,7 @@ fn the_support_graph_is_the_state_graph() {
                 };
                 (
                     system.transition_key(transition).expect("bytes"),
-                    system.state_key(&step.post).expect("key").0,
+                    system.state_key(&step.post, fsl_foundation::IdentityLimits::default()).expect("key").0,
                 )
             })
             .collect();
@@ -1310,9 +1310,9 @@ fn model_state_key_memo_tracks_clones_and_cell_mutation() {
     let cloned = state.clone();
     assert!(state.shares_key_memo(&cloned));
     let cold_debug = format!("{state:?}");
-    let original = system.state_key(&state).expect("key").0;
+    let original = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("key").0;
     assert_eq!(format!("{state:?}"), cold_debug);
-    assert_eq!(system.state_key(&cloned).expect("cloned key").0, original);
+    assert_eq!(system.state_key(&cloned, fsl_foundation::IdentityLimits::default()).expect("cloned key").0, original);
 
     let (population, objects) = state
         .state()
@@ -1331,16 +1331,16 @@ fn model_state_key_memo_tracks_clones_and_cell_mutation() {
     let mut changed = cloned;
     changed.set_cell(&cell, None);
     assert!(!state.shares_key_memo(&changed));
-    let changed_key = system.state_key(&changed).expect("changed key").0;
+    let changed_key = system.state_key(&changed, fsl_foundation::IdentityLimits::default()).expect("changed key").0;
     assert_ne!(changed_key, original);
     let mut freshly_changed = initial(&system);
     freshly_changed.set_cell(&cell, None);
     let freshly_computed_key = system
-        .state_key(&freshly_changed)
+        .state_key(&freshly_changed, fsl_foundation::IdentityLimits::default())
         .expect("freshly computed key for the changed state")
         .0;
     assert_eq!(changed_key, freshly_computed_key);
-    assert_eq!(system.state_key(&state).expect("original key").0, original);
+    assert_eq!(system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("original key").0, original);
 }
 
 /// FR-185-AC-7 (TC-620 step 7): `Service`, with `d` typed `Millis = Int[1,
@@ -2079,7 +2079,7 @@ fn a_weight_zero_workload_keeps_every_step_inside_the_state_graph() {
     let mut seen = BTreeSet::new();
     let mut queue = VecDeque::from([initial(&system)]);
     while let Some(state) = queue.pop_front() {
-        let (key, _) = system.state_key(&state).expect("a key");
+        let (key, _) = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("a key");
         if !seen.insert(key) {
             continue;
         }
@@ -2091,7 +2091,7 @@ fn a_weight_zero_workload_keeps_every_step_inside_the_state_graph() {
             .map(|(transition, post)| {
                 (
                     system.transition_key(transition).expect("bytes"),
-                    system.state_key(post).expect("key").0,
+                    system.state_key(post, fsl_foundation::IdentityLimits::default()).expect("key").0,
                 )
             })
             .collect();
@@ -2101,7 +2101,7 @@ fn a_weight_zero_workload_keeps_every_step_inside_the_state_graph() {
             if let TransitionId::Operation(transition) = &step.transition {
                 let edge = (
                     system.transition_key(transition).expect("bytes"),
-                    system.state_key(&step.post).expect("key").0,
+                    system.state_key(&step.post, fsl_foundation::IdentityLimits::default()).expect("key").0,
                 );
                 assert!(successors.contains(&edge), "{state:?}");
             }
@@ -2161,7 +2161,7 @@ fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
     let world = World::new(&model);
     let system = world.system();
     let actual = initial(&system);
-    let bytes = system.state_key(&actual).unwrap().0;
+    let bytes = system.state_key(&actual, fsl_foundation::IdentityLimits::default()).unwrap().0;
     let mut budget = Budget {
         meter: filament_exact::Meter::new(system.meter_limits()),
         used: 0,
@@ -2174,7 +2174,7 @@ fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
             &Cancel::new(),
         )
         .unwrap();
-    assert_eq!(system.state_key(&restored).unwrap().0, bytes);
+    assert_eq!(system.state_key(&restored, fsl_foundation::IdentityLimits::default()).unwrap().0, bytes);
     assert!(matches!(
         restored.provenance(),
         ModelStateProvenance::RestoredFromKey { effect: None }
@@ -2216,8 +2216,8 @@ fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
             {
                 assert_eq!(transition, restored_transition);
                 assert_eq!(
-                    system.state_key(post).unwrap().0,
-                    system.state_key(restored_post).unwrap().0
+                    system.state_key(post, fsl_foundation::IdentityLimits::default()).unwrap().0,
+                    system.state_key(restored_post, fsl_foundation::IdentityLimits::default()).unwrap().0
                 );
                 assert!(restored_post.anchor().is_none());
                 assert!(
@@ -2234,7 +2234,7 @@ fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
         .map(|(_, post)| post)
         .find(|post| matches!(field(post, "delivered"), Value::Boolean(false)))
         .expect("a genuine failed send reaches attempts1");
-    let next_bytes = system.state_key(noninitial).unwrap().0;
+    let next_bytes = system.state_key(noninitial, fsl_foundation::IdentityLimits::default()).unwrap().0;
     assert_ne!(next_bytes, bytes);
     assert!(noninitial.anchor().is_some() && noninitial.reached_by().is_some());
     let restored_next = system
@@ -2257,12 +2257,12 @@ fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
                 actual
                     .successors
                     .iter()
-                    .map(|(step, post)| (step.clone(), system.state_key(post).unwrap().0))
+                    .map(|(step, post)| (step.clone(), system.state_key(post, fsl_foundation::IdentityLimits::default()).unwrap().0))
                     .collect::<Vec<_>>(),
                 restored
                     .successors
                     .iter()
-                    .map(|(step, post)| (step.clone(), system.state_key(post).unwrap().0))
+                    .map(|(step, post)| (step.clone(), system.state_key(post, fsl_foundation::IdentityLimits::default()).unwrap().0))
                     .collect::<Vec<_>>()
             );
         }
@@ -2382,7 +2382,7 @@ fn restored_large_declared_field_index_retains_the_nonzero_caller_work_stop() {
     }
     let world = World::new(&model);
     let system = world.system();
-    let bytes = system.state_key(&initial(&system)).unwrap().0;
+    let bytes = system.state_key(&initial(&system), fsl_foundation::IdentityLimits::default()).unwrap().0;
     let field_count = system.fields.values().map(Vec::len).sum::<usize>();
     assert_eq!(field_count, 66);
     let mut limits = system.meter_limits();

@@ -89,7 +89,7 @@ pub(super) fn run(
                     scope.variant_types(),
                     scope.enums(),
                 ),
-                &|state| system.state_key(state).ok().map(|(_, key)| key),
+                &|state| system.state_key(state, fsl_foundation::IdentityLimits::default()).ok().map(|(_, key)| key),
                 &scheduler,
             );
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
@@ -276,7 +276,7 @@ fn materialize_inner(
             .key(control)
             .map_err(ProbabilityWitnessError::from)?;
         let (raw, _) = system
-            .state_key(initial)
+            .state_key(initial, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ProbabilityWitnessError::Refused)?;
         ProbabilityProductKey::for_formula_state(reference, &raw, &control, limits.document, cancel)
             .map_err(ProbabilityWitnessError::from)?
@@ -332,7 +332,7 @@ fn materialize_inner(
         .map_err(ProbabilityWitnessError::from)?
     } else {
         let (raw, _) = system
-            .state_key(initial)
+            .state_key(initial, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ProbabilityWitnessError::Refused)?;
         ProbabilityProductKey::for_model_state_with_limits(reference, &raw, limits.document, cancel)
             .map_err(ProbabilityWitnessError::from)?
@@ -364,7 +364,7 @@ fn materialize_inner(
                     )
                 } else {
                     system
-                        .state_key(&state)
+                        .state_key(&state, fsl_foundation::IdentityLimits::default())
                         .map_err(|_| ProbabilityWitnessError::Refused)?
                         .1
                 },
@@ -390,7 +390,7 @@ fn materialize_inner(
                 }
                 for (transition, post) in candidate_draw.successors {
                     if system
-                        .state_key(&post)
+                        .state_key(&post, fsl_foundation::IdentityLimits::default())
                         .map_err(|_| ProbabilityWitnessError::Refused)?
                         .0
                         == step.target.model
