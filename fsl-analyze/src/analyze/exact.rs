@@ -1809,7 +1809,30 @@ fn run(
                                 sweeps,
                                 policy,
                             }),
-                            result => result,
+                            Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(mut solved)) => {
+                                for value in &mut solved.values {
+                                    let ExtRational::Finite(finite) = value else {
+                                        return unbounded_failure(
+                                            UnboundedError::InvalidState,
+                                            &limits,
+                                            subject,
+                                        );
+                                    };
+                                    *finite = Rational::from_integer(1_i64.into()).sub(finite);
+                                }
+                                Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(solved))
+                            }
+                            Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
+                                lower,
+                                upper,
+                            }) => Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
+                                lower: complement_dyadic(&upper),
+                                upper: complement_dyadic(&lower),
+                            }),
+                            result @ (Ok(
+                                crate::exact_probabilistic::UnboundedOutcome::Stopped(_),
+                            )
+                            | Err(_)) => result,
                         }
                     }
                     ProbForm::ExpectedReward { reward, .. } => {

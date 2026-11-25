@@ -641,6 +641,47 @@ fn an_acyclic_subject_past_the_rational_budget_goes_on_to_the_threshold_solve() 
     assert_eq!(value.value(), &ratio(24, 25));
 }
 
+/// `Link`'s `always holds(m.attempts <= 1 or m.delivered)` fails only by
+/// losing both sends, so its least value is `1 - 1/25 = 24/25`. Past the
+/// rational budget the threshold solve runs on that complement. At 8 bits it
+/// reaches an exact answer and at 4 bits, which the elimination does not fit,
+/// it stops on its interval: both report the claim's own value.
+#[trace("TC-3187", "FR-201", "FR-198")]
+#[test]
+fn an_always_claim_past_the_rational_budget_settles_on_its_own_value() {
+    let world = World::new(&crate::prob_world::link(
+        "probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin \
+         { probability >= 0.95 [ always holds(m.attempts <= 1 or m.delivered) ] }\n",
+    ));
+    let run = |max_rational_bits| {
+        settle(&world, "Likely", ModelCheckLimits::default(), |request| {
+            request.limits.max_rational_bits = max_rational_bits;
+            request.limits.precision_bits = 4;
+            request.limits.max_precision_bits = 4;
+        })
+    };
+    let record = run(8);
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = record.terminal().unwrap().value()
+    else {
+        panic!("{record:#?}");
+    };
+    assert_eq!(value.value(), &ratio(24, 25));
+
+    let record = run(4);
+    let TerminalValue::Incomplete(IncompleteCause::PrecisionBudget { lower, upper }) =
+        record.terminal().unwrap().value()
+    else {
+        panic!("{record:#?}");
+    };
+    assert!(
+        lower.value() <= &ratio(24, 25) && &ratio(24, 25) <= upper.value(),
+        "{lower:?} {upper:?}"
+    );
+}
+
 #[trace("TC-3185", "FR-201-AC-63")]
 #[test]
 fn cancellation_and_limits_keep_their_cause_across_every_cyclic_state_stage() {
