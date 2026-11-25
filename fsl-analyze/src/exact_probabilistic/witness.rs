@@ -1174,7 +1174,6 @@ mod tests {
                 binding: None,
                 model: vec![0],
                 monitor: None,
-                timed_history: None,
                 accumulator: None,
                 pending: None,
                 certificate_state: None,

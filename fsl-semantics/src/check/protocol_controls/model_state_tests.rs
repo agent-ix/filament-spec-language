@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-218 (TC-663, TC-1056, TC-1065) over fixture R of the protocol
 //! obligation tests, whose object, record, reference and event types these
 //! criteria read: a channel's `fifo` ordering, its binder and its key, and

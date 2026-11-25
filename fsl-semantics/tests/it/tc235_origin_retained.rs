@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-056-AC-33: a normalize-stage declaration refusal retains the artifact
-//! and source position of the refused node's FCD origin. One typed vector per
-//! refusal site, over a K2 package whose every node carries a source origin.
-//! Assertions compare the typed code, cause, node, member path, artifact and
-//! position, never detail text.
+//! and source position of the refused node's FCD origin, and a
+//! `malformed-declaration` the semantic-IR reader raises at intake retains
+//! them too. Typed vectors over a K2 package whose every node carries a source
+//! origin. Assertions compare the typed code, cause, node, member path,
+//! artifact and position, never detail text.
 
 use super::*;
 
@@ -62,8 +63,12 @@ fn sourced(mutate: impl FnOnce(&mut Value)) -> (Value, BTreeMap<String, u64>) {
 }
 
 fn refused(document: &Value) -> Vec<ModelRefusal> {
-    let package = read_k2(document).expect("the reader retains the declaration for normalization");
-    match normalize_with_meter(&package, ModelNormalizationLimits::default()).0 {
+    let package = read_k2(document).expect("the semantic-IR reader admits the document");
+    refused_package(&package)
+}
+
+fn refused_package(package: &DomainPackage) -> Vec<ModelRefusal> {
+    match normalize_with_meter(package, ModelNormalizationLimits::default()).0 {
         NormalizeOutcome::Refused(refusals) => refusals.iter().cloned().collect(),
         other => panic!("the vector must refuse, got {other:?}"),
     }
@@ -149,14 +154,42 @@ fn an_event_type_with_identity_fields_keeps_its_origin() {
     );
 }
 
-/// An event type whose occurrence field resolves to a non-Timestamp scalar.
+/// An event type whose occurrence field resolves to a non-Timestamp scalar:
+/// refused by the semantic-IR reader at intake, and by normalization for a
+/// package whose occurrence field is retargeted after the read.
 #[trace("TC-1005", "FR-056-AC-33")]
 #[test]
 fn an_event_occurrence_that_is_not_a_timestamp_keeps_its_origin() {
-    only_refusal(
-        |document| {
-            type_named_mut(document, "Instant")["target"] = json!("ix://filament/native/Integer");
-        },
+    let (document, lines) = sourced(|document| {
+        type_named_mut(document, "Instant")["target"] = json!("ix://filament/native/Integer");
+    });
+    let found = intake_refusals(&document);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_retains_origin(
+        &found[0],
+        &lines,
+        "OrderPlaced",
+        "TypeDefinition.occurrenceField",
+    );
+
+    let (document, lines) = sourced(|_| {});
+    let mut package = read_k2(&document).expect("the sourced K2 package reads");
+    let event = package
+        .records
+        .iter_mut()
+        .find_map(|record| match record {
+            DomainPackageRecord::EventType(event) if event.key == package_key("OrderPlaced") => {
+                Some(event)
+            }
+            _ => None,
+        })
+        .expect("OrderPlaced is an event type record");
+    event.occurrence_field = Some(package_key("OrderPlaced/order_id"));
+    let found = refused_package(&package);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_retains_origin(
+        &found[0],
+        &lines,
         "OrderPlaced",
         "TypeDefinition.occurrenceField",
     );
@@ -208,79 +241,82 @@ fn a_state_machine_missing_required_members_keeps_its_origin() {
         "TypeDefinition.transitions",
     );
 
+    // A machine with no operations and no transitions: both refusals, at the
+    // machine.
     let (document, lines) = sourced(|document| {
-        type_named_mut(document, "OrderLifecycle")["operations"] = json!([]);
+        let machine = type_named_mut(document, "OrderLifecycle");
+        machine["operations"] = json!([]);
+        machine["transitions"] = json!([]);
     });
     let found = refused(&document);
-    assert_eq!(summary(&found), without_operations_summary(), "{found:?}");
-    assert_retains_origin(
-        &found[0],
-        &lines,
-        "OrderLifecycle",
-        "TypeDefinition.operations",
-    );
+    assert_eq!(found.len(), 2, "{found:?}");
+    for (refusal, path) in found
+        .iter()
+        .zip(["TypeDefinition.operations", "TypeDefinition.transitions"])
+    {
+        assert_retains_origin(refusal, &lines, "OrderLifecycle", path);
+    }
 
-    // Another node's reader refusal beside the refused machine is reported
-    // exactly once, as it is without the machine's own refusal.
-    let (document, lines) = sourced(|document| {
+    // With its transitions kept, each trigger names nothing: the semantic-IR
+    // reader refuses them and intake ends.
+    let (document, _) = sourced(|document| {
+        type_named_mut(document, "OrderLifecycle")["operations"] = json!([]);
+    });
+    let found = intake_refusals(&document);
+    assert_eq!(missing_names(&found), dangling_triggers(), "{found:?}");
+
+    // Another node's reader refusal beside the machine's is reported exactly
+    // once, in reader order.
+    let (document, _) = sourced(|document| {
         type_named_mut(document, "OrderLifecycle")["operations"] = json!([]);
         type_named_mut(document, "Order")["fields"]
             .as_array_mut()
             .unwrap()
             .push(field("Order", "ghost", &id("Nope")));
     });
-    let found = refused(&document);
-    // Refusals sort by node: the ghost field's, then the machine's.
+    let found = intake_refusals(&document);
     let mut expected = vec![(
-        "missing_declaration".to_owned(),
-        "missing-name".to_owned(),
         id("Order/ghost"),
+        id("Nope"),
+        "/types/0/fields/2/typeRef".to_owned(),
     )];
-    expected.extend(without_operations_summary());
-    assert_eq!(summary(&found), expected, "{found:?}");
-    assert_retains_origin(
-        &found[1],
-        &lines,
-        "OrderLifecycle",
-        "TypeDefinition.operations",
-    );
+    expected.extend(dangling_triggers());
+    assert_eq!(missing_names(&found), expected, "{found:?}");
 }
 
-/// Code, cause tag and node of each refusal, in report order.
-fn summary(found: &[ModelRefusal]) -> Vec<(String, String, String)> {
+/// Node, absent declaration and reader pointer of each refusal, in report
+/// order; every one must be a `missing_declaration`/`missing-name`.
+fn missing_names(found: &[ModelRefusal]) -> Vec<(String, String, String)> {
     found
         .iter()
         .map(|refusal| {
-            let node = match &refusal.cause {
-                ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
-                | ModelRefusalCause::IntakeMissingDeclaration { node, .. } => node.clone(),
-                other => panic!("no node on {other:?}"),
-            };
-            (
-                refusal.code.as_str().to_owned(),
-                refusal.cause.as_str().to_owned(),
+            assert_eq!(refusal.code, Code::MissingDeclaration, "{refusal:?}");
+            assert_eq!(refusal.cause.as_str(), "missing-name", "{refusal:?}");
+            let ModelRefusalCause::IntakeMissingDeclaration {
                 node,
-            )
+                reference,
+                path,
+                ..
+            } = &refusal.cause
+            else {
+                panic!("expected an intake missing-name: {refusal:?}");
+            };
+            (node.clone(), reference.clone(), path.as_str().to_owned())
         })
         .collect()
 }
 
-/// An `OrderLifecycle` with no operations: its own refusal, then one
-/// dangling trigger per transition that named an operation.
-fn without_operations_summary() -> Vec<(String, String, String)> {
-    let mut list = vec![(
-        "invalid_model_binding".to_owned(),
-        "malformed-declaration".to_owned(),
-        id("OrderLifecycle"),
-    )];
-    list.extend((0..3).map(|_| {
-        (
-            "missing_declaration".to_owned(),
-            "missing-name".to_owned(),
-            id("OrderLifecycle"),
-        )
-    }));
-    list
+/// The three K2 transition triggers of an `OrderLifecycle` with no operations.
+fn dangling_triggers() -> Vec<(String, String, String)> {
+    [(0, "place"), (1, "cancel"), (2, "cancel")]
+        .map(|(position, operation)| {
+            (
+                id("OrderLifecycle"),
+                id(&format!("OrderLifecycle/{operation}")),
+                format!("/types/4/transitions/{position}/trigger"),
+            )
+        })
+        .to_vec()
 }
 
 /// A process subtype of a state machine that supplies no identity fields:
@@ -391,7 +427,8 @@ fn a_generated_origin_leaves_artifact_and_span_none() {
 /// TC-235 M10 run 10: a population member naming a declaration of the wrong
 /// meaning refuses `malformed-declaration` at the population node, path
 /// `PopulationDefinition.members[i]`, keeping the population's origin. A
-/// member naming no declaration stays `missing_declaration`.
+/// member naming no declaration stays `missing_declaration`, which the
+/// semantic-IR reader raises at intake.
 #[trace("FSpec-TC-235", "TC-1005", "FR-056-AC-33")]
 #[test]
 fn a_population_member_of_another_meaning_refuses_malformed_with_origin() {
@@ -427,9 +464,16 @@ fn a_population_member_of_another_meaning_refuses_malformed_with_origin() {
             "origin": origin("PO"),
         }]);
     });
-    let found = refused(&document);
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].code, Code::MissingDeclaration);
+    let found = intake_refusals(&document);
+    assert_eq!(
+        missing_names(&found),
+        [(
+            id("PO"),
+            id("Missing"),
+            "/populations/0/members/0".to_owned()
+        )],
+        "{found:?}"
+    );
 }
 
 /// TC-235 M10 run 10 as the row is written: K2 plus population `PA` (closed)

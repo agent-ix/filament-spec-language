@@ -12,13 +12,13 @@ use filament_exact::{Cancel, Identifier, Integer, ObjectReference, Rational, Val
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::StateKey;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
-    Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading, ScheduledIdentity,
-    Unsteppable, same_rewards,
+    same_rewards, Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading,
+    ScheduledIdentity, Unsteppable,
 };
 use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
+use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
@@ -349,7 +349,6 @@ mod tests {
             accumulator: None,
             pending: None,
             certificate_state: None,
-            timed_history: None,
         };
         let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
         let product = ProbProduct {
@@ -390,7 +389,7 @@ mod tests {
         assert_eq!(completed.states.len(), 3);
         assert_eq!(completed.labels[2], vec![false]);
         assert_eq!(completed.edges[1].to, ProbStateId(2));
-        assert_eq!(completed.edges[2].to, ProbStateId(2));
+        assert_eq!(completed.edges.len(), 2);
     }
 }
 
@@ -573,16 +572,6 @@ fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, OmittedEdge)>) -
             rewards: edge.rewards,
         });
     }
-    completed.edges.push(ProbEdge {
-        from: ProbStateId(sink),
-        choice: ProductAction::TerminalStutter,
-        action: None,
-        draw: None,
-        to: ProbStateId(sink),
-        probability: Rational::from_integer(Integer::one()),
-        elapsed: Rational::from_integer(Integer::from(0_i64)),
-        rewards: Vec::new(),
-    });
     completed
 }
 
@@ -636,7 +625,6 @@ impl Builder<'_, '_, '_, '_> {
                             binding: self.bindings[binding].0.clone(),
                             model: hit.model.clone(),
                             monitor,
-                            timed_history: None,
                             accumulator,
                             pending: None,
                             certificate_state: None,
@@ -840,7 +828,6 @@ impl Builder<'_, '_, '_, '_> {
             binding: self.bindings[binding].0.clone(),
             model,
             monitor,
-            timed_history: None,
             accumulator,
             pending,
             certificate_state: None,

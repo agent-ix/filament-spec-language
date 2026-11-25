@@ -9,17 +9,22 @@
 //! emit a hyper clause), so FR-183-AC-2 and AC-5 are not claimed.
 
 use filament_exact::{Cancel, Meter, Undefined};
+use fsl_eval::hyper::ParameterBinding;
+use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
+use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    settle_hyper_check, DisagreementCause, HyperCounterexample, HyperCounterexampleKind,
-    HyperLocus, HyperOutcome, HyperStep, InconclusiveCause, ModelCheckLimit, ModelCheckLimits,
+    check_match_witness, settle_hyper_check, DisagreementCause, HyperCounterexample,
+    HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperReplay, HyperStep, HyperTrace,
+    InconclusiveCause, MatchWitness, MatchWitnessCheck, ModelCheckLimit, ModelCheckLimits,
     ModelStep, ModelTraceRefusal, ModelTraceSettlement, ModelTraceValue, ReachedLimit,
-    ReplayRefusal, RunStats, StepMark, TerminalValue,
+    ReplayLimits, ReplayRefusal, RunStats, StepMark, TerminalValue, DEFAULT_MAX_WITNESS_SET,
 };
 use ix_trace_rs::trace;
 
+use crate::counter::UNLIMITED;
 use crate::hyper::positions;
 use crate::hyper_projected::{aligned, IDLE, MID_OPERATION};
 use crate::hyper_witness::{
@@ -27,7 +32,7 @@ use crate::hyper_witness::{
     KERNEL_MOD_FUNCTION,
 };
 use crate::hyper_world::{
-    busy_of, high, low, non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS,
+    busy_of, high, key, low, non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS,
 };
 
 mod certificate_boundary_cases;
@@ -296,7 +301,7 @@ fn undefined_body_at_the_first_tuple_precedes_the_undefined_guard() {
     assert_ne!(undefined.locus, HyperLocus::Contract("G".to_owned()));
     assert_eq!(
         undefined.variables,
-        [("a".to_owned(), "v".to_owned()), ("b".to_owned(), "v".to_owned())]
+        [("a".to_owned(), "V".to_owned()), ("b".to_owned(), "V".to_owned())]
     );
     assert_eq!(undefined.cause, UndefinedCause::Kernel(Undefined::DivisionByZero));
     assert_eq!(counterexample.traces.len(), 2);
@@ -333,17 +338,22 @@ fn undefined_body_at_the_first_tuple_precedes_the_undefined_guard() {
     assert_eq!(guarded.trace_position, 0);
     assert_eq!(guard_undefined.position, 0);
     assert_eq!(guard_undefined.locus, HyperLocus::Contract("G".to_owned()));
-    assert_eq!(guard_undefined.variables, [("b".to_owned(), "v".to_owned())]);
+    assert_eq!(guard_undefined.variables, [("b".to_owned(), "V".to_owned())]);
     assert_eq!(guard_undefined.state_keys.len(), 1);
     let Some(transition) = &guard_undefined.transition else {
         panic!("the undefined guard names its step transition");
     };
     assert!(transition.operation().contains("/Vault/step\""));
-    assert_eq!(guarded.traces.len(), 1);
-    assert_eq!(guarded.traces[0].variable, "b");
-    assert_eq!(guarded.traces[0].initial, 1);
-    assert!(guarded.traces[0].steps.is_empty());
-    assert_eq!(positions(&defined_world, &guarded, 0), [(1, 0)]);
+    // The locus names `b` alone; FR-183 "Undefined evaluation" still gives
+    // one path per trace variable.
+    assert_eq!(guarded.traces.len(), 2);
+    assert_eq!(guarded.traces[0].variable, "a");
+    assert_eq!(guarded.traces[0].initial, 0);
+    assert_eq!(guarded.traces[1].variable, "b");
+    assert_eq!(guarded.traces[1].initial, 1);
+    assert!(guarded.traces.iter().all(|trace| trace.steps.is_empty()));
+    assert_eq!(positions(&defined_world, &guarded, 0), [(0, 0)]);
+    assert_eq!(positions(&defined_world, &guarded, 1), [(1, 0)]);
 }
 
 /// ADR-023 section 8.2's `Opaque` over `vault`.
@@ -1348,4 +1358,140 @@ fn every_listed_refusal_settles_no_result() {
     a_counterexample_that_breaks_a_replay_rule_is_refused();
     a_projected_counterexample_that_breaks_a_replay_rule_is_refused();
     a_loop_that_is_unfair_under_its_own_fairness_set_is_refused();
+}
+
+/// Letters a match-witness check must not call: it does not read the body.
+struct NoBody;
+
+impl fsl_eval::hyper::HyperLetters for NoBody {
+    fn atom(
+        &self,
+        _: fsl_semantics::check::FormulaNodeId,
+        _: &[ParameterBinding],
+        _: &[&ModelSimState],
+        _: &mut Meter,
+    ) -> Result<fsl_eval::temporal::AtomReading, fsl_eval::model_subject::AtomStop> {
+        panic!("the match-witness check read the body");
+    }
+}
+
+/// `check_match_witness` of `witness` over `world`'s systems, twice, with the
+/// request binding `v` to `bound`; both checks answer alike.
+fn checked_witness(world: &World, bound: &str, witness: &MatchWitness) -> MatchWitnessCheck {
+    let seams = world.seams();
+    let instance = [ParameterBinding {
+        parameter: "v".to_owned(),
+        instance: ModelInstance {
+            population: key("vaults"),
+            key: bound.to_owned(),
+        },
+    }];
+    let check = || {
+        check_match_witness(
+            &HyperReplay {
+                clause: &world.clause,
+                systems: seams.per_trace(),
+                instance: &instance,
+                letters: &NoBody,
+                matcher: &seams,
+                meter: UNLIMITED,
+                max_witness_set: DEFAULT_MAX_WITNESS_SET,
+                max_states: u64::try_from(ModelCheckLimits::default().limits.max_states)
+                    .unwrap_or(u64::MAX),
+                cancel: &Cancel::new(),
+            },
+            witness,
+            ReplayLimits::default(),
+        )
+    };
+    let first = check();
+    assert_eq!(format!("{first:?}"), format!("{:?}", check()));
+    first
+}
+
+/// The trace of `variable` from `(h, l) = (0, 0)` taking `step` with each of
+/// `inputs`.
+fn witness_trace(world: &World, variable: &str, inputs: [i64; 2]) -> HyperTrace {
+    let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
+    let start = system
+        .initial()
+        .into_iter()
+        .next()
+        .expect("initial state 0");
+    assert_eq!((high(&start), low(&start)), (0, 0));
+    let (first, middle) = take(world, &start, inputs[0]);
+    let (second, _) = take(world, &middle, inputs[1]);
+    HyperTrace {
+        variable: variable.to_owned(),
+        alias: "V".to_owned(),
+        initial: 0,
+        steps: vec![HyperStep::Model(first), HyperStep::Model(second)],
+        results: Vec::new(),
+        marks: Vec::new(),
+    }
+}
+
+/// The refusal of a refused match witness, which is
+/// `invalid_runtime_input`/`invalid-value`.
+fn witness_refusal(check: MatchWitnessCheck) -> ModelTraceRefusal {
+    let MatchWitnessCheck::Refused(ReplayRefusal::ModelTrace(refusal)) = check else {
+        panic!("expected a model-trace refusal, got {check:?}");
+    };
+    assert_eq!(refusal.code(), Code::InvalidRuntimeInput);
+    assert_eq!(refusal.cause(), "invalid-value");
+    *refusal
+}
+
+/// FR-183-AC-8: over the secure vault and `NonInterference` at `v`, the
+/// matched witness is accepted without reading the body, the unmatched one is
+/// re-executed and refused at joint step 1, and one binding `v` to a key
+/// outside the `vaults` universe is refused before any trace is re-executed,
+/// whichever instance the request names.
+#[trace("TC-608", "FR-183-AC-8")]
+#[test]
+fn a_match_witness_is_checked_without_the_body_against_its_instance_and_match() {
+    let world = World::new(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &non_interference(EQUAL_INPUTS),
+    );
+    let witness = |key: &str, traces: Vec<HyperTrace>| MatchWitness {
+        instance: vec![("v".to_owned(), key.to_owned())],
+        traces,
+        loop_entry: 0,
+    };
+    let a = witness_trace(&world, "a", [0, 0]);
+
+    let matched = witness("v", vec![a.clone(), witness_trace(&world, "b", [0, 0])]);
+    assert!(matches!(
+        checked_witness(&world, "v", &matched),
+        MatchWitnessCheck::Accepted
+    ));
+
+    let unmatched = witness("v", vec![a, witness_trace(&world, "b", [1, 0])]);
+    let refused = witness_refusal(checked_witness(&world, "v", &unmatched));
+    assert!(
+        matches!(refused, ModelTraceRefusal::HyperUnmatched { joint: 1 }),
+        "{refused:?}"
+    );
+
+    // No subject has initial state 7, so a re-executed trace would refuse that.
+    let mut outside = witness("w", matched.traces.clone());
+    for trace in &mut outside.traces {
+        trace.initial = 7;
+    }
+    for (bound, reason) in [
+        (
+            "w",
+            "binds a parameter to a key outside its population's universe",
+        ),
+        ("v", "names an instance other than the request's"),
+    ] {
+        let refused = witness_refusal(checked_witness(&world, bound, &outside));
+        assert!(
+            matches!(&refused, ModelTraceRefusal::HyperShape { reason: found } if *found == reason),
+            "{bound}: {refused:?}"
+        );
+    }
 }

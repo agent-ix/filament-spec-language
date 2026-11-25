@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-218 (TC-2020, TC-2021, TC-2022): a role on a whole model, a choice
 //! guard over the protocol input, and the variant's type, each asserted with
 //! the refusal region every reporting surface shows.
