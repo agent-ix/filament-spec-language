@@ -534,18 +534,6 @@ fn canonical(
     Ok((rows, renumbered))
 }
 
-/// Charge the emit meter for one owner's walk: the visits it logged and the
-/// terminals it derived.
-fn charge_walk(
-    meter: &mut crate::emit::OutputMeter,
-    table: &Table,
-    derived: usize,
-) -> Result<(), EmitRefusal> {
-    let bytes = table.visited.len() * std::mem::size_of::<(usize, usize, bool, usize)>()
-        + derived * std::mem::size_of::<((usize, u64), Option<usize>)>();
-    meter.charge_bytes(bytes as u64)
-}
-
 /// The shared table of `graph`'s written value-validity records and each
 /// guarded record's terminal frame, derived from the emitted owner bodies in
 /// `nodes` and compared with the checker's own guard chain.
@@ -556,7 +544,6 @@ pub(super) fn derive(
     source_map: &[CheckedSourceMapEntry],
     omitted: &Omitted,
     renumbering: &super::ordinals::Renumbering,
-    meter: &mut crate::emit::OutputMeter,
 ) -> Result<Frames, EmitRefusal> {
     // Written owners holding a guarded record, in structural-key order.
     let mut owners = BTreeMap::<NodeKey, Vec<(&OccurrenceKey, &RequirementRecord)>>::new();
@@ -623,7 +610,6 @@ pub(super) fn derive(
             walk.owner(position, measure, false, true, &mut visits, &mut table);
         }
         touched_by.push((position, table.take_owner_touches()));
-        charge_walk(meter, &table, derived.len())?;
         table.visited.clear();
         let Some(records) = records_of.get(owner_id) else {
             continue;
@@ -693,7 +679,6 @@ pub(super) fn rederive(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     records: &[CarriedRecord<'_>],
-    meter: &mut crate::emit::OutputMeter,
 ) -> Result<(Vec<PathConditionFrame>, Vec<PathConditionFrameId>), EmitRefusal> {
     let index: BTreeMap<&CheckedNodeId, usize> = nodes
         .iter()
@@ -729,7 +714,6 @@ pub(super) fn rederive(
             walk.owner(position, measure, false, true, &mut visits, &mut table);
         }
         touched_by.push((position, table.take_owner_touches()));
-        charge_walk(meter, &table, derived.len())?;
         table.visited.clear();
         for &(at, application, occurrence) in wanted.get(&position).into_iter().flatten() {
             terminals[at] = derived

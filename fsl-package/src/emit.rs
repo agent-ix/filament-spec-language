@@ -7037,9 +7037,8 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let mut meter = OutputMeter::new(limits);
     let (requirement_rows, path_condition_frames, renumbered) =
-        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map, &mut meter)?;
+        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     if let Some(data) = &mut checked_term_data {
         value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
     }
@@ -8085,8 +8084,7 @@ fn emit_package_nodes(
             .and_then(|candidate| candidate.expression_region(claim.origin().ordinal(), &regions))
             .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
-    // The meter charges the owner walks the renumbering makes, then every row
-    // section below.
+    // The meter charges the canonical rows that are written below.
     let mut meter = OutputMeter::new(limits);
     let value_validity = value_validity_requirements::append(
         ids,
@@ -8095,7 +8093,6 @@ fn emit_package_nodes(
         &mut source_map,
         &value_validity_region,
         &omitted_causes,
-        &mut meter,
     )?;
     omitted.extend(value_validity.omitted.iter().cloned());
     omitted.sort_by(|left, right| left.node.cmp(&right.node));

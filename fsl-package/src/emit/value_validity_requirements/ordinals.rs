@@ -153,7 +153,6 @@ pub(in crate::emit) fn renumber(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
     omitted: &Omitted,
-    meter: &mut super::super::OutputMeter,
 ) -> Result<Renumbering, EmitRefusal> {
     // Static multi-use is not the only source of extra reads: a package-root
     // walk may enter a nested function body transitively. Walk every expression
@@ -185,9 +184,6 @@ pub(in crate::emit) fn renumber(
     // The visits each needed node receives, with both the package-root owner
     // and the function whose syntax the visit is inside.
     let walked = frames::visits(nodes, source_map, &keep);
-    meter.charge_bytes(
-        (walked.len() as u64).saturating_mul(std::mem::size_of::<frames::Visit>() as u64),
-    )?;
     let mut visited = HashMap::<usize, Vec<(Use, bool, usize)>>::new();
     for visit in &walked {
         let function = function_index.get(&node_keys[visit.syntax_owner]).copied();
@@ -446,7 +442,6 @@ pub(in crate::emit) fn rewalk(
     base_source_map: &[CheckedSourceMapEntry],
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
-    meter: &mut super::super::OutputMeter,
 ) -> Result<BTreeMap<CheckedNodeId, Mapping>, EmitRefusal> {
     let carry = |reason| EmitRefusal::RequirementRowCarry(reason);
     let finals = nodes
@@ -465,14 +460,11 @@ pub(in crate::emit) fn rewalk(
                 > 1
         })
         .collect();
-    let mut owners = |nodes: &[CheckedSemanticNodeV2],
-                      source_map: &[CheckedSourceMapEntry]|
+    let owners = |nodes: &[CheckedSemanticNodeV2],
+                  source_map: &[CheckedSourceMapEntry]|
      -> Result<HashMap<usize, Vec<(usize, bool)>>, EmitRefusal> {
         let mut owners = HashMap::<usize, Vec<(usize, bool)>>::new();
         let walked = frames::visits(nodes, source_map, &keep);
-        meter.charge_bytes(
-            (walked.len() as u64).saturating_mul(std::mem::size_of::<frames::Visit>() as u64),
-        )?;
         for visit in walked {
             owners
                 .entry(visit.node)
