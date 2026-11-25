@@ -95,18 +95,6 @@ impl Renumbering {
         !self.by_node.is_empty()
     }
 
-    /// Move every checked-term row naming a renumbered expression occurrence
-    /// to the occurrence's new ordinal, and put each changed table back in
-    /// its canonical order. `ids` names each node's id in the rows.
-    pub(in crate::emit) fn relabel_term_data(
-        &self,
-        ids: &HashMap<NodeKey, CheckedNodeId>,
-        data: &mut filament_contract_model::CheckedTermDataV2,
-    ) {
-        let by_id = self.by_id(ids);
-        relabel_term_data(&by_id, data);
-    }
-
     /// Relabel term rows except body locations. The body-location writer keeps
     /// the captured source-use order while recomputing its compact path deltas.
     pub(in crate::emit) fn relabel_term_data_without_body_locations(
