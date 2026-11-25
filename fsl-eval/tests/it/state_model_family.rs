@@ -451,13 +451,19 @@ fn available_source_attribute_and_reaches_have_declared_nodes_and_types() {
 #[trace("TC-790", "FR-300-AC-2")]
 #[test]
 fn available_source_attribute_and_reaches_negatives_have_owned_raw_pairs_and_loci() {
-    for (body, authored, expected_cause, expected_code) in [
+    for (body, authored, mut expected_cause, expected_code) in [
         (
-            // FR-056-AC-9 preserves an ill_typed check refusal for a field
-            // absent from the effective static type (deref(g).nope).
+            // FR-056-AC-9, FR-363: a field absent from the effective static
+            // type (deref(g).nope) is an ill_typed check refusal keeping its
+            // owner, spelling and token span. The span is the token's place
+            // in the compiled source, set below.
             "function F using v(r: M::A): Boolean pure { deref(r).missing }",
             "missing",
-            CheckCause::IllTyped(IllTypedCause::TypeMismatch),
+            CheckCause::UnknownField {
+                owner: "A".into(),
+                field: "missing".into(),
+                span: None,
+            },
             ("ill_typed", "type-mismatch"),
         ),
         (
@@ -500,6 +506,13 @@ fn available_source_attribute_and_reaches_negatives_have_owned_raw_pairs_and_loc
         ),
     ] {
         let (declarations, _, source) = declarations(body, true);
+        if let CheckCause::UnknownField { span, .. } = &mut expected_cause {
+            let start = source.find("deref(r).missing").unwrap() + "deref(r).".len();
+            *span = Some(fsl_foundation::Span {
+                start,
+                end: start + "missing".len(),
+            });
+        }
         let regions = declarations.regions();
         let refusals = declarations
             .check(CheckMode::Linked, CheckingLimits::default(),

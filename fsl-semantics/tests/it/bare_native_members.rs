@@ -203,6 +203,20 @@ fn a_clause_using_a_bare_native_field_refuses_at_the_projection() {
     }
 }
 
+/// FR-056-AC-43: a bare native field read after `deref` refuses the same way
+/// as its projection, not as an absent or mistyped field.
+#[test]
+fn a_dereferenced_bare_native_field_refuses_as_untyped() {
+    assert_eq!(
+        untyped(
+            &note_document(),
+            "function f using v(r: Reference<Config::ConfigVersion>): Boolean pure \
+             { deref(r).memo = deref(r).memo }\n"
+        ),
+        expect("ConfigVersion", "memo", "Field.typeRef")
+    );
+}
+
 /// FR-056-AC-43 (TC-897 step 8): a call of `scale` refuses at the call
 /// naming `scale` and `Operation.params[0].typeRef` (its argument, `count`, is
 /// not refused), a call of `peek` at the call naming `Operation.returns.typeRef`.
