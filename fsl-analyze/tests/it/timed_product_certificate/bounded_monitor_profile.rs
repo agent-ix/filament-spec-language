@@ -707,3 +707,61 @@ fn a_tied_step_does_not_retract_an_event_already_met() {
     let record = settle(&world, "Missed");
     assert!(is_refuted(&record), "{record:#?}");
 }
+
+/// Under a workload a refutation whose paths fire `step` names the choice
+/// that lets the workload resolve it, and the independent replay admits it.
+#[trace("FR-204-AC-5")]
+#[test]
+fn a_workload_refutation_through_a_resolution_replays() {
+    let claim = claim_under(
+        "Hit",
+        "under One",
+        "<= 0.5",
+        "eventually[0 ms, 5 ms] holds(c.late)",
+    );
+    let world = one_step(" and self.x >= 3 ms", "", &claim);
+    let record = settle(&world, "Hit");
+    assert!(is_refuted(&record), "{record:#?}");
+}
+
+/// `a` fires by 1 ms and resets `x`, and `b` fires 2 ms later: a path with a
+/// step in [1 ms, 2 ms] refutes `always` there at a lower bound and
+/// `eventually` there at an upper bound, with a free and with a drawn delay of
+/// `b`.
+#[trace("FR-204-AC-5", "FR-204-AC-21")]
+#[test]
+fn a_workload_refutes_a_window_through_the_step_inside_it() {
+    let claims = claim_under(
+        "Always",
+        "under W",
+        ">= 0.5",
+        "always[1 ms, 2 ms] holds(false)",
+    ) + &claim_under(
+        "Eventually",
+        "under W",
+        "<= 0.5",
+        "eventually[1 ms, 2 ms] holds(true)",
+    );
+    for delay in ["", "delay M::Call::b ~ discrete { 2 ms: 1 };\n"] {
+        let package_document =
+            timed_world::document(&["x"], &[("a", &["phase", "x"]), ("b", &["phase"])]);
+        let body = format!(
+            "{}\
+             pre CanA using v on M::Call::a {{ self.phase = 0 }}\n\
+             post DidA using v on M::Call::a {{ self.phase = 1 and self.x = 0 ms }}\n\
+             pre CanB using v on M::Call::b {{ self.phase = 1 and self.x >= 2 ms }}\n\
+             post DidB using v on M::Call::b {{ self.phase = 2 }}\n\
+             {delay}\
+             workload W on M {{ weight Call::a = 1; weight Call::b = 1; }}\n\
+             time invariant WaitA when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n\
+             time invariant WaitB when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+             {claims}",
+            timed_world::DENSE,
+        );
+        let world = timed_world::world(&package_document, super::PROFILES, &body);
+        for claim in ["Always", "Eventually"] {
+            let record = settle(&world, claim);
+            assert!(is_refuted(&record), "{claim} {delay}: {record:#?}");
+        }
+    }
+}

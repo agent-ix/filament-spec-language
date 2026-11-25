@@ -2236,7 +2236,7 @@ fn enumerate_digital_deadline(
         }
         let mut choices = Vec::new();
         if given_actions == 0 {
-            for choice in digital_time_choices(
+            for (_, choice) in digital_time_choices(
                 system,
                 timed,
                 watch,
@@ -3967,7 +3967,7 @@ fn digital_workload_choices(
             reached,
             pending,
         )?;
-        scheduler_actions.resize_with(time_choices.len(), Vec::new);
+        let (time_actions, time_choices): (Vec<_>, Vec<_>) = time_choices.into_iter().unzip();
         choices.extend(time_choices);
         // The workload resolves the free identity enabled now.
         let weighted = free_now
@@ -4001,9 +4001,19 @@ fn digital_workload_choices(
             run.choice_of(states, &mut resolve, reached, pending, storage)?;
             charge_work(meter, run.cancel, 1)?;
         }
-        if !resolve.is_empty() {
+        // A witness names the action it takes where the scheduler can resolve,
+        // so such a state lists the action of each of its choices.
+        if let Some(first) = free_now.first().filter(|_| !resolve.is_empty()) {
             choices.push(resolve);
-            scheduler_actions.push(Vec::new());
+            let schedule = crate::Schedule::of(run.system, &first.identity)
+                .map_err(|_| ProbabilityDocumentError::Malformed)?;
+            scheduler_actions.extend(time_actions.into_iter().map(|action| vec![action]));
+            scheduler_actions.push(vec![crate::ProductAction::WorkloadResolve {
+                schedule,
+                delay: 0,
+            }]);
+        } else {
+            scheduler_actions.resize_with(choices.len(), Vec::new);
         }
         return Ok((choices, scheduler_actions));
     }
@@ -4221,7 +4231,7 @@ fn digital_workload_choices(
 
 /// The time-passing choices of a running state that no identity races from:
 /// the next distinct unit delay and, where the state may idle, the idle
-/// delay.
+/// delay, each with the action a witness names it by.
 #[allow(clippy::too_many_arguments)]
 fn digital_time_choices(
     system: &ModelSystem<'_>,
@@ -4238,7 +4248,7 @@ fn digital_time_choices(
     storage: &mut u64,
     reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
     pending: &mut VecDeque<ProbabilityProductKey>,
-) -> Result<Vec<Vec<ProbabilityEdge>>, ProbabilityDocumentError> {
+) -> Result<Vec<(crate::ProductAction, Vec<ProbabilityEdge>)>, ProbabilityDocumentError> {
     let mut choices = Vec::new();
     if let Some((delayed_key, delayed)) = next_digital_delay(
         system, timed, watch, binding, current, caps, key_scale, deadline, cancel,
@@ -4251,10 +4261,11 @@ fn digital_time_choices(
             limits,
             storage,
         )?;
-        choices.push(vec![ProbabilityEdge {
+        let edge = ProbabilityEdge {
             target: delayed_key,
             probability: one(),
-        }]);
+        };
+        choices.push((crate::ProductAction::UnitDelay, vec![edge]));
         charge_work(meter, cancel, 1)?;
     }
     let invariants = timed
@@ -4268,10 +4279,11 @@ fn digital_time_choices(
             system, timed, watch, binding, current, caps, key_scale, deadline, cancel,
         )? {
             admit_region_state(target.clone(), idle, reached, pending, limits, storage)?;
-            choices.push(vec![ProbabilityEdge {
+            let edge = ProbabilityEdge {
                 target,
                 probability: one(),
-            }]);
+            };
+            choices.push((crate::ProductAction::EnterIdleDelay, vec![edge]));
             charge_work(meter, cancel, 1)?;
         }
     }
