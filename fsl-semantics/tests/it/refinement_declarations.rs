@@ -1100,6 +1100,27 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         })
     }
 
+    /// The value type `BoxOption`, an `Option<Box>`.
+    fn box_option(package: &str) -> Value {
+        json!({
+            "identity": node(package, "BoxOption"), "displayName": node(package, "BoxOption"),
+            "kind": "option", "roles": [], "origin": origin(package, "BoxOption"),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "inner": node(package, "Box"),
+        })
+    }
+
+    /// The value type `BoxMap`, a `Map<Text, Option<Box>>`.
+    fn box_map(package: &str) -> Value {
+        json!({
+            "identity": node(package, "BoxMap"), "displayName": node(package, "BoxMap"),
+            "kind": "map", "roles": [], "origin": origin(package, "BoxMap"),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "keys": "ix://filament/native/Text", "values": node(package, "BoxOption"),
+            "bound": {"lower": 0},
+        })
+    }
+
     fn pair(package: &str, object: &str) -> Value {
         declaration(
             package,
@@ -1160,6 +1181,8 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
             pair(NESTED_SPEC, "Queue"),
             holder(NESTED_SPEC, "Queue"),
             parcel(NESTED_SPEC),
+            box_option(NESTED_SPEC),
+            box_map(NESTED_SPEC),
             object_type(
                 NESTED_SPEC,
                 "Queue",
@@ -1174,6 +1197,8 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("pair", &node(NESTED_SPEC, "Pair")),
                     ("holder", &node(NESTED_SPEC, "Holder")),
                     ("parcel", &node(NESTED_SPEC, "Parcel")),
+                    ("box_list", &node(NESTED_SPEC, "Box")),
+                    ("box_map", &node(NESTED_SPEC, "BoxMap")),
                 ],
                 Vec::new(),
             ),
@@ -1192,6 +1217,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     Some("chain" | "maybes") => ((0, 2, true), "required"),
                     Some("link") => (single, "optional"),
                     Some("cells") => ((0, 2, false), "required"),
+                    Some("box_list") => ((0, 2, true), "required"),
                     _ => continue,
                 };
                 *member = shaped(member.clone(), shape.0, shape.1);
@@ -1212,6 +1238,8 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
             pair(NESTED_IMPL, "Ring"),
             holder(NESTED_IMPL, "Ring"),
             parcel(NESTED_IMPL),
+            box_option(NESTED_IMPL),
+            box_map(NESTED_IMPL),
             object_type(
                 NESTED_IMPL,
                 "Ring",
@@ -1225,6 +1253,8 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("pair", &node(NESTED_IMPL, "Pair")),
                     ("holder", &node(NESTED_IMPL, "Holder")),
                     ("parcel", &node(NESTED_IMPL, "Parcel")),
+                    ("box_list", &node(NESTED_IMPL, "Box")),
+                    ("box_map", &node(NESTED_IMPL, "BoxMap")),
                 ],
                 Vec::new(),
             ),
@@ -1244,6 +1274,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                         *member = shaped(member.clone(), (0, 2, true), "required");
                     }
                     Some("link") => *member = shaped(member.clone(), single, "optional"),
+                    Some("box_list") => *member = shaped(member.clone(), (0, 2, true), "required"),
                     _ => {}
                 }
             }
@@ -1339,6 +1370,77 @@ fn a_row_nesting_a_reference_in_a_composite_is_lifted() {
             )
         });
         assert_eq!(only_refinement(&graph).objects().len(), 2, "{row}");
+    }
+}
+
+/// FR-135-AC-6 (TC-540): composite pairing reaches a record through a
+/// sequence and through a map value nested under an option.
+#[trace("TC-540", "FR-135-AC-6")]
+#[test]
+fn composite_pairing_reaches_through_sequence_and_map_option() {
+    let (spec, concrete) = nested_models();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+
+    let sequence = check_with("", &models, &nested_refinement("box_list = self.box_list;"))
+        .unwrap_or_else(|refusals| {
+            panic!(
+                "Sequence<Box> must pair its record element: {:?}",
+                refusals
+                    .iter()
+                    .map(|refusal| &refusal.refusal)
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(only_refinement(&sequence).objects().len(), 2);
+
+    let map_option = check_with("", &models, &nested_refinement("box_map = self.box_map;"))
+        .unwrap_or_else(|refusals| {
+            panic!(
+                "Map<Text, Option<Box>> must pair its record value: {:?}",
+                refusals
+                    .iter()
+                    .map(|refusal| &refusal.refusal)
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(only_refinement(&map_option).objects().len(), 2);
+}
+
+/// FR-135-AC-6 (TC-540): an unpaired reference inside a collection or a
+/// map/option value refuses the row instead of producing a checked graph.
+#[trace("TC-540", "FR-135-AC-6")]
+#[test]
+fn composite_pairing_refuses_unmapped_references_through_carriers() {
+    for (row, field_name) in [
+        ("box_list = self.box_list;", "box_list"),
+        ("box_map = self.box_map;", "box_map"),
+    ] {
+        let (spec, concrete) = nested_models();
+        let mut concrete: Value = serde_json::from_slice(&concrete).expect("a concrete model");
+        let boxed = concrete["types"]
+            .as_array_mut()
+            .expect("types")
+            .iter_mut()
+            .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Box"))
+            .expect("Box");
+        boxed["fields"][0]["typeRef"] = json!(node(NESTED_IMPL, "Slot"));
+        let concrete = concrete.to_string().into_bytes();
+        let models = [
+            ("Q", NESTED_SPEC, &spec[..]),
+            ("R", NESTED_IMPL, &concrete[..]),
+        ];
+
+        let found = refused(&models, &nested_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{field_name}"
+        );
+        assert_eq!(refusal.at, format!("self.{field_name}"));
     }
 }
 

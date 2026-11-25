@@ -2438,6 +2438,10 @@ fn requires_composite_pairing(value_type: &ValueType) -> bool {
     match value_type {
         ValueType::Composite(_) => true,
         ValueType::Option(payload) => requires_composite_pairing(payload),
+        ValueType::Collection(collection) => requires_composite_pairing(collection.element()),
+        ValueType::Map(map) => {
+            requires_composite_pairing(map.key()) || requires_composite_pairing(map.values())
+        }
         _ => false,
     }
 }
