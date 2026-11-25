@@ -79,9 +79,12 @@ printed script.
    clause's guard `a and b` by `b`. Encode `Unrolling{depth: 2}` over
    `{c, d}`, check each disjunct of the negated property alone with a
    solver, and check that no model of the satisfiable one leaves the
-   criterion's values. Then run EN-1 over the same package with the
-   production letters and replay its counterexample against the source
-   unit's request, once as found and once with `over_binding` `c`.
+   criterion's values. Then replay the counterexample that model holds
+   (`inc` on `d` twice, `over_binding` `d`, `UndefinedEvaluation` at
+   position 2, `none-value`, its site naming the activation) against the
+   source unit's request, its condition read by the hand-built package's
+   production letters, once as read and once with `over_binding` `c`. Run
+   EN-1 over the same package with those letters.
 
 Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
 
@@ -132,7 +135,7 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
   which settles `Proved{BoundedComplete{depth: 3}, Uncertified}`.
 - Step 9: of the negated property's disjuncts only `d`'s condition failure
   at position 2 is satisfiable, every model of it holding `c.value` 0, 0, 0
-  and `d.value` 0, 1, 2; EN-1 reports `UndefinedEvaluation` at position 2,
-  `none-value`, its site naming the activation, `over_binding` `d`, over
-  those values; replay reproduces it, and with `over_binding` `c` settles
-  `inconclusive`, `ReplayParity`.
+  and `d.value` 0, 1, 2; replay reproduces that counterexample, and with
+  `over_binding` `c` settles `inconclusive`, `ReplayParity`. EN-1, which
+  searches every depth, reports a formula violation with `over_binding` `c`,
+  the first instance in canonical order with a finding (FR-126-AC-11).
