@@ -117,13 +117,13 @@ their document identity.
     `holder` fields. In `box`, supply a `record` value whose exact checked
     `Box` declaration identity has `fields.target` set to the checked
     reference value obtained for `r1`. In `pair`, supply
-    `{"tuple":{"type":"<the checked Pair declaration identity>","values":[<that reference value>,{"boolean":true}]}}`.
+    `{"tuple":{"type":"<the checked Pair declaration identity>","components":[<that reference value>,{"boolean":true}]}}`.
     In `holder`, supply both `{"variant":{"type":"<the checked Holder
-    declaration identity>","case":"Has","values":[<that reference
-    value>]}}` and, in a separate snapshot, the existing nullary spelling
+    declaration identity>","case":"Has","components":[<that reference
+    value>]}}` and, in a separate snapshot, the nullary spelling
     `{"variant":{"type":"<the checked Holder declaration
     identity>","case":"Empty"}}`. Also try a tuple with one and three
-    positional values, a `Has` case with zero and two values, a `Holder`
+    components, a `Has` case with zero and two components, a `Holder`
     case named `Missing`, and each carrier with an extra payload member.
     Read the three admitted values back from the observation and read their
     nested references as typed data.
@@ -195,8 +195,11 @@ Bind step 11 to `FR-106-AC-84`.
   AC-73 nested-field loci and no observation or truth value; it is not
   admitted as the new optional place.
 - Step 11: the record, tuple, payload-bearing union and nullary union values
-  admit with their exact nominal declaration identities; tuple elements and
-  union payloads remain in declaration order, and every nested reference is
-  the same checked reference value supplied. Tuple and `Has` arity mismatches
-  and the unknown case and extra-member controls refuse before an observation
-  is produced.
+  admit with their exact nominal declaration identities; tuple and union
+  components remain in declaration order, and every nested reference is the
+  same checked reference value supplied. The tuple and `Has` component count
+  mismatches and the `Missing` case refuse
+  `invalid_runtime_input`/`invalid-value`; an extra tuple or variant payload
+  member refuses `invalid_runtime_input`/`unknown-member`. Each of these
+  controls, and the record's extra-member control, refuses before an
+  observation is produced.
