@@ -835,18 +835,16 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
                 cause,
             ))
         );
-        if let Some(backend) = backend {
-            assert_eq!(
-                record
-                    .producer(request.items[offset + 3].item.backend.as_ref())
-                    .map(|backend| backend.as_str()),
-                Some(backend)
-            );
-        } else {
-            assert_eq!(
-                record.producer(request.items[offset + 3].item.backend.as_ref()),
-                None
-            );
+        let detail = record
+            .disposition_detail()
+            .expect("the disposition carries its FR-272 detail");
+        match (offset, backend) {
+            (0, Some("fsl.test-c")) => assert_eq!(detail["backend"], "fsl.test-c"),
+            (1, Some("fsl.test-a")) => {
+                assert_eq!(detail["candidates"], serde_json::json!(["fsl.test-a"]))
+            }
+            (2, None) => assert!(detail.is_empty()),
+            _ => panic!("unexpected temporal expectation at index {offset}"),
         }
     }
     assert_eq!(calls.load(Ordering::Relaxed), 0, "no rejected handoff runs");
