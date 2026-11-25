@@ -547,6 +547,10 @@ fn tc_921_an_accounting_stage_limit_stops_execution_without_a_value() {
     assert_eq!(limit.limit, 1);
     assert_eq!(limit.consumed, 1);
     assert_eq!(limit.next_charge, Integer::from(1_i64));
+    assert_eq!(
+        limit.charge_point,
+        filament_exact::ChargePoint::FunctionCall
+    );
 }
 
 const LEAVES: &str = "enum Color { BLUE, GREEN, RED }\n\
