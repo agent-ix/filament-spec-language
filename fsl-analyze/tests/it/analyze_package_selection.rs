@@ -711,11 +711,11 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
     assert_eq!(run.exit, source.exit);
 }
 
-/// FR-940, FR-962-AC-1: package `claim_names` resolves named operation clauses
+/// FR-962-AC-1: package `claim_names` resolves named operation clauses
 /// to their claim occurrence, and the admitted requirement row gives the item:
 /// it reaches `contract-checker` alone and, over an unbounded subject, settles
 /// `requires_bound` exactly as the source route settles it.
-#[trace("TC-2702", "FR-489-AC-2")]
+#[trace("TC-2702", "FR-962-AC-1")]
 #[test]
 fn named_operation_clauses_resolve_over_a_package() {
     for (name, clause) in [
@@ -757,11 +757,12 @@ fn named_operation_clauses_resolve_over_a_package() {
     }
 }
 
-/// FR-940: package operation-contract claims with one shared structural node
-/// retain their distinct claim occurrence ordinals when names resolve. The
-/// later name must not fall back to the first state clause on that node, and
-/// each settles as the source route settles the same name.
-#[trace("TC-2967", "FR-940-AC-7")]
+/// FR-104-AC-6: two operation-contract claims that share one structural node
+/// keep their own claim occurrence ordinals, in source order, when their
+/// names resolve over a package. The later name must not fall back to the
+/// first state clause on that node, and each settles as the source route
+/// settles the same name.
+#[trace("TC-461", "FR-104-AC-6")]
 #[test]
 fn shared_operation_contract_node_keeps_each_named_occurrence() {
     let body = concat!(
