@@ -34,6 +34,7 @@ jsonschema = { version = "0.17.1", default-features = false, features = ["draft2
 quire-canonical = { workspace = true }
 
 [dev-dependencies]
+fsl-conformance = { path = ".", features = ["test-support"] }
 serde = { version = "1.0.228", features = ["derive"] }
 filament-contract-model = { workspace = true }
 filament-verification-contracts = { git = "https://github.com/agent-ix/filament-verification-contracts", rev = "e6eebb660c6d9b3dee25d643923d3984cbc745b6" }
