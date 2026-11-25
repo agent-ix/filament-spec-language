@@ -8,6 +8,10 @@ use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, Engines,
 };
+#[cfg(feature = "test-support")]
+use fsl_analyze::analyze::{
+    exact_work_checkpoints, reset_exact_work_checkpoints, ExactWorkCheckpoint, ExactWorkPhase,
+};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::{Limits, TransitionSystem};
 use fsl_foundation::RequestIndex;
@@ -73,49 +77,62 @@ fn settle_with_work(
     .remove(0)
 }
 
-fn first_complete_work(
+#[cfg(feature = "test-support")]
+fn settle_with_work_and_checkpoints(
     world: &World,
     claim: &str,
-    expected: impl Fn(&TerminalValue) -> bool,
-) -> u64 {
-    let mut high = 1u64;
-    while settle_with_work(world, claim, high)
-        .terminal()
-        .is_some_and(|terminal| !expected(terminal.value()))
-    {
-        high = high.checked_mul(2).expect("work search stays bounded");
-        assert!(
-            high <= 1 << 24,
-            "the fixture completes under a finite budget"
-        );
-    }
-    let mut low = 0u64;
-    while low + 1 < high {
-        let middle = low + (high - low) / 2;
-        if settle_with_work(world, claim, middle)
-            .terminal()
-            .is_some_and(|terminal| expected(terminal.value()))
-        {
-            high = middle;
-        } else {
-            low = middle;
-        }
-    }
-    high
+    work_units: u64,
+) -> (
+    fsl_analyze::analyze::AnalyzeRecord,
+    Vec<ExactWorkCheckpoint>,
+) {
+    reset_exact_work_checkpoints();
+    let record = settle_with_work(world, claim, work_units);
+    (record, exact_work_checkpoints())
+}
+
+#[cfg(feature = "test-support")]
+fn phase_span(checkpoints: &[ExactWorkCheckpoint], phase: ExactWorkPhase) -> (u64, u64) {
+    let start = checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.phase == phase && !checkpoint.completed)
+        .unwrap_or_else(|| panic!("missing start checkpoint for {phase:?}"))
+        .consumed;
+    let end = checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.phase == phase && checkpoint.completed)
+        .unwrap_or_else(|| panic!("missing completion checkpoint for {phase:?}"))
+        .consumed;
+    (start, end)
+}
+
+#[cfg(feature = "test-support")]
+fn phase_cost(checkpoints: &[ExactWorkCheckpoint], phase: ExactWorkPhase) -> u64 {
+    let (start, end) = phase_span(checkpoints, phase);
+    end - start
 }
 
 /// Product construction, certificate production and independent checking
 /// share the item's `accounting.work_units` allowance.
-#[trace("FR-203-AC-29", "FR-203-AC-30")]
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-29")]
 #[test]
-fn certificate_work_is_cumulative_across_build_production_and_checking() {
+fn product_and_certificate_production_share_the_item_remainder() {
     let world = World::new(&prob_world::link(CLAIMS));
-    let complete = first_complete_work(&world, "Likely", |value| {
-        matches!(value, TerminalValue::Proved { .. })
-    });
-    assert!(complete > 1, "the fixture exercises later certificate work");
+    let (_, sufficient_checkpoints) = settle_with_work_and_checkpoints(&world, "Likely", 1 << 24);
+    let product = phase_cost(&sufficient_checkpoints, ExactWorkPhase::Product);
+    let production = phase_cost(
+        &sufficient_checkpoints,
+        ExactWorkPhase::CertificateProduction,
+    );
+    assert!(product > 0 && production > 0);
+    let combined = product + production;
+    let isolated_bound = product.max(production);
+    assert!(product <= isolated_bound && production <= isolated_bound);
+    assert!(combined > isolated_bound);
 
-    let short = settle_with_work(&world, "Likely", complete - 1);
+    let (short, short_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Likely", isolated_bound);
     assert!(matches!(
         short.terminal().map(|terminal| terminal.value()),
         Some(TerminalValue::Incomplete(
@@ -124,28 +141,81 @@ fn certificate_work_is_cumulative_across_build_production_and_checking() {
     ));
     assert!(short.exact_probabilistic.is_none());
     assert!(short.probabilistic_counterexample.is_none());
+    assert!(short_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::CertificateProduction && !checkpoint.completed
+    }));
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.phase == ExactWorkPhase::CertificateCheck));
 
-    let complete_record = settle_with_work(&world, "Likely", complete);
+    let (production_complete, production_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Likely", combined);
+    assert!(matches!(
+        production_complete
+            .terminal()
+            .map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert!(production_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::CertificateProduction && checkpoint.completed
+    }));
+    assert!(production_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::CertificateCheck && !checkpoint.completed
+    }));
+}
+
+/// Certificate checking is the first unpaid phase after product and production.
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-30")]
+#[test]
+fn certificate_checking_spends_only_the_item_work_remainder() {
+    let world = World::new(&prob_world::link(CLAIMS));
+    let (complete_record, complete_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Likely", 1 << 24);
     assert!(matches!(
         complete_record.terminal().unwrap().value(),
+        TerminalValue::Proved { .. }
+    ));
+    let (_, check_end) = phase_span(&complete_checkpoints, ExactWorkPhase::CertificateCheck);
+    let total = check_end;
+
+    let (short, checkpoints) = settle_with_work_and_checkpoints(&world, "Likely", total - 1);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert!(short.exact_probabilistic.is_none());
+    assert!(checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::CertificateProduction && checkpoint.completed
+    }));
+    assert!(checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::CertificateCheck && !checkpoint.completed
+    }));
+
+    let sufficient = settle_with_work(&world, "Likely", total);
+    assert!(matches!(
+        sufficient.terminal().unwrap().value(),
         TerminalValue::Proved { .. }
     ));
 }
 
 /// Witness construction and independent replay use the same item work prefix.
-#[trace("FR-203-AC-31", "FR-203-AC-32")]
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-31")]
 #[test]
-fn counterexample_work_is_cumulative_across_production_and_replay() {
+fn witness_production_spends_the_remainder_after_product_work() {
     let world = World::new(&prob_world::link(CLAIMS));
-    let complete = first_complete_work(&world, "Unlikely", |value| {
-        *value == TerminalValue::Refuted
-    });
-    assert!(
-        complete > 1,
-        "the fixture exercises witness production and replay"
-    );
+    let (_, checkpoints) = settle_with_work_and_checkpoints(&world, "Unlikely", 1 << 24);
+    let product = phase_cost(&checkpoints, ExactWorkPhase::Product);
+    let production = phase_cost(&checkpoints, ExactWorkPhase::WitnessProduction);
+    let bound = product.max(production);
+    assert!(product > 0 && production > 0 && product + production > bound);
 
-    let short = settle_with_work(&world, "Unlikely", complete - 1);
+    let (short, short_checkpoints) = settle_with_work_and_checkpoints(&world, "Unlikely", bound);
     assert!(matches!(
         short.terminal().map(|terminal| terminal.value()),
         Some(TerminalValue::Incomplete(
@@ -154,8 +224,62 @@ fn counterexample_work_is_cumulative_across_production_and_replay() {
     ));
     assert!(short.probabilistic_counterexample.is_none());
     assert!(short.exact_probabilistic.is_none());
+    assert!(short_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::WitnessProduction && !checkpoint.completed
+    }));
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.phase == ExactWorkPhase::WitnessReplay));
 
-    let complete_record = settle_with_work(&world, "Unlikely", complete);
+    let (production_complete, production_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Unlikely", product + production);
+    assert!(matches!(
+        production_complete
+            .terminal()
+            .map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert!(production_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::WitnessProduction && checkpoint.completed
+    }));
+    assert!(production_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::WitnessReplay && !checkpoint.completed
+    }));
+}
+
+/// Independent replay cannot accept a witness after the item allowance is spent.
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-32")]
+#[test]
+fn witness_replay_spends_the_remainder_after_production() {
+    let world = World::new(&prob_world::link(CLAIMS));
+    let (_, sufficient_checkpoints) = settle_with_work_and_checkpoints(&world, "Unlikely", 1 << 24);
+    let replay_total = sufficient_checkpoints
+        .iter()
+        .find(|checkpoint| {
+            checkpoint.phase == ExactWorkPhase::WitnessReplay && checkpoint.completed
+        })
+        .expect("replay completes under the fixture budget")
+        .consumed;
+    let (short, checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Unlikely", replay_total - 1);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert!(short.probabilistic_counterexample.is_none());
+    assert!(checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::WitnessProduction && checkpoint.completed
+    }));
+    assert!(checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::WitnessReplay && !checkpoint.completed
+    }));
+
+    let complete_record = settle_with_work(&world, "Unlikely", replay_total);
     assert_eq!(
         complete_record.terminal().unwrap().value(),
         &TerminalValue::Refuted
@@ -165,21 +289,23 @@ fn counterexample_work_is_cumulative_across_production_and_replay() {
 
 /// Undefined-path re-exploration continues after product construction has
 /// spent part of the item allowance.
+#[cfg(feature = "test-support")]
 #[trace("FR-203-AC-33", "FR-196-AC-5")]
 #[test]
 fn undefined_reexploration_spends_the_remaining_item_work() {
     let claim = "probabilistic Dropped using ev on M over (c: M::Coin) under Even on origin \
         { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
     let world = World::new(&prob_world::coin(claim));
-    let complete = first_complete_work(&world, "Dropped", |value| {
-        *value == TerminalValue::Refuted
-    });
-    assert!(
-        complete > 1,
-        "the fixture performs product work and re-exploration"
-    );
+    let (_, checkpoints) = settle_with_work_and_checkpoints(&world, "Dropped", 1 << 24);
+    let proof_only = phase_cost(&checkpoints, ExactWorkPhase::ProofOnlyBuild);
+    let reexploration = phase_cost(&checkpoints, ExactWorkPhase::UndefinedReexploration);
+    let materialization = phase_cost(&checkpoints, ExactWorkPhase::UndefinedMaterialization);
+    let replay = phase_cost(&checkpoints, ExactWorkPhase::UndefinedReplay);
+    let reexplore_bound = proof_only + reexploration;
+    assert!(proof_only > 0 && reexploration > 0 && materialization > 0 && replay > 0);
 
-    let short = settle_with_work(&world, "Dropped", complete - 1);
+    let (short, short_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Dropped", reexplore_bound - 1);
     assert!(matches!(
         short.terminal().map(|terminal| terminal.value()),
         Some(TerminalValue::Incomplete(
@@ -188,8 +314,33 @@ fn undefined_reexploration_spends_the_remaining_item_work() {
     ));
     assert!(short.probabilistic_counterexample.is_none());
     assert!(short.exact_probabilistic.is_none());
+    assert!(short_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::UndefinedReexploration && !checkpoint.completed
+    }));
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| { checkpoint.phase == ExactWorkPhase::UndefinedMaterialization }));
 
-    let complete_record = settle_with_work(&world, "Dropped", complete);
+    let (reexplored, reexplored_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Dropped", reexplore_bound);
+    assert!(matches!(
+        reexplored.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert!(reexplored_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::UndefinedReexploration && checkpoint.completed
+    }));
+    assert!(reexplored_checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::UndefinedMaterialization && !checkpoint.completed
+    }));
+
+    let full = checkpoints
+        .last()
+        .expect("the full undefined route records a final work checkpoint")
+        .consumed;
+    let complete_record = settle_with_work(&world, "Dropped", full);
     assert_eq!(
         complete_record.terminal().unwrap().value(),
         &TerminalValue::Refuted
@@ -298,7 +449,7 @@ fn a_reachability_bound_that_holds_settles_proved_with_the_checked_certificate()
 /// stops at that budget on the measure and long-run routes too: only a lower
 /// proof settles a partial product (FSpec FR-411 "Evidence on a partial
 /// product"), and these forms have none here.
-#[trace("TC-638", "FR-203")]
+#[trace("TC-638", "FR-203-AC-2")]
 #[test]
 fn a_partial_product_that_settles_nothing_stops_at_the_state_budget() {
     let link = World::new(&prob_world::link(
@@ -363,7 +514,7 @@ fn a_state_budget_of_one_settles_incomplete() {
     assert!(record.exact_probabilistic.is_none());
 }
 
-#[trace("TC-763", "FR-201", "FR-203", "FR-282")]
+#[trace("TC-763", "FR-201", "FR-203-AC-2", "FR-282")]
 #[test]
 fn cancellation_at_the_checker_acceptance_boundary_settles_incomplete_without_evidence() {
     let world = World::new(&prob_world::link(CLAIMS));
@@ -413,7 +564,7 @@ fn cancellation_at_the_checker_acceptance_boundary_settles_incomplete_without_ev
     }
 }
 
-#[trace("TC-763", "FR-201", "FR-203", "FR-282")]
+#[trace("TC-763", "FR-201", "FR-203-AC-2", "FR-282")]
 #[test]
 fn cancelling_after_the_solver_finishes_is_observed_by_the_independent_checker() {
     use std::cell::Cell;

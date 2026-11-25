@@ -100,7 +100,8 @@ pub use exact::{ExactProbabilityEvidence, exact_probabilistic_item};
 #[cfg(feature = "test-support")]
 pub use exact::{
     exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered,
-    settle_exact_engine_report,
+    exact_work_checkpoints, reset_exact_work_checkpoints, settle_exact_engine_report,
+    ExactWorkCheckpoint, ExactWorkPhase,
 };
 pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;

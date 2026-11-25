@@ -38,7 +38,13 @@ pub(super) fn run(
         Ok(system) => system,
         Err(error) => return build_refusal(ProductRefusal::Admission(error), subject),
     };
+    record_work_checkpoint(ExactWorkPhase::UndefinedMaterialization, work, false);
     let built = materialize(&system, claim, &path, monitor, limits, cancel, work);
+    record_work_checkpoint(
+        ExactWorkPhase::UndefinedMaterialization,
+        work,
+        built.is_ok(),
+    );
     let (mut witness, scheduler) = match built {
         Ok(built) => built,
         Err(ProducerFailure::Invariant) => return broken(),
@@ -50,7 +56,8 @@ pub(super) fn run(
     let Some(package) = system.source_package() else {
         return not_yet();
     };
-    match replay_probabilistic_undefined_with_work_scope(
+    record_work_checkpoint(ExactWorkPhase::UndefinedReplay, work, false);
+    let replay = replay_probabilistic_undefined_with_work_scope(
         package,
         &system,
         &witness.path.item,
@@ -58,7 +65,13 @@ pub(super) fn run(
         limits,
         cancel,
         Some(work),
-    ) {
+    );
+    record_work_checkpoint(
+        ExactWorkPhase::UndefinedReplay,
+        work,
+        matches!(&replay, Ok(ProbabilityWitnessReplay::Reproduced(_))),
+    );
+    match replay {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let quantile_bound;
             let Some(claim_type) = super::probabilistic_bound_type(&claim.form) else {

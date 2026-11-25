@@ -36,13 +36,19 @@ pub use mdp::{
 };
 pub use mdp::{
     ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
-    cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
-    read_probability_proof_document, write_probability_proof_document,
-    write_value_bounds_proof_document,
+    cyclic_mdp_probability_certificate_document_with_work_scope,
+    cyclic_mdp_reward_probability_certificate_document,
+    cyclic_mdp_reward_probability_certificate_document_with_work_scope, probability_proof_document,
+    probability_proof_document_with_work_scope, read_probability_proof_document,
+    write_probability_proof_document, write_probability_proof_document_with_work_scope,
+    write_value_bounds_proof_document, write_value_bounds_proof_document_with_work_scope,
 };
 pub(super) mod long_run;
 mod partial;
-pub use partial::partial_lower_probability_proof_document;
+pub use partial::{
+    partial_lower_probability_proof_document,
+    partial_lower_probability_proof_document_with_work_scope,
+};
 pub(super) mod refutation;
 pub use long_run::{
     LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,

@@ -110,7 +110,9 @@ pub(crate) fn observe_path_search() {
 pub(crate) use build::BudgetedProductError;
 pub use build::build_product;
 #[cfg(feature = "test-support")]
-pub use build::{BudgetedProductError, build_product_with_key_budget};
+pub use build::{
+    BudgetedProductError, build_product_with_key_budget, build_product_with_work_scope,
+};
 pub(crate) use build::{
     admit_in_scope, automaton_refusal, build_retaining_monitor_in_scope,
     build_retaining_monitor_with_budget_in_scope,

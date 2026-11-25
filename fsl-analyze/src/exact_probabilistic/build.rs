@@ -53,6 +53,17 @@ pub fn build_product(
     build_retaining_monitor(request, cancel).map(|(build, _)| build)
 }
 
+/// Build a product under a caller-owned item work scope.
+#[cfg(feature = "test-support")]
+#[implements("FR-203-AC-29")]
+pub fn build_product_with_work_scope(
+    request: ProductRequest<'_>,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<ProbBuild, ProductRefusal> {
+    build_retaining_monitor_in_scope(request, work, cancel).map(|(build, _)| build)
+}
+
 /// Retain the reached semantic owner for certificate key projection. The
 /// monitor cache moves once after exploration, never once per product node.
 pub(crate) fn build_retaining_monitor(

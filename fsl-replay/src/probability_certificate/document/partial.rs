@@ -104,6 +104,47 @@ pub fn partial_lower_probability_proof_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    partial_lower_probability_proof_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+#[implements("FR-203-AC-29")]
+pub fn partial_lower_probability_proof_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    partial_lower_probability_proof_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        Some(work),
+    )
+}
+
+fn partial_lower_probability_proof_document_in_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     // Both attempts share one arithmetic and retained-storage scope.
     let (whole, mut meter, mut storage) = super::mdp::probability_proof_document_spending(
         system,
@@ -112,6 +153,7 @@ pub fn partial_lower_probability_proof_document(
         certificate,
         limits,
         cancel,
+        work,
     );
     let exhausted = match whole {
         Err(
