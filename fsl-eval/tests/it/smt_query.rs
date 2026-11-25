@@ -18,7 +18,9 @@ use fsl_eval::smt::{
 };
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedTemporalClause, PackageDeclarations, TemporalProfile};
+use fsl_semantics::check::{
+    CheckedGraph, CheckedTemporalClause, PackageDeclarations, TemporalProfile,
+};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
@@ -207,6 +209,28 @@ fn world_with_activation(
     formulas: &[&str],
     start: &[(&str, Json)],
 ) -> World {
+    world_with_edited_graph(
+        (object, variable),
+        document,
+        contracts,
+        profile,
+        (activation, |_| {}),
+        formulas,
+        start,
+    )
+}
+
+/// As [`world_with_activation`], with the checked graph passed to `edit`
+/// before it is linked: a package built by hand from the unit's.
+fn world_with_edited_graph(
+    (object, variable): (&str, &str),
+    document: &[u8],
+    contracts: &str,
+    profile: &str,
+    (activation, edit): (&str, fn(&mut CheckedGraph)),
+    formulas: &[&str],
+    start: &[(&str, Json)],
+) -> World {
     let packages = package_input([document]).unwrap();
     let clauses: String = formulas
         .iter()
@@ -243,7 +267,7 @@ fn world_with_activation(
         fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
-    let graph = PackageDeclarations::assemble(
+    let mut graph = PackageDeclarations::assemble(
         parsed.source().reference().clone(),
         "fixture".to_owned(),
         built,
@@ -257,6 +281,7 @@ fn world_with_activation(
         &fsl_eval::value::S6aRewardEvaluator,
     )
     .unwrap_or_else(|refusals| panic!("{unit}: the unit checks: {refusals:?}"));
+    edit(&mut graph);
     let clauses: Vec<CheckedTemporalClause> = graph
         .temporal_clauses()
         .iter()
@@ -555,7 +580,7 @@ fn monitor_encoding_limits_accept_exact_and_reject_zero_or_one_short() {
 #[test]
 fn monitor_alphabet_width_overflow_is_a_typed_size_refusal() {
     let atoms = (0..63)
-        .map(|value| format!("holds(c.value = {value})"))
+        .map(|value| format!("holds(c.value <= {value})"))
         .collect::<Vec<_>>();
     let body = format!("always ({})", atoms.join(" and "));
     let formulas = [body.as_str()];
@@ -758,7 +783,7 @@ fn guarded_infinite_and_bounded_items_preserve_monitor_and_guard_failures() {
         &document,
         contract,
         BOUNDED,
-        "on each (q: M::Counter) when (c.value + 2 = c.value)",
+        "on each (q: M::Counter) when (c.value < 2 and c.value + 2 = c.value)",
         &["eventually[0,3] holds(c.value = 3)"],
         &[("c", json!({"value": {"integer": "0"}}))],
     );
@@ -788,7 +813,7 @@ fn guarded_infinite_and_bounded_items_preserve_monitor_and_guard_failures() {
         assert_eq!(
             negated[position * 3 + 1],
             format!(
-                "(and (not h{position}) (not (and (<= 0 (+ s{position}.c.value 2)) (<= (+ s{position}.c.value 2) 3))))"
+                "(and (not h{position}) (not (=> (< s{position}.c.value 2) (and (<= 0 (+ s{position}.c.value 2)) (<= (+ s{position}.c.value 2) 3)))))"
             )
         );
         let postcondition_failure = &negated[position * 3 + 2];
@@ -800,13 +825,98 @@ fn guarded_infinite_and_bounded_items_preserve_monitor_and_guard_failures() {
     }
 }
 
+/// FR-315-AC-58: a package built by hand, whose guard keeps a `value` read
+/// that the source unit's left conjunct protects, over two instances of which
+/// only `d` lacks the field. Of the negated property's disjuncts only `d`'s
+/// condition failure at position 2 is satisfiable, on one path.
+#[trace("TC-1201", "FR-315-AC-58")]
+#[test]
+fn a_hand_built_guards_only_failure_is_one_instances_at_position_two() {
+    // `inc` writes the receiver's `value` only (FR-154).
+    let mut inc = operation("Counter", "inc", &[]);
+    inc["frame"]["modifies_receiver"] = json!([ident("Counter/value")]);
+    let document = document(
+        "Counter",
+        vec![
+            field("Counter", "value", &ident("Level"), "required"),
+            field("Counter", "held", &ident("Level"), "optional"),
+        ],
+        vec![inc],
+    );
+    let contract = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
+        post Inc using v on M::Counter::inc { self.value = pre(self.value) + 1 }\n";
+    let world = world_with_edited_graph(
+        ("Counter", "c"),
+        &document,
+        contract,
+        BOUNDED,
+        (
+            "on each (q: M::Counter) \
+             when (present(c.held) and (c.value < 2 or value(c.held) = 0))",
+            |graph| graph.drop_temporal_guard_left_conjunct_after_s3(0),
+        ),
+        &["eventually[0,3] holds(c.value = 3)"],
+        &[
+            (
+                "c",
+                json!({"value": {"integer": "0"}, "held": {"present": {"integer": "0"}}}),
+            ),
+            (
+                "d",
+                json!({"value": {"integer": "0"}, "held": {"absent": {}}}),
+            ),
+        ],
+    );
+    let script = world
+        .query_with(&["c", "d"], 0, SmtQueryKind::Unrolling { depth: 2 })
+        .expect("the hand-built item encodes");
+    let negated = assertions(&script).pop().expect("the negated property");
+    let disjuncts = operands(&negated, "or");
+    let failure = |position: u64, object: &str| {
+        format!(
+            "(and (not h{position}) (not (=> (not (< s{position}.{object}.value 2)) \
+             s{position}.{object}.held.present)))"
+        )
+    };
+    for position in 0..=2 {
+        for object in ["c", "d"] {
+            assert!(
+                disjuncts.contains(&failure(position, object)),
+                "{disjuncts:#?}"
+            );
+        }
+    }
+
+    let negated_line = format!("(assert {})", show(&negated));
+    let unrolling: Vec<&str> = script
+        .lines()
+        .filter(|line| *line != negated_line)
+        .collect();
+    assert_eq!(unrolling.len() + 1, script.lines().count());
+    let unrolling = unrolling.join("\n");
+    let satisfied: Vec<&String> = disjuncts
+        .iter()
+        .filter(|disjunct| satisfiable(&format!("{unrolling}\n(assert {disjunct})")))
+        .collect();
+    assert_eq!(satisfied, [&failure(2, "d")]);
+    // Every model of that disjunct holds this path: `inc` on `d`, twice.
+    assert_unsat(&format!(
+        "{unrolling}\n(assert {})\n(assert (not (and (= s0.c.value 0) (= s1.c.value 0) \
+         (= s2.c.value 0) (= s0.d.value 0) (= s1.d.value 1) (= s2.d.value 2))))",
+        failure(2, "d")
+    ));
+}
+
 #[trace("TC-1201", "FR-315-AC-38")]
 #[test]
 fn monitor_queries_encode_one_monitor_per_over_binding() {
+    // `inc` writes the receiver's `value` only (FR-154).
+    let mut inc = operation("Counter", "inc", &[]);
+    inc["frame"]["modifies_receiver"] = json!([ident("Counter/value")]);
     let document = document(
         "Counter",
         vec![field("Counter", "value", &ident("Level"), "required")],
-        vec![operation("Counter", "inc", &["value"])],
+        vec![inc],
     );
     let contract = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
         post Inc using v on M::Counter::inc { self.value = pre(self.value) + 1 }\n";

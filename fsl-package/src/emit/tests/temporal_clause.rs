@@ -1849,6 +1849,13 @@ fn an_on_each_clause_emits_its_trigger_and_guard() {
 /// start offset of its region in the unit text.
 fn refused_on(activation: &str, body: &str) -> (Code, Option<&'static str>, u64, String) {
     let text = unit(INFINITE, &declared_on("Each", activation, body));
+    let (code, tag, start) = refused_in(&text);
+    (code, tag, start, text)
+}
+
+/// The code and tag of the one refusal of the unit `text`, and the start
+/// offset of its region.
+fn refused_in(text: &str) -> (Code, Option<&'static str>, u64) {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("assembles");
     let regions = declarations.regions();
@@ -1863,7 +1870,7 @@ fn refused_on(activation: &str, body: &str) -> (Code, Option<&'static str>, u64,
         panic!("one refusal: {refusals:?}");
     };
     let start = regions.refusal_region(refusal).expect("a region").start();
-    (refusal.cause.code(), refusal.cause.cause(), start, text)
+    (refusal.cause.code(), refusal.cause.cause(), start)
 }
 
 /// FR-337-AC-7 (TC-1265 steps 3 and 4): S3 checks the guard as a `holds`
@@ -1942,23 +1949,29 @@ fn s3_checks_the_on_each_guard_and_binder() {
         assert_eq!(start, u64::try_from(offset).unwrap(), "{activation}");
     }
 
-    // A divisor with no S3 law checks, in a unit that selects the complete
-    // value layer through a function.
-    let text = unit(
-        INFINITE,
-        &format!(
-            "function Noop using v(): Boolean pure {{ true }}\n{}",
-            declared_on(
-                "Each",
-                &each(
-                    "q",
-                    " when (c.versionNumber != 0 and 6 mod c.versionNumber = 0)",
-                ),
-                BODY
-            )
-        ),
+    // In a unit that selects the complete value layer through a function, a
+    // divisor the guard proves nonzero checks and one it does not is refused.
+    let with_function = |condition: &str| {
+        let activation = each("q", &format!(" when ({condition})"));
+        unit(
+            INFINITE,
+            &format!(
+                "function Noop using v(): Boolean pure {{ true }}\n{}",
+                declared_on("Each", &activation, BODY)
+            ),
+        )
+    };
+    compile(&with_function(
+        "c.versionNumber != 0 and 6 mod c.versionNumber = 0",
+    ));
+    let text = with_function("6 mod (2 - c.versionNumber) = 0");
+    let (code, tag, start) = refused_in(&text);
+    assert_eq!(
+        (code, tag),
+        (Code::UndefinedExpression, Some("unproved-nonzero"))
     );
-    compile(&text);
+    let offset = text.find("6 mod (2 - c.versionNumber)").unwrap();
+    assert_eq!(start, u64::try_from(offset).unwrap());
 
     // A guard that is not Boolean and a `holds` condition that is not refuse
     // once, at the guard.

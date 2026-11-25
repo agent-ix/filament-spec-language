@@ -40,8 +40,8 @@ use ix_trace_rs::trace;
 
 use crate::closure_certificate::world;
 use crate::counter::{clause_text, CONTRACT, UNLIMITED};
-use crate::derived_request::{counter_body, derived_deadlock};
-use crate::model_settle::{case, kernel_case, replay};
+use crate::derived_request_support::{counter_body, derived_deadlock};
+use crate::model_settle_support::{case, kernel_case, replay};
 use crate::provider_test_support::CountingUnknownProvider;
 
 fn index(at: usize) -> RequestIndex {
@@ -477,7 +477,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
 #[test]
 fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
     let case = case(&counter_body(""), &[0]);
-    let mut counterexample = crate::model_settle::counterexample(&case);
+    let mut counterexample = crate::model_settle_support::counterexample(&case);
     let last = counterexample.prefix.len() as u64;
     let evaluation = UndefinedEvaluation {
         site: UndefinedSite {
@@ -508,7 +508,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
         &case.request(),
         &Cancel::new(),
         |payload| {
-            let mut result = replay(&case, crate::model_settle::counterexample(&case))?;
+            let mut result = replay(&case, crate::model_settle_support::counterexample(&case))?;
             result.settlement = ModelTraceSettlement::Reproduced {
                 value: ModelTraceValue::Undefined(evaluation.clone()),
                 trace_position: payload.trace_position(),
@@ -521,7 +521,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
     // EN-1 item whose run violated it and whose replay reproduced it.
     let mut item = case.model_item();
     item.replay = Box::new(|payload| {
-        let mut result = replay(&case, crate::model_settle::counterexample(&case))?;
+        let mut result = replay(&case, crate::model_settle_support::counterexample(&case))?;
         result.settlement = ModelTraceSettlement::Reproduced {
             value: ModelTraceValue::Undefined(evaluation.clone()),
             trace_position: payload.trace_position(),
@@ -583,7 +583,7 @@ fn an_undefined_step_evaluation_settles_refuted_with_its_successor_and_transitio
         clause_text("Bounded", "", "always holds(c.value <= 3)")
     );
     let case = kernel_case(&body, DIVIDE, &[0]);
-    let expected = crate::model_settle::counterexample(&case);
+    let expected = crate::model_settle_support::counterexample(&case);
     let CounterexampleKind::UndefinedEvaluation(evaluation) = &expected.kind else {
         panic!("the precondition is undefined at its successor: {expected:?}");
     };
@@ -857,7 +857,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
     assert_eq!(verdict.witnesses.len(), 3);
     for witness in &verdict.witnesses {
         assert_eq!(
-            crate::statistical_witness_replay::replay(&world, "Two", &verdict.provenance, witness,)
+            crate::statistical_witness_support::replay(&world, "Two", &verdict.provenance, witness,)
                 .expect("provider witness replays"),
             fsl_replay::statistical::SampledWitnessReplay::Reproduced
         );

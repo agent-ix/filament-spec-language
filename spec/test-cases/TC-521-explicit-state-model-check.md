@@ -46,11 +46,13 @@ to 1,000,000 (TC-472's 1,000 would stop the example at its first expansion); the
    `Counter` subject's own and whose expansion of value 1, reached by `inc`
    from 0, records `ContractUndetermined` for `inc` with one `Refused`
    evaluation); `always holds(true)` over the `Counter` subject with `pre CanInc
-   { 6 mod (2 - self.value) >= 0 }` from value 2; a subject with an unbounded population root.
+   { q(2 - self.value) >= 0 }` (`q(x) = 6 mod x`, its body checked under
+   `Kernel`) from value 2; a subject with an unbounded population root.
 7. Step 1's first two requests, twice each.
 8. The TP-4 claim with no granularity over the example unit with initial
-   versions `a` 2 and `b` 0 (FR-126-AC-10); `always holds(6 mod (2 -
-   c.versionNumber) >= 0)` over the example unit with both versions 0 and
+   versions `a` 2 and `b` 0 (FR-126-AC-10);
+   `always holds(mod_defined(c.versionNumber))` (FR-126-AC-11's
+   `Kernel`-checked function) over the example unit with both versions 0 and
    with `a` 0 and `b` 1 (FR-126-AC-11).
 9. The guarded `on each` clauses of FR-126-AC-16 over `Counter`: each from a
    test-built checked package carrying its `temporal_clause` node in the
