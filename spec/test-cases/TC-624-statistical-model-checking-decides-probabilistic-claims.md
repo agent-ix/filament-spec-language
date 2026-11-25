@@ -16,7 +16,7 @@ Scope: FR-189-AC-1 to FR-189-AC-5, FR-189-AC-7 to FR-189-AC-12, FR-189-AC-13 to 
 
 ## Test Procedure
 
-Fixtures: the `Undef` model and its two-initial-state variant (FR-189-AC-8), `BehaviourSampler` stubs giving FR-189-AC-10's (decision, estimate) pairs, an empty-subject request, the activation-probability-0 variant of FR-189-AC-4 with `max_draws` 1,000; `Service` and `P95` at `5 ms` and `2 ms`; a two-initial-state variant; a two-server variant with an admitted symmetry declaration, run with a workload that weights each operation equally and with one whose operation weights differ from one another (FR-189-AC-3); `BehaviourSampler` stubs giving FR-189-AC-15's samples, `Quantity<ms>` `M` variants for whole and fractional magnitudes, S3 threshold/support refusal variants, and a quantile test whose stub returns no counted sample; the activation variant and the two-point `M` variant of FR-189-AC-4; `NoFault`; the `Health` variants; a `mean of` claim; the `Wide` model of FR-189-AC-7. Seed 7 throughout.
+Fixtures: FR-189-AC-8's `ClaimSampler` stubs with one test and with two, `BehaviourSampler` stubs giving FR-189-AC-10's (decision, estimate) pairs, an empty-subject request, the activation-probability-0 variant of FR-189-AC-4 with `max_draws` 1,000; `Service` and `P95` at `5 ms` and `2 ms`; a two-initial-state variant; a two-server variant with an admitted symmetry declaration, run with a workload that weights each operation equally and with one whose operation weights differ from one another (FR-189-AC-3); `BehaviourSampler` stubs giving FR-189-AC-15's samples, `Quantity<ms>` `M` variants for whole and fractional magnitudes, S3 threshold/support refusal variants, and a quantile test whose stub returns no counted sample; the activation variant and the two-point `M` variant of FR-189-AC-4; `NoFault`; the `Health` variants; a `mean of` claim; the `Wide` model of FR-189-AC-7. Seed 7 throughout.
 
 1. `P95` at `5 ms` and `2 ms` with Okamoto, then with SPRT.
 2. Compute Okamoto's `N` for `m = 1` and `m = 2`, and the SPRT thresholds; run step 1's first request twice.
@@ -24,7 +24,7 @@ Fixtures: the `Undef` model and its two-initial-state variant (FR-189-AC-8), `Be
 4. Run the activation variant with Okamoto; reduce `quantile 0.5 of (M) >= 3` (`M` is a placeholder for the claim's parenthesised measure) over the two-point variant.
 5. Compute `N` for `NoFault`; run the `Health` variants; request `mean of` with SPRT.
 6. Run the `Wide` claim of FR-189-AC-7 with Okamoto.
-7. Run `Undef` and its two-initial-state variant (FR-189-AC-8).
+7. Run FR-189-AC-8's one-test and two-test requests.
 8. Read the estimate and interval of FR-189-AC-9's tests: Okamoto and the mean of a fraction ended by an undefined second sample, a decided Okamoto test, an SPRT test, and a `LongRun` test ended before its first positive-weight cycle.
 9. Select the least favourable test for each case of FR-189-AC-10.
 10. Run the empty-subject request (FR-189-AC-11) and the activation-probability-0 variant (FR-189-AC-12).
