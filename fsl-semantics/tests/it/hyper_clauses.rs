@@ -1534,8 +1534,9 @@ fn relation_and_hyper_atom_bodies_share_value_typer_refusals() {
     }
 }
 
-/// A `let` may not rebind a binder in scope or a variable of the clause, as
-/// the value typer refuses a `let` that rebinds a parameter.
+/// A `let` may not rebind a binder in scope or a variable of the clause. A
+/// function parameter is neither: the value typer admits a `let` that shadows
+/// it.
 #[trace("TC-597")]
 #[test]
 fn a_let_binder_may_not_shadow_a_binder_or_a_variable() {
@@ -1558,7 +1559,7 @@ fn a_let_binder_may_not_shadow_a_binder_or_a_variable() {
             "{body}: {faults:?}"
         );
     }
-    assert!(!value_typer_admits("", "x: Integer", "let x = 1 in x = 1"));
+    assert!(value_typer_admits("", "x: Integer", "let x = 1 in x = 1"));
     // Two lets in separate operands do not shadow each other.
     body_outcome(&relation_over(
         "(let n = 1 in n = 1) and (let n = true in n)",
