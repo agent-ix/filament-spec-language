@@ -363,7 +363,10 @@ pub(crate) fn check<R: PlanRules>(
     let Some(first) = entries.first() else {
         return reject(CertificateRule::Initial, 0);
     };
-    let start_key = system.state_key(&start).map(|(key, _)| key).ok();
+    let start_key = system
+        .state_key(&start, fsl_foundation::IdentityLimits::default())
+        .map(|(key, _)| key)
+        .ok();
     if start_key.as_ref() != Some(&first.key.state)
         || rules
             .compare_policy_states(&monitors, &first.monitors)
@@ -379,7 +382,7 @@ pub(crate) fn check<R: PlanRules>(
         // The entry's stored state is the state its key names, and (past
         // entry 0) its parent record names an earlier entry that records
         // the step into it.
-        match system.state_key(&entry.state) {
+        match system.state_key(&entry.state, fsl_foundation::IdentityLimits::default()) {
             Ok((key, _)) if key == entry.key.state => {}
             _ => return reject(CertificateRule::Closure, index),
         }
@@ -566,7 +569,9 @@ pub(crate) fn check<R: PlanRules>(
             let Some(successor) = entries.get(*target) else {
                 return reject(CertificateRule::Closure, index);
             };
-            let Ok((state_key, _)) = system.state_key(&state) else {
+            let Ok((state_key, _)) =
+                system.state_key(&state, fsl_foundation::IdentityLimits::default())
+            else {
                 return reject(CertificateRule::Closure, index);
             };
             // With no cost dominance the node keeps its accumulated value,
@@ -678,7 +683,7 @@ fn invariants_hold(
         Ok(super::Admission::Violated) => Ok(Some(false)),
         Ok(super::Admission::Undetermined(invariant)) => {
             let key = system
-                .state_key(state)
+                .state_key(state, fsl_foundation::IdentityLimits::default())
                 .map(|(key, _)| key)
                 .unwrap_or_default();
             Err(PlanStopCause::InvariantUndetermined {
