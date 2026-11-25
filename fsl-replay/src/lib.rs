@@ -422,6 +422,7 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
+    check_step_for_model,
     abstract_classes, candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
     candidate_lasso_has_fair_run,
     candidate_lasso_has_fair_run_with_recurring_edge, check_initial, check_protocol_initial,

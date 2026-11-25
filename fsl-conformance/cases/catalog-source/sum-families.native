@@ -1,0 +1,8 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type E = Decimal[0, 1000; 2, 2; toward-zero];
+type D = Decimal[0, 4000; 2, 2; toward-zero];
+type P = Rational[0, 10; 1, 2];
+type Q = Rational[-80, 80; 1, 2];
+function decimals using v(s: Sequence<E>[0, 4]): D pure { sum<D>(x in s: x) }
+function rationals using v(s: Sequence<P>[0, 4]): Q pure { sum<Q>(x in s: x) }

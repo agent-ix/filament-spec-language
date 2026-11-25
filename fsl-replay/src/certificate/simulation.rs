@@ -54,9 +54,9 @@ use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::counterexample::{UndefinedEvaluation, UndefinedLocus};
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits};
 use crate::refinement::{
-    check_initial, check_step, open_systems, ConcreteStep, EvalFailure, RefinementFailure,
-    RefinementPosition, RefinementSystems, StepRejection, StepVerdict, SubjectRefusal, Taken,
-    Undetermined,
+    check_initial, check_step_for_model, open_systems, ConcreteStep, EvalFailure,
+    RefinementFailure, RefinementPosition, RefinementSystems, StepRejection, StepVerdict,
+    SubjectRefusal, Taken, Undetermined,
 };
 
 /// One position of a simulation certificate: a product state EN-1 stored.
@@ -776,7 +776,7 @@ impl Run<'_, '_> {
             }
             self.edges = self.edges.saturating_add(1);
             let number = widen(number);
-            let verdict = check_step(
+            let verdict = check_step_for_model(
                 self.refinement,
                 self.concrete,
                 self.abstract_system,

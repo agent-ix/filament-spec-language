@@ -1,0 +1,361 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.object-type/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "catalog/timed",
+        "name": "object_type"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.population/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "catalog/timed",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.value-type/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "catalog/timed",
+        "name": "value_type"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/timed",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1.0.0"
+  },
+  "populations": [
+    {
+      "displayName": "ix://catalog/timed/config_history",
+      "extent": "closed",
+      "identity": "ix://catalog/timed/config_history",
+      "kind": {
+        "module": "catalog/timed",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/timed/ConfigVersion"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/timed/config_history",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/timed/config_history"
+          ]
+        }
+      }
+    }
+  ],
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/timed/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [
+        {
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "identity": "ix://catalog/timed/VersionNumber/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/timed/VersionNumber",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/timed/VersionNumber"
+              ]
+            }
+          }
+        },
+        {
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "identity": "ix://catalog/timed/VersionNumber/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "1000"
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/timed/VersionNumber",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/timed/VersionNumber"
+              ]
+            }
+          }
+        }
+      ],
+      "displayName": "ix://catalog/timed/VersionNumber",
+      "extensions": [],
+      "identity": "ix://catalog/timed/VersionNumber",
+      "kind": {
+        "module": "catalog/timed",
+        "name": "value_type"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/timed/VersionNumber",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/timed/VersionNumber"
+          ]
+        }
+      },
+      "roles": [],
+      "scalar": "integer",
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "ix://catalog/timed/ConfigVersion",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/timed/ConfigVersion/versionNumber",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "versionNumber",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/timed/ConfigVersion/versionNumber",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/timed/ConfigVersion/versionNumber"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/timed/VersionNumber"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/timed/ConfigVersion/parent",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "parent",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/timed/ConfigVersion/parent",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/timed/ConfigVersion/parent"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/timed/ConfigVersion"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/timed/ConfigVersion/x",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "x",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/timed/ConfigVersion/x",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/timed/ConfigVersion/x"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Clock"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/timed/ConfigVersion/r",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "r",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/timed/ConfigVersion/r",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/timed/ConfigVersion/r"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/timed/ClockRef"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/timed/ConfigVersion/optional",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "optional",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/timed/ConfigVersion/optional",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/timed/ConfigVersion/optional"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/timed/ClockRef"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/timed/ConfigVersion/refs",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": false,
+            "upper": 3
+          },
+          "name": "refs",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/timed/ConfigVersion/refs",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/timed/ConfigVersion/refs"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/timed/ClockRef"
+        }
+      ],
+      "identity": "ix://catalog/timed/ConfigVersion",
+      "kind": {
+        "module": "catalog/timed",
+        "name": "object_type"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": [
+              "ix://catalog/timed/ConfigVersion/versionNumber",
+              "ix://catalog/timed/ConfigVersion/r",
+              "ix://catalog/timed/ConfigVersion/x"
+            ]
+          },
+          "identity": "ix://catalog/timed/ConfigVersion/attemptUpdate",
+          "name": "attemptUpdate",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/timed/spec",
+              "startColumn": 1,
+              "startLine": 1
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": [],
+          "returns": {
+            "multiplicity": {
+              "lower": 1,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "nullable": false,
+            "typeRef": "ix://filament/native/Boolean"
+          }
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/timed/ConfigVersion",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/timed/ConfigVersion"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "ClockRef",
+      "extensions": [],
+      "identity": "ix://catalog/timed/ClockRef",
+      "kind": "reference",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/timed/ClockRef",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/timed/ClockRef"
+          ]
+        }
+      },
+      "roles": [],
+      "target": "ix://filament/native/Clock",
+      "unknownPolicy": "reject"
+    }
+  ]
+}

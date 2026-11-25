@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile Complete = "filament.value.complete/v1";
+profile Retention = "retention";
+retention Audit { subject: "audit", days: 30 }
