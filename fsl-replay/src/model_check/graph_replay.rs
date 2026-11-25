@@ -379,13 +379,15 @@ pub fn replay_model_graph_from_package(
     let bare = fsl_package::BarePackage::new(&admitted)
         .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
-            package.with_supply(
-                fsl_package::BareSupply {
-                    identities: &identities,
-                    equality: equality.as_ref(),
-                },
-                &mut budget,
-            )
+            package
+                .with_supply(
+                    fsl_package::BareSupply {
+                        identities: &identities,
+                        equality: equality.as_ref(),
+                    },
+                    &mut budget,
+                )
+                .map_err(fsl_package::DependencyJoinRefusal::from)
         })
         .map_err(|_| fault("handoff-supply-joins"))?;
     let input =

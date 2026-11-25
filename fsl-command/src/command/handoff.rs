@@ -619,15 +619,20 @@ mod tests {
         let _view = fsl_package::BarePackage::new(&loaded.package)
             .with_dependency_artifacts(&loaded.dependencies, &mut loaded.budget)
             .and_then(|package| {
-                package.with_supply(
-                    fsl_package::BareSupply {
-                        identities: &loaded.identities,
-                        equality: loaded.equality.as_ref(),
-                    },
-                    &mut loaded.budget,
-                )
+                package
+                    .with_supply(
+                        fsl_package::BareSupply {
+                            identities: &loaded.identities,
+                            equality: loaded.equality.as_ref(),
+                        },
+                        &mut loaded.budget,
+                    )
+                    .map_err(fsl_package::DependencyJoinRefusal::from)
             })
-            .map_err(|native| {
+            .map_err(|refusal| {
+                let fsl_package::DependencyJoinRefusal::Native(native) = refusal else {
+                    panic!("an admitted closure has distinct package names: {refusal}");
+                };
                 Box::new(NativeDenial {
                     native,
                     consumed: loaded.budget.consumed(),

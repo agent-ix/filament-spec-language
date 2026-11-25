@@ -154,6 +154,8 @@ pub(crate) enum UnitDefinitionRefusal {
     Graph,
     /// A selected row names no node of the package.
     Unjoined,
+    /// Two views define one dimension or unit node key differently.
+    Disagreement,
 }
 
 /// A checked rational as `Rational`, only when its spelling is the reduced one:
@@ -307,12 +309,17 @@ pub(crate) fn read_unit_table(
 
 /// Rebuild the world's graph from its admitted package definitions, then apply
 /// the same equivalence classes and runtime projection as the source route.
+///
+/// # Errors
+///
+/// [`UnitDefinitionRefusal::Disagreement`] when two views hold unequal
+/// definitions under one node key: neither replaces the other.
 pub(crate) fn world_units(
     package: &crate::bare::BarePackage<'_>,
 ) -> Result<UnitTable, UnitDefinitionRefusal> {
     use filament_contract_model::{CheckedDimensionOperand, CheckedNodeKind, CheckedTerm};
     use fsl_semantics::check::EquivalenceClasses;
-    use UnitDefinitionRefusal::Graph;
+    use UnitDefinitionRefusal::{Disagreement, Graph};
 
     let mut dimensions = std::collections::BTreeMap::new();
     let mut units = std::collections::BTreeMap::new();
@@ -320,10 +327,20 @@ pub(crate) fn world_units(
     let mut pairs = Vec::new();
     for view in std::iter::once(package).chain(package.dependency_views()) {
         for (definition, key) in &view.units.dimensions {
-            dimensions.insert(key.clone(), definition.clone());
+            if dimensions
+                .insert(key.clone(), definition.clone())
+                .is_some_and(|held| held != *definition)
+            {
+                return Err(Disagreement);
+            }
         }
         for (definition, key) in &view.units.units {
-            units.insert(key.clone(), definition.clone());
+            if units
+                .insert(key.clone(), definition.clone())
+                .is_some_and(|held| held != *definition)
+            {
+                return Err(Disagreement);
+            }
         }
         owners.extend(view.units.owners.iter().cloned());
         let admitted = view.package();

@@ -977,6 +977,14 @@ impl HandoffSupply<'_> {
             });
         }
         let package = read(bytes, &evidence, limits, budget).map_err(admission_refusal)?;
+        // An artifact named as the root is refused whether or not a lock
+        // selects it: its definitions would stand under the root's node keys.
+        if dependencies
+            .iter()
+            .any(|artifact| artifact.package.name() == package.name())
+        {
+            return Err(malformed());
+        }
         Ok((package, dependencies))
     }
 }
@@ -1112,13 +1120,15 @@ pub fn replay_model_trace_from_package(
     let bare = fsl_package::BarePackage::new(&admitted)
         .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
-            package.with_supply(
-                fsl_package::BareSupply {
-                    identities: &identities,
-                    equality: equality.as_ref(),
-                },
-                &mut budget,
-            )
+            package
+                .with_supply(
+                    fsl_package::BareSupply {
+                        identities: &identities,
+                        equality: equality.as_ref(),
+                    },
+                    &mut budget,
+                )
+                .map_err(fsl_package::DependencyJoinRefusal::from)
         })
         .map_err(|_| fault("handoff-supply-joins"))?;
     let input =
@@ -1632,13 +1642,15 @@ pub fn replay_protocol_trace_from_package(
     let bare = fsl_package::BarePackage::new(&admitted)
         .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
-            package.with_supply(
-                fsl_package::BareSupply {
-                    identities: &identities,
-                    equality: equality.as_ref(),
-                },
-                &mut budget,
-            )
+            package
+                .with_supply(
+                    fsl_package::BareSupply {
+                        identities: &identities,
+                        equality: equality.as_ref(),
+                    },
+                    &mut budget,
+                )
+                .map_err(fsl_package::DependencyJoinRefusal::from)
         })
         .map_err(|_| fault("handoff-supply-joins"))?;
     let input =

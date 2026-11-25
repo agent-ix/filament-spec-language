@@ -1197,22 +1197,20 @@ fn extraneous_models_keep_the_run_request_pointer_and_analyze_mapping() {
     );
 }
 
-#[test]
-#[trace("FR-850-AC-13", "TC-2410")]
-fn an_artifact_under_the_root_name_is_refused_unselected_and_selected() {
+/// Adds to the prepared handoff a dependency artifact under the root's package
+/// name, with its own witnesses and other content, as manifest row 0.
+fn supply_under_root_name(directory: &Path) {
     use fsl_command::{checked_handoff, emit_checked_v2};
-    let directory = tempfile::tempdir().unwrap();
-    prepare(directory.path(), false);
-    let handoff = directory.path().join("handoff");
 
     // Another content under the root's package name, with its own witnesses.
-    let other_source = directory.path().join("other.native");
+    let handoff = directory.join("handoff");
+    let other_source = directory.join("other.native");
     std::fs::write(
         &other_source,
         format!("{HEADER}function answer using v(): Integer pure {{ 7 }}"),
     )
     .unwrap();
-    let other = directory.path().join("other");
+    let other = directory.join("other");
     checked_handoff::write(
         &checked_handoff::CheckedHandoffRequest {
             emit: emit_checked_v2::Request {
@@ -1249,6 +1247,16 @@ fn an_artifact_under_the_root_name_is_refused_unselected_and_selected() {
         {"identity": "test/z", "directory": "dependencies/2"},
     ]);
     std::fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+}
+
+#[test]
+#[trace("FR-850-AC-13", "TC-2410")]
+fn an_artifact_under_the_root_name_is_refused_unselected_and_selected() {
+    let directory = tempfile::tempdir().unwrap();
+    prepare(directory.path(), false);
+    let dependencies = directory.path().join("handoff/dependencies");
+
+    supply_under_root_name(directory.path());
     let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
     assert_eq!(exit, 20, "{outcome}");
     assert_eq!(outcome["code"], "invalid_package", "{outcome}");
@@ -1267,4 +1275,45 @@ fn an_artifact_under_the_root_name_is_refused_unselected_and_selected() {
     assert_eq!(exit, 20, "{outcome}");
     assert_eq!(outcome["code"], "invalid_package", "{outcome}");
     assert_eq!(outcome["cause"], "definition-cycle", "{outcome}");
+}
+
+/// A closure that holds the root's name, directly or through a library, is an
+/// import cycle for the directory loader whether or not an artifact is
+/// supplied under that name, and refuses before any item runs.
+#[test]
+#[trace("FR-531-AC-63", "TC-1331")]
+fn a_closure_holding_the_root_name_is_a_cycle_with_or_without_an_artifact() {
+    for through_library in [false, true] {
+        for supplied in [false, true] {
+            let case = format!("through a library: {through_library}, supplied: {supplied}");
+            let directory = tempfile::tempdir().unwrap();
+            prepare(directory.path(), false);
+            if supplied {
+                supply_under_root_name(directory.path());
+            }
+            // The root selects `test/z`, which selects `test/a`.
+            let (file, selections) = if through_library {
+                let library = if supplied { 1 } else { 0 };
+                (
+                    format!("handoff/dependencies/{library}/checked-package.json"),
+                    json!([{"identity": "dependency-root"}]),
+                )
+            } else {
+                (
+                    "handoff/checked-package.json".to_owned(),
+                    json!([{"identity": "dependency-root"}, {"identity": "test/z"}]),
+                )
+            };
+            let file = directory.path().join(file);
+            let mut value: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+            value["lock"]["dependency_selections"] = selections;
+            std::fs::write(&file, serde_json::to_vec(&value).unwrap()).unwrap();
+
+            let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
+            assert_eq!(exit, 20, "{case}: {outcome}");
+            assert_eq!(outcome["code"], "invalid_package", "{case}: {outcome}");
+            assert_eq!(outcome["cause"], "definition-cycle", "{case}: {outcome}");
+            assert_eq!(outcome.get("outcome"), None, "{case}: {outcome}");
+        }
+    }
 }

@@ -11,6 +11,7 @@ use filament_contract_model::{
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{DependencyArtifact, Emission, EmitLimits, V2ReadLimits};
 use fsl_semantics::check::PackageDeclarations;
+use ix_trace_rs::trace;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -173,6 +174,7 @@ fn wire(artifact: &DependencyArtifact) -> Value {
 /// its name, before reading it: byte-identical artifacts and two contents
 /// differing only in an equivalence's `root_scale` refuse alike. No content is
 /// compared here; the link diamond rule does that.
+#[trace("TC-1331", "FR-531-AC-60")]
 #[test]
 fn a_second_supplied_artifact_of_one_name_refuses_whatever_its_content() {
     let one = wire(&library(1));
@@ -226,6 +228,7 @@ fn assert_refuses(outcome: Result<usize, ReplayRefusal>, case: &str) {
 
 /// Handoff admission refuses an artifact that carries the root package's name,
 /// with the root's own content or another: that name already holds the root.
+#[trace("TC-1331", "FR-531-AC-59")]
 #[test]
 fn an_artifact_named_as_the_root_refuses() {
     for (root_ratio, supplied_ratio) in [(1, 1), (1, 2), (2, 1)] {
@@ -237,6 +240,7 @@ fn an_artifact_named_as_the_root_refuses() {
 }
 
 /// A root whose lock selects its own name refuses.
+#[trace("TC-1331", "FR-531-AC-59")]
 #[test]
 fn a_root_selecting_its_own_name_refuses() {
     let control = admit(&selecting("root", "dep"), &[library(2)]);
@@ -248,6 +252,7 @@ fn a_root_selecting_its_own_name_refuses() {
 }
 
 /// The same refusal holds when a selected library selects the root's name.
+#[trace("TC-1331", "FR-531-AC-59")]
 #[test]
 fn a_library_selecting_the_root_name_refuses() {
     let closure = [library(2), selecting("mid", "dep")];
@@ -261,6 +266,7 @@ fn a_library_selecting_the_root_name_refuses() {
 
 /// An artifact is named by the package in its bytes: a root-named one refuses
 /// under whatever identity it is supplied.
+#[trace("TC-1331", "FR-531-AC-59")]
 #[test]
 fn a_root_named_artifact_supplied_under_another_identity_refuses() {
     let mut relabelled = library(2);
