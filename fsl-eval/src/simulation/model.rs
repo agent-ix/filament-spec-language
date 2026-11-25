@@ -86,7 +86,7 @@ use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::OperationKey;
+use fsl_semantics::check::{OperationKey, PopulationDomain};
 use fsl_semantics::family::ClassifyFailure;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::clause_observation::Observation;
@@ -2567,16 +2567,58 @@ impl<'a> ModelSystem<'a> {
         Ok(instances)
     }
 
-    /// Every declared key in each admitting population, including keys no
-    /// initial state holds. Populations follow declaration identity text
-    /// order and their keys keep the order of each universe list.
+    /// FR-172 Object parameters: the instances of a hyper clause parameter,
+    /// one per key of the universe of the one population `domain` it resolves
+    /// to, in universe order, whether or not an initial state holds the key.
+    /// `self` is the system of the parameter's alias. No other population
+    /// contributes a key, whatever its member types.
+    ///
+    /// # Errors
+    ///
+    /// [`NotSimulated::RequiresBound`] when that population has no universe;
+    /// [`NotSimulated::Extent`] when this system's model has no one population
+    /// that is `domain`, and as [`Self::instances`].
+    pub fn hyper_instances(
+        &self,
+        domain: &PopulationDomain,
+    ) -> Result<Vec<ModelInstance>, NotSimulated> {
+        let resolved = self.model.resolved_population(domain).ok_or_else(|| {
+            NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
+                "model-simulation",
+                "parameter-population",
+            )))
+        })?;
+        let mut seen = BTreeSet::new();
+        let instances = self
+            .universe_members_where(&|population| population.key == resolved)?
+            .filter(|(_, key)| seen.insert(*key))
+            .map(|(population, key)| ModelInstance {
+                population: population.clone(),
+                key: key.to_owned(),
+            })
+            .collect();
+        Ok(instances)
+    }
+
+    /// [`Self::universe_members_where`] the populations that overlap the
+    /// object type `parameter`.
     fn universe_members<'s>(
         &'s self,
         parameter: &EffectiveId,
     ) -> Result<impl Iterator<Item = (&'s DeclarationKey, &'s str)> + 's, NotSimulated> {
+        self.universe_members_where(&|population| self.overlaps(population, parameter.clone()))
+    }
+
+    /// Every declared key in each population `admits` selects, including keys
+    /// no initial state holds. Populations follow declaration identity text
+    /// order and their keys keep the order of each universe list.
+    fn universe_members_where<'s>(
+        &'s self,
+        admits: &dyn Fn(&fsl_semantics::model::state::StatePopulation) -> bool,
+    ) -> Result<impl Iterator<Item = (&'s DeclarationKey, &'s str)> + 's, NotSimulated> {
         let mut admitting = Vec::new();
         for population in &self.populations {
-            if self.overlaps(population, parameter.clone()) {
+            if admits(population) {
                 let text = declaration_text(&population.key, CanonicalLimits::new(u64::MAX))
                     .map_err(|_| {
                         NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(

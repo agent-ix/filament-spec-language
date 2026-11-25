@@ -19,8 +19,8 @@ use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{
-    ModelCheckRefusal, ModelCheckRequest, StateGraphItem, StateGraphRequest, check_model,
-    check_state_graph,
+    ModelCheckRefusal, ModelCheckRequest, SingleExistentialRequest, StateGraphItem,
+    StateGraphRequest, check_model, check_single_existential, check_state_graph,
 };
 use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
@@ -36,6 +36,10 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{CertificateRequest, ClosureCertificate, ClosureRefusal, check_closure};
 use fsl_replay::{CounterexampleKind, ModelCheckItem, ModelCheckLimits};
 use fsl_replay::{ModelCheckOutcome, UndecidedCause};
+use fsl_replay::{
+    ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ResultLabel,
+    StateGraphMethod, settle_existential,
+};
 use fsl_semantics::check::{
     CheckCause, CheckedTemporalClause, FormulaNode, FormulaNodeId, HyperCause,
 };
@@ -2231,4 +2235,78 @@ fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
     );
     assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 0);
     assert_eq!(generated_initial_states() - generated_before, 0);
+}
+
+/// FR-172 Object parameters and FR-125 Instancing: `v: M::Lamp` resolves to
+/// `P1`, the one population that overlaps `Lamp`, so its instances are the
+/// keys of `P1`'s universe, held or not. `P1`'s other member type is `Dog`.
+/// `Q`, a population of `Dog`'s supertype `Animal`, does not overlap `Lamp`:
+/// it contributes no instance, and replay refuses its key.
+#[test]
+fn hyper_instances_are_the_keys_of_the_resolved_population_alone() {
+    let world = world(
+        &[("P1", &["Dog", "Lamp"]), ("Q", &["Animal"])],
+        &[("P1", &[("l", "Lamp")]), ("Q", &[("a", "Animal")])],
+    );
+    let body = "hyper H using t0 over behaviours (v: M::Lamp) \
+        exists trace a of M { always holds((v = v) @ a) }\n";
+    let graph = declarations_in(PACKAGE, &world.document, body)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the hyper clause checks: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let [clause] = package.graph().hyper_clauses() else {
+        panic!("one hyper clause");
+    };
+    let both = || universes(&[("P1", &["l", "spare"]), ("Q", &["a", "b"])]);
+    let limits = ModelCheckLimits::default();
+    let system =
+        ModelSystem::new(world.subject(&package, both()).simulation).expect("the subject admits");
+    let letters =
+        CheckedHyperLetters::new(&package, clause, vec![&system]).expect("the letters build");
+    let run = check_single_existential(
+        SingleExistentialRequest {
+            clause,
+            subject: world.subject(&package, both()),
+            letters: &letters,
+            limits,
+            max_depth: None,
+            seed: None,
+            meter: UNLIMITED,
+        },
+        &Cancel::new(),
+    )
+    .expect("the HP-5 run is not refused");
+    let bound = |key: &str| vec![("v".to_owned(), key.to_owned())];
+    let listed: Vec<_> = run
+        .instances
+        .iter()
+        .map(|decided| decided.instance.clone())
+        .collect();
+    assert_eq!(listed, [bound("l"), bound("spare")]);
+
+    let subjects = [world.subject(&package, both())];
+    let request = ProductClosureRequest {
+        package: &package,
+        clause: ProductClosureClause::Hyper(clause),
+        subjects: &subjects,
+        meter: UNLIMITED,
+    };
+    let method = StateGraphMethod {
+        limits,
+        max_depth: None,
+        seed: 0,
+    };
+    let held = settle_existential(&request, &run.instances[0], &method, &Cancel::new())
+        .expect("replay binds the key the engine listed");
+    assert_eq!(held.record.label, ResultLabel::Proved);
+    let mut foreign = run.instances[0].clone();
+    foreign.instance = bound("a");
+    assert!(matches!(
+        settle_existential(&request, &foreign, &method, &Cancel::new()),
+        Err(ProductClosureRefusal::Input("HP-5-instance"))
+    ));
 }
