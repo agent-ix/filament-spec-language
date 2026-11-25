@@ -4779,6 +4779,45 @@ fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
     Value::Object(member)
 }
 
+/// Write FR-621's certificate member for a verified temporal SMT settlement.
+///
+/// This is the writer projection used by callers that settle a CG-produced
+/// [`fsl_replay::SmtProofOutcome`] through
+/// [`crate::model_check::smt::settle_temporal_smt_proof`]. No certificate is
+/// written when the core did not verify it.
+#[must_use]
+pub fn smt_proof_certificate_member(
+    identity: Value,
+    settlement: &fsl_replay::SmtProofSettlement,
+) -> Option<Value> {
+    if !matches!(
+        settlement.value(),
+        fsl_replay::TerminalValue::Proved {
+            certification: fsl_replay::Certification::Certified,
+            ..
+        }
+    ) {
+        return None;
+    }
+    let checker = settlement.checker()?;
+    if checker != fsl_replay::CertificateChecker::SmtProof {
+        return None;
+    }
+    Some(checker_certificate_member(identity, checker, true))
+}
+
+fn checker_certificate_member(
+    identity: Value,
+    checker: fsl_replay::CertificateChecker,
+    accepted: bool,
+) -> Value {
+    json!({
+        "identity": identity,
+        "checker": checker.as_str(),
+        "accepted": accepted,
+    })
+}
+
 /// FR-741's `counterpart` of a `ValueBounds` proof: the other side's
 /// `{kind, document, accepted}`, its `document` a bare FSpec FR-331
 /// `ProbabilityCertificate`.
@@ -4888,11 +4927,8 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         record.get("result").and_then(Value::as_str),
     ) {
         if matches!(result, "proved" | "refuted") {
-            let mut certificate = json!({
-                "identity": identity,
-                "checker": checker.as_str(),
-                "accepted": result == "proved"
-            });
+            let mut certificate =
+                checker_certificate_member(identity, checker, result == "proved");
             if let Some(document) = certificate_document {
                 if let Some(certificate) = certificate.as_object_mut() {
                     certificate.insert("document".to_owned(), document);
