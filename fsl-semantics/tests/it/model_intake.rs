@@ -152,7 +152,9 @@ fn package_with_dimension_and_unit_graph() -> Value {
     document
 }
 
-fn intake_reference_refusals(document: &Value) -> Vec<fsl_semantics::model::refusal::ModelRefusal> {
+fn intake_reference_refusals(
+    document: &Value,
+) -> Vec<fsl_semantics::model::normalize::ModelRefusal> {
     let bytes = serde_json::to_vec(document).expect("serialize the mutated model");
     let packages = package_input([bytes.as_slice()]).expect("the package input parses");
     let selection = DomainPackageRef {
@@ -168,7 +170,7 @@ fn intake_reference_refusals(document: &Value) -> Vec<fsl_semantics::model::refu
 }
 
 fn assert_reference_refusal(
-    refusals: &[fsl_semantics::model::refusal::ModelRefusal],
+    refusals: &[fsl_semantics::model::normalize::ModelRefusal],
     node: &str,
     reference: &str,
     origin: &Value,
