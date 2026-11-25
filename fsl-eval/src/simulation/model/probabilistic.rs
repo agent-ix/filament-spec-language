@@ -903,7 +903,7 @@ impl ModelSystem<'_> {
                     .and_then(Option::take)
                     .ok_or_else(|| stop(BROKEN))?;
                 let key = match key_policy {
-                    Some(policy) => policy.key(self, &successor.1.state())?,
+                    Some(policy) => policy.key(self, successor.1.state())?,
                     None => self
                         .canonical_state_key(&successor.1)
                         .map_err(|_| stop(BROKEN))?,

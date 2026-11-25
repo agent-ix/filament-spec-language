@@ -299,18 +299,53 @@ fn a_package_with_no_relation_writes_no_relation_node() {
     assert!(matches!(emitted.read(), Read::Verified { .. }));
 }
 
-/// FR-306-AC-2 (TC-804 step 2): changing an `ObjectBinding` field's
-/// `RustField` changes the emitted relation and remains readable.
+/// FR-306-AC-2 (TC-804 step 2): an unchanged recompile gives an equal
+/// relation node id and body. Changing an `ObjectBinding` field's
+/// `RustField` keeps the node id, writes the new spelling in that type's
+/// `objects` entry, and the changed package reads back.
 #[trace("TC-804", "FR-306-AC-2")]
 #[test]
 fn a_rebinding_changes_the_relation_body() {
     let first = emit_with(Some(&three_bindings("version")));
     let again = emit_with(Some(&three_bindings("version")));
+    assert_eq!(first.relation()["node_id"], again.relation()["node_id"]);
     assert_eq!(first.relation()["body"], again.relation()["body"]);
 
     let rebound = emit_with(Some(&three_bindings("revision")));
+    assert_eq!(first.relation()["node_id"], rebound.relation()["node_id"]);
     assert_ne!(first.relation()["body"], rebound.relation()["body"]);
-    assert!(matches!(rebound.read(), Read::Verified { .. }));
+    let bound_fields = |emitted: &Emitted| {
+        let objects = emitted.relation()["body"]["objects"]
+            .as_array()
+            .expect("the objects");
+        let [object] = &objects[..] else {
+            panic!("one objects entry: {objects:?}");
+        };
+        assert_eq!(
+            object["type"],
+            emitted.object_type("ConfigVersion")["node_id"]
+        );
+        object["fields"].clone()
+    };
+    assert_eq!(
+        bound_fields(&first),
+        json!([
+            {"name": "note", "rust_field": "note"},
+            {"name": "version", "rust_field": "version"},
+        ])
+    );
+    assert_eq!(
+        bound_fields(&rebound),
+        json!([
+            {"name": "note", "rust_field": "note"},
+            {"name": "version", "rust_field": "revision"},
+        ])
+    );
+    assert!(
+        matches!(rebound.read(), Read::Verified { .. }),
+        "{:?}",
+        rebound.read()
+    );
 }
 
 /// A Rust path with an empty segment has no array of segments, so the

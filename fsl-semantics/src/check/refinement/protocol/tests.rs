@@ -2415,7 +2415,7 @@ fn a_refused_abstract_clause_reports_alone_over_a_concrete_protocol() {
 /// `cattempt` no binder record (FR-432's binder-record table defines none
 /// for it; filed on STD-493), so a `cend` sharing the template's record
 /// would also be empty. It bites once a template has a record.
-#[trace("TC-310", "FR-375-AC-28")]
+#[trace("FSpec-TC-310", "FSpec-FR-375-AC-28")]
 #[test]
 fn effect_commit_and_cend_classes_are_catalogued() {
     let graph = checks(&unit(REFUNDS, REFUND_ROWS));

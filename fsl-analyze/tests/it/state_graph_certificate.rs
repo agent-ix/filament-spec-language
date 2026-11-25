@@ -20,16 +20,16 @@ use fsl_eval::simulation::model::ModelSimState;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_replay::{
-    check_state_graph, CertificateLocus, CertificateRejection, CertificateRule, IncompleteCause,
-    ModelCheckLimit, ModelCheckLimits, StateGraphCertificate, StateGraphCertificateRequest,
-    StateGraphOutcome, TemporalCertificateCheck,
+    check_state_graph, CertificateLocus, CertificateRejection, CertificateRule, ClosureRefusal,
+    IncompleteCause, ModelCheckLimit, ModelCheckLimits, StateGraphCertificate,
+    StateGraphCertificateRequest, StateGraphOutcome, TemporalCertificateCheck,
 };
 use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
-    config_kernel_world, config_kernel_world_over, config_world, fork_kernel_world, fork_world,
-    game_world, job_world, World, DIVIDES, REACHES_TWO,
+    config_kernel_world, config_kernel_world_over, config_version, config_world, fork_kernel_world,
+    fork_world, game_world, job_world, World, CONFIG_CONTRACT, DIVIDES, REACHES_TWO,
 };
 use crate::state_graph::{no_samples, reachable, run, system, AB};
 
@@ -457,7 +457,7 @@ fn certificates_reject_the_other_forms_list_and_accept_an_empty_one() {
             &world,
             AB,
             "ReachesTwo",
-            over,
+            over.clone(),
             &missing_count_entry,
             &ModelCheckLimits::default()
         ),
@@ -467,7 +467,14 @@ fn certificates_reject_the_other_forms_list_and_accept_an_empty_one() {
         })
     );
     assert_eq!(
-        check(&world, AB, "ReachesTwo", None, &certificate, &ModelCheckLimits::default()),
+        check(
+            &world,
+            AB,
+            "ReachesTwo",
+            over,
+            &certificate,
+            &ModelCheckLimits::default()
+        ),
         TemporalCertificateCheck::Accepted
     );
 
@@ -842,4 +849,33 @@ fn an_undefined_guard_at_a_reached_state_rejects_bad_state() {
     let (guarded, two) = checked(GUARD);
     assert_eq!(guarded, rejected(CertificateRule::BadState, two));
     assert_eq!(checked("").0, TemporalCertificateCheck::Accepted);
+}
+
+/// FR-125-AC-13: over a subject with no initial state an `over` claim has no
+/// instance either; the checker refuses `NoInitialState`, never
+/// `NoInstance`.
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn the_checker_refuses_no_initial_state_before_no_instance() {
+    let (over, certificate) = reaches_two(&config_world(REACHES_TWO, &[(0, 0)]));
+    let empty = World::new(
+        config_version(),
+        &format!("{CONFIG_CONTRACT}{REACHES_TWO}"),
+        &[],
+    );
+    let request = StateGraphCertificateRequest {
+        subject: empty.subject(AB, UNLIMITED),
+        claim: empty.claim("ReachesTwo"),
+        over,
+    };
+    let checked = check_state_graph(
+        &request,
+        &certificate,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(checked, Err(ClosureRefusal::NoInitialState)),
+        "{checked:?}"
+    );
 }

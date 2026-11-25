@@ -18,13 +18,13 @@ use filament_contract_model::{
     CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
     CheckedProtocolLocationOrigin, CheckedProtocolSemanticLocation,
 };
-use filament_exact::{NodeKey, PathSegment};
+use filament_exact::NodeKey;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_semantics::check::{
     BodyTerm, CheckedActivation, CheckedBody, CheckedGraph, CheckedLifetime, CheckedNode,
-    CheckedOrdering, CheckedProtocol, CheckedTerminalMember, LeafTerm, NodeTag,
+    CheckedOrdering, CheckedProtocol, CheckedTerminalMember, LeafTerm, NodeTag, Operator,
 };
 
 use super::{checked_occurrence, EmitRefusal};
@@ -197,7 +197,7 @@ pub(super) fn term_rows<L>(
                     .into_iter()
                     .flatten()
                     .map(|(key, _)| key)
-                    .filter(|key| is_deref_application(key) && !taken.contains(key))
+                    .filter(|key| has_operator(graph, key, Operator::Deref) && !taken.contains(key))
                     .collect::<std::collections::BTreeSet<_>>(),
             );
         }
@@ -446,26 +446,20 @@ fn term_application<'c>(
     under: Option<(&NodeKey, &[&NodeKey])>,
 ) -> Result<Option<&'c NodeKey>, EmitRefusal> {
     let mut keys: Vec<&NodeKey> = Vec::new();
-    // NodeKey's checked-term grammar puts each application under the exact
-    // `expression/<form>` prefix. Inspecting those typed path segments keeps
-    // query and collection terms from being mistaken for another application
-    // at the same location; no display-string or substring search is used.
-    let form = match node.kind() {
+    // The operator class keeps query and collection terms from being mistaken
+    // for another application at the same location.
+    let class = match node.kind() {
         NodeKind::Query { visit, .. } => Some(match visit {
-            Visit::Forall | Visit::Exists => "quantify",
-            Visit::Map | Visit::Filter | Visit::Count | Visit::Sum | Visit::Only => "collection",
+            Visit::Forall | Visit::Exists => Operator::Quantify,
+            Visit::Map | Visit::Filter | Visit::Count | Visit::Sum | Visit::Only => {
+                Operator::Collection
+            }
         }),
-        NodeKind::Collection { .. } => Some("collection"),
+        NodeKind::Collection { .. } => Some(Operator::Collection),
         _ => None,
     };
     for (key, _) in candidates {
-        if form.is_some_and(|form| {
-            !matches!(
-                key.path().as_slice(),
-                [PathSegment::Text(expression), PathSegment::Text(candidate), ..]
-                    if expression == "expression" && candidate == form
-            )
-        }) {
+        if class.is_some_and(|class| !has_operator(graph, key, class)) {
             continue;
         }
         if !keys.contains(&key) && !taken.contains(&key) {
@@ -566,18 +560,20 @@ fn wire_location(location: &Location) -> Option<(String, CheckedProtocolLocation
     Some((name, CheckedProtocolLocation { origin, path }))
 }
 
-/// Whether `key` is the key of a `deref` application node.
-#[ix_trace_rs::string_edge]
-fn is_deref_application(key: &NodeKey) -> bool {
+/// Whether `key` names an application node of operator class `class`. The
+/// class is read from the node, never from the key's path: a recursion-group
+/// member's key carries its group's declaration path (FSpec FR-322-AC-274).
+fn has_operator(graph: &CheckedGraph, key: &NodeKey, class: Operator) -> bool {
     matches!(
-        key.path().as_slice(),
-        [PathSegment::Text(form), PathSegment::Text(kind), ..] if form == "expression" && kind == "deref"
+        graph.semantic_graph().node(key.clone()).map(|node| node.body()),
+        Some(BodyTerm::Application(application)) if application.operator == class
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use filament_exact::PathSegment;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use fsl_semantics::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
     use ix_trace_rs::trace;
