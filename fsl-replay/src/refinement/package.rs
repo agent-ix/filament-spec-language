@@ -16,6 +16,67 @@ use super::read::{
     self, FieldMapping, MappingExpression, MappingTarget, ObjectMapping, PopulationMapping,
     RefinementRead, StepMapping,
 };
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+
+#[derive(Clone, Copy)]
+struct FieldKeyRef<'a>(&'a DeclarationKey);
+
+impl Ord for FieldKeyRef<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        record_hidden_field_key_comparison();
+        self.0.cmp(other.0)
+    }
+}
+
+impl PartialOrd for FieldKeyRef<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for FieldKeyRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for FieldKeyRef<'_> {}
+
+fn hidden_field_keys<'a>(
+    declared_keys: Vec<DeclarationKey>,
+    mapped_keys: impl IntoIterator<Item = &'a DeclarationKey>,
+) -> Vec<DeclarationKey> {
+    let mapped_keys: BTreeSet<_> = mapped_keys.into_iter().map(FieldKeyRef).collect();
+    declared_keys
+        .into_iter()
+        .filter(|key| !mapped_keys.contains(&FieldKeyRef(key)))
+        .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    static HIDDEN_FIELD_KEY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_hidden_field_key_comparison() {
+    HIDDEN_FIELD_KEY_COMPARISONS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn record_hidden_field_key_comparison() {}
+
+#[cfg(test)]
+fn reset_hidden_field_key_comparisons() {
+    HIDDEN_FIELD_KEY_COMPARISONS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn hidden_field_key_comparisons() -> usize {
+    HIDDEN_FIELD_KEY_COMPARISONS.with(std::cell::Cell::get)
+}
 
 /// Why no package refinement execution definition could be published.
 #[derive(Debug, thiserror::Error)]
@@ -319,10 +380,7 @@ impl<'a> PackageRefinement<'a> {
                     },
                 });
             }
-            let hidden = declared_keys
-                .into_iter()
-                .filter(|key| !fields.iter().any(|field| field.key == *key))
-                .collect();
+            let hidden = hidden_field_keys(declared_keys, fields.iter().map(|field| &field.key));
             objects.push(Object {
                 abstract_type,
                 concrete_type,
@@ -487,5 +545,62 @@ impl RefinementRead for PackageRefinement<'_> {
     }
     fn abstract_operation_fairness(&self) -> Box<dyn Iterator<Item = &FairnessConstraint> + '_> {
         Box::new(std::iter::empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn declaration_key(index: usize) -> DeclarationKey {
+        DeclarationKey {
+            package: "test/refinement".to_owned(),
+            node: format!("Abstract/field-{index:04}"),
+        }
+    }
+
+    #[trace("NFR-141-AC-26")]
+    #[test]
+    fn hidden_field_key_comparisons_are_bounded_and_preserve_declaration_order() {
+        for count in [512, 1_024, 2_048] {
+            let declared: Vec<_> = (0..count).map(declaration_key).collect();
+            let mapped: Vec<_> = (0..count)
+                .filter(|index| index % 2 == 0)
+                .rev()
+                .map(|index| &declared[index])
+                .collect();
+            let expected: Vec<_> = (0..count)
+                .filter(|index| index % 2 == 1)
+                .map(declaration_key)
+                .collect();
+
+            reset_hidden_field_key_comparisons();
+            let actual = hidden_field_keys(declared.clone(), mapped.iter().copied());
+            let indexed_comparisons = hidden_field_key_comparisons();
+            let log_bound = usize::BITS as usize - mapped.len().leading_zeros() as usize;
+            let comparison_bound = 8 * (declared.len() + mapped.len()) * log_bound;
+            let mapped_count = mapped.len();
+            let nested_scan_comparisons =
+                mapped_count * (mapped_count + 1) / 2 + mapped_count * mapped_count;
+
+            assert_eq!(actual, expected, "hidden keys at N = {count}");
+            assert!(
+                indexed_comparisons > 0,
+                "index operations compare keys at N = {count}"
+            );
+            assert!(
+                indexed_comparisons <= comparison_bound,
+                "the ordered index makes {indexed_comparisons} comparisons, bound {comparison_bound}, at N = {count}"
+            );
+            assert!(
+                nested_scan_comparisons > count * mapped_count / 2,
+                "the reverse-order nested-scan fixture requires {nested_scan_comparisons} comparisons at N = {count}"
+            );
+            assert!(
+                nested_scan_comparisons > comparison_bound,
+                "the reverse-order nested-scan fixture requires {nested_scan_comparisons} comparisons, exceeding the indexed bound {comparison_bound} at N = {count}"
+            );
+        }
     }
 }
