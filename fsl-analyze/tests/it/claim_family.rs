@@ -9,21 +9,27 @@
 //! kind, so the only thing that can refuse a probe item is its family.
 
 use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
+use crate::graph_world::{config_version, World, CONFIG_CONTRACT, REACHES_TWO};
 use filament_exact::{Cancel, NodeKey, Origin, Role};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
-    AnalyzeItem, AnalyzeRecord, DispositionKind, Engine, Engines, Payload, Settlement,
-    analyze_items,
+    analyze, analyze_items, AnalyzeItem, AnalyzeLimits, AnalyzeRecord, AnalyzeRefusal,
+    AnalyzeRequest, BackendTool, ClaimItem, Diagnostic, DispositionKind, Engine, Engines, ItemForm,
+    ItemOptions, NegotiatedItem, Payload, Settlement, SubjectBinding, TemporalItem,
 };
 use fsl_analyze::claim_family::claim_family;
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
-use fsl_route::request::ItemKind;
-use fsl_semantics::check::{Capability, DeclarationFamily};
+use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalValue};
+use fsl_route::request::{ExtentClassification, ItemKind};
+use fsl_route::routing::Disposition;
+use fsl_route::{Candidate, ManifestMembers, Mode, ProviderOrigin};
+use fsl_semantics::check::{Capability, DeclarationFamily, NegotiationOutcome};
 use ix_trace_rs::trace;
-use crate::graph_world::{CONFIG_CONTRACT, REACHES_TWO, World, config_version};
 
 const PROBE: &str = "probe";
 
@@ -323,7 +329,7 @@ fn a_bound_relations_model_and_code_claims_are_read_as_relation_claims() {
 #[test]
 fn the_operation_contract_arm_runs_a_relations_code_claim() {
     use fsl_analyze::analyze::contract_item;
-    use fsl_analyze::contract_check::{ContractRequest, manifest};
+    use fsl_analyze::contract_check::{manifest, ContractRequest};
     use fsl_replay::contract_check::select_contract;
     use fsl_replay::{TerminalValue, UnavailabilityCause};
 
@@ -371,7 +377,7 @@ fn the_operation_contract_arm_runs_a_relations_code_claim() {
 #[trace("TC-1302", "FR-507-AC-7")]
 #[test]
 fn a_proof_eligible_refinements_four_occurrences_are_relation_claims() {
-    use crate::refinement_fixture::{Variant, World as Cas, lost_update_refinement};
+    use crate::refinement_fixture::{lost_update_refinement, Variant, World as Cas};
 
     let world = Cas::with(Variant::LOST_UPDATE, &lost_update_refinement());
     let (declaration, obligations) = refinement_claims(&world);
@@ -431,7 +437,7 @@ fn a_proof_eligible_refinements_four_occurrences_are_relation_claims() {
 #[trace("TC-1302", "FR-507-AC-8")]
 #[test]
 fn derived_items_take_temporal_trace_from_their_item_kind_on_any_anchor() {
-    use crate::protocol_roles::{EACH, unit};
+    use crate::protocol_roles::{unit, EACH};
     use crate::protocol_system::touch;
 
     let temporal = DeclarationFamily::TemporalTrace;
@@ -566,7 +572,7 @@ fn a_boolean_value_clause_is_read_on_its_expression_node() {
 /// admits `operation-contract`, while `finite-replay` and
 /// `probabilistic-satisfaction` settle `inapplicable-kind` naming the family
 /// the reader produced (`state-model`), without running an engine.
-#[trace("TC-115", "FR-057-AC-11")]
+#[trace("TC-115", "FR-057-AC-11", "FR-281-AC-13")]
 #[test]
 fn a_state_declaration_admits_operation_contract_and_refuses_other_kinds_as_state_model() {
     let world = claims_world();
@@ -597,6 +603,239 @@ fn a_state_declaration_admits_operation_contract_and_refuses_other_kinds_as_stat
         Capability::ProbabilisticSatisfaction,
         Some(DeclarationFamily::StateModel),
     );
+}
+
+#[derive(Debug)]
+struct NeverCalledHandoffProvider(Arc<AtomicUsize>);
+
+impl fsl_analyze::provider::ExternalProvider for NeverCalledHandoffProvider {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        vec![fsl_analyze::provider::ProviderVerdict::Unknown; request.items().len()]
+    }
+}
+
+/// FR-281-AC-13: a state claim refuses every inapplicable handoff before
+/// backend lookup; applicable temporal claims preserve their routing results.
+#[trace("TC-762", "TC-1302", "FR-281-AC-13")]
+#[test]
+fn handoff_refusals_are_settled_after_claim_family_is_checked() {
+    let profile = "profile t = \"filament.temporal.infinite-trace/v1\";\n";
+    let state = "constraint StateOk using v on Config::ConfigVersion at current { true }\n";
+    let temporal = "temporal TemporalProgress using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { always holds(true) }\n";
+    let body = format!("{CONFIG_CONTRACT}{state}{temporal}");
+    let objects: [crate::graph_world::Object<'_>; 1] = [("a", &[("versionNumber", 0)])];
+    let world = World::with_profiles(config_version(), profile, &body, &[&objects]);
+    let package = &world.package;
+    let state_clause = package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.name() == "StateOk")
+        .expect("the fixture has its named state clause");
+    let state_claim = OccurrenceKey::new(state_clause.identity(), state_clause.claim().clone());
+    let temporal_clause = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|clause| clause.clause().name() == "TemporalProgress")
+        .expect("the fixture has its named temporal clause");
+    let temporal_claim =
+        OccurrenceKey::new(temporal_clause.identity(), temporal_clause.claim().clone());
+    let test_a = Candidate::new(fsl_foundation::BackendId::new("fsl.test-a"));
+    let test_c = Candidate::new(fsl_foundation::BackendId::new("fsl.test-c"));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let value_domain = [fsl_foundation::bound::DomainKind::Integer.to_wire()];
+    let descriptor = fsl_route::descriptor_from_manifest(
+        test_a.clone(),
+        ProviderOrigin::Linked,
+        [(
+            Some(Capability::ValueValidity.to_wire()),
+            Some(Mode::Unbounded.to_wire()),
+        )],
+        ManifestMembers {
+            domains: Some(&value_domain),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("test-a advertises only unbounded value-validity");
+    let mut engines = Engines::default();
+    engines
+        .with(
+            Engine::external(
+                descriptor,
+                BackendTool::new("handoff-test", "1").expect("a tool identity"),
+                Box::new(NeverCalledHandoffProvider(calls.clone())),
+            )
+            .expect("the external test engine is admitted"),
+        )
+        .expect("one test engine");
+
+    let item = |index: usize,
+                claim: &OccurrenceKey,
+                capability: Capability,
+                item_kind: ItemKind,
+                disposition: Disposition,
+                backend: &Candidate,
+                diagnostic: Option<Diagnostic>| {
+        let mut request = ClaimItem {
+            request_index: RequestIndex::new(index),
+            claim: claim.clone(),
+            kind: capability,
+            extent: ExtentClassification::Bounded,
+            backend: if matches!(&disposition, Disposition::InvalidRequest) {
+                None
+            } else {
+                Some(backend.id().clone())
+            },
+            candidates: if matches!(&disposition, Disposition::InvalidRequest) {
+                vec![test_a.clone(), test_c.clone()]
+            } else {
+                vec![backend.clone()]
+            },
+            options: ItemOptions::default(),
+            form: None,
+        };
+        if capability == Capability::TemporalSatisfaction {
+            request.form = Some(ItemForm::Temporal(TemporalItem {
+                item_kind,
+                ..TemporalItem::default()
+            }));
+        }
+        NegotiatedItem {
+            item: request,
+            disposition,
+            diagnostic,
+        }
+    };
+    let invalid_ambiguous = || Some(Diagnostic::new(NegotiationOutcome::AmbiguousBackend.code()));
+    let items = vec![
+        item(
+            0,
+            &state_claim,
+            Capability::FiniteReplay,
+            ItemKind::Formula,
+            Disposition::Supported(test_c.clone()),
+            &test_c,
+            None,
+        ),
+        item(
+            1,
+            &state_claim,
+            Capability::FiniteReplay,
+            ItemKind::Formula,
+            Disposition::Supported(test_a.clone()),
+            &test_a,
+            None,
+        ),
+        item(
+            2,
+            &state_claim,
+            Capability::FiniteReplay,
+            ItemKind::Formula,
+            Disposition::InvalidRequest,
+            &test_a,
+            invalid_ambiguous(),
+        ),
+        item(
+            3,
+            &temporal_claim,
+            Capability::TemporalSatisfaction,
+            ItemKind::Formula,
+            Disposition::Supported(test_c.clone()),
+            &test_c,
+            None,
+        ),
+        item(
+            4,
+            &temporal_claim,
+            Capability::TemporalSatisfaction,
+            ItemKind::Formula,
+            Disposition::Supported(test_a.clone()),
+            &test_a,
+            None,
+        ),
+        item(
+            5,
+            &temporal_claim,
+            Capability::TemporalSatisfaction,
+            ItemKind::Formula,
+            Disposition::InvalidRequest,
+            &test_a,
+            invalid_ambiguous(),
+        ),
+    ];
+    let subject = world.subject(&["a"], crate::counter::UNLIMITED);
+    let binding = SubjectBinding {
+        packages: subject.simulation.packages,
+        snapshots: subject.simulation.snapshots,
+        initial: subject.simulation.initial,
+        universes: subject.simulation.universes,
+    };
+    let outcome = analyze(
+        package,
+        &AnalyzeRequest {
+            binding,
+            provision: world.source_provision(),
+            items,
+        },
+        &engines,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("the package binding admits")
+    .into_value();
+
+    assert_eq!(outcome.records.len(), 6);
+    for (index, record) in outcome.records[..3].iter().enumerate() {
+        assert_eq!(record.request_index(), RequestIndex::new(index));
+        assert_eq!(
+            record.value(),
+            &TerminalValue::Declined {
+                cause: ProofRefusalCause::InvalidInput,
+                code: DeclineCode::Fsl(fsl_foundation::diagnostic::Code::InvalidRequest),
+            }
+        );
+        assert_eq!(
+            record.diagnostic(),
+            Some(filament_semantic_value::catalog::CatalogCode::new(
+                "invalid_capability",
+                "inapplicable-kind",
+            ))
+        );
+        assert_eq!(record.backend(), None);
+    }
+    let temporal_expectations = [
+        ("unknown-backend", Some("fsl.test-c")),
+        ("inconsistent-candidates", Some("fsl.test-a")),
+        ("ambiguous-backend", None),
+    ];
+    for (offset, (cause, backend)) in temporal_expectations.into_iter().enumerate() {
+        let record = &outcome.records[offset + 3];
+        assert_eq!(record.request_index(), RequestIndex::new(offset + 3));
+        assert_eq!(
+            record.value(),
+            &TerminalValue::Declined {
+                cause: ProofRefusalCause::InvalidInput,
+                code: DeclineCode::Fsl(fsl_foundation::diagnostic::Code::InvalidRequest),
+            }
+        );
+        assert_eq!(record.diagnostic().map(|code| code.cause()), Some(cause));
+        if let Some(backend) = backend {
+            assert_eq!(
+                record.backend().map(|backend| backend.as_str()),
+                Some(backend)
+            );
+        }
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), 0, "no rejected handoff runs");
 }
 
 /// FR-507-AC-9 evidence for the reader's remaining rows: an `item_kind` of
