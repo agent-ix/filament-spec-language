@@ -11,6 +11,7 @@ relationships:
 ## Description
 
 Verify FR-107's `evaluate_clause_set`: the entries it returns and their order,
+the stop of the preconditions at the first one that is not `Completed(true)`,
 that a postcondition is evaluated only after every precondition is true, the
 combined outcome, the stop at an incomplete clause, and the refusals.
 
@@ -76,8 +77,8 @@ step sets one. Tag the tests `#[trace("TC-1039", "FR-107-AC-n")]`.
   `UpdateRaises`.
 - Step 2: over `up12` three entries in the order `UpdateAllowed`,
   `UpdateNotMax`, `UpdateRaises`, each `Completed(true)`, outcome `True`; over
-  `up34` two entries, `UpdateAllowed` `Completed(false)` then `UpdateNotMax`
-  `Completed(true)`, outcome `False`, and no entry for `UpdateRaises`.
+  `up34` exactly one entry, `UpdateAllowed` `Completed(false)`, outcome
+  `False`, and no entry for `UpdateNotMax` or `UpdateRaises`.
 - Step 3: two entries, `NoCycle` `Completed(true)` then `UpdateAllowed`
   `Completed(false)`; outcome `False`; no entry for `UpdateRaises`.
 - Step 4: one entry, `UpdateAllowed` `Incomplete` with `resource_exhausted`/
@@ -94,7 +95,7 @@ step sets one. Tag the tests `#[trace("TC-1039", "FR-107-AC-n")]`.
   the same outcome.
 - Step 7: {`F`}: one entry, `F` `FamilyResult::Undefined` with reason
   `precondition-false` (operation `ready`), outcome `Undecided`; {`G`, `F`}:
-  two entries in the order `F`, `G`, `F` that result and `G`
-  `Completed(true)`, outcome `Undecided`; {`H`, `F`}: one entry, `F` with that
-  result, no entry for `H`, outcome `Undecided`; with the precondition
-  `true`, {`F`}: one entry, `F` `Completed(true)`, outcome `True`.
+  exactly one entry, `F` with that result, no entry for `G`, outcome
+  `Undecided`; {`H`, `F`}: one entry, `F` with that result, no entry for `H`,
+  outcome `Undecided`; with the precondition `true`, {`F`}: one entry, `F`
+  `Completed(true)`, outcome `True`.
