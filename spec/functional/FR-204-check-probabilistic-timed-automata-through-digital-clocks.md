@@ -33,9 +33,10 @@ the scheduler chooses delays and identities; under a workload, the workload
 resolves the identity and every delay a `discrete` delay distribution
 gives, so the subject is a DTMC over digital timed states; a delay no
 distribution gives stays the scheduler's choice and is decided by its
-minimum and maximum. Strict constraints, other bounded-window form shapes,
-delay distributions over every scheduler, zero-delay cycles and time-locks
-are decided exactly by the rules under Admission; only continuous delay
+minimum and maximum. Strict constraints, bounded-window forms other than a
+deadline event or its `always[0, D]` complement (decided over the region MDP), delay distributions over every
+scheduler, zero-delay cycles and time-locks are decided by the rules under
+Admission; only continuous delay
 distributions, whose probabilities exact evidence cannot state, go to the
 statistical engine.
 
@@ -61,7 +62,8 @@ FR-196's complete tail control. Each edge has the mandatory closed
 ProductAction choice. Delay/tail observation operation projections remain
 `action: None`; this projection cannot identify the policy choice. Delay
 choices carry one digital unit of elapsed time; IdleObserve carries zero. The results of
-FR-197 and FR-198 over it, or over the region MDP for strict constraints;
+FR-197 and FR-198 over it, or over the region MDP for strict constraints
+and for the bounded-window forms Admission sends there;
 and, for exact evidence over a continuous delay distribution only, FR-203's
 unsupported cause `DelayDistribution{operation}`.
 
@@ -72,8 +74,40 @@ unsupported cause `DelayDistribution{operation}`.
 - Every claim over a timed subject whose delays are deterministic or given by
   `discrete` distributions SHALL be decided with exact evidence; no form,
   constraint or scheduler of that class settles `unsupported`. The digital MDP
-  below decides it when every clock constraint is closed; the following rules
-  decide the rest.
+  below decides it when every clock constraint is closed and its form is one
+  the digital route decides (the next rule); the following rules decide the
+  rest.
+- **Route.** The digital MDP SHALL decide only reachability and until over
+  state predicates, a TA-4 deadline event `eventually[0, D] holds(P)` or
+  `holds(A) until[0, D] holds(B)` and its complement `always[0, D] holds(P)`,
+  each over state predicates (predicates over the discrete state, with no
+  clock atom), `expected elapsed until holds(B)`, the elapsed measures and
+  quantiles of FR-877, and a `steps` measure or an `accumulate` of per-step
+  rewards within a time horizon, when every clock constraint is closed. Every
+  other bounded-window formula SHALL be decided over the region MDP
+  (FR-922), closed or not. A `steps` or per-step `accumulate` measure within
+  a horizon is a reachability over the closed automaton: its count or sum is
+  discrete state, its activation resets a closed horizon clock, and its
+  event is reaching a completing position before that clock passes the
+  horizon, which TA-3 covers. This rule does not settle the route of a
+  `weighted by delay` fraction over a window, a `weighted by delay`
+  long-run fraction, or an unweighted fraction over a time window: they keep
+  the rule they had before it (digital when every constraint is closed,
+  region otherwise), pending an arch ruling (QSL-3324). ADR-028 TA-3's equality of digital and
+  dense extrema covers reachability and expected time only; a bounded-window
+  value can turn on a position being absent from a window, which integer
+  time stamps cannot always arrange, so the digital MDP can give a wrong
+  extremum (AC-26).
+- **Pending target times.** For some admitted forms the number of pending
+  target times the claim's monitor keeps can grow without bound on the region
+  MDP (an interval operator nested under another, read at arbitrarily many
+  positions of its window). While EN-5 cannot decide such a case within the
+  request's limits, the run stops with FR-203's
+  `Incomplete(LimitReached{limit, value, setting})` naming the limit it
+  reached, as any exact run does, and settles neither `unsupported` nor a
+  verdict it has not decided. That stop is what the product may do while it
+  cannot decide a case; it is not a replacement for any criterion, and every
+  exact value a criterion states (AC-21 and AC-26 here, FR-498-AC-8) stands.
 - **Strict constraints.** When a guard, a time invariant or a timed interval
   of the claim is strict, EN-5 SHALL decide the claim over the region MDP
   instead of the digital MDP: each clock keeps its integer part, capped as in
@@ -86,10 +120,21 @@ unsupported cause `DelayDistribution{operation}`.
 - **Form shapes.** Every bounded-window formula FR-186 admits under the timed
   profile SHALL be decided. `always[0, D] holds(P)` SHALL be decided as the
   complement of `eventually[0, D] holds(not P)`, a minimum becoming a
-  maximum and the reverse. Every other bounded-window formula SHALL be
-  decided over the product of the MDP with the claim's monitor, which keeps
-  one deadline clock per interval operator occurrence, capped at its upper
-  bound plus one.
+  maximum and the reverse. Every other bounded-window formula, a punctual
+  interval and an interval operator nested under another included, SHALL be
+  decided over the product of the region MDP with the claim's monitor. The
+  monitor SHALL give the formula's FSpec FR-416 "Pointwise meaning" value on
+  every behaviour of the product and SHALL keep whatever pending target times
+  that value needs (FSpec FR-421 "Admitted forms"); its product-key member is
+  FR-196's `["window",residual]`.
+- **Positions.** Every form, deadline events included, SHALL read its
+  predicates at positions only: the initial state, each discrete post-step
+  and each TS-5 idle observation stutter (FR-196). A delay move is not a
+  position (ADR-026 TS-3): it advances time, so a window it passes closes,
+  but it reads no predicate, and a drawn race delay of several units reads
+  no instant inside it. The time stamps of idle observation stutters after a
+  quiescent state are the scheduler's choice (FSpec FR-416 "Time stamps"),
+  so a minimum or maximum ranges over them as over every other choice.
 - **Delay distributions over every scheduler.** Over every scheduler, a
   `discrete` delay distribution SHALL apply as it does under a workload: the
   race draws given delays with their probabilities, and the scheduler chooses
@@ -271,11 +316,12 @@ unsupported cause `DelayDistribution{operation}`.
 | FR-204-AC-18 | Under the workload `Skew` (weights `A` 1, `B` 2, `C` 3), the model `Trio` of the worked example below, whose `A`, `B` and `C` race with the given delays `discrete { 1 ms: 1, 2 ms: 1 }`, `discrete { 2 ms: 1, 3 ms: 1 }` and `discrete { 2 ms: 1, 3 ms: 3 }`, has at its initial state exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`), each edge `Identity(A)`, with `A` at 1 ms `1/2`, `A` at 2 ms `53/192`, `B` at 2 ms `7/48` and `C` at 2 ms `5/64`; `probability >= 0.13 [eventually[0 ms, 3 ms] holds(t.b)]` settles `proved`, `ExactValue{7/48}`, `probability >= 0.07 [eventually[0 ms, 3 ms] holds(t.c)]` settles `proved`, `ExactValue{5/64}`, `probability <= 0.8 [eventually[0 ms, 3 ms] holds(t.a)]` settles `proved`, `ExactValue{149/192}`, and `probability >= 0.5 [eventually[0 ms, 1 ms] holds(t.a)]` settles `proved`, `ExactValue{1/2}`; the `t.b` item's `Exact` certificate with values computed with even ties (initial value `11/96`) and the one computed with ties taken in canonical order (initial value `0`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3204) |
 | FR-204-AC-19 | Under the workload `Share` (weights `fire` 4, `G` 1), the model `Pair` of the worked example below, whose operation `fire` has the two tied identities `F1` and `F2` with `discrete { 2 ms: 1 }` and whose `G` has `discrete { 2 ms: 1, 3 ms: 1 }`, divides `fire`'s weight between `F1` and `F2` (2 each against `G` 1): its initial state has exactly three race edges and no other action, `F1` at 2 ms `9/20`, `F2` at 2 ms `9/20` and `G` at 2 ms `1/10`; `probability >= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` and `probability <= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` each settle `proved`, `ExactValue{9/20}`; the `n1.hit` item's `Exact` certificates with the weight not divided (initial value `17/36`) and with even ties (initial value `5/12`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3205) |
 | FR-204-AC-20 | Under the workload `Order` (weights `X` 1, `Y` 2, `Z` 3), the model `Chain` of the worked example below, whose `X`, `Y` and `Z` tie at 2 ms and each fire when still enabled at its turn, orders the tie without replacement by the weights, so `probability >= 0.58 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = X)]` settles `proved`, `ExactValue{7/12}`, `probability <= 0.2 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Z)]` settles `proved`, `ExactValue{3/20}`, and `probability <= 0.3 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Y)]` settles `proved`, `ExactValue{4/15}`; the `c.last = Z` item's `Exact` certificates with the first pick weighted and the rest in canonical order (initial value `1/2`), with even orders (initial value `1/3`) and with canonical order (initial value `1`) are each rejected `InequalityFails`, and the test submits all three. | Test (TC-3206) |
-| FR-204-AC-21 | Over the timed `Retx` subject of AC-1, under the timed profile EN-5 runs every bounded-window formula that FR-186 admits and retains a monitor for every bounded operator occurrence, including nested occurrences and their nonzero lower bounds. Representative admitted formulas are `eventually[1 ms, 4 ms] holds(m.delivered)`, `always[0 ms, 4 ms] holds(m.delivered)`, `holds(not m.delivered) until[1 ms, 4 ms] holds(m.delivered)`, nested `eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(m.delivered)`, and nested `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)`. The first, third and nested `eventually`-then-`always` forms each have minimum `99/100` and settle `proved` at threshold `0.99`; the `always` form has value `0` and settles `proved` for `probability <= 0.01`. The `always`-then-`eventually` form settles an exact verdict and does not settle `unsupported` or `not-yet-implemented`. Every bounded-window formula admitted for the timed profile is decided by EN-5 and does not settle `unsupported` or `not-yet-implemented` (FR-186, FR-204). The timed profile refuses `probability >= 0.99 [eventually holds(m.delivered)]` as `unsupported_construct`/`expression-form` at `eventually`, and refuses both `probability >= 0.99 [eventually[1 ms, *] holds(m.delivered)]` and `probability >= 0.99 [always[0 ms, 4 ms] eventually[2 ms, *] holds(m.delivered)]` as `unsupported_construct`/`expression-form` at the unbounded interval, before EN-5 is called (FR-186). | Test |
+| FR-204-AC-21 | Over the timed `Retx` subject of AC-1, under the timed profile EN-5 runs every bounded-window formula that FR-186 admits and retains a monitor for every bounded operator occurrence, including nested occurrences and their nonzero lower bounds. Representative admitted formulas are `eventually[1 ms, 4 ms] holds(m.delivered)`, `always[0 ms, 4 ms] holds(m.delivered)`, `holds(not m.delivered) until[1 ms, 4 ms] holds(m.delivered)`, nested `eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(m.delivered)`, and nested `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)`. Every value is the FSpec FR-416 pointwise value over every scheduler, derived in "Worked example: pointwise values" below. The first and third forms each have minimum `99/100` and maximum `9999/10000` and settle `proved` at threshold `0.99`; the `always` form has value `0` and settles `proved` for `probability <= 0.01`; the nested `eventually`-then-`always` form has minimum `99999/100000` and maximum `1` and settles `proved` at threshold `0.99`; the nested `always`-then-`eventually` form has minimum `0` and maximum `99/100`, settles `refuted` at `probability >= 0.99` on the minimum and `proved` at `probability <= 0.99` on the maximum, and does not settle `unsupported` or `not-yet-implemented`. Over the model `Step` of that example, where a delay without a step is not a position, `probability <= 0.01 [eventually[1 ms, 2 ms] holds(not c.late)]`, `probability >= 0.99 [always[1 ms, 2 ms] holds(c.late)]` (vacuous) and `probability <= 0.01 [always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(not c.late)]` settle `proved` with values `0`, `1` and `0`, and with `step`'s delay drawn by `delay M::Call::step ~ discrete { 3 ms: 1 };` `probability <= 0.01 [always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(c.late)]` settles `proved` with value `0`; on each of these items the certificate checker of FR-921 accepts the producer's certificate. Each of these forms is decided over the region MDP (Admission "Route"). Rejection: for the `Step` claim `always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(not c.late)`, the producer's accepted `exact` `timed-product/v1` document with only the initial product key's value changed to `1` (the value a reading of the state at the 2 ms instant gives: `late` is false then), is rejected `InequalityFails` at the initial product key, and the tampered item settles `inconclusive`, `CertificateRejected`. Every bounded-window formula admitted for the timed profile is decided by EN-5 and does not settle `unsupported` or `not-yet-implemented` (FR-186, FR-204). The timed profile refuses `probability >= 0.99 [eventually holds(m.delivered)]` as `unsupported_construct`/`expression-form` at `eventually`, and refuses both `probability >= 0.99 [eventually[1 ms, *] holds(m.delivered)]` and `probability >= 0.99 [always[0 ms, 4 ms] eventually[2 ms, *] holds(m.delivered)]` as `unsupported_construct`/`expression-form` at the unbounded interval, before EN-5 is called (FR-186). | Test |
 | FR-204-AC-22 | For FR-196's cap-2 no-operation oracle from AC-2, the every-scheduler claim `expected elapsed until holds(B) <= 3 ms` is `refuted` only after FR-202 replays FR-201-AC-81's finite Lower document (initial bound 5 ms, the same exact initial value as AC-2); the result carries the replayed witness and no infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
 | FR-204-AC-23 | For AC-22's claim, a supplied finite Lower document with `ranking` omitted settles `inconclusive` with cause `CertificateRejected{Malformed, CertificateMember("ranking")}`; the infinite engine start value alone does not settle `refuted` and emits no `ExactValue`. | Test (TC-639) |
 | FR-204-AC-24 | On a timed `Retx` subject with an admitted workload `One` and claim `expected elapsed until holds(false) >= 3 ms`, the exact engine's `+infinity` minimum is accepted as a proof of the lower bound; the result settles `proved` and carries no infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
 | FR-204-AC-25 | On timed `Retx` with claim `expected elapsed until holds(false) >= 3 ms` under every scheduler, because every admitted scheduler has nonreachability value `+infinity`, the result settles `proved` without an infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
+| FR-204-AC-26 | A bounded-window form other than a deadline event is decided over the region MDP even when every constraint is closed, with dense values derived in "Worked example: pointwise values" (items 6 and 7). Over the closed model `Gap` of that example, over every scheduler, `always[1 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`: `probability <= 0.5` settles `refuted` on the maximum `ExactValue{1}` and `probability >= 0.5` settles `refuted` on the minimum `ExactValue{0}`, never `proved` on the digital MDP's maximum `0`, and the item's certificate document has `route: "region"`. Over `Retx` of AC-1, `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`, so `probability <= 0.95` does not settle `proved`, which the digital MDP's maximum `9/10` would give: it settles `refuted` on the maximum `ExactValue{1}`. | Test (TC-639) |
 
 The Chain check also asserts that the six firing orders listed in the worked
 example are represented as six outcome edges from the initial product key,
@@ -422,6 +468,141 @@ QSL-2983 resolves the product representation: each ordered tie outcome is one
 product edge, while replay exposes one trace position per firing identity at
 the shared instant. A certificate rejection is located at the source product
 key and the complete ordered edge label.
+
+## Worked example: pointwise values
+
+The values of AC-21 are derived by hand from the FSpec FR-416 text alone
+(QSL-3324), never from engine output. The rules used:
+
+- R1. Positions are the initial state at time 0, the post-state of each
+  discrete step at its time stamp, and the terminal stutter positions of an
+  idle tail; a delay is not a position (ADR-026 TS-3, FR-196).
+- R2. A behaviour may end its discrete steps only at a quiescent state, one
+  where no time invariant applies and which is not urgent; it then continues
+  with stutter positions, each after a positive delay of any length, every
+  such choice an admitted behaviour (FSpec FR-416 "Time stamps", ADR-026
+  TS-5). Over every scheduler these choices are the scheduler's, so the
+  minimum and maximum range over them.
+- R3. `eventually_I p` holds at position `i` when some position `j >= i` has
+  `τ_j − τ_i` in `I` and `p` at `j`; `p until_I q` when some such `j` has `q`
+  and every `k` with `i <= k < j` has `p`; `always_I p` holds when every
+  position `j >= i` with `τ_j − τ_i` in `I` has `p`, so it holds vacuously
+  when no position has such a time stamp. Interval ends are inclusive here.
+  An `on origin` claim is read at position 0.
+
+**`Retx`** (ADR-028 §15.5, the `digital_clocks` fixture: `late` is
+`delivered`). `delivered` is false and `x` is 0 initially; `send(lost)` is
+guarded by `not delivered and x >= 1 ms` and sets `delivered = not lost` and
+`x = 0`; `lost` is `true` with probability `1/10`; the time invariant
+`x <= 2 ms` applies while `not delivered`. Write `D` for `delivered`.
+
+- Before delivery the invariant applies, so no behaviour ends there (R2):
+  attempts come at time stamps `t1 < t2 < …` with `t1` in `[1, 2]` and each
+  gap in `[1, 2]`; at most one attempt has a given time stamp. Each attempt
+  is a position, with `D` false when lost.
+- After the delivery at `T` no operation is enabled and no invariant applies,
+  so the state is quiescent: the positions after `T` are stutter positions
+  with `D` true at time stamps the scheduler chooses (R2). `D` is false at
+  every position before `T` and true at every position from `T` on.
+- Attempts with time stamp at most `s`: at most `⌊s⌋` (all gaps 1, starting
+  at 1) and at least `⌊s/2⌋` (all gaps 2, starting at 2). By 4 ms: between 2
+  and 4; by 2 ms: between 1 and 2.
+
+1. `eventually[1 ms, 4 ms] D`. A position with `D` and time stamp in
+   `[1, 4]` exists exactly when `T <= 4` (every attempt is at 1 ms or
+   later, and a stutter at most 4 ms needs `T` below it). The scheduler
+   minimizing takes two attempts by 4 ms (at 2 and 4): `1 − (1/10)^2 =
+   99/100`. The maximizer takes four (at 1, 2, 3, 4): `1 − (1/10)^4 =
+   9999/10000`.
+2. `always[0 ms, 4 ms] D`. Position 0 has time stamp 0 and `D` false: value
+   `0` on every behaviour.
+3. `(not D) until[1 ms, 4 ms] D`. The only candidate `j` is the delivery
+   position (every earlier position has `not D`; a stutter `j` would have the
+   delivery position, with `D`, among the `k`). It qualifies exactly when
+   `T <= 4`: minimum `99/100`, maximum `9999/10000`, as in 1.
+4. `eventually[0 ms, 4 ms] always[1 ms, 1 ms] D`. Some position `i` with
+   `τ_i <= 4` must have `D` at every position at `τ_i + 1`. The formula is
+   false only when every such `i` has a position at `τ_i + 1` with `D`
+   false. Positions with `D` false are position 0 and lost attempts, so
+   falsity needs a lost attempt at 1 (for position 0), then at 2, 3, 4 and 5
+   (for the attempts at 1, 2, 3 and 4, each of time stamp at most 4); a
+   delivery at `T <= 4` gives an `i` (the delivery) whose later positions
+   all have `D`, and a delivery at 5 makes the attempt at 4 such an `i`. The
+   gaps of 1 are admitted, so the minimizer attempts at 1, 2, 3, 4 and 5 and
+   the formula is false exactly when all five are lost: minimum
+   `1 − (1/10)^5 = 99999/100000`. The maximizer attempts first at 2: no
+   position has time stamp 1, so `always[1 ms, 1 ms] D` holds vacuously at
+   position 0, and the maximum is `1`.
+5. `always[0 ms, 4 ms] eventually[2 ms, 2 ms] D`. Position 0 needs a position
+   with `D` at exactly 2 ms, so `T <= 2`. Minimum: attempt at 1; if
+   delivered, place the first stutter at 3 ms; if lost, attempt next at
+   3 ms. No position with `D` has time stamp 2, so the formula is false on
+   every behaviour: minimum `0`. Maximum: at most two attempts by 2 ms, so
+   `P(T <= 2) <= 1 − (1/10)^2 = 99/100`; it is attained by attempting at 1
+   and, after a loss, at 2, then placing stutters at every whole millisecond
+   from `T + 1` to 6 ms: each position at time stamp `τ <= 4` (0, a lost
+   attempt at 1, the delivery, the stutters) then has a position with `D` at
+   `τ + 2 <= 6`. Maximum `99/100`.
+
+Every extremal choice in items 1 to 5 has integer time stamps, so the values
+above are dense values that integer time stamps attain; items 6 and 7 show
+forms where integer time stamps do not attain them, which is why every such
+form is decided over the region MDP (Admission "Route").
+
+6. **`Retx`, `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)`.** The
+   formula holds on a behaviour exactly when no two positions `i < j` have
+   `τ_i <= 4` and `τ_j − τ_i = 2` (the inner `always` is vacuous only when no
+   position is 2 ms after `i`).
+   - Minimum `0`: the first attempt at 2 ms puts a position 2 ms after
+     position 0, whether it is lost or delivered.
+   - Maximum `1` (dense): attempt at 1.1, 2.2, 3.3, … ms (every gap 1.1 ms,
+     inside `[1, 2]`) until delivery, then place the first stutter 10 ms
+     after the delivery and later ones 10 ms apart. Differences between
+     attempts and position 0 are multiples of 1.1 ms, never 2 ms; every
+     stutter is after 11 ms, so it is no position `j` for an `i` with
+     `τ_i <= 4` (`τ_i + 2 <= 6`) and no position `i` itself. Every outcome
+     satisfies the formula.
+   - The digital MDP's maximum is `9/10`: position 0 excludes a position at
+     2 ms, so the first attempt is at 1; if it is lost (`1/10`) the next is at
+     2 or 3 ms, 2 ms after position 0 or after the attempt at 1, so the
+     formula fails; if it is delivered, stutters from 4 ms on (avoiding 2, 3
+     and 6) satisfy it.
+7. **`Gap`, `always[1 ms, 2 ms] holds(false)`.** `Gap` (`time dense unit ms`)
+   has one object `c` with `phase` (0, 1 or 2, initially 0) and clock `x`
+   (initially 0). `a` is guarded by `phase = 0` and sets `phase = 1` and
+   `x = 0`; `b` is guarded by `phase = 1 and x >= 2 ms` and sets
+   `phase = 2`; the time invariants are `x <= 1 ms` while `phase = 0` and
+   `x <= 2 ms` while `phase = 1`. Every constraint is closed and no
+   operation declares a delay. `a` happens at a time `s` in `[0, 1]` of the
+   scheduler's choice and `b` at exactly `s + 2`; phase 2 is quiescent, and
+   its stutters come after `s + 2`. The formula holds exactly when no
+   position has a time stamp in `[1, 2]`.
+   - Minimum `0`: `s = 0` puts `b` at 2 ms.
+   - Maximum `1` (dense): `s` strictly between 0 and 1 puts `a` before 1 ms
+     and `b` after 2 ms.
+   - The digital MDP's maximum is `0`: `s` is 0 or 1, putting `b` at 2 ms or
+     `a` at 1 ms. On the digital route `probability <= 0.5` would be proved
+     although the dense maximum is 1.
+
+**`Step`** (`time dense unit ms`; the fixture of QSL-3324's evidence). One
+object `c` with `phase` (initially 0), `late` (initially false) and clock
+`x` (initially 0). `step` is guarded by `phase = 0 and x >= 3 ms` and sets
+`phase = 1` and `late = true`; the time invariant `x <= 3 ms` applies while
+`phase = 0`. While `phase = 0` the invariant applies, so no behaviour ends
+there (R2) and `step` happens at exactly 3 ms. Its post-state is quiescent.
+The positions are position 0 at 0 ms (`late` false), the `step` post-state
+at 3 ms (`late` true) and stutter positions after 3 ms (`late` true). In the
+drawn variant `step` is guarded by `phase = 0` only and declares
+`delay M::Call::step ~ discrete { 3 ms: 1 };`: the draw is 3 ms with
+probability 1, inside the window `[0, 3]` the invariant leaves, so the
+positions are the same. No position has a time stamp in `[1, 2]`.
+
+- `eventually[1 ms, 2 ms] not late`: no position in `[1, 2]`; value `0`.
+- `always[1 ms, 2 ms] late`: no position in `[1, 2]`, vacuous; value `1`.
+- `always[0 ms, 0 ms] eventually[2 ms, 2 ms] not late`: the only position at
+  0 ms is position 0, and no position is at 2 ms; value `0`.
+- The drawn variant's `always[0 ms, 0 ms] eventually[2 ms, 2 ms] late`: the
+  same positions; value `0`.
 
 ## Rulings
 

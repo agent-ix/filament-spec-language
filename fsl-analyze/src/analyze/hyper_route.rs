@@ -309,9 +309,9 @@ fn single(
                 | GraphEvidence::PathPair { over, .. }
                 | GraphEvidence::Undefined { over, .. } => over.as_ref(),
             };
-            let reference = match (clause.parameters().first(), over) {
-                (Some(parameter), Some(instance)) => {
-                    match system.bound_reference(parameter.population.object(), instance) {
+            let reference = match (clause.parameter_object_type(0), over) {
+                (Some(declared), Some(instance)) => {
+                    match system.written_reference(declared.clone(), instance) {
                         Ok(reference) => Some(reference),
                         Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
                     }
