@@ -14,7 +14,7 @@ Verify the `ambiguous_declaration`/`ambiguous-name` refusals for two
 declarations of one name in one scope and for a shadowing binder, and the
 refusal order.
 
-Scope: FR-113-AC-4 to FR-113-AC-8.
+Scope: FR-113-AC-4 to FR-113-AC-9.
 
 ## Test Procedure
 
@@ -32,10 +32,11 @@ Use TC-510's `RecoveryFlow` fixture.
    `compensate Undo for Main::Tried`; an `await Wait after Main ...` in
    `Main`; channels `C` and `D` from `R` to `R` with `send S via C ...` and
    `receive Got via D of S ...`. Then change the receive to `via C`.
-5. Use the TC-380 compensation fixture with `activate first (f: M::Failure)`
-   and its later `event Fail by w as (f: M::Failure) { true };` declaration.
-   Check it. Then add `capture f: M::Failure = f;` inside that activation and
-   check that variant.
+5. **FR-113-AC-8:** Use the TC-380 compensation fixture with
+   `activate first (f: M::Failure)` and its later
+   `event Fail by w as (f: M::Failure) { true };` declaration. Check it.
+6. **FR-113-AC-9:** Add `capture f: M::Failure = f;` inside that activation
+   and check the variant.
 
 Tag the tests `#[trace("TC-512", "FR-113-AC-n")]`.
 
@@ -55,6 +56,6 @@ Tag the tests `#[trace("TC-512", "FR-113-AC-n")]`.
   `await-after` and `sequence`; then channels `C` and `D`. With `via C` the
   protocol checks.
 - Step 5: the TC-380 trigger and later event binder reuse checks without
-  `ambiguous_declaration`; with the added capture, the check refuses
-  `ambiguous_declaration`/`ambiguous-name` at the capture naming the active
-  trigger binder. The check distinguishes scope reuse from shadowing.
+  `ambiguous_declaration`.
+- Step 6: the added capture refuses `ambiguous_declaration`/`ambiguous-name`
+  at the capture naming the active trigger binder.
