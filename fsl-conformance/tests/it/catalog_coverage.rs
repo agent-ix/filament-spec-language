@@ -310,6 +310,7 @@ source_cases! {
     carried_quantity_sum => sourced!("carried-quantity-sum", &["filament.op.collection.sum.carried_quantity"], &[("scalar_type", "carried_quantity")]),
     rational_narrow => sourced!("rational-narrow", &["filament.op.rational.narrow"], &[]),
     source_dispatch => sourced!("source-dispatch", &["filament.op.model.dispatch_call"], &[]),
+    string_keyed_map => sourced!("string-keyed-map", &[], &[("composite_type", "map")]),
     synthesis_request => sourced!("synthesis-request", &[], &[("claim", "synthesis_request")]),
     dimension_equivalence => sourced!("dimension-equivalence", &[], &[("scalar_type", "dimension_equivalence")]),
     tuple_value_type => sourced!("tuple-value-type", &[], &[("model", "tuple_value_type")]),
@@ -1148,18 +1149,6 @@ const UNPRODUCED: &[Unproduced] = &[
             source: "",
             detect: Detect::Form("composite_type/alias"),
             expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "composite_type/map",
-        keys: &["QSL-3054"],
-        probe: Probe {
-            source: include_str!("../../cases/catalog-source/probe-map-contains.native"),
-            detect: Detect::Form("composite_type/map"),
-            expect: Expect::Refused {
-                stage: "admit",
-                cause: "InvalidDerivedShape",
-            },
         },
     },
     Unproduced {

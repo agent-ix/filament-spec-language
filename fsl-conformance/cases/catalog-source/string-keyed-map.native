@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+record R { m: Map<String,Boolean>[1,4]; }
+function f using v(r: R): Boolean pure { true }
