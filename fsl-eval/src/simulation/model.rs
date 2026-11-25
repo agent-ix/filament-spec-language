@@ -77,7 +77,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
     ClockPlaceReference, EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey,
-    ObjectReference, Refusal, ScalarLimits, Undefined, ValueType,
+    ObjectReference, Refusal, ScalarLimits, Undefined, UniverseId, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -1580,19 +1580,25 @@ impl<'a> ModelSystem<'a> {
             initial.push(ModelSimState::anchored(state, anchor));
         }
 
-        // FR-125 gives an object key one type across the subject's initial
-        // states and every population that admits the bounded universe. Do
-        // this before reference bindings or any instance is formed: otherwise
-        // the same key could denote different objects depending on which
-        // population or initial snapshot supplied the row.
-        let mut admitted_types = BTreeMap::<String, DeclarationKey>::new();
+        // FR-125 gives an object universe's key one type across the subject's
+        // initial states and every bounded population. Do this before
+        // reference bindings or any instance is formed: otherwise one
+        // reference could denote different objects depending on which
+        // population or initial snapshot supplied the row. Equal keys in two
+        // object universes (unrelated type hierarchies) name two objects.
+        let mut admitted_types = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
         for state in &initial {
             for (population, objects) in &state.state.populations {
                 if !universes.contains_key(population) {
                     continue;
                 }
                 for (key, object) in objects {
-                    match admitted_types.get(key) {
+                    let universe = model
+                        .object_reference(&object.type_identity, key)?
+                        .universe()
+                        .clone();
+                    let identity = (universe, key.clone());
+                    match admitted_types.get(&identity) {
                         Some(first_type) if first_type != &object.type_identity => {
                             return Err(refused(
                                 Code::InvalidRuntimeInput,
@@ -1606,7 +1612,7 @@ impl<'a> ModelSystem<'a> {
                         }
                         Some(_) => {}
                         None => {
-                            admitted_types.insert(key.clone(), object.type_identity.clone());
+                            admitted_types.insert(identity, object.type_identity.clone());
                         }
                     }
                 }

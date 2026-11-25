@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Identifier, Integer, ScalarLimits};
 use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
-use fsl_foundation::{Code, SourceIdentity};
+use fsl_foundation::{Code, Setting, SettingLimits, SourceIdentity};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
 use ix_trace_rs::trace;
@@ -214,6 +214,162 @@ fn static_subject_after_recompile(wire: ReplayRequestWire) -> crate::spine::Stat
             .expect("emitted replay unit retains a static subject")
     );
     checked
+}
+
+/// TC-737: every S1/S3 setting is copied to its own compile limit, omitted
+/// settings retain literal defaults, and each accounting setting changes
+/// only its matching counter. This unit test is not allowed-path FR coverage.
+#[trace("TC-737")]
+#[test]
+fn tc_737_replay_limits_map_each_stage_and_accounting_setting_independently() {
+    let stage_cases = [
+        (Setting::S1InputBytes, "s1.input_bytes", 900_001, 1_048_576),
+        (Setting::S1Tokens, "s1.tokens", 90_002, 100_000),
+        (Setting::S1Nodes, "s1.nodes", 45_003, 50_000),
+        (Setting::S1WorkUnits, "s1.work_units", 28_000_004, 288),
+        (Setting::S1Diagnostics, "s1.diagnostics", 90_005, 100),
+        (Setting::S3Nodes, "s3.nodes", 90_006, 100_000),
+        (
+            Setting::S3InputBytes,
+            "s3.input_bytes",
+            15_000_007,
+            16_777_216,
+        ),
+        (
+            Setting::S3WorkUnits,
+            "s3.work_units",
+            14_000_008,
+            16_777_216,
+        ),
+        (Setting::S3RationalBits, "s3.rational_bits", 60_009, 65_536),
+        (Setting::S3DecimalScale, "s3.decimal_scale", 3_900, 4_096),
+        (
+            Setting::S3DecimalLiteralScale,
+            "s3.decimal_literal_scale",
+            64_011,
+            65_535,
+        ),
+        (
+            Setting::S3DecimalLiteralScaleTotal,
+            "s3.decimal_literal_scale_total",
+            1_000_012,
+            1_048_576,
+        ),
+    ];
+    let mut stages = crate::request::StageLimits::default();
+    for (_, name, supplied, _) in stage_cases {
+        stages = stages
+            .with_named(name, supplied)
+            .expect("known replay setting");
+    }
+    let stage_only = stages.clone();
+
+    let base = ScalarLimits {
+        integer_bits: 101,
+        decimal_digits: 102,
+        scale_expansion: 103,
+        text_input_bytes: 104,
+        text_scalars: 105,
+        normalized_scalars: 106,
+        unit_edges: 107,
+        value_occurrences: 108,
+        work_units: 109,
+        result_units: 110,
+    };
+    let accounting_cases = [
+        ("accounting.integer_bits", 201),
+        ("accounting.decimal_digits", 202),
+        ("accounting.scale_expansion", 203),
+        ("accounting.text_input_bytes", 204),
+        ("accounting.text_scalars", 205),
+        ("accounting.normalized_scalars", 206),
+        ("accounting.unit_edges", 207),
+        ("accounting.value_occurrences", 208),
+        ("accounting.work_units", 209),
+        ("accounting.result_units", 210),
+    ];
+    for (name, bound) in accounting_cases {
+        stages = stages
+            .with_named(name, bound)
+            .expect("known accounting setting");
+    }
+
+    let limits = request_limits(&stages, base, ReplayLimits::default()).expect("limits map");
+    let spine = limits
+        .spine
+        .bounds()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    for (setting, _, supplied, _) in stage_cases {
+        assert_eq!(spine.get(&setting), Some(&supplied), "{}", setting.name());
+    }
+    assert_eq!(limits.accounting.0.integer_bits, 201);
+    assert_eq!(limits.accounting.0.decimal_digits, 202);
+    assert_eq!(limits.accounting.0.scale_expansion, 203);
+    assert_eq!(limits.accounting.0.text_input_bytes, 204);
+    assert_eq!(limits.accounting.0.text_scalars, 205);
+    assert_eq!(limits.accounting.0.normalized_scalars, 206);
+    assert_eq!(limits.accounting.0.unit_edges, 207);
+    assert_eq!(limits.accounting.0.value_occurrences, 208);
+    assert_eq!(limits.accounting.0.work_units, 209);
+    assert_eq!(limits.accounting.0.result_units, 210);
+
+    let stage_only = request_limits(&stage_only, base, ReplayLimits::default())
+        .expect("stage limits map without counter entries");
+    assert_eq!(
+        stage_only.accounting.0, base,
+        "stage settings do not alter counters"
+    );
+
+    let mut accounting_only = crate::request::StageLimits::default();
+    for (name, bound) in accounting_cases {
+        accounting_only = accounting_only
+            .with_named(name, bound)
+            .expect("known accounting setting");
+    }
+    let accounting_only = request_limits(&accounting_only, base, ReplayLimits::default())
+        .expect("counter limits map without stage entries");
+
+    let omitted = request_limits(
+        &crate::request::StageLimits::default(),
+        base,
+        ReplayLimits::default(),
+    )
+    .expect("default limits map");
+    let defaults = omitted
+        .spine
+        .bounds()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    for (setting, name, _, default) in stage_cases {
+        assert_eq!(defaults.get(&setting), Some(&default), "{name}");
+    }
+    let accounting_only_defaults = accounting_only
+        .spine
+        .bounds()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    for (setting, name, _, default) in stage_cases {
+        assert_eq!(
+            accounting_only_defaults.get(&setting),
+            Some(&default),
+            "accounting does not alter {name}"
+        );
+    }
+    assert_eq!(
+        omitted.accounting.0, base,
+        "omitted counter entries keep the request's values"
+    );
+    assert_eq!(accounting_only.accounting.0.integer_bits, 201);
+    assert_eq!(accounting_only.accounting.0.decimal_digits, 202);
+    assert_eq!(accounting_only.accounting.0.scale_expansion, 203);
+    assert_eq!(accounting_only.accounting.0.text_input_bytes, 204);
+    assert_eq!(accounting_only.accounting.0.text_scalars, 205);
+    assert_eq!(accounting_only.accounting.0.normalized_scalars, 206);
+    assert_eq!(accounting_only.accounting.0.unit_edges, 207);
+    assert_eq!(accounting_only.accounting.0.value_occurrences, 208);
+    assert_eq!(accounting_only.accounting.0.work_units, 209);
+    assert_eq!(accounting_only.accounting.0.result_units, 210);
 }
 
 /// FR-750-AC-12 (runtime-invariant rows): impossible checked-package faults
@@ -1061,6 +1217,12 @@ fn tc_444_stage_limits_bound_the_recompile() {
     };
     assert_eq!(refusal.stage(), SpineStage::Check);
     assert_eq!(refusal.code(), Code::StageLimitExceeded);
+    let limit = refusal
+        .limit()
+        .expect("the stage refusal retains its limit");
+    assert_eq!(limit.setting().name(), "s3.work_units");
+    assert_eq!(limit.configured_bound(), 0);
+    assert_eq!(limit.actual(), 15);
     assert_eq!(refused.code(), Code::StageLimitExceeded);
 }
 

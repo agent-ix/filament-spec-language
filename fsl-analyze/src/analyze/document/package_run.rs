@@ -11,8 +11,21 @@
 //! echoed and written by the source route's own negotiation and writer, so
 //! an item settles with the source route's record, counterexample, replay
 //! and summary. An item whose family has no package form yet refuses the
-//! request whole, typed and naming the family, never settling `unsupported`
-//! for a fact the source route reads.
+//! request whole, typed and naming the family, rather than settle
+//! `unsupported` for a fact the source route reads.
+//!
+//! Operation-contract items fall short of that (QSL-2934): the contract check
+//! and an external provider have no evaluator over a package. Each item is
+//! negotiated first, and what negotiation settles itself is written as on the
+//! source route. A named `pre` or `post` clause over a bounded extent that is
+//! routed to the contract check then refuses the request whole. An item
+//! routed to the check over an unbounded extent settles `requires_bound`, as
+//! on the source route. These settle
+//! `unsupported`/`unsupported-requested-capability`, although the source route
+//! may evaluate them: a `pre` or `post` clause or an invariant routed to an
+//! external provider, an invariant routed to the contract check over a
+//! bounded extent, and a default `pre` or `post` item (a request with no
+//! `items`) routed to the check over a bounded extent.
 
 use std::collections::BTreeMap;
 
@@ -52,7 +65,9 @@ use super::{
 /// A `package` request (FR-850) whose item names a family the package route
 /// does not settle yet (FR-940 "Package forms of the source-checked
 /// evaluators"): the request is refused whole rather than settle that item
-/// `unsupported`.
+/// `unsupported`. Some operation-contract items settle `unsupported` all the
+/// same until their evaluators read a package (QSL-2934; the module
+/// documentation lists them).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingPackageFamily {
     /// The request index of the first such item, `None` for the default
@@ -176,8 +191,9 @@ pub enum PendingFamily {
     Declaration,
     /// A value-validity parameter or body form has no package evaluator form.
     ValueShape,
-    /// A selected operation contract needs the source requirement record,
-    /// whose operation-contract form the package wire contract does not carry.
+    /// An operation contract whose admitted requirement row and record give
+    /// no item, or a named `pre` or `post` clause over a bounded extent routed
+    /// to the contract check, which has no package evaluator yet (QSL-2934).
     OperationContractRequirementRecord,
     /// A name the package carries no row for while it holds a claim whose
     /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
@@ -395,7 +411,9 @@ enum Route<'a> {
     ProtocolAnalysis,
     SuppliedProtocol(String),
     Deadlock,
-    StateClause,
+    /// A state clause, with the refusal it gets if negotiation routes it to
+    /// the contract check (QSL-2934).
+    StateClause(Option<Box<PendingPackageFamily>>),
     StateGraph(Box<PackageStateGraphSubject<'a>>),
     Hyper(Box<PackageHyperSubject<'a>>),
     Relation(Box<PackageRelationSubject<'a>>),
@@ -775,9 +793,9 @@ fn settle_package_run_inner(
                 selection,
             } => match reads.state_clause(index, name, &declaration, ordinal, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
-                Resolution::Claim(claim, ()) => {
+                Resolution::Claim(claim, unevaluated) => {
                     invariant_claims.push(claim.item.claim.clone());
-                    routes.insert(index, Route::StateClause);
+                    routes.insert(index, Route::StateClause(unevaluated));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -907,6 +925,18 @@ fn settle_package_run_inner(
             family: &family,
         },
     )?;
+    // QSL-2934: the contract check reads no package yet, so a clause held
+    // for refusal that negotiation routed to it refuses the request.
+    for item in &negotiated {
+        let contract_check = item.disposition.target().is_some_and(|backend| {
+            backend.id().as_str() == crate::contract_check::manifest::BACKEND_ID
+        });
+        if let (true, Some(Route::StateClause(Some(pending)))) =
+            (contract_check, routes.get(&item.item.request_index))
+        {
+            return Err(PackageRunError::Pending((**pending).clone()));
+        }
+    }
     let mut analyzed = Vec::with_capacity(negotiated.len());
     if let (Some(input), Some(model)) = (input.as_ref(), model_input.as_ref()) {
         // FR-624: the shared subject binding is admitted before any item
@@ -3261,13 +3291,16 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// FR-625's item over the `invariant` state clause `name`, whose
-    /// `claim_names` row is on `declaration`, as the source route's
-    /// `resolve_one` resolves it: at the clause's node and `claim`
-    /// occurrence, kind `operation-contract` unless the item names another,
-    /// and, over a model subject, FR-489's tie narrowed to EN-1 (FR-962). An
-    /// item with no model subject is decided by EN-2's contract check, which
-    /// has no package form yet.
+    /// FR-625's item over the state clause `name` (`invariant`, `pre` or
+    /// `post`), whose `claim_names` row is on `declaration`, as the source
+    /// route's `resolve_one` resolves it: at the clause's node and `claim`
+    /// occurrence, with the extent of its admitted requirement row, kind
+    /// `operation-contract` unless the item names another, and, for an
+    /// invariant over a model subject, FR-489's tie narrowed to EN-1
+    /// (FR-962). A named `pre` or `post` clause over a bounded extent also
+    /// returns the refusal it gets if negotiation routes it to the contract
+    /// check, which reads no package yet (QSL-2934; the module documentation).
+    /// A default item with no model subject refuses the request.
     fn state_clause(
         &self,
         index: RequestIndex,
@@ -3275,7 +3308,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         declaration: &CheckedNodeId,
         ordinal: u64,
         selection: &ItemSelection,
-    ) -> Result<Resolution<()>, PackageRunError> {
+    ) -> Result<Resolution<Option<Box<PendingPackageFamily>>>, PackageRunError> {
         let pending = |family| {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
@@ -3290,14 +3323,13 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         // state-clause input: pre/post clauses have no EN-1 form, so looking
         // them up there first turns the expected pending package record into
         // an internal fault.
-        let pending_requirement_record = || {
-            PackageRunError::Pending(PendingPackageFamily {
-                request_index: Some(index),
-                family: PendingFamily::OperationContractRequirementRecord,
-                node: Some(declaration.clone()),
-                note: Some(format!("`{name}` (claim occurrence {ordinal})")),
-            })
+        let requirement_record_family = || PendingPackageFamily {
+            request_index: Some(index),
+            family: PendingFamily::OperationContractRequirementRecord,
+            node: Some(declaration.clone()),
+            note: Some(format!("`{name}` (claim occurrence {ordinal})")),
         };
+        let pending_requirement_record = || PackageRunError::Pending(requirement_record_family());
         let row = self
             .package
             .requirement_items()
@@ -3314,11 +3346,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         else {
             return Err(pending_requirement_record());
         };
-        if !record.invariant && self.explicit_items {
-            // Named pre/post clauses have a retained requirement row, but
-            // the package route has no operation-contract form for them.
-            return Err(pending_requirement_record());
-        }
+        // FR-940: an admitted record is a request item whatever its kind of
+        // clause, so negotiation settles it before any evaluator is chosen.
         let claim = if record.invariant {
             let input = self
                 .input
@@ -3345,6 +3374,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             )
         };
         let extent = ExtentClassification::of(&extent);
+        // An unbounded extent is not held: the shared contract-check decision
+        // settles it `requires_bound` without an evaluator.
+        let unevaluated =
+            (self.explicit_items && !record.invariant && extent == ExtentClassification::Bounded)
+                .then(|| Box::new(requirement_record_family()));
         let own_subject = self.own_subject(index, selection)?;
         let kind = match selection.kind.as_deref() {
             Some(label) => match Capability::from_wire(label) {
@@ -3410,7 +3444,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: own_subject,
                 unrouted,
             }),
-            (),
+            unevaluated,
         ))
     }
 }
@@ -3693,7 +3727,7 @@ impl<'a> WorkInputs<'_, 'a> {
             }
             // FR-489's tie routed the invariant over the model subject to
             // EN-1 (FR-625, FR-951), as on the source route.
-            (_, Some(Route::StateClause))
+            (_, Some(Route::StateClause(_)))
                 if item.kind == Capability::OperationContract
                     && negotiated.disposition.target().is_some_and(|backend| {
                         backend.id().as_str() == crate::model_check::manifest::BACKEND_ID

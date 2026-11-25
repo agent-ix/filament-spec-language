@@ -89,7 +89,7 @@ pub(super) fn run(
         let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok((ProbBuild::Built(product), _)) => product,
-            Ok((ProbBuild::Partial { .. }, _)) => return not_yet(),
+            Ok((ProbBuild::Partial { .. }, _)) => return max_states_limit(&limits, subject),
             Ok((ProbBuild::Undefined(path), monitor)) => {
                 return undefined::run(
                     simulation.clone(),
@@ -128,7 +128,9 @@ pub(super) fn run(
                             tamper_witness,
                         )
                     }
-                    Ok((ProbBuild::Partial { .. }, _)) => return not_yet(),
+                    Ok((ProbBuild::Partial { .. }, _)) => {
+                        return max_states_limit(&limits, subject)
+                    }
                     Ok((ProbBuild::Built(_), _)) => return broken(),
                     Err(error) => return build_refusal(error, subject),
                 }

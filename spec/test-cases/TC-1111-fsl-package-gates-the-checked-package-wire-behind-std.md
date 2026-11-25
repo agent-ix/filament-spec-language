@@ -65,7 +65,8 @@ NFR-015-AC-4 to NFR-015-AC-7, NFR-015-AC-9 and NFR-015-AC-10.
 5. Both pass: the emitted bytes and `package_id` match the FR-322 vectors.
 6. No match.
 7. It is `None`.
-8. It is `None` after the binding; the second emission's `package_id`
-   differs from the first. The second package's binding is refused with
+8. It is `None` after the binding; the second emission holds the relation
+   node and its `declaration` occurrence, which the first lacks. The second
+   package's binding is refused with
    `AbstractionRefusal::MissingDeclaration`, and `emitted_package_id` then
    equals the emitted `package_id`.
