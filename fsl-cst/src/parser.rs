@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! One bounded interpreter for the declarative complete-V1 grammar.
-use ix_trace_rs::implements;
-
 use std::collections::BTreeSet;
 
 use logos::Logos;
