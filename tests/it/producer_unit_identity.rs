@@ -11,7 +11,7 @@ use filament_semantic_value::quantity::{
 };
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use filament_semantic_value::unit::{DimensionNode, NominalUnitForm, UnitGraph, UnitNode};
-use fsl_foundation::SourceIdentity;
+use fsl_foundation::{Setting, SourceIdentity};
 use fsl_replay::{AdmittedCompilation, CompileUnit, ReplayLimits, StageLimits};
 use ix_trace_rs::trace;
 
@@ -304,9 +304,11 @@ fn small_admitted_root_family_completes_exact_handoff() {
 #[test]
 fn long_admitted_package_name_reaches_actual_handoff_identity_refusal() {
     let package_name = "p".repeat(16_777_216 / ROOTS);
-    let limits = StageLimits::default()
-        .with_named("emit.output_bytes", 1_073_741_824)
-        .expect("the emitter ceiling is a stage limit");
+    // `with_named` accepts only settings carried by a replay request. This
+    // compile-time producer fixture raises E4's output ceiling directly.
+    let limits: StageLimits = [(Setting::EmitOutputBytes, 1_073_741_824)]
+        .into_iter()
+        .collect();
     conversion_handoff(
         &compile_with_limits(package_name, ROOTS, false, limits),
         true,

@@ -4,7 +4,7 @@
 use super::*;
 use filament_exact::{Identifier, NodeKey, NodePathIter};
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
-use fsl_foundation::node_wire::{project_node_key, NodeIdentitySink};
+use fsl_foundation::node_wire::{NodeIdentitySink, project_node_key};
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 /// Actual bounded fair-proof checking stages, for default-off observation.
@@ -111,6 +111,17 @@ struct WireTarget<'a> {
 }
 
 pub(super) fn admit(claim: &CheckedProbabilisticClaim) -> Result<(), ProbabilityDocumentError> {
+    if matches!(claim.form, ProbForm::MeanTime { .. }) {
+        return if !claim.fairness.is_empty()
+            && matches!(claim.scheduler, ProbScheduler::Every)
+            && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+                == Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
+        {
+            Ok(())
+        } else {
+            Err(ProbabilityDocumentError::Unsupported)
+        };
+    }
     if matches!(
         &claim.form,
         ProbForm::Reach {
@@ -588,7 +599,7 @@ pub(super) fn fair_end_component_keys(
                                 crate::ExactProbBuildIssue::Expansion(stop),
                             )),
                         },
-                    })
+                    });
                 }
             };
         let mut rows = Vec::new();

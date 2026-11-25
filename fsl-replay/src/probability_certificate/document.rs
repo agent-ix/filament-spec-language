@@ -899,6 +899,31 @@ fn read_document(
     read_document_profile(bytes, limits, cancel, meter, false, None, &mut 0)
 }
 
+/// Cancellation-aware working-byte budget for the canonical reader.
+struct CancellableReadReservation<'a> {
+    cancel: &'a Cancel,
+    bound: u64,
+    charged: u64,
+    refused: Option<u64>,
+}
+
+impl quire_canonical::Reservation for CancellableReadReservation<'_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
+        if self.cancel.poll() {
+            return Err(quire_canonical::ReservationDenied);
+        }
+        let required = self
+            .charged
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+        if required > self.bound {
+            self.refused = Some(required);
+            return Err(quire_canonical::ReservationDenied);
+        }
+        self.charged = required;
+        Ok(())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[ix_trace_rs::string_edge]
 fn read_document_profile(
@@ -919,18 +944,46 @@ fn read_document_profile(
             u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         ));
     }
-    let parsed = quire_canonical::read_bounded(bytes, limits.bytes, limits.storage_bytes).map_err(
-        |error| match error {
-            quire_canonical::ReadError::Limit(limit) => exceeded(
+    let mut reservation = CancellableReadReservation {
+        cancel,
+        bound: limits.storage_bytes,
+        charged: 0,
+        refused: None,
+    };
+    let parsed = match quire_canonical::read_with_reservation(bytes, limits.bytes, &mut reservation)
+    {
+        Ok(parsed) => parsed,
+        Err(quire_canonical::ReadError::ReservationDenied { .. }) => {
+            if let Some(cause) = cancel.cause() {
+                return Err(ProbabilityDocumentError::Cancelled(cause));
+            }
+            return Err(exceeded(
                 ProbabilityDocumentLimit::StorageBytes,
-                limit.bound,
-                limit.required,
-            ),
-            _ => ProbabilityDocumentError::Malformed,
-        },
-    )?;
+                limits.storage_bytes,
+                reservation.refused.unwrap_or(u64::MAX),
+            ));
+        }
+        Err(_) => return Err(ProbabilityDocumentError::Malformed),
+    };
+    // Catch cancellation requested after the reader's final growth charge
+    // and before any decoded document member can be accepted or exposed.
+    poll(cancel)?;
     let root = parsed.root();
     let objective = root.get("objective");
+    let timed_fair_profile = allow_fair
+        && matches!(
+            objective
+                .and_then(|node| node.get("profile"))
+                .map(|node| node.node()),
+            Some(quire_canonical::Node::String(TIMED_PROFILE))
+        )
+        && matches!(
+            objective
+                .and_then(|node| node.get("timed"))
+                .and_then(|node| node.get("form"))
+                .map(|node| node.node()),
+            Some(quire_canonical::Node::String("expected-elapsed"))
+        );
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
         || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) } else { !(allow_fair && matches!(profile, BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE)) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
@@ -950,6 +1003,7 @@ fn read_document_profile(
                                 BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
                             ))
                         ))
+                    && !timed_fair_profile
             }
             _ => false,
         };
@@ -999,7 +1053,7 @@ fn read_document_profile(
         Some(quire_canonical::Node::String(
             BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
         ))
-    );
+    ) || timed_fair_profile;
     if fair_profile {
         let mut admission =
             ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
@@ -1043,6 +1097,7 @@ fn read_document_profile(
             .timed
             .as_ref()
             .is_some_and(|timed| timed.form == "elapsed-quantile");
+    let timed_fair_profile = timed_fair_profile && !wire.objective.fairness.is_empty();
     if (wire.kind != "exact" && !upper_kind)
         || if cyclic_mdp {
             !matches!(
@@ -1070,13 +1125,15 @@ fn read_document_profile(
                 wire.objective.profile.as_str(),
                 BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
             )
+            && !timed_fair_profile
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if matches!(
         wire.objective.profile.as_str(),
         BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
-    ) {
+    ) || timed_fair_profile
+    {
         let destination = fairness.ok_or(ProbabilityDocumentError::Unsupported)?;
         *destination = fairness::read(&wire.objective.fairness, limits, cancel, meter, storage)?;
         if destination.is_empty() {
@@ -1269,8 +1326,21 @@ pub fn write_value_bounds_measure_certificate(
             .map(|row| row.state.clone())
             .collect::<std::collections::BTreeSet<_>>();
         document.ranking.retain(|(state, _)| states.contains(state));
+    } else {
+        document.ranking.clear();
     }
-    let exact = write_measure_probability_certificate(&document, limits, cancel)?;
+    // Interval endpoints may round just outside a shifted payoff's exact range
+    // (for example, below -2/5). Their Bellman inequalities establish the
+    // outward bound, so validate the canonical base shape without applying the
+    // exact-document range check here.
+    let exact = measure::encode(&document, limits, cancel)?;
+    measure::decode_measure_probability_certificate(
+        &exact,
+        limits,
+        cancel,
+        &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+        &mut 0,
+    )?;
     value_bounds::wrap(&exact, side, limits)
 }
 
@@ -1281,6 +1351,34 @@ pub fn write_probability_certificate(
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
     writer::write(document, limits, cancel)
+}
+
+/// Write an expected-elapsed certificate carrying the checked timed claim's
+/// fairness objective.
+pub fn write_timed_fair_probability_certificate(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    document: &ProbabilityCertificateDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let claim = bind_claim(claims, item, cancel)?;
+    if !std::ptr::eq(system.input().probabilistic.claims(), claims)
+        || !matches!(
+            document.timed.as_ref().map(|timed| timed.form),
+            Some(TimedProbabilityForm::ExpectedElapsed)
+        )
+    {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let fairness = fairness::checked(system, claim, limits, cancel, &mut meter, &mut storage)?;
+    if fairness.is_empty() {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    writer::encode_fair_profile(document, limits, cancel, false, false, &fairness)
 }
 
 type SubjectGraph = (
@@ -2105,18 +2203,8 @@ fn check_document_bytes(
     }
     match dispatch {
         ProfileDispatch::Measure => {
-            let partial_lower = bound_side == Some(SubsystemBoundKind::Lower)
-                && offer.role == CertificateRole::Claim;
             return measure::check(
-                system,
-                claims,
-                item,
-                bytes,
-                partial_lower,
-                bound_side.filter(|_| !partial_lower),
-                offer.role,
-                limits,
-                cancel,
+                system, claims, item, bytes, false, bound_side, offer.role, limits, cancel,
             );
         }
         ProfileDispatch::Timed => {
@@ -2680,6 +2768,37 @@ pub(super) fn certificate_identity(
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
+
+    #[trace("TC-636", "FR-282-AC-21")]
+    #[test]
+    fn cancellation_at_a_certificate_reader_charge_stops_parsing() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, OnceLock,
+        };
+
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&polls);
+        let cancel = Cancel::observing(move || {
+            if observed.fetch_add(1, Ordering::Relaxed) + 1 == 3 {
+                weak.upgrade()
+                    .expect("the slot remains owned during the read")
+                    .get()
+                    .expect("the cancellation handle is initialized")
+                    .cancel(CancelCause::Requested);
+            }
+        });
+        slot.set(cancel.clone())
+            .expect("the cancellation handle is initialized once");
+
+        assert_eq!(
+            read_probability_certificate(&bytes(), limits(), &cancel),
+            Err(ProbabilityDocumentError::Cancelled(CancelCause::Requested))
+        );
+        assert_eq!(polls.load(Ordering::Relaxed), 3);
+    }
 
     #[trace("TC-636", "FR-201-AC-25", "FR-282-AC-19")]
     #[test]

@@ -6,11 +6,14 @@
 //! Every case runs on a thread spawned with a 512 KiB stack, so a recursive
 //! walk anywhere in the path overflows the test instead of passing quietly.
 
-use filament_eval::FamilyOutcome;
+use filament_eval::{
+    CallFailure, Evaluation, ExecutionBackendChoice, FamilyOutcome, SessionLimits,
+};
 use filament_exact::{
     FieldValue, Integer, LimitKind, Meter, Outcome, ScalarLimits, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use fsl_eval::execution::{ExecuteLimits, ExecuteRequest, ExecuteSelection, SuppliedBackends};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
@@ -108,7 +111,7 @@ fn assert_completed_with(outcome: &FamilyOutcome<Value>, expected: i64) {
 
 #[trace("TC-734", "FR-262-AC-1")]
 #[test]
-fn a_100_000_deep_recursive_call_completes_and_fuel_is_exact_at_the_last_charge() {
+pub(super) fn a_100_000_deep_recursive_call_completes_and_fuel_is_exact_at_the_last_charge() {
     on_small_stack(|| {
         let package = package_of(TALLY);
         let mut meter = Meter::new(limits(50_000_000));
@@ -140,7 +143,7 @@ fn a_100_000_deep_recursive_call_completes_and_fuel_is_exact_at_the_last_charge(
 
 #[trace("TC-734", "FR-262-AC-1")]
 #[test]
-fn a_call_that_exceeds_fuel_returns_the_typed_refusal_not_a_crash() {
+pub(super) fn a_call_that_exceeds_fuel_returns_the_typed_refusal_not_a_crash() {
     on_small_stack(|| {
         let package = package_of(TALLY);
         let mut meter = Meter::new(limits(1_000));
@@ -152,6 +155,43 @@ fn a_call_that_exceeds_fuel_returns_the_typed_refusal_not_a_crash() {
         assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
         assert_eq!(incomplete.limit, 1_000);
     });
+}
+
+/// TC-1121 FR-403-AC-7's recursive-count vector through the no_std entry on
+/// the required 512 KiB stack.
+pub(super) fn no_std_recursive_count_on_small_stack() -> Result<Evaluation, CallFailure> {
+    on_small_stack(|| {
+        let package = package_of(TALLY);
+        let cancel = filament_exact::Cancel::new();
+        let request = ExecuteRequest {
+            selection: ExecuteSelection::Function {
+                name: QualifiedName::unqualified("tally").expect("function name"),
+                arguments: vec![Value::Integer(Integer::from(DEPTH))],
+                environment: ObjectEnvironment::default(),
+            },
+            backend: ExecutionBackendChoice::Interpreter,
+        };
+        let limits = ExecuteLimits {
+            accounting: limits(50_000_000),
+            prepare: fsl_eval::execution::PrepareLimits::default(),
+            session: SessionLimits::default(),
+        };
+        let mut run = filament_semantic_value::supplied_stop::SuppliedRun::new(
+            filament_semantic_value::supplied_stop::SuppliedLimits::default(),
+            cancel.clone(),
+        )
+        .expect("supplied run initializes");
+        let evaluation = fsl_eval::execution::execute(
+            &package,
+            &request,
+            &SuppliedBackends::default(),
+            &limits,
+            &mut run,
+            &cancel,
+        )?;
+        assert_completed_with(&evaluation.outcome, DEPTH as i64);
+        Ok(evaluation)
+    })
 }
 
 const CHAIN: &str = "record Link { head: Int[0,9]; tail: Option<Link>; } \
@@ -182,7 +222,7 @@ fn chain_length(value: &Value) -> u64 {
 }
 
 #[test]
-fn a_100_000_long_list_evaluates_compares_clones_and_drops() {
+pub(super) fn a_100_000_long_list_evaluates_compares_clones_and_drops() {
     on_small_stack(|| {
         let package = package_of(CHAIN);
         let mut accounting = limits(50_000_000);
@@ -221,7 +261,7 @@ fn a_100_000_long_list_evaluates_compares_clones_and_drops() {
 }
 
 #[test]
-fn a_100_000_deep_value_type_clones_compares_hashes_formats_and_drops() {
+pub(super) fn a_100_000_deep_value_type_clones_compares_hashes_formats_and_drops() {
     on_small_stack(|| {
         let nest = |base: ValueType| {
             let mut value_type = base;

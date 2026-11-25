@@ -99,7 +99,10 @@ nodes and edges; their attributes and layout are the renderer's choice.
 one DOT statement. Before it writes a unit, `render` charges the unit's
 UTF-8 byte length against `output_bytes` and polls `&Cancel` (FR-276). The
 budget counts every byte `render` would return, newlines included. A JSON
-rendering is one unit.
+rendering is one unit. In an FR-865 text rendering of an outcome with
+`native_fences`, each fence summary line and each fence diagnostic, cause,
+label or hint line is a separate text unit and is charged separately before
+it is written.
 
 ### The unsupported-form refusal
 
@@ -152,6 +155,9 @@ returns no bytes and no partial bytes.
 - When `render` has an output unit to write, `render` shall charge the
   unit's UTF-8 byte length against `RenderLimits.output_bytes` and poll
   `&Cancel` before the unit is written.
+- When an FR-865 text outcome has `native_fences`, `render` shall treat each
+  fence summary and each fence diagnostic, cause, label and hint line as a
+  separate output unit and charge it before writing that line.
 - When a charge would exceed `output_bytes`, `render` shall return
   `StageFailure::Limit(LimitExceeded)` naming `render.output_bytes`, the
   bound and the count the charge would have reached, and no bytes.
@@ -177,6 +183,7 @@ returns no bytes and no partial bytes.
 | FR-298-AC-9 | DOT rendering of a retained state graph of 100,000 states, cancelled with `Deadline` from a second thread once the test's charge observer has seen 1,000 output charges, returns `StageFailure::Cancelled(Deadline)`, no bytes, and the observer records at most one charge after the cancellation; with a handle already cancelled with `Requested`, `render` returns `StageFailure::Cancelled(Requested)` before its first charge. Both exit 22. | Test (TC-783) |
 | FR-298-AC-10 | Each AC-2, AC-3 and AC-7 rendering called twice with equal inputs, forms, `RenderSources` and limits returns byte-equal output. The text counterexample rows follow the function's parameter declaration order; the text trace lists positions in increasing index with the loop-start line and the deciding-position line each marked; no structural element AC-2 or AC-7 names is absent. | Test (TC-783) |
 | FR-298-AC-11 | `RenderSources::from_sources` over two admitted `Source` values holds each under its own source reference; over two `Source` values with one source reference admitted under paths `a.fsl` and `b.fsl`, FR-286-AC-2's refusal over that reference renders with path `a.fsl`. A `compile_fail` doctest that inserts a `Source` under a caller-supplied key, or builds `RenderSources` from a map, fails to compile beside a compiling `from_sources` control. | Test (TC-783) |
+| FR-298-AC-12 | For a one-entry `check_fences` document using FR-865-AC-25's `Broken` fence and diagnostic, with no later output, let `N` be the UTF-8 byte length, including newlines, of the complete default-limit text output. With `render.output_bytes` set to `N - 1`, rendering returns `StageFailure::Limit(LimitExceeded)` on the final `  hint: replace the payload` output unit, with kind `input-bytes-exceeded`, bound `N - 1`, would-be count `N`, setting `render.output_bytes`, no bytes and exit 22. At exactly `N`, rendering returns the complete byte-equal output. | Test (TC-783) |
 
 ## Dependencies
 

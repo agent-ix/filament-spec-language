@@ -152,11 +152,11 @@ fn the_weak_each_proof_is_a_certificate_the_checker_accepts() {
 /// object's constraint on the first accepting component is
 /// `WitnessFails` at its first state, since edges inside the component take
 /// it; the two accepting components listed before the waiting component
-/// that reaches them is `BackwardEdge` at a waiting state; a state in two
+/// that reaches them is `BackwardEdge` at the exact edge; a state in two
 /// components is `NotPartition` at it; and a `Trivial` witness over the
 /// terminal stutter state of the Counter, whose one state has a self-edge,
 /// is `WitnessFails`.
-#[trace("TC-526", "FR-339-AC-2")]
+#[trace("TC-526", "FR-339-AC-2", "FR-282-AC-6")]
 #[test]
 fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
     let (world, certificate, _) = weak_each_proof();
@@ -174,14 +174,23 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
     let mut early = certificate.clone();
     let waiting = early.components.remove(0);
     early.components.insert(2, waiting.clone());
-    let TemporalCertificateCheck::Rejected(CertificateRejection {
-        rule: CertificateRule::BackwardEdge,
-        at: CertificateLocus::ProductState(at),
-    }) = accepts(&world, &early)
-    else {
+    let TemporalCertificateCheck::Rejected(rejection) = accepts(&world, &early) else {
         panic!("the waiting component reaches the accepting ones");
     };
-    assert!(waiting.states.contains(&at));
+    assert_eq!(rejection.rule, CertificateRule::BackwardEdge);
+    let CertificateLocus::ProductEdge { source, target } = &rejection.at else {
+        panic!("the backward-edge diagnostic names both endpoint states");
+    };
+    assert_eq!(
+        serde_json::to_value(&rejection.at).expect("the edge locus serializes"),
+        serde_json::json!({"source": source, "target": target}),
+        "the diagnostic carries both exact endpoints of the backward edge"
+    );
+    assert!(waiting.states.contains(&source));
+    assert!(early
+        .components
+        .iter()
+        .any(|component| component.states.contains(&target)));
 
     let mut twice = certificate.clone();
     let shared = twice.components[1].states[0].clone();
@@ -211,6 +220,52 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
             CertificateRule::WitnessFails,
             &terminal.components[last].states[0]
         )
+    );
+}
+
+/// A transposition of two components in the weakly fair finite `Counter`
+/// liveness certificate creates a backward edge. The current core rejection
+/// locates that edge at its source state, without retaining the transition
+/// that made the edge backward.
+#[trace("TC-526")]
+#[test]
+fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
+    let fixture = counter(
+        crate::counter::document(false),
+        "fair weak M::Counter::inc;",
+        "always eventually holds(c.value = 3)",
+    );
+    let (certificate, _) = fixture.certified(is_three);
+    let letters = fixture.letters(is_three);
+    let request = fixture.certificate_request(&letters, UNLIMITED);
+    let backward = (0..certificate.components.len())
+        .flat_map(|left| (left + 1..certificate.components.len()).map(move |right| (left, right)))
+        .find_map(|(left, right)| {
+            let mut swapped = certificate.clone();
+            swapped.components.swap(left, right);
+            match check_components(
+                &request,
+                &swapped,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            )
+            .expect("the request is checked")
+            {
+                TemporalCertificateCheck::Rejected(CertificateRejection {
+                    rule: CertificateRule::BackwardEdge,
+                    at: CertificateLocus::ProductState(at),
+                }) => Some((swapped, at)),
+                _ => None,
+            }
+        })
+        .expect("swapping two components out of topological order is rejected");
+    let (swapped, at) = backward;
+    assert!(
+        swapped
+            .components
+            .iter()
+            .any(|component| component.states.contains(&at)),
+        "the current cause names the backward edge's source state"
     );
 }
 

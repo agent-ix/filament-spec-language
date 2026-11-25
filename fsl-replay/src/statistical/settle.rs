@@ -749,6 +749,7 @@ mod tests {
     /// `runtime_invariant`/`established-invariant-broken`; `NotStatistical`
     /// settles no record, with `invalid_capability`/`not-statistical`.
     #[trace("TC-627", "FR-192-AC-1")]
+    #[trace("TC-630", "FR-195-AC-5")]
     #[test]
     fn each_refusal_row_settles_as_the_map_states() {
         let settled = |refusal: StatisticalRefusal| {

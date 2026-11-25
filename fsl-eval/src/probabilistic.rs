@@ -73,6 +73,13 @@ pub enum MonitorState {
         /// Where the event stands.
         phase: DeadlinePhase,
     },
+    /// A timed formula with distinct root and nested operator occurrences.
+    TimedFormula {
+        /// The checked root operator occurrence.
+        root: TimedOperatorState,
+        /// The nested checked operator occurrence, when present.
+        nested: Option<TimedOperatorState>,
+    },
 }
 
 /// The shape of a timed deadline event (FR-204 "Admission").
@@ -98,6 +105,77 @@ pub enum DeadlinePhase {
     Reject,
 }
 
+/// One checked timed temporal operator occurrence retained in EN-5's product.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TimedOperatorState {
+    /// The checked formula node identifying this occurrence.
+    pub occurrence: u64,
+    /// The operator kind.
+    pub kind: DeadlineKind,
+    /// The closed lower bound, in digital units.
+    pub lower: u64,
+    /// The closed upper bound, in digital units.
+    pub upper: u64,
+    /// Elapsed digital units since activation.
+    pub elapsed: u64,
+    /// The occurrence's control phase.
+    pub phase: DeadlinePhase,
+}
+
+/// Advance the shared Eventually/Always monitor used for a punctual nested
+/// timed formula.
+///
+/// The nested Always result remains provisional through all ordered
+/// observations at its target timestamp. A later false observation can
+/// therefore invalidate an earlier true one before the timestamp closes.
+pub fn advance_nested_timed_deadline(
+    root: &mut TimedOperatorState,
+    nested: &mut TimedOperatorState,
+    holds: bool,
+    elapsed: u64,
+) {
+    if elapsed > root.elapsed {
+        if root.phase == DeadlinePhase::Pending && nested.phase == DeadlinePhase::Accept {
+            root.phase = DeadlinePhase::Accept;
+        }
+        if root.phase == DeadlinePhase::Pending {
+            nested.phase = DeadlinePhase::Pending;
+        }
+    }
+    let lower = root.lower.saturating_add(nested.lower);
+    let upper = root.upper.saturating_add(nested.upper);
+    if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
+        nested.elapsed = elapsed.saturating_sub(root.lower);
+        nested.phase = if nested.lower == 0 {
+            // At zero delay a later position at this timestamp can itself be
+            // the Eventually witness, so only the suffix after the last
+            // observation determines whether one remains possible.
+            if holds {
+                DeadlinePhase::Accept
+            } else {
+                DeadlinePhase::Reject
+            }
+        } else if !holds {
+            // At positive delay all positions at the target timestamp belong
+            // to the same Always window; one false observation invalidates it.
+            DeadlinePhase::Reject
+        } else if nested.phase == DeadlinePhase::Pending {
+            DeadlinePhase::Accept
+        } else {
+            nested.phase
+        };
+    } else {
+        nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
+        if root.phase == DeadlinePhase::Pending && elapsed > upper {
+            nested.phase = DeadlinePhase::Pending;
+        }
+    }
+    if root.phase == DeadlinePhase::Pending && elapsed > upper {
+        root.phase = DeadlinePhase::Reject;
+    }
+    root.elapsed = elapsed;
+}
+
 impl MonitorState {
     /// Whether the control is decided: nothing it reads can change it, so
     /// the product does not expand the state.
@@ -110,6 +188,7 @@ impl MonitorState {
             ),
             Self::Fraction { remaining } => remaining == 0,
             Self::Deadline { phase, .. } => !matches!(phase, DeadlinePhase::Pending),
+            Self::TimedFormula { root, .. } => !matches!(root.phase, DeadlinePhase::Pending),
         }
     }
 }
@@ -651,7 +730,7 @@ impl MeasurePayoff {
             | Self::Satisfied(comparison, threshold)
             | Self::Shifted(comparison, threshold, _) => (*comparison, threshold),
             Self::Activated | Self::Fraction => {
-                return Err(MeasureError::Broken("comparison-payoff"))
+                return Err(MeasureError::Broken("comparison-payoff"));
             }
         };
         let operator = match comparison {
@@ -761,8 +840,8 @@ mod tests {
                 })
             );
         }
-        assert!(plan
-            .step(
+        assert!(
+            plan.step(
                 control,
                 amount.as_ref(),
                 &[true, false],
@@ -770,7 +849,8 @@ mod tests {
                 &[],
                 &mut meter
             )
-            .is_err());
+            .is_err()
+        );
     }
 
     #[trace("TC-631", "FR-196-AC-7", "FR-196-AC-11")]

@@ -1533,17 +1533,14 @@ impl<'a> Typer<'a> {
                         cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
                 }
-                let value_type = match hint.as_deref() {
-                    Some(ValueType::Int(interval))
-                        if interval.lower() <= value && value <= interval.upper() =>
-                    {
-                        ValueType::Int(interval.clone())
-                    }
-                    _ => ValueType::Integer,
-                };
                 node(
                     NodeKind::Literal(CheckedLiteral(Value::Integer(value.clone()))),
-                    value_type,
+                    // Integer literals retain their unbounded Integer type.
+                    // A bounded expected type is represented by the explicit
+                    // `numeric.narrow` coercion in the checked graph (FR-093),
+                    // which also carries the definedness condition consumed
+                    // by temporal export (FSpec FR-812/FR-813).
+                    ValueType::Integer,
                     &location,
                 )
             }
@@ -3795,7 +3792,7 @@ impl<'a> Typer<'a> {
     ) -> Result<Step<'e, 'r>, CheckRefusal> {
         match frame.value.take() {
             None => {
-                let slot = self.bind_declared(
+                let slot = self.bind_let_declared(
                     frame.name,
                     frame
                         .annotation
@@ -3803,7 +3800,6 @@ impl<'a> Typer<'a> {
                         .unwrap_or(&typed.value_type)
                         .clone(),
                     &frame.location,
-                    LocalKind::Bound,
                     Some((&frame.location, 0)),
                 )?;
                 if self.lowers_as_integer(&typed) {

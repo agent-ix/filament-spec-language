@@ -381,6 +381,11 @@ impl World {
         &self.packages
     }
 
+    /// The original unit bytes keyed by the package graph's declared source.
+    pub(crate) fn source_provision(&self) -> fsl_analyze::analyze::SourceProvision {
+        fsl_analyze::analyze::SourceProvision::single(self.package.graph().source(), &self.source)
+    }
+
     /// Recompile and replay one state-graph witness through FR-170.
     pub(crate) fn replay_witness(
         &self,
@@ -593,6 +598,23 @@ pub(crate) fn temporal_config_world() -> World {
     let hyper = "hyper HyperProgress using t over behaviours (c: Config::ConfigVersion) \
                  exists trace a of Config { always [0, 2] holds(true) }\n";
     let body = format!("{CONFIG_CONTRACT}{REACHES_TWO}{temporal}{hyper}");
+    let objects: [Object<'_>; 1] = [("a", &[("versionNumber", 0)])];
+    World::with_profiles(config_version(), profile, &body, &[&objects])
+}
+
+/// The same temporal and hyper bindings under an order-only transition and
+/// claim, for identity read-back tests without equality-decision metadata.
+pub(crate) fn temporal_config_world_ordered() -> World {
+    let profile = "profile t = \"filament.temporal.event-position.false-extension/v1\";\n";
+    let contract = "post Advance using v on Config::ConfigVersion::attemptUpdate { \
+                    self.versionNumber > pre(self.versionNumber) }\n";
+    let temporal = "temporal TemporalProgress using t over (c: Config::ConfigVersion) \
+                    clock \"model-steps\" on origin { eventually[0,2] holds(true) }\n";
+    let hyper = "hyper HyperProgress using t over behaviours (c: Config::ConfigVersion) \
+                 exists trace a of Config { always [0, 2] holds(true) }\n";
+    let claim = "possible ReachesTwo using v over (c: Config::ConfigVersion) \
+                 { c.versionNumber < 2 }\n";
+    let body = format!("{contract}{claim}{temporal}{hyper}");
     let objects: [Object<'_>; 1] = [("a", &[("versionNumber", 0)])];
     World::with_profiles(config_version(), profile, &body, &[&objects])
 }

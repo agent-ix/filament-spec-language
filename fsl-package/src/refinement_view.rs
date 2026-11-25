@@ -253,6 +253,15 @@ impl crate::BarePackage<'_> {
         let site = match sources.as_slice() {
             [] => return Err(unsupported(Code::RowSource, "mapping row source").into()),
             [site] => *site,
+            [first, rest @ ..]
+                if rest.iter().all(|site| {
+                    site.source == first.source
+                        && site.start == first.start
+                        && site.end == first.end
+                }) =>
+            {
+                *first
+            }
             sites if allow_operation_parameter => *sites
                 .iter()
                 .min_by_key(|site| site.end.saturating_sub(site.start))
@@ -261,9 +270,6 @@ impl crate::BarePackage<'_> {
                 return Err(unsupported(Code::RowSource, "ambiguous mapping row source").into());
             }
         };
-        if sources.len() > 1 && !allow_operation_parameter {
-            return Err(unsupported(Code::RowSource, "ambiguous mapping row source").into());
-        }
         let mut binders = Vec::new();
         let mut seen_binders = std::collections::BTreeSet::new();
         let mut unsupported_parameter = false;

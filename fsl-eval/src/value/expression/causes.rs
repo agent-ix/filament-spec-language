@@ -15,6 +15,7 @@ use filament_semantic_value::catalog::{
     render_identity, CatalogCode, CatalogCoded, UndefinedCoded, UndefinedReason, UndefinedRecord,
     STATE_MODEL_CATALOG_PREFIX,
 };
+use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
 
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::call::WrongSnapshotCause;
@@ -26,8 +27,8 @@ use fsl_semantics::model::observation::AdmissionRecord;
 #[derive(Debug)]
 pub(crate) struct OnlyNotOneCause {
     pub(crate) population: String,
-    pub(crate) locus: String,
-    pub(crate) row: String,
+    pub(crate) location: Option<ExpressionLocation>,
+    pub(crate) enclosing_row: Option<String>,
 }
 
 impl UndefinedCoded for OnlyNotOneCause {
@@ -36,14 +37,75 @@ impl UndefinedCoded for OnlyNotOneCause {
     }
 
     fn undefined_record(&self) -> UndefinedRecord {
+        let row = self
+            .enclosing_row
+            .clone()
+            .or_else(|| {
+                self.location
+                    .as_ref()
+                    .map(|location| expression_owner_name(&location.origin))
+            })
+            .unwrap_or_else(|| "unknown".to_owned());
+        let locus = match (&self.enclosing_row, &self.location) {
+            (Some(row), Some(location)) => {
+                format!("{row}#{}", expression_locus(location))
+            }
+            (Some(row), None) => format!("{row}#unknown"),
+            (None, Some(location)) => format!(
+                "{}#{}",
+                expression_owner_name(&location.origin),
+                expression_locus(location)
+            ),
+            (None, None) => "unknown".to_owned(),
+        };
         UndefinedRecord {
             reason: UndefinedReason::OnlyNotOne,
             fields: BTreeMap::from([
                 ("population", self.population.clone()),
-                ("locus", self.locus.clone()),
-                ("row", self.row.clone()),
+                ("locus", locus),
+                ("row", row),
             ]),
         }
+    }
+}
+
+/// Render the owner only when a caller requests the public undefined record.
+fn expression_owner_name(owner: &ExpressionOwner) -> String {
+    match owner {
+        ExpressionOwner::Body { function, .. } => format!("function {function}"),
+        ExpressionOwner::Measure { function, .. } => format!("measure {function}"),
+        ExpressionOwner::Expression => "expression".to_owned(),
+        ExpressionOwner::TypeDeclaration { name } => name.clone(),
+        ExpressionOwner::StateClause { clause, .. } => clause.clone(),
+        ExpressionOwner::ProtocolAttempt {
+            protocol, attempt, ..
+        } => format!("protocol attempt {protocol}/{attempt}"),
+        ExpressionOwner::ModelOperationClause {
+            operation,
+            kind,
+            position,
+        } => {
+            let kind = match kind {
+                filament_semantic_value::location::OperationClauseKind::Requires => "requires",
+                filament_semantic_value::location::OperationClauseKind::Ensures => "ensures",
+            };
+            format!("{operation} {kind} clause {position}")
+        }
+    }
+}
+
+/// Render an expression path only when a caller requests the public undefined record.
+fn expression_locus(location: &ExpressionLocation) -> String {
+    let path = location.path();
+    if path.is_empty() {
+        "root".to_owned()
+    } else {
+        let suffix = path
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join("/");
+        format!("root/{suffix}")
     }
 }
 
@@ -396,13 +458,49 @@ impl CatalogCoded for ModelQueryRefusal {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClockIdentityAllocation, ClockOriginUnavailable, ModelQueryRefusal, ProtocolClauseSnapshot,
+        ClockIdentityAllocation, ClockOriginUnavailable, ExpressionLocation, ExpressionOwner,
+        ModelQueryRefusal, OnlyNotOneCause, ProtocolClauseSnapshot,
     };
-    use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category};
+    use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category, UndefinedCoded};
     use fsl_foundation::diagnostic::{category_of, Code};
     use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
     use ix_trace_rs::trace;
     use std::collections::BTreeMap;
+
+    #[trace("FR-139-AC-7")]
+    #[test]
+    fn only_not_one_preserves_the_public_body_and_measure_loci() {
+        for (origin, expected_row, expected_locus) in [
+            (
+                ExpressionOwner::Body {
+                    function: "f".to_owned(),
+                    index: 0,
+                },
+                "function f",
+                "function f#root/2/1",
+            ),
+            (
+                ExpressionOwner::Measure {
+                    function: "m".to_owned(),
+                    index: 0,
+                },
+                "measure m",
+                "measure m#root/2/1",
+            ),
+        ] {
+            let cause = OnlyNotOneCause {
+                population: "P::objects".to_owned(),
+                location: Some(ExpressionLocation::at(origin, &[2, 1])),
+                enclosing_row: None,
+            };
+            let record = cause.undefined_record();
+            assert_eq!(record.fields.get("row").map(String::as_str), Some(expected_row));
+            assert_eq!(
+                record.fields.get("locus").map(String::as_str),
+                Some(expected_locus)
+            );
+        }
+    }
 
     fn wrong_anchor() -> ProtocolClauseSnapshot {
         ProtocolClauseSnapshot::WrongAnchor {
