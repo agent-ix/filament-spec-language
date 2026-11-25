@@ -129,6 +129,9 @@ fn emits_and_admits_the_normative_three_task_claim_bodies() {
     for (row, claim) in rows.iter().zip(&claims) {
         assert_eq!(&row.declaration, claim.declaration());
         assert_eq!(row.occurrence, claim.occurrence().ordinal);
+        assert_eq!(row.task_set.as_ref(), "Ctl");
+        assert!(row.release_bindings.is_empty());
+        assert!(row.mode_switch_bindings.is_empty());
         let node = claim_node(&wire, &serde_json::to_value(claim.declaration()).unwrap());
         assert_eq!(node["node_tag"], "claim");
         assert_eq!(node["semantic_form"], "schedulability");

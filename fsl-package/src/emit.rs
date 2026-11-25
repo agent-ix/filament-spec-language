@@ -4371,10 +4371,13 @@ fn checked_equality_term_data(
                 .as_ref()
                 .and_then(|keys| keys.get(position))
                 .cloned()
-                .unwrap_or(lowered_compared_type_key);
+                .unwrap_or_else(|| lowered_compared_type_key.clone());
             compared_type_keys.push(compared_type_key.clone());
             let conversion_target_key = compared_type_key.clone();
-            let mut source_type = compared_type_key.clone();
+            // The IR decision records the type at the operand in the emitted
+            // term. This can differ from the compared type for a literal
+            // admitted against a refined declaration type.
+            let mut source_type = lowered_compared_type_key.clone();
             if authored.target().is_some() {
                 if let Some(operand_node) = operand_node {
                     if let fsl_semantics::check::BodyTerm::Application(convert) =
@@ -5838,6 +5841,25 @@ fn schedulability_claim_body(
     ]))
 }
 
+fn schedulability_operation_identity(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    nodes: &[CheckedSemanticNodeV2],
+    operation: &fsl_semantics::check::ProbabilisticOperation,
+) -> Result<(Box<str>, CheckedNodeId, Box<str>), EmitRefusal> {
+    let model_identity = graph
+        .model_package_identity(operation.model())
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    let declaration = operation
+        .declaring_key()
+        .and_then(|declaration| {
+            probabilistic::model_node(ids, graph.package_name(), nodes, declaration)
+        })
+        .map(|(_, node)| node)
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    Ok((model_identity.into(), declaration, operation.name().into()))
+}
+
 /// The checked claims grouped by the node their normalized body keys. A
 /// checked claim without a node key would be silently unemitted, so it is
 /// refused as a broken invariant of the checker.
@@ -6020,9 +6042,76 @@ fn append_schedulability_claims(
                     end: region.end(),
                 }],
             });
+            let mut release_bindings = task_sets
+                .releases()
+                .iter()
+                .filter(|release| release.task_set() == claim.task_set)
+                .map(|release| {
+                    let (selected_model_identity, operation_declaring_identity, operation_member) =
+                        schedulability_operation_identity(ids, graph, nodes, release.operation())?;
+                    Ok(
+                        filament_contract_model::CheckedSchedulabilityReleaseBinding {
+                            task_name: release.task().into(),
+                            selected_model_identity,
+                            operation_declaring_identity,
+                            operation_member,
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, EmitRefusal>>()?;
+            release_bindings.sort_by(|left, right| {
+                (
+                    &left.task_name,
+                    &left.selected_model_identity,
+                    &left.operation_declaring_identity,
+                    &left.operation_member,
+                )
+                    .cmp(&(
+                        &right.task_name,
+                        &right.selected_model_identity,
+                        &right.operation_declaring_identity,
+                        &right.operation_member,
+                    ))
+            });
+            let mut mode_switch_bindings = task_sets
+                .mode_switches()
+                .iter()
+                .filter(|mode_switch| mode_switch.task_set() == claim.task_set)
+                .map(|mode_switch| {
+                    let (selected_model_identity, operation_declaring_identity, operation_member) =
+                        schedulability_operation_identity(
+                            ids,
+                            graph,
+                            nodes,
+                            mode_switch.operation(),
+                        )?;
+                    Ok(
+                        filament_contract_model::CheckedSchedulabilityModeSwitchBinding {
+                            selected_model_identity,
+                            operation_declaring_identity,
+                            operation_member,
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, EmitRefusal>>()?;
+            mode_switch_bindings.sort_by(|left, right| {
+                (
+                    &left.selected_model_identity,
+                    &left.operation_declaring_identity,
+                    &left.operation_member,
+                )
+                    .cmp(&(
+                        &right.selected_model_identity,
+                        &right.operation_declaring_identity,
+                        &right.operation_member,
+                    ))
+            });
             rows.push(filament_contract_model::CheckedSchedulabilityClaimRow {
                 declaration: id.clone(),
                 occurrence: *ordinal,
+                task_set: claim.task_set.as_str().into(),
+                release_bindings,
+                mode_switch_bindings,
             });
         }
         let node = CheckedSemanticNodeV2 {
@@ -10985,6 +11074,12 @@ fn write_index_segments(
     }
     for row in schedulability_rows {
         sidecar(&mut row.declaration)?;
+        for binding in &mut row.release_bindings {
+            sidecar(&mut binding.operation_declaring_identity)?;
+        }
+        for binding in &mut row.mode_switch_bindings {
+            sidecar(&mut binding.operation_declaring_identity)?;
+        }
     }
     Ok(graph_wire)
 }

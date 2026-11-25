@@ -135,7 +135,7 @@ fn reference(target: CheckedNodeId) -> CheckedTerm {
 
 /// The key and node of the model object type `declaration` names, when the
 /// graph holds its node.
-fn model_node(
+pub(super) fn model_node(
     ids: &StructuralIds,
     package_name: &str,
     nodes: &[CheckedSemanticNodeV2],

@@ -2121,11 +2121,13 @@ fn mode_switch_declarations_format_to_one_line_and_keep_package_identity() {
     let body = "dimension Time;\n\
          unit s : Time = rational(1, 1);\n\
          unit ms : Time = rational(1, 1000) * s;\n\
+         time Config dense unit ms;\n\
          taskset Ctl {\n\
          task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 hi wcet_hi 2 ms;\n\
          }\n\
          release Ctl.a on ConfigVersion::attemptUpdate;\n\
-         mode   Ctl hi\n  on ConfigVersion::command ;\n";
+         mode   Ctl hi\n  on ConfigVersion::command ;\n\
+         schedulable CtlClaim on Ctl under amc;\n";
     let (text, packages) = config_unit_with_profiles(
         &document,
         "profile t = \"filament.temporal.complete/v1\";\n",
@@ -2157,7 +2159,7 @@ fn mode_switch_declarations_format_to_one_line_and_keep_package_identity() {
     assert_eq!(fsl_cst::format::format(&reparsed).unwrap(), formatted);
     // `emitted` compiles the original and its formatted output and asserts
     // that both reach equal packages.
-    emitted(
+    let emitted = emitted(
         source,
         "unit.native",
         text.as_bytes(),
@@ -2165,4 +2167,37 @@ fn mode_switch_declarations_format_to_one_line_and_keep_package_identity() {
         &DependencyInput::default(),
     )
     .unwrap_or_else(|refusal| panic!("mode switch unit must compile: {refusal}"));
+    let admitted = match filament_contract_model::read_checked_package(
+        emitted.package().bytes(),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        emitted.evidence(),
+    ) {
+        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+        other => panic!("the bound release and mode operations admit: {other:?}"),
+    };
+    assert_eq!(admitted.schedulability_claims().count(), 1);
+    let wire: serde_json::Value = serde_json::from_slice(emitted.package().bytes()).unwrap();
+    let [claim] = wire["schedulability_claims"].as_array().unwrap().as_slice() else {
+        panic!("one schedulability claim row");
+    };
+    assert_eq!(claim["task_set"], "Ctl");
+    assert_eq!(claim["release_bindings"].as_array().unwrap().len(), 1);
+    assert_eq!(claim["release_bindings"][0]["task_name"], "a");
+    assert_eq!(
+        claim["release_bindings"][0]["selected_model_identity"],
+        "example/config-version"
+    );
+    assert_eq!(
+        claim["release_bindings"][0]["operation_member"],
+        "attemptUpdate"
+    );
+    assert_eq!(claim["mode_switch_bindings"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        claim["mode_switch_bindings"][0]["selected_model_identity"],
+        "example/config-version"
+    );
+    assert_eq!(
+        claim["mode_switch_bindings"][0]["operation_member"],
+        "command"
+    );
 }

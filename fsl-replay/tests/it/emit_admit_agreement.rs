@@ -18,7 +18,8 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageReadLimits, CheckedPackageV2,
+    read_checked_package, read_checked_package_structural, CheckedPackageDispatchResult,
+    CheckedPackageReadLimits, CheckedPackageV2,
 };
 use filament_exact::Cancel;
 use fsl_bench::prop::{self, near_miss, unit};
@@ -91,6 +92,85 @@ fn reread(emitted: &EmittedUnit) -> Result<Box<CheckedPackageV2>, TestCaseError>
         CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
         other => Err(TestCaseError::fail(format!("reader: {other:?}"))),
     }
+}
+
+/// Canonically re-encode every retained structural package field for comparison with its wire.
+fn structural_wire(package: &CheckedPackageV2) -> serde_json::Value {
+    use filament_contract_model::{
+        CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    };
+
+    let schedulability_claims = package
+        .schedulability_claims()
+        .map(
+            |claim| filament_contract_model::CheckedSchedulabilityClaimRow {
+                declaration: claim.declaration().clone(),
+                occurrence: claim.occurrence().ordinal,
+                task_set: claim.task_set().into(),
+                release_bindings: claim
+                    .release_bindings()
+                    .map(
+                        |binding| filament_contract_model::CheckedSchedulabilityReleaseBinding {
+                            task_name: binding.task_name().into(),
+                            selected_model_identity: binding.selected_model_identity().into(),
+                            operation_declaring_identity: binding
+                                .operation_declaring_identity()
+                                .clone(),
+                            operation_member: binding.operation_member().into(),
+                        },
+                    )
+                    .collect(),
+                mode_switch_bindings: claim
+                    .mode_switch_bindings()
+                    .map(|binding| {
+                        filament_contract_model::CheckedSchedulabilityModeSwitchBinding {
+                            selected_model_identity: binding.selected_model_identity().into(),
+                            operation_declaring_identity: binding
+                                .operation_declaring_identity()
+                                .clone(),
+                            operation_member: binding.operation_member().into(),
+                        }
+                    })
+                    .collect(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let protocol_correlation = match package.protocol_correlation_provenance() {
+        filament_contract_model::ProtocolCorrelationProvenance::Unavailable(_) => None,
+        filament_contract_model::ProtocolCorrelationProvenance::Complete(table) => Some(
+            table
+                .groups()
+                .flat_map(|group| group.clauses().iter().cloned())
+                .collect::<Vec<_>>(),
+        ),
+    };
+    let bytes = filament_contract_model::encode_checked_package_v2_with_path_condition_frames(
+        package.name(),
+        package.lock(),
+        package.graph(),
+        CheckedPackageSourceCorrespondenceRef {
+            source_map: package.source_map(),
+            refinement_step_rows: package.refinement_step_rows(),
+        },
+        CheckedPackageSidecarsRef {
+            checked_term_data: package.checked_term_data(),
+            temporal_bindings: package.temporal_bindings(),
+            temporal_clause_names: package.temporal_clause_names(),
+            claim_names: package.claim_names(),
+            operation_effects: package.operation_effect_rows(),
+            operation_bodies: package.operation_body_rows(),
+            schedulability_claims: (!schedulability_claims.is_empty())
+                .then_some(schedulability_claims.as_slice()),
+        },
+        (!package.requirement_items().is_empty()).then_some(package.requirement_items()),
+        protocol_correlation.as_deref(),
+        (!package.path_condition_frames().is_empty()).then_some(package.path_condition_frames()),
+        package.capability_report(),
+        package.diagnostics(),
+        quire_canonical::Limits::new(1 << 24),
+    )
+    .expect("the structural reader's package re-encodes");
+    serde_json::from_slice(&bytes).expect("the re-encoded package is JSON")
 }
 
 /// FR-110-AC-16's strict-reader modes use a real package selecting floor `div`.
@@ -208,7 +288,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         "lock selection and operation-law definition are changed together"
     );
     let bytes = serde_json::to_vec(&paired).expect("serialize paired mutation");
-    let admitted = match read_checked_package(
+    let admitted = match read_checked_package_structural(
         &bytes,
         CheckedPackageReadLimits::bounded(),
         emitted.evidence(),
@@ -225,7 +305,11 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
     assert_eq!(retained.authority.as_ref(), floor_authority);
     assert_eq!(retained.identity.as_ref(), ceiling_identity);
     let graph = serde_json::to_value(admitted.graph()).expect("admitted graph");
-    assert!(contains_pair(&graph, &floor_authority, ceiling_identity));
+    assert!(operation_law_contains_pair(
+        &graph,
+        &floor_authority,
+        ceiling_identity
+    ));
 
     let mut lock_only = original;
     let row = lock_only["lock"]["definition_selections"]
@@ -236,7 +320,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .expect("floor law row");
     row["identity"] = ceiling_identity.into();
     let bytes = serde_json::to_vec(&lock_only).expect("serialize lock-only mutation");
-    let refusal = match read_checked_package(
+    let refusal = match read_checked_package_structural(
         &bytes,
         CheckedPackageReadLimits::bounded(),
         emitted.evidence(),
@@ -347,15 +431,11 @@ fn refused_units_are_not_emitted() {
     .unwrap();
 }
 
-/// Provenance: QSL-2062 negative. A package with one byte changed is refused by the strict
-/// reader, or admitted as the very same package. The corruption adds one to a byte at 64
-/// evenly spaced positions of a generated unit's package; a corrupted package the reader
-/// admits must read back equal to the original (the change was not semantic). A corrupted
-/// package that is admitted and differs is a defect: the reader would accept a package other
-/// than the one emitted. "Equal" is the `Debug` of the admitted package, which may omit fields
-/// the reader keeps opaque: the admitted-although-corrupted positions are printed so that the
-/// bytes can be judged (including source-map region ends, which the reader does not
-/// cross-check).
+/// Provenance: QSL-2062 negative. A package with one byte changed is refused or admitted
+/// without changing its graph or lock. The corruption adds one to a byte at 64 evenly spaced
+/// positions of a generated unit's package; these are compared structurally rather than with
+/// `Debug`, which omits retained package details. Source-map spans and unreferenced definition
+/// selections have explicit admission assertions below.
 #[test]
 fn corrupted_package_is_refused() {
     let source = unit::package_units()
@@ -364,52 +444,63 @@ fn corrupted_package_is_refused() {
     let source = proptest::strategy::ValueTree::current(&source).source();
     let emitted = emit(&source).expect("emits");
     let bytes = emitted.package().bytes().to_vec();
-    let original = format!(
-        "{:?}",
-        reread(&emitted).expect("the emitted package is admitted")
+    let original = match read_checked_package_structural(
+        &bytes,
+        CheckedPackageReadLimits::bounded(),
+        emitted.evidence(),
+    ) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => package,
+        other => panic!("the emitted package is admitted: {other:?}"),
+    };
+    let original_wire: serde_json::Value = serde_json::from_slice(&bytes).expect("emitted JSON");
+    assert_eq!(
+        structural_wire(&original),
+        original_wire,
+        "baseline structural round trip"
     );
-    let (mut refused, mut same) = (0, 0);
-    let mut different = Vec::new();
+    assert!(matches!(
+        read_checked_package(
+            &bytes,
+            CheckedPackageReadLimits::bounded(),
+            emitted.evidence()
+        ),
+        CheckedPackageDispatchResult::AdmittedV2(_)
+    ));
+    let (mut refused, mut admitted_unchanged) = (0, 0);
     for at in (0..bytes.len()).step_by((bytes.len() / 64).max(1)) {
         let mut corrupt = bytes.clone();
         corrupt[at] = corrupt[at].wrapping_add(1);
-        match read_checked_package(
+        match read_checked_package_structural(
             &corrupt,
             CheckedPackageReadLimits::bounded(),
             emitted.evidence(),
         ) {
             CheckedPackageDispatchResult::AdmittedV2(package) => {
-                if format!("{package:?}") == original {
-                    same += 1;
-                    eprintln!("admitted although corrupted, reads back equal, at {at}: {:?} -> {:?} in {:?}", bytes[at] as char, corrupt[at] as char, String::from_utf8_lossy(&bytes[at.saturating_sub(40)..(at + 40).min(bytes.len())]));
-                } else {
-                    different.push((at, corrupt));
-                }
+                // The IR writer exposes the admitted structure; comparing its complete wire
+                // value catches retained fields that Debug omits. Random byte changes may not
+                // alter a graph or lock row, so both remain equal to the emitted package.
+                let wire: serde_json::Value =
+                    serde_json::from_slice(&corrupt).expect("admitted input is JSON");
+                assert_eq!(structural_wire(&package), wire, "at byte {at}");
+                assert_eq!(
+                    wire["semantic_graph"], original_wire["semantic_graph"],
+                    "at byte {at}"
+                );
+                assert_eq!(wire["lock"], original_wire["lock"], "at byte {at}");
+                admitted_unchanged += 1;
             }
             _ => refused += 1,
         }
     }
-    eprintln!(
-        "corrupted packages: {refused} refused, {same} admitted unchanged, {} admitted different",
-        different.len()
-    );
+    eprintln!("corrupted packages: {refused} refused, {admitted_unchanged} admitted unchanged");
     assert!(refused > 0, "no corruption was refused");
-    assert!(
-        different.is_empty(),
-        "the reader admitted a different package for a corrupted input at byte {:?}:\n{}",
-        different.first().map(|(at, _)| at),
-        different
-            .first()
-            .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
-            .unwrap_or_default()
-    );
     // QSL-2947: a changed source-map region end is INTENTIONALLY admitted by the strict
     // reader. contract-ir FR-038 (#1149) makes source-map rows retained package data: the
     // reader checks their wire shape and joins but SHALL NOT claim a region is the exact
     // span of the named syntax, because the package does not carry the source bytes; the
     // emitter verifies regions (FSpec FR-203). The admitted package does retain the changed
-    // end, so `Debug` equality hides it: the retained ends are compared here. Positions are
-    // located by content, not by offset.
+    // end, so it is checked through the retained typed source-map rows. Positions are located
+    // by content, not by offset.
     let ends_of = |package: &CheckedPackageV2| -> Vec<u64> {
         package
             .source_map()
@@ -417,7 +508,7 @@ fn corrupted_package_is_refused() {
             .flat_map(|entry| entry.regions.iter().map(|region| region.end))
             .collect()
     };
-    let original_ends = match read_checked_package(
+    let original_ends = match read_checked_package_structural(
         &bytes,
         CheckedPackageReadLimits::bounded(),
         emitted.evidence(),
@@ -444,7 +535,7 @@ fn corrupted_package_is_refused() {
         } else {
             corrupt[digit] + 1
         };
-        if let CheckedPackageDispatchResult::AdmittedV2(package) = read_checked_package(
+        if let CheckedPackageDispatchResult::AdmittedV2(package) = read_checked_package_structural(
             &corrupt,
             CheckedPackageReadLimits::bounded(),
             emitted.evidence(),
@@ -461,7 +552,8 @@ fn corrupted_package_is_refused() {
         admitted_with_changed_end > 0,
         "FR-038: a changed source-map region end is admitted and retained"
     );
-    // This binds only the catalog-free reader clause of FR-110-AC-16. Catalog-bound
+    // FR-110-AC-16 requires the structural reader to retain unreferenced definition-selection
+    // rows exactly; this binds only that catalog-free reader clause. Catalog-bound
     // checked-package and replay/run/analyze request cases are tracked by QSL-3131.
     // The reader admits the row without resolving either string and retains both.
     let mut altered: serde_json::Value = serde_json::from_slice(&bytes).expect("emitted JSON");
@@ -490,7 +582,7 @@ fn corrupted_package_is_refused() {
     row["authority"] = expected_authority.into();
     row["identity"] = expected_identity.into();
     let altered = serde_json::to_vec(&altered).expect("serialize altered package");
-    let admitted = match read_checked_package(
+    let admitted = match read_checked_package_structural(
         &altered,
         CheckedPackageReadLimits::bounded(),
         emitted.evidence(),
@@ -501,13 +593,17 @@ fn corrupted_package_is_refused() {
     let retained = admitted
         .lock()
         .definition_selections
-        .first()
+        .iter()
+        .find(|selection| {
+            selection.authority.as_ref() == expected_authority
+                && selection.identity.as_ref() == expected_identity
+        })
         .expect("admitted package retains the definition row");
     assert_eq!(retained.authority.as_ref(), expected_authority);
     assert_eq!(retained.identity.as_ref(), expected_identity);
     // Truncation is always refused.
     assert!(!matches!(
-        read_checked_package(
+        read_checked_package_structural(
             &bytes[..bytes.len() / 2],
             CheckedPackageReadLimits::bounded(),
             emitted.evidence()
