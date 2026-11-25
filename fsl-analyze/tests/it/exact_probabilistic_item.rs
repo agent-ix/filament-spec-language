@@ -293,7 +293,7 @@ fn witness_replay_spends_the_remainder_after_production() {
 #[trace("FR-203-AC-33", "FR-196-AC-5")]
 #[test]
 fn undefined_reexploration_spends_the_remaining_item_work() {
-    let claim = "probabilistic Dropped using ev on M over (c: M::Coin) under Even on origin \
+    let claim = "probabilistic Dropped using inf on M over (c: M::Coin) under Even on origin \
         { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
     let world = World::new(&prob_world::coin(claim));
     let (_, checkpoints) = settle_with_work_and_checkpoints(&world, "Dropped", 1 << 24);

@@ -1652,7 +1652,6 @@ fn run(
             Err(error) => return build_refusal(error, subject),
         }
     };
-    record_work_checkpoint(ExactWorkPhase::Product, &work, true);
     if let Some(error) = reward_subject_stopped {
         if !matches!(built.0, ProbBuild::Partial { .. }) {
             return document_failure(error, subject);
@@ -2065,6 +2064,7 @@ fn run(
         };
         (solved.values, solved.policy)
     };
+    record_work_checkpoint(ExactWorkPhase::Product, &work, true);
     let values = values
         .into_iter()
         .take(product.states.len())
@@ -3383,7 +3383,7 @@ fn replay_refutation(
     work: &WorkScope,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
+        FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
     };
     let mut producer_meter = work.meter().with_cancel(cancel.clone());
     let mut producer_storage = 0u64;
@@ -3564,7 +3564,17 @@ fn replay_refutation(
                 &mut control,
             )
         } else {
-            produce_witness(product, policy, scope, initial, &accepting, &past, limits)
+            crate::exact_probabilistic::produce_witness_stopping(
+                product,
+                policy,
+                scope,
+                initial,
+                &accepting,
+                None,
+                &past,
+                limits,
+                &mut control,
+            )
         };
         record_work_checkpoint(
             ExactWorkPhase::WitnessProduction,
