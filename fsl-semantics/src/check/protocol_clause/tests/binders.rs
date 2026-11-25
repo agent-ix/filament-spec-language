@@ -256,7 +256,7 @@ fn a_later_event_binder_reuses_a_compensation_trigger_name() {
 
 /// FR-113-AC-9 (TC-512): an enclosing binder remains active in a nested
 /// control, so the child's same-named binder refuses.
-#[trace("TC-512", "FR-113-AC-9")]
+#[trace("TC-512", "FR-113-AC-10")]
 #[test]
 fn a_nested_sequences_binder_reusing_an_outer_siblings_name_refuses() {
     let inner = "sequence Inner {\n\
