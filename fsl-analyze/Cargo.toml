@@ -112,6 +112,10 @@ path = "tests/it/model_check_binary.rs"
 name = "it_refinement"
 path = "tests/it/refinement.rs"
 
+[[test]]
+name = "it_refinement_cx1"
+path = "tests/it_refinement_cx1.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
