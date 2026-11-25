@@ -32,6 +32,13 @@ pub struct Segment {
     pub original: Span,
 }
 
+/// Maximal body ranges whose corresponding original bytes are contiguous.
+#[derive(Clone, Copy, Debug)]
+struct RegionGroup {
+    body: Span,
+    original: Span,
+}
+
 /// Only explicitly enabled layout deletions are accepted. No inserted or rewritten bytes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Layout {
@@ -50,7 +57,12 @@ pub struct SourceMap {
     body: Source,
     region: Span,
     segments: Vec<Segment>,
+    region_groups: Vec<RegionGroup>,
     layout: Layout,
+    #[cfg(test)]
+    region_lookup_steps: std::cell::Cell<usize>,
+    #[cfg(test)]
+    region_index_build_steps: usize,
 }
 
 /// Cause-specific location and message for a [`SourceMap::verify`] or
@@ -136,7 +148,10 @@ impl SourceMap {
                 || segment.original.start < original_cursor
                 || segment.original.end > region.end
             {
-                return Err(fail(SourceMapErrorCause::InvalidMap, "segments must cover the body once in original order inside the selected region"));
+                return Err(fail(
+                    SourceMapErrorCause::InvalidMap,
+                    "segments must cover the body once in original order inside the selected region",
+                ));
             }
             if body_bytes != original_bytes {
                 return Err(fail(SourceMapErrorCause::InvalidMap, "mapped bytes differ"));
@@ -176,12 +191,38 @@ impl SourceMap {
                 "mapping omits body bytes or discards an unapproved source suffix",
             ));
         }
+        let mut region_groups: Vec<RegionGroup> = Vec::new();
+        #[cfg(test)]
+        let mut region_index_build_steps = 0;
+        for segment in &segments {
+            #[cfg(test)]
+            {
+                region_index_build_steps += 1;
+            }
+            if let Some(previous) = region_groups
+                .last_mut()
+                .filter(|group| group.original.end == segment.original.start)
+            {
+                previous.body.end = segment.body.end;
+                previous.original.end = segment.original.end;
+            } else {
+                region_groups.push(RegionGroup {
+                    body: segment.body,
+                    original: segment.original,
+                });
+            }
+        }
         Ok(Self {
             original,
             body,
             region,
             segments,
+            region_groups,
             layout,
+            #[cfg(test)]
+            region_lookup_steps: std::cell::Cell::new(0),
+            #[cfg(test)]
+            region_index_build_steps,
         })
     }
     /// Original source whose identity and bytes were checked at construction.
@@ -238,6 +279,52 @@ impl SourceMap {
             .collect()
     }
 
+    /// Maps a body span only when it corresponds to one contiguous original
+    /// region. This has the same result as filtering [`Self::map_regions`]
+    /// to exactly one region, without materializing every region for a
+    /// discontiguous span.
+    pub fn map_region(&self, source: &Source, span: Span) -> Option<SourceRegion> {
+        if !self.matches_body(source) || self.body.slice(span).is_none() {
+            return None;
+        }
+
+        if span.start == span.end {
+            let first = self.region_groups.partition_point(|group| {
+                self.record_region_lookup_step();
+                group.body.end <= span.start
+            });
+            let byte = self.region_groups.get(first).map_or_else(
+                || {
+                    self.region_groups
+                        .last()
+                        .map_or(self.region.start, |group| group.original.end)
+                },
+                |group| group.original.start + span.start - group.body.start,
+            );
+            return self.original.region(Span {
+                start: byte,
+                end: byte,
+            });
+        }
+
+        let first = self.region_groups.partition_point(|group| {
+            self.record_region_lookup_step();
+            group.body.end <= span.start
+        });
+        let last = self.region_groups.partition_point(|group| {
+            self.record_region_lookup_step();
+            group.body.end < span.end
+        });
+        if first != last || first == self.region_groups.len() {
+            return None;
+        }
+        let group = self.region_groups[first];
+        self.original.region(Span {
+            start: group.original.start + span.start - group.body.start,
+            end: group.original.start + span.end - group.body.start,
+        })
+    }
+
     /// The original byte ranges of a body span.
     fn map_bytes(&self, source: &Source, span: Span) -> Result<Vec<Span>, Box<SourceMapError>> {
         let fail = |message: &str| {
@@ -252,10 +339,7 @@ impl SourceMap {
                 message: message.into(),
             })
         };
-        if source.identity() != self.body.identity()
-            || source.path() != self.body.path()
-            || source.text() != self.body.text()
-        {
+        if !self.matches_body(source) {
             return Err(fail(
                 "span belongs to a different source label, path or bytes",
             ));
@@ -263,9 +347,10 @@ impl SourceMap {
         if self.body.slice(span).is_none() {
             return Err(fail("invalid body span"));
         }
-        let first = self
-            .segments
-            .partition_point(|segment| segment.body.end <= span.start);
+        let first = self.segments.partition_point(|segment| {
+            self.record_region_lookup_step();
+            segment.body.end <= span.start
+        });
         if span.start == span.end {
             let byte = self.segments.get(first).map_or_else(
                 || {
@@ -282,6 +367,7 @@ impl SourceMap {
         }
         let mut regions: Vec<Span> = Vec::new();
         for segment in &self.segments[first..] {
+            self.record_region_lookup_step();
             if segment.body.start >= span.end {
                 break;
             }
@@ -295,6 +381,158 @@ impl SourceMap {
             }
         }
         Ok(regions)
+    }
+
+    fn matches_body(&self, source: &Source) -> bool {
+        source.same_document(&self.body)
+            || (source.identity() == self.body.identity()
+                && source.path() == self.body.path()
+                && source.text() == self.body.text())
+    }
+
+    #[cfg(test)]
+    fn record_region_lookup_step(&self) {
+        self.region_lookup_steps
+            .set(self.region_lookup_steps.get().saturating_add(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::{Source, SourceIdentity};
+    use ix_trace_rs::trace;
+
+    const SIZES: [usize; 3] = [5_000, 10_000, 20_000];
+
+    fn source(identity: &str, path: &str, text: &str) -> Source {
+        Source::read_typed(
+            SourceIdentity::new("agent-ix", identity),
+            path,
+            text.as_bytes(),
+            text.len(),
+        )
+        .unwrap_or_else(|_| panic!("test source should be valid"))
+    }
+
+    fn indented_map(lines: usize) -> (SourceMap, Source) {
+        let mut body_text = String::with_capacity(lines * 2);
+        let mut original_text = String::with_capacity(lines * 4);
+        let mut segments = Vec::with_capacity(lines);
+
+        for line in 0..lines {
+            if line > 0 {
+                original_text.push_str("  ");
+            }
+            let body_start = body_text.len();
+            let original_start = original_text.len();
+            body_text.push_str("x\n");
+            original_text.push_str("x\n");
+            segments.push(Segment {
+                body: Span {
+                    start: body_start,
+                    end: body_text.len(),
+                },
+                original: Span {
+                    start: original_start,
+                    end: original_text.len(),
+                },
+            });
+        }
+
+        let body = source("region-body", "unit.native", &body_text);
+        let original = source("region-document", "unit.md", &original_text);
+        let original_end = original_text.len();
+        let map = SourceMap::verify_typed(
+            original,
+            body.clone(),
+            Span {
+                start: 0,
+                end: original_end,
+            },
+            segments,
+            Layout {
+                strip_indentation: true,
+                ..Layout::default()
+            },
+            lines,
+        )
+        .unwrap_or_else(|_| panic!("the indented source map should verify"));
+        (map, body)
+    }
+
+    fn current_single_region(map: &SourceMap, body: &Source, span: Span) -> Option<SourceRegion> {
+        let mut regions = map.map_regions(body, span)?;
+        (regions.len() == 1).then(|| regions.remove(0))
+    }
+
+    fn ceil_log2(value: usize) -> usize {
+        (usize::BITS - value.saturating_sub(1).leading_zeros()) as usize
+    }
+
+    #[test]
+    #[trace("NFR-141-AC-19")]
+    fn nested_single_region_lookups_do_not_rescan_every_segment() {
+        let mut previous_steps: Option<usize> = None;
+        for lines in SIZES {
+            let (map, body) = indented_map(lines);
+            assert!(map.region_index_build_steps <= lines);
+            let mut total_steps = 0usize;
+
+            for prefix_lines in 1..=lines {
+                map.region_lookup_steps.set(0);
+                let span = Span {
+                    start: 0,
+                    end: prefix_lines * 2,
+                };
+                let region = map.map_region(&body, span);
+                let steps = map.region_lookup_steps.get();
+                total_steps = total_steps.saturating_add(steps);
+
+                if prefix_lines == 1 {
+                    let region = region.expect("one source-map segment resolves to one region");
+                    assert_eq!((region.start(), region.end()), (0, 2));
+                } else {
+                    assert!(
+                        region.is_none(),
+                        "an indentation gap makes a multi-line prefix discontiguous"
+                    );
+                }
+            }
+
+            let per_lookup_bound = 2 * ceil_log2(lines) + 4;
+            let total_bound = lines.saturating_mul(per_lookup_bound);
+            assert!(
+                total_steps <= total_bound,
+                "single-region lookup did {total_steps} segment steps for {lines} nested spans; bound is {total_bound}"
+            );
+            if let Some(previous) = previous_steps {
+                assert!(
+                    total_steps <= previous.saturating_mul(3),
+                    "doubling segments grew lookup work from {previous} to {total_steps}"
+                );
+            }
+            previous_steps = Some(total_steps);
+        }
+    }
+
+    #[test]
+    #[trace("NFR-141-AC-19")]
+    fn single_region_lookup_matches_multi_region_mapping_at_boundaries() {
+        let (map, body) = indented_map(12);
+        for start_line in 0..=12 {
+            for end_line in start_line..=12 {
+                let span = Span {
+                    start: start_line * 2,
+                    end: end_line * 2,
+                };
+                assert_eq!(
+                    map.map_region(&body, span),
+                    current_single_region(&map, &body, span),
+                    "mapping differs for body span {span:?}"
+                );
+            }
+        }
     }
 }
 
