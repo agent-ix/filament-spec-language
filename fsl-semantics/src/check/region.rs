@@ -25,6 +25,7 @@ use fsl_forms::{DeclarationSpans, ExpressionSpans};
 use fsl_foundation::Span;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::source_map::SourceMap;
+use ix_trace_rs::implements;
 
 use super::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
 use filament_semantic_value::location::{
@@ -528,6 +529,7 @@ impl CheckedGraph {
     /// `body` declaration, or the candidate's `operation` member. `None` for
     /// every other occurrence. Positions inside the function keep the region
     /// [`Self::region`] gives them (FR-096).
+    #[implements("FR-569-AC-6")]
     pub fn clause_declaration_region(
         &self,
         node: &filament_exact::NodeKey,

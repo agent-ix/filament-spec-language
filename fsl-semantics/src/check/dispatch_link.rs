@@ -29,6 +29,7 @@ use filament_semantic_value::location::{
 use fsl_forms::{BinaryOperator, DeclaredClauseKind, ExprNode, Expression, StateClauseKind};
 use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
+use ix_trace_rs::implements;
 
 use super::check::DispatchOperation;
 use super::checked_dispatch::{
@@ -661,6 +662,7 @@ impl PackageDeclarations {
     /// operation's clause function, whose `generated` occurrence is at its
     /// body, and for an authored precondition, which `synthesized_spans`
     /// already places at its `pre` declaration.
+    #[implements("FR-569-AC-6")]
     fn clause_declaration_span(&self, clause: &ModelClause) -> Option<Span> {
         let path = clause.source_declaration.as_ref()?;
         match clause.kind {
