@@ -62,6 +62,15 @@ fn run(path: &Path) -> command::RunResult {
         .unwrap_or_else(|error| panic!("{}", error.value().expect("error document")))
 }
 
+fn object_keys(value: &Value) -> Vec<&str> {
+    value
+        .as_object()
+        .expect("a wire record is an object")
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
 fn markdown(body: &str, newline: &str) -> String {
     format!("# Original\n\n## Invariants\n\n### parent_order\n```ix:native\n{body}```\n")
         .replace('\n', newline)
@@ -88,40 +97,85 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             let upstream = json!({"availability": upstream.availability,
                 "clause_text": upstream.clause_text, "diagnostics": upstream.diagnostics,
                 "clauses": upstream.clauses});
-            let expected_segments: Vec<_> = admitted
-                .map()
-                .segments()
-                .iter()
-                .map(|segment| {
-                    json!({"body_start": segment.body.start, "body_end": segment.body.end,
-                    "original_start": segment.original.start, "original_end": segment.original.end})
-                })
-                .collect();
+            let expected_segments = if newline == "\n" {
+                json!([{"body_start":0,"body_end":282,"original_start":57,"original_end":339}])
+            } else {
+                json!([{"body_start":0,"body_end":287,"original_start":63,"original_end":350}])
+            };
             let extracted = run(&extracted_path);
             let document = extracted.value.as_value();
             assert_eq!(extracted.exit_code, exit, "{document}");
             assert_eq!(document["disposition"]["category"], category, "{document}");
             assert_eq!(document["disposition"]["truth"], truth, "{document}");
             let extraction = &document["extraction"];
-            let mut extraction_members = extraction
-                .as_object()
-                .expect("extraction is an object")
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>();
-            extraction_members.sort_unstable();
-            let expected_members = ["binding", "body", "map", "original", "outcome"];
-            assert_eq!(extraction_members, expected_members);
+            assert_eq!(
+                object_keys(extraction),
+                vec!["binding", "body", "map", "original", "outcome"]
+            );
+            assert_eq!(
+                object_keys(&extraction["original"]),
+                vec!["authority", "bytes", "identity", "path"]
+            );
+            assert_eq!(
+                object_keys(&extraction["body"]),
+                vec!["authority", "bytes", "document", "identity"]
+            );
+            assert_eq!(
+                object_keys(&extraction["binding"]),
+                vec!["clause", "package"]
+            );
+            assert_eq!(object_keys(&extraction["map"]), vec!["region", "segments"]);
+            assert_eq!(
+                object_keys(&extraction["map"]["region"]),
+                vec!["end", "start"]
+            );
+            assert_eq!(
+                object_keys(&extraction["map"]["segments"][0]),
+                vec!["body_end", "body_start", "original_end", "original_start"]
+            );
+            let original_text = markdown(&body(), newline);
+            assert_eq!(extraction["original"]["authority"], "agent-ix");
             assert_eq!(
                 extraction["original"]["identity"],
                 "ix://agent-ix/native-workflow/original"
             );
+            assert_eq!(extraction["original"]["path"], "spec.md");
+            assert_eq!(
+                extraction["original"]["bytes"],
+                json!(original_text.as_bytes())
+            );
             assert_eq!(extraction["body"]["authority"], "agent-ix");
             assert_eq!(extraction["body"]["identity"], "body");
+            assert_eq!(extraction["body"]["document"], "Body");
+            let expected_body = body().replace('\n', newline);
+            let expected_body = expected_body
+                .strip_suffix(newline)
+                .expect("the code body ends with its source newline");
+            let actual_body = extraction["body"]["bytes"]
+                .as_array()
+                .expect("body bytes are a JSON byte array")
+                .iter()
+                .map(|byte| {
+                    u8::try_from(byte.as_u64().expect("a byte is an integer"))
+                        .expect("a body byte fits u8")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                String::from_utf8(actual_body).expect("body bytes are UTF-8"),
+                expected_body
+            );
             assert_eq!(extraction["binding"]["clause"], "parent_order");
+            assert_eq!(extraction["binding"]["package"], "example/config-version");
             assert_eq!(extraction["outcome"], upstream);
-            assert!(!expected_segments.is_empty());
-            assert_eq!(extraction["map"]["segments"], json!(expected_segments));
+            assert_eq!(
+                extraction["map"]["region"],
+                if newline == "\n" {
+                    json!({"start":57,"end":340})
+                } else {
+                    json!({"start":63,"end":352})
+                }
+            );
+            assert_eq!(extraction["map"]["segments"], expected_segments);
 
             let read = fsl_replay::spine::read_native_run_result(
                 &serde_json::to_vec(document).expect("the command result serializes"),
@@ -131,8 +185,80 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
                 panic!("a clause result");
             };
             assert_eq!(read.extraction(), Some(extraction));
+            assert_eq!(read.stage(), document["disposition"]["stage"]);
+            assert_eq!(read.category(), document["disposition"]["category"]);
+            assert_eq!(read.truth(), document["disposition"]["truth"].as_bool());
+            assert_eq!(read.basis(), document["basis"]);
+            assert_eq!(read.code(), None);
+            assert_eq!(read.cause(), None);
+            assert!(read.temporal().is_none());
         }
     }
+}
+
+/// TC-742: command output uses the strict `/2` reader's shape and keeps
+/// codegen artifact identities out of the FSL result document.
+#[test]
+#[trace("TC-742")]
+fn command_clause_result_v2_omits_codegen_artifact_members() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    spine::write(directory.path(), Case::Healthy).expect("observations write");
+    std::fs::write(directory.path().join("spec.md"), markdown(&body(), "\n"))
+        .expect("the extracted Markdown source writes");
+    let result = run(&write(directory.path(), &request()));
+    let document = result.value.as_value();
+    assert_eq!(result.exit_code, 0, "{document}");
+    assert_eq!(document["format"], "native-run-result/2");
+    for member in [
+        "generated_source",
+        "generated_source_identity",
+        "source_map",
+        "source_map_identity",
+        "coverage_producer",
+        "coverage_tool_version",
+    ] {
+        assert!(document.get(member).is_none(), "{member}: {document}");
+    }
+
+    let bytes = serde_json::to_vec(document).expect("the command document serializes");
+    let read = fsl_replay::spine::read_native_run_result(&bytes)
+        .expect("the command's `/2` document reads");
+    assert!(matches!(
+        read,
+        fsl_replay::spine::NativeRunResult::Clause(_)
+    ));
+
+    let mut injected = document.clone();
+    injected["source_map"] = json!({"identity": "ix://tests/generated/map"});
+    assert!(
+        fsl_replay::spine::read_native_run_result(
+            &serde_json::to_vec(&injected).expect("the injected document serializes")
+        )
+        .is_err(),
+        "the strict reader rejects a member outside the `/2` shape"
+    );
+
+    for format in ["native-run-result/1", "native-run-result/3"] {
+        let mut wrong_version = document.clone();
+        wrong_version["format"] = json!(format);
+        assert!(
+            fsl_replay::spine::read_native_run_result(
+                &serde_json::to_vec(&wrong_version).expect("the versioned document serializes")
+            )
+            .is_err(),
+            "the strict reader rejects {format}"
+        );
+    }
+
+    let mut invalid = document.clone();
+    invalid["basis"] = json!("unrecognized-basis");
+    assert!(
+        fsl_replay::spine::read_native_run_result(
+            &serde_json::to_vec(&invalid).expect("the invalid `/2` document serializes")
+        )
+        .is_err(),
+        "the strict reader rejects an invalid `/2` document"
+    );
 }
 
 #[test]
@@ -261,6 +387,18 @@ fn an_extracted_body_with_a_syntax_error_refuses_at_the_source() {
         "{document}"
     );
     assert!(document["disposition"]["truth"].is_null(), "{document}");
+    assert!(!document["extraction"]["original_regions"]
+        .as_array()
+        .expect("a body-span refusal carries original Markdown regions")
+        .is_empty());
+    let read = fsl_replay::spine::read_native_run_result(
+        &serde_json::to_vec(document).expect("the refusal document serializes"),
+    )
+    .expect("the extracted refusal reads");
+    let fsl_replay::spine::NativeRunResult::Clause(read) = read else {
+        panic!("a clause refusal record");
+    };
+    assert_eq!(read.extraction(), Some(&document["extraction"]));
 }
 
 #[test]
