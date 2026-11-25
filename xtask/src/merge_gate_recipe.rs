@@ -1195,6 +1195,9 @@ impl TestSelector {
             "-p".to_owned(),
             self.package.clone(),
         ];
+        if self.package == "fsl-semantics" && matches!(&self.target, TestTarget::Integration(_)) {
+            arguments.extend(["--features".to_owned(), "test-support".to_owned()]);
+        }
         match &self.target {
             TestTarget::Library => arguments.push("--lib".to_owned()),
             TestTarget::Integration(name) => {
@@ -3715,6 +3718,45 @@ mod tests {
             .selectors
             .iter()
             .all(|selector| selector.filter.is_some()));
+    }
+
+    #[test]
+    fn semantics_integration_commands_enable_test_support() {
+        let source_objects = plan(
+            workspace_root(),
+            &["fsl-semantics/tests/it/source_objects.rs"],
+        );
+        let source_objects = source_objects
+            .selectors
+            .iter()
+            .find(|selector| {
+                selector.package == "fsl-semantics"
+                    && selector.filter.as_deref() == Some("source_objects")
+            })
+            .expect("source_objects selector");
+        assert_eq!(
+            source_objects.command(false).join(" "),
+            "test --locked -p fsl-semantics --features test-support --test it -- source_objects"
+        );
+
+        let manifest = plan(workspace_root(), &["Cargo.lock"]);
+        for selector in manifest.selectors.iter().filter(|selector| {
+            selector.package == "fsl-semantics"
+                && matches!(&selector.target, TestTarget::Integration(_))
+        }) {
+            let command = selector.command(false);
+            let features = command
+                .windows(2)
+                .any(|pair| pair[0] == "--features" && pair[1] == "test-support");
+            assert!(features, "{}", command.join(" "));
+        }
+
+        let semantics_library = plan(workspace_root(), &["fsl-semantics/src/check/check.rs"]);
+        assert!(semantics_library.selectors.iter().all(|selector| {
+            selector.package != "fsl-semantics"
+                || matches!(&selector.target, TestTarget::Integration(_))
+                || !selector.command(false).contains(&"--features".to_owned())
+        }));
     }
 
     #[test]

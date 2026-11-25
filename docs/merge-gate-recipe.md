@@ -1,7 +1,8 @@
 # Merge gate recipe
 
-Run `cargo xtask merge-gate-recipe [--preflight] <changed-path>...` from the
-workspace for a PR head that already contains current `origin/main`. Pass
+Run `cargo run --locked -p xtask -- merge-gate-recipe [--preflight]
+<changed-path>...` from the workspace for a PR head that already contains
+current `origin/main`. Pass
 changed paths relative to the workspace root. The command fetches `origin/main`,
 verifies ancestry, and prints both commit IDs in its header. By default it only
 prints the recipe and does not invoke Cargo. Add `--preflight` before the paths
