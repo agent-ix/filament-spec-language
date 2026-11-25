@@ -112,7 +112,6 @@ pub(super) fn checked_body_locations(
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
     source_keys: &super::SourceDeclarationKeys,
-    renumbering: &super::value_validity_requirements::ordinals::Renumbering,
     meter: &mut super::OutputMeter,
 ) -> Result<Vec<CheckedBodySemanticLocation>, EmitRefusal> {
     let nodes: BTreeMap<_, _> = nodes.iter().map(|node| (&node.node_id, node)).collect();
@@ -148,8 +147,6 @@ pub(super) fn checked_body_locations(
     }
     let origins = functions.iter().map(|function| &function.4).collect();
     let applications = applications_at(graph, &origins);
-    let keys_by_id: BTreeMap<&CheckedNodeId, &NodeKey> =
-        emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
     let mut pending = Vec::new();
 
     meter.section(|writer| {
@@ -165,14 +162,6 @@ pub(super) fn checked_body_locations(
                 &|at, _, _| (&at.origin == origin).then(|| (name.clone(), at.clone())),
                 true,
             )?;
-            for row in &mut captured {
-                let key = keys_by_id
-                    .get(&row.application)
-                    .ok_or(EmitRefusal::SourceMapInvariant)?;
-                row.occurrence.ordinal = renumbering
-                    .ordinal(key, row.occurrence.ordinal)
-                    .ok_or(EmitRefusal::SourceMapInvariant)?;
-            }
             let captured = ordered(captured, |application, occurrence, ordinal, location| {
                 (application, occurrence, ordinal, location)
             });
