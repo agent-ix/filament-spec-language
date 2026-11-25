@@ -207,14 +207,6 @@ pub(super) fn check(
     if replay_targets != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    if graph.states.len() != document.values.len()
-        || document
-            .values
-            .iter()
-            .any(|row| !graph.states.contains_key(&row.state))
-    {
-        return Err(ProbabilityDocumentError::ObjectiveMismatch);
-    }
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };

@@ -493,6 +493,21 @@ fn bounded_solve_failure(
     }
 }
 
+/// A product `max_states` cut short whose explored prefix settles nothing: the
+/// run stopped at the caller's state budget (FR-203).
+fn max_states_limit(
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    settled(
+        &ExactProbBuildIssue::Limit {
+            limit: ModelCheckLimit::ExactProbMaxStates,
+            value: u64::try_from(limits.model.limits.max_states).unwrap_or(u64::MAX),
+        },
+        subject,
+    )
+}
+
 /// A finite-horizon solve that held its probabilities only as outward-rounded
 /// intervals for a form whose interval is not certified: the certificate carries
 /// exact rationals, so the run stopped at the caller's `max_rational_bits`.
@@ -1354,17 +1369,10 @@ fn run(
     };
     // `bounded_formula` means a finite temporal horizon. Probability
     // `eventually holds(P)` also has a formula and monitor, but its interval is
-    // unbounded and belongs to the fair-minimum route.
-    let bounded_formula = event_formula.filter(|formula| {
-        !is_unbounded_eventually_formula(formula)
-            && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
-                .is_some_and(|profile| {
-                    fsl_eval::automaton::QualifiedBoundedMonitor::supports_observations(
-                        formula.formula(),
-                        profile,
-                    )
-                })
-    });
+    // unbounded and belongs to the fair-minimum route. Every other formula takes
+    // the bounded route, which reports the shapes the qualified monitor does not
+    // admit as not yet implemented.
+    let bounded_formula = event_formula.filter(|formula| !is_unbounded_eventually_formula(formula));
     let unbounded_eventual_formula = event_formula.is_some_and(is_unbounded_eventually_formula);
     let state_predicate = matches!(
         &claim.form,
@@ -1533,7 +1541,7 @@ fn run(
                     }
                 )
             {
-                return not_yet();
+                return max_states_limit(&limits, subject);
             }
             (product, Some(lower_product), monitor)
         }
@@ -1718,6 +1726,34 @@ fn run(
         let solved = match result {
             Ok(solved) => solved,
             Err(UnboundedError::MaxRationalBits) if bounded_formula.is_none() => {
+                // FR-201-AC-65: the cyclic until and always profiles are not
+                // FR-1042 bases, so a cyclic subject has no interval document
+                // and the budget is its stop.
+                if state_predicate {
+                    let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
+                    if let Some(cause) = cancel.tripped() {
+                        return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+                    }
+                    let system = match admitted {
+                        Ok(system) => system,
+                        Err(error) => {
+                            return build_refusal(ProductRefusal::Admission(error), subject)
+                        }
+                    };
+                    // The scalar budget that stopped the solve does not bound
+                    // this question about the model graph's shape.
+                    let mut shape_limits = limits.clone();
+                    shape_limits.max_rational_bits = u64::MAX;
+                    match fsl_replay::admit_acyclic_probabilistic_refutation_subject(
+                        &system,
+                        &shape_limits,
+                        cancel,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) => return rational_bits_limit(&limits, subject),
+                        Err(error) => return document_failure(error, subject),
+                    }
+                }
                 let threshold = match bound {
                     Bound::AtLeast(threshold) | Bound::AtMost(threshold) => threshold,
                 };
@@ -2025,7 +2061,7 @@ fn run(
     }
     if lower_product.is_some() {
         if !holds || !matches!(bound, Bound::AtLeast(_)) {
-            return not_yet();
+            return max_states_limit(&limits, subject);
         }
         let io = fsl_replay::ProbabilityDocumentIoLimits {
             bytes: document_limits.bytes,

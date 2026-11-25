@@ -114,7 +114,8 @@ pub enum RowClass {
     /// `timeout` or `finish` node, an attempt node no operation row covers,
     /// or a `parallel`'s `fork` or `join` (FR-136).
     Node,
-    /// A `step` row for a compensation template's `cattempt` or `cend`.
+    /// A `step` row for a compensation template's `cattempt`, `cend`,
+    /// `cfail`, `ctimeout` or `cexpire`.
     Template,
     /// A `step` row for a channel's `duplicate` or `lose`.
     Channel,
@@ -1298,6 +1299,13 @@ pub enum StepClass {
     CompensationAttempt(String),
     /// A compensation template's `cend`.
     CompensationEnd(String),
+    /// A compensation template's `cfail`: a failed attempt.
+    CompensationFail(String),
+    /// A compensation template's `ctimeout`: a timed-out attempt.
+    CompensationTimeout(String),
+    /// A compensation template's `cexpire`: its thread ends with no recovery
+    /// evaluated.
+    CompensationExpire(String),
     /// A protocol node's step.
     ProtocolNode {
         /// Which step of the node.

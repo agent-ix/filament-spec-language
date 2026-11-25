@@ -40,6 +40,7 @@ mod protocol_saga_route;
 #[cfg(feature = "checked-handoff")]
 mod protocol_source_routes;
 mod refinement_source_routes;
+mod scale_and_runtime_measurements;
 mod source_corpus;
 
 #[cfg(feature = "checked-handoff")]

@@ -84,7 +84,7 @@ pub(super) fn run(
             if matches!(claim.form, ProbForm::MeanOfFraction { .. })
                 && matches!(claim.scheduler, ProbScheduler::Workload(_))
             {
-                return not_yet();
+                return max_states_limit(&limits, subject);
             }
             (product, Some(lower_product))
         }
@@ -378,7 +378,7 @@ pub(super) fn run(
             claim.form,
             ProbForm::Quantile { .. } | ProbForm::MeanOfFraction { .. }
         ) {
-            return not_yet();
+            return max_states_limit(&limits, subject);
         }
         let checked = (|| {
             let document = measure_probability_certificate_document(

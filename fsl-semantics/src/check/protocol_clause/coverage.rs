@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The part of a protocol's content [`check`](super::check) does not read:
 //! which constructs are not yet checked, and the grammar's required
 //! `using`, role and binder-type resolution.
