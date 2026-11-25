@@ -49,3 +49,17 @@ No Impact note is required: the PR changes only test fixtures/helpers and assert
 - Changed paths are only the two integration-test files listed above.
 - GitHub PR checks: `cla / gate` passed; `cla / cla-check-internal` passed; `cla / cla-check` was skipped.
 - PR description reports both focused tests and required clippy passing. No local Cargo invocation was made because no accessible worktree was at the exact reviewed head.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The fix commit removed only the inaccurate FR-151-AC-2 trace and retained the two test-case traces; the test body and assertions are unchanged. |
+
+### Disposition round 1 evidence
+
+Verified PR head `28c79395ed4d7890be5edae32d4d76b5b4f0a0f4`. The only change since the reviewed head in `model_normalization.rs` is the trace attribute, now `#[trace("FSpec-TC-195", "FSpec-TC-196")]`; `n06_wide_ancestry_with_two_contesting_redefiners_completes` and its assertions are unchanged. The same commit adds this SR artifact under `reviews/` for the lead to retain in the branch.
+
+## Current disposition verdict
+
+**PASS** — FND-001 is fixed at head `28c79395ed4d7890be5edae32d4d76b5b4f0a0f4`; no findings remain open.
