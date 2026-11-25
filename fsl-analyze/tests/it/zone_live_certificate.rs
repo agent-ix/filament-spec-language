@@ -150,7 +150,11 @@ fn a_dense_zone_certificate_is_rejected_when_a_zone_is_removed() {
         "temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
          { always holds(not c.late) }\n",
     );
-    let certificate = proved(crate::zone_search::claim(&dense_rpc));
+    let certificate = proved(crate::zone_search::claim(
+        &dense_rpc,
+        ZoneCheckLimits::default(),
+        &Cancel::new(),
+    ));
     assert_eq!(
         verdict(&dense_rpc, &certificate),
         ZoneCertificateVerdict::Accepted
