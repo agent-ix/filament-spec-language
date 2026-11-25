@@ -3985,7 +3985,12 @@ pub fn settle_run_with_smt_proofs(
         negotiate,
         &ItemReads {
             admit: &|item| admit_reductions(&source_input, &binding, &limits, item),
-            owner: &|claim| owning_model(package, claim).map(str::to_owned),
+            owner: &|claim| {
+                package
+                    .graph()
+                    .owning_model(claim.node())
+                    .map(str::to_owned)
+            },
             family: &|kind, claim| crate::claim_family::claim_family(package, kind, claim),
         },
     )?;
@@ -4824,35 +4829,6 @@ struct ItemMembers {
     producer: Option<String>,
     /// Whether a disposition settled the record.
     disposed: bool,
-}
-
-/// The identity of the domain package that owns the obligation `claim`
-/// names, FR-621's certificate `model` (FSpec FR-201, FR-412): the package
-/// of a temporal clause's `over` object type, else the package's one model
-/// selection. `None` when the claim names no single owning package: a
-/// package with no model selection, or several and a claim with no `over`
-/// object type.
-fn owning_model<'p>(package: &'p CheckedPackage, claim: &'p OccurrenceKey) -> Option<&'p str> {
-    let graph = package.graph();
-    let over = graph
-        .temporal_clauses()
-        .iter()
-        .find(|clause| clause.identity() == *claim.node())
-        .and_then(|clause| match &clause.clause().over().1 {
-            filament_exact::ValueType::Reference(object_type) => {
-                Some(object_type.original().package())
-            }
-            _ => None,
-        });
-    let hybrid = graph
-        .hybrid_claim_sites()
-        .iter()
-        .any(|site| &site.identity == claim.node())
-        .then(|| claim.node().package());
-    over.or(hybrid).or_else(|| match graph.model_selections() {
-        [selection] => Some(selection.identity.as_str()),
-        _ => None,
-    })
 }
 
 /// FSpec FR-323's replay target member object for the reproduced
