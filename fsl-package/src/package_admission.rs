@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageRefusal, CheckedPackageRefusalCode, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageRefusal,
+    CheckedPackageRefusalCode, CheckedPackageV2, read_checked_package,
 };
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::value::DefinitionRole;
@@ -323,8 +323,6 @@ impl PackageAdmissionRefusal {
     /// The cause as a catalog spelling: the reader's own cause, else the
     /// catalog default of the code (`insufficient-next-charge` for a reached
     /// ceiling, `missing-selection` for a missing import, `invalid-value`
-    /// otherwise). The reader's causes are a closed set, so interning them
-    /// holds a bounded number of strings for the process.
     #[must_use]
     pub fn catalog_cause(&self) -> &str {
         self.cause.as_deref().unwrap_or(match self.code {

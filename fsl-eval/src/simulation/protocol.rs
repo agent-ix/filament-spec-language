@@ -1291,14 +1291,12 @@ pub type ProtocolSuccessorsAndTerminal<M> = (
 );
 
 #[cfg(feature = "test-support")]
-thread_local! {
-    static CONSTRUCTED_INITIAL: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
+static CONSTRUCTED_INITIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The number of protocol initial-state constructions started by this thread.
+/// The number of protocol initial-state constructions started by this process.
 #[cfg(feature = "test-support")]
 pub fn constructed_initial_states() -> u64 {
-    CONSTRUCTED_INITIAL.with(std::cell::Cell::get)
+    CONSTRUCTED_INITIAL.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// FR-215: the transition system of a protocol subject.
@@ -1992,7 +1990,11 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         over: &Value,
     ) -> Result<ProtocolState<M>, ProtocolRefusal> {
         #[cfg(feature = "test-support")]
-        CONSTRUCTED_INITIAL.with(|count| count.set(count.get().saturating_add(1)));
+        let _ = CONSTRUCTED_INITIAL.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |count| Some(count.saturating_add(1)),
+        );
         let (instances, initial_findings) = if self.program.activation.is_some() {
             (BTreeMap::new(), Vec::new())
         } else {

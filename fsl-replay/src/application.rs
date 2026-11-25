@@ -2,10 +2,9 @@
 //! FR-485: in-process checked-closure acquisition and application through the replay facade.
 
 use filament_checked::node::NodeKind;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use filament_eval::{
     Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, LiveContext, Progress,
@@ -24,9 +23,9 @@ use fsl_semantics::check::{CheckedExpression, CheckedNode};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
-use crate::admitted::{context_of, AdmittedContext, AdmittedRefusal};
+use crate::admitted::{AdmittedContext, AdmittedRefusal, context_of};
 use crate::bounds::ReplayLimits;
-use crate::compile::{recompile_unit, CompileUnit, CompiledPackage};
+use crate::compile::{CompileUnit, CompiledPackage, recompile_unit};
 use crate::request::StageLimits;
 use crate::spine::DependencyInput;
 
@@ -520,6 +519,7 @@ impl CheckedClosureHandle {
             acquisition: Arc::clone(&self.acquisition),
             inner: Registry::new(PackageClosure::new(Arc::clone(&self.package))),
             host_bindings: BTreeSet::new(),
+            child_request_slot: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -882,6 +882,7 @@ pub struct ApplicationRegistry {
     acquisition: Arc<()>,
     inner: Registry<Adapter>,
     host_bindings: BTreeSet<NodeKey>,
+    child_request_slot: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
 impl ApplicationRegistry {
@@ -898,7 +899,10 @@ impl ApplicationRegistry {
         let admission = self.inner.register(
             selection.key.clone(),
             signature,
-            ChildRequestTrackingFactory(factory),
+            ChildRequestTrackingFactory {
+                factory,
+                child_request_slot: Arc::clone(&self.child_request_slot),
+            },
         );
         if admission == Admission::Accepted {
             self.host_bindings.insert(selection.key.clone());
@@ -923,14 +927,23 @@ impl ApplicationRegistry {
         }
         let host_root = self.host_bindings.contains(&selection.key);
         let child_requested = Arc::new(AtomicBool::new(false));
-        self.inner
-            .begin_call(
-                selection.key.clone(),
-                arguments,
-                limits,
-                &environment.0,
-                meter,
-            )
+        *self
+            .child_request_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(Arc::clone(&child_requested));
+        let begun = self.inner.begin_call(
+            selection.key.clone(),
+            arguments,
+            limits,
+            &environment.0,
+            meter,
+        );
+        *self
+            .child_request_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        begun
             .map(|inner| CheckedApplicationSession {
                 inner,
                 host_root,
@@ -983,7 +996,6 @@ impl<'a> CheckedApplicationSession<'a> {
         // Every admitted frame charges at least one occurrence, so a count
         // above `held` proves the registered root was pushed successfully.
         let host_root_opened = host_root && self.inner.live_occurrences() > held;
-        let _active_request = ActiveChildRequest::enter(Arc::clone(&child_requested));
         match self.inner.step() {
             Progress::Runnable(inner) => CheckedApplicationProgress::Runnable(Self {
                 inner,
@@ -1010,15 +1022,30 @@ impl<'a> CheckedApplicationSession<'a> {
     }
 }
 
-struct ChildRequestTrackingFactory<F>(F);
+struct ChildRequestTrackingFactory<F> {
+    factory: F,
+    child_request_slot: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+}
 
 impl<F: BodyFactory> BodyFactory for ChildRequestTrackingFactory<F> {
     fn begin(&self) -> Box<dyn Body> {
-        Box::new(ChildRequestTrackingBody(self.0.begin()))
+        let tracker = self
+            .child_request_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(Arc::clone);
+        Box::new(ChildRequestTrackingBody {
+            body: self.factory.begin(),
+            tracker,
+        })
     }
 }
 
-struct ChildRequestTrackingBody(Box<dyn Body>);
+struct ChildRequestTrackingBody {
+    body: Box<dyn Body>,
+    tracker: Option<Arc<AtomicBool>>,
+}
 
 impl Body for ChildRequestTrackingBody {
     fn resume(
@@ -1027,38 +1054,13 @@ impl Body for ChildRequestTrackingBody {
         context: &mut LiveContext,
         meter: &mut Meter,
     ) -> Result<Transition, BodyFailure> {
-        let transition = self.0.resume(input, context, meter)?;
+        let transition = self.body.resume(input, context, meter)?;
         if matches!(&transition, Transition::Call(_)) {
-            ACTIVE_CHILD_REQUEST.with(|active| {
-                if let Some(tracker) = active.borrow().as_ref() {
-                    tracker.store(true, Ordering::Relaxed);
-                }
-            });
+            if let Some(tracker) = &self.tracker {
+                tracker.store(true, Ordering::Relaxed);
+            }
         }
         Ok(transition)
-    }
-}
-
-thread_local! {
-    // Body::resume has no session argument; this scoped tracker keeps child
-    // requests associated with the CheckedApplicationSession being stepped.
-    static ACTIVE_CHILD_REQUEST: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
-}
-
-struct ActiveChildRequest(Option<Arc<AtomicBool>>);
-
-impl ActiveChildRequest {
-    fn enter(tracker: Arc<AtomicBool>) -> Self {
-        let previous = ACTIVE_CHILD_REQUEST.with(|active| active.replace(Some(tracker)));
-        Self(previous)
-    }
-}
-
-impl Drop for ActiveChildRequest {
-    fn drop(&mut self) {
-        ACTIVE_CHILD_REQUEST.with(|active| {
-            active.replace(self.0.take());
-        });
     }
 }
 
@@ -2572,19 +2574,23 @@ mod tests {
         assert_eq!(holder.node(), &holder_id);
         assert_eq!(holder.form(), NominalDeclarationForm::Record);
         assert_eq!(holder.qualified_name().last().unwrap().as_str(), "Holder");
-        let [NominalDeclarationMember::RecordField {
-            identifier: flag,
-            value_type: ValueType::Boolean,
-            presence: Presence::Required,
-        }, NominalDeclarationMember::RecordField {
-            identifier: pair_name,
-            value_type: ValueType::Composite(pair_key),
-            presence: Presence::Required,
-        }, NominalDeclarationMember::RecordField {
-            identifier: shape_name,
-            value_type: ValueType::Composite(_),
-            presence: Presence::Required,
-        }] = holder.members()
+        let [
+            NominalDeclarationMember::RecordField {
+                identifier: flag,
+                value_type: ValueType::Boolean,
+                presence: Presence::Required,
+            },
+            NominalDeclarationMember::RecordField {
+                identifier: pair_name,
+                value_type: ValueType::Composite(pair_key),
+                presence: Presence::Required,
+            },
+            NominalDeclarationMember::RecordField {
+                identifier: shape_name,
+                value_type: ValueType::Composite(_),
+                presence: Presence::Required,
+            },
+        ] = holder.members()
         else {
             panic!("record members preserve their checked declaration order and types");
         };
@@ -2616,19 +2622,23 @@ mod tests {
             .nominal_declaration(&selection, &shape_id)
             .expect("the nested union is reachable through Holder");
         assert_eq!(shape.form(), NominalDeclarationForm::Union);
-        let [NominalDeclarationMember::UnionMember {
-            member: empty_member,
-            variant: empty_variant,
-            payload: empty_payload,
-        }, NominalDeclarationMember::UnionMember {
-            member: circle_member,
-            variant: circle_variant,
-            payload: circle_payload,
-        }, NominalDeclarationMember::UnionMember {
-            member: boxed_member,
-            variant: boxed_variant,
-            payload: boxed_payload,
-        }] = shape.members()
+        let [
+            NominalDeclarationMember::UnionMember {
+                member: empty_member,
+                variant: empty_variant,
+                payload: empty_payload,
+            },
+            NominalDeclarationMember::UnionMember {
+                member: circle_member,
+                variant: circle_variant,
+                payload: circle_payload,
+            },
+            NominalDeclarationMember::UnionMember {
+                member: boxed_member,
+                variant: boxed_variant,
+                payload: boxed_payload,
+            },
+        ] = shape.members()
         else {
             panic!("union view retains each sealed member in declared order");
         };
@@ -2774,18 +2784,22 @@ mod tests {
             .nominal_declaration(&selection, &composite_id("P"))
             .expect("the signature's record declaration is available");
         assert_eq!(record.form(), NominalDeclarationForm::Record);
-        let [NominalDeclarationMember::RecordField {
-            identifier: required,
-            value_type: required_type,
-            presence: required_presence,
-        }, NominalDeclarationMember::RecordField {
-            identifier: optional,
-            value_type: optional_type,
-            presence: optional_presence,
-        }, NominalDeclarationMember::RecordField {
-            presence: Presence::Required,
-            ..
-        }] = record.members()
+        let [
+            NominalDeclarationMember::RecordField {
+                identifier: required,
+                value_type: required_type,
+                presence: required_presence,
+            },
+            NominalDeclarationMember::RecordField {
+                identifier: optional,
+                value_type: optional_type,
+                presence: optional_presence,
+            },
+            NominalDeclarationMember::RecordField {
+                presence: Presence::Required,
+                ..
+            },
+        ] = record.members()
         else {
             panic!("record members preserve their declared order and presence");
         };

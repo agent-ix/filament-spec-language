@@ -66,11 +66,11 @@ use serde_json::Value;
 use syn::visit::Visit;
 
 use crate::api_surface::{
-    cfg_test_lines, cfg_test_module_declarations, enclosing_function, flatten_tokens,
-    module_path_of, pattern_match_lines, walk_rs_files, CallPattern,
+    CallPattern, cfg_test_lines, cfg_test_module_declarations, enclosing_function, flatten_tokens,
+    module_path_of, pattern_match_lines, walk_rs_files,
 };
 use crate::error::{Code, Error, Result};
-use crate::graph::{classify, Repo};
+use crate::graph::{Repo, classify};
 
 /// The FSL crates of the qualified core (ADR-029 CB-2), by package name.
 /// Each crate's source root is `<name>/src` under the FSL root.
@@ -731,34 +731,57 @@ pub(crate) struct AmbientFinding {
 }
 
 /// The line of every `static mut` and every `static` whose type names one
-/// of [`MUTABLE_STATIC_TYPES`].
+/// of [`MUTABLE_STATIC_TYPES`], including mutable types reached through aliases.
 fn mutable_static_lines(parsed: &syn::File) -> BTreeSet<usize> {
-    struct Idents(Vec<String>);
-    impl<'ast> Visit<'ast> for Idents {
-        fn visit_ident(&mut self, ident: &'ast proc_macro2::Ident) {
-            self.0.push(ident.to_string());
+    fn mutable_type(
+        ty: &syn::Type,
+        aliases: &BTreeMap<String, syn::Type>,
+        visited: &mut BTreeSet<String>,
+    ) -> bool {
+        struct Idents(Vec<String>);
+        impl<'ast> Visit<'ast> for Idents {
+            fn visit_ident(&mut self, ident: &'ast proc_macro2::Ident) {
+                self.0.push(ident.to_string());
+            }
         }
+        let mut idents = Idents(Vec::new());
+        idents.visit_type(ty);
+        idents.0.iter().any(|name| {
+            MUTABLE_STATIC_TYPES.contains(&name.as_str())
+                || aliases.get(name).is_some_and(|aliased| {
+                    visited.insert(name.clone()) && mutable_type(aliased, aliases, visited)
+                })
+        })
     }
-    struct Statics(BTreeSet<usize>);
-    impl<'ast> Visit<'ast> for Statics {
+
+    let aliases: BTreeMap<String, syn::Type> = parsed
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Type(alias) => Some((alias.ident.to_string(), (*alias.ty).clone())),
+            _ => None,
+        })
+        .collect();
+    struct Statics<'a> {
+        lines: BTreeSet<usize>,
+        aliases: &'a BTreeMap<String, syn::Type>,
+    }
+    impl<'ast> Visit<'ast> for Statics<'_> {
         fn visit_item_static(&mut self, node: &'ast syn::ItemStatic) {
-            let mutable = matches!(node.mutability, syn::StaticMutability::Mut(_));
-            let mut idents = Idents(Vec::new());
-            idents.visit_type(&node.ty);
-            let type_idents = idents.0;
-            if mutable
-                || type_idents
-                    .iter()
-                    .any(|name| MUTABLE_STATIC_TYPES.contains(&name.as_str()))
-            {
-                self.0.insert(node.static_token.span.start().line);
+            let mutable = matches!(node.mutability, syn::StaticMutability::Mut(_))
+                || mutable_type(&node.ty, self.aliases, &mut BTreeSet::new());
+            if mutable {
+                self.lines.insert(node.static_token.span.start().line);
             }
             syn::visit::visit_item_static(self, node);
         }
     }
-    let mut visitor = Statics(BTreeSet::new());
+    let mut visitor = Statics {
+        lines: BTreeSet::new(),
+        aliases: &aliases,
+    };
     visitor.visit_file(parsed);
-    visitor.0
+    visitor.lines
 }
 
 /// Scan one file. `exempt` names a function whose findings of one category
@@ -1229,9 +1252,11 @@ mod tests {
             [pair("fsl-eval", frontend), pair("fsl-replay", frontend)]
         );
         let findings = check_direction(&eval.graph).unwrap();
-        assert!(findings
-            .iter()
-            .all(|finding| finding.offence == Offence::FcdFrontend));
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.offence == Offence::FcdFrontend)
+        );
 
         // A second route into the frontend beside the sanctioned one fails
         // whichever route the walk discovers first.
@@ -1349,7 +1374,9 @@ mod tests {
              fn k(p: &Path) { let _ = p.read_dir(); }\n\
              fn l(p: &Path) { let _ = p.metadata(); }\n\
              static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();\n\
-             static TABLE: LazyLock<BTreeMap<u8, u8>> = LazyLock::new(BTreeMap::new);\n",
+             static TABLE: LazyLock<BTreeMap<u8, u8>> = LazyLock::new(BTreeMap::new);\n\
+             type CountCache<T> = OnceLock<Mutex<BTreeMap<usize, Arc<T>>>>;\n\
+             static HIDDEN: CountCache<u8> = OnceLock::new();\n",
         )]);
         let file = "fsl-eval/src/lib.rs".to_owned();
         assert_eq!(
@@ -1370,7 +1397,8 @@ mod tests {
                 (file.clone(), 13, Ambient::Filesystem),
                 (file.clone(), 14, Ambient::Filesystem),
                 (file.clone(), 15, Ambient::GlobalState),
-                (file, 16, Ambient::GlobalState),
+                (file.clone(), 16, Ambient::GlobalState),
+                (file, 18, Ambient::GlobalState),
             ]
         );
     }

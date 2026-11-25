@@ -37,7 +37,7 @@ pub use cst::{
 };
 pub use diagnostic::{CompleteCause, CompleteCode, CompleteDiagnostic, HostCause};
 pub use extension::{ExtensionForms, ExtensionProduction};
-pub use lexer::{declared_edition, declared_language, DeclaredEdition, DeclaredLanguage, Limits};
+pub use lexer::{DeclaredEdition, DeclaredLanguage, Limits, declared_edition, declared_language};
 
 /// The one edition the complete-V1 grammar admits (its `Header` rule).
 pub const EDITION: &str = "1-draft";
@@ -106,6 +106,7 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
 use filament_exact::Cancel;
 use fsl_foundation::selection::SourceSelections;
 use fsl_foundation::{Source, SourceIdentity, Span};
+use std::collections::BTreeSet;
 
 /// A version-bound source artifact and its lossless parse evidence.
 ///
@@ -280,38 +281,104 @@ fn shifted_selections(selections: &SourceSelections, at: usize, added: usize) ->
     selections
 }
 
-/// Parse the complete-V1 grammar while retaining every original source byte.
+/// Caller-owned complete-V1 parser tables, reusable across parses in one process entry point.
+///
+/// Construct one context at the process entry point and reuse it for each source
+/// that uses the default grammar. Caller-supplied extension forms are assembled
+/// for that parse and do not change these default tables.
+pub struct ParserContext {
+    grammar: grammar::Grammar,
+    reserved_words: BTreeSet<&'static str>,
+    compound_spellings: Box<[&'static str]>,
+}
+
+impl ParserContext {
+    /// Construct one complete-V1 grammar context.
+    #[must_use]
+    pub fn new() -> Self {
+        let grammar = grammar::complete_v1();
+        let reserved_words = grammar::default_reserved_words(&grammar);
+        let compound_spellings = grammar::default_compound_spellings(&grammar);
+        Self {
+            grammar,
+            reserved_words,
+            compound_spellings,
+        }
+    }
+
+    /// Parse bytes with the default complete-V1 grammar.
+    pub fn parse(
+        &self,
+        identity: SourceIdentity,
+        path: impl Into<String>,
+        bytes: &[u8],
+        limits: Limits,
+    ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+        self.parse_with_cancel(identity, path, bytes, limits, &Cancel::new())
+    }
+
+    /// Parse bytes under a caller-owned [`Cancel`] handle (FR-276).
+    pub fn parse_with_cancel(
+        &self,
+        identity: SourceIdentity,
+        path: impl Into<String>,
+        bytes: &[u8],
+        limits: Limits,
+        cancel: &Cancel,
+    ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+        let source = diagnostic::read_source(identity, path, bytes, limits.source_bytes)?;
+        parser::parse(source, limits, cancel, &ExtensionForms::default(), self)
+    }
+
+    /// Parse bytes where each supplied form is also a top-level declaration form (FR-354).
+    pub fn parse_with_extensions(
+        &self,
+        identity: SourceIdentity,
+        path: impl Into<String>,
+        bytes: &[u8],
+        limits: Limits,
+        forms: &ExtensionForms,
+        cancel: &Cancel,
+    ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+        let source = diagnostic::read_source(identity, path, bytes, limits.source_bytes)?;
+        parser::parse(source, limits, cancel, forms, self)
+    }
+
+    /// Parse an already admitted exact source.
+    pub fn parse_source(
+        &self,
+        source: Source,
+        limits: Limits,
+    ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+        parser::parse(
+            source,
+            limits,
+            &Cancel::new(),
+            &ExtensionForms::default(),
+            self,
+        )
+    }
+}
+
+impl Default for ParserContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Parse complete-V1 source while retaining every original source byte.
 /// Invalid syntax returns a recovered [`ParsedSource`]; only fatal source or
 /// resource failures use the outer error result.
-/// Backend installation is deliberately absent from this authority boundary.
-///
-/// ```compile_fail
-/// use std::collections::BTreeSet;
-/// use fsl_cst::Limits;
-/// use fsl_foundation::SourceIdentity;
-/// let installed_backends = BTreeSet::from(["solver:x"]);
-/// let _ = fsl_cst::parse(
-///     SourceIdentity { authority: "agent-ix".into(), identity: "doc".into(),},
-///     "doc.native",
-///     b"",
-///     Limits::default(),
-///     &installed_backends,
-/// );
-/// ```
 pub fn parse(
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    parse_with_cancel(identity, path, bytes, limits, &Cancel::new())
+    ParserContext::new().parse(identity, path, bytes, limits)
 }
 
-/// [`parse`] under a caller-owned [`Cancel`] handle (FR-276). The lexer's
-/// token charge and the parser's step charge poll it, and a cancelled
-/// handle stops the parse there with a resource diagnostic: a caller that
-/// holds the handle reads [`Cancel::tripped`] to tell that stop from a
-/// reached ceiling.
+/// Parse with a caller-owned cancellation handle (FR-276).
 pub fn parse_with_cancel(
     identity: SourceIdentity,
     path: impl Into<String>,
@@ -319,14 +386,10 @@ pub fn parse_with_cancel(
     limits: Limits,
     cancel: &Cancel,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    let source = diagnostic::read_source(identity, path, bytes, limits.source_bytes)?;
-    parser::parse(source, limits, cancel, &ExtensionForms::default())
+    ParserContext::new().parse_with_cancel(identity, path, bytes, limits, cancel)
 }
 
-/// [`parse_with_cancel`] where each of `forms` is also a declaration form of
-/// the unit (FR-354). A leading keyword of `forms` is recognised only as the
-/// first token of a top-level declaration; everywhere else the same word
-/// stays an ordinary identifier.
+/// Parse with caller-supplied extension forms (FR-354).
 pub fn parse_with_extensions(
     identity: SourceIdentity,
     path: impl Into<String>,
@@ -335,8 +398,7 @@ pub fn parse_with_extensions(
     forms: &ExtensionForms,
     cancel: &Cancel,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    let source = diagnostic::read_source(identity, path, bytes, limits.source_bytes)?;
-    parser::parse(source, limits, cancel, forms)
+    ParserContext::new().parse_with_extensions(identity, path, bytes, limits, forms, cancel)
 }
 
 /// Parse an already admitted exact source.
@@ -344,5 +406,5 @@ pub fn parse_source(
     source: Source,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    parser::parse(source, limits, &Cancel::new(), &ExtensionForms::default())
+    ParserContext::new().parse_source(source, limits)
 }
