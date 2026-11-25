@@ -85,10 +85,18 @@ always present and is exactly one of:
 A snapshot or invocation admission refusal (FR-106 checks 1 to 11) SHALL
 carry the document locus of the first failing member: the snapshot's
 labels, the pointer to the member, the object's population and key, and
-the member name. For a missing declared object field or a missing
-required operation parameter the pointer names the absent member
-(FR-106-AC-82, FR-106-AC-71); for a missing context field, or a member
-missing inside a value, it stops at the containing object.
+the member name. For a missing declared object field, a missing context
+field or a missing required operation parameter the pointer names the
+absent member, so the pointer says what is missing (FR-106-AC-82,
+FR-663-AC-6, FR-106-AC-71); for a member missing inside a value, it stops
+at the containing object.
+
+The member name is that of the field, parameter or `result` whose value
+was refused or, where the refusal names a member inside that value, that
+member's. An `ill_typed` refusal of a member of no checked type
+(FR-056-AC-43) names the model declaration in its own `member`, which for
+a parameter or a result is the operation; its locus names the field,
+parameter or `result` of the document.
 
 Every non-null locus is one of the six tagged forms of FR-267's
 **Refusal locus wire** (`region`, `located`, `occurrence`, `artifact`,
@@ -122,6 +130,8 @@ node origins; this rule governs the planning finite-domain refusal.
 | FR-663-AC-2 | Parsing the fixture twice gives equal `result` members; parsing it with `s1.tokens` set to its token count reports `used` equal to `bound` for `s1.tokens`. | Test (TC-1745) |
 | FR-663-AC-3 | A clause run over a current snapshot whose object `child` of population `config_history` lacks a required field `parent` refuses `invalid_runtime_input`/`missing-member` with a document locus naming the snapshot's labels, pointer `/populations/0/objects/1/fields/parent` (the absent member, not its containing object), `object` `{config_history, child}` and `member` `parent`; an unknown member `extra` on that object gives `unknown-member` with `member` `extra` and the pointer to it; a run whose request file is absent gives a refusal record whose `locus` is present and `null`. | Test (TC-1746) |
 | FR-663-AC-4 | For TC-1746's operation-parameter planning refusal with an imported FCD origin, both the compile adapter and the native-run compile adapter write the imported `located` form and the exact flat command-error `details`, retaining URI, path and coordinates without bytes or a native source-label pair. A complete end-coordinate pair is preserved; an incomplete pair projects the start point while its partial original remains retained. Changing program labels preserves the projections. Removing the parameter origin without supplying a direct JSON document locus gives a present `locus: null`, even when the operation has an origin. An `ix://` URI remains imported, including when the imported declaration's native producer and its native pair are known separately. | Test |
+| FR-663-AC-5 | A clause run over a current snapshot whose object `root` of population `config_history` holds `versionNumber` as a Boolean refuses `invalid_runtime_input`/`wrong-value-kind`, and one holding `{"integer": "1001"}` refuses `invalid-value`, each with a document locus naming the snapshot's labels, pointer `/populations/0/objects/0/fields/versionNumber`, `object` `{config_history, root}` and `member` `versionNumber`; a snapshot listing `root` again as its third object refuses `conflicting-identity` with pointer `/populations/0/objects/2/key`, the same `object` and `member` `key`. | Test (TC-1746) |
+| FR-663-AC-6 | Over TC-1045's `pre` snapshot, a context without `cancelled` refuses `invalid_runtime_input`/`missing-member` with `member` `cancelled` and pointer `/contexts/0/fields/cancelled`, the absent member; one with an unknown field `extra` refuses `unknown-member` with `member` `extra` and pointer `/contexts/0/fields/extra`; and one holding `placed` as an integer refuses `wrong-value-kind` with pointer `/contexts/0/fields/placed`. | Test (TC-1045) |
 
 ## Dependencies
 

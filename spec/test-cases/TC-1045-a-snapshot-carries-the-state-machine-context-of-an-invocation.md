@@ -127,7 +127,11 @@ Snapshots hold `"populations": []` unless a step says otherwise. Tag the tests
   `unknown-member` naming `state`; `unknown-member` naming `transitions`;
   `wrong-value-kind` at the path `OrderLifecycle`, `placed`. The object defect
   is reported before the context defect, and the first entry's defect before
-  the second's.
+  the second's. The missing `cancelled` refusal carries `path`
+  `/contexts/0/fields/cancelled`, the absent member, and `member`
+  `cancelled`; an unknown field `extra` carries `/contexts/0/fields/extra`
+  and `member` `extra`; and the `placed` refusal carries
+  `/contexts/0/fields/placed` (FR-663-AC-6).
 - Step 5: side `post` under `Witness`: the frame holds, the post context
   admits and the post observation reports one `OutOfRange` naming `ExpressLifecycle`, `retries`, the range
   `[0, 5]` and the observed `-1`; under `Refuse`, and for the `pre` context

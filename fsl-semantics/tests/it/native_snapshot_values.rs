@@ -3310,6 +3310,10 @@ fn an_invocation_of_an_operation_of_no_checked_type_refuses_the_untyped_slot() {
         untyped_refusal(&record),
         expected("scale", "Operation.params[0].typeRef", "by")
     );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/by")
+    );
     let record = record_of(replay.invoke(
         "scale",
         Selected::Postcondition,
@@ -3336,6 +3340,10 @@ fn an_invocation_of_an_operation_of_no_checked_type_refuses_the_untyped_slot() {
         untyped_refusal(&record),
         expected("peek", "Operation.returns.typeRef", "result")
     );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/result")
+    );
     let admitted = replay
         .invoke(
             "peek",
@@ -3346,6 +3354,90 @@ fn an_invocation_of_an_operation_of_no_checked_type_refuses_the_untyped_slot() {
         )
         .expect("a null untyped result is omitted and admitted");
     assert!(admitted.result.is_none());
+}
+
+/// FR-106 check 10 (TC-897 step 9): an invocation and a `PreCall` selection
+/// of `tint` that omit its `optional` parameter of no checked type are
+/// admitted with nothing bound for it; supplying `shade` refuses at `shade`.
+#[trace("TC-897")]
+#[test]
+fn an_omitted_optional_parameter_of_no_checked_type_is_admitted() {
+    let replay = bare_native_replay();
+    let invoked = replay
+        .invoke(
+            "tint",
+            Selected::Postcondition,
+            json!({}),
+            integer("1"),
+            ObservationLimits::default(),
+        )
+        .unwrap_or_else(|failure| panic!("the invocation admits: {failure:?}"));
+    assert!(invoked.parameters.is_empty());
+    let pre_call = replay
+        .pre_call("tint", Vec::new())
+        .unwrap_or_else(|failure| panic!("the pre-call selection admits: {failure:?}"));
+    assert!(pre_call.parameters.is_empty());
+    let record = record_of(replay.invoke(
+        "tint",
+        Selected::Postcondition,
+        json!({"shade": text("a")}),
+        integer("1"),
+        ObservationLimits::default(),
+    ));
+    assert_eq!(
+        untyped_refusal(&record),
+        expected("tint", "Operation.params[0].typeRef", "shade")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/shade")
+    );
+}
+
+/// FR-663 over a unit bound (FSpec FR-154 "Unit bounds"): with `Item`
+/// carrying `max` `3` on `ms` and an operation `meter(q: ms): ms`, a value of
+/// `4 ms` refuses `invalid_runtime_input`/`invalid-value` at the snapshot
+/// field with its population, at `/parameters/q` and at `/result`.
+#[trace("TC-1746")]
+#[test]
+fn a_unit_bound_refusal_names_the_failing_field_parameter_or_result() {
+    let replay = replay_with(
+        fixture::bounded_quantity_document(),
+        quantity_fields(),
+        "dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n",
+    );
+    let within = ms(ratio("3", "1"));
+    let beyond = ms(ratio("4", "1"));
+    let invoke = |parameter: &Value, result: &Value| {
+        record_of(replay.invoke(
+            "meter",
+            Selected::Postcondition,
+            json!({"q": parameter}),
+            result.clone(),
+            ObservationLimits::default(),
+        ))
+    };
+    let snapshot = record_of(replay.admit(
+        &with(quantity_fields(), "reach", beyond.clone()),
+        ObservationLimits::default(),
+    ));
+    for (record, field, path) in [
+        (
+            snapshot.clone(),
+            "reach",
+            "/populations/0/objects/0/fields/reach",
+        ),
+        (invoke(&beyond, &within), "q", "/parameters/q"),
+        (invoke(&within, &beyond), "result", "/result"),
+    ] {
+        let named = |name: &str| record.fields.get(name).map(String::as_str);
+        assert_eq!(record.catalog.cause(), "invalid-value", "{field}");
+        assert_eq!(named("keyword"), Some("max"), "{field}");
+        assert_eq!(named("field"), Some(field));
+        assert_eq!(named("path"), Some(path), "{field}");
+    }
+    assert_eq!(snapshot.fields.get("population"), Some(&id("items")));
 }
 
 /// FR-505-AC-5 (TC-1300 row 23), the unit sentence: over a bounded Rational

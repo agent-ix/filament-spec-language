@@ -1673,27 +1673,37 @@ fn a_context_set_field_follows_the_collection_rules_of_an_object_field() {
     assert_eq!(record.path, vec![PathStep::Index(0)]);
 }
 
-/// FR-663, FR-106-AC-15, FR-106-AC-21 (TC-1045): a context-field refusal
-/// carries `fields["path"]`, the RFC 6901 pointer to the failing member in the
-/// supplied snapshot, and it resolves there.
-#[trace("TC-1045", "FR-106-AC-44", "FR-663-AC-1")]
+/// FR-663-AC-6, FR-106-AC-15, FR-106-AC-21 (TC-1045): a context-field refusal
+/// carries `fields["path"]`, the RFC 6901 pointer of the field in the
+/// supplied snapshot. A refused or unknown field resolves there; a missing
+/// one is named by its absent member, so the pointer says what is missing,
+/// and a missing or unknown field is also the refusal's `member`.
+#[trace("TC-1045", "FR-106-AC-44", "FR-663-AC-6")]
 #[test]
-fn a_context_field_refusal_carries_a_pointer_that_resolves_in_the_snapshot() {
+fn a_context_field_refusal_carries_the_pointer_of_the_field() {
     let orders = Orders::new(false);
-    type Edit = (fn(&mut Json), &'static str);
+    type Edit = (
+        fn(&mut Json),
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+        bool,
+    );
     let edits: [Edit; 3] = [
-        // A wrong kind resolves to the field value itself.
         (
             |document| document["contexts"][0]["fields"]["placed"] = json!({"integer": "1"}),
             "wrong-value-kind",
+            "/contexts/0/fields/placed",
+            None,
+            true,
         ),
-        // An unknown field resolves to the member that is there.
         (
             |document| document["contexts"][0]["fields"]["extra"] = json!(1),
             "unknown-member",
+            "/contexts/0/fields/extra",
+            Some("extra"),
+            true,
         ),
-        // A missing field is absent, so its pointer stops at the `fields`
-        // object that lacks it.
         (
             |document| {
                 document["contexts"][0]["fields"]
@@ -1702,9 +1712,12 @@ fn a_context_field_refusal_carries_a_pointer_that_resolves_in_the_snapshot() {
                     .remove("cancelled");
             },
             "missing-member",
+            "/contexts/0/fields/cancelled",
+            Some("cancelled"),
+            false,
         ),
     ];
-    for (edit, cause) in edits {
+    for (edit, cause, expected, member, resolves) in edits {
         let mut pre = orders.snapshot("p1", "pre", vec![lifecycle(false, false)]);
         edit(&mut pre);
         let mut docs = Docs::default();
@@ -1721,12 +1734,10 @@ fn a_context_field_refusal_carries_a_pointer_that_resolves_in_the_snapshot() {
         ));
         let record = refused(orders.context(&docs, "Consistent", &i1, ContextSide::Pre));
         assert_eq!(record.catalog.cause(), cause);
-        let pointer = record.fields.get("path").expect("a rendered path");
-        assert!(
-            pre.pointer(pointer).is_some(),
-            "{cause}: {pointer} resolves in the supplied snapshot"
-        );
-        assert!(pointer.starts_with("/contexts/0/fields"), "{pointer}");
+        let field = |name: &str| record.fields.get(name).map(String::as_str);
+        assert_eq!(field("path"), Some(expected), "{cause}");
+        assert_eq!(field("member"), member, "{cause}");
+        assert_eq!(pre.pointer(expected).is_some(), resolves, "{cause}");
     }
 }
 

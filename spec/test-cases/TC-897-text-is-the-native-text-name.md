@@ -76,6 +76,9 @@ Start from a domain package whose object type `Note` declares a field
    omits `memo` and `ratio`, then the same snapshot supplying `{"kind": "text",
    "text": "a"}` for `memo`. Admit an invocation of `scale` supplying `by`,
    one omitting `by`, and an invocation of `peek` with a non-null `result`.
+   Over the same package with an operation `tint(shade?: Text): Integer`,
+   whose parameter presence is `optional`, admit an invocation and a
+   `PreCall` selection omitting `shade`, then an invocation supplying it.
 
 ## Expected Results
 
@@ -116,7 +119,10 @@ Start from a domain package whose object type `Note` declares a field
   `fields.memo` with the value unread; the `scale` invocation supplying `by`
   refuses the same at `parameters.by` naming `scale`; omitting `by` refuses
   `invalid_runtime_input`/`missing-member`; the `peek` invocation refuses at
-  `result` naming `peek` and `Operation.returns.typeRef`.
+  `result` naming `peek` and `Operation.returns.typeRef`. Both selections
+  omitting `shade` are admitted with nothing bound for it (FR-106 check 10);
+  the invocation supplying it refuses `ill_typed`/`operator-ineligible` at
+  `parameters.shade` naming `tint`.
 
 ### Step 6 adapter vectors
 

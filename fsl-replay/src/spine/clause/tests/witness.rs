@@ -705,6 +705,64 @@ fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
     assert!(read.fields().is_none());
 }
 
+/// FR-663-AC-5 (TC-1746): the native result's document locus of a refused
+/// field value names the snapshot, the pointer to the field, the object's
+/// population and key, and the field as the member, though the refusal itself
+/// names no member for a value that does not fit.
+#[trace("TC-1746", "FR-663-AC-5")]
+#[test]
+fn a_refused_field_value_locus_names_the_object_and_the_member() {
+    for (cause, value) in [
+        ("wrong-value-kind", json!({"boolean": true})),
+        ("invalid-value", json!({"integer": "1001"})),
+    ] {
+        let report = run_with_snapshot_edit(|document| {
+            document["populations"][0]["objects"][0]["fields"]["versionNumber"] = value;
+        });
+        let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result["disposition"]["refusal"]["cause"], cause, "{result}");
+        assert_eq!(
+            result["disposition"]["refusal"]["locus"],
+            json!({
+                "kind": "document",
+                "document": {"authority": "test", "identity": "low"},
+                "path": null,
+                "pointer": "/populations/0/objects/0/fields/versionNumber",
+                "object": {
+                    "population": "ix://example/config-version/config_history",
+                    "key": "root"
+                },
+                "member": "versionNumber"
+            }),
+            "{cause}"
+        );
+    }
+    let report = run_with_snapshot_edit(|document| {
+        let duplicate = document["populations"][0]["objects"][0].clone();
+        document["populations"][0]["objects"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
+    });
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        result["disposition"]["refusal"]["locus"],
+        json!({
+            "kind": "document",
+            "document": {"authority": "test", "identity": "low"},
+            "path": null,
+            "pointer": "/populations/0/objects/2/key",
+            "object": {
+                "population": "ix://example/config-version/config_history",
+                "key": "root"
+            },
+            "member": "key"
+        })
+    );
+}
+
 pub(super) fn decisive_witness_wire() -> serde_json::Value {
     let report = run("AllBelow", Snapshot::High, "mid");
     let bytes = crate::spine::write_clause_run_result(&report).unwrap();

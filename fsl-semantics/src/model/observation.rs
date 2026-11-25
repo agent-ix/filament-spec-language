@@ -3775,13 +3775,23 @@ fn check_argument_bounds(
                 if let Some(record) =
                     document::unit_bound_refusal(&bounds, &parameter.key, value, types)
                 {
-                    return Err(refuse(record.with("parameter", name.clone())));
+                    return Err(refuse(
+                        record
+                            .with("parameter", name.clone())
+                            .with("field", name.clone())
+                            .with("path", document::parameter_path(name)),
+                    ));
                 }
             }
             if let Some(record) = result
                 .and_then(|value| document::unit_bound_refusal(&bounds, &member.key, value, types))
             {
-                return Err(refuse(record.with("result", operation.name().to_owned())));
+                return Err(refuse(
+                    record
+                        .with("result", operation.name().to_owned())
+                        .with("field", "result")
+                        .with("path", document::RESULT_PATH),
+                ));
             }
         }
     }

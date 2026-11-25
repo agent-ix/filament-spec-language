@@ -106,10 +106,36 @@ pub(crate) fn quantity_document() -> Value {
     build_with(Flavor::Quantity)
 }
 
+/// [`quantity_document`] with `Item` carrying the unit bound `max` `3` on
+/// `ms` and the operation `meter(q: Quantity<ms>): Quantity<ms>`.
+pub(crate) fn bounded_quantity_document() -> Value {
+    let mut document = quantity_document();
+    let item = document["types"]
+        .as_array_mut()
+        .expect("the package has types")
+        .iter_mut()
+        .find(|declared| declared["displayName"] == "Item")
+        .expect("Item is declared");
+    let bound = id("Item/max");
+    item["constraints"] = json!([{
+        "identity": bound, "keyword": "max", "operands": {"value": "3"},
+        "appliesTo": "ix://filament/unit/ms", "diagnosticCode": "bound.max",
+        "origin": base::origin("Item/max"),
+    }]);
+    let ms = "ix://filament/unit/ms".to_owned();
+    let meter = variants::operation_with("Item", "meter", &[("q", ms.clone())], &ms);
+    item["operations"]
+        .as_array_mut()
+        .expect("Item has operations")
+        .push(meter);
+    document
+}
+
 /// The package document with `Item` also holding, after its other fields, the
 /// native members of FR-056-AC-43: unchecked `memo` (`Text`) and `ratio`
 /// (`Rational`), checked `amount` and `amounts` (`Decimal`, `[0, 3]`),
-/// `scale(by: Rational): Integer` and `peek(): Text`.
+/// `scale(by: Rational): Integer`, `peek(): Text` and `tint(shade?: Text):
+/// Integer`, whose one parameter is `optional`.
 pub(crate) fn bare_native_document() -> Value {
     build_with(Flavor::BareNative)
 }
@@ -260,10 +286,17 @@ fn build_with(flavor: Flavor) -> Value {
             &type_ref("Integer"),
         );
         let peek = variants::operation_with("Item", "peek", &[], &type_ref("Text"));
+        let mut tint = variants::operation_with(
+            "Item",
+            "tint",
+            &[("shade", type_ref("Text"))],
+            &type_ref("Integer"),
+        );
+        tint["params"][0]["presence"] = json!("optional");
         item["operations"]
             .as_array_mut()
             .expect("Item has operations")
-            .extend([scale, peek]);
+            .extend([scale, peek, tint]);
     }
     if flavor == Flavor::Rational {
         let rational_type = |name: &str| {

@@ -290,6 +290,119 @@ fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
     );
 }
 
+/// FR-663 (TC-1746): the document locus built from an invocation parameter's
+/// admission refusal points at the parameter, or at the member inside its
+/// value that the refusal names, and names it. An invocation names no
+/// snapshot object.
+#[trace("TC-1746")]
+#[test]
+fn a_parameter_refusal_locus_names_the_parameter_and_its_pointer() {
+    for (parameters, cause, pointer, member) in [
+        (
+            json!({}),
+            "missing-member",
+            "/parameters/expectedVersion",
+            "expectedVersion",
+        ),
+        (
+            json!({"expectedVersion": {"boolean": true}}),
+            "wrong-value-kind",
+            "/parameters/expectedVersion",
+            "expectedVersion",
+        ),
+        (
+            json!({"expectedVersion": {"integer": "1001"}}),
+            "invalid-value",
+            "/parameters/expectedVersion",
+            "expectedVersion",
+        ),
+        (
+            json!({"expectedVersion": {"integer": "1"}, "extra": {"integer": "1"}}),
+            "unknown-member",
+            "/parameters/extra",
+            "extra",
+        ),
+    ] {
+        let input = bump_invocation(2, |document| document["parameters"] = parameters);
+        let invocation = input.invocation.clone();
+        let report = run_clause_over(input, "PreMatches");
+        let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &report.disposition
+        else {
+            panic!("expected a {cause} refusal, got {:?}", report.disposition);
+        };
+        assert_eq!(record.catalog.cause(), cause);
+        let locus = crate::outcome::snapshot_admission_locus(record, &invocation, None)
+            .expect("a document locus");
+        assert_eq!(
+            serde_json::to_value(locus).expect("the locus serializes"),
+            json!({
+                "kind": "document",
+                "document": {"authority": "test", "identity": "bump-invocation"},
+                "path": null,
+                "pointer": pointer,
+                "object": null,
+                "member": member
+            }),
+            "{cause}"
+        );
+    }
+}
+
+/// FR-663 (TC-1746), FR-056-AC-43: for a supplied parameter of no checked
+/// type the refusal's `member` names the operation, whose parameter has the
+/// untyped reference, and the document locus names the parameter.
+#[trace("TC-1746", "TC-897")]
+#[test]
+fn an_untyped_parameter_refusal_locus_names_the_parameter_not_the_operation() {
+    let mut operation = bump_operation("required");
+    operation["params"][0]["typeRef"] = json!("ix://filament/native/Text");
+    let (unit, packages) =
+        config_version_unit_and_packages_for(config_version_domain_document_with_operations(vec![
+            operation,
+        ]));
+    let input = bump_invocation(2, |_| {});
+    let invocation = input.invocation.clone();
+    let mut request = config_version_request_for(
+        format!(
+            "{unit}    pre VersionOne using v on Config::ConfigVersion::bump {{ \
+             self.versionNumber = 1 }}\n"
+        ),
+        packages,
+        "untyped-invocation-parameters.native",
+        ClauseRunSelection::Clause(config_version_invocation_selection(
+            "VersionOne",
+            invocation.clone(),
+        )),
+    );
+    request.snapshots.extend(input.snapshots);
+    request.invocations.extend(input.invocations);
+    let report = run_clause(request).expect("a well-formed request always reports");
+    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &report.disposition else {
+        panic!(
+            "expected an ill_typed refusal, got {:?}",
+            report.disposition
+        );
+    };
+    assert_eq!(record.catalog.code(), "ill_typed");
+    assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some("bump")
+    );
+    let locus = crate::outcome::snapshot_admission_locus(record, &invocation, None)
+        .expect("a document locus");
+    assert_eq!(
+        serde_json::to_value(locus).expect("the locus serializes"),
+        json!({
+            "kind": "document",
+            "document": {"authority": "test", "identity": "bump-invocation"},
+            "path": null,
+            "pointer": "/parameters/expectedVersion",
+            "object": null,
+            "member": "expectedVersion"
+        })
+    );
+}
+
 fn bump_frame_selection(invocation: DocumentRef) -> ClauseRunSelection {
     ClauseRunSelection::Frame {
         operation: OperationName {

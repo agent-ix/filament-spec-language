@@ -5113,7 +5113,19 @@ fn tc465_row38_result_for_a_no_result_operation_refuses_unknown_member() {
         |_| {},
         |value| value["result"] = json!({"boolean": true}),
     );
-    assert_tc465_refused(result, "invalid_runtime_input", "unknown-member");
+    let record = assert_tc465_refused(result, "invalid_runtime_input", "unknown-member");
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("result")
+    );
+    assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some("result")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/result")
+    );
 }
 
 /// Row 43 (check 8 over a check-10 value; SR-771 FND-001): probe
@@ -5142,6 +5154,14 @@ fn tc465_row43_dangling_reference_parameter_refuses_dangling_reference() {
     assert_eq!(
         record.fields.get("population").map(String::as_str),
         Some(population)
+    );
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("target")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/target")
     );
 }
 

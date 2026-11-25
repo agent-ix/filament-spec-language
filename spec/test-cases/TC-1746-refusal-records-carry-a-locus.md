@@ -10,8 +10,8 @@ relationships:
 
 ## Description
 
-Verify the `locus` member of refusal records. Scope: FR-663-AC-3 and
-FR-663-AC-4. The imported-parameter cases are adapter fixtures; they do not
+Verify the `locus` member of refusal records. Scope: FR-663-AC-3,
+FR-663-AC-4 and FR-663-AC-5. The imported-parameter cases are adapter fixtures; they do not
 require a planner search or assert that a model-intake path is implemented.
 
 ## Test Procedure
@@ -56,6 +56,15 @@ require a planner search or assert that a model-intake path is implemented.
 11. Repeat step 10 with just `endLine` removed, then with just `endColumn`
     removed. Compare each retained original FCD origin verbatim with its
     supplied partial origin, and inspect both projected spans.
+12. Run a clause over a current snapshot whose `root.versionNumber` is a
+    Boolean, then `{"integer": "1001"}`, then one listing `root` twice, the
+    copy as the third object. Inspect the native result's refusal locus.
+13. Run a clause over an invocation of an operation with one required
+    parameter: omitted, a Boolean, an integer outside its range, and beside
+    an undeclared parameter; then supply a parameter declared with no checked
+    type. Build the document locus from each admission refusal.
+14. Over a package with the unit bound `max` `3` on a unit, admit `4` of that
+    unit in a snapshot field, in an invocation parameter and in a result.
 
 ### Imported parameter origin
 
@@ -124,3 +133,12 @@ Tag the tests `#[trace("TC-1746", "<AC id>")]`.
   borrowing a start coordinate. The full retained FCD origin still equals
   the respective supplied partial origin, including its one remaining end
   member; projection does not delete it from retention.
+- Step 12: the locus names the snapshot's labels, the field's pointer,
+  `object` `{config_history, root}` and `member` `versionNumber`; the
+  duplicate gives `/populations/0/objects/2/key` and `member` `key`.
+- Step 13: each locus names the invocation's labels, `object` `null`, the
+  parameter's pointer `/parameters/NAME` and `member` the parameter's name,
+  also for the `ill_typed` refusal, whose own `member` names the operation.
+- Step 14: each refuses `invalid_runtime_input`/`invalid-value` naming the
+  keyword `max`; the snapshot field refusal names its population, and the
+  three name the pointer of the field, `/parameters/NAME` and `/result`.
