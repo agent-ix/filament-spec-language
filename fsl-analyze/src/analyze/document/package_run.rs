@@ -498,12 +498,18 @@ fn settle_package_run_inner(
         .then(|| PackageModelInput::of(package, binding.packages, limits.normalization))
         .transpose()
         .map_err(input_refusal)?;
+    // Schedulability candidate resolution uses its admitted claim relations
+    // before the later TaskProduct refusal; it does not read the timed model
+    // form at this stage.
     if input
         .as_ref()
         .is_some_and(|input| !input.input().time_sources.is_empty())
-        && named
-            .iter()
-            .any(|item| !matches!(item, Named::Settled(_) | Named::StateGraph { .. }))
+        && named.iter().any(|item| {
+            !matches!(
+                item,
+                Named::Settled(_) | Named::StateGraph { .. } | Named::Schedule { .. }
+            )
+        })
     {
         return Err(PackageRunError::Pending(PendingPackageFamily {
             request_index: None,
