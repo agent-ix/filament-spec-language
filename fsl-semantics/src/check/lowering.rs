@@ -7462,6 +7462,7 @@ impl<'a> Lowering<'a> {
 
     /// The literal term of `value` typed at `declared`, located at
     /// `location`: a `literal` node, or an enum member's `enum_value` node.
+    #[implements("FR-093-AC-33", "FR-093-AC-50")]
     pub(super) fn literal_at(
         &mut self,
         location: &Location,
@@ -7505,6 +7506,7 @@ impl<'a> Lowering<'a> {
     /// The `literal` term value of `value`: the one value-to-literal decision
     /// a checked literal node and a refinement history row's inline initial
     /// both use.
+    #[implements("FR-093-AC-33", "FR-093-AC-50")]
     pub(super) fn literal_value(
         location: &Location,
         value: &Value,
