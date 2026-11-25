@@ -2354,7 +2354,7 @@ fn hyper_instances_are_the_keys_of_the_resolved_population_alone() {
         &[("P1", &["Dog", "Lamp"]), ("Q", &["Animal"])],
         &[("P1", &[("l", "Lamp")]), ("Q", &[("a", "Animal")])],
     );
-    let body = "hyper H using t0 over behaviours (v: M::Lamp) \
+    let body = "hyper H using t0 over behaviours (v: M::Thing) \
         exists trace a of M { always holds((v = v) @ a) }\n";
     let graph = declarations_in(PACKAGE, &world.document, body)
         .check(
@@ -2451,14 +2451,15 @@ fn the_admitted_lamp() -> Json {
     })
 }
 
-/// FR-125 "Instancing", FR-181: the HP-5 witness of `v: M::Lamp` names the
-/// admitted `Lamp`, not the population's least member type `Dog`.
-#[trace("TC-520")]
+/// FR-125 "Instancing", FR-181: the HP-5 witness of `v: M::Thing` names the
+/// admitted `Lamp`, neither the declared type `Thing` nor the population's
+/// least member type `Dog`.
+#[trace("TC-520", "FR-125-AC-9")]
 #[test]
 fn an_hp5_witness_binds_the_admitted_member_type() {
     let run = analyze_over_pets(
         "instances-hp5-admitted-type",
-        "hyper H using t0 over behaviours (v: M::Lamp) \
+        "hyper H using t0 over behaviours (v: M::Thing) \
             exists trace a of M { eventually always holds((v = v) @ a) }\n",
         json!({"claim": "H", "temporal": {"witness_samples": 0}}),
     );
@@ -2473,7 +2474,7 @@ fn an_hp5_witness_binds_the_admitted_member_type() {
 
 /// FR-125 "Instancing": the state-graph evidence of `over (x: M::Thing)`
 /// names the admitted `Lamp`, not the declared `over` type.
-#[trace("TC-520")]
+#[trace("TC-520", "FR-125-AC-9")]
 #[test]
 fn state_graph_evidence_binds_the_admitted_member_type() {
     let run = analyze_over_pets(
@@ -2493,7 +2494,7 @@ fn state_graph_evidence_binds_the_admitted_member_type() {
 /// FR-125 "Instancing": a refuted temporal `over_binding` of
 /// `over (x: M::Thing)` names the admitted `Lamp`, not the declared `over`
 /// type.
-#[trace("TC-520")]
+#[trace("TC-520", "FR-125-AC-9")]
 #[test]
 fn a_refuted_over_binding_names_the_admitted_member_type() {
     let run = analyze_over_pets(
@@ -2506,6 +2507,62 @@ fn a_refuted_over_binding_names_the_admitted_member_type() {
     assert_eq!(
         run.item(0)["counterexample"]["over_binding"],
         the_admitted_lamp(),
+        "{}",
+        run.document()
+    );
+}
+
+/// A key of the resolved population's universe that no initial state admits
+/// is still an HP-5 instance, and its written binding carries the parameter's
+/// declared type `Thing`. The item reports its last instance, `m`; the initial
+/// state holds only `l`.
+#[trace("TC-520")]
+#[test]
+fn an_hp5_witness_of_an_unadmitted_key_binds_the_declared_type() {
+    let initial = world(&[("pets", &["Dog", "Lamp"])], &[("pets", &[("l", "Lamp")])]);
+    let later = world(
+        &[("pets", &["Dog", "Lamp"])],
+        &[("pets", &[("l", "Lamp"), ("m", "Lamp")])],
+    );
+    let workspace = Workspace::new("instances-hp5-unadmitted-key");
+    // The universe snapshot is a second document, distinct from `s0`.
+    let universe = String::from_utf8(
+        later
+            .snapshots
+            .values()
+            .next()
+            .expect("one snapshot")
+            .clone(),
+    )
+    .expect("snapshot text")
+    .replace("\"identity\":\"s0\"", "\"identity\":\"u0\"")
+    .into_bytes();
+    let held = initial.snapshots.values().next().expect("one snapshot");
+    let run = analyze(&request_over(
+        &workspace,
+        &unit_text_in(
+            PACKAGE,
+            "hyper H using t0 over behaviours (v: M::Thing) \
+                exists trace a of M { eventually always holds(true) }\n",
+        ),
+        &initial.document,
+        &[held.clone(), universe],
+        json!({
+            "items": [{"claim": "H", "temporal": {"witness_samples": 0}}],
+            "subject": {
+                "initial_states": [{"authority": "test", "identity": "s0"}],
+                "universes": [{"authority": "test", "identity": "u0"}],
+                "proof_bounds": []
+            }
+        }),
+    ));
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    let mut declared = the_admitted_lamp();
+    declared["identity"] = json!("m");
+    declared["object_type"]["original"]["node"] = json!("ix://test/things/Thing");
+    assert_eq!(
+        run.item(0)["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "v", "key": declared}),
         "{}",
         run.document()
     );
