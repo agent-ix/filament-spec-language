@@ -66,6 +66,7 @@ use fsl_eval::automaton::{
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::Reductions;
+use ix_trace_rs::implements;
 
 /// FR-239's budgets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -665,6 +666,7 @@ impl From<DbmError> for Halt {
 /// [`ZoneCheckRefusal`] when the clause is of no form EN-6 decides, its
 /// automaton does not build, its instances are not finite, an atom gives
 /// no reading, or the engine breaks an invariant.
+#[implements("FR-239-AC-1")]
 pub fn check_timed_model<S: Clone>(
     request: ZoneCheckRequest<'_, '_, '_, S>,
     cancel: &Cancel,
