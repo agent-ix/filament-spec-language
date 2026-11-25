@@ -215,10 +215,10 @@ fn pre_over_an_expression_holding_a_parameter_keeps_the_parameter_value() {
     assert!(!boolean_disposition(&other_value.disposition));
 }
 
-/// FSpec FR-106-AC-71: an optional operation argument accepts present,
-/// explicit absent, and omission (which binds the same absent value); a bare
-/// value has the wrong kind. Required parameters remain mandatory.
-#[trace("FSpec-FR-106-AC-71")]
+/// FR-106 check 10 through `run_clause`: an optional operation argument
+/// accepts present, explicit absent, and omission (which binds the same
+/// absent value); a bare value has the wrong kind. Required parameters remain
+/// mandatory. Each refusal's `path` points at the parameter.
 #[test]
 fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
     let present = run_optional_presence(bump_invocation(2, |document| {
@@ -248,10 +248,13 @@ fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
     };
     assert_eq!(record.catalog.cause(), "wrong-value-kind");
     assert_eq!(record.catalog.code(), "invalid_runtime_input");
-    assert!(
-        format!("{:?}", record.path).contains("expectedVersion"),
-        "the refusal is at the parameter's member path: {:?}",
-        record.path
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("expectedVersion")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/expectedVersion")
     );
 
     let required = run_bump(
@@ -273,10 +276,13 @@ fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
     };
     assert_eq!(record.catalog.cause(), "missing-member");
     assert_eq!(record.catalog.code(), "invalid_runtime_input");
-    assert!(
-        format!("{:?}", record.path).contains("expectedVersion"),
-        "the refusal is at the parameter's member path: {:?}",
-        record.path
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("expectedVersion")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/expectedVersion")
     );
 }
 
