@@ -275,6 +275,15 @@ fn temporal_holds_refusal_preserves_kernel_record_position_and_locus() {
     assert_eq!(refusal.code().as_str(), "undefined_expression");
     assert_eq!(refusal.cause(), Some("unproved-range"));
     assert_eq!(linked.disposition.exit_code(), 20);
+    let region = refusal.region().expect("the refusal is located");
+    let argument = NARROWING_CLAUSE
+        .find("holds(InUnit(c.value))")
+        .expect("the narrowing condition is in source")
+        + "holds(InUnit(".len();
+    assert_eq!(
+        (region.start(), region.end()),
+        (argument as u64, (argument + "c.value".len()) as u64)
+    );
 
     let zero = run_kernel_package(&[("s0", "0"), ("s1", "0")]);
     assert_eq!(zero.disposition.category(), Category::Success);

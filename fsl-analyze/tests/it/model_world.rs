@@ -24,7 +24,9 @@ use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
 use fsl_replay::TemporalCounterexample;
-use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckedGraph, CheckedTemporalClause, FormulaNodeId, PackageDeclarations,
+};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
@@ -267,7 +269,35 @@ impl World {
         clauses: &[Clause<'_>],
         start: &[(&str, Json)],
     ) -> Self {
-        Self::build(domain, body, "", CheckMode::Linked, profile, clauses, start)
+        Self::build(
+            domain,
+            body,
+            ("", CheckMode::Linked, |_| {}),
+            profile,
+            clauses,
+            start,
+        )
+    }
+
+    /// As [`World::new`], with the checked graph passed to `edit` before it
+    /// is linked: a package built by hand from the unit's, whose `unit` is
+    /// still the source of the unedited one.
+    pub(crate) fn with_edited_graph(
+        domain: Domain,
+        body: &str,
+        edit: fn(&mut CheckedGraph),
+        profile: &str,
+        clauses: &[Clause<'_>],
+        start: &[(&str, Json)],
+    ) -> Self {
+        Self::build(
+            domain,
+            body,
+            ("", CheckMode::Linked, edit),
+            profile,
+            clauses,
+            start,
+        )
     }
 
     /// As [`World::new`], with `functions` (unit-level declarations placed
@@ -284,8 +314,7 @@ impl World {
         Self::build(
             domain,
             body,
-            functions,
-            CheckMode::Kernel,
+            (functions, CheckMode::Kernel, |_| {}),
             profile,
             clauses,
             start,
@@ -295,8 +324,7 @@ impl World {
     fn build(
         domain: Domain,
         body: &str,
-        functions: &str,
-        mode: CheckMode,
+        (functions, mode, edit): (&str, CheckMode, fn(&mut CheckedGraph)),
         profile: &str,
         clauses: &[Clause<'_>],
         start: &[(&str, Json)],
@@ -348,13 +376,14 @@ impl World {
             .expect("the unit assembles")
         };
         let unit = format!("{text}{declared}");
-        let graph = declarations(&unit)
+        let mut graph = declarations(&unit)
             .check(
                 mode,
                 CheckingLimits::default(),
                 &fsl_eval::value::S6aRewardEvaluator,
             )
             .unwrap_or_else(|refusals| panic!("{unit}: the unit checks: {refusals:?}"));
+        edit(&mut graph);
         let checked: Vec<CheckedTemporalClause> = graph
             .temporal_clauses()
             .iter()

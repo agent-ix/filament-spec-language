@@ -18,26 +18,30 @@
 //! dispatch-family fixture whose `family_steps` or `ancestor_steps` ceiling refuses a dispatched
 //! call, and the dispatch fixtures live in `fsl-eval`'s tests (Remaining
 //! work: QSL-898). Replay's reading of a guarded condition
-//! (`ReplayedLetters::activation`) is untested here: replay recompiles the
-//! unit and reads the guard through the production letters.
+//! (`ReplayedLetters::activation`) is exercised once, over FR-315-AC-58's
+//! hand-built package and its production letters.
 
 use filament_exact::{Cancel, Charge, ChargePoint, Incomplete, LimitKind, Meter};
 use fsl_analyze::model_check::{check_model, Atoms, ModelCheckRefusal, ModelCheckRequest, Por};
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState, ModelSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_eval::temporal::UndefinedCause;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    settle_model_check, CertificateRequest, CounterexampleKind, IncompleteCause, ModelCheckItem,
-    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit, SmtEncodingLimits,
-    TemporalCounterexample, TerminalValue, UndefinedLocus,
+    replay_model_trace_with_temporal_selections, settle_model_check, CertificateRequest,
+    CounterexampleKind, DisagreementCause, IncompleteCause, ModelCheckItem, ModelCheckLimit,
+    ModelCheckLimits, ModelCheckOutcome, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue,
+    ReachedLimit, ReplayLimits, SmtEncodingLimits, TemporalCounterexample, TerminalValue,
+    UndefinedLocus,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::counter::{CONTRACT, UNLIMITED};
+use crate::model_settle::{envelope_at, request};
 use crate::model_world::{self, Atom, Clause, Letters, World, BOUNDED, INFINITE};
 
 const ORIGIN: &str = "on origin";
@@ -1165,6 +1169,176 @@ fn an_undefined_activation_condition_is_an_undefined_evaluation() {
     assert_eq!(
         values(&world, &["c"], counterexample, "c", "value"),
         [0, 1, 2]
+    );
+}
+
+/// The `Counter` package whose object type also declares `held`, an optional
+/// field of `value`'s type that no operation modifies, and whose `inc` writes
+/// its receiver's `value` only (FR-154).
+fn holding_counter() -> model_world::Domain {
+    let counter = model_world::counter();
+    let mut document: Value =
+        serde_json::from_slice(&counter.document).expect("the Counter document is JSON");
+    let object = document["types"]
+        .as_array_mut()
+        .expect("the document declares types")
+        .iter_mut()
+        .find(|declared| declared.get("fields").is_some())
+        .expect("the document declares the object type");
+    for operation in object["operations"]
+        .as_array_mut()
+        .expect("the object type declares operations")
+    {
+        let written = operation["frame"]["modifies"].take();
+        operation["frame"]["modifies"] = json!([]);
+        operation["frame"]["modifies_receiver"] = written;
+    }
+    let fields = object["fields"]
+        .as_array_mut()
+        .expect("the object type declares its fields");
+    let mut held: Value =
+        serde_json::from_str(&fields[0].to_string().replace("/value\"", "/held\""))
+            .expect("the renamed field is JSON");
+    held["name"] = json!("held");
+    held["presence"] = json!("optional");
+    fields.push(held);
+    model_world::Domain {
+        document: document.to_string().into_bytes(),
+        ..counter
+    }
+}
+
+/// FR-315-AC-58: over the hand-built package whose guard reads `value(c.held)`
+/// where `c.value >= 2`, the one path FR-315's query admits, `inc` on `d`
+/// twice, ends where the guard of `d`, which holds no `held`, has no value.
+/// The production letters read it, FR-128 replays it as an undefined
+/// activation, and the same payload bound over `c` is not reproduced.
+#[trace("TC-1201", "FR-315-AC-58")]
+#[test]
+fn a_hand_built_guards_undefined_activation_replays_for_its_instance() {
+    let activation = format!(
+        "{} when (present(c.held) and (c.value < 2 or value(c.held) = 0))",
+        each("Counter")
+    );
+    let clauses = [Clause {
+        activation: &activation,
+        formula: "eventually[0,3] holds(c.value = 3)",
+    }];
+    let start = [
+        (
+            "c",
+            json!({"value": {"integer": "0"}, "held": {"present": {"integer": "0"}}}),
+        ),
+        (
+            "d",
+            json!({"value": {"integer": "0"}, "held": {"absent": {}}}),
+        ),
+    ];
+    let source = World::new(holding_counter(), CONTRACT, BOUNDED, &clauses, &start);
+    let built = World::with_edited_graph(
+        holding_counter(),
+        CONTRACT,
+        |graph| graph.drop_temporal_guard_left_conjunct_after_s3(0),
+        BOUNDED,
+        &clauses,
+        &start,
+    );
+    let keys = ["c", "d"];
+    let node = &built.package.graph().temporal_clauses()[0];
+    let system =
+        ModelSystem::new(built.subject(&keys, UNLIMITED).simulation).expect("the subject admits");
+    let letters = system.clause_letters(node).expect("the clause has letters");
+    let selections = crate::fill::tcb_01_event_position_selection(&built.package);
+    let outcome = check_model(
+        ModelCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &selections,
+            subject: built.subject(&keys, UNLIMITED),
+            item: ModelCheckItem::Clause {
+                clause: &built.clauses[0],
+                letters: &letters,
+            },
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
+            reductions: Default::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("checked");
+    let counterexample = violated(&outcome);
+    let over = counterexample
+        .over_binding
+        .clone()
+        .expect("a clause counterexample names its instance");
+    assert_eq!(over.key, "d");
+    let CounterexampleKind::UndefinedEvaluation(claimed) = &counterexample.kind else {
+        panic!("expected an undefined evaluation: {counterexample:?}");
+    };
+    assert_eq!(claimed.site.locus, UndefinedLocus::Activation);
+    assert_eq!(claimed.site.position, 2);
+    assert_eq!(
+        claimed.cause,
+        UndefinedCause::Kernel(filament_exact::Undefined::NoneValue)
+    );
+    assert_eq!(
+        values(&built, &keys, counterexample, "c", "value"),
+        [0, 0, 0]
+    );
+    assert_eq!(
+        values(&built, &keys, counterexample, "d", "value"),
+        [0, 1, 2]
+    );
+
+    let identity = node.identity().clone();
+    let occurrence = OccurrenceKey::new(identity.clone(), node.claim().clone());
+    let subject = ModelTraceSubject {
+        timed: None,
+        initial: source.initial.clone(),
+        universes: crate::counter::universe(&keys),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        stutter_closure: false,
+    };
+    let replay = |payload: TemporalCounterexample| {
+        replay_model_trace_with_temporal_selections(
+            request(
+                &source.package,
+                &selections,
+                source.domain.document.as_slice(),
+                source.snapshot_bytes(),
+                &source.unit,
+            ),
+            &subject,
+            &envelope_at(payload, identity.clone(), occurrence.clone()),
+            &letters,
+            &selections,
+            ReplayLimits::default(),
+        )
+        .expect("replays")
+        .settlement
+    };
+    assert_eq!(
+        replay(counterexample.clone()),
+        ModelTraceSettlement::Reproduced {
+            value: ModelTraceValue::Undefined(claimed.clone()),
+            trace_position: counterexample.trace_position(),
+        }
+    );
+    let mut misbound = counterexample.clone();
+    misbound.over_binding = Some(ModelInstance {
+        key: "c".to_owned(),
+        ..over
+    });
+    let settled = replay(misbound);
+    assert!(
+        matches!(
+            settled,
+            ModelTraceSettlement::Inconclusive(DisagreementCause::Verdicts { .. })
+        ),
+        "{settled:?}"
     );
 }
 
