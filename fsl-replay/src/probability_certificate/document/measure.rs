@@ -8,6 +8,7 @@ use fsl_eval::probabilistic::{
 };
 use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, PredicateReading};
 use fsl_semantics::check::{BoundedMeasure, CheckedPredicate, Event, Weighting};
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Node, Sink, Writer};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -667,6 +668,7 @@ fn restore_named(
 /// that part cannot show the proof: a payoff other than `shifted` or a
 /// comparison event, a fair claim, more states named than `max_states`
 /// admits, or a named state the part does not reach.
+#[implements("FSpec-FR-412-AC-5")]
 #[allow(clippy::too_many_arguments)]
 fn whole_or_lower_part(
     system: &ModelSystem<'_>,
@@ -2369,6 +2371,7 @@ fn acceptance(
     })
 }
 
+#[implements("FR-1042-AC-27")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
