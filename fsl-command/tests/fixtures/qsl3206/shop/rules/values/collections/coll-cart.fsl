@@ -1,8 +1,31 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
 
-function prices using v(): Sequence<Int[0, 2000]>[0, 3] pure { sequence[1250, 1250, 300] }
+type Cents = Int[0, 1000000];
+type Tally = Int[0, 5];
+type Total = Int[0, 5000000];
+type Running = Integer;
+
+function prices using v(): Sequence<Cents>[0, 5] pure { sequence[1250, 1250, 300] }
 
 function lineCount using v(): Int[0, 5] pure { size(prices()) }
 
 function hasSmall using v(): Boolean pure { contains(prices(), 300) }
+
+function allWithinLimit using v(): Boolean pure { forall(p in prices(): p <= 1250) }
+
+function anyFree using v(): Boolean pure { exists(p in prices(): p = 0) }
+
+function bigLines using v(): Int[0, 5] pure { size(filter(p in prices(): p > 1000)) }
+
+function bigCount using v(): Tally pure { count<Tally>(p in prices(): p > 1000) }
+
+function cartTotal using v(): Total pure { sum<Total>(p in prices(): p) }
+
+function cartTotalFolded using v(): Integer pure {
+  fold<Running>(acc, p in prices(): acc + p, identity: 0)
+}
+
+function totalWithTax using v(): Integer pure {
+  sum<Running>(p in map(c in prices(): c + 100): p)
+}

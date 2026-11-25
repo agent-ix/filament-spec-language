@@ -4,31 +4,26 @@
 
 use super::*;
 
-const SHARED_CALLEE: &str = r#"language "ix:native" edition "1-draft";
-profile v = "filament.value.complete/v1";
-
-function prices using v(): Sequence<Int[0, 2000]>[0, 3] pure { sequence[1250, 1250, 300] }
-
-function lineCount using v(): Int[0, 5] pure { size(prices()) }
-
-function hasSmall using v(): Boolean pure { contains(prices(), 300) }"#;
+const COLL_CART: &str = include_str!(
+    "../../../../fsl-command/tests/fixtures/qsl3206/shop/rules/values/collections/coll-cart.fsl"
+);
 
 #[trace("QSL-3206", "FSpec-FR-322")]
 #[test]
-fn shared_callee_application_emits_with_two_callers_and_source_rows() {
+fn coll_cart_shared_application_emits_with_nine_function_owners_and_source_rows() {
     let identity =
         fsl_foundation::SourceIdentity::new("example", "example:shop/values/collections/coll-cart");
     let parsed = fsl_cst::parse(
         identity.clone(),
         "../../../rules/values/collections/coll-cart.fsl",
-        SHARED_CALLEE.as_bytes(),
+        COLL_CART.as_bytes(),
         fsl_cst::Limits::default(),
     )
-    .expect("the shared-callee unit parses");
+    .expect("the coll-cart unit parses");
     assert_eq!(parsed.diagnostics(), []);
 
     let raw = parsed.source().reference().clone();
-    let unit = fsl_forms::build_unit(&parsed).expect("the shared-callee unit builds");
+    let unit = fsl_forms::build_unit(&parsed).expect("the coll-cart unit builds");
     let graph = PackageDeclarations::assemble(
         raw,
         identity
@@ -38,13 +33,13 @@ fn shared_callee_application_emits_with_two_callers_and_source_rows() {
         Vec::new(),
         Vec::new(),
     )
-    .expect("the shared-callee program assembles")
+    .expect("the coll-cart program assembles")
     .check(
         CheckMode::Linked,
         CheckingLimits::default(),
         &fsl_semantics::check::test_support::ZeroRewardEvaluator,
     )
-    .expect("the shared-callee program checks");
+    .expect("the coll-cart program checks");
     let package = CheckedPackage::link(graph);
 
     let emission = emit_checked(&package)
@@ -73,15 +68,20 @@ fn shared_callee_application_emits_with_two_callers_and_source_rows() {
         .filter(|row| row["role"] == "expression")
         .collect();
     expression_rows.sort_by_key(|row| row["ordinal"].as_u64().expect("ordinal is an integer"));
-    assert_eq!(expression_rows.len(), 2, "each caller owns prices()");
+    assert_eq!(
+        expression_rows.len(),
+        9,
+        "the nine coll-cart calls to prices() each own one expression occurrence"
+    );
     assert_eq!(
         expression_rows
             .iter()
             .map(|row| row["ordinal"].as_u64().expect("ordinal is an integer"))
             .collect::<Vec<_>>(),
-        [0, 1],
+        [0, 1, 2, 3, 4, 5, 6, 7, 8],
         "shared call occurrences have consecutive ordinals"
     );
+
     let mut source_rows: Vec<_> = wire["source_map"]
         .as_array()
         .expect("source map is a list")
@@ -91,8 +91,8 @@ fn shared_callee_application_emits_with_two_callers_and_source_rows() {
     source_rows.sort_by_key(|row| row["ordinal"].as_u64().expect("ordinal is an integer"));
     assert_eq!(
         source_rows.len(),
-        2,
-        "each shared call occurrence has a source-map row"
+        9,
+        "every prices() call has a source-map row"
     );
     let actual_starts: Vec<_> = source_rows
         .iter()
@@ -102,7 +102,7 @@ fn shared_callee_application_emits_with_two_callers_and_source_rows() {
                 .expect("source offset is an integer")
         })
         .collect();
-    let expected_starts: Vec<_> = SHARED_CALLEE
+    let expected_starts: Vec<_> = COLL_CART
         .match_indices("prices()")
         .map(|(start, _)| u64::try_from(start).expect("fixture source offset fits u64"))
         .collect();
@@ -110,17 +110,17 @@ fn shared_callee_application_emits_with_two_callers_and_source_rows() {
         actual_starts, expected_starts,
         "source-map rows correspond to each prices() call"
     );
-    let library = LibraryName::new("example:shop/values/collections/coll-cart")
-        .expect("the source identity is a library name");
+
     let read = read_v2(
         emission.package.bytes(),
-        library,
+        LibraryName::new("example:shop/values/collections/coll-cart")
+            .expect("the source identity is a library name"),
         V2ReadLimits::fixture(),
         &read_evidence(&emission),
     );
     let admitted = match read {
         Read::Verified { admitted, .. } => admitted,
-        other => panic!("Contract IR must admit the shared-callee package: {other:?}"),
+        other => panic!("Contract IR must admit the coll-cart package: {other:?}"),
     };
     let mut admitted_rows: Vec<_> = admitted
         .source_map()
@@ -136,8 +136,8 @@ fn shared_callee_application_emits_with_two_callers_and_source_rows() {
             .iter()
             .map(|row| row.ordinal)
             .collect::<Vec<_>>(),
-        [0, 1],
-        "verified Contract IR readback retains both shared call occurrences"
+        [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        "verified Contract IR readback retains all shared call occurrences"
     );
     let admitted_starts: Vec<_> = admitted_rows
         .iter()
