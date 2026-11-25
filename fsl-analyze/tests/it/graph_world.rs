@@ -649,10 +649,69 @@ pub(crate) fn config_kernel_world_over(
 ) -> World {
     config_world_over_model_mode(
         config_version(),
+        "",
         extra,
         &format!("{QUOTIENT}{claims}"),
         keys,
         starts,
+        CheckMode::Kernel,
+    )
+}
+
+/// The header line by which a unit selects the integer-division law itself,
+/// so that replay recompiles it from its source.
+const DIVISION_PROFILE: &str = "profile d = \"filament.value.integer-division.truncating/v1\";\n";
+
+/// As [`config_kernel_world_over`], in a unit with [`DIVISION_PROFILE`].
+pub(crate) fn config_replayable_kernel_world(
+    extra: &str,
+    claims: &str,
+    keys: &[&str],
+    starts: &[Vec<i64>],
+) -> World {
+    config_world_over_model_mode(
+        config_version(),
+        DIVISION_PROFILE,
+        extra,
+        &format!("{QUOTIENT}{claims}"),
+        keys,
+        starts,
+        CheckMode::Kernel,
+    )
+}
+
+/// One counter `c`, initially 0, over `Int[0, 3]` with `inc` below 3,
+/// checked under Kernel in a unit with [`DIVISION_PROFILE`]: `aliases` (more
+/// `model` lines for the counter), then the functions `remainder`, undefined
+/// at 0, and `narrow`, refused at 3, the contract and `body`.
+pub(crate) fn counter_kernel_world(aliases: &str, body: &str) -> World {
+    let model = Model {
+        package: "test/counter",
+        alias: "C",
+        object: "Counter",
+        population: "counters",
+        symmetric: false,
+        fields: vec![Field {
+            name: "value",
+            range: Some((0, 3)),
+        }],
+        operations: vec![Operation {
+            name: "inc",
+            modifies: &["value"],
+        }],
+    };
+    let body = format!(
+        "{aliases}function remainder using v(divisor: Integer): Integer pure {{ 6 mod divisor }}\n\
+         function narrow using v(n: Integer): Int[0, 2] pure {{ n }}\n\
+         pre CanInc using v on C::Counter::inc {{ self.value < 3 }}\n\
+         post Inc using v on C::Counter::inc {{ self.value = pre(self.value) + 1 }}\n{body}"
+    );
+    let counter: [Object<'_>; 1] = [("c", &[("value", 0)])];
+    World::build(
+        model,
+        DIVISION_PROFILE,
+        &body,
+        &[&counter],
         CheckMode::Kernel,
     )
 }
@@ -718,11 +777,12 @@ fn config_world_over_model(
     keys: &[&str],
     starts: &[Vec<i64>],
 ) -> World {
-    config_world_over_model_mode(model, extra, claims, keys, starts, CheckMode::Linked)
+    config_world_over_model_mode(model, "", extra, claims, keys, starts, CheckMode::Linked)
 }
 
 fn config_world_over_model_mode(
     model: Model,
+    profiles: &str,
     extra: &str,
     claims: &str,
     keys: &[&str],
@@ -750,7 +810,7 @@ fn config_world_over_model_mode(
     let starts: Vec<&[Object<'_>]> = objects.iter().map(Vec::as_slice).collect();
     World::build(
         model,
-        "",
+        profiles,
         &format!("{CONFIG_CONTRACT}{extra}{claims}"),
         &starts,
         mode,

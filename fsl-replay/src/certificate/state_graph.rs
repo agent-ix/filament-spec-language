@@ -18,7 +18,9 @@
 //! 2. `InitialMissing`: an initial state is not in the closure;
 //! 3. `SuccessorMissing`: a closure state the checker reached has a successor
 //!    outside the closure; `BadState`: its expansion evaluated a contract
-//!    conjunction undefined or refused, so its successors are not known;
+//!    conjunction undefined or refused, so its successors are not known, or
+//!    it has no successor and FR-124 classifies it undefined or undecided,
+//!    its `terminal when` predicates having no value there;
 //! 4. `PredicateUndefined`: a claim predicate is undefined or refused at a
 //!    reached state;
 //! 5. by form: `possible` and `always possible` check ranks (`RankMissing`,
@@ -39,11 +41,12 @@
 //! only refutes a `from` node and so is never trusted for acceptance. That
 //! lets a cycle of `H` that no `from` node reaches be certified.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading};
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading, TerminalClass};
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole, StateGraphForm};
 
@@ -348,6 +351,7 @@ impl Check<'_, '_> {
     /// Every closure state reachable from `initial`, expanded, checking
     /// `SuccessorMissing` then `BadState` at the first failing state in
     /// certificate order.
+    #[implements("FR-169-AC-11", "FR-169-AC-18")]
     fn explore(
         &self,
         initial: &BTreeMap<StateKey, ModelSimState>,
@@ -383,6 +387,19 @@ impl Check<'_, '_> {
                 finding.undefined_contract().is_some() || finding.is_refused_contract()
             }) {
                 bad.insert(at.clone());
+            } else if expansion.successors.is_empty() {
+                // FR-124: `terminal when` is read where no transition is
+                // enabled, and must have a value there.
+                let class = self
+                    .system
+                    .terminal_class(&state, false)
+                    .map_err(|stop| self.halt(&stop))?;
+                if matches!(
+                    class,
+                    TerminalClass::Undefined { .. } | TerminalClass::Undecided { .. }
+                ) {
+                    bad.insert(at.clone());
+                }
             }
             let mut successors = Vec::with_capacity(expansion.successors.len());
             for (_, next) in expansion.successors {

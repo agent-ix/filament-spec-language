@@ -15,7 +15,7 @@ under each limit and an undecided expansion, the deadlock-freedom item on
 the same exploration, the reduction pre-check, the manifests, and
 determinism.
 
-Scope: FR-167-AC-1 to FR-167-AC-6.
+Scope: FR-167-AC-1 to FR-167-AC-7.
 
 ## Test Procedure
 
@@ -41,6 +41,9 @@ state; a subject with an unbounded population root.
 5. Step 1's §7.2 request twice.
 6. ADR-021 §7.1's `config_history` subject, the `ReachesTwo` instance `c = a`,
    first without symmetry and then with its admitted symmetry declaration.
+7. Over §7.1's subject with universe `{a}`, explore FR-167-AC-7's
+   constraint `Low` from `va = 0` and from `va = 1`; request `Absent`,
+   `Bounded` and `Advance` as the constraint.
 
 Tag the tests `#[trace("TC-592", "FR-167-AC-n")]`.
 
@@ -66,3 +69,6 @@ Tag the tests `#[trace("TC-592", "FR-167-AC-n")]`.
 - Step 6: 27 states without symmetry and 18 states under the stabiliser of
   `c = a`; every retained edge's target is canonical and its permutation
   maps the concrete successor to that target, with labels for `c = a`.
+- Step 7: 2 nodes and 1 edge, then 1 node and none; `va = 1` open
+  `ConstraintBoundary`; `NoDecision`, end `Completed`; each name refused
+  before expansion.
