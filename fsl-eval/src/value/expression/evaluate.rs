@@ -87,6 +87,7 @@ use fsl_semantics::model::observation::OutOfRange;
 use fsl_semantics::model::population::PopulationBinding;
 use fsl_semantics::value::divide as integer_divide;
 use fsl_semantics::value::model_query::{evaluate_all_instances, evaluate_lookup, ModelQueryHalt};
+use ix_trace_rs::implements;
 use node_source::NodeSource;
 pub(crate) use world::World;
 
@@ -3071,6 +3072,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// `self.pop()?`, never `NodeKind`), each locally `#[allow]`-annotated
     /// (or expressed as a refutable `let ... else`, which this lint does not
     /// reach) rather than left to this `deny` -- see each site's own note.
+    #[implements("FR-063-AC-7")]
     #[deny(clippy::wildcard_enum_match_arm)]
     fn apply_as(
         &mut self,
