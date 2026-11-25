@@ -4,6 +4,7 @@
 use std::cell::RefCell;
 
 use super::*;
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Reservation, ReservationDenied, Sink, Writer};
 
 pub(super) struct Admission<'a> {
@@ -540,6 +541,7 @@ pub(super) fn encode_admitted(
     Ok(output)
 }
 
+#[implements("FR-201-AC-9")]
 pub(super) fn write(
     document: &ProbabilityCertificateDocument,
     limits: ProbabilityDocumentLimits,

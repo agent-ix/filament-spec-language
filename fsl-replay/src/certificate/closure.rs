@@ -113,6 +113,7 @@ use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits};
 use crate::proof_result::{IncompleteCause, InstanceBound, MemoryBound, MemoryBoundMember};
 use fsl_eval::smt::SmtEncodingLimits;
 use fsl_package::TemporalClockSelection;
+use ix_trace_rs::implements;
 
 /// One product state of a certificate: its model state's
 /// `filament.simulation.state-key/v1` state key and its automaton state's
@@ -299,6 +300,7 @@ impl<'c> Proof<'c> {
 /// [`ClosureRefusal`] when the subject does not admit, a root is unbounded,
 /// the item has no translation or no instance, or a state cannot be
 /// encoded. A refusal is never an acceptance.
+#[implements("FR-338-AC-1")]
 pub fn check_closure(
     request: &CertificateRequest<'_>,
     certificate: &ClosureCertificate,
