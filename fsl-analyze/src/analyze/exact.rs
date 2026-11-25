@@ -3979,6 +3979,7 @@ fn finish_replay(
                     claim_type,
                     input.types,
                     input.variant_types,
+                    input.enums,
                     &state_key,
                     spelled_scheduler,
                 ),

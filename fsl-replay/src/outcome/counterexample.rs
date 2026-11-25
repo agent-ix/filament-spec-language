@@ -1111,6 +1111,7 @@ pub fn sampled_witness_wire(
     witness: &crate::statistical::SampledWitness,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
 ) -> Result<Json, super::WitnessOmission> {
     use crate::statistical::{MeasureValue, WitnessValue};
     use fsl_eval::simulation::model::TransitionId;
@@ -1138,7 +1139,7 @@ pub fn sampled_witness_wire(
         let mut random = Vec::with_capacity(step.random.len());
         for drawn in &step.random {
             random.push(
-                fsl_eval::simulation::model::typed_value_json(drawn, types, variants)
+                fsl_eval::simulation::model::typed_value_json(drawn, types, variants, enums)
                     .ok_or_else(|| witness_omission(witness))?,
             );
         }
@@ -1947,7 +1948,7 @@ pub fn assignments_wire(
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
 ) -> Result<Json, CounterexampleWireError> {
     assignments_wire_using(parameters, values, |value| {
-        fsl_eval::simulation::model::typed_value_json(value, types, variants)
+        fsl_eval::simulation::model::typed_value_json(value, types, variants, &[])
     })
 }
 
@@ -2007,12 +2008,17 @@ fn assignments_wire_using(
 ///
 /// [`CounterexampleWireError::Unspelled`] when a state or value has no
 /// encoding.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the witness, its claim, the declarations that type its values and the state spelling"
+)]
 pub fn probabilistic_wire(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
     claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2022,7 +2028,7 @@ pub fn probabilistic_wire(
     )],
 ) -> Result<Json, CounterexampleWireError> {
     probabilistic_wire_using(witness, bound, claim_type, state_key, scheduler, |value| {
-        fsl_eval::simulation::model::typed_value_json(value, types, variants)
+        fsl_eval::simulation::model::typed_value_json(value, types, variants, enums)
     })
 }
 
@@ -2230,6 +2236,10 @@ fn randomized_scheduler_wire_entry(
 
 /// Spell a checked-subject undefined path with its complete pre-read product key.
 /// This writes untrusted evidence; only semantic replay can reproduce it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the witness, its claim, the declarations that type its values and the state spelling"
+)]
 pub fn probabilistic_undefined_wire(
     witness: &crate::ProbabilityUndefinedWitness,
     claim: &OccurrenceKey,
@@ -2237,6 +2247,7 @@ pub fn probabilistic_undefined_wire(
     claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2252,6 +2263,7 @@ pub fn probabilistic_undefined_wire(
         claim_type,
         types,
         variants,
+        enums,
         state_key,
         scheduler,
     )?;

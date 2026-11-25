@@ -101,12 +101,13 @@ pub(super) const COLLECTION_FAMILIES: &[Family] = &[
     },
     Family {
         name: "quantifier",
-        accepting: &["quant-forall-ok", "quant-nested", "quant-range-fact"],
-        rejecting: &[
-            "quant-nonbool-bad",
+        accepting: &[
+            "quant-forall-ok",
+            "quant-nested",
+            "quant-range-fact",
             "quant-binder-shadow",
-            "quant-unbounded-int",
         ],
+        rejecting: &["quant-nonbool-bad", "quant-unbounded-int"],
     },
     Family {
         name: "function call",

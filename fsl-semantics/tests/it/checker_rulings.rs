@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 
 use filament_checked::key::DeclarationKey;
+use filament_checked::node::{NodeKind, Visit};
 use filament_exact::{CardinalityBound, CollectionKind, CollectionType, NodeKey, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
@@ -777,6 +778,69 @@ fn a_state_clause_binder_in_the_reserved_slot_form_is_refused_at_the_identifier(
             (code.as_str(), cause.as_str(), at.as_str()),
             (Code::AmbiguousDeclaration.as_str(), "ambiguous-name", "op_sa"),
             "{clause}"
+        );
+    }
+}
+
+// ----- FR-016-AC-11: a quantifier binder over a function parameter -----
+
+/// FR-016-AC-11 (TC-3083 step 12): bare `x` in the predicate reads the
+/// quantifier binder, not the same-named function parameter, while a name
+/// that is already an active binder, or a repeated parameter, is refused.
+#[trace("TC-3083", "FR-016-AC-11")]
+#[test]
+fn a_quantifier_binder_shadows_the_same_named_function_parameter() {
+    let graph = checks(
+        check_source(
+            false,
+            "function f using v(x: Integer, s: Sequence<Integer>[0,3]): Boolean pure { forall(x in s: x = 0) }",
+        ),
+        "a binder named like a parameter",
+    );
+    let identity = graph.function_identity("f").expect("f is declared");
+    let body = graph
+        .function_by_identity(identity)
+        .expect("f has a checked body")
+        .body;
+    let NodeKind::Query {
+        visit: Visit::Forall,
+        slot,
+        source,
+        body: predicate,
+        ..
+    } = body.kind()
+    else {
+        panic!("a universal quantifier: {:?}", body.kind());
+    };
+    // Slot 0 is the parameter `x`, slot 1 the parameter `s`.
+    assert_eq!(*slot, 2, "the binder has its own slot");
+    assert!(matches!(body.at(*source).kind(), NodeKind::Local(1)));
+    let operands = body.at(*predicate).children();
+    assert!(
+        matches!(operands[0].kind(), NodeKind::Local(2)),
+        "bare x reads the binder: {:?}",
+        operands[0].kind()
+    );
+
+    for (what, function) in [
+        (
+            "a nested quantifier binder over an active binder",
+            "function f using v(x: Integer, s: Sequence<Integer>[0,3]): Boolean pure { forall(x in s: forall(x in s: x = 0)) }",
+        ),
+        (
+            "a let over an active binder",
+            "function f using v(x: Integer, s: Sequence<Integer>[0,3]): Boolean pure { forall(x in s: let x = 1 in x = 1) }",
+        ),
+        (
+            "a repeated parameter name",
+            "function f using v(x: Integer, x: Integer): Boolean pure { x = 0 }",
+        ),
+    ] {
+        assert_one_refusal(
+            check_source(false, function),
+            what,
+            Code::AmbiguousDeclaration,
+            "ambiguous-name",
         );
     }
 }
