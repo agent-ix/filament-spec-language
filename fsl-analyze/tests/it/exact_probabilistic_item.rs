@@ -1845,11 +1845,11 @@ fn bounded_fair_eventual_remains_in_the_bounded_profile() {
 #[trace("FR-1042-AC-22")]
 #[test]
 fn fair_exact_fallback_is_not_yet() {
-    const CLAIM: &str = "probabilistic FairHalf using inf on M over (o: M::Once) under every scheduler fair strong Once::go on origin { probability >= 1 [ eventually holds(not o.done) ] }";
-    let world = World::new(&prob_world::one_shot(CLAIM));
+    const CLAIM: &str = "probabilistic FairDone using inf on M over (p: M::Proc) under every scheduler fair strong Proc::exit on origin { probability >= 0.9 [ eventually holds(p.done) ] }";
+    let world = World::new(&prob_world::zero_reward_exit(CLAIM));
     let item = exact_probabilistic_item(
         RequestIndex::new(0),
-        world.request("FairHalf", ModelCheckLimits::default()),
+        world.request("FairDone", ModelCheckLimits::default()),
     );
     let record = analyze_items(
         &Engines::fsl().expect("the linked engines are admitted"),
