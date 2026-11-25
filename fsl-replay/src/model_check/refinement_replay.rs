@@ -35,6 +35,7 @@ use fsl_eval::fairness::{Constraint, Identity, Strength};
 use fsl_eval::simulation::model::{ClockValuation, ModelFinding, TimedSystem};
 use fsl_eval::simulation::{Limits, TransitionSystem};
 use fsl_semantics::model::state::ModelState;
+use ix_trace_rs::implements;
 
 use crate::certificate::simulation::CertifiedEdge;
 use crate::execute::ReplayRefusal;
@@ -1453,6 +1454,7 @@ struct Walk<'p> {
 
 /// The settlement of a lasso whose prefix and loop `check_step` has run along:
 /// `found` is what the checks found, `walk` what they recomputed.
+#[implements("FR-145-AC-2")]
 fn replay_lasso(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
