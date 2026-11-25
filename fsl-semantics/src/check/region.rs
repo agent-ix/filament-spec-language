@@ -163,10 +163,7 @@ pub(super) fn region(
     span: Span,
 ) -> Option<SourceRegion> {
     if let Some(map) = embedding.filter(|map| map.body().reference() == source) {
-        return match map.map_regions(map.body(), span)?.as_slice() {
-            [region] => Some(region.clone()),
-            _ => None,
-        };
+        return map.map_region(map.body(), span);
     }
     let start = u64::try_from(span.start).ok()?;
     let end = u64::try_from(span.end).ok()?;

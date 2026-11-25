@@ -252,6 +252,7 @@ fn bound_findings(
 
 /// The conjunction of a set of clauses of one kind (FR-120 "Contract
 /// clauses").
+#[derive(Clone)]
 pub(super) enum Conjunction {
     /// Every clause is `true`, or there are none.
     True,
