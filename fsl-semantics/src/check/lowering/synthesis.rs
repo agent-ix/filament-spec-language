@@ -91,7 +91,7 @@ impl<'a> Lowering<'a> {
                         "direction",
                         self.text_literal(direction, &claim_at)?,
                     )),
-                    GroupMember::Binding(Binding::new("root", root)),
+                    GroupMember::Binding(Binding::new("expression", root)),
                     GroupMember::Binding(Binding::new(
                         "text",
                         self.text_literal(&text, &claim_at)?,

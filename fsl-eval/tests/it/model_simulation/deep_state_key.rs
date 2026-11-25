@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! TC-735 step 2 (FR-262-AC-2): the state key of a 100,000-long `List`
-//! record, taken through the public model-simulation snapshot path on a
-//! 512 KiB stack, equals the RFC 8785 text of its canonical JSON form.
+//! TC-735 step 2 (FR-262-AC-2) and TC-729 step 1 (FR-259-AC-3): the state
+//! key of a 100,000-long `List` record, taken through the public
+//! model-simulation snapshot path on a 512 KiB stack, equals the RFC 8785
+//! text of its canonical JSON form and matches the key from an 8 MiB stack.
 //!
 //! The expected bytes are written out here by hand (sorted members, no
 //! whitespace, `null` for an absent presence-optional field and the bare
@@ -102,13 +103,13 @@ fn expected_list() -> String {
     text
 }
 
-fn small_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> T {
+fn on_stack<T: Send + 'static>(stack_size: usize, run: impl FnOnce() -> T + Send + 'static) -> T {
     std::thread::Builder::new()
-        .stack_size(512 * 1024)
+        .stack_size(stack_size)
         .spawn(run)
         .expect("spawns")
         .join()
-        .expect("no overflow or panic on a 512 KiB stack")
+        .expect("no overflow or panic on the requested stack")
 }
 
 /// TC-735 step 2 (FR-262-AC-2): the 100,000-long list, held in a field of an
@@ -116,6 +117,7 @@ fn small_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> T
 /// RFC 8785 text, byte for byte, on a 512 KiB stack. A list one record
 /// shorter keys differently, so the comparison is over the whole depth.
 #[trace("TC-735", "FR-262-AC-2")]
+#[trace("TC-729", "FR-259-AC-3")]
 #[test]
 fn a_100_000_long_list_keys_as_its_rfc_8785_text() {
     keys_as_its_rfc_8785_text(false);
@@ -141,55 +143,80 @@ fn a_100_000_long_list_keys_as_its_rfc_8785_text_through_the_unbudgeted_state_ke
 }
 
 fn keys_as_its_rfc_8785_text(unbudgeted: bool) {
-    small_stack(move || {
-        let mut world =
-            build_world_document(list_document(), "", false, false).expect("the unit checks");
-        let counter = format!(
-            r#"{{"key":"c1","type":"{}","fields":{{"value":{{"integer":"0"}},"label":{{"integer":"0"}},"next":{{"absent":{{}}}},"list":{{"present":{}}}}}}}"#,
-            ident("Counter"),
-            snapshot_list()
-        );
-        let snapshot = format!(
-            r#"{{"format":"filament.state.snapshot/v1","identity":{{"authority":"test","identity":"deep"}},"observation":"current","anchor":{{"kind":"initialization","name":"start"}},"model":{{"identity":"{PACKAGE}"}},"populations":[{{"population":"{}","complete":true,"objects":[{counter}]}}]}}"#,
-            ident("counters")
-        );
-        let bytes = snapshot.into_bytes();
-        world.snapshots.insert(
-            fsl_semantics::model::observation::document_reference(&bytes)
-                .expect("a document names itself"),
-            bytes,
-        );
-        let reference = DocumentRef {
-            authority: "test".to_owned(),
-            identity: "deep".to_owned(),
-        };
-        let mut request = request(&world, vec![reference], universe(&["c1"]), UNLIMITED, 1_000);
-        request.observation = ObservationLimits::default()
-            .with_document_bytes(1 << 30)
-            .with_values_per_document(10_000_000);
-        let system = ModelSystem::new(request).expect("the system admits the deep snapshot");
-        let initial = system.initial();
-        assert_eq!(initial.len(), 1);
-        // The default 16 MiB identity ceiling is below this key's size, so
-        // the identity bound is raised for the one key.
-        let raw = if unbudgeted {
-            system.state_key(&initial[0]).expect("the key encodes").0
-        } else {
-            system
-                .state_key_bytes_with_budget(
-                    &initial[0],
-                    fsl_foundation::IdentityLimits::default().with_input_bytes(1 << 30),
-                    &mut RawKeyBudget::unlimited(),
-                    &Cancel::new(),
-                )
-                .expect("the key encodes")
-        };
+    let small = on_stack(512 * 1024, move || state_key_bytes(unbudgeted));
+    if !unbudgeted {
+        let large = on_stack(8 * 1024 * 1024, || state_key_bytes(false));
+        assert!(small == large, "the key differs across stack sizes");
+    }
+}
 
-        // The envelope around the list, canonical by construction: members
-        // sorted, no whitespace.
-        let empty = json!({"type": "map", "entries": []});
-        let reference = world.reference("c1");
-        let envelope = json!({"type": "simulation-state",
+fn state_key_bytes(unbudgeted: bool) -> Vec<u8> {
+    with_deep_state(|system, state, world| {
+        // The default 16 MiB identity ceiling is below this key's size,
+        // so the key is encoded with the explicitly raised limit.
+        let raw = if unbudgeted {
+            system.state_key(state).expect("the key encodes").0
+        } else {
+            encode_state(system, state, 1 << 30).expect("the key encodes")
+        };
+        assert_expected_state_key(&raw, world);
+        raw
+    })
+}
+
+fn with_deep_state<R>(
+    run: impl FnOnce(&ModelSystem<'_>, &fsl_eval::simulation::model::ModelSimState, &World) -> R,
+) -> R {
+    let mut world =
+        build_world_document(list_document(), "", false, false).expect("the unit checks");
+    let counter = format!(
+        r#"{{"key":"c1","type":"{}","fields":{{"value":{{"integer":"0"}},"label":{{"integer":"0"}},"next":{{"absent":{{}}}},"list":{{"present":{}}}}}}}"#,
+        ident("Counter"),
+        snapshot_list()
+    );
+    let snapshot = format!(
+        r#"{{"format":"filament.state.snapshot/v1","identity":{{"authority":"test","identity":"deep"}},"observation":"current","anchor":{{"kind":"initialization","name":"start"}},"model":{{"identity":"{PACKAGE}"}},"populations":[{{"population":"{}","complete":true,"objects":[{counter}]}}]}}"#,
+        ident("counters")
+    );
+    let bytes = snapshot.into_bytes();
+    world.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+    let reference = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "deep".to_owned(),
+    };
+    let mut request = request(&world, vec![reference], universe(&["c1"]), UNLIMITED, 1_000);
+    request.observation = ObservationLimits::default()
+        .with_document_bytes(1 << 30)
+        .with_values_per_document(10_000_000);
+    let system = ModelSystem::new(request).expect("the system admits the deep snapshot");
+    let initial = system.initial();
+    assert_eq!(initial.len(), 1);
+    run(&system, &initial[0], &world)
+}
+
+fn encode_state(
+    system: &ModelSystem<'_>,
+    state: &fsl_eval::simulation::model::ModelSimState,
+    bound: u64,
+) -> Result<Vec<u8>, fsl_eval::simulation::model::ModelKeyError> {
+    system.state_key_bytes_with_budget(
+        state,
+        fsl_foundation::IdentityLimits::default().with_input_bytes(bound),
+        &mut RawKeyBudget::unlimited(),
+        &Cancel::new(),
+    )
+}
+
+fn expected_state_key(world: &World) -> Vec<u8> {
+    // The envelope around the list, canonical by construction: members
+    // sorted, no whitespace.
+    let empty = json!({"type": "map", "entries": []});
+    let reference = world.reference("c1");
+    let envelope = json!({"type": "simulation-state",
             "semantic": {"type": "map", "entries": [{
                 "key": {"type": "text", "value": population_text()},
                 "value": {"type": "map", "entries": [{
@@ -204,17 +231,84 @@ fn keys_as_its_rfc_8785_text(unbudgeted: bool) {
                         {"name": "list", "value": "@@LIST@@"}]}}]}}]},
             "control": empty, "queues": empty, "roles": empty, "observations": empty,
             "bounds": empty, "memory": empty});
-        let template = envelope.to_string();
-        let marker = "\"@@LIST@@\"";
-        assert_eq!(template.matches(marker).count(), 1);
-        let expected = template.replace(marker, &expected_list());
-        assert!(raw.len() > DEPTH * 80, "the key holds every record");
-        assert!(
-            raw == expected.as_bytes(),
-            "the key bytes differ from the RFC 8785 text at byte {:?}",
-            raw.iter()
-                .zip(expected.as_bytes())
-                .position(|(a, b)| a != b)
-        );
+    let template = envelope.to_string();
+    let marker = "\"@@LIST@@\"";
+    assert_eq!(template.matches(marker).count(), 1);
+    template.replace(marker, &expected_list()).into_bytes()
+}
+
+fn assert_expected_state_key(raw: &[u8], world: &World) {
+    let expected = expected_state_key(world);
+    assert!(raw.len() > DEPTH * 80, "the key holds every record");
+    assert!(
+        raw == expected.as_slice(),
+        "the key bytes differ from the RFC 8785 text at byte {:?}",
+        raw.iter()
+            .zip(expected.iter())
+            .position(|(actual, expected)| actual != expected)
+    );
+}
+
+/// FR-259-AC-6: zero is an exact byte bound, `u64::MAX` accepts a key over
+/// the former 16 MiB default, and the independently authored byte count is
+/// the exact successful bound.
+#[trace("TC-729", "FR-259-AC-6")]
+#[test]
+fn identity_input_bytes_accepts_the_full_u64_range_and_uses_the_exact_bound() {
+    on_stack(512 * 1024, || {
+        with_deep_state(|system, state, world| {
+            let expected = expected_state_key(world);
+            assert!(expected.len() > fsl_foundation::DEFAULT_IDENTITY_INPUT_BYTES as usize);
+            let key = encode_state(system, state, u64::MAX).expect("u64::MAX admits the key");
+            assert_eq!(key, expected);
+
+            let exact_bound =
+                u64::try_from(expected.len()).expect("the expected key length fits u64");
+            let exact = encode_state(system, state, exact_bound)
+                .expect("the bound equal to the canonical byte count admits the key");
+            assert_eq!(exact, expected);
+
+            let zero = encode_state(system, state, 0).expect_err("zero refuses nonempty key bytes");
+            let fsl_eval::simulation::model::ModelKeyError::Encoding(
+                fsl_eval::simulation::EncodingRefusal::Limit(limit),
+            ) = zero
+            else {
+                panic!("zero-byte bound has the exact byte-limit refusal: {zero:?}");
+            };
+            assert_eq!(limit.setting(), fsl_foundation::Setting::IdentityInputBytes);
+            assert_eq!(limit.configured_bound(), 0);
+            assert_eq!(limit.actual(), 2);
+        })
+    });
+}
+
+/// TC-729 step 4 candidate for FR-259-AC-7: the same key fails one byte
+/// below its independently authored canonical byte count and succeeds at
+/// that exact count. This test is not tagged with AC-7 until the malformed
+/// input and malformed-value distinction clauses are asserted as well.
+#[trace("TC-729")]
+#[test]
+fn identity_input_bytes_refusal_reports_the_reached_bound_and_exact_bound_succeeds() {
+    on_stack(512 * 1024, || {
+        with_deep_state(|system, state, world| {
+            let expected = expected_state_key(world);
+            let exact_bound =
+                u64::try_from(expected.len()).expect("the expected key length fits u64");
+            let too_small = encode_state(system, state, exact_bound - 1)
+                .expect_err("one byte below the key length refuses");
+            let fsl_eval::simulation::model::ModelKeyError::Encoding(
+                fsl_eval::simulation::EncodingRefusal::Limit(limit),
+            ) = too_small
+            else {
+                panic!("one-byte-short bound has the exact byte-limit refusal: {too_small:?}");
+            };
+            assert_eq!(limit.setting(), fsl_foundation::Setting::IdentityInputBytes);
+            assert_eq!(limit.configured_bound(), exact_bound - 1);
+            assert_eq!(limit.actual(), u128::from(exact_bound));
+
+            let exact = encode_state(system, state, exact_bound)
+                .expect("the exact canonical byte count admits the key");
+            assert_eq!(exact, expected);
+        })
     });
 }

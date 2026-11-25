@@ -2523,10 +2523,9 @@ impl<'a> ModelSystem<'a> {
     /// type `over` under this subject's universes, in the canonical order.
     ///
     /// A population admits `T` when one of its member types is `T`, a
-    /// subtype or a supertype of `T`; each key of each admitting
-    /// population's universe is one instance, however many of its member
-    /// types are comparable with `T`. Admitting populations are ordered by
-    /// declaration identity text, and the keys of each by its universe list.
+    /// subtype or a supertype of `T`. Each key held by at least one initial
+    /// state is one instance. A key held in multiple admitting populations
+    /// is listed at its first occurrence in canonical population and key order.
     /// A type no population admits, and a type that is not an object
     /// reference, has no instance.
     ///
@@ -2540,6 +2539,35 @@ impl<'a> ModelSystem<'a> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
+        let mut seen_instance_keys = BTreeSet::new();
+        let mut instances = Vec::new();
+        for (population, key) in self.universe_members(parameter)? {
+            // Generated stages change field values only. The base states
+            // supply every initial object's type identity and population.
+            let admitted = self.initial_base.iter().any(|state| {
+                state
+                    .state
+                    .populations
+                    .get(population)
+                    .is_some_and(|objects| objects.contains_key(key))
+            });
+            if admitted && seen_instance_keys.insert(key) {
+                instances.push(ModelInstance {
+                    population: population.clone(),
+                    key: key.to_owned(),
+                });
+            }
+        }
+        Ok(instances)
+    }
+
+    /// Every declared key in each admitting population, including keys no
+    /// initial state holds. Populations follow declaration identity text
+    /// order and their keys keep the order of each universe list.
+    fn universe_members<'s>(
+        &'s self,
+        parameter: &EffectiveId,
+    ) -> Result<impl Iterator<Item = (&'s DeclarationKey, &'s str)> + 's, NotSimulated> {
         let mut admitting = Vec::new();
         for population in &self.populations {
             if self.overlaps(population, parameter.clone()) {
@@ -2572,28 +2600,13 @@ impl<'a> ModelSystem<'a> {
             .collect();
         crate::simulation::not_simulated::check_requires_bound(&roots, self.types, u64::MAX)?;
         admitting.sort_by(|left, right| left.0.cmp(&right.0));
-        let mut seen_instance_keys = BTreeSet::new();
-        let mut instances = Vec::new();
-        for (_, population) in admitting {
-            for key in self.universes.get(population).into_iter().flatten() {
-                // Generated stages change field values only; they preserve
-                // every base object's type identity and population holder.
-                let admitted = self.initial_base.iter().any(|state| {
-                    state
-                        .state
-                        .populations
-                        .get(population)
-                        .is_some_and(|objects| objects.contains_key(key))
-                });
-                if admitted && seen_instance_keys.insert(key.clone()) {
-                    instances.push(ModelInstance {
-                        population: population.clone(),
-                        key: key.clone(),
-                    });
-                }
-            }
-        }
-        Ok(instances)
+        Ok(admitting.into_iter().flat_map(move |(_, population)| {
+            self.universes
+                .get(population)
+                .into_iter()
+                .flatten()
+                .map(move |key| (population, key.as_str()))
+        }))
     }
 
     /// The universe keys that do not have an admitted initial member for an

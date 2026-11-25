@@ -449,7 +449,7 @@ fn parse_objective(term: &CheckedTerm) -> Option<(&str, &str, &CheckedNodeId)> {
             filament_contract_model::CheckedLiteralValue::Text(value) => Some(value),
             _ => None,
         })?;
-    let root = binding(objective, "root").and_then(reference)?;
+    let root = binding(objective, "expression").and_then(reference)?;
     Some((direction, text, root))
 }
 

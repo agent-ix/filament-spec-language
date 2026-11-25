@@ -3085,7 +3085,7 @@ fn policy_accounting_exhaustion_is_an_incomplete_run() {
 /// A typed numeric family awaiting its planning ordering/certificate
 /// implementation refuses before a low search budget can produce a verdict.
 #[test]
-#[trace("FR-1013")]
+#[trace("FR-1013", "FR-1036-AC-2")]
 fn unsupported_numeric_objectives_refuse_before_plan_search() {
     for (family, declarations, expression) in [
         (

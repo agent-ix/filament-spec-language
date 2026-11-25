@@ -334,9 +334,8 @@ pub fn encode_smt_query(
         if form == PropertyForm::BoundedMltl {
             let shape = match clause.activation() {
                 Activation::Origin => bounded_shape(clause),
-                Activation::Each { guarded: true } => closure_shape(clause)
+                Activation::Each { .. } => closure_shape(clause)
                     .filter(|(kind, _, _)| matches!(kind, BoundedKind::Eventually)),
-                Activation::Each { guarded: false } => None,
             };
             bounded = Some(shape.ok_or(Refusal::ItemForm {
                 form: "a TP-2 clause other than a bounded `always` or `eventually` of one state predicate",

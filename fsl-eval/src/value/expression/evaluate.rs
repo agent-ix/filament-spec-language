@@ -473,20 +473,24 @@ fn charge_call(meter: &mut Meter) -> Result<(), Stop> {
     Ok(meter.charge(Charge::new(ChargePoint::FunctionCall))?)
 }
 
-/// The declaration identity of the concrete population a refinement row's
-/// `only` ranges over, for the undefined cause's payload: the population
-/// under any `where` filter of `source`.
-fn population_of<'a, N: NodeSource<'a>>(source: N) -> Result<String, Halt> {
-    let mut node = source;
+/// The source named by an undefined `only`, through any `where` filter.
+fn only_source_name<'a, N: NodeSource<'a>>(mut node: N) -> Result<&'a str, Halt> {
     loop {
         match node.kind() {
-            NodeKind::PopulationObjects { population } => return Ok(population.node.clone()),
+            NodeKind::PopulationObjects { population } => return Ok(&population.node),
+            NodeKind::AllInstances { population }
+                if let NodeKind::NamedPopulation { population, .. } =
+                    node.at(*population).kind() =>
+            {
+                return Ok(&population.node);
+            }
             NodeKind::Query {
                 visit: Visit::Filter,
                 source,
                 ..
             } => node = node.at(*source),
-            _ => return Err(invariant("only-source-is-a-population")),
+            _ if matches!(node.value_type(), ValueType::Collection(_)) => return Ok("collection"),
+            _ => return Err(invariant("only-source-is-a-collection")),
         }
     }
 }
@@ -5440,7 +5444,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 };
                 return Err(Halt::Family(FamilyResult::Undefined(Box::new(
                     OnlyNotOneCause {
-                        population: population_of(node.at(*operand))?,
+                        population: only_source_name(node.at(*operand))?.to_owned(),
                         location: node.location().cloned(),
                         enclosing_row: self.enclosing_row.clone(),
                     },

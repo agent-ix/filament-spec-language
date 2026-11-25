@@ -1960,6 +1960,13 @@ fn clock_reference_set_aggregators_use_the_canonical_member_order() {
             panic!("the generated field is a typed Set");
         };
         let refs = set.elements();
+        let place_ids = refs.iter().map(|value| {
+            let Value::ClockReference(reference) = value else {
+                panic!("a Set member is a clock reference");
+            };
+            reference.text().as_bytes()
+        });
+        assert!(place_ids.is_sorted());
         let count = row_value(state, "set_count");
         assert!(
             matches!(
