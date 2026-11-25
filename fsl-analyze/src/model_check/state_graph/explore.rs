@@ -10,30 +10,45 @@
 //!
 //! - `MaxDepth`: it is at the horizon and has a successor, which the run does
 //!   not follow;
+//! - `ConstraintBoundary`: the selected state constraint is false at it, so it
+//!   is not expanded (FR-158);
 //! - `UndecidedSuccessor`: its expansion evaluated a contract conjunction
-//!   undecided; the successors the expansion did return are retained and
-//!   explored;
+//!   undecided, the successors the expansion did return being retained and
+//!   explored; the selected state constraint is undefined at it; or it has no
+//!   successor and a refused `terminal when` leaves it undecided;
 //! - `NotExpanded`: it was discovered and not expanded, or partly expanded,
 //!   when a limit or a cancellation stopped the run.
+//!
+//! The first node in discovery order where one of the subject's own
+//! expressions (a guard, the `terminal when` predicate, the selected state
+//! constraint) is undefined is kept with the graph, and refutes every
+//! state-graph item (FR-168 "Undefined evaluation").
 //!
 //! The deadlock-freedom item is decided on the same exploration, as FR-126
 //! decides it: the first node in discovery order whose expansion evaluates a
 //! contract conjunction undefined, or that is deadlocked, is its violation,
 //! with the canonical breadth-first path to it.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::Cancel;
+use filament_semantic_value::location::ExpressionLocation;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{SafetyState, SafetyTranslation};
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
-use fsl_eval::simulation::{
-    ExpansionStop, InitialStateRefusal, SubjectSystem, SymmetryGroup, TransitionSystem,
+use fsl_eval::simulation::model::{
+    ModelFinding, ModelSimState, ModelSystem, TerminalClass, UndefinedContract,
 };
+use fsl_eval::simulation::{
+    ConstraintValue, ExpansionStop, InitialStateRefusal, SubjectSystem, SymmetryGroup,
+    TransitionSystem,
+};
+use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
-    ClosureCertificate, CounterexampleKind, ItemRefusal, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ModelStep, OpenCause, ProductStateRef, RunEnd, RunStats,
-    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    ClosureCertificate, CounterexampleKind, GraphUndefined, ItemRefusal, ModelCheckLimit,
+    ModelCheckLimits, ModelCheckOutcome, ModelStep, OpenCause, ProductStateRef, ReductionCause,
+    RunEnd, RunStats, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus,
+    UndefinedSite,
 };
 
 use super::super::ample::Por;
@@ -80,7 +95,7 @@ impl Initial {
                     .canonicalise(&start, symmetry)
                     .map_err(Keying::Stop)?;
                 let (key, _) = system
-                    .state_key(&state)
+                    .state_key(&state, fsl_foundation::IdentityLimits::default())
                     .map_err(|refused| Keying::Refused(refused.into()))?;
                 keys.push(key.clone());
                 if retain_starts {
@@ -128,6 +143,7 @@ pub(super) fn empty(end: RunEnd) -> ExploredStateGraph {
         parent: Vec::new(),
         root: Vec::new(),
         initial: Vec::new(),
+        subject_undefined: None,
     }
 }
 
@@ -153,6 +169,8 @@ pub(super) struct Exploration<'r, 'a, 'v> {
     pub(super) cancel: &'r Cancel,
     pub(super) budgets: Budgets,
     pub(super) views: &'r [Vec<InstanceView<'v>>],
+    /// The selected state constraint, which the pre-check resolved.
+    pub(super) constraint: Option<&'r str>,
     pub(super) deadlock_freedom: bool,
     pub(super) por: Option<&'r Por<'r, 'a>>,
     pub(super) declared_symmetry: &'r SymmetryGroup,
@@ -178,6 +196,58 @@ impl Walk {
                 .open
                 .insert(NodeIndex(node), OpenCause::NotExpanded);
         }
+    }
+
+    /// Keep `at` as the node where one of the subject's expressions is
+    /// undefined. Nodes are expanded in discovery order, so the first one
+    /// kept is the earliest.
+    fn subject_undefined(
+        &mut self,
+        at: usize,
+        locus: Option<ExpressionLocation>,
+        transition: Option<ModelTransition>,
+        cause: UndefinedCause,
+    ) {
+        let state_key = &self.graph.nodes[at].key;
+        self.graph.subject_undefined.get_or_insert_with(|| {
+            (
+                NodeIndex(at),
+                GraphUndefined {
+                    predicate: None,
+                    transition,
+                    state_key: state_key.clone(),
+                    locus,
+                    cause,
+                },
+            )
+        });
+    }
+
+    /// The deadlock-freedom item's violation by an undefined evaluation at
+    /// node `at`.
+    fn undefined_violation(
+        &self,
+        at: usize,
+        locus: UndefinedLocus,
+        transition: Option<ModelTransition>,
+        cause: UndefinedCause,
+    ) -> DeadlockEvent {
+        let node = &self.graph.nodes[at];
+        DeadlockEvent::Violated(
+            Box::new(CounterexampleKind::UndefinedEvaluation(
+                UndefinedEvaluation {
+                    site: UndefinedSite {
+                        position: node.depth,
+                        state_key: node.key.clone(),
+                        locus,
+                        transition,
+                        time: None,
+                    },
+                    cause,
+                },
+            )),
+            at,
+        )
     }
 
     fn insert(
@@ -256,6 +326,13 @@ impl Exploration<'_, '_, '_> {
     }
 
     /// Label and expand node `at`.
+    #[implements(
+        "FR-167-AC-7",
+        "FR-168-AC-11",
+        "FR-168-AC-12",
+        "FR-168-AC-13",
+        "FR-168-AC-16"
+    )]
     fn visit(
         &self,
         walk: &mut Walk,
@@ -293,6 +370,36 @@ impl Exploration<'_, '_, '_> {
             })
             .collect();
         walk.graph.nodes[at].labels = labels;
+        if let Some(name) = self.constraint {
+            match self.system.constraint_value(&walk.states[at], name) {
+                Ok(ConstraintValue::Holds) => {}
+                // FR-158 "Boundary states": stored and labelled, never
+                // expanded, and never a deadlock.
+                Ok(ConstraintValue::Boundary) => {
+                    walk.graph
+                        .open
+                        .insert(NodeIndex(at), OpenCause::ConstraintBoundary);
+                    return Ok(Ok(()));
+                }
+                Ok(ConstraintValue::Undefined { cause, .. }) => {
+                    walk.graph
+                        .open
+                        .insert(NodeIndex(at), OpenCause::UndecidedSuccessor);
+                    walk.subject_undefined(
+                        at,
+                        self.system.state_clause_locus(name),
+                        None,
+                        cause.clone(),
+                    );
+                    if self.deadlock_freedom && walk.deadlock.is_none() {
+                        let locus = UndefinedLocus::Constraint(name.to_owned());
+                        walk.deadlock = Some(walk.undefined_violation(at, locus, None, cause));
+                    }
+                    return Ok(Ok(()));
+                }
+                Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
+            }
+        }
         let expansion = match self.system.successors(&walk.states[at]) {
             Ok(expansion) => expansion,
             Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
@@ -310,17 +417,43 @@ impl Exploration<'_, '_, '_> {
                 .open
                 .insert(NodeIndex(at), OpenCause::UndecidedSuccessor);
         }
-        if self.deadlock_freedom && walk.deadlock.is_none() {
-            match self.deadlock_event(
-                walk,
-                at,
-                undefined,
-                undecided,
-                !expansion.successors.is_empty(),
-            )? {
-                Ok(event) => walk.deadlock = event,
-                Err(halt) => return Ok(Err(halt)),
+        // An undefined guard is no disabled transition: it refutes.
+        let guard = expansion
+            .findings
+            .iter()
+            .filter_map(ModelFinding::undefined_contract)
+            .find_map(|contract| Some((contract.clause, contract.guard_of?, contract.cause)));
+        if let Some((clause, transition, cause)) = guard {
+            let locus = self.system.state_clause_locus(&clause);
+            walk.subject_undefined(at, locus, Some(transition), cause);
+        }
+        let pending = self.deadlock_freedom && walk.deadlock.is_none();
+        // FR-124: `terminal when` is read only where no transition is
+        // enabled, which an undecided contract leaves unknown.
+        let terminal = if expansion.successors.is_empty() && undefined.is_none() && !undecided {
+            match self.system.terminal_class(&walk.states[at], false) {
+                Ok(class) => Some(class),
+                Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
             }
+        } else {
+            None
+        };
+        match &terminal {
+            // A refused declaration may intend the state, so the node stays
+            // undecided, whatever another reads (FR-124, FR-167).
+            Some(TerminalClass::Undecided { .. }) => {
+                walk.graph
+                    .open
+                    .insert(NodeIndex(at), OpenCause::UndecidedSuccessor);
+            }
+            Some(TerminalClass::Undefined { model, cause }) => {
+                let locus = self.system.terminal_locus(model);
+                walk.subject_undefined(at, locus, None, cause.clone());
+            }
+            _ => {}
+        }
+        if pending {
+            walk.deadlock = deadlock_event(walk, at, undefined, undecided, terminal);
         }
         let depth = self.depth_of(walk, at)?;
         if self.horizon.is_some_and(|horizon| depth >= horizon) {
@@ -340,7 +473,9 @@ impl Exploration<'_, '_, '_> {
                 Ok(canonical) => canonical,
                 Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
             };
-            let (key, _) = self.system.state_key(&state)?;
+            let (key, _) = self
+                .system
+                .state_key(&state, fsl_foundation::IdentityLimits::default())?;
             successors.push((order, key, transition, state, permutation));
         }
         successors.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
@@ -420,61 +555,6 @@ impl Exploration<'_, '_, '_> {
         usize::try_from(walk.graph.nodes[at].depth).map_err(|_| fault("node-depth-fits-usize"))
     }
 
-    /// The deadlock-freedom item's event at node `at`, if `at` decides it:
-    /// an undefined contract conjunction, then a refused one, then the
-    /// state's FR-124 class (ADR-018 DL-7, UE-6, V-6).
-    fn deadlock_event(
-        &self,
-        walk: &Walk,
-        at: usize,
-        undefined: Option<fsl_eval::simulation::model::UndefinedContract>,
-        undecided: bool,
-        has_successor: bool,
-    ) -> Result<Result<Option<DeadlockEvent>, Halt>, ModelCheckRefusal> {
-        let site = |locus, transition| UndefinedSite {
-            position: walk.graph.nodes[at].depth,
-            state_key: walk.graph.nodes[at].key.clone(),
-            locus,
-            transition,
-            time: None,
-        };
-        if let Some(contract) = undefined {
-            return Ok(Ok(Some(DeadlockEvent::Violated(
-                Box::new(CounterexampleKind::UndefinedEvaluation(
-                    UndefinedEvaluation {
-                        site: site(UndefinedLocus::Contract(contract.clause), contract.guard_of),
-                        cause: contract.cause,
-                    },
-                )),
-                at,
-            ))));
-        }
-        if undecided {
-            return Ok(Ok(Some(DeadlockEvent::Undecided)));
-        }
-        let class = match self.system.terminal_class(&walk.states[at], has_successor) {
-            Ok(class) => class,
-            Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
-        };
-        Ok(Ok(match class {
-            TerminalClass::NotTerminal | TerminalClass::Intended => None,
-            TerminalClass::Deadlocked => Some(DeadlockEvent::Violated(
-                Box::new(CounterexampleKind::Deadlock),
-                at,
-            )),
-            TerminalClass::Undefined { model, cause } => Some(DeadlockEvent::Violated(
-                Box::new(CounterexampleKind::UndefinedEvaluation(
-                    UndefinedEvaluation {
-                        site: site(UndefinedLocus::Terminal(model), None),
-                        cause,
-                    },
-                )),
-                at,
-            )),
-            TerminalClass::Undecided { .. } => Some(DeadlockEvent::Undecided),
-        }))
-    }
-
     /// The graph's statistics and the deadlock-freedom item's outcome.
     fn finish(&self, mut walk: Walk) -> Result<Explored, ModelCheckRefusal> {
         walk.graph.stats = GraphStats {
@@ -540,6 +620,13 @@ impl Exploration<'_, '_, '_> {
                     limit: *limit,
                     stats,
                 },
+                // FR-158: a boundary state settles before any bound.
+                RunEnd::Completed if graph.boundary_states() > 0 => ModelCheckOutcome::Reduction {
+                    cause: ReductionCause::ConstraintReached {
+                        boundary_states: graph.boundary_states(),
+                    },
+                    stats,
+                },
                 RunEnd::Completed if walk.horizon_cut => ModelCheckOutcome::BoundReached {
                     depth: widen(self.horizon.unwrap_or(0)),
                     stats,
@@ -561,6 +648,37 @@ impl Exploration<'_, '_, '_> {
                 },
             },
         })
+    }
+}
+
+/// The deadlock-freedom item's event at node `at`, if `at` decides it: an
+/// undefined contract conjunction, then a refused one, then the node's
+/// FR-124 class when it is terminal (ADR-018 DL-7, UE-6, V-6).
+#[implements("FR-168-AC-16")]
+fn deadlock_event(
+    walk: &Walk,
+    at: usize,
+    undefined: Option<UndefinedContract>,
+    undecided: bool,
+    terminal: Option<TerminalClass>,
+) -> Option<DeadlockEvent> {
+    if let Some(contract) = undefined {
+        let locus = UndefinedLocus::Contract(contract.clause);
+        return Some(walk.undefined_violation(at, locus, contract.guard_of, contract.cause));
+    }
+    if undecided {
+        return Some(DeadlockEvent::Undecided);
+    }
+    match terminal? {
+        TerminalClass::NotTerminal | TerminalClass::Intended => None,
+        TerminalClass::Deadlocked => Some(DeadlockEvent::Violated(
+            Box::new(CounterexampleKind::Deadlock),
+            at,
+        )),
+        TerminalClass::Undefined { model, cause } => {
+            Some(walk.undefined_violation(at, UndefinedLocus::Terminal(model), None, cause))
+        }
+        TerminalClass::Undecided { .. } => Some(DeadlockEvent::Undecided),
     }
 }
 
@@ -603,6 +721,17 @@ impl ExploredStateGraph {
         }
         steps.reverse();
         steps
+    }
+
+    /// The boundary states of the selected state constraint the run stored
+    /// (FR-158).
+    pub(super) fn boundary_states(&self) -> u64 {
+        widen(
+            self.open
+                .values()
+                .filter(|cause| **cause == OpenCause::ConstraintBoundary)
+                .count(),
+        )
     }
 
     /// The initial-state index of `node`'s breadth-first tree root.

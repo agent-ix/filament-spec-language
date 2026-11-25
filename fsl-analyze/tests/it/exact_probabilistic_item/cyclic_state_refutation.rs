@@ -837,7 +837,13 @@ fn a_fair_minimum_ranking_over_the_repeatable_operation_cycle_is_malformed() {
     let item_identity = fsl_replay::probabilistic_claim_identity(checked_claim).unwrap();
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let binding = claim_binding(&system, checked_claim).unwrap().unwrap();
-    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    let raw = system
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .unwrap()
+        .0;
     let initial = ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap();
     let malformed = json!({
         "identity": {

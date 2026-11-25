@@ -388,7 +388,7 @@ impl TimedSystem<'_, '_> {
     fn key(&self, state: &TimedState) -> Result<(Vec<u8>, super::ClockValuation), TimedStop> {
         let (bytes, _) = self
             .system
-            .state_key(&state.discrete)
+            .state_key(&state.discrete, fsl_foundation::IdentityLimits::default())
             .map_err(|_| crate::simulation::model::walk::stop(crate::simulation::model::BROKEN))?;
         Ok((bytes, state.clocks.clone()))
     }

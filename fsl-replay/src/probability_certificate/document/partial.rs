@@ -4,6 +4,7 @@
 //! names and their successors.
 
 use super::*;
+use ix_trace_rs::implements;
 
 /// The `cyclic_dtmc` flag of the base a partial product's `lower` document
 /// takes for `claim`: the cyclic chain for an `eventually`, the acyclic
@@ -86,13 +87,15 @@ pub(super) fn explored_subject(
     Ok(subject)
 }
 
-/// [`probability_proof_document`], or, where `max_states` stops the whole
-/// graph, the document of a `lower` proof over the states `certificate` names
-/// and their successors (FR-1042 "Document"). An `eventually` takes the cyclic
-/// chain base, ranking each named state by its distance to a named target
-/// through named states of positive value; an expected reward takes the
-/// acyclic profile, ranked by height in that part. This does not grant
-/// acceptance.
+/// [`probability_proof_document`], ranking the states `certificate` names
+/// alone and naming for an acyclic `eventually` those in that graph alone, or,
+/// where `max_states` stops the whole graph, the document of a `lower` proof
+/// over the states `certificate` names and their successors (FR-1042
+/// "Document"). Over that part an `eventually` takes the cyclic chain base,
+/// ranking each named state by its distance to a named target through named
+/// states of positive value; an expected reward takes the acyclic profile,
+/// ranked by height in that part. This does not grant acceptance.
+#[implements("FR-1042-AC-25", "FR-1042-AC-26")]
 pub fn partial_lower_probability_proof_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -117,7 +120,20 @@ pub fn partial_lower_probability_proof_document(
                 ..
             },
         ) => error,
-        other => return other,
+        // The checker's graph can fit `max_states` where the explored model
+        // did not: an `eventually` graph stops at its targets.
+        Ok(mut proof) => {
+            let claim = bind_claim(claims, item, cancel)?;
+            if !proof.document().cyclic_dtmc
+                && matches!(claim.scheduler, ProbScheduler::Workload(_))
+                && is_eventual_reach(claim)
+            {
+                proof.keep_graph_values();
+            }
+            proof.rank_named_rows();
+            return Ok(proof);
+        }
+        Err(error) => return Err(error),
     };
     let Some(cyclic_dtmc) = cyclic_dtmc(bind_claim(claims, item, cancel)?) else {
         return Err(exhausted);

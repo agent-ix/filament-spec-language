@@ -145,7 +145,7 @@ impl<'r, 's> Joint<'r, 's> {
             .zip(components)
             .map(|(system, state)| {
                 system
-                    .state_key(state)
+                    .state_key(state, fsl_foundation::IdentityLimits::default())
                     .map(|(bytes, _)| crate::simulation::StateKey::from_canonical_bytes(bytes))
                     .map_err(|refusal| self.record(Halt::Encoding(refusal)))
             })

@@ -19,8 +19,10 @@ use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use ix_trace_rs::trace;
 
+use crate::certificate_rejection_support::{state_locus, written_cause};
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{self, Vault};
+use crate::provider_schema_support::{assert_valid, provider_definition};
 use crate::relation_claims_support::{
     initial_world, package_and_relation, package_and_relation_with_document,
     step_with_result_document, subjects, DETERMINISTIC,
@@ -142,7 +144,12 @@ impl Fixture {
         let mut keys: Vec<_> = system
             .initial()
             .iter()
-            .map(|state| system.state_key(state).expect("state key").1)
+            .map(|state| {
+                system
+                    .state_key(state, fsl_foundation::IdentityLimits::default())
+                    .expect("state key")
+                    .1
+            })
             .collect();
         keys.sort();
         keys.dedup();
@@ -228,6 +235,12 @@ fn hp1_det_certificate_is_deterministic_and_independently_certified() {
         1
     );
     assert!(wire["closure"][0].get("automaton_state").is_none());
+    // The certificate's edges keep the bare StateKey spelling of its
+    // `states`; only a rejection locus writes State objects.
+    let edge = &wire["closure"][0]["executions"][0]["transitions"][0];
+    let expected = &subject.executions[0].transitions[0];
+    assert_eq!(edge["pre_state"], state_locus(&expected.pre_state)["key"]);
+    assert_eq!(edge["post_state"], state_locus(&expected.post_state)["key"]);
     assert_eq!(
         fixture
             .check(&proof, ModelCheckLimits::default())
@@ -592,22 +605,52 @@ fn hp1_aliases_follow_declarations_and_edge_sequences_are_exact_inputs() {
     }
 }
 
+/// The written tuple rejection `cause` against FSpec FR-331's schema: the
+/// tuple and its State objects, with bare state strings refused.
+///
+/// Each edge's `transition` is replaced by a conforming identity first: FSL
+/// writes the operation and a reference receiver as objects the schema's
+/// `TransitionIdentity` does not admit, so this does not validate them.
+fn assert_tuple_conforms(mut cause: serde_json::Value) {
+    for edge in cause["at"]["transitions"]
+        .as_array_mut()
+        .expect("labelled edges")
+    {
+        assert_eq!(edge["transition"]["type"], "transition");
+        edge["transition"] = serde_json::json!(
+            {"type": "transition", "operation": "step", "receiver": null, "arguments": []}
+        );
+    }
+    let tuple = provider_definition("HyperTransitionTupleLocus");
+    let rejected = provider_definition("CertificateRejected");
+    assert_valid(&tuple, &cause["at"], "the transition tuple locus");
+    assert_valid(&rejected, &cause, "the transition tuple rejection");
+    for member in ["pre_state", "post_state"] {
+        let mut bare = cause.clone();
+        let state = &mut bare["at"]["transitions"][0][member];
+        *state = state["key"].take();
+        assert!(!rejected.is_valid(&bare), "{bare}");
+    }
+}
+
 #[trace("FR-163-AC-6", "FR-163-AC-12")]
 #[test]
 fn hp1_false_and_undefined_rejections_keep_complete_first_tuples() {
     const NONDETERMINISTIC: &str =
         "post Step using v on V::Vault::step { self.l = i or self.l = 1 - i }\n";
     let true_text = "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { true }";
-    for (vault, rejected_body, rule) in [
+    for (vault, rejected_body, rule, spelled) in [
         (
             Vault::Custom(NONDETERMINISTIC),
             DETERMINISTIC,
             CertificateRule::ViolatingMember,
+            "violating-member",
         ),
         (
             Vault::Secure,
             "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { 1 mod x.i >= y.i }",
             CertificateRule::UndefinedMember,
+            "undefined-member",
         ),
     ] {
         let proof = Fixture::new(vault, true_text).proof(ModelCheckLimits::default());
@@ -651,10 +694,12 @@ fn hp1_false_and_undefined_rejections_keep_complete_first_tuples() {
         }
         let wire = serde_json::to_value(&rejection.at).expect("complete tuple wire");
         assert_eq!(wire.as_object().expect("tuple object").len(), 1);
-        for edge in wire["transitions"].as_array().expect("labelled edges") {
+        let written = wire["transitions"].as_array().expect("labelled edges");
+        assert_eq!(written.len(), tuple.transitions.len());
+        for (edge, expected) in written.iter().zip(&tuple.transitions) {
             assert_eq!(edge.as_object().expect("edge object").len(), 4);
-            assert!(edge["pre_state"].is_string());
-            assert!(edge["post_state"].is_string());
+            assert_eq!(edge["pre_state"], state_locus(&expected.pre_state));
+            assert_eq!(edge["post_state"], state_locus(&expected.post_state));
             assert_eq!(edge["transition"]["type"], "transition");
             assert!(edge["result"].is_null());
         }
@@ -663,6 +708,12 @@ fn hp1_false_and_undefined_rejections_keep_complete_first_tuples() {
             record.value,
             TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::CertificateRejected { .. })
         ));
+        let cause = written_cause(record.value);
+        assert_eq!(
+            cause,
+            serde_json::json!({"type": "certificate-rejected", "rule": spelled, "at": wire})
+        );
+        assert_tuple_conforms(cause);
     }
 }
 
@@ -800,8 +851,14 @@ fn hp1_result_expansion_keeps_all_results_and_ordinary_successors_stay_unchanged
             .iter()
             .filter(|(edge, candidate)| {
                 &edge.transition == transition
-                    && system.state_key(candidate).expect("post key").1
-                        == system.state_key(post).expect("ordinary post key").1
+                    && system
+                        .state_key(candidate, fsl_foundation::IdentityLimits::default())
+                        .expect("post key")
+                        .1
+                        == system
+                            .state_key(post, fsl_foundation::IdentityLimits::default())
+                            .expect("ordinary post key")
+                            .1
             })
             .collect();
         assert_eq!(matching.len(), 2);

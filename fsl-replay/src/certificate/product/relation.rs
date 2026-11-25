@@ -12,12 +12,14 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::{ExpansionLimit, StateKey, TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::value::ModelRelationEvaluation;
 use fsl_semantics::check::HyperForm;
+use ix_trace_rs::implements;
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use super::{
     ModelRelationClosureRequest, ProductClosure, ProductClosureCertificate, ProductClosureCheck,
     ProductClosureRefusal,
 };
+use crate::outcome::{TimedStateWire, TimedTransitionWire};
 use crate::{
     CertificateLocus, CertificateRejection, CertificateRule, IncompleteCause, ModelCheckLimit,
     ModelCheckLimits,
@@ -36,27 +38,43 @@ pub struct HyperTransitionEdge {
     pub result: Option<String>,
 }
 
+/// One edge as written, its two states spelled as `K`.
+#[derive(Serialize)]
+struct EdgeWire<K> {
+    pre_state: K,
+    transition: TimedTransitionWire,
+    post_state: K,
+    result: Option<serde_json::Value>,
+}
+
+impl HyperTransitionEdge {
+    #[implements("FR-163-AC-12")]
+    fn wire<K>(&self, state: impl Fn(&StateKey) -> K) -> serde_json::Result<EdgeWire<K>> {
+        Ok(EdgeWire {
+            pre_state: state(&self.pre_state),
+            transition: TimedTransitionWire::from(&self.transition),
+            post_state: state(&self.post_state),
+            result: self
+                .result
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()?,
+        })
+    }
+}
+
+/// An HP-1 certificate edge: each state is its bare `StateKey` spelling, as
+/// in the closure's `states` (FR-163).
 impl Serialize for HyperTransitionEdge {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let key = |key: &StateKey| {
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes())
-        };
-        let result: Option<serde_json::Value> = self
-            .result
-            .as_deref()
-            .map(serde_json::from_str)
-            .transpose()
-            .map_err(serde::ser::Error::custom)?;
-        let mut object = serializer.serialize_struct("HyperTransitionEdge", 4)?;
-        object.serialize_field("pre_state", &key(&self.pre_state))?;
-        object.serialize_field(
-            "transition",
-            &crate::outcome::TimedTransitionWire::from(&self.transition),
-        )?;
-        object.serialize_field("post_state", &key(&self.post_state))?;
-        object.serialize_field("result", &result)?;
-        object.end()
+        self.wire(key_text)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
     }
+}
+
+fn key_text(key: &StateKey) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes())
 }
 
 /// Complete applicable edges of one execution, in canonical edge order.
@@ -81,18 +99,32 @@ pub struct HyperSubjectClosure {
 }
 
 fn serialize_states<S: Serializer>(states: &[StateKey], serializer: S) -> Result<S::Ok, S::Error> {
-    let keys: Vec<_> = states
-        .iter()
-        .map(|key| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes()))
-        .collect();
+    let keys: Vec<_> = states.iter().map(key_text).collect();
     keys.serialize(serializer)
 }
 
 /// One complete tuple of labelled edges in execution-binding order.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HyperTransitionTuple {
     /// Exactly one edge for every execution variable.
     pub transitions: Vec<HyperTransitionEdge>,
+}
+
+/// FSpec FR-331's rejection tuple: unlike a certificate edge, each edge's
+/// `pre_state` and `post_state` is a State object `{key}`.
+impl Serialize for HyperTransitionTuple {
+    #[implements("FR-163-AC-12")]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let transitions = self
+            .transitions
+            .iter()
+            .map(|edge| edge.wire(|key| TimedStateWire::from(key)))
+            .collect::<serde_json::Result<Vec<_>>>()
+            .map_err(serde::ser::Error::custom)?;
+        let mut object = serializer.serialize_struct("HyperTransitionTuple", 1)?;
+        object.serialize_field("transitions", &transitions)?;
+        object.end()
+    }
 }
 
 /// The tuple whose evaluation would exceed this check's own allowance.
@@ -193,7 +225,7 @@ fn reconstruct(
     let mut initials = BTreeMap::new();
     for state in system.initial() {
         let (_, key) = system
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ProductClosureRefusal::Recompute("state-key"))?;
         initials.entry(key).or_insert(state);
     }
@@ -242,7 +274,7 @@ fn reconstruct(
         for (labelled, next) in expansion.successors {
             poll(cancel)?;
             let (_, target) = system
-                .state_key(&next)
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| ProductClosureRefusal::Recompute("successor-key"))?;
             let order = quire_canonical::to_vec(
                 &labelled,

@@ -22,21 +22,20 @@ use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
-use fsl_foundation::BackendId;
 use fsl_replay::{
     check_closure, check_components, settle_hyper_check, settle_model_check, CertificateLocus,
     CertificateRejection, CertificateRequest, CertificateRule, Certification, ClosureCertificate,
     ClosureRefusal, Component, ComponentCertificate, ComponentWitness, Execution, HyperOutcome,
     IncompleteCause, InconclusiveCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, Operation, OutcomeDocument, OutcomeItem, OutcomeStage, ProductClosureClause,
-    ProductClosureRequest, ProductStateRef, ProofBasis, ProofCertificate, RequestIndex,
-    ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits, TemporalCertificateCheck,
-    TerminalRecord, TerminalValue,
+    ModelCheckOutcome, ProductClosureClause, ProductClosureRequest, ProductStateRef, ProofBasis,
+    ProofCertificate, ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits,
+    TemporalCertificateCheck, TerminalValue,
 };
 use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use ix_trace_rs::trace;
 use serde_json::json;
 
+use crate::certificate_rejection_support::written_cause;
 use crate::counter::{UNLIMITED, ZERO};
 use crate::example_units::{config, decide, reaches_two, EACH};
 use crate::hyper_world::{self, non_interference, Vault, EQUAL_INPUTS, STARTS};
@@ -303,28 +302,26 @@ fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
     );
 }
 
-/// The `cause` the outcome writer writes for an item settled `value`, under
-/// FR-331's member name `type` for the writer's `kind`.
-fn written_cause(value: TerminalValue) -> serde_json::Value {
-    let TerminalValue::Inconclusive(cause) = value else {
-        panic!("a rejected certificate settles inconclusive: {value:?}");
-    };
-    let item = OutcomeItem::from_terminal(&TerminalRecord::inconclusive(
-        RequestIndex::new(0),
-        BackendId::new("en-1"),
+/// `value` is written as a `certificate-rejected` cause under `rule` at
+/// exactly `at`, which FSpec FR-331 admits as the locus form `locus` and in
+/// that pair.
+pub(crate) fn assert_written_rejection(
+    value: TerminalValue,
+    rule: &str,
+    locus: &str,
+    at: &serde_json::Value,
+) {
+    let cause = written_cause(value);
+    assert_eq!(
         cause,
-    ));
-    let bytes = OutcomeDocument::settled(Operation::Analyze, Some(OutcomeStage::S6c), vec![item])
-        .to_bytes()
-        .expect("the outcome encodes");
-    let document: serde_json::Value = serde_json::from_slice(&bytes).expect("the outcome is JSON");
-    let mut cause = document["items"][0]["cause"].clone();
-    let kind = cause
-        .as_object_mut()
-        .and_then(|members| members.remove("kind"))
-        .expect("the cause names its kind");
-    cause["type"] = kind;
-    cause
+        json!({"type": "certificate-rejected", "rule": rule, "at": at})
+    );
+    assert_valid(&provider_definition(locus), &cause["at"], locus);
+    assert_valid(
+        &provider_definition("CertificateRejected"),
+        &cause,
+        "the certificate-rejected cause",
+    );
 }
 
 /// `value` is written as a `backward-edge` rejection at `source`, in FSpec
@@ -778,7 +775,9 @@ fn state_key_of(fixture: &Fixture, phase: u8) -> fsl_eval::simulation::StateKey 
         state = successors[pick].1.clone();
     }
     {
-        let (bytes, _) = system.state_key(&state).expect("encodes");
+        let (bytes, _) = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes");
         fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
     }
 }
@@ -1101,7 +1100,9 @@ fn a_guarded_each_activation_has_its_own_acceptance_set_in_the_certificate() {
         .expect("a's update is a step")
         .1;
     let one_zero = {
-        let (bytes, _) = system.state_key(&updated).expect("encodes");
+        let (bytes, _) = system
+            .state_key(&updated, fsl_foundation::IdentityLimits::default())
+            .expect("encodes");
         fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
     };
     let removed = certificate.components[1]
@@ -1118,7 +1119,9 @@ fn a_guarded_each_activation_has_its_own_acceptance_set_in_the_certificate() {
     );
 
     let initial = {
-        let (bytes, _) = system.state_key(&start).expect("encodes");
+        let (bytes, _) = system
+            .state_key(&start, fsl_foundation::IdentityLimits::default())
+            .expect("encodes");
         fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
     };
     let waiting = certificate.components[0]

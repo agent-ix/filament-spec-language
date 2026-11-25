@@ -450,8 +450,8 @@ fn state_machines_processes_and_object_types_emit_rows_and_a_subtype_does_not() 
     let emitted = emit(&document, clauses);
     assert!(emitted.verified());
     // The lifecycle's first transition emits the event type `OrderPlaced`, so
-    // its node is in the package (an event-typed function parameter is refused
-    // by the reader, so no clause can name it): it carries the model owner and the package reads back through the strict reader.
+    // its node is in the package though no clause names it: it carries the
+    // model owner and the package reads back through the strict reader.
     let event = emitted.declaration("OrderPlaced");
     let event_node = emitted
         .admitted

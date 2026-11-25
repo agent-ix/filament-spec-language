@@ -332,7 +332,7 @@ impl SubjectSystem for ModelSystem<'_> {
         &self,
         state: &ModelSimState,
     ) -> Result<(Vec<u8>, crate::simulation::StateKey), EncodingRefusal> {
-        ModelSystem::state_key(self, state)
+        ModelSystem::state_key(self, state, fsl_foundation::IdentityLimits::default())
     }
 
     fn canonical_state_key(&self, state: &ModelSimState) -> Result<StateKey, EncodingRefusal> {

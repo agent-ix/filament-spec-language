@@ -194,10 +194,11 @@ pub enum GraphEvidence {
   re-execute the stem and evaluate at its last state the expression
   `where.locus` names: the guard of the transition `where.transition` names,
   enabled-tested there; the `terminal when` predicate, when no transition is
-  enabled there; or the state constraint whose clause `where.locus` names,
-  resolved in the recompiled package, which the executor reads from the locus
-  and never from the request. An `Undefined` value with
-  the payload's cause SHALL settle `reproduced-with-evaluated-witness`;
+  enabled there and FR-124 classifies the state undefined; or the state
+  constraint whose clause `where.locus` names, resolved in the recompiled
+  package, which the executor reads from the locus and never from the
+  request. An `Undefined` value with the payload's cause SHALL settle
+  `reproduced-with-evaluated-witness`;
   any other value, or an undefined evaluation at an earlier state of the
   stem, SHALL settle `inconclusive`, `Verdicts`. For a state constraint the
   executor SHALL also evaluate the constraint at every earlier state of the

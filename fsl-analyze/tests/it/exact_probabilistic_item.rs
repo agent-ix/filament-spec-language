@@ -366,10 +366,9 @@ fn a_rejected_certificate_never_settles_proved() {
     let locus = CertificateLocus::ProbabilityProductState(expected.clone());
     let wire = serde_json::to_value(&locus).unwrap();
     // Encode the complete canonical octets independently of the locus serializer.
-    let expected_wire = serde_json::to_value(fsl_replay::CertificateLocus::ModelKey(
-        fsl_eval::simulation::StateKey::from_canonical_bytes(expected.as_bytes().to_vec()),
-    ))
-    .unwrap();
+    use base64::Engine as _;
+    let expected_wire =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(expected.as_bytes());
     assert_eq!(wire, serde_json::json!({"product_key": expected_wire}));
     let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal)).unwrap();
     assert_eq!(outcome["result"], "inconclusive");
@@ -615,7 +614,10 @@ fn the_bound_reference_is_part_of_the_product_key() {
         .expect("one instance")
         .expect("the claim has an over");
     let model = system
-        .state_key(&system.initial()[0])
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
         .expect("the owner encodes its initial state")
         .0;
     let bound =
@@ -1208,7 +1210,10 @@ fn rekey_undefined(
             None => monitor.unread_key(),
         }
         .unwrap();
-        let raw = system.state_key(state).unwrap().0;
+        let raw = system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0;
         let key = ProbabilityProductKey::for_formula_state(
             reference,
             &raw,
@@ -1348,8 +1353,15 @@ fn assert_same_horizon_zero_witness(
     assert_eq!(reproduced.item, expected.item);
     assert_eq!(reproduced.binding, expected.binding);
     assert_eq!(
-        system.state_key(&reproduced.initial).unwrap(),
-        system.state_key(&expected.initial).unwrap()
+        system
+            .state_key(
+                &reproduced.initial,
+                fsl_foundation::IdentityLimits::default()
+            )
+            .unwrap(),
+        system
+            .state_key(&expected.initial, fsl_foundation::IdentityLimits::default())
+            .unwrap()
     );
     assert_eq!(reproduced.initial_key, expected.initial_key);
     assert_eq!(reproduced.scheduler, expected.scheduler);
@@ -1387,7 +1399,13 @@ fn external_always_initial_key(world: &World, system: &ModelSystem<'_>) -> Proba
         QualifiedBoundedMonitor::for_observations(formula.formula(), &context, 100).unwrap();
     let control = monitor.start(true).unwrap();
     let monitor_key = monitor.key(control).unwrap();
-    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    let raw = system
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .unwrap()
+        .0;
     ProbabilityProductKey::for_formula_state(
         reference,
         &raw,
@@ -1536,8 +1554,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
-    let fsl_replay::ExactBound::Finite(upper) = upper
-    else {
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("complete product interval has a finite upper endpoint");
     };
     let exact = ratio(9_999_999, 10_000_000)
