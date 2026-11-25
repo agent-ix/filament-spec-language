@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! QSL-2097: production accounting meters keep fixed-size state.
+//! Production accounting meters keep fixed-size state.
 
 use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::population::{AdmissionMeter, PopulationAdmissionLimits};

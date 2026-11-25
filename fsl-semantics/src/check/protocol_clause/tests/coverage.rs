@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The unchecked-content refusal and the grammar-required content checks.
 
 use filament_semantic_value::checking::CheckMode;

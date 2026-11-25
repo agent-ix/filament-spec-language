@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-235 state-machine binder vectors (FR-208).
 
 use super::*;

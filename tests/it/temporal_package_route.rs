@@ -809,8 +809,10 @@ fn boundary_clause(
 }
 
 /// Enumerate all eight bounded operators, three profiles, four nesting
-/// depths, and four authored i64 boundary pairs. Every result is valued or a
-/// typed incomplete/non-value/indeterminate result; no case refuses or wraps.
+/// depths, and four authored i64 boundary pairs. A case either compiles and
+/// evaluates to a valued or typed incomplete/non-value/indeterminate result,
+/// or is refused at compile by the `s3.work_units` limit; both occur, and no
+/// case wraps or ends any other way.
 #[test]
 #[trace("NFR-008-M-1", "TC-1318")]
 fn temporal_declared_bound_population_returns_only_well_formed_assessments() {
