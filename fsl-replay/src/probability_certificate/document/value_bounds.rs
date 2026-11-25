@@ -15,14 +15,15 @@ use serde_json::{Value, json};
 use super::*;
 
 /// The base profiles a wrapper may carry: bounded reachability, which FR-197's
-/// backward induction rounds into an interval, and unbounded eventual
-/// reachability over a cyclic chain or MDP.
+/// backward induction rounds into an interval, unbounded eventual
+/// reachability over a cyclic chain or MDP, and the expected rewards.
 fn is_wrappable_base(profile: &str) -> bool {
     matches!(
         profile,
         PROFILE
             | CYCLIC_PROFILE
             | CYCLIC_MDP_PROFILE
+            | REWARD_PROFILE
             | CYCLIC_REWARD_PROFILE
             | CYCLIC_MDP_REWARD_PROFILE
             | measure::PROFILE

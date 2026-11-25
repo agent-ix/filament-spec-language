@@ -134,6 +134,50 @@ fn partial_reward_lower_certificate_uses_infinite_upper_bound() {
     ));
 }
 
+/// The partial expected-reward `lower` document, read over its one named state
+/// and that state's successors or over the whole graph, rejects the same false
+/// documents.
+#[trace("TC-3212", "FSpec-FR-412-AC-5")]
+#[test]
+fn a_partial_reward_lower_checked_either_way_refuses_a_false_document() {
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 1;
+    let source = claim(&two_step(), "Even", ">=", "rational(0,1)", "m.delivered");
+    let (request, settlement) = request_with(&source, SNAPSHOT, limits, DOMAIN);
+    let wide = request.unwrap_or_else(|| panic!("a partial reward proof: {settlement:?}"));
+    let mut narrow = wide.clone();
+    narrow["limits"]["states"] = json!(1);
+    let emitted = document(&wide);
+    let initial = emitted["values"][0]["state"].clone();
+    let ordinal = emitted["identity"]["ordinal"].as_u64().unwrap();
+    for request in [&narrow, &wide] {
+        // `1/2 (1 + 0) + 1/2 (4 + 0)` with both successors unnamed.
+        accepted(request, "5", "2");
+        let (code, output) = run(&mutate(request, |doc| {
+            doc["values"][0]["value"] = json!({"numerator": "3", "denominator": "1"});
+        }));
+        assert_eq!(code, 1, "{output}");
+        assert_eq!(output["rule"], "inequality-fails", "{output}");
+        assert_eq!(output["at"], json!({"product_key": initial}), "{output}");
+        let (code, output) = run(&mutate(request, |doc| doc["ranking"] = json!([])));
+        assert_eq!(code, 1, "{output}");
+        assert_eq!(output["rule"], "malformed", "{output}");
+        assert_eq!(output["at"], json!({"member": "ranking"}), "{output}");
+        let (code, output) = run(&mutate(request, |doc| {
+            doc["identity"]["ordinal"] = json!(ordinal + 1);
+        }));
+        assert_eq!(code, 2, "{output}");
+        assert_eq!(output["status"], "refused", "{output}");
+        assert!(
+            output["reason"]
+                .as_str()
+                .unwrap()
+                .contains("conflicting_identity"),
+            "{output}"
+        );
+    }
+}
+
 /// FR-1042-AC-20: the geometric retry reward is two; both interval bounds are
 /// independently accepted and reject a changed value.
 #[trace("TC-3212", "FR-1042-AC-20")]

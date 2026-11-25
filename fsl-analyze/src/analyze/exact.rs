@@ -22,7 +22,8 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::{ClaimForm, SubjectLimits};
 use fsl_replay::{
-    check_probability_certificate_document, claim_binding, probability_proof_document,
+    check_probability_certificate_document, claim_binding,
+    partial_lower_probability_proof_document, probability_proof_document,
     write_probability_certificate, write_probability_proof_document, ExactBinding,
     ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
@@ -1435,6 +1436,7 @@ fn run(
         ProbabilityDocumentLimits::for_exact(&limits, meter)
     };
     let mut reward_subject_undefined = None;
+    let mut reward_subject_stopped = None;
     let reward_system = if expected_reward {
         let item = match fsl_replay::probabilistic_claim_identity(claim) {
             Ok(item) => item,
@@ -1462,6 +1464,13 @@ fn run(
                     // unbuilt; a later disagreement remains an engine fault.
                     reward_subject_undefined = Some(error);
                 }
+                // FSpec FR-411 "Evidence on a partial product": a `lower`
+                // proof over an explored part may still settle the item, so
+                // this stands only if the product is not partial.
+                error @ ProbabilityDocumentError::Limit {
+                    limit: fsl_replay::ProbabilityDocumentLimit::States,
+                    ..
+                } => reward_subject_stopped = Some(error),
                 error => return document_failure(error, subject),
             }
         }
@@ -1548,6 +1557,11 @@ fn run(
             Err(error) => return build_refusal(error, subject),
         }
     };
+    if let Some(error) = reward_subject_stopped {
+        if !matches!(built.0, ProbBuild::Partial { .. }) {
+            return document_failure(error, subject);
+        }
+    }
     let (product, lower_product, monitor) = match built {
         (ProbBuild::Built(product), monitor) => (product, None, monitor),
         (
@@ -1611,11 +1625,19 @@ fn run(
     {
         return not_yet();
     }
-    let target: Vec<bool> = solve_product
+    let mut target: Vec<bool> = solve_product
         .labels
         .iter()
         .map(|labels| labels.first().copied().unwrap_or(false))
         .collect();
+    // FSpec FR-411 "Evidence on a partial product": an omitted successor counts
+    // as the objective's least value. An expected reward is least, zero, with
+    // the completion's sink counted as reached.
+    if expected_reward {
+        for sink in target.iter_mut().skip(product.states.len()) {
+            *sink = true;
+        }
+    }
     let mut interval: Option<Interval> = None;
     let mut fair_policy: Option<Vec<Option<crate::exact_probabilistic::SchedulerChoice>>> = None;
     let (values, policy) = if fair_eventual {
@@ -2110,7 +2132,7 @@ fn run(
             if let Some(tamper) = tamper {
                 tamper(&mut certificate);
             }
-            let document = probability_proof_document(
+            let document = partial_lower_probability_proof_document(
                 &system,
                 probabilistic.claims(),
                 &item,
