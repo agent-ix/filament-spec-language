@@ -3517,11 +3517,16 @@ pub(crate) mod checking_tests {
         assert!(global_state_findings(test_only).is_empty());
     }
 
+    /// The production `.rs` files under `directory`. A file or directory
+    /// named for tests holds the files of a `#[cfg(test)] mod tests;`, whose
+    /// own text does not carry the attribute, so it is left out by name.
     fn collect_sources(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).expect("directory reads") {
             let path = entry.expect("entry reads").path();
             if path.is_dir() {
-                collect_sources(&path, files);
+                if path.file_name().is_none_or(|name| name != "tests") {
+                    collect_sources(&path, files);
+                }
             } else if path.extension().is_some_and(|extension| extension == "rs")
                 && !path
                     .file_stem()
