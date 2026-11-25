@@ -4,54 +4,31 @@
 
 use super::*;
 
-const COLL_CART: &str = r#"language "ix:native" edition "1-draft";
+const SHARED_CALLEE: &str = r#"language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
 
-type Cents = Int[0, 1000000];
-type Tally = Int[0, 5];
-type Total = Int[0, 5000000];
-type Running = Integer;
-
-function prices using v(): Sequence<Cents>[0, 5] pure { sequence[1250, 1250, 300] }
+function prices using v(): Sequence<Int[0, 2000]>[0, 3] pure { sequence[1250, 1250, 300] }
 
 function lineCount using v(): Int[0, 5] pure { size(prices()) }
 
-function hasSmall using v(): Boolean pure { contains(prices(), 300) }
-
-function allWithinLimit using v(): Boolean pure { forall(p in prices(): p <= 1250) }
-
-function anyFree using v(): Boolean pure { exists(p in prices(): p = 0) }
-
-function bigLines using v(): Int[0, 5] pure { size(filter(p in prices(): p > 1000)) }
-
-function bigCount using v(): Tally pure { count<Tally>(p in prices(): p > 1000) }
-
-function cartTotal using v(): Total pure { sum<Total>(p in prices(): p) }
-
-function cartTotalFolded using v(): Integer pure {
-  fold<Running>(acc, p in prices(): acc + p, identity: 0)
-}
-
-function totalWithTax using v(): Integer pure {
-  sum<Running>(p in map(c in prices(): c + 100): p)
-}"#;
+function hasSmall using v(): Boolean pure { contains(prices(), 300) }"#;
 
 #[trace("QSL-3206", "FSpec-FR-322")]
 #[test]
-fn coll_cart_shared_application_emits_with_nine_function_owners() {
+fn shared_callee_application_emits_with_two_callers_and_source_rows() {
     let identity =
         fsl_foundation::SourceIdentity::new("example", "example:shop/values/collections/coll-cart");
     let parsed = fsl_cst::parse(
         identity.clone(),
         "../../../rules/values/collections/coll-cart.fsl",
-        COLL_CART.as_bytes(),
+        SHARED_CALLEE.as_bytes(),
         fsl_cst::Limits::default(),
     )
-    .expect("the coll-cart unit parses");
+    .expect("the shared-callee unit parses");
     assert_eq!(parsed.diagnostics(), []);
 
     let raw = parsed.source().reference().clone();
-    let unit = fsl_forms::build_unit(&parsed).expect("the coll-cart unit builds");
+    let unit = fsl_forms::build_unit(&parsed).expect("the shared-callee unit builds");
     let graph = PackageDeclarations::assemble(
         raw,
         identity
@@ -61,13 +38,13 @@ fn coll_cart_shared_application_emits_with_nine_function_owners() {
         Vec::new(),
         Vec::new(),
     )
-    .expect("the coll-cart program assembles")
+    .expect("the shared-callee program assembles")
     .check(
         CheckMode::Linked,
         CheckingLimits::default(),
         &fsl_semantics::check::test_support::ZeroRewardEvaluator,
     )
-    .expect("the coll-cart program checks");
+    .expect("the shared-callee program checks");
     let package = CheckedPackage::link(graph);
 
     let emission = emit_checked(&package)
@@ -89,25 +66,93 @@ fn coll_cart_shared_application_emits_with_nine_function_owners() {
                 && node["body"]["arguments"][0]["target"] == *prices_id
         })
         .expect("calls to prices share one Application node");
+    let mut expression_rows: Vec<_> = shared_prices["occurrences"]
+        .as_array()
+        .expect("occurrences are rows")
+        .iter()
+        .filter(|row| row["role"] == "expression")
+        .collect();
+    expression_rows.sort_by_key(|row| row["ordinal"].as_u64().expect("ordinal is an integer"));
+    assert_eq!(expression_rows.len(), 2, "each caller owns prices()");
     assert_eq!(
-        shared_prices["occurrences"]
-            .as_array()
-            .expect("occurrences are rows")
+        expression_rows
             .iter()
-            .filter(|row| row["role"] == "expression")
-            .count(),
-        9,
-        "the nine coll-cart calls to prices() each own one expression occurrence"
+            .map(|row| row["ordinal"].as_u64().expect("ordinal is an integer"))
+            .collect::<Vec<_>>(),
+        [0, 1],
+        "shared call occurrences have consecutive ordinals"
+    );
+    let mut source_rows: Vec<_> = wire["source_map"]
+        .as_array()
+        .expect("source map is a list")
+        .iter()
+        .filter(|row| row["node_id"] == shared_prices["node_id"] && row["role"] == "expression")
+        .collect();
+    source_rows.sort_by_key(|row| row["ordinal"].as_u64().expect("ordinal is an integer"));
+    assert_eq!(
+        source_rows.len(),
+        2,
+        "each shared call occurrence has a source-map row"
+    );
+    let actual_starts: Vec<_> = source_rows
+        .iter()
+        .map(|row| {
+            row["regions"][0]["start"]
+                .as_u64()
+                .expect("source offset is an integer")
+        })
+        .collect();
+    let expected_starts: Vec<_> = SHARED_CALLEE
+        .match_indices("prices()")
+        .map(|(start, _)| u64::try_from(start).expect("fixture source offset fits u64"))
+        .collect();
+    assert_eq!(
+        actual_starts, expected_starts,
+        "source-map rows correspond to each prices() call"
+    );
+    let library = LibraryName::new("example:shop/values/collections/coll-cart")
+        .expect("the source identity is a library name");
+    let read = read_v2(
+        emission.package.bytes(),
+        library,
+        V2ReadLimits::fixture(),
+        &read_evidence(&emission),
+    );
+    let admitted = match read {
+        Read::Verified { admitted, .. } => admitted,
+        other => panic!("Contract IR must admit the shared-callee package: {other:?}"),
+    };
+    let mut admitted_rows: Vec<_> = admitted
+        .source_map()
+        .iter()
+        .filter(|row| {
+            serde_json::to_value(&row.node_id).ok().as_ref() == Some(&shared_prices["node_id"])
+                && row.role == filament_contract_model::CheckedOccurrenceRole::Expression
+        })
+        .collect();
+    admitted_rows.sort_by_key(|row| row.ordinal);
+    assert_eq!(
+        admitted_rows
+            .iter()
+            .map(|row| row.ordinal)
+            .collect::<Vec<_>>(),
+        [0, 1],
+        "verified Contract IR readback retains both shared call occurrences"
+    );
+    let admitted_starts: Vec<_> = admitted_rows
+        .iter()
+        .map(|row| row.regions[0].start)
+        .collect();
+    assert_eq!(
+        admitted_starts, expected_starts,
+        "verified Contract IR source-map rows correspond to each prices() call"
     );
 }
 
 #[trace("QSL-3206", "FSpec-FR-322")]
 #[test]
 fn recursive_drop_first_measure_and_body_emit_with_owner_grouped_ordinals() {
-    let identity = fsl_foundation::SourceIdentity::new(
-        "example",
-        "operations-arithmetic/recursion-size-measure-dropfirst-with-fact",
-    );
+    let identity = fsl_foundation::SourceIdentity::new("qsl-3206-test", "recursive-drop-first");
     let source = r#"language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
 function tally using v(s: Sequence<Int[0, 9]>): Integer pure decreases(size(s)) { if size(s) > 0 then 1 + tally(dropFirst(s)) else 0 }
@@ -212,8 +257,8 @@ function example using v(): Boolean pure { let q: Sequence<Int[0, 9]> = sequence
     }
     let read = read_v2(
         emission.package.bytes(),
-        LibraryName::new("operations-arithmetic/recursion-size-measure-dropfirst-with-fact")
-            .expect("the request identity is a library name"),
+        LibraryName::new("recursive-drop-first")
+            .expect("the test-owned identity is a library name"),
         V2ReadLimits::fixture(),
         &read_evidence(&emission),
     );
