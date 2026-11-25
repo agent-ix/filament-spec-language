@@ -269,6 +269,15 @@ fn authored_refusal(text: &str) -> Expected {
     }
 }
 
+/// The strict `exact` refusal with the would-be flags the row states.
+fn ieee_not_exact(flags: &[&str]) -> Expected {
+    Expected::IeeeRefused {
+        code: "ieee_not_exact".to_owned(),
+        cause: Some("rounding-required".to_owned()),
+        flags: flags.iter().map(|flag| (*flag).to_owned()).collect(),
+    }
+}
+
 /// An authored IEEE refusal with the flags the cell lists as `flags`.
 fn ieee_refusal_expected(text: &str) -> Expected {
     let Expected::Refused { code, cause } = refusal_expected(text) else {
@@ -653,7 +662,10 @@ fn decimal_admission_cases(vector: &QualificationVector) -> Option<Vec<SourceCas
         }
         "D11" => {
             let types = decimal_types(vector.inputs);
-            let groups: Vec<Vec<(Integer, u32)>> = vector.inputs.split(';').map(pairs).collect();
+            // One group of operands ends at each quoted type; the types
+            // themselves contain `;`.
+            let groups: Vec<Vec<(Integer, u32)>> =
+                vector.inputs.split_terminator("]`").map(pairs).collect();
             assert_eq!((types.len(), groups.len()), (3, 3));
             let mut cases = Vec::new();
             let mut refused = 0;
@@ -1910,10 +1922,7 @@ fn float_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase
                 "Float32[exact]",
                 body,
                 limits(32, 2, 3, 1),
-                Expected::Refused {
-                    code: "ieee_not_exact".to_owned(),
-                    cause: Some("rounding-required".to_owned()),
-                },
+                ieee_not_exact(&["inexact"]),
                 &ieee[..3],
             );
             let nearest = limited_function(
@@ -2079,10 +2088,7 @@ fn float_extended_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>>
         .chain(std::iter::once(function(
             "Float32[exact]",
             "float32(bits: 0x7f7fffff) + float32(bits: 0x73000000)",
-                Expected::Refused {
-                    code: "ieee_not_exact".to_owned(),
-                    cause: Some("rounding-required".to_owned()),
-                },
+                ieee_not_exact(&["inexact", "overflow"]),
         )))
         .collect(),
         "F24" => vec![
@@ -2183,15 +2189,15 @@ fn float_extended_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>>
         ],
         "F29" => vec![
             function("Float32[nearest-even]", "float32(bits: 0x7f7fffff) + float32(bits: 0x72800000)", float(0x7f7fffff, &["inexact"])),
-            function("Float32[exact]", "float32(bits: 0x7f7fffff) + float32(bits: 0x72800000)", Expected::Refused { code: "ieee_not_exact".to_owned(), cause: Some("rounding-required".to_owned()) }),
+            function("Float32[exact]", "float32(bits: 0x7f7fffff) + float32(bits: 0x72800000)", ieee_not_exact(&["inexact"])),
             function("Float32[nearest-even]", "float32(bits: 0x007fffff) * float32(bits: 0x3f800001)", float(0x00800000, &["inexact"])),
-            function("Float32[exact]", "float32(bits: 0x007fffff) * float32(bits: 0x3f800001)", Expected::Refused { code: "ieee_not_exact".to_owned(), cause: Some("rounding-required".to_owned()) }),
+            function("Float32[exact]", "float32(bits: 0x007fffff) * float32(bits: 0x3f800001)", ieee_not_exact(&["inexact"])),
         ],
         "F31" => vec![
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0xfff0000000000000))", limits(64, 1, 2, 1), float(0xff800000, &[]), &[ChargePoint::IeeeOperands, ChargePoint::IeeeResultRetain]),
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0xfff0000000000000))", limits(64, 1, 1, 1), Expected::Incomplete { limit_kind: LimitKind::WorkUnits, limit: 1, consumed: 1, next_charge: Integer::from(1_i64), charge_point: ChargePoint::IeeeResultRetain }, &[ChargePoint::IeeeOperands]),
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0x3fb999999999999a))", limits(64, 1, 4, 1), float(0x3dcccccd, &["inexact"]), &ieee),
-            limited_function("Float32[exact]", "convert<Float32[exact]>(float64(bits: 0x3fb999999999999a))", limits(64, 1, 3, 1), Expected::Refused { code: "ieee_not_exact".to_owned(), cause: Some("rounding-required".to_owned()) }, &ieee[..3]),
+            limited_function("Float32[exact]", "convert<Float32[exact]>(float64(bits: 0x3fb999999999999a))", limits(64, 1, 3, 1), ieee_not_exact(&["inexact"]), &ieee[..3]),
             limited_function("Float32[exact]", "convert<Float32[exact]>(float64(bits: 0x3fb999999999999a))", limits(64, 1, 2, 1), Expected::Incomplete { limit_kind: LimitKind::WorkUnits, limit: 2, consumed: 2, next_charge: Integer::from(1_i64), charge_point: ChargePoint::IeeeRound }, &ieee[..2]),
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0x47efffffe0000000))", limits(64, 1, 4, 1), float(0x7f7fffff, &[]), &ieee),
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0x47effffff0000000))", limits(64, 1, 4, 1), float(0x7f800000, &["inexact", "overflow"]), &ieee),
@@ -2514,7 +2520,7 @@ fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceC
             limited_function_with(
                 "Int[0, 1]",
                 "a: Integer, b: Integer",
-                "convert<Int[0, 1]>(a mod b)",
+                "a mod b",
                 vec![
                     Value::Integer(Integer::from(-7_i64)),
                     Value::Integer(Integer::from(3_i64)),
@@ -2529,7 +2535,7 @@ fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceC
             limited_function_with(
                 "Int[0, 1]",
                 "a: Integer, b: Integer",
-                "convert<Int[0, 1]>(a mod b)",
+                "a mod b",
                 vec![
                     Value::Integer(Integer::from(-7_i64)),
                     Value::Integer(Integer::from(3_i64)),
@@ -3775,41 +3781,22 @@ fn observed(case: &SourceCase) -> Observation {
             }
         }
         Outcome::Refused(refusal) => {
-            let mut flags: Vec<String> = evaluation
-                .losses
-                .iter()
-                .flat_map(|loss| match &loss.loss {
-                    ValueLoss::IeeeFlags(flags) => {
-                        flags.iter().map(|flag| flag.as_str().to_owned()).collect()
-                    }
-                    _ => Vec::new(),
-                })
-                .collect();
-            flags.sort();
             assert!(
-                flags.is_empty()
-                    || evaluation
-                        .losses
-                        .iter()
-                        .all(|loss| matches!(&loss.loss, ValueLoss::IeeeFlags(_))),
-                "IEEE refusal exposes only its would-be flags: {:?}",
+                evaluation.losses.is_empty(),
+                "a refusal exposes no losses: {:?}",
                 evaluation.losses
             );
-            if flags.is_empty() {
-                assert!(
-                    evaluation.losses.is_empty(),
-                    "refusal exposes no other losses"
-                );
-                Expected::Refused {
-                    code: refusal.code().expect("refusal code").to_owned(),
-                    cause: refusal.cause().map(str::to_owned),
-                }
+            let code = refusal.code().expect("refusal code").to_owned();
+            let cause = refusal.cause().map(str::to_owned);
+            if let Refusal::IeeeNotExact { would_be, .. } = &refusal {
+                let mut flags: Vec<String> = would_be
+                    .iter()
+                    .map(|flag| flag.as_str().to_owned())
+                    .collect();
+                flags.sort();
+                Expected::IeeeRefused { code, cause, flags }
             } else {
-                Expected::IeeeRefused {
-                    code: refusal.code().expect("refusal code").to_owned(),
-                    cause: refusal.cause().map(str::to_owned),
-                    flags,
-                }
+                Expected::Refused { code, cause }
             }
         }
         Outcome::Incomplete(mut incomplete) => {
