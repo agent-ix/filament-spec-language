@@ -364,16 +364,6 @@ fn assert_reproduced(world: &AuxWorld<'_>, payload: &TemporalCounterexample) {
     }
 }
 
-/// The operation identities of `payload`'s stem and of its loop.
-fn stem_and_loop(payload: &TemporalCounterexample) -> (Vec<String>, Vec<String>) {
-    let entry = payload.lasso.as_ref().expect("a lasso").entry;
-    let identity = |step: &fsl_replay::ModelStep| step.transition.operation().to_owned();
-    (
-        payload.prefix[..entry].iter().map(identity).collect(),
-        payload.prefix[entry..].iter().map(identity).collect(),
-    )
-}
-
 /// FR-899-AC-7 / TC-2536 CX-2: each constraint has a fair candidate alone,
 /// but no one candidate run satisfies both constraints.
 #[trace("TC-2536", "FR-899-AC-7")]
