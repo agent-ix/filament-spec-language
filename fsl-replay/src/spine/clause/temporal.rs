@@ -23,6 +23,7 @@ use fsl_semantics::model::observation::{
     AdmissionFailure, AdmissionRecord, AdmissionUsage, DocumentProvision, DocumentRef, Provisions,
     admit_trace_snapshot, population_universe_for,
 };
+use ix_trace_rs::implements;
 
 use super::progress::{
     ContradictedDimension, LedgerBinding, ObservedPosition, ProgressAssertion, ProgressClosure,
@@ -1960,6 +1961,7 @@ fn empty_trace_refusal(
 }
 
 /// FR-330: run the temporal clause `name` over `trace`.
+#[implements("FR-330-AC-18")]
 pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> ClauseRunReport {
     let TemporalRun {
         name,

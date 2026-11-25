@@ -49,6 +49,7 @@ use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::source::{SourceLabel, SourceReadCause};
 use fsl_foundation::{LocatedSpan, RequestIndex};
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1943,6 +1944,12 @@ pub fn omitted_witnesses(verdict: &StatisticalVerdict) -> Vec<OmittedWitness> {
 /// # Errors
 ///
 /// [`CounterexampleWireError`] when a member has no spelling.
+#[implements("FSpec-FR-410-AC-1")]
+#[implements("FSpec-FR-410-AC-2")]
+#[implements("FSpec-FR-410-AC-8")]
+#[implements("FSpec-FR-410-AC-9")]
+#[implements("FSpec-FR-410-AC-10")]
+#[implements("FSpec-FR-410-AC-11")]
 fn statistical_verdict_wire(
     verdict: &StatisticalVerdict,
 ) -> Result<serde_json::Value, CounterexampleWireError> {
@@ -3175,6 +3182,8 @@ impl OutcomeDocument {
 
     /// The document of a `parse` outcome. Completed S1/S2 work carries its
     /// parsed report, including when S2 later refuses recovered syntax.
+    #[implements("FR-663-AC-1")]
+    #[implements("FR-663-AC-2")]
     pub fn from_parse(result: &Result<Staged<ParsedUnitSource>, FrontEndFailure>) -> Self {
         match result {
             Ok(staged) => {

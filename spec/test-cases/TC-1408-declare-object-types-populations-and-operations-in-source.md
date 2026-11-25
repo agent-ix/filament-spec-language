@@ -95,11 +95,13 @@ Variants, each one change to S (or D):
 3. Check each collision variant of AC-3 and each declaration variant of AC-4,
    one change to S per run. (FR-569-AC-3, FR-569-AC-4)
 4. Check S and D, S-R and D-R, S-R' and D-R'; compare their effective views,
-   dispatch tables, effective preconditions and the checked types of AC-5's
-   expressions. (FR-569-AC-5)
+   dispatch tables (by what each function handle declares, not its position),
+   effective preconditions and the checked types of AC-5's expressions.
+   (FR-569-AC-5)
 5. **waits on QC-30.** Emit S, S-R and D. Read the object, anchor and frame
-   nodes; the clause functions of `size` (`Qs`, `C`, `B`, and in S-R `Qs2` and
-   `Sub.size`'s effective precondition); the six `operation_effects` rows;
+   nodes; the clause functions of `size` (`Qs`, `C`, `B`, `Order.size`'s
+   effective precondition, and in S-R `Qs2` and `Sub.size`'s effective
+   precondition) and where each one's occurrence is; the six `operation_effects` rows;
    and the dispatch-table row of the `self.size()` application in `Sized`. Emit
    the AC-7 variants of S, and read every package with IR's strict reader.
    (FR-569-AC-6, FR-569-AC-7, FR-105-AC-18, FR-383-AC-67)
@@ -137,20 +139,27 @@ Tag each test with the criteria it asserts and `TC-1408`, for example
   on the whole model `M` and `Seller` a role on the source `Order`.
 - Step 3: each variant refuses with the code, cause and spans AC-3 or AC-4
   states, and no checked package.
-- Step 4: equal views, dispatch tables and types; `Sub.size`'s effective
-  precondition is `Qs2 or Qs` in S-R and in D-R; S-R' and D-R' each refuse
-  `ill_typed`/`effect-escape` once, on the member `Sub.bump` and the field `note`.
+- Step 4: equal views and types; dispatch tables with equal candidates,
+  bodies and contributing clauses, differing only in that `Order.size`'s
+  effective precondition is its own function in S and `Qs`'s authored
+  function in D; `Sub.size`'s effective precondition is `Qs2 or Qs` in S-R
+  and in D-R; S-R' and D-R' each refuse `ill_typed`/`effect-escape` once, on
+  the member `Sub.bump` and the field `note`.
 - Step 5: the node shapes of AC-6 and FR-105-AC-18, including `Order`'s and
   `Sub`'s field bindings; the clause functions
-  `["Order", "size", "precondition", "Qs"]`, `["Order", "size", "body"]` and
-  `["Sub", "size", "body"]`, and in S-R `["Sub", "size", "precondition",
+  `["Order", "size", "precondition", "Qs"]`,
+  `["Order", "size", "effective_precondition"]`, `["Order", "size", "body"]`
+  and `["Sub", "size", "body"]`, and in S-R `["Sub", "size", "precondition",
   "Qs2"]` and `["Sub", "size", "effective_precondition"]`, with no clause
-  function for `bump`; six `operation_effects` rows with origin
+  function for `bump`; each of these functions' one `declaration` occurrence
+  at its `pre` declaration (`Qs`, `Qs2`), its `body` declaration (`C`, `B`) or,
+  for an effective precondition, the candidate's `size` member; six `operation_effects` rows with origin
   `source_declaration_operation_frame`, `member` `<type>::<operation>` and
   `document` the unit's source identity, in `(document, declaring,
   operation)` order, `bump`'s holding the receiver `modifies` of `total`; the
   `self.size()` dispatch row with context `Order` and candidates `Order.size`
-  and `Sub.size` carrying `C`'s and `B`'s body ids; S's `Order` id is
+  and `Sub.size` carrying `C`'s and `B`'s body ids, `Order.size` naming its
+  own effective precondition and `Sub.size` none in S; S's `Order` id is
   unchanged by the field addition, the operation rename and the move, and
   changed by the rename of `Order`; S's and D's `Order` ids differ; IR's
   strict reader admits every package.

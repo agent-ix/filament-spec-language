@@ -44,6 +44,7 @@ use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::environment_stage::{membership_failure_cause, membership_failure_code};
+use ix_trace_rs::implements;
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
 use crate::hybrid_replay::{
@@ -3296,6 +3297,7 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
 /// read from its typed nodes (not its bytes) with each id spelled as the
 /// emitted bytes spell it, the form `function_records` reads from the
 /// proving package.
+#[implements("FR-098-AC-34")]
 fn check_recorded_modes(
     recorded: &[crate::request::FunctionRecord],
     recompiled: &fsl_package::Emission,
@@ -3318,6 +3320,7 @@ fn check_recorded_modes(
 /// under exactly the mode it records; a function whose recompile records
 /// another mode, or none, is refused at its node. `recompiled_modes` is the
 /// recompile's recorded mode by canonical node id.
+#[implements("FR-098-AC-34")]
 fn verify_recorded_modes(
     recorded: &[crate::request::FunctionRecord],
     recompiled_modes: &std::collections::BTreeMap<Vec<u8>, Option<String>>,

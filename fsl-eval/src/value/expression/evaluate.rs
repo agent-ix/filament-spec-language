@@ -87,6 +87,7 @@ use fsl_semantics::model::observation::OutOfRange;
 use fsl_semantics::model::population::PopulationBinding;
 use fsl_semantics::value::divide as integer_divide;
 use fsl_semantics::value::model_query::{evaluate_all_instances, evaluate_lookup, ModelQueryHalt};
+use ix_trace_rs::implements;
 use node_source::NodeSource;
 pub(crate) use world::World;
 
@@ -1269,6 +1270,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self
     }
 
+    #[implements("FR-230-AC-71")]
     fn clock_place_reference(
         &self,
         node: N,
@@ -3071,6 +3073,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// `self.pop()?`, never `NodeKind`), each locally `#[allow]`-annotated
     /// (or expressed as a refutable `let ... else`, which this lint does not
     /// reach) rather than left to this `deny` -- see each site's own note.
+    #[implements("FR-063-AC-7")]
     #[deny(clippy::wildcard_enum_match_arm)]
     fn apply_as(
         &mut self,
@@ -5235,6 +5238,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// the evaluator without it. A missing or ill-typed slot is caller input
     /// that refuses `invalid_runtime_input`/`wrong-value-kind`, never a fault
     /// or a misread.
+    #[implements("FR-106-AC-12")]
     fn admitted_slot<'o>(
         &self,
         objects: &'o ObjectEnvironment,

@@ -25,6 +25,7 @@ use fsl_forms::{DeclarationSpans, ExpressionSpans};
 use fsl_foundation::Span;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::source_map::SourceMap;
+use ix_trace_rs::implements;
 
 use super::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
 use filament_semantic_value::location::{
@@ -523,6 +524,38 @@ impl CheckedGraph {
         self.parameter_spans.get(&(node, origin.clone())).copied()
     }
 
+    /// FR-569: the region of `node`'s `declaration` occurrence when `node` is
+    /// a source operation's body or effective-precondition function: its
+    /// `body` declaration, or the candidate's `operation` member. `None` for
+    /// every other occurrence. Positions inside the function keep the region
+    /// [`Self::region`] gives them (FR-096).
+    #[implements("FR-569-AC-6")]
+    pub fn clause_declaration_region(
+        &self,
+        node: &filament_exact::NodeKey,
+        origin: &filament_exact::Origin,
+    ) -> Option<SourceRegion> {
+        if origin.role().as_str() != "declaration" {
+            return None;
+        }
+        let Origin::Body { index, .. } = self.occurrence(node.clone(), origin)?.origin else {
+            return None;
+        };
+        if self.function_identity_at(index).as_ref() != Some(node) {
+            return None;
+        }
+        self.function_region(index, *self.clause_declaration_spans.get(&index)?)
+    }
+
+    /// `span` as a region of the source function `index` was read from.
+    fn function_region(&self, index: usize, span: Span) -> Option<SourceRegion> {
+        let source = self.function_sources.get(index).unwrap_or(&self.source);
+        let embedding = (source == &self.source)
+            .then_some(self.embedding.as_deref())
+            .flatten();
+        region(source, embedding, span)
+    }
+
     /// The original source region of one recorded occurrence, including a
     /// function parameter's own declaration rather than its enclosing body.
     pub fn occurrence_region(
@@ -541,8 +574,12 @@ impl CheckedGraph {
                 .flatten();
             return region(source, embedding, span);
         }
+        if let Some(region) = self.clause_declaration_region(&node, origin) {
+            return Some(region);
+        }
         self.region(self.occurrence(node, origin)?)
     }
+
     /// FR-096: the region of the checked unit that `location` names, by the
     /// same rule as [`PackageDeclarations::region`], so a consumer holding
     /// only the checked package resolves an `Evaluation.location`.
@@ -594,11 +631,7 @@ impl CheckedGraph {
             Some(spans) => spans.declaration,
             None => *self.synthesized_spans.get(&index)?,
         };
-        let source = self.function_sources.get(index).unwrap_or(&self.source);
-        let embedding = (source == &self.source)
-            .then_some(self.embedding.as_deref())
-            .flatten();
-        region(source, embedding, span)
+        self.function_region(index, span)
     }
 }
 

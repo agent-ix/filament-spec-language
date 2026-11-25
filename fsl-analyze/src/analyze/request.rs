@@ -9,6 +9,7 @@ use fsl_foundation::{BackendId, RequestIndex};
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{Candidate, EvidenceKind};
 use fsl_semantics::check::Capability;
+use ix_trace_rs::implements;
 
 use super::Diagnostic;
 
@@ -1086,6 +1087,8 @@ pub(super) fn protocol_analysis_item<'a>(
     crate::protocol_analysis::realizability_item_owned(item.request_index, v2, request)
 }
 
+#[implements("FSpec-FR-348-AC-3")]
+#[implements("FSpec-FR-290-AC-14")]
 fn work<'a>(
     analysis: &'a super::RunInput<'a>,
     binding: &'a super::SubjectBinding<'a>,

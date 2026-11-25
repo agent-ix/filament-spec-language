@@ -1317,6 +1317,7 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 /// The original identity of a model variant whose owner path is
 /// `model/variant_type/<identity>`, `None` for any other owner path.
 #[ix_trace_rs::string_edge]
+#[implements("FR-531-AC-42")]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
         [
@@ -4592,36 +4593,60 @@ impl<'a> Lowering<'a> {
     /// scalar type. Preserve that identity for its projection and for IEEE
     /// negation, whose checked result has the operand's type node.
     fn lowering_type_ref(&mut self, node: CheckedNode<'_>) -> Result<NodeRef, CheckRefusal> {
-        let value_type = node.lowered_value_type();
-        if let NodeKind::Pre(operand) = node.kind() {
-            return self.lowering_type_ref(node.at(*operand));
-        }
-        if matches!(node.kind(), NodeKind::Attribute { .. }) {
-            if let ValueType::Float(float) = &*value_type {
-                // Equality provenance retains the checked exact-mode source
-                // type even though the model member's wire type is scalar.
-                let source_type = self.type_ref(&value_type, node.location())?;
-                if let Some(key) = source_type.admitted() {
-                    if !self.occurrences.has(key.clone()) {
-                        self.record(
-                            key.clone(),
-                            OccurrenceRole::Generated,
-                            node.location().clone(),
-                        );
-                    }
-                }
-                let scalar = match float.width() {
-                    filament_exact::IeeeWidth::Binary32 => "float32",
-                    filament_exact::IeeeWidth::Binary64 => "float64",
-                };
-                return self.scalar(scalar, node.location()).map(NodeRef::from);
+        let node = under_pre(node);
+        let source_type = self.type_ref(&node.lowered_value_type(), node.location())?;
+        let Some(scalar) = float_member_scalar(node) else {
+            return Ok(source_type);
+        };
+        // Equality provenance retains the checked exact-mode source type even
+        // though the model member's wire type is scalar.
+        if let Some(key) = source_type.admitted() {
+            if !self.occurrences.has(key.clone()) {
+                self.record(
+                    key.clone(),
+                    OccurrenceRole::Generated,
+                    node.location().clone(),
+                );
             }
         }
-        self.type_ref(&value_type, node.location())
+        self.scalar(scalar, node.location()).map(NodeRef::from)
+    }
+
+    /// The literal term of `operand` where the floating equality `node` is
+    /// authored, `operand` is a float constant and `other`, the operand it is
+    /// compared with, is typed at a bare float scalar node: a float model
+    /// member read, through `pre` and one negation. The constant is typed at
+    /// that same node, since FSpec FR-322's `float` schedule joins two
+    /// operands of one type node. `None` for any other operand, which lowers
+    /// at its own checked type; so does an operand of the `numericEqual`
+    /// intrinsic, which records no equality decision.
+    fn member_compared_literal(
+        &mut self,
+        node: CheckedNode<'_>,
+        operand: CheckedNode<'_>,
+        other: CheckedNode<'_>,
+    ) -> Result<Option<LeafTerm>, CheckRefusal> {
+        if node.equality_producer().is_none() {
+            return Ok(None);
+        }
+        let NodeKind::Literal(CheckedLiteral(value @ Value::Float(_))) = operand.kind() else {
+            return Ok(None);
+        };
+        // A negation takes its operand's type node (`Self::application`).
+        let other = match other.kind() {
+            NodeKind::Negate(negated) => other.at(*negated),
+            _ => other,
+        };
+        let Some(scalar) = float_member_scalar(under_pre(other)) else {
+            return Ok(None);
+        };
+        self.literal_as(operand, value, operand.value_type(), Some(scalar))
+            .map(Some)
     }
 
     /// Key an application node for checked `node` and return a reference to
     /// it.
+    #[implements("FR-495-AC-25")]
     fn application(
         &mut self,
         node: CheckedNode<'_>,
@@ -4872,6 +4897,7 @@ impl<'a> Lowering<'a> {
     /// operand in its place; any other node builds its own type and member
     /// nodes, pushes its frame and descends into its first operand.
     #[deny(clippy::wildcard_enum_match_arm)]
+    #[implements("FR-093-AC-78")]
     fn lower_node<'n>(
         &mut self,
         node: CheckedNode<'n>,
@@ -6437,6 +6463,15 @@ impl<'a> Lowering<'a> {
                     }
                 }
             }
+            let node = frame.node;
+            if let NodeKind::IeeeNumericEquality(left, right) = node.kind() {
+                let other = if frame.next == 1 { right } else { left };
+                if let Some(term) = self.member_compared_literal(node, operand, node.at(*other))? {
+                    self.retain_checked_node(operand, &term);
+                    frame.terms.push(term);
+                    return self.next_operand(frame, frames);
+                }
+            }
             frames.push(LowerFrame::Operands(frame));
             return Ok(LowerStep::Descend(operand));
         }
@@ -6555,6 +6590,7 @@ impl<'a> Lowering<'a> {
         .map(LowerStep::Lowered)
     }
 
+    #[implements("FR-495-AC-24", "FR-495-AC-26")]
     fn equality_identity(
         &mut self,
         node: CheckedNode<'_>,
@@ -8328,6 +8364,7 @@ fn exact_decimal_or_ratio(value: &filament_exact::Rational) -> String {
 }
 
 /// The body-walk operands of [`derived_operands`].
+#[implements("FR-093-AC-78")]
 fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     struct Walk {
@@ -8812,6 +8849,30 @@ fn relax(
 /// declaration reaches its node.
 pub(crate) fn generated_location() -> Location {
     Location::root(Origin::Expression)
+}
+
+/// `node`, or the operand under its `pre` operators, which take their
+/// operand's type node.
+fn under_pre(mut node: CheckedNode<'_>) -> CheckedNode<'_> {
+    while let NodeKind::Pre(operand) = node.kind() {
+        node = node.at(*operand);
+    }
+    node
+}
+
+/// The bare scalar form the model package types `node` at, where `node` reads
+/// a floating model member.
+fn float_member_scalar(node: CheckedNode<'_>) -> Option<&'static str> {
+    if !matches!(node.kind(), NodeKind::Attribute { .. }) {
+        return None;
+    }
+    match &*node.lowered_value_type() {
+        ValueType::Float(float) => Some(match float.width() {
+            filament_exact::IeeeWidth::Binary32 => "float32",
+            filament_exact::IeeeWidth::Binary64 => "float64",
+        }),
+        _ => None,
+    }
 }
 
 /// Whether `identity` is an integer operator whose integer literal operands
