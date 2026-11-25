@@ -997,6 +997,31 @@ mod tests {
         );
     }
 
+    /// Whether a top-level `pub use <owner>::…` in `source` takes `name`
+    /// from that crate's root under its own name, alone or in a group.
+    fn reexports_from_root(source: &str, owner: &str, name: &str) -> bool {
+        let named =
+            |tree: &syn::UseTree| matches!(tree, syn::UseTree::Name(leaf) if leaf.ident == name);
+        syn::parse_file(source)
+            .expect("the source parses")
+            .items
+            .iter()
+            .any(|item| {
+                let syn::Item::Use(item) = item else {
+                    return false;
+                };
+                let syn::UseTree::Path(path) = &item.tree else {
+                    return false;
+                };
+                matches!(item.vis, syn::Visibility::Public(_))
+                    && path.ident == owner
+                    && match &*path.tree {
+                        syn::UseTree::Group(group) => group.items.iter().any(named),
+                        leaf => named(leaf),
+                    }
+            })
+    }
+
     const TAGGED_METER: &str =
         "/// A meter.\n/// filament:canonical\n/// Counts work.\npub struct Meter {\n    pub used: u64,\n}\n";
 
@@ -1576,9 +1601,7 @@ mod tests {
     #[trace("TC-748", "FR-273-AC-46")]
     fn replay_origin_reexport_names_exact_owner_path() {
         let source = include_str!("../../fsl-replay/src/lib.rs");
-        assert!(source.contains(
-            "pub use filament_exact::{Identifier, NodeKey, Origin, PathSegment, Role, ScalarLimits, Value};"
-        ));
+        assert!(reexports_from_root(source, "filament_exact", "Origin"));
         assert!(!source.contains("Origin as"));
         assert_no_reexport_finding("Origin");
     }
