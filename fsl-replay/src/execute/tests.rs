@@ -216,10 +216,10 @@ fn static_subject_after_recompile(wire: ReplayRequestWire) -> crate::spine::Stat
     checked
 }
 
-/// FR-263-AC-4 (TC-737): every S1/S3 setting is copied to its own compile
-/// limit, omitted settings retain FR-255's literal defaults, and each
-/// accounting setting changes only its matching counter.
-#[trace("TC-737", "FR-263-AC-4")]
+/// TC-737: every S1/S3 setting is copied to its own compile limit, omitted
+/// settings retain literal defaults, and each accounting setting changes
+/// only its matching counter. This unit test is not allowed-path FR coverage.
+#[trace("TC-737")]
 #[test]
 fn tc_737_replay_limits_map_each_stage_and_accounting_setting_independently() {
     let stage_cases = [
@@ -1175,7 +1175,7 @@ fn tc_444_arguments_follow_declared_parameter_order() {
 /// refuses before the recompile; one below the source's size stops the
 /// recompile at S1 with `stage_limit_exceeded`; so does an `s3.work_units`
 /// entry of 0 at S3.
-#[trace("TC-444", "FR-098-AC-4", "FR-263-AC-5")]
+#[trace("TC-444", "FR-098-AC-4")]
 #[test]
 fn tc_444_stage_limits_bound_the_recompile() {
     let reader = crate::bounds::DEFAULT_REPLAY_INPUT_BYTES;

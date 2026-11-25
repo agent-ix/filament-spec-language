@@ -512,10 +512,10 @@ fn tc_921_a_stage_limits_counter_entry_sets_the_budget() {
     assert_eq!(raised.charges(), unlimited.charges());
 }
 
-/// FR-263-AC-5 (TC-921): after the one input node is admitted, the same
+/// TC-921: after the one input node is admitted, the same
 /// accounting entry denies the function's next evaluation charge as an
 /// incomplete no-value result with the literal work-unit limit.
-#[trace("TC-921", "FR-263-AC-5")]
+#[trace("TC-921")]
 #[test]
 fn tc_921_an_accounting_stage_limit_stops_execution_without_a_value() {
     let fixture = fixture(

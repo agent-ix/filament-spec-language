@@ -1599,7 +1599,7 @@ fn a_float_ordering_ends_the_path(clause: &str, truth: bool) {
     );
 }
 
-#[trace("TC-740", "FR-265-AC-3", "FR-265-AC-8")]
+#[trace("TC-740", "FR-265-AC-3")]
 #[test]
 fn tc_740_a_float_ordering_clause_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatOrder", true);
@@ -1623,7 +1623,7 @@ fn tc_740_a_float_ordering_as_a_walked_or_operand_ends_the_path_at_closed_scope(
     a_float_ordering_ends_the_path("FloatOrOperand", true);
 }
 
-#[trace("TC-740", "FR-265-AC-3", "FR-265-AC-9")]
+#[trace("TC-740", "FR-265-AC-3")]
 #[test]
 fn tc_740_a_float_ordering_as_a_walked_and_operand_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatAndOperand", true);

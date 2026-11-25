@@ -827,7 +827,7 @@ fn settle(
 
 /// FR-290-AC-12 and the QSL-977 correctness fix: a value-validity item is not
 /// replayed as the owning function's predicate but as its application claim.
-#[trace("TC-774", "FR-290-AC-2", "FR-290-AC-12")]
+#[trace("TC-774", "FR-290-AC-12")]
 #[test]
 fn tc_774_function_contract_and_application_items_replay() {
     let fixture = fixture();
