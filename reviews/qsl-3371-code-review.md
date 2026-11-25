@@ -52,3 +52,19 @@ The new tests can fail. On main, `bound_base` is false for this base, so the `lo
 
 - Rust lane: no `unwrap`/panic added to production code; `name_lower_rows` is `pub(super)`, takes no locks and does no I/O; `BTreeSet` borrows are scoped. No integer conversions added.
 - Semantic soundness was checked against FR-1042 "Bases", "Document" and "Conditions" (workload row), FR-201, FSpec FR-411 "Evidence on a partial product" and FSpec FR-412 `lower`, as of filament-specification origin/main `53fe180bdc`.
+
+## New findings (disposition pass 1)
+
+Head `eb46f046c5478957af741ab13d6ac7abdd04bc62`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | FR-1042-AC-26's clause "over the bounded base each remaining rank is the named state's remaining horizon" is never exercised on a subset `lower`: the bounded case of `a_subset_lower_over_a_whole_graph_ranks_exactly_the_states_it_names` keeps the exact ranks, so skipping the remaining-horizon comparison for every partial document would fail no test. Soundness is unaffected, because the inequalities bound a bounded base by induction. | fsl-replay/src/probability_certificate/document.rs:2472-2475, tools/fsl-probability-check/tests/it/value_bounds.rs:1060 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `(explored \|\| partial) && ranks.keys().any(..)` rejects `Malformed` at `ranking`; `a_subset_lower_over_a_whole_graph_ranks_exactly_the_states_it_names` fails on bc3b621 and passes at eb46f046. |
+| FND-002 | fixed | `an_acyclic_eventual_base_takes_no_bounds_under_every_scheduler` fails if the `Workload` term is deleted, since the single-action `minimum` lower would be accepted. The fair claim is refused as a changed base (AC-8). |
+| FND-003 | still-open | New this round: needs a subset bounded `lower` with one named rank changed, expected `RankBroken` at that key. |

@@ -1076,9 +1076,9 @@ fn a_subset_lower_over_a_whole_graph_ranks_exactly_the_states_it_names() {
     }
 }
 
-/// The acyclic `reachability/v1` bounds above are admitted under a workload
-/// alone. Neither side offered for the claim under every scheduler is checked.
-#[trace("TC-3151", "FR-1042-AC-25")]
+/// Pins a known gap, not required behaviour: FR-1042 "Bases" admits
+/// `reachability/v1` under every scheduler as well as under a workload, and
+/// neither side offered for the claim under every scheduler is checked yet.
 #[test]
 fn an_acyclic_eventual_base_takes_no_bounds_under_every_scheduler() {
     let source = acyclic("rational(2,5)", false)
@@ -1152,4 +1152,24 @@ fn a_partial_lower_the_analyzer_writes_over_a_whole_graph_ranks_its_named_states
     assert_eq!(emitted["values"].as_array().map(Vec::len), Some(2));
     assert_eq!(emitted["ranking"].as_array().map(Vec::len), Some(2));
     accepted(claim, rational(1, 2));
+}
+
+/// FR-1042 "Conditions": over a bounded base a subset `lower` carries each
+/// named state's remaining horizon, and no other rank.
+#[trace("TC-3151", "FR-1042-AC-26")]
+#[test]
+fn a_subset_bounded_lower_with_a_changed_rank_is_refused() {
+    let exact = proof(&one_step_under_even());
+    let s = ranked_key(&exact);
+    let unnamed = zero_key(&exact);
+    let full = bound(&exact, "lower", &[(&s, rational(1, 3))], None, true);
+    let subset = edit(&full, |doc| {
+        drop_row(doc, "values", &unnamed);
+        drop_row(doc, "ranking", &unnamed);
+    });
+    accepted(&subset, rational(1, 3));
+    for rank in [0, 2] {
+        let changed = edit(&subset, |doc| set(doc, "ranking", &s, "rank", json!(rank)));
+        rejected(&changed, "rank-broken", at_key(&s));
+    }
 }

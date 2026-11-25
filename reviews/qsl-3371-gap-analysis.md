@@ -31,3 +31,18 @@ Plan completion: not assessed
 - The removed measure case in `value_bounds_certificates_are_accepted` was bound to no AC that requires it. FR-201-AC-51's list does not include a partial measure proof, and FR-1042-AC-11 lists the chain, `shifted`, reward and timed cases. The replacement adds checker coverage (accepted 40/81 exact, `inequality-fails`, `threshold-missed` on a prefix `lower`).
 - Reverse gap: `name_lower_rows` (mdp.rs) and the `acyclic_eventual` admission are owned by FR-1042 "Document" and "Bases".
 - Semantic review: not run (opt-in, not requested).
+
+## New findings (disposition pass 1)
+
+Head `eb46f046c5478957af741ab13d6ac7abdd04bc62`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | `an_acyclic_eventual_base_takes_no_bounds_under_every_scheduler` is tagged FR-1042-AC-25, but AC-25 says nothing about every scheduler. TC-3151 step 13 expects "neither side is checked for the claim under every scheduler", which pins as conformance a refusal that FR-1042 "Bases" (`reachability/v1`, both subsets) and "Conditions" (minimum and maximum rows) contradict. A correct fix of that gap would then fail an AC-tagged test. | tools/fsl-probability-check/tests/it/value_bounds.rs:1083, spec/test-cases/TC-3151-certify-value-bounds.md:52-54, spec/test-cases/TC-3151-certify-value-bounds.md:95-96 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-1042-AC-25 and AC-26 were added and both earlier tests are retagged `#[trace("TC-3151", "FR-1042-AC-25")]`; TC-3151's scope and steps 13-14 name them. |
+| FND-002 | still-open | New this round: untag the every-scheduler refusal test and drop the TC-3151 step 13 expectation (keep the test as a known-gap guard with a Remaining work ticket), or get a spec ruling that narrows "Bases". |

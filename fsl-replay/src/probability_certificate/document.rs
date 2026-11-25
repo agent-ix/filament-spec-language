@@ -2508,8 +2508,12 @@ fn check_document_bytes(
                 let mut progress = false;
                 for edge in state.choices.iter().flatten() {
                     super::reward::visit(cancel, &mut meter)?;
+                    // A successor a partial `lower` omits has no rank row,
+                    // and progress goes through it: an expected reward
+                    // `lower` is sound without ranks (FR-1042 "Conditions").
+                    let omitted = partial && !named.contains(&edge.target);
                     if edge.probability > rational(0)
-                        && ranks.get(&edge.target).is_some_and(|next| next < rank)
+                        && (omitted || ranks.get(&edge.target).is_some_and(|next| next < rank))
                     {
                         progress = true;
                         break;
