@@ -77,29 +77,33 @@ includes artifact decoding and request reconstruction, but excludes the
 fixture-preparation process. The report requires numeric positive RSS in KiB.
 
 For the five-round A/B protocol, build both variants in this ticket's single
-worktree. A's Criterion binary is current `origin/main` plus only this PR's
-FSL benchmark harness patch. A's separate probe binary adds the replay
-counter-seam patch. B's Criterion binary is the candidate; B's separate probe
-binary includes the same replay counter seam and harness. The report JSON
+worktree. A's Criterion binary is current `origin/main` plus this PR's FSL
+benchmark harness. Also apply the replay counter-seam patch before building A:
+the harness declares the `fsl-replay/bench-counters` feature and Cargo validates
+that dependency feature during resolution even when the `counters` feature is
+disabled. The A Criterion build does not enable `counters`, so the replay
+instrumentation is not compiled into the timed benchmark. A's separate probe
+binary enables `counters`. B's Criterion binary is the candidate; B's separate
+probe binary includes the same replay counter seam and harness. The report JSON
 intentionally records side labels and measurements only; it does not infer a
 binary's source from the checkout that happens to run the report.
 
 ```sh
 git fetch origin main
 git status --short
-mkdir -p target/package-a-bench target/package-a-probe target/package-b-bench target/package-b-probe
+mkdir -p target/package-recorder target/package-a-bench target/package-a-probe target/package-b-bench target/package-b-probe
 git diff --binary origin/main...HEAD -- Cargo.toml Cargo.lock fsl-bench > target/package-bench-harness.patch
 git diff --binary origin/main...HEAD -- fsl-replay > target/package-replay-counter.patch
 git switch --detach origin/main
 git apply target/package-bench-harness.patch
-cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-bench target/package-a-bench
 git apply target/package-replay-counter.patch
-cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-probe target/package-a-probe
+CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-bench target/package-a-bench
+CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-probe target/package-a-probe
 git reset --hard origin/main
 git switch <candidate-branch>
-cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-bench target/package-b-bench
-cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-probe target/package-b-probe
-make bench-package-ab BENCH_PACKAGE_A_BENCH_TARGET=target/package-a-bench BENCH_PACKAGE_B_BENCH_TARGET=target/package-b-bench BENCH_PACKAGE_A_PROBE_TARGET=target/package-a-probe BENCH_PACKAGE_B_PROBE_TARGET=target/package-b-probe BENCH_PACKAGE_A_RESULTS=target/package-a-results.json BENCH_PACKAGE_B_RESULTS=target/package-b-results.json
+CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-bench target/package-b-bench
+CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-probe target/package-b-probe
+CARGO_TARGET_DIR=target/package-recorder make bench-package-ab BENCH_PACKAGE_A_BENCH_TARGET=target/package-a-bench BENCH_PACKAGE_B_BENCH_TARGET=target/package-b-bench BENCH_PACKAGE_A_PROBE_TARGET=target/package-a-probe BENCH_PACKAGE_B_PROBE_TARGET=target/package-b-probe BENCH_PACKAGE_A_RESULTS=target/package-a-results.json BENCH_PACKAGE_B_RESULTS=target/package-b-results.json
 ```
 
 Proceed only when `git status --short` is empty. If the PR branch needs to be

@@ -207,15 +207,16 @@ fn probe_package_fixture(axis: &str, count: usize) -> ExitCode {
     let witness_supplier = fsl_package::SourceWitnessSupplier::new(&fixture.emission);
     let started = Instant::now();
     let parse_calls: Option<u64> = None;
+    let checked_package = fixture.checked.package();
     let succeeded = match axis {
         "emit" => fsl_package::emit_package(
-            fixture.checked.package(),
-            |_| Some(fixture.region.clone()),
+            checked_package,
+            |location| checked_package.graph().region(location),
             fsl_package::EmitLimits::new(1 << 32),
         )
         .is_ok(),
         "read" => fsl_package::read_evaluation_emission(
-            fixture.checked.package(),
+            checked_package,
             &fixture.emission,
             read_identity,
             &fixture.packages,
