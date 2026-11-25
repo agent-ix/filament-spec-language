@@ -2632,8 +2632,8 @@ fn a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration() {
 /// iteration. With a `choice` taking `a` and then `b` before the inner
 /// `repeat` of the cancelling `parallel` and no `P`, the recording `a`, `A`,
 /// `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`,
-/// `yes` leaves the second iteration's `L` and `R` `satisfied` in batch, as
-/// under `outstanding continue`.
+/// `yes` leaves both iterations' `L` and `R` `satisfied` in batch and every
+/// causal prefix. A verdict may not reverse when the second choice arrives.
 #[trace("TC-2531", "FR-895-AC-42")]
 #[test]
 fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
@@ -2672,15 +2672,21 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
             &[5, 6, 12, 13],
             &[(4, 5), (11, 12)],
         );
-        // Only the second iteration is asserted: QSL-3009 makes the first
-        // iteration's `L` and `R` violated, whatever the join policy.
-        for node in [NESTED_LEFT, NESTED_RIGHT] {
-            assert_eq!(
-                node_verdicts_in(&item, node).get(1).map(String::as_str),
-                Some("satisfied"),
-                "{outstanding} {node}: {item}"
-            );
+        let prefixes = item["prefixes"].as_array().expect("prefixes");
+        assert_eq!(prefixes.len(), 14, "{outstanding}: {item}");
+        for prefix in prefixes {
+            for node in [NESTED_LEFT, NESTED_RIGHT] {
+                assert!(
+                    node_verdicts_in(prefix, node)
+                        .iter()
+                        .all(|verdict| verdict == "satisfied"),
+                    "{outstanding} {node}: {prefix}"
+                );
+            }
         }
+        let order: Vec<usize> = (0..14).collect();
+        assert_every_verdict_only_advances(prefixes, &order);
+        assert_eq!(prefixes[13]["obligations"], item["obligations"], "{item}");
     }
 }
 
