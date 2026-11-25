@@ -423,29 +423,29 @@ impl Exploration<'_, '_, '_> {
         // FR-124: `terminal when` is read only where no transition is
         // enabled, which an undecided contract leaves unknown.
         let terminal = if expansion.successors.is_empty() && undefined.is_none() && !undecided {
-            match self.system.terminal_reading(&walk.states[at], false) {
-                Ok(reading) => Some(reading),
+            match self.system.terminal_class(&walk.states[at], false) {
+                Ok(class) => Some(class),
                 Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
             }
         } else {
             None
         };
-        if let Some(reading) = &terminal {
-            // A refused reading leaves the node undecided (FR-167).
-            if matches!(reading.class, TerminalClass::Undecided { .. }) {
+        match &terminal {
+            // A refused declaration may intend the state, so the node stays
+            // undecided, whatever another reads (FR-124, FR-167).
+            Some(TerminalClass::Undecided { .. }) => {
                 walk.graph
                     .open
                     .insert(NodeIndex(at), OpenCause::UndecidedSuccessor);
             }
-            // An undefined declaration refutes, beside a refused one too.
-            if let Some((model, cause)) = &reading.undefined {
+            Some(TerminalClass::Undefined { model, cause }) => {
                 let locus = self.system.terminal_locus(model);
                 walk.subject_undefined(at, locus, None, cause.clone());
             }
+            _ => {}
         }
         if pending {
-            let class = terminal.map(|reading| reading.class);
-            walk.deadlock = deadlock_event(walk, at, undefined, undecided, class);
+            walk.deadlock = deadlock_event(walk, at, undefined, undecided, terminal);
         }
         let depth = self.depth_of(walk, at)?;
         if self.horizon.is_some_and(|horizon| depth >= horizon) {

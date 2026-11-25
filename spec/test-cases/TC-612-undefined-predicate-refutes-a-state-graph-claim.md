@@ -48,8 +48,9 @@ for `c = a`, `quotient` being FR-168-AC-5's `Kernel`-checked function.
    and through one that selects no constraint; then with its stem's last
    step removed; then with its cause changed.
 8. Run FR-168-AC-16's counter with a refused `terminal when` beside a
-   false, an undefined and a true declaration, and with an undefined
-   declaration beside a true one.
+   false, an undefined and a true declaration; with an undefined
+   declaration beside a false and beside a true one; and replay undefined
+   evidence at `value = 3` on the refused and undefined unit.
 
 Tag the tests `#[trace("TC-612", "<AC id>")]`.
 
@@ -79,7 +80,9 @@ Tag the tests `#[trace("TC-612", "<AC id>")]`.
   `decisive-counterexample`, cause `UndefinedEvaluation`; both replays
   settle `reproduced-with-evaluated-witness`; `inconclusive`, `Verdicts`,
   twice.
-- Step 8: with the false declaration `WitnessedUnchecked` and
-  `NoDecision`, `value = 3` open `UndecidedSuccessor`; with the undefined
-  one `Undefined` at `value = 3`, replayed and `refuted`; with a true one
+- Step 8: beside the refused declaration, with the false and with the
+  undefined one, `WitnessedUnchecked` and `NoDecision`, `value = 3` open
+  `UndecidedSuccessor`; the replay on the refused and undefined unit
+  `inconclusive`, `Verdicts`; the undefined declaration beside a false one
+  `Undefined` at `value = 3`, replayed and `refuted`; with a true one
   `Witnessed` and `Holds`, no open node.

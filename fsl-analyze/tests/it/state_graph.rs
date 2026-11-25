@@ -20,13 +20,16 @@ use fsl_analyze::model_check::{
 };
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::StateKey;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading, TerminalClass};
+use fsl_eval::simulation::model::{
+    ModelSimState, ModelSystem, PredicateReading, TerminalClass, TerminalModel,
+};
 use fsl_eval::simulation::{StopReason, TransitionSystem};
 use fsl_replay::{
     CounterexampleKind, DEFAULT_MAX_WALK_STEPS, DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED,
-    GraphEvidence, GraphWitness, IncompleteCause, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ModelPath, ModelStep, OpenCause, ReachedLimit, ReplayLimits, RunEnd,
-    SettlementBasis, StateGraphOutcome, TerminalValue, WitnessSource,
+    DisagreementCause, GraphEvidence, GraphReplaySettlement, GraphUndefined, GraphWitness,
+    IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelPath, ModelStep,
+    OpenCause, ReachedLimit, ReplayLimits, RunEnd, SettlementBasis, StateGraphOutcome,
+    TerminalValue, WitnessSource,
 };
 use fsl_semantics::check::{PredicateRole, StateGraphForm};
 use ix_trace_rs::trace;
@@ -2280,16 +2283,19 @@ const COUNTER_CLAIMS: &str = "possible AtThree using v over (c: C::Counter) { c.
      always possible CanReachThree using v over (c: C::Counter) { c.value = 3 }\n";
 
 /// FR-168-AC-16 (TC-612): a refused `terminal when` leaves its dead end open
-/// `UndecidedSuccessor`, so no item is proved; an undefined declaration
-/// beside it still refutes every item, and replays, while the
-/// deadlock-freedom item stays undecided (FR-124). A declaration that intends
-/// the state decides it, whatever the others read.
+/// `UndecidedSuccessor` beside a false declaration and beside an undefined
+/// one, since it may intend the state: no item is proved or refuted, the
+/// deadlock-freedom item stays undecided (FR-124), and replay does not
+/// reproduce an undefined evaluation there. With the refused declaration
+/// false instead, the undefined one refutes. A declaration that intends the
+/// state decides it, whatever the others read.
 #[trace("TC-612", "FR-168-AC-16")]
 #[test]
-fn a_refused_terminal_predicate_opens_its_node_and_hides_no_undefined_one() {
+fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
     const UNDEFINED: &str = "terminal Stop using v on N when { remainder(3 - self.value) = 0 };\n";
     const FALSE: &str = "terminal Stop using v on N when { false };\n";
     const TRUE: &str = "terminal Stop using v on N when { true };\n";
+    const DONE_FALSE: &str = "terminal Done using v on C when { false };\n";
     let world_of = |terminals: String| {
         counter_kernel_world(SECOND_ALIAS, &format!("{terminals}{COUNTER_CLAIMS}"))
     };
@@ -2297,84 +2303,108 @@ fn a_refused_terminal_predicate_opens_its_node_and_hides_no_undefined_one() {
         state_key_where(world, &["c"], |state| world.value(state, "c", "value") == 3)
     };
 
-    // Refused, with no undefined declaration: nothing is proved.
-    let world = world_of(format!("{REFUSED_WHEN}{FALSE}"));
-    for claim in ["AtThree", "CanReachThree"] {
-        let over = bound_to(&world, &["c"], "c");
-        let mut request = world.request(
-            &["c"],
-            vec![StateGraphItem::for_binding(world.claim(claim), over)],
-            no_samples(),
-        );
-        request.deadlock_freedom = true;
-        let result = run(request);
-        let open = BTreeSet::from([OpenCause::UndecidedSuccessor]);
-        match &result.items[0][0].outcome {
-            StateGraphOutcome::WitnessedUnchecked { open: causes, .. } => {
-                assert_eq!((claim, causes), ("AtThree", &open));
+    // Refused beside a false or an undefined declaration: whether the state
+    // is intended is not known.
+    let mut witness = None;
+    for sibling in [FALSE, UNDEFINED] {
+        let world = world_of(format!("{REFUSED_WHEN}{sibling}"));
+        for claim in ["AtThree", "CanReachThree"] {
+            let over = bound_to(&world, &["c"], "c");
+            let mut request = world.request(
+                &["c"],
+                vec![StateGraphItem::for_binding(world.claim(claim), over)],
+                no_samples(),
+            );
+            request.deadlock_freedom = true;
+            let result = run(request);
+            let open = BTreeSet::from([OpenCause::UndecidedSuccessor]);
+            match &result.items[0][0].outcome {
+                StateGraphOutcome::WitnessedUnchecked {
+                    paths,
+                    open: causes,
+                    ..
+                } => {
+                    assert_eq!((claim, causes), ("AtThree", &open), "{sibling}");
+                    witness = Some(paths[0].path.clone());
+                }
+                outcome => assert_eq!(
+                    (claim, outcome),
+                    (
+                        "CanReachThree",
+                        &StateGraphOutcome::NoDecision {
+                            end: RunEnd::Completed,
+                            open
+                        }
+                    ),
+                    "{sibling}"
+                ),
             }
-            outcome => assert_eq!(
-                (claim, outcome),
-                (
-                    "CanReachThree",
-                    &StateGraphOutcome::NoDecision {
-                        end: RunEnd::Completed,
-                        open
-                    }
-                )
-            ),
+            let at = node_of(&result, three(&world));
+            assert_eq!(
+                result.graph.open,
+                BTreeMap::from([(at, OpenCause::UndecidedSuccessor)])
+            );
+            assert!(matches!(
+                result.deadlock,
+                Some(ModelCheckOutcome::Undecided { .. })
+            ));
         }
-        let at = node_of(&result, three(&world));
-        assert_eq!(
-            result.graph.open,
-            BTreeMap::from([(at, OpenCause::UndecidedSuccessor)])
-        );
-        assert!(matches!(
-            result.deadlock,
-            Some(ModelCheckOutcome::Undecided { .. })
-        ));
     }
 
-    // Refused beside undefined: the undefined declaration refutes.
+    // With no refused declaration the undefined one refutes, and replays.
+    let decided = world_of(format!("{DONE_FALSE}{UNDEFINED}"));
+    let over = bound_to(&decided, &["c"], "c");
+    let settled = settle_undefined(&decided, &["c"], "AtThree", &over);
+    let StateGraphOutcome::Undefined { undefined, .. } = &settled.run.items[0][0].outcome else {
+        panic!("undefined: {:?}", settled.run.items[0][0].outcome);
+    };
+    assert_eq!(undefined.state_key, three(&decided));
+    assert_eq!(settled.records[0][0].value, TerminalValue::Refuted);
+
+    // Beside the refused one, the same evidence does not reproduce.
     let world = world_of(format!("{REFUSED_WHEN}{UNDEFINED}"));
-    let over = bound_to(&world, &["c"], "c");
-    for claim in ["AtThree", "CanReachThree"] {
-        let settled = settle_undefined(&world, &["c"], claim, &over);
-        let result = &settled.run;
-        let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
-            panic!("{claim}: {:?}", result.items[0][0].outcome);
-        };
-        assert_eq!(stem.steps.len(), 3);
-        assert_eq!(undefined.state_key, three(&world));
-        assert_eq!((undefined.predicate, &undefined.transition), (None, &None));
-        assert_eq!(
-            undefined.cause,
-            fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
-        );
-        let model = system(&world, &["c"]);
-        let dead_end = positions(&world, &["c"], stem)
-            .pop()
-            .expect("the stem ends at the dead end");
-        let reading = model.terminal_reading(&dead_end, false).expect("reads");
-        assert!(matches!(reading.class, TerminalClass::Undecided { .. }));
-        let (declaration, _) = reading.undefined.expect("`Stop` is undefined");
-        assert_eq!(undefined.locus, model.terminal_locus(&declaration));
-        assert!(undefined.locus.is_some());
-        let at = node_of(result, undefined.state_key.clone());
-        assert_eq!(
-            result.graph.open.get(&at),
-            Some(&OpenCause::UndecidedSuccessor)
-        );
-        assert!(matches!(
-            result.deadlock,
-            Some(ModelCheckOutcome::Undecided { .. })
-        ));
-        assert_eq!(
-            settled.records[0][0].value,
-            TerminalValue::Refuted,
-            "{claim}"
-        );
-    }
+    let stem = witness.expect("`AtThree` has a witness to `value = 3`");
+    let model = system(&world, &["c"]);
+    let dead_end = positions(&world, &["c"], &stem)
+        .pop()
+        .expect("the stem ends at the dead end");
+    let TerminalClass::Undecided { model: refused } =
+        model.terminal_class(&dead_end, false).expect("reads")
+    else {
+        panic!("a refused declaration leaves the state undecided");
+    };
+    // `Stop` is the identity's other declaration.
+    let stop = TerminalModel::new(refused.identity(), "N").with_ordinal(1 - refused.ordinal());
+    let forged = GraphUndefined {
+        predicate: None,
+        transition: None,
+        state_key: three(&world),
+        locus: model.terminal_locus(&stop),
+        cause: fsl_eval::temporal::UndefinedCause::Kernel(
+            filament_exact::Undefined::DivisionByZero,
+        ),
+    };
+    assert!(forged.locus.is_some());
+    let replayed = world
+        .replay_evidence(
+            world.claim("AtThree"),
+            GraphEvidence::Undefined {
+                stem,
+                undefined: forged,
+                over: Some(bound_to(&world, &["c"], "c")),
+            },
+            &["c"],
+            ReplayLimits::default(),
+        )
+        .expect("the evidence is replayed");
+    assert!(
+        matches!(
+            replayed.settlement,
+            GraphReplaySettlement::Inconclusive(DisagreementCause::Verdicts { .. })
+        ),
+        "{:?}",
+        replayed.settlement
+    );
 
     // A declaration that intends the state decides it.
     for terminals in [

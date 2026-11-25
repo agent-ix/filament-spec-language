@@ -34,3 +34,18 @@ Dependents: producer `fsl-analyze` state_graph and checker `fsl-replay` graph_re
 | --- | --- | --- | --- |
 | FND-001 | medium | The independent certificate checker never evaluates a `terminal when` predicate, so it accepts a `Witnessed` or `Holds` certificate over a subject whose terminal predicate is undefined (or refused) at a reachable dead-end state, which FR-169 says an accepted certificate rules out ("well-definedness included") and FSpec FR-391 forbids settling `proved` | fsl-replay/src/certificate/state_graph.rs:350-427 |
 | FND-002 | medium | A refused `terminal when` reading (`TerminalClass::Undecided`) is dropped for state-graph items: the node stays closed and unopened, so the item can settle `Witnessed`/`Holds` without the terminal predicate being evaluated; and since FR-124 ranks a refused declaration above an undefined one, a dead-end node with one refused and one undefined declaration returns a proof where FR-168 requires `Undefined` (Unconfirmed item 7) | fsl-analyze/src/model_check/state_graph/explore.rs:420-436 |
+
+## New findings (disposition pass 1)
+
+Head `19113c1aaefb8ac7e81c7ebe9ddbb693e53dde1e` (fix commit 43ca766128, main merged through c3e372c739).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | medium | A dead end that a refused declaration leaves undecided is now refuted `Undefined` when another declaration is undefined there. FR-366 ranks unknown above undefined because the refused declaration "may intend it", and an intended state is not refuted (the PR's own rule), so this `refuted` is not established: it should stay open `UndecidedSuccessor` and inconclusive. FND-002's suggested remedy is retracted | fsl-analyze/src/model_check/state_graph/explore.rs:433-445, fsl-eval/src/simulation/model/terminal.rs:240-247, fsl-replay/src/model_check/graph_replay.rs:827-833, spec/functional/FR-168-decide-state-graph-claims-over-the-explored-graph.md:192-200 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `Check::explore` reads `terminal_class(state, false)` at every reached state with no successor and no contract finding and inserts it into `bad` on `Undefined` or `Undecided`; FR-169's BadState rule and its "well-definedness included" sentence name it; FR-169-AC-18 test `a_terminal_predicate_without_a_value_rejects_bad_state` |
+| FND-002 | fixed | A `TerminalClass::Undecided` dead end is opened `UndecidedSuccessor` (FR-167 bullet, FR-168-AC-16 first clause), so no proof is returned; the undefined declaration beside a refused one is no longer hidden (replaced by FND-003, which disputes refuting on it) |

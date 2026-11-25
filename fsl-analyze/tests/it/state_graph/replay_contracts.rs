@@ -4,7 +4,7 @@
 use super::*;
 use crate::terminal_two_models::handoff_package;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_eval::simulation::model::PackageModelInput;
+use fsl_eval::simulation::model::{PackageModelInput, TerminalClass};
 use fsl_replay::{GraphReplaySettlement, ModelTraceRefusal, ReplayRefusal, WitnessPath};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 
@@ -427,8 +427,12 @@ fn a_package_subject_reports_each_undefined_expression_at_its_locus() {
                 .successors
                 .remove(0)
                 .1;
-            let reading = system.terminal_reading(&dead_end, false).expect("reads");
-            system.terminal_locus(&reading.undefined.expect("`Done` is undefined").0)
+            let TerminalClass::Undefined { model, .. } =
+                system.terminal_class(&dead_end, false).expect("reads")
+            else {
+                panic!("`Done` is undefined there");
+            };
+            system.terminal_locus(&model)
         };
         assert!(expected.is_some(), "{extra}");
         assert_eq!(undefined.locus, expected, "{extra}");

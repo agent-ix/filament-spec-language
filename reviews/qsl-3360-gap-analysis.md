@@ -30,3 +30,10 @@ CONDITIONAL. Every FSL criterion in scope is tagged (matrix status `tagged`): FR
 - Stubs: none.
 - Semantic review: skipped (not requested).
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `an_undefined_operation_guard_is_reported_at_its_contract_site` now runs `ReachesTwo`, `CanReachTwo` and `ReachesThree` over `{a}`, asserting one equal `Undefined` evidence with the guard's locus, `va = 2` open `UndecidedSuccessor`, and each record `refuted`, `decisive-counterexample` |
+| FND-002 | fixed | FR-167-AC-7 (boundary open `ConstraintBoundary`, never expanded, store counts, constraint-name refusals) and FR-169-AC-19 (`ConstraintReached` with the count, after `UndecidedSuccessor`) were added with TC-592/TC-594 and their tests re-tagged |
