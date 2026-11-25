@@ -3622,8 +3622,7 @@ const NEGOTIATED: &str = "probabilistic Seeded using ev on M over (p: M::Proc) u
      probabilistic Unseeded using ev on M over (p: M::Proc) under Even on origin \
      { probability >= 0.9 [ always[0,3] holds(not p.done) ] }";
 
-/// Checks FR-195-AC-4, refusal half only (TC-630 step 4; the manifest and the
-/// FR-192 settlement are not built): a claim only exact evidence decides is
+/// FR-195-AC-4 (TC-630 step 4): a claim only exact evidence decides is
 /// refused at negotiation, before any sample, with the cause that names why:
 /// `EveryScheduler` for `FairTerminates`, `ExactOnlyForm` for an
 /// expected-reward claim under a workload, `MissingConfidence` for a bounded

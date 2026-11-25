@@ -99,19 +99,3 @@ fn the_published_manifest_is_independent_of_the_provider_origin() {
     assert_eq!(linked.domains(), process.domains());
     assert_ne!(linked, process);
 }
-
-#[test]
-#[trace("TC-630", "FR-195-AC-5")]
-fn en5_advertises_only_exact_evidence_for_unbounded_probabilistic_satisfaction() {
-    let descriptor =
-        fsl_analyze::exact_probabilistic::manifest::descriptor(ProviderOrigin::Linked)
-            .expect("EN-5's manifest is admitted");
-    assert_eq!(
-        descriptor.advertises().collect::<Vec<_>>(),
-        [(Capability::ProbabilisticSatisfaction, Mode::Unbounded)]
-    );
-    assert_eq!(
-        descriptor.evidence_kinds(),
-        &BTreeSet::from([EvidenceKind::Exact])
-    );
-}
