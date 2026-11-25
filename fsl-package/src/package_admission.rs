@@ -324,12 +324,72 @@ impl PackageAdmissionRefusal {
     /// catalog default of the code (`insufficient-next-charge` for a reached
     /// ceiling, `missing-selection` for a missing import, `invalid-value`
     #[must_use]
-    pub fn catalog_cause(&self) -> &str {
-        self.cause.as_deref().unwrap_or(match self.code {
+    pub fn catalog_cause(&self) -> &'static str {
+        // The strict reader has a closed, kebab-case cause enum; keep canonical spellings here instead of interning runtime strings.
+        const CAUSES: &[&str] = &[
+            "malformed-json",
+            "missing-member",
+            "unknown-member",
+            "wrong-value-kind",
+            "definition-cycle",
+            "incompatible-definition",
+            "feature-set-mismatch",
+            "insufficient-next-charge",
+            "missing-name",
+            "wrong-observation",
+            "malformed-declaration",
+            "wrong-export",
+            "invalid-derived-shape",
+            "unknown-operation",
+            "operation-class-mismatch",
+            "operation-law-missing",
+            "operation-law-mismatch",
+            "operation-law-unselected",
+            "operation-mode-mismatch",
+            "operation-mode-type-mismatch",
+            "operation-member-mismatch",
+            "operator-ineligible",
+            "expression-form",
+            "declaration-form",
+            "declaration-nominal-mismatch",
+            "ambiguous-name",
+            "missing-selection",
+            "wrong-model-selection",
+            "conflicting-binding",
+            "unpreserved-model-meaning",
+            "conflicting-definition",
+            "invalid-semantic-graph",
+            "invalid-value",
+            "duplicate-member",
+            "type-mismatch",
+            "unit-mismatch",
+            "non-boolean-root",
+            "missing-timed-model",
+            "timed-node-reference",
+            "duplicate-clock-place",
+            "malformed-clock-place",
+            "invalid-time-quantity",
+            "clock-without-dense-time",
+            "unsupported-selection",
+            "wrong-selection-role",
+            "inexact-integer",
+            "inexact-number",
+            "invalid-task-set",
+            "clock-read-outside-constraint",
+        ];
+        let default = match self.code {
             Code::ResourceExhausted => "insufficient-next-charge",
             Code::MissingImport => "missing-selection",
             _ => "invalid-value",
-        })
+        };
+        match self.cause.as_deref() {
+            Some(cause) => CAUSES
+                .iter()
+                .copied()
+                .find(|known| *known == cause)
+                .expect("checked package refusal causes are catalog spellings"),
+            None => default,
+        }
     }
 
     /// The strict reader's refusal inside a failed evaluation read of a
