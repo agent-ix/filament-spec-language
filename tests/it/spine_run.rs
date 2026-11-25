@@ -561,11 +561,11 @@ fn tc_450_step_4_native_model_refuses_alone() {
     );
 }
 
-/// FR-100-AC-3 (TC-450 step 4, FND-005): a `1-draft` request with no `call`,
-/// no models and every other named member absent refuses `invalid-request`
-/// "... selects no call" at stage `request`, exit 20, empty stdout.
+/// FR-100-AC-3 and FR-100-AC-25 (TC-450 step 5): a `1-draft` request with no
+/// `call` or FR-031 clause-run form refuses `invalid-request` with the exact
+/// no-call message at stage `request`, exit 20, and empty stdout.
 #[test]
-#[trace("TC-450", "FR-100-AC-3")]
+#[trace("TC-450", "FR-100-AC-3", "FR-100-AC-25")]
 fn tc_450_step_4_no_call_refuses_alone() {
     let program = std::fs::read(SEVEN_FIXTURE).unwrap();
     let directory = tempfile::tempdir().unwrap();

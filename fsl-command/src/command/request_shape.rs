@@ -244,6 +244,11 @@ const RUN: &[Entry] = &[
 /// `native-run/1` lacks no `call` / `clause` / `items` group (FR-1047).
 const RUN_SELECTED: &[Entry] = &[models(), PROGRAM_OR_PACKAGE, libraries()];
 
+/// A `1-draft` program request with no call selector is refused by FR-100
+/// after the program has been read, so it must reach that reader before the
+/// generic missing-selection check below.
+const RUN_NO_CALL: &[Entry] = &[models(), PROGRAM_OR_PACKAGE, libraries()];
+
 /// The members that select another reading of `native-run/1` than a call
 /// (the export members have their own shapes below).
 const SELECTORS: [&str; 5] = [
@@ -359,6 +364,12 @@ fn export_shape(selection: ExportSelection) -> &'static [Entry] {
 fn run_shape(request: &BTreeMap<String, &RawValue>) -> &'static [Entry] {
     if SELECTORS.iter().any(|name| request.contains_key(*name)) {
         RUN_SELECTED
+    } else if request.contains_key("program")
+        && !["call", "clause", "items"]
+            .iter()
+            .any(|name| request.contains_key(*name))
+    {
+        RUN_NO_CALL
     } else {
         RUN
     }
