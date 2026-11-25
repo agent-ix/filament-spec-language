@@ -46,7 +46,7 @@ exactly as they were.
 ## Outputs
 
 - `CheckedRefinement.history: Vec<HistoryRow>` with
-  `HistoryRow{object_type, field, declared: ValueType, initial: Literal,
+  `HistoryRow{object_type, field, declared: ValueType, initial: Value,
   updates: Vec<(DeclarationKey, CheckedExpr)>}`.
 - `HistoryValues`: for each object of each type with a history row, the
   value of each history field, sorted by object key and field.
@@ -67,8 +67,6 @@ exactly as they were.
   their canonical literals, as FR-630 decides. A decimal's canonical literal
   retains its scale (FR-120-AC-16), so `decimal(150, 1)` and `decimal(15, 0)`
   are two values with two keys, and equal literals key equally.
-
-**Present `Option` initial through the package route (current).** A history row typed `Option<T>` with a present initial (for example `Option<Phase> = Phase::OPEN`) checks at S3 and computes in replay, as FR-138-AC-9 states. The package route does not lower it yet: the checked package reader admits a history initial as an inline `literal` term, a reference to a `literal` node or, at an option-typed history, a reference to an `option_value` node of the history's type, and FSL lowers no present option to an `option_value` node, so the refinement is refused `unsupported_construct`/`not-yet-implemented` as not emitted. A `none` initial lowers, written as an inline `literal` term typed at the option type (the reader refuses a reference to a `literal` node at an option-typed history). This is the current implementation gap, not a requirement; it closes with QSL-3011 once FSL lowers a present option initial to an `option_value` node.
 
 - Any other declared type SHALL be a bounded value type (finite domain); an
   unbounded type SHALL refuse `ill_typed`/`type-mismatch` at the type.
