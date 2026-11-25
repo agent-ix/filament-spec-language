@@ -1737,14 +1737,7 @@ fn run(
         };
         let result = result.and_then(|solved| {
             let scalar_too_wide = solved.values.iter().any(|value| match value {
-                ExtRational::Finite(value) => {
-                    value
-                        .numerator()
-                        .magnitude_bits()
-                        .saturating_add(value.denominator().magnitude_bits())
-                        .saturating_add(1)
-                        > limits.max_rational_bits
-                }
+                ExtRational::Finite(value) => value.max_part_bits() > limits.max_rational_bits,
                 ExtRational::PlusInfinity => false,
             });
             if scalar_too_wide {
@@ -1831,7 +1824,30 @@ fn run(
                                 sweeps,
                                 policy,
                             }),
-                            result => result,
+                            Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(mut solved)) => {
+                                for value in &mut solved.values {
+                                    let ExtRational::Finite(finite) = value else {
+                                        return unbounded_failure(
+                                            UnboundedError::InvalidState,
+                                            &limits,
+                                            subject,
+                                        );
+                                    };
+                                    *finite = Rational::from_integer(1_i64.into()).sub(finite);
+                                }
+                                Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(solved))
+                            }
+                            Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
+                                lower,
+                                upper,
+                            }) => Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
+                                lower: complement_dyadic(&upper),
+                                upper: complement_dyadic(&lower),
+                            }),
+                            result @ (Ok(
+                                crate::exact_probabilistic::UnboundedOutcome::Stopped(_),
+                            )
+                            | Err(_)) => result,
                         }
                     }
                     ProbForm::ExpectedReward { reward, .. } => {
