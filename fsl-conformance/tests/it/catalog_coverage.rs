@@ -1956,15 +1956,15 @@ fn the_named_unproduced_owners_are_listed_with_their_keys() {
     };
     assert_eq!(keyed("filament.op.collection.index"), ["IR-1491"]);
     assert_eq!(keyed("filament.op.collection.seq"), ["IR-1492"]);
-    assert_eq!(keyed("source-declared-object-navigation"), ["QSL-1880"]);
+    assert_eq!(keyed("source-declared-object-navigation"), ["QSL-3047"]);
 }
 
-/// Only the filed tickets own an unproduced entry: QSL-3043..QSL-3056 (the
+/// Only the filed tickets own an unproduced entry: QSL-3044..QSL-3056 (the
 /// QSL-2051 groups) and the long-standing owners of the named non-producers.
 #[test]
 #[trace("FR-350")]
 fn listed_keys_are_among_the_filed_set() {
-    const FILED: &[&str] = &["IR-1491", "IR-1492", "QSL-1880", "IR-1320", "STD-654"];
+    const FILED: &[&str] = &["IR-1491", "IR-1492", "IR-1320", "STD-654"];
     let outside: Vec<_> = UNPRODUCED
         .iter()
         .flat_map(|entry| entry.keys.iter().map(move |key| (entry.id, *key)))
@@ -1972,7 +1972,7 @@ fn listed_keys_are_among_the_filed_set() {
             let group = key
                 .strip_prefix("QSL-")
                 .and_then(|number| number.parse::<u32>().ok())
-                .is_some_and(|number| (3043..=3056).contains(&number));
+                .is_some_and(|number| (3044..=3056).contains(&number));
             !group && !FILED.contains(key)
         })
         .collect();
