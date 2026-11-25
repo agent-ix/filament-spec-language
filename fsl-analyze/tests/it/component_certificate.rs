@@ -174,8 +174,7 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
     let mut early = certificate.clone();
     let waiting = early.components.remove(0);
     early.components.insert(2, waiting.clone());
-    let TemporalCertificateCheck::Rejected(rejection) = accepts(&world, &early)
-    else {
+    let TemporalCertificateCheck::Rejected(rejection) = accepts(&world, &early) else {
         panic!("the waiting component reaches the accepting ones");
     };
     assert_eq!(rejection.rule, CertificateRule::BackwardEdge);

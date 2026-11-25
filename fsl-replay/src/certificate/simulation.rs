@@ -801,9 +801,7 @@ impl Run<'_, '_> {
                 StepVerdict::Fails(failure) => match *failure {
                     RefinementFailure::NoAbstractMatch { position } => {
                         let Some(transition) = transition.clone() else {
-                            return Err(Self::fault(
-                                "an-unmatched-abstract-step-has-a-transition",
-                            ));
+                            return Err(Self::fault("an-unmatched-abstract-step-has-a-transition"));
                         };
                         return Err(failed(FailedStep::NoAbstractMatch {
                             position,
