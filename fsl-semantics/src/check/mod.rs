@@ -1164,11 +1164,10 @@ pub struct CheckedGraph {
     /// FR-115: every admitted object type's effective identity, by its
     /// declaration key.
     object_types: BTreeMap<filament_checked::key::DeclarationKey, filament_exact::EffectiveId>,
-    /// ADR-012 §15.4: every admitted object type's `model`/`object_type`
-    /// node key, by its declaration key -- keyed from the declaration
-    /// whether or not this package's lowering minted the node, so
-    /// [`Self::field_domain`] names a field's declaring type even when no
-    /// clause reads it.
+    /// ADR-012 §15.4: every admitted object type or operation owner's model
+    /// node key, by declaration key -- keyed from the declaration whether or
+    /// not this package's lowering minted the node, so requirement rows can
+    /// name state-machine and process owners as well as object types.
     object_nodes: BTreeMap<filament_checked::key::DeclarationKey, filament_exact::NodeKey>,
     /// ADR-012 §15.7: each `model` alias's population declarations, by
     /// artifact id, each with its canonical member type and ordinal, as
@@ -3460,6 +3459,7 @@ impl PackageDeclarations {
             .collect();
         let object_nodes = object_types
             .keys()
+            .chain(owner_types.keys())
             .filter_map(|declaration| {
                 models
                     .iter()
