@@ -438,6 +438,7 @@ fn closure(
 /// holds every one of the 16 reachable model states under each of the two
 /// instances' carried root, and the core checker accepts it.
 #[trace("TC-525")]
+#[trace("TC-764", "FR-282-AC-5")]
 #[test]
 fn a_proved_invariant_carries_a_certificate_the_core_accepts() {
     let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
@@ -462,6 +463,7 @@ fn a_proved_invariant_carries_a_certificate_the_core_accepts() {
 /// `SuccessorMissing` at that product state, and with the initial (0, 0)
 /// removed, `InitialMissing` at it.
 #[trace("TC-525")]
+#[trace("TC-764", "FR-282-AC-5")]
 #[test]
 fn a_certificate_missing_a_reached_state_is_rejected_at_it() {
     let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
