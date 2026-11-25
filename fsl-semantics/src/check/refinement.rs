@@ -692,11 +692,12 @@ impl CheckedRefinement {
             let target = match &row.target {
                 KeyedStepTarget::Operation {
                     operation,
+                    target_type,
                     receiver,
                     arguments: written,
-                    ..
                 } => RefinementStepTarget::Operation {
                     operation: local(operation),
+                    target_type: local(target_type),
                     receiver: Box::new(term(receiver)?),
                     arguments: arguments(written)?,
                 },
