@@ -45,8 +45,29 @@ fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box
             let path = evaluator_cost::emit_report(target, &axis, role)?;
             println!("wrote evaluator cost report: {}", path.display());
         }
+        Some("compare") => {
+            let axis = arguments.next().ok_or("expected an evaluator axis")?;
+            let a_path = arguments.next().ok_or("expected A result JSON path")?;
+            let b_path = arguments.next().ok_or("expected B result JSON path")?;
+            let output = arguments.next().map(PathBuf::from);
+            if let Some(argument) = arguments.next() {
+                return Err(format!("unexpected compare argument: {argument}").into());
+            }
+            let comparison = evaluator_cost::compare_ab_result_files(
+                Path::new(&a_path),
+                Path::new(&b_path),
+                &axis,
+            )?;
+            let serialized = serde_json::to_vec_pretty(&comparison)?;
+            if let Some(output) = output {
+                std::fs::write(&output, serialized)?;
+                println!("wrote A/B comparison: {}", output.display());
+            } else {
+                println!("{}", String::from_utf8(serialized)?);
+            }
+        }
         Some(command) => return Err(format!("unknown evaluator report command: {command}").into()),
-        None => return Err("expected start, profile, or report".into()),
+        None => return Err("expected start, profile, report, or compare".into()),
     }
     Ok(())
 }

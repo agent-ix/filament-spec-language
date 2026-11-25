@@ -35,7 +35,17 @@ impl TempTarget {
             .expect("estimate directory is created");
         fs::write(
             path,
-            serde_json::json!({"mean": {"point_estimate": nanos}}).to_string(),
+            serde_json::json!({
+                "mean": {
+                    "point_estimate": nanos,
+                    "confidence_interval": {
+                        "confidence_level": 0.95,
+                        "lower_bound": nanos * 0.9,
+                        "upper_bound": nanos * 1.1,
+                    }
+                }
+            })
+            .to_string(),
         )
         .expect("Criterion estimate is written");
     }
@@ -140,6 +150,7 @@ fn emitted_invocation_artifacts_contain_the_required_axes_sizes_and_metrics() {
         );
         for row in rows {
             assert!(row["wall_time_ns"].as_f64().unwrap() > 0.0);
+            assert!(row["wall_time_ci_half_width_ns"].as_f64().unwrap() > 0.0);
             assert_eq!(row["child_traversal_allocation_count"], 0);
             assert_eq!(row["child_traversal_allocation_share"], 0.0);
             assert_eq!(row["evaluation_allocation_count"], 100);
@@ -279,4 +290,170 @@ fn emitted_candidate_artifact_uses_dynamic_evaluator_traversal_allocations() {
         row["evaluation_allocation_count"],
         evaluation_allocation_count
     );
+}
+
+fn ab_result(side: &str, times: [f64; 5], child_allocations: u64) -> serde_json::Value {
+    let role = if side == "A" { "baseline" } else { "candidate" };
+    let rounds = (0..5)
+        .map(|round_index| {
+            let round = round_index + 1;
+            let time = times[round_index];
+            let rows = expected_cases(EVALUATOR_CALL_CHAIN_AXIS)
+                .into_iter()
+                .map(|(case, size)| {
+                    serde_json::json!({
+                        "case": case,
+                        "size": size,
+                        "wall_time_ns": time,
+                        "wall_time_ci_half_width_ns": time * 0.05,
+                        "child_traversal_allocation_count": child_allocations,
+                        "child_traversal_allocation_share": child_allocations as f64 / 100.0,
+                        "evaluation_allocation_count": 100,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "round": round,
+                "load_before": {"1m": round as f64, "5m": (round + 1) as f64, "15m": (round + 2) as f64},
+                "load_after": {"1m": (round as f64) + 0.5, "5m": (round + 1) as f64 + 0.5, "15m": (round + 2) as f64 + 0.5},
+                "report": {
+                    "run_id": format!("{side}-{round}"),
+                    "axis": EVALUATOR_CALL_CHAIN_AXIS,
+                    "role": role,
+                    "fields": REPORT_FIELDS,
+                    "rows": rows,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "format": "fsl-evaluator-ab-v1",
+        "side": side,
+        "axis": EVALUATOR_CALL_CHAIN_AXIS,
+        "rounds": rounds,
+    })
+}
+
+fn write_ab_result(target: &TempTarget, side: &str, input: &serde_json::Value) -> PathBuf {
+    let path = target.0.join(format!("{side}.json"));
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(input).expect("A/B input serializes"),
+    )
+    .expect("A/B result file is written");
+    path
+}
+
+fn compare_ab(
+    target: &TempTarget,
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let a_path = write_ab_result(target, "A", a);
+    let b_path = write_ab_result(target, "B", b);
+    evaluator_cost::compare_ab_result_files(&a_path, &b_path, EVALUATOR_CALL_CHAIN_AXIS)
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
+fn comparison_computes_medians_mad_noise_verdict_and_preserves_round_loads() {
+    let target = TempTarget::new();
+    let a = ab_result("A", [80.0, 100.0, 100.0, 100.0, 120.0], 18);
+    let b = ab_result("B", [80.0, 90.0, 100.0, 110.0, 120.0], 0);
+    let result = compare_ab(&target, &a, &b).expect("complete five-round inputs compare");
+    let row = result["rows"]
+        .as_array()
+        .expect("comparison rows exist")
+        .iter()
+        .find(|row| row["case"] == "linked_chain" && row["size"] == 1)
+        .expect("linked chain size 1 is present");
+
+    assert_eq!(row["a_median_wall_time_ns"], 100.0);
+    assert_eq!(row["b_median_wall_time_ns"], 100.0);
+    assert_eq!(row["a_mad_wall_time_ns"], 0.0);
+    assert_eq!(row["b_mad_wall_time_ns"], 10.0);
+    assert_eq!(row["mad_noise_fraction"], 0.1);
+    assert_eq!(row["ci_noise_fraction"], 0.05);
+    assert_eq!(row["noise_fraction"], 0.1);
+    assert!((row["allowed_b_wall_time_ns"].as_f64().unwrap() - 110.0).abs() < 1e-9);
+    assert_eq!(row["timing_passed"], true);
+    assert_eq!(row["allocations_passed"], true);
+    assert_eq!(row["a_rounds"][0]["load_before"]["15m"], 3.0);
+    assert_eq!(row["b_rounds"][4]["load_after"]["1m"], 5.5);
+    assert_eq!(result["raw_inputs"]["A"], a);
+    assert_eq!(result["raw_inputs"]["B"], b);
+
+    let slow_b = ab_result("B", [130.0; 5], 0);
+    let failed = compare_ab(&target, &a, &slow_b).expect("slow candidate is still reportable");
+    assert_eq!(failed["rows"][0]["timing_passed"], false);
+    assert_eq!(failed["rows"][0]["passed"], false);
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
+fn comparison_fails_candidate_child_allocations_and_rejects_inconsistent_share() {
+    let target = TempTarget::new();
+    let a = ab_result("A", [10.0; 5], 18);
+    let mut b = ab_result("B", [10.0; 5], 0);
+    b["rounds"][0]["report"]["rows"][0]["child_traversal_allocation_count"] = 1.into();
+    b["rounds"][0]["report"]["rows"][0]["child_traversal_allocation_share"] = 0.01.into();
+    let result = compare_ab(&target, &a, &b).expect("nonzero B allocation remains a failed result");
+    assert_eq!(result["rows"][0]["allocations_passed"], false);
+    assert_eq!(result["rows"][0]["passed"], false);
+
+    b["rounds"][0]["report"]["rows"][0]["child_traversal_allocation_share"] = 0.0.into();
+    assert!(compare_ab(&target, &a, &b)
+        .expect_err("allocation share must match counts")
+        .to_string()
+        .contains("share does not match"));
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
+fn comparison_rejects_incomplete_duplicate_and_reused_round_evidence() {
+    let target = TempTarget::new();
+    let a = ab_result("A", [10.0; 5], 18);
+    let b = ab_result("B", [10.0; 5], 0);
+
+    let mut incomplete = a.clone();
+    incomplete["rounds"]
+        .as_array_mut()
+        .expect("rounds are an array")
+        .pop();
+    assert!(compare_ab(&target, &incomplete, &b)
+        .expect_err("all five rounds are required")
+        .to_string()
+        .contains("must contain five rounds"));
+
+    let mut missing = a.clone();
+    missing["rounds"][0]["report"]["rows"]
+        .as_array_mut()
+        .expect("report rows are an array")
+        .pop();
+    assert!(compare_ab(&target, &missing, &b)
+        .expect_err("a missing row is refused")
+        .to_string()
+        .contains("missing, duplicate, or unexpected"));
+
+    let mut duplicate = a.clone();
+    let row_zero = duplicate["rounds"][0]["report"]["rows"][0].clone();
+    duplicate["rounds"][0]["report"]["rows"][3] = row_zero;
+    assert!(compare_ab(&target, &duplicate, &b)
+        .expect_err("a duplicate row is refused")
+        .to_string()
+        .contains("missing, duplicate, or unexpected"));
+
+    let mut reused = b.clone();
+    reused["rounds"][1]["report"]["run_id"] = "B-1".into();
+    assert!(compare_ab(&target, &a, &reused)
+        .expect_err("run IDs cannot be reused")
+        .to_string()
+        .contains("reused run identifier"));
+
+    let mut cross_reused = b.clone();
+    cross_reused["rounds"][0]["report"]["run_id"] = "A-1".into();
+    assert!(compare_ab(&target, &a, &cross_reused)
+        .expect_err("run IDs cannot be shared across A and B")
+        .to_string()
+        .contains("across A/B inputs"));
 }

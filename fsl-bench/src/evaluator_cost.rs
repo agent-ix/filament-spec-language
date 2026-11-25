@@ -1,6 +1,7 @@
 //! Invocation-local evaluator timing and child-traversal allocation reports.
 
 use crate::kernel::{self, KernelKind};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
@@ -22,9 +23,11 @@ pub const PROFILE_AXES: [(&str, &[usize]); 2] = [
     (EVALUATOR_CALL_CHAIN_AXIS, &CALL_CHAIN_SIZES),
 ];
 
-/// Required columns in the evaluator cost report.
-pub const REPORT_FIELDS: [&str; 4] = [
+/// Required per-case fields, including the 95% Criterion CI half-width used by
+/// the live A/B noise calculation.
+pub const REPORT_FIELDS: [&str; 5] = [
     "wall_time_ns",
+    "wall_time_ci_half_width_ns",
     "child_traversal_allocation_count",
     "child_traversal_allocation_share",
     "evaluation_allocation_count",
@@ -160,7 +163,8 @@ pub fn emit_report(target: &Path, axis: &str, role: ReportRole) -> Result<PathBu
             .ok_or_else(|| {
                 io::Error::other(format!("missing allocation probe for {axis}/{case}/{size}"))
             })?;
-        let wall_time_ns = estimate(&criterion_path(&criterion, axis, case, size), marker_time)?;
+        let estimate = estimate(&criterion_path(&criterion, axis, case, size), marker_time)?;
+        let wall_time_ns = estimate.point_estimate_ns;
         let child_count = probe.child_traversal_allocation_count;
         let allocation_share = if probe.evaluation_allocation_count == 0 {
             0.0
@@ -178,6 +182,7 @@ pub fn emit_report(target: &Path, axis: &str, role: ReportRole) -> Result<PathBu
             "case": case,
             "size": size,
             "wall_time_ns": wall_time_ns,
+            "wall_time_ci_half_width_ns": estimate.ci_half_width_ns,
             "child_traversal_allocation_count": child_count,
             "child_traversal_allocation_share": allocation_share,
             "evaluation_allocation_count": probe.evaluation_allocation_count,
@@ -268,6 +273,349 @@ fn expected_cases(axis: &str) -> Result<Vec<(&'static str, usize)>, Box<dyn Erro
     }
 }
 
+/// Compare the five recorded rounds in side A and B result files.
+///
+/// Each input has `format: "fsl-evaluator-ab-v1"`, its `side` and `axis`, and
+/// five ordered rounds. A round contains `round`, `load_before`, `load_after`,
+/// and the complete per-invocation report object under `report`. Each load
+/// object has numeric `1m`, `5m`, and `15m` fields.
+pub fn compare_ab_result_files(
+    a_path: &Path,
+    b_path: &Path,
+    axis: &str,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let a_input = read_json(a_path)?;
+    let b_input = read_json(b_path)?;
+    let a = parse_side(a_input, "A", axis)?;
+    let b = parse_side(b_input, "B", axis)?;
+    let mut run_ids = BTreeSet::new();
+    for round in a.rounds.iter().chain(&b.rounds) {
+        let run_id = round.report["run_id"]
+            .as_str()
+            .ok_or_else(|| io::Error::other("round report has no run identifier"))?;
+        if !run_ids.insert(run_id) {
+            return Err(io::Error::other(format!(
+                "reused run identifier across A/B inputs: {run_id}"
+            ))
+            .into());
+        }
+    }
+    let expected = expected_cases(axis)?;
+    let mut rows = Vec::with_capacity(expected.len());
+
+    for (case, size) in expected {
+        let a_points = points_for(&a, case, size)?;
+        let b_points = points_for(&b, case, size)?;
+        let a_times: Vec<_> = a_points.iter().map(|point| point.wall_time_ns).collect();
+        let b_times: Vec<_> = b_points.iter().map(|point| point.wall_time_ns).collect();
+        let a_median = median(&a_times);
+        let b_median = median(&b_times);
+        let a_mad = median(&absolute_deviations(&a_times, a_median));
+        let b_mad = median(&absolute_deviations(&b_times, b_median));
+        let mad_noise = (a_mad / a_median).max(b_mad / b_median);
+        let ci_noise = a_points
+            .iter()
+            .chain(&b_points)
+            .map(|point| point.ci_half_width_ns / point.wall_time_ns)
+            .fold(0.0_f64, f64::max);
+        let noise = mad_noise.max(ci_noise);
+        let allowed_b_wall_time_ns = a_median * (1.0 + noise);
+        let timing_passed = b_median <= allowed_b_wall_time_ns;
+        let allocations_passed = b_points.iter().all(|point| {
+            point.child_traversal_allocation_count == 0
+                && point.child_traversal_allocation_share == 0.0
+        });
+        rows.push(serde_json::json!({
+            "case": case,
+            "size": size,
+            "a_rounds": a_points.iter().map(point_json).collect::<Vec<_>>(),
+            "b_rounds": b_points.iter().map(point_json).collect::<Vec<_>>(),
+            "a_median_wall_time_ns": a_median,
+            "b_median_wall_time_ns": b_median,
+            "a_mad_wall_time_ns": a_mad,
+            "b_mad_wall_time_ns": b_mad,
+            "mad_noise_fraction": mad_noise,
+            "ci_noise_fraction": ci_noise,
+            "noise_fraction": noise,
+            "allowed_b_wall_time_ns": allowed_b_wall_time_ns,
+            "timing_passed": timing_passed,
+            "allocations_passed": allocations_passed,
+            "passed": timing_passed && allocations_passed,
+        }));
+    }
+
+    let passed = rows.iter().all(|row| row["passed"] == true);
+
+    Ok(serde_json::json!({
+        "format": "fsl-evaluator-ab-comparison-v1",
+        "axis": axis,
+        "noise_rule": "max(A MAD/median, B MAD/median, widest 95% CI half-width / estimate)",
+        "threshold_rule": "B median <= A median * (1 + noise_fraction)",
+        "a_rounds": a.rounds.iter().map(|round| round.raw.clone()).collect::<Vec<_>>(),
+        "b_rounds": b.rounds.iter().map(|round| round.raw.clone()).collect::<Vec<_>>(),
+        "rows": rows,
+        "passed": passed,
+        "raw_inputs": { "A": a.raw, "B": b.raw },
+    }))
+}
+
+#[derive(Debug)]
+struct SideInput {
+    raw: serde_json::Value,
+    rounds: Vec<RecordedRound>,
+}
+
+#[derive(Debug)]
+struct RecordedRound {
+    raw: serde_json::Value,
+    report: serde_json::Value,
+}
+
+#[derive(Debug)]
+struct Point {
+    round: usize,
+    run_id: String,
+    load_before: serde_json::Value,
+    load_after: serde_json::Value,
+    wall_time_ns: f64,
+    ci_half_width_ns: f64,
+    child_traversal_allocation_count: u64,
+    child_traversal_allocation_share: f64,
+    evaluation_allocation_count: u64,
+}
+
+fn parse_side(
+    raw: serde_json::Value,
+    expected_side: &str,
+    axis: &str,
+) -> Result<SideInput, Box<dyn Error>> {
+    if raw["format"].as_str() != Some("fsl-evaluator-ab-v1")
+        || raw["side"].as_str() != Some(expected_side)
+        || raw["axis"].as_str() != Some(axis)
+    {
+        return Err(io::Error::other(format!(
+            "expected fsl-evaluator-ab-v1 side {expected_side} for {axis}"
+        ))
+        .into());
+    }
+    let rounds = raw["rounds"]
+        .as_array()
+        .ok_or_else(|| io::Error::other("A/B input has no rounds array"))?;
+    if rounds.len() != 5 {
+        return Err(io::Error::other(format!(
+            "A/B side {expected_side} must contain five rounds, got {}",
+            rounds.len()
+        ))
+        .into());
+    }
+    let expected_rows: BTreeSet<_> = expected_cases(axis)?
+        .into_iter()
+        .map(|(case, size)| (case, size))
+        .collect();
+    let expected_role = if expected_side == "A" {
+        "baseline"
+    } else {
+        "candidate"
+    };
+    let mut run_ids = BTreeSet::new();
+    let mut parsed_rounds = Vec::with_capacity(5);
+
+    for (index, raw_round) in rounds.iter().enumerate() {
+        let expected_round = index + 1;
+        if raw_round["round"].as_u64() != Some(expected_round as u64) {
+            return Err(io::Error::other(format!(
+                "A/B side {expected_side} rounds must be numbered 1 through 5 in order"
+            ))
+            .into());
+        }
+        validate_load(&raw_round["load_before"])?;
+        validate_load(&raw_round["load_after"])?;
+        let report = raw_round["report"].clone();
+        if report["axis"].as_str() != Some(axis) || report["role"].as_str() != Some(expected_role) {
+            return Err(io::Error::other(format!(
+                "round {expected_round} report does not match side {expected_side} axis {axis}"
+            ))
+            .into());
+        }
+        let run_id = report["run_id"]
+            .as_str()
+            .ok_or_else(|| io::Error::other("round report has no run identifier"))?;
+        if !run_ids.insert(run_id.to_owned()) {
+            return Err(io::Error::other(format!(
+                "reused run identifier in side {expected_side}: {run_id}"
+            ))
+            .into());
+        }
+        let report_fields: BTreeSet<_> = report["fields"]
+            .as_array()
+            .ok_or_else(|| io::Error::other("round report has no fields array"))?
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        for field in REPORT_FIELDS {
+            if !report_fields.contains(field) {
+                return Err(
+                    io::Error::other(format!("round report omits required field {field}")).into(),
+                );
+            }
+        }
+        let report_rows = report["rows"]
+            .as_array()
+            .ok_or_else(|| io::Error::other("round report has no rows array"))?;
+        let actual_rows: BTreeSet<_> = report_rows
+            .iter()
+            .map(|row| {
+                let case = row["case"]
+                    .as_str()
+                    .ok_or_else(|| io::Error::other("report row has no case"))?;
+                let size = row["size"]
+                    .as_u64()
+                    .and_then(|size| usize::try_from(size).ok())
+                    .ok_or_else(|| io::Error::other("report row has no valid size"))?;
+                Ok((case.to_owned(), size))
+            })
+            .collect::<Result<_, io::Error>>()?;
+        let expected_owned: BTreeSet<_> = expected_rows
+            .iter()
+            .map(|(case, size)| ((*case).to_owned(), *size))
+            .collect();
+        if actual_rows != expected_owned || report_rows.len() != expected_owned.len() {
+            return Err(io::Error::other(format!(
+                "round {expected_round} report has a missing, duplicate, or unexpected {axis} row"
+            ))
+            .into());
+        }
+        for row in report_rows {
+            validate_report_row(row)?;
+        }
+        parsed_rounds.push(RecordedRound {
+            raw: raw_round.clone(),
+            report,
+        });
+    }
+    Ok(SideInput {
+        raw,
+        rounds: parsed_rounds,
+    })
+}
+
+fn points_for(side: &SideInput, case: &str, size: usize) -> Result<Vec<Point>, io::Error> {
+    side.rounds
+        .iter()
+        .enumerate()
+        .map(|(index, round)| {
+            let row = round.report["rows"]
+                .as_array()
+                .and_then(|rows| {
+                    rows.iter().find(|row| {
+                        row["case"].as_str() == Some(case)
+                            && row["size"].as_u64() == Some(size as u64)
+                    })
+                })
+                .ok_or_else(|| io::Error::other(format!("missing report row {case}/{size}")))?;
+            Ok(Point {
+                round: index + 1,
+                run_id: round.report["run_id"]
+                    .as_str()
+                    .ok_or_else(|| io::Error::other("round report has no run identifier"))?
+                    .to_owned(),
+                load_before: round.raw["load_before"].clone(),
+                load_after: round.raw["load_after"].clone(),
+                wall_time_ns: row["wall_time_ns"]
+                    .as_f64()
+                    .ok_or_else(|| io::Error::other("round report has invalid wall time"))?,
+                ci_half_width_ns: row["wall_time_ci_half_width_ns"]
+                    .as_f64()
+                    .ok_or_else(|| io::Error::other("round report has invalid CI half-width"))?,
+                child_traversal_allocation_count: row["child_traversal_allocation_count"]
+                    .as_u64()
+                    .ok_or_else(|| {
+                        io::Error::other("round report has invalid child allocations")
+                    })?,
+                child_traversal_allocation_share: row["child_traversal_allocation_share"]
+                    .as_f64()
+                    .ok_or_else(|| io::Error::other("round report has invalid child share"))?,
+                evaluation_allocation_count: row["evaluation_allocation_count"]
+                    .as_u64()
+                    .ok_or_else(|| io::Error::other("round report has invalid eval allocations"))?,
+            })
+        })
+        .collect()
+}
+
+fn point_json(point: &Point) -> serde_json::Value {
+    serde_json::json!({
+        "round": point.round,
+        "run_id": point.run_id,
+        "load_before": point.load_before,
+        "load_after": point.load_after,
+        "wall_time_ns": point.wall_time_ns,
+        "ci_half_width_ns": point.ci_half_width_ns,
+        "child_traversal_allocation_count": point.child_traversal_allocation_count,
+        "child_traversal_allocation_share": point.child_traversal_allocation_share,
+        "evaluation_allocation_count": point.evaluation_allocation_count,
+    })
+}
+
+fn validate_report_row(row: &serde_json::Value) -> Result<(), io::Error> {
+    let positive = |field: &str| {
+        row[field]
+            .as_f64()
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .ok_or_else(|| io::Error::other(format!("invalid positive report field: {field}")))
+    };
+    positive("wall_time_ns")?;
+    row["wall_time_ci_half_width_ns"]
+        .as_f64()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| io::Error::other("invalid confidence-interval half-width"))?;
+    let evaluation_allocations = row["evaluation_allocation_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::other("invalid evaluation allocation count"))?;
+    let child_allocations = row["child_traversal_allocation_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::other("invalid child traversal allocation count"))?;
+    let child_share = row["child_traversal_allocation_share"]
+        .as_f64()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| io::Error::other("invalid child traversal allocation share"))?;
+    let expected_share = if evaluation_allocations == 0 {
+        0.0
+    } else {
+        child_allocations as f64 / evaluation_allocations as f64
+    };
+    if child_share != expected_share {
+        return Err(io::Error::other(
+            "child allocation share does not match counts",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_load(load: &serde_json::Value) -> Result<(), io::Error> {
+    for interval in ["1m", "5m", "15m"] {
+        load[interval]
+            .as_f64()
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .ok_or_else(|| io::Error::other(format!("invalid {interval} load average")))?;
+    }
+    Ok(())
+}
+
+fn read_json(path: &Path) -> Result<serde_json::Value, Box<dyn Error>> {
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
+fn median(values: &[f64]) -> f64 {
+    let mut values = values.to_vec();
+    values.sort_by(f64::total_cmp);
+    values[values.len() / 2]
+}
+
+fn absolute_deviations(values: &[f64], median: f64) -> Vec<f64> {
+    values.iter().map(|value| (value - median).abs()).collect()
+}
+
 fn criterion_path(criterion: &Path, axis: &str, case: &str, size: usize) -> PathBuf {
     let path = if axis == EVALUATOR_KERNEL_AXIS {
         criterion
@@ -279,7 +627,13 @@ fn criterion_path(criterion: &Path, axis: &str, case: &str, size: usize) -> Path
     path.join("new/estimates.json")
 }
 
-fn estimate(path: &Path, marker_time: SystemTime) -> Result<f64, Box<dyn Error>> {
+#[derive(Clone, Copy, Debug)]
+struct Estimate {
+    point_estimate_ns: f64,
+    ci_half_width_ns: f64,
+}
+
+fn estimate(path: &Path, marker_time: SystemTime) -> Result<Estimate, Box<dyn Error>> {
     let metadata = fs::metadata(path)?;
     if metadata.modified()? <= marker_time {
         return Err(
@@ -287,7 +641,7 @@ fn estimate(path: &Path, marker_time: SystemTime) -> Result<f64, Box<dyn Error>>
         );
     }
     let estimates: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
-    estimates["mean"]["point_estimate"]
+    let point_estimate_ns = estimates["mean"]["point_estimate"]
         .as_f64()
         .filter(|time| time.is_finite() && *time > 0.0)
         .ok_or_else(|| {
@@ -295,6 +649,34 @@ fn estimate(path: &Path, marker_time: SystemTime) -> Result<f64, Box<dyn Error>>
                 "Criterion estimate has no positive wall time: {}",
                 path.display()
             ))
-            .into()
-        })
+        })?;
+    let lower_bound = estimates["mean"]["confidence_interval"]["lower_bound"]
+        .as_f64()
+        .filter(|time| time.is_finite() && *time >= 0.0 && *time <= point_estimate_ns)
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "Criterion estimate has no valid 95% confidence-interval lower bound: {}",
+                path.display()
+            ))
+        })?;
+    let upper_bound = estimates["mean"]["confidence_interval"]["upper_bound"]
+        .as_f64()
+        .filter(|time| time.is_finite() && *time >= point_estimate_ns)
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "Criterion estimate has no valid 95% confidence-interval upper bound: {}",
+                path.display()
+            ))
+        })?;
+    if estimates["mean"]["confidence_interval"]["confidence_level"].as_f64() != Some(0.95) {
+        return Err(io::Error::other(format!(
+            "Criterion estimate is not a 95% confidence interval: {}",
+            path.display()
+        ))
+        .into());
+    }
+    Ok(Estimate {
+        point_estimate_ns,
+        ci_half_width_ns: (point_estimate_ns - lower_bound).max(upper_bound - point_estimate_ns),
+    })
 }
