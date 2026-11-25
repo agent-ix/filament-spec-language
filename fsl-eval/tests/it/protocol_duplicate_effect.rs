@@ -288,11 +288,12 @@ struct FlagPayload {
     count: String,
 }
 
-fn flag_payload(value: &filament_exact::Value) -> Option<FlagPayload> {
+fn flag_payload(value: Option<&filament_exact::Value>) -> Option<FlagPayload> {
+    let value = value?;
     let filament_exact::Value::Composite(record) = value else {
         return None;
     };
-    let [filament_exact::FieldValue::Present(filament_exact::Value::Boolean(ready)), filament_exact::FieldValue::Present(filament_exact::Value::Integer(count))] =
+    let [filament_exact::FieldValue::Present(filament_exact::Value::Integer(count)), filament_exact::FieldValue::Present(filament_exact::Value::Boolean(ready))] =
         record.slots()
     else {
         return None;
@@ -301,6 +302,19 @@ fn flag_payload(value: &filament_exact::Value) -> Option<FlagPayload> {
         ready: *ready,
         count: count.to_string(),
     })
+}
+
+#[test]
+#[trace("TC-2528", "FR-894-AC-1")]
+fn flag_payload_requires_a_present_complete_record() {
+    let wrong_shape = filament_exact::Value::Boolean(true);
+
+    assert_eq!(flag_payload(None), None, "an absent binder has no payload");
+    assert_eq!(
+        flag_payload(Some(&wrong_shape)),
+        None,
+        "a binder with the wrong shape has no Flag payload"
+    );
 }
 
 struct DuplicateEffectPath {
@@ -388,8 +402,7 @@ fn duplicate_then_effect(
                     }
                     receive_threads.push(transition.thread()?.clone());
                     if delivery.index() == 1 {
-                        redelivery_payload =
-                            flag_payload(transition.binder_record()?).or(redelivery_payload);
+                        redelivery_payload = flag_payload(transition.binder_record());
                     }
                     receives.push(delivery);
                 }
@@ -403,7 +416,7 @@ fn duplicate_then_effect(
                         && receives.iter().any(|delivery| delivery.index() == 0)
                         && receives.iter().any(|delivery| delivery.index() == 1)
                     {
-                        let effect_payload = flag_payload(transition.binder_record()?);
+                        let effect_payload = flag_payload(transition.binder_record());
                         return Some(DuplicateEffectPath {
                             copies,
                             receives,
@@ -656,9 +669,14 @@ fn a_redelivered_review_acknowledgement_establishes_one_effect_identity() {
     let acknowledgement_message = receives[0].message();
     assert_eq!(receives[1].message(), acknowledgement_message);
     let redelivery_thread = &path.receive_threads[1];
+    let redelivery_payload = path
+        .redelivery_payload
+        .expect("the redelivered acknowledgement has a complete Flag payload");
     let (effect, effect_node, effect_thread, acceptance_effect) = path
         .effect
         .expect("the Accepted effect transition is present");
+    let acceptance_effect =
+        acceptance_effect.expect("the Accepted effect has a complete Flag payload");
     assert!(effect_node.contains("Accepted"), "the effect is Accepted");
     assert_eq!(effect.instance(), acknowledgement_message.instance());
     assert_eq!(effect.path(), redelivery_thread);
@@ -669,7 +687,7 @@ fn a_redelivered_review_acknowledgement_establishes_one_effect_identity() {
     assert!(attempt_node.contains("RecordAcceptance"));
     assert_eq!(attempt_thread, *effect.path());
     assert_eq!(
-        path.redelivery_payload, acceptance_effect,
+        redelivery_payload, acceptance_effect,
         "the acceptance binder carries the received acknowledgement payload"
     );
 
