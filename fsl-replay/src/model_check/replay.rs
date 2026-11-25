@@ -69,6 +69,7 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, TerminalKeys, TerminalMismatch};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::observation::DocumentRef;
+use ix_trace_rs::implements;
 
 mod timed;
 #[cfg(test)]
@@ -3035,6 +3036,7 @@ pub enum ModelTraceEnd {
 ///
 /// [`ReplayRefusal`] as [`replay_model_trace`] refuses a model counterexample's
 /// initial state, steps, loop closure and fairness.
+#[implements("FR-125-AC-9")]
 pub fn evaluate_model_trace(
     system: &ModelSystem<'_>,
     payload: &TemporalCounterexample,

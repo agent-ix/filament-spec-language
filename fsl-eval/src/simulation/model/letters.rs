@@ -29,6 +29,7 @@ use fsl_semantics::check::{
     CheckedNode, CheckedTemporalClause, FormulaNodeId, StatePredicate, TemporalClauseNode,
 };
 use fsl_semantics::model::observation::Observation;
+use ix_trace_rs::implements;
 
 use super::contracts::{Verdict, verdict};
 use super::reference_bindings::ReferenceBinding;
@@ -584,6 +585,7 @@ impl ClauseLetters<'_, '_> {
     /// The written binding of the clause's `over` parameter to `instance`
     /// (FSpec FR-364's `over_binding`; [`ModelSystem::written_reference`]), or
     /// `None` when the model refuses a reference under the key.
+    #[implements("FR-125-AC-9")]
     pub fn instance_reference(&self, instance: &ModelInstance) -> Option<ObjectReference> {
         self.system
             .written_reference(self.parameter.clone(), instance)
