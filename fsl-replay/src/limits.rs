@@ -20,6 +20,7 @@ use fsl_foundation::{
 use fsl_semantics::library::bundle::PackageLimits as LibraryLimits;
 use fsl_semantics::model::observation::ObservationLimits;
 use fsl_semantics::model::population::PopulationAdmissionLimits;
+use ix_trace_rs::implements;
 
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::CertificateCheckLimits;
@@ -175,6 +176,7 @@ pub struct SmtRunLimits {
 }
 
 impl Default for SmtRunLimits {
+    #[implements("FR-255-AC-14")]
     fn default() -> Self {
         Self {
             max_solver_steps: 100_000_000,
@@ -184,6 +186,7 @@ impl Default for SmtRunLimits {
 }
 
 impl SettingLimits for SmtRunLimits {
+    #[implements("FR-255-AC-3")]
     fn bounds(&self) -> Vec<(Setting, u64)> {
         vec![
             (Setting::SmtMaxSolverSteps, self.max_solver_steps),
@@ -191,6 +194,7 @@ impl SettingLimits for SmtRunLimits {
         ]
     }
 
+    #[implements("FR-255-AC-3")]
     fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
         match setting {
             Setting::SmtMaxSolverSteps => self.max_solver_steps = bound,

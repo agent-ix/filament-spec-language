@@ -27,6 +27,7 @@ use fsl_foundation::Code;
 use fsl_foundation::{AccountingSetting, Setting, SettingName};
 use fsl_package::ObligationIdentity;
 use fsl_semantics::library::LibraryName;
+use ix_trace_rs::implements;
 
 mod package;
 use filament_contract_model::CheckedRefinementInternal;
@@ -54,6 +55,7 @@ impl StateEnvironment {
 
 /// Whether a replay request's stage-limits wire can carry this setting
 /// (FR-255 lifecycle caller-limit coverage).
+#[implements("FR-255-AC-24")]
 pub(crate) const fn is_replay_wire_stage_setting(setting: Setting) -> bool {
     !matches!(
         setting,
