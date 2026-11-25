@@ -885,8 +885,9 @@ acceptance justified only by a post-D predicate. Terminal closure and a
 resource stop must preserve the same complete digital form.
 
 These vectors prescribe prospective qualification, not implementation PASS.
-All eight members must be round-tripped by each consumer, including
-rejection loci, with no model-only shortcut.
+Every component of the applicable canonical key form must be round-tripped
+by each consumer, including the conditional `root` component when present,
+with rejection loci and no model-only shortcut.
 
 ## Behavior
 
