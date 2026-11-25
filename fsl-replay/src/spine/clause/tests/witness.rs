@@ -23,6 +23,7 @@ use crate::{
     StateClauseCounterexample, StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict,
     WitnessEnvelope, WitnessFailure, WitnessSettlement,
 };
+use filament_checked::node::{Connective, ConnectiveOrigin, NodeKind};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
 use fsl_eval::value::ClauseEvaluation;
@@ -1554,6 +1555,43 @@ fn a_float_ordering_ends_the_path(clause: &str, truth: bool) {
         panic!("{clause} completes a Boolean");
     };
     assert_eq!(*settled, truth, "{clause}");
+    if clause == "FloatAndOperand" {
+        let graph = unit.compiled.package.graph();
+        let body = graph.state_clause(clause).unwrap().body();
+        let NodeKind::Connective(Connective::And, ConnectiveOrigin::Authored, _, right) =
+            body.kind()
+        else {
+            panic!(
+                "FloatAndOperand begins with its authored `and`: {:?}",
+                body.kind()
+            );
+        };
+        assert_eq!(
+            evaluation.decision(body.location()),
+            Some(true),
+            "the authored `and` records its true left operand and evaluates the right"
+        );
+        // The float ordering binds each nontrivial operand before reaching
+        // its synthesized connective, so follow those checked `let` bodies.
+        let mut cursor = *right;
+        loop {
+            let node = body.at(cursor);
+            match node.kind() {
+                NodeKind::Let { body: inner, .. } => cursor = *inner,
+                NodeKind::Connective(Connective::And, ConnectiveOrigin::Synthesized, _, _) => {
+                    assert_eq!(
+                        evaluation.decision(node.location()),
+                        None,
+                        "the walked Float connective is synthesized and records no decision"
+                    );
+                    break;
+                }
+                kind => panic!(
+                    "expected Float's operand binding or synthesized connective, got {kind:?}"
+                ),
+            }
+        }
+    }
     assert_eq!(
         derive(&unit, clause, Snapshot::High, "mid"),
         closed(),
