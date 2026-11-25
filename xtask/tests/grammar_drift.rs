@@ -10,7 +10,7 @@ use ix_trace_rs::trace;
 
 /// The shared grammar's published path inside the standard's pinned package.
 const SHARED_GRAMMAR: &str = "proposals/filament-v1/shared-grammar.md";
-const FR_503: &str = "spec/functional/source-package/FR-503-publish-the-grammar-as-a-comparable-production-inventory.md";
+const TC_1010: &str = "spec/test-cases/TC-1010-grammar-production-inventory-is-self-consistent.md";
 
 /// The bytes of a standard file, read only through the pinned
 /// `filament_specification` crate (FR-760, FSpec FR-660): no environment
@@ -55,19 +55,21 @@ fn shared_grammar_productions() -> BTreeSet<String> {
     names
 }
 
-/// The lexical terminals allowed by FSpec FR-503-AC-2.
+/// The lexical terminals allowed by FSpec FR-503-AC-2, repeated in TC-1010.
 fn shared_grammar_lexical_terminals() -> BTreeSet<String> {
-    let text = published_file(FR_503)
-        .unwrap_or_else(|| panic!("{FR_503}: not published by the pinned standard"));
-    let criterion = text
+    let text = published_file(TC_1010)
+        .unwrap_or_else(|| panic!("{TC_1010}: not published by the pinned standard"));
+    let expected = text
         .lines()
-        .find(|line| line.starts_with("| FR-503-AC-2 |"))
-        .unwrap_or_else(|| panic!("{FR_503}: FR-503-AC-2 is missing"));
-    let names = criterion
+        .skip_while(|line| *line != "## Expected Results")
+        .skip(1)
+        .find(|line| line.contains("every right-hand-side name is defined or is one of"))
+        .unwrap_or_else(|| panic!("{TC_1010}: expected terminal list is missing"));
+    let names = expected
         .split_once("or is one of")
-        .and_then(|(_, rest)| rest.split_once("that the lexical contract defines"))
+        .and_then(|(_, rest)| rest.split_once(". The"))
         .map(|(names, _)| names)
-        .unwrap_or_else(|| panic!("{FR_503}: FR-503-AC-2 lexical terminal list is missing"));
+        .unwrap_or_else(|| panic!("{TC_1010}: expected terminal list is malformed"));
     let terminals: BTreeSet<String> = names
         .split('`')
         .enumerate()
@@ -75,7 +77,7 @@ fn shared_grammar_lexical_terminals() -> BTreeSet<String> {
         .collect();
     assert!(
         !terminals.is_empty(),
-        "{FR_503}: FR-503-AC-2 lexical terminal list is empty"
+        "{TC_1010}: expected terminal list is empty"
     );
     terminals
 }
