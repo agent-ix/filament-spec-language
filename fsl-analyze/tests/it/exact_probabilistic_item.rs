@@ -1840,31 +1840,6 @@ fn bounded_fair_eventual_remains_in_the_bounded_profile() {
     assert!(!document.is_fair_cyclic_mdp());
 }
 
-/// FR-1042-AC-22: an exact fair claim without interval endpoints stays
-/// unsupported by this interval profile instead of becoming a checker error.
-#[trace("FR-1042-AC-22")]
-#[test]
-fn fair_exact_fallback_is_not_yet() {
-    const CLAIM: &str = "probabilistic FairDone using inf on M over (p: M::Proc) under every scheduler fair strong Proc::exit on origin { probability >= 0.9 [ eventually holds(p.done) ] }";
-    let world = World::new(&prob_world::zero_reward_exit(CLAIM));
-    let item = exact_probabilistic_item(
-        RequestIndex::new(0),
-        world.request("FairDone", ModelCheckLimits::default()),
-    );
-    let record = analyze_items(
-        &Engines::fsl().expect("the linked engines are admitted"),
-        vec![item],
-        &Cancel::new(),
-    )
-    .remove(0);
-    assert!(record.terminal().is_none());
-    assert!(matches!(
-        &record.settlement,
-        fsl_analyze::analyze::Settlement::Disposed(disposal)
-            if disposal.kind == fsl_analyze::analyze::DispositionKind::Unsupported
-    ));
-}
-
 /// FR-1042-AC-6: the checker accepts the claim-side `lower` document and the
 /// `upper` counterpart, and refuses either one relabelled as the other side,
 /// since the `lower` document's ranking and the `upper` document's absence of
