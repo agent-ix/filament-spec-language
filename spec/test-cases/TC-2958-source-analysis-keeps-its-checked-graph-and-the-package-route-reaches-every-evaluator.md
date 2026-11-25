@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-940
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-630
+    type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-200
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-230
@@ -19,7 +21,7 @@ relationships:
 Verify that analysis from source decides every item family over its compiled
 package, that a selected package reaches the source-checked evaluators through
 their package forms with equal records, and that the package route settles every item
-family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21, FR-940-AC-22, FR-940-AC-28 to FR-940-AC-32, FR-940-AC-40 to FR-940-AC-44 and FR-200-AC-8 to FR-200-AC-10: fair eventual claims with strong and per-instance constraints retain their source/package outcomes; a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
+family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21, FR-940-AC-22, FR-940-AC-28 to FR-940-AC-32, FR-940-AC-40 to FR-940-AC-48, FR-630-AC-11 and FR-200-AC-8 to FR-200-AC-10: fair eventual claims with strong and per-instance constraints retain their source/package outcomes; a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
 
 ## Test Procedure
 
@@ -91,6 +93,19 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18
     bind weak whole `<= 98/100` to `FR-200-AC-4` and `FR-940-AC-44`, and add
     traces for `TC-2958` and both owning ACs.
 
+13. Run `identity_refinement_package_matches_source_without_source` with the
+    `CounterIdentity` source request defined by FR-630-AC-11. Compile it with a
+    handoff, remove `unit.native` and the handoff `sources/`, then analyze the
+    request after removing `program` and selecting the handoff directory as
+    `package`. Compare the complete source and package outcome documents and
+    exit codes. In `identity_refinement_package_matches_source_without_source`,
+    add traces for `TC-1590`, `TC-2958`, FR-630-AC-11 and FR-940-AC-45.
+    Repeat the route comparison for `deadlock-freedom` (FR-940-AC-46),
+    `time-lock-freedom` (FR-940-AC-47) and `race-freedom` (FR-940-AC-48).
+    In `unrelated_temporal_kinds_do_not_run_package_refinement`, bind each kind
+    to its AC, add `TC-2958`, and verify complete source/package document and
+    exit equality after deleting source files.
+
 Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3 and 8 to 10),
 `fsl-analyze/tests/it/hyper_wire.rs` (step 4) and
 `fsl-analyze/tests/it/package_refusal_route.rs` (steps 5 and 6), and the
@@ -134,3 +149,10 @@ named `operation_contract_package_route_matches_source` case for step 7.
 - Step 12: all source/package pairs have equal complete outcome documents and
   exit codes. Each `>= 99/100` claim and the weak-whole `<= 98/100` claim is
   `refuted`, exit `10`; the reverse-bound weak-whole package replay reproduces.
+- Step 13: `CounterIdentity` is equal on both routes: `proved`, `certified`,
+  backend `en-1`, exit 0, with no source present on the package route. For
+  `deadlock-freedom` and `time-lock-freedom`, both routes refuse the item with
+  cause `unknown-claim`; the item omits `certificate`, `counterexample` and
+  `replay`, and exits 20. For `race-freedom`, both routes use cause
+  `unsupported-requested-capability`; the item omits those three members and
+  exits 21. Each package outcome document equals its source counterpart.

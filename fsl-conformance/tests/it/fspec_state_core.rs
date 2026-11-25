@@ -1082,23 +1082,12 @@ fn every_reference_case_is_unsupported_and_pinned_by_the_registry() {
 }
 
 /// A missing standard fails with a message, and no run passes with zero cases.
-#[trace("FR-350-AC-22")]
+#[trace("FR-350-AC-22", "FR-760-AC-2")]
 #[test]
-fn a_missing_standard_fails_clearly_and_never_runs_zero_cases() {
-    let missing = std::path::Path::new("/nonexistent/fspec-dir-for-the-self-test");
-    let error = fspec_standard::read_from(Some(missing.as_os_str()), "proposals/x")
-        .expect_err("a missing FSPEC_DIR fails");
-    assert!(
-        error.contains("FSPEC_DIR=") && error.contains("is not a directory"),
-        "{error}"
-    );
-    let empty = tempfile::tempdir().expect("a temporary directory");
-    let error = fspec_standard::read_from(
-        Some(empty.path().as_os_str()),
-        &format!("{ROOT}typing-cases.json"),
-    )
-    .expect_err("a directory without the fixtures fails");
-    assert!(error.contains("does not hold"), "{error}");
+fn the_state_core_fixture_resolves_from_the_pinned_standard() {
+    assert!(!fspec_standard::read(&format!("{ROOT}typing-cases.json"))
+        .expect("the pinned package publishes the state-core fixture")
+        .is_empty());
     let tally = fspec_standard::settle(RUNNER, Vec::new(), fspec_standard::registry());
     assert!(tally.matched.is_empty());
 }

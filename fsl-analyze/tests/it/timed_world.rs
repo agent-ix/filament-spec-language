@@ -500,6 +500,14 @@ fn world_built_in_with_protocol_selection_and_source(
     for (name, value) in extra.as_object().expect("extra fields") {
         fields[name] = value.clone();
     }
+    let model_document: Json = serde_json::from_slice(documents[0]).expect("domain JSON");
+    let object_type = model_document["types"]
+        .as_array()
+        .expect("domain types")
+        .iter()
+        .find(|ty| ty["kind"]["name"] == "object_type")
+        .and_then(|ty| ty["identity"].as_str())
+        .expect("domain object type identity");
     let snapshot = json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": "s0"},
@@ -509,7 +517,7 @@ fn world_built_in_with_protocol_selection_and_source(
             "objects": keys.iter().map(|key| {
                 let mut fields = fields.clone();
                 fields["inflight"] = json!({"boolean": armed.contains(key)});
-                json!({"key": key, "type": format!("ix://{package}/Call"), "fields": fields})
+                json!({"key": key, "type": object_type, "fields": fields})
             }).collect::<Vec<_>>()}],
     });
     let bytes = snapshot.to_string().into_bytes();

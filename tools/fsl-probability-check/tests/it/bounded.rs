@@ -392,9 +392,14 @@ fn fraction_mean_documents_are_accepted_by_the_separate_checker() {
 fn shifted_quantile_documents_are_accepted_by_the_separate_checker() {
     let mut source = model_source()
         .replace("{ true: 1, false: 9 }", "{ true: 1, false: 1 }")
-        .replace("{ true: 1, false: 4 }", "{ true: 1, false: 3 }");
+        .replace("{ true: 1, false: 4 }", "{ true: 3, false: 1 }");
     source.push_str("\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin { quantile 0.4 of (steps from holds(true) until holds(m.delivered) within 4) <= 2 }\n");
-    let limits = ExactProbLimits::default();
+    let limits = ExactProbLimits {
+        max_rational_bits: 1,
+        precision_bits: 4,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
     let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
     assert!(
         !requests.is_empty(),
@@ -403,18 +408,110 @@ fn shifted_quantile_documents_are_accepted_by_the_separate_checker() {
     let Settlement::Terminal(record) = settlement else {
         panic!("quantile interval settles terminal: {settlement:?}");
     };
-    assert!(matches!(
-        record.value(),
-        fsl_replay::TerminalValue::Proved { .. }
-    ));
-    for request in &requests {
+    let fsl_replay::TerminalValue::Proved {
+        basis:
+            fsl_replay::ProofBasis::ValueBounds {
+                lower: lower_end,
+                upper: fsl_replay::ExactBound::Finite(upper_end),
+                exploration: fsl_replay::BoundsExploration::Complete,
+                ..
+            },
+        certification: fsl_replay::Certification::Certified,
+    } = record.as_ref().value()
+    else {
+        panic!(
+            "quantile settles with complete certified bounds: {:?}",
+            record.value()
+        );
+    };
+    let exact = Rational::new(Integer::from(3_i64), Integer::from(80_i64)).unwrap();
+    assert!(
+        lower_end.value() >= &Rational::new(Integer::from(0_i64), Integer::from(1_i64)).unwrap()
+    );
+    assert!(lower_end.value() <= &exact && &exact <= upper_end.value());
+    assert!(lower_end.value() <= upper_end.value());
+    let [lower, upper] = requests.as_slice() else {
+        panic!("quantile interval emits exactly two lower and upper documents");
+    };
+    assert_eq!(document(lower)["kind"], "lower");
+    assert_eq!(document(upper)["kind"], "upper");
+    let k0 = lower["certificate"]
+        .as_str()
+        .map(|certificate| serde_json::from_str::<Value>(certificate).unwrap())
+        .unwrap();
+    let k0 = k0["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["rank"] == 4)
+        .expect("the initial full product key has horizon rank 4")["state"]
+        .clone();
+    for (request, side, endpoint) in [
+        (lower, "lower", lower_end.value()),
+        (upper, "upper", upper_end.value()),
+    ] {
+        let doc = document(request);
+        assert_eq!(
+            doc["objective"]["profile"],
+            "filament.probability-objective/value-bounds/v1"
+        );
+        assert_eq!(
+            doc["objective"]["base"]["profile"],
+            "filament.probability-objective/finite-horizon-measure/v1"
+        );
+        assert_eq!(doc["objective"]["base"]["payoff"], "shifted");
+        assert_eq!(
+            doc["objective"]["base"]["measure"],
+            json!({"kind":"steps", "window":4, "reward":null, "unit":null,
+                "comparison":"le", "threshold":{"numerator":"2", "denominator":"1"},
+                "level":{"numerator":"2", "denominator":"5"}})
+        );
+        assert_eq!(doc["objective"]["base"]["optimization"], "minimum");
+        assert_eq!(doc["objective"]["base"]["fairness"], json!([]));
+        let parsed = quire_canonical::read_bounded(
+            request["certificate"].as_str().unwrap().as_bytes(),
+            1_000_000,
+            8_000_000,
+        )
+        .unwrap();
+        let canonical =
+            quire_canonical::to_vec(&parsed, quire_canonical::Limits::new(1_000_000)).unwrap();
+        assert_eq!(
+            canonical,
+            request["certificate"].as_str().unwrap().as_bytes()
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&canonical).unwrap(),
+            serde_json::from_slice::<Value>(request["certificate"].as_str().unwrap().as_bytes())
+                .unwrap()
+        );
+        assert_eq!(doc["kind"], side);
+        assert_eq!(
+            doc["values"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["state"] == k0)
+                .map(|row| &row["value"]),
+            Some(&json!({"numerator": endpoint.numerator().to_string(),
+                "denominator": endpoint.denominator().to_string()}))
+        );
         let (code, output) = run(request);
         assert_eq!(code, 0, "{output}");
-        let altered = mutate(request, |doc| {
-            doc["values"][0]["value"] = json!({"numerator":"1","denominator":"7"});
-        });
-        assert_ne!(run(&altered).0, 0, "mutated quantile bound must fail");
     }
+    let altered = mutate(lower, |doc| {
+        let row = doc["values"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["state"] == k0)
+            .expect("the lower document contains K0");
+        row["value"] = json!({"numerator":"1", "denominator":"16"});
+    });
+    let (code, output) = run(&altered);
+    assert_ne!(code, 0, "changing only K0 to 1/16 must fail: {output}");
+    assert_eq!(output["rule"], "inequality-fails");
+    assert_eq!(output["at"]["product_key"], k0);
 }
 
 pub(super) fn proof(source: &str, snapshot: &[u8]) -> Value {

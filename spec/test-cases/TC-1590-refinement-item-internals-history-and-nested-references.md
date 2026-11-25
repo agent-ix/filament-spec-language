@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-10, FR-135-AC-6 and FR-135-AC-13 to FR-135-AC-16, FR-138-AC-9, and FR-140-AC-19 to FR-140-AC-22.
+Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-11, FR-135-AC-6 and FR-135-AC-13 to FR-135-AC-16, FR-138-AC-9, and FR-140-AC-19 to FR-140-AC-22.
 
 ## Test Procedure
 
@@ -30,6 +30,13 @@ Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-10, 
 8. Analyze the nested `Parcel` case of FR-630-AC-10 with
    `a.parcel.owners = [Some(Reference<Ring>(b)), None]`, preserved by each
    concrete and abstract transition.
+9. Analyze `CounterIdentity` from the source request
+   `tests/corpus/refinement/refinement-identity.analyze.json`, whose source is
+   `tests/corpus/refinement/refinement-identity.native`, selected model is
+   `fsl-conformance/cases/counter-step-package.json` and abstract document is
+   `fsl-conformance/cases/counter-step-v0.json`; its initial state and universe
+   both select `test`/`v0`. Assert the first outcome item's `claim_name` is
+   `CounterIdentity`.
 
 ## Expected Results
 
@@ -40,4 +47,7 @@ Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-10, 
 - Steps 5–8: each item settles `proved`, `certified`; its checked simulation
   certificate maps the record, tuple, union or nested sequence/option value
   exactly as the corresponding FR-630 acceptance criterion states.
+- Step 9: the source route's first outcome item has `claim_name`
+  `CounterIdentity` and settles `proved`, `certified` with backend `en-1`,
+  exit 0.
 - Assertions compare the outcome document's typed members and the exit code, never message text.

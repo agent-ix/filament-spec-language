@@ -4371,10 +4371,16 @@ fn checked_equality_term_data(
                 .as_ref()
                 .and_then(|keys| keys.get(position))
                 .cloned()
-                .unwrap_or(lowered_compared_type_key);
+                .unwrap_or_else(|| lowered_compared_type_key.clone());
             compared_type_keys.push(compared_type_key.clone());
             let conversion_target_key = compared_type_key.clone();
-            let mut source_type = compared_type_key.clone();
+            let mut source_type = match operand {
+                fsl_semantics::check::LeafTerm::Literal { .. } => lowered_compared_type_key,
+                fsl_semantics::check::LeafTerm::Reference { .. }
+                | fsl_semantics::check::LeafTerm::DependencyReference { .. } => {
+                    compared_type_key.clone()
+                }
+            };
             if authored.target().is_some() {
                 if let Some(operand_node) = operand_node {
                     if let fsl_semantics::check::BodyTerm::Application(convert) =
@@ -6023,6 +6029,111 @@ fn append_schedulability_claims(
             rows.push(filament_contract_model::CheckedSchedulabilityClaimRow {
                 declaration: id.clone(),
                 occurrence: *ordinal,
+                task_set: claim.task_set.as_str().into(),
+                release_bindings: if matches!(
+                    &claim.claim,
+                    fsl_semantics::check::ScheduleClaim::Schedulable(_)
+                ) {
+                    let mut bindings = task_sets
+                        .releases()
+                        .iter()
+                        .filter(|release| release.task_set() == claim.task_set)
+                        .map(|release| {
+                            let operation = release.operation();
+                            let selected_model_identity = graph
+                                .model_package_identity(operation.model())
+                                .ok_or(EmitRefusal::SourceMapInvariant)?;
+                            let declaring_key = operation
+                                .declaring_key()
+                                .and_then(|key| {
+                                    fsl_semantics::model::key::declaring_node_key(
+                                        key,
+                                        graph.package_name(),
+                                    )
+                                })
+                                .ok_or(EmitRefusal::SourceMapInvariant)?;
+                            Ok(
+                                filament_contract_model::CheckedSchedulabilityReleaseBinding {
+                                    task_name: release.task().into(),
+                                    selected_model_identity: selected_model_identity.into(),
+                                    operation_declaring_identity: node_id(ids, &declaring_key),
+                                    operation_member: operation.name().into(),
+                                },
+                            )
+                        })
+                        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+                    bindings.sort_by(|left, right| {
+                        let left_owner = &left.operation_declaring_identity;
+                        let right_owner = &right.operation_declaring_identity;
+                        (
+                            &left.task_name,
+                            &left.selected_model_identity,
+                            &left_owner.package,
+                            &left_owner.path,
+                            left_owner.ordinal,
+                            &left.operation_member,
+                        )
+                            .cmp(&(
+                                &right.task_name,
+                                &right.selected_model_identity,
+                                &right_owner.package,
+                                &right_owner.path,
+                                right_owner.ordinal,
+                                &right.operation_member,
+                            ))
+                    });
+                    bindings
+                } else {
+                    Vec::new()
+                },
+                mode_switch_bindings: {
+                    let mut bindings = task_sets
+                        .mode_switches()
+                        .iter()
+                        .filter(|mode| mode.task_set() == claim.task_set)
+                        .map(|mode| {
+                            let operation = mode.operation();
+                            let selected_model_identity = graph
+                                .model_package_identity(operation.model())
+                                .ok_or(EmitRefusal::SourceMapInvariant)?;
+                            let declaring_key = operation
+                                .declaring_key()
+                                .and_then(|key| {
+                                    fsl_semantics::model::key::declaring_node_key(
+                                        key,
+                                        graph.package_name(),
+                                    )
+                                })
+                                .ok_or(EmitRefusal::SourceMapInvariant)?;
+                            Ok(
+                                filament_contract_model::CheckedSchedulabilityModeSwitchBinding {
+                                    selected_model_identity: selected_model_identity.into(),
+                                    operation_declaring_identity: node_id(ids, &declaring_key),
+                                    operation_member: operation.name().into(),
+                                },
+                            )
+                        })
+                        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+                    bindings.sort_by(|left, right| {
+                        let left_owner = &left.operation_declaring_identity;
+                        let right_owner = &right.operation_declaring_identity;
+                        (
+                            &left.selected_model_identity,
+                            &left_owner.package,
+                            &left_owner.path,
+                            left_owner.ordinal,
+                            &left.operation_member,
+                        )
+                            .cmp(&(
+                                &right.selected_model_identity,
+                                &right_owner.package,
+                                &right_owner.path,
+                                right_owner.ordinal,
+                                &right.operation_member,
+                            ))
+                    });
+                    bindings
+                },
             });
         }
         let node = CheckedSemanticNodeV2 {
@@ -6640,33 +6751,35 @@ fn timed_body_operands(
 
 /// FSpec FR-322 `model_root`, FR-322-AC-132 and AC-134: append one self-typed
 /// root and generated source-map entry per selected domain package, in
-/// selection order. The placeholder region is the checked unit's first byte.
+/// selection order. Each generated occurrence uses its selected model's
+/// source region.
 fn append_model_roots<'a>(
     ids: &StructuralIds,
     roots: impl Iterator<
         Item = (
-            &'a fsl_semantics::model::domain_package::DomainPackageRef,
-            NodeKey,
+            (&'a fsl_semantics::model::domain_package::DomainPackageRef, NodeKey),
+            Option<SourceRegion>,
         ),
     >,
-    source: &RawSourceRef,
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
-) {
-    for (selection, key) in roots {
+) -> Result<(), EmitRefusal> {
+    for ((selection, key), region) in roots {
         let root = model_root_node(ids, selection, key);
+        let region = region.ok_or(EmitRefusal::SourceMapInvariant)?;
         source_map.push(CheckedSourceMapEntry {
             node_id: root.node_id.clone(),
             role: CheckedOccurrenceRole::Generated,
             ordinal: 0,
             regions: vec![CheckedSourceRegion {
-                source: source_artifact(source),
-                start: 0,
-                end: 1,
+                source: source_artifact(region.source()),
+                start: region.start(),
+                end: region.end(),
             }],
         });
         nodes.push(root);
     }
+    Ok(())
 }
 
 /// FR-322 / contract-ir model occurrence rule: each model-owned declaration
@@ -7946,11 +8059,12 @@ fn emit_package_nodes(
     }
     append_model_roots(
         ids,
-        graph.model_roots(),
-        graph.source(),
+        graph
+            .model_roots()
+            .zip(graph.model_root_locations().iter().map(|location| regions(location))),
         &mut nodes,
         &mut source_map,
-    );
+    )?;
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
