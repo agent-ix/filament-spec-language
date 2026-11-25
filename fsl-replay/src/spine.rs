@@ -50,6 +50,7 @@ use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{UnitIntakeCause, UnitIntakeRefusal};
 use fsl_semantics::model::refusal::MemberPath;
+use ix_trace_rs::implements;
 
 mod clocks;
 mod lifecycle;
@@ -1483,6 +1484,8 @@ fn checked_diagnostic(
     )
 }
 
+#[implements("FR-881-AC-1")]
+#[implements("FR-383-AC-28")]
 fn check_message_one(first: &CheckRefusal) -> String {
     let mut message = first.cause.code().as_str().to_owned();
     if let Some(cause) = first.cause.cause() {
