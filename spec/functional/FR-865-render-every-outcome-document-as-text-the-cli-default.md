@@ -80,14 +80,27 @@ mode.
    `hint` member has no hint line; the renderer never composes a hint of
    its own, and writes the document's `hint` byte for byte, a
    `missing_import` hint included (FR-286 "Missing selections").
-3. One line per item, in request order:
+3. One line per `document.items()` item, in request order:
    `item <request_index>: <result> (<category>)`, then ` clause <name>`
    when the item names a clause, then ` <certification>` for a `proved`
    item. An item with a non-null `cause` is followed by
    `  cause: <cause>`, the cause's FR-331 wire spelling with its inner
    cause in parentheses (`undefined-evaluation (division-by-zero)`). An
    item's counterexample and trace follow it in FR-298's table and
-   numbered-position forms, indented two spaces.
+   numbered-position forms, indented two spaces. For an outcome whose
+   `native_fences` member is present, one fence line per entry in that report's
+   order is also written as `item <zero-based-index>: checked (<category>)`,
+   followed by ` clause <name>` when `unit.clause` is present, then
+   ` first-line <line>`. When `actual` is present, the line
+   `  actual: <actual>` follows. For each fence diagnostic in order, the
+   renderer writes its first `original_regions` locus as
+   `<file>:<line>:<column>` when located, or
+   `<authority>/<identity>:<start>-<end>` for a source region, then
+   `<code>: <message>`. A diagnostic with a cause is followed by
+   `  cause: <cause>`, and one with a `label` or `hint` member by
+   `  label: <label>` or `  hint: <hint>`, respectively; those values are
+   emitted byte for byte from the diagnostic. When the diagnostic has no
+   original region, the prefix is `<no-source>`.
 4. When `result` is not null and its kind is neither `exported` nor
    `packaged`, one line `result: <kind>` followed by a
    space and the canonical JSON of the result's other members, so a
@@ -289,6 +302,7 @@ exit code of the document's category.
 | FR-865-AC-22 | The text of a refusal of a unit whose `import "sibling/unit" as s;` names a supplied sibling unit of identity `sibling/unit` while no library is supplied as `sibling/unit` holds the line `  hint: Supply the imported unit as a library, not as a sibling unit.`, and its JSON `selection` is `sibling-unit`. | Test (TC-3199) |
 | FR-865-AC-23 | For each of the `source`, `extension-definition` and `package-reference` kinds, the diagnostic of its producer in FR-286 "Missing selections" renders a line `  hint: <text>` with `<text>` the table's text for the kind, byte for byte. | Test (TC-3199) |
 | FR-865-AC-24 | For every diagnostic of AC-17 to AC-23, the text's `  hint:` line equals the JSON diagnostic's `hint` member byte for byte, and no text line is `  hint: Import the package that supplies the selected name.`. | Test (TC-3199) |
+| FR-865-AC-25 | For a `check_fences` `OutcomeDocument` whose report has `Healthy` success at `first_line` 4 and `Broken` refusal at `first_line` 12, `render_outcome` writes `item 0: checked (success) clause Healthy first-line 4` and `item 1: checked (refusal) clause Broken first-line 12`, in report order. A `Broken` diagnostic whose first `original_regions` entry is located at `spec.md` line 7, column 9, and whose code is `ill_typed`, message is `payload has the wrong type`, cause is `type-mismatch`, label is `payload` and hint is `replace the payload`, renders `spec.md:7:9: ill_typed: payload has the wrong type`, then `  cause: type-mismatch`, `  label: payload` and `  hint: replace the payload`; the cause, label and hint lines are absent when their corresponding members are absent. A third refusal entry at `first_line` 20 with `actual: 2` writes `  actual: 2` after its fence line. No fence entry or diagnostic is omitted. | Test (TC-2455) |
 
 ## Dependencies
 

@@ -2075,6 +2075,52 @@ fn n10_unsorted_derivation_refuses_by_the_semantic_check() {
     );
 }
 
+/// FSpec TC-195 N01's type B retains its qualification fact followed by its
+/// direct inheritance link to A; exchanging those rows while preserving their
+/// ordinals is an unsorted derivation.
+#[trace("FSpec-TC-195", "FR-400-AC-15")]
+#[test]
+fn n01_type_b_preimage_validates_then_rejects_swapped_facts() {
+    let view = completed(&fixture_f1(), ModelNormalizationLimits::UNLIMITED);
+    let type_a = find_type(&view, "ix://test/orders/A");
+    let type_b = find_type(&view, "ix://test/orders/B");
+    let expected = vec![
+        Fact {
+            ordinal: 0,
+            rule: RULE_QUALIFY,
+            inputs: keys(&["ix://test/orders/B"]),
+            parent: None,
+        },
+        Fact {
+            ordinal: 1,
+            rule: RULE_INHERIT,
+            inputs: keys(&["ix://test/orders/A"]),
+            parent: Some(type_a.effective_id.clone()),
+        },
+    ];
+    assert_eq!(type_b.preimage.owner_effective_type, None);
+    assert_eq!(
+        type_b.preimage.original,
+        DeclarationKey::fixture("ix://test/orders/B")
+    );
+    assert_eq!(type_b.preimage.derivation, expected);
+    assert_eq!(type_b.preimage.validate_derivation(), Ok(()));
+
+    let mut swapped = type_b.preimage.clone();
+    swapped.derivation.swap(0, 1);
+    let (cause, _) = swapped
+        .validate_derivation()
+        .expect_err("swapping N01's fact rows leaves the old ordinals invalid");
+    assert_eq!(
+        cause,
+        ModelRefusalCause::UnsortedDerivation {
+            original: DeclarationKey::fixture("ix://test/orders/B"),
+            position: 0,
+            ordinal: 1,
+        }
+    );
+}
+
 #[trace("FSpec-TC-195")]
 #[test]
 fn n10_duplicate_path_refuses_by_the_semantic_check() {

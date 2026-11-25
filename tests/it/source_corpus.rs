@@ -1011,6 +1011,21 @@ fn quantifier_binder_shadowing_a_function_parameter_is_allowed() {
     assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
 }
 
+/// FR-100-AC-4: a Boolean result crosses the run boundary in tagged form.
+#[trace("FR-100-AC-4")]
+#[test]
+fn unbounded_forall_run_result_uses_the_tagged_boolean_envelope() {
+    let directory = corpus_root().join("collections");
+    let stem = "r-unbounded-forall";
+    let program = directory.join(format!("{stem}.native"));
+    let expected: Expectation = serde_json::from_slice(
+        &std::fs::read(directory.join(format!("{stem}.expected.json"))).unwrap(),
+    )
+    .unwrap();
+    let actual = execute(&program, &expected).unwrap();
+    assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
+}
+
 /// FR-104-AC-18 / TC-3083: a same-named quantifier binder and qualified
 /// operation-parameter read are admitted together in a precondition.
 #[trace("TC-3083", "FR-104-AC-18")]

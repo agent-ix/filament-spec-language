@@ -222,6 +222,32 @@ fn a_removed_edge_is_rejected() {
     );
 }
 
+/// Removing the target position's sole abstract relation pair makes the
+/// listed concrete edge fail, but the current checker reports only the
+/// `PostDiffers` source edge and not the missing abstract match.
+#[trace("TC-556")]
+#[test]
+fn a_removed_relation_pair_reports_only_the_concrete_source_edge() {
+    let world = safety_only();
+    let (mut certificate, _) = certificate(&world);
+    let from = position_of(&world, &certificate, [0, 0, 1, 0, 0]);
+    let edge = edge_of(&certificate, from, "commitA");
+    let target = usize::try_from(
+        certificate.successors[usize::try_from(from).expect("a position")][edge].post,
+    )
+    .expect("a target position");
+    assert_eq!(certificate.positions[target].abstract_states.len(), 1);
+    certificate.positions[target].abstract_states.remove(0);
+
+    assert_eq!(
+        rejected(check(&world, &certificate)),
+        (
+            CertificateRule::PostDiffers,
+            step(from, Some(u64::try_from(edge).expect("an edge")))
+        )
+    );
+}
+
 /// FR-149-AC-2 (TC-556 step 2): an edge's transition changed, an edge
 /// appended, and the edges of a position reordered are each rejected
 /// `SuccessorsDiffer`.
