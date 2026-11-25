@@ -1806,8 +1806,9 @@ fn apply_rule(workspace_root: &Path, path: &str, rule: &Rule, recipe: &mut Recip
         }
     }
     apply_it_filters(workspace_root, rule.it_filters, Some(path), recipe)?;
-    if path.starts_with("fsl-package/src/emit") {
+    if path.starts_with("fsl-package/src/") {
         apply_it_filters(workspace_root, PACKAGE_CONSUMERS, None, recipe)?;
+        add_package_replay_controls(recipe);
     }
     for control in rule.large_input {
         add_large_input(recipe, control);
@@ -2187,6 +2188,7 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
                     )?;
                 }
                 apply_it_filters(workspace_root, PACKAGE_CONSUMERS, None, recipe)?;
+                add_package_replay_controls(recipe);
             }
             "fsl-replay" => {
                 if let Some(rule) = matching_rule("fsl-replay/src/fallback.rs") {
@@ -2250,6 +2252,24 @@ fn add_library(recipe: &mut Recipe, package: &str, filter: String, no_match_is_n
             timed: false,
             threads: None,
             no_match_is_note,
+        },
+    );
+}
+
+fn add_package_replay_controls(recipe: &mut Recipe) {
+    add_target_filter(
+        recipe,
+        TestSelector {
+            package: "fsl-replay".to_owned(),
+            target: TestTarget::Library,
+            filter: Some(
+                "tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict".to_owned(),
+            ),
+            exact: false,
+            skip: Vec::new(),
+            timed: false,
+            threads: None,
+            no_match_is_note: true,
         },
     );
 }
@@ -3686,6 +3706,13 @@ mod tests {
         let package = plan(workspace_root(), &["fsl-package/src/probabilistic_read.rs"]);
         assert!(package.selectors.iter().any(|item| {
             item.package == "fsl-eval" && item.target == TestTarget::Integration("it".to_owned())
+        }));
+        assert!(package.selectors.iter().any(|item| {
+            item.package == "fsl-replay"
+                && item.target == TestTarget::Library
+                && item.filter.as_deref()
+                    == Some("tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict")
+                && !item.exact
         }));
         assert!(foundation
             .selectors
