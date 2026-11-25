@@ -964,7 +964,7 @@ replayed with.
 A package whose dependency closure holds its own name, directly or through a
 library, is an import cycle and is never admitted: `read_checked_package`
 refuses it as `invalid_package`/`definition-cycle`
-(FSpec FR-322-AC-544; Contract IR FR-038-AC-637), so no `BarePackage` exists for
+(FSpec FR-322-AC-545; Contract IR FR-038-AC-637), so no `BarePackage` exists for
 it, and the FR-850 directory loader refuses its handoff with the same code and
 cause. A source compile refuses such a unit too (FR-099).
 
