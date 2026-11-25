@@ -1835,6 +1835,8 @@ mod en1_closure_certificate {
         }
     }
 
+    /// The state set the closure checker itself asks for: each state it
+    /// reports missing is added until it accepts. No EN-1 run produces it.
     fn complete_certificate(world: &World) -> ClosureCertificate {
         let request = request(world);
         let mut certificate = ClosureCertificate { states: Vec::new() };
@@ -1867,7 +1869,9 @@ mod en1_closure_certificate {
         panic!("the finite model's reachable closure terminates");
     }
 
-    #[trace("TC-764", "FR-282-AC-5")]
+    /// TC-764, the checker's rejection half: removing a reached state from an
+    /// accepted closure names that state as a missing successor.
+    #[trace("TC-764")]
     #[test]
     fn en1_closure_accepts_the_finite_invariant_and_names_a_removed_successor() {
         let world = world();

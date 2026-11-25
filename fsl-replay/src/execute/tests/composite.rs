@@ -31,6 +31,42 @@ fn fixture(body: &str) -> Fixture {
     }
 }
 
+/// A fixture compiled under the raised S1 and S3 limits a very large source
+/// needs, as the proving run would have run it.
+fn fixture_with_raised_limits(body: &str) -> Fixture {
+    let source = format!("language \"ix:native\" edition \"1-draft\";\n{PROFILE}{body}");
+    let raised = SpineLimits {
+        source: fsl_cst::Limits {
+            source_bytes: 1 << 28,
+            tokens: 1 << 28,
+            nodes: 1 << 28,
+            work_units: 1 << 20,
+            ..fsl_cst::Limits::default()
+        },
+        checking: SpineLimits::default()
+            .checking
+            .with_nodes(1 << 40)
+            .with_input_bytes(1 << 40)
+            .with_work_budget(1 << 40),
+        package: crate::spine::PackageLimits::default().with_output_bytes(1 << 40),
+        ..SpineLimits::default()
+    };
+    let compiled = compose(
+        SourceIdentity::new(AUTHORITY, IDENTITY),
+        IDENTITY,
+        source.as_bytes(),
+        &BTreeMap::new(),
+        &crate::spine::DependencyInput::default(),
+        raised,
+    )
+    .expect("the unit compiles under the raised limits");
+    Fixture {
+        source,
+        compiled,
+        provision: Vec::new(),
+    }
+}
+
 /// A fixture over the `acme/orders` model package (`M::Widget`,
 /// `M::Rock`), which the request's byte provision carries.
 fn model_fixture(body: &str) -> Fixture {
@@ -487,7 +523,7 @@ fn tc_921_an_accounting_stage_limit_stops_execution_without_a_value() {
          x < 5 and x >= 0 and x != 8 }",
     );
     let mut wire = fixture.input("p", int(3));
-    wire.accounting_limits.work_units = 1;
+    wire.accounting_limits.work_units = 10_000;
     wire.stage_limits
         .insert("accounting.work_units".to_owned(), 1);
     let request = ReplayRequest::decode(wire.clone(), ReplayLimits::default()).expect("decodes");
@@ -729,6 +765,157 @@ fn list(declaration: NodeKey, depth: usize) -> WitnessValue {
         };
     }
     value
+}
+
+/// The term count of the deep source and the length of its list value.
+const DEEP_TERMS: usize = 100_000;
+
+/// The replay inputs of a function whose body is a 100,000-term sum over a
+/// recursive list parameter, compiled under raised limits. The compiler
+/// graph is not retained during replay.
+struct DeepSum {
+    source_bytes: Vec<u8>,
+    package_bytes: Vec<u8>,
+    target: crate::RequestTargetWire,
+    parameter: NodeKey,
+    record: NodeKey,
+}
+
+impl DeepSum {
+    fn compile() -> Self {
+        let sum = vec!["l.head"; DEEP_TERMS].join(" + ");
+        let fixture = fixture_with_raised_limits(&format!(
+            "record List {{ head: Int[0, 9]; tail: List?; }}\n\
+             function small using v(l: List): Boolean pure {{ {sum} < 5 }}\n"
+        ));
+        let target = crate::RequestTargetWire::function(
+            name(&["small"]),
+            declaration_key(&fixture.compiled, &name(&["small"])),
+        );
+        let parameter = fixture.parameter("small");
+        let record = fixture.record_id("List");
+        Self {
+            package_bytes: fixture.compiled.emitted.bytes().to_vec(),
+            source_bytes: fixture.source.into_bytes(),
+            target,
+            parameter,
+            record,
+        }
+    }
+
+    fn request(&self, source: ReplaySource) -> ReplayRequestWire {
+        ReplayRequestWire {
+            package: crate::ReplayPackage::read(&self.package_bytes, 1 << 30)
+                .expect("actual emitted replay package"),
+            replay_target: self.target.clone(),
+            source,
+            certificate: None,
+            profile_selections: vec![],
+            dependencies: vec![],
+            obligation_identity: crate::ObligationIdentity::new(crate::fixture_node(2), None, 0),
+            backend: "kani-backend-1".to_owned(),
+            state_environment: StateEnvironment::new(vec![]),
+            accounting_limits: UNLIMITED,
+            stage_limits: BTreeMap::new(),
+            supplied_limits: None,
+            object_environment: None,
+            declared_domains: vec![],
+            byte_provision: vec![(
+                AUTHORITY.to_owned(),
+                IDENTITY.to_owned(),
+                self.source_bytes.clone(),
+            )],
+            documents: vec![],
+        }
+    }
+
+    /// A request carrying the 100,000-long list as a witness entry.
+    fn witness(&self) -> ReplayRequestWire {
+        let value = list(self.record.clone(), DEEP_TERMS);
+        let text = value.to_value_text().unwrap();
+        let transcript = format!(
+            "<<<assertion|small|c|{}={text}>>>",
+            crate::pn(&self.parameter)
+        );
+        self.request(ReplaySource::Witness(Witness::parse(transcript).unwrap()))
+    }
+}
+
+/// The `replay.input_bytes` bound the deep requests fit under.
+fn deep_replay_limits() -> ReplayLimits {
+    // The emitted package carries a validity record per operation, so it
+    // runs to hundreds of megabytes.
+    ReplayLimits::default().with_input_bytes(1 << 30)
+}
+
+/// TC-736, the default stage limits: with no `stage_limits` entry the
+/// recompile of the 100,000-term source is refused by the first limit it
+/// reaches.
+#[trace("TC-736")]
+#[test]
+fn tc_736_a_100000_term_source_is_refused_at_the_default_stage_limits() {
+    on_small_stack(|| {
+        let refused = replay(DeepSum::compile().witness(), deep_replay_limits());
+        let Err(ReplayRefusal::Recompile { refusal, .. }) = &refused else {
+            panic!("the default stage limits must refuse the recompile");
+        };
+        assert_eq!(refusal.stage(), crate::spine::SpineStage::Source);
+        assert_eq!(refusal.code(), fsl_foundation::Code::StageLimitExceeded);
+        let limit = refusal.limit().expect("the refusal carries its limit");
+        assert_eq!(limit.setting().name(), "s1.tokens");
+        assert_eq!(limit.configured_bound(), 100_000);
+        assert_eq!(limit.actual(), 100_001);
+    });
+}
+
+/// TC-736 steps 1 and 2: on a thread with a 512 KiB stack, a request whose
+/// source holds a function with a 100,000-term sum over a recursive list
+/// parameter, whose assignment (and witness entry) carries a 100,000-long
+/// recursive list, whose `stage_limits` carries raised `s1.*`, `s3.*` and
+/// `emit.output_bytes` settings, and whose `replay.input_bytes` is raised to
+/// fit, replays to the proving run's verdict.
+#[test]
+#[ignore = "QSL-3253: deep replay recompilation reaches the fixed emit.output_bytes bound before the raised S1 and S3 settings admit the source"]
+fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
+    on_small_stack(|| {
+        let sum = DeepSum::compile();
+        let raised = deep_replay_limits();
+        let limits: BTreeMap<String, u64> = BTreeMap::from(
+            [
+                "s1.input_bytes",
+                "s1.tokens",
+                "s1.nodes",
+                "s1.work_units",
+                "s3.nodes",
+                "s3.input_bytes",
+                "s3.work_units",
+                "emit.output_bytes",
+                "i2.input_bytes",
+                "i2.nodes",
+                "i2.edges",
+                "i2.occurrences",
+                "i2.work_units",
+            ]
+            .map(|name| {
+                let bound = if name == "s1.input_bytes" {
+                    1_u64 << 27
+                } else {
+                    1_u64 << 40
+                };
+                (name.to_owned(), bound)
+            }),
+        );
+        // The raised settings replay, from the witness and from the input.
+        let mut wire = sum.witness();
+        wire.stage_limits = limits.clone();
+        assert_reproduced(replay(wire, raised));
+        let mut input = sum.request(typed_input(
+            sum.parameter.clone(),
+            list(sum.record.clone(), DEEP_TERMS),
+        ));
+        input.stage_limits = limits;
+        assert_reproduced(replay(input, raised));
+    });
 }
 
 /// TC-736, the value half: a 100,000-long recursive list

@@ -91,7 +91,6 @@ fn request(source_text: &str, function: &str, argument: i64) -> ReplayRequestWir
 #[test]
 fn accounting_work_limit_stops_execution_and_s3_limit_stays_a_stage_refusal() {
     let mut wire = request(SOURCE, "p", 3);
-    wire.accounting_limits.work_units = 1;
     wire.stage_limits
         .insert("accounting.work_units".to_owned(), 1);
     let result = replay(wire, ReplayLimits::default()).expect("the request is admitted");

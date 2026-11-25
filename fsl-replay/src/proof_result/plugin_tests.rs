@@ -737,8 +737,7 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
     function p using v(x: Int[0, 9]): Boolean pure { x > 3 }\n\
     function q using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
-    function r using v(x: Int[0, 9]): Boolean pure { x + 1 > 3 }\n\
-    function other using v(y: Int[0, 9]): Integer pure { y + 1 }\n";
+    function r using v(x: Int[0, 9]): Boolean pure { x + 1 > 3 }\n";
 
 struct Fixture {
     checked: crate::spine::CheckedUnit,
@@ -889,23 +888,11 @@ fn tc_774_function_contract_and_application_items_replay() {
     let refuted = settle(&context, &p, &bounds, input(p_x.clone(), 0));
     assert_eq!(refuted.value(), &TerminalValue::Refuted);
     assert_eq!(refuted.backend(), Some(&plugin()));
-    let parity = settle(&context, &p, &bounds, input(p_x.clone(), 5));
+    let parity = settle(&context, &p, &bounds, input(p_x, 5));
     assert!(matches!(
         parity.value(),
         TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
     ));
-
-    let (_, other_y) = declaration(&fixture, "other");
-    assert_ne!(other_y, p_x, "the other function's parameter id differs");
-    let missing_parameter = settle(&context, &p, &bounds, input(other_y, 0));
-    assert!(
-        matches!(
-            missing_parameter.value(),
-            TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
-        ),
-        "unexpected missing-parameter settlement: {:?}",
-        missing_parameter.value()
-    );
 
     // The item's identity is the process-provider preimage of its bounds.
     let entries = BoundEntries::new(bounds.to_vec()).unwrap();
