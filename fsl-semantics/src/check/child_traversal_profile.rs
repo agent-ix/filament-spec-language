@@ -72,9 +72,13 @@ pub(crate) fn measure_child<T>(iterator_construction: bool, operation: impl FnOn
 }
 
 pub(crate) fn note_child_yielded() {
+    note_children_yielded(1);
+}
+
+pub(crate) fn note_children_yielded(count: usize) {
     ACTIVE.with(|active| {
         if let Some((mut profile, measure)) = active.get() {
-            profile.child_count += 1;
+            profile.child_count += u64::try_from(count).unwrap_or(u64::MAX);
             active.set(Some((profile, measure)));
         }
     });

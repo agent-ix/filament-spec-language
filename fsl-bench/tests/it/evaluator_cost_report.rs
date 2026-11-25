@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The invocation-local evaluator report is the acceptance evidence artifact.
 
+use fsl_bench::check::{call_head, completed_with_five, linked_chain};
 use fsl_bench::evaluator_cost::{
     self, AllocationProbe, ReportRole, CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS,
     EVALUATOR_KERNEL_AXIS, PROFILE_AXES, REPORT_FIELDS,
@@ -456,4 +457,168 @@ fn comparison_rejects_incomplete_duplicate_and_reused_round_evidence() {
         .expect_err("run IDs cannot be shared across A and B")
         .to_string()
         .contains("across A/B inputs"));
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
+fn start_profile_report_populates_five_round_files_with_load_metadata() {
+    let target = TempTarget::new();
+    let a_path = target.0.join("kernel-A.json");
+    let b_path = target.0.join("kernel-B.json");
+    let objects = ObjectEnvironment::default();
+
+    for (side, result_path) in [("A", &a_path), ("B", &b_path)] {
+        let role = if side == "A" {
+            ReportRole::Baseline
+        } else {
+            ReportRole::Candidate
+        };
+        for round in 1..=5 {
+            let run_id = evaluator_cost::start_recorded_invocation(
+                &target.0,
+                side,
+                round,
+                EVALUATOR_CALL_CHAIN_AXIS,
+                result_path,
+            )
+            .expect("recorded invocation captures before-load metadata");
+            for (case, size) in expected_cases(EVALUATOR_CALL_CHAIN_AXIS) {
+                if case == "linked_chain" && size == 1 {
+                    let package = linked_chain(size);
+                    evaluator_cost::record_evaluation_probe(
+                        &target.0,
+                        run_id,
+                        EVALUATOR_CALL_CHAIN_AXIS,
+                        case,
+                        size,
+                        || {
+                            let evaluation = call_head(&package, &objects);
+                            assert!(completed_with_five(&evaluation));
+                            std::hint::black_box(evaluation);
+                        },
+                    )
+                    .expect("the real evaluator profile records this case");
+                    target.write_estimate(
+                        EVALUATOR_CALL_CHAIN_AXIS,
+                        case,
+                        size,
+                        100.0 + round as f64 + if side == "B" { 1.0 } else { 0.0 },
+                    );
+                    continue;
+                }
+                evaluator_cost::record_probe(
+                    &target.0,
+                    run_id,
+                    EVALUATOR_CALL_CHAIN_AXIS,
+                    case,
+                    size,
+                    AllocationProbe {
+                        child_traversal_allocation_count: if side == "A" { 18 } else { 0 },
+                        evaluation_allocation_count: 100,
+                    },
+                )
+                .expect("every case probe is recorded");
+                target.write_estimate(
+                    EVALUATOR_CALL_CHAIN_AXIS,
+                    case,
+                    size,
+                    100.0 + round as f64 + if side == "B" { 1.0 } else { 0.0 },
+                );
+            }
+            evaluator_cost::emit_report(&target.0, EVALUATOR_CALL_CHAIN_AXIS, role)
+                .expect("report captures after-load and appends the full report automatically");
+        }
+    }
+
+    for path in [&a_path, &b_path] {
+        let input: serde_json::Value =
+            serde_json::from_slice(&fs::read(path).expect("recorded result file exists"))
+                .expect("recorded result file is JSON");
+        assert_eq!(input["rounds"].as_array().unwrap().len(), 5);
+        for round in input["rounds"].as_array().unwrap() {
+            for load_key in ["load_before", "load_after"] {
+                for interval in ["1m", "5m", "15m"] {
+                    assert!(round[load_key][interval].as_f64().unwrap() >= 0.0);
+                }
+            }
+            assert_eq!(round["report"]["rows"].as_array().unwrap().len(), 4);
+        }
+    }
+    let comparison =
+        evaluator_cost::compare_ab_result_files(&a_path, &b_path, EVALUATOR_CALL_CHAIN_AXIS)
+            .expect(
+                "the automatically assembled result files compare without manual JSON assembly",
+            );
+    assert_eq!(comparison["passed"], true);
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
+fn failed_recorded_round_is_immutable_and_invalidates_comparison() {
+    let target = TempTarget::new();
+    let a_path = target.0.join("kernel-A.json");
+    let b_path = target.0.join("kernel-B.json");
+    evaluator_cost::start_recorded_invocation(
+        &target.0,
+        "A",
+        1,
+        EVALUATOR_CALL_CHAIN_AXIS,
+        &a_path,
+    )
+    .expect("start captures the before-load metadata");
+    evaluator_cost::record_round_failure(&target.0, "criterion exited with status 101")
+        .expect("failure is appended with load-after metadata");
+    fs::write(
+        &b_path,
+        serde_json::to_vec(&serde_json::json!({
+            "format": "fsl-evaluator-ab-v1",
+            "side": "B",
+            "axis": EVALUATOR_CALL_CHAIN_AXIS,
+            "rounds": [],
+        }))
+        .expect("B input serializes"),
+    )
+    .expect("empty B input is written");
+
+    let recorded: serde_json::Value =
+        serde_json::from_slice(&fs::read(&a_path).expect("A failure is persisted"))
+            .expect("A failure is valid JSON");
+    assert_eq!(recorded["rounds"][0]["status"], "failed");
+    assert_eq!(
+        recorded["rounds"][0]["diagnostic"],
+        "criterion exited with status 101"
+    );
+    for load_key in ["load_before", "load_after"] {
+        for interval in ["1m", "5m", "15m"] {
+            assert!(recorded["rounds"][0][load_key][interval].as_f64().unwrap() >= 0.0);
+        }
+    }
+
+    let comparison =
+        evaluator_cost::compare_ab_result_files(&a_path, &b_path, EVALUATOR_CALL_CHAIN_AXIS)
+            .expect("comparison reports the failed session rather than comparing results");
+    assert_eq!(comparison["session_valid"], false);
+    assert_eq!(comparison["passed"], false);
+    assert_eq!(
+        comparison["invalid_rounds"][0]["diagnostic"],
+        "criterion exited with status 101"
+    );
+
+    assert!(evaluator_cost::start_recorded_invocation(
+        &target.0,
+        "A",
+        1,
+        EVALUATOR_CALL_CHAIN_AXIS,
+        &target.0.join("alternate-kernel-A.json"),
+    )
+    .is_err());
+    evaluator_cost::start_recorded_invocation(
+        &target.0,
+        "A",
+        1,
+        EVALUATOR_CALL_CHAIN_AXIS,
+        &a_path,
+    )
+    .expect("the CLI can begin, but cannot replace the recorded round");
+    assert!(evaluator_cost::record_round_failure(&target.0, "retry").is_err());
 }

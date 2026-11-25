@@ -25,7 +25,29 @@ fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box
     let mut arguments = arguments;
     match arguments.next().as_deref() {
         Some("start") => {
-            let run_id = evaluator_cost::start_invocation(target)?;
+            let run_id = match arguments.next().as_deref() {
+                None => evaluator_cost::start_invocation(target)?,
+                Some("--record") => {
+                    let side = arguments.next().ok_or("expected A or B side")?;
+                    let round = arguments
+                        .next()
+                        .ok_or("expected round number")?
+                        .parse::<usize>()?;
+                    let axis = arguments.next().ok_or("expected an evaluator axis")?;
+                    let result_file = arguments.next().ok_or("expected A/B result JSON path")?;
+                    if let Some(argument) = arguments.next() {
+                        return Err(format!("unexpected start argument: {argument}").into());
+                    }
+                    evaluator_cost::start_recorded_invocation(
+                        target,
+                        &side,
+                        round,
+                        &axis,
+                        Path::new(&result_file),
+                    )?
+                }
+                Some(argument) => return Err(format!("unknown start option: {argument}").into()),
+            };
             println!("evaluator cost invocation {run_id}");
         }
         Some("profile") => {
@@ -66,8 +88,16 @@ fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box
                 println!("{}", String::from_utf8(serialized)?);
             }
         }
+        Some("fail") => {
+            let diagnostic = arguments.collect::<Vec<_>>().join(" ");
+            if diagnostic.is_empty() {
+                return Err("expected a failure diagnostic".into());
+            }
+            evaluator_cost::record_round_failure(target, &diagnostic)?;
+            eprintln!("recorded failed evaluator round: {diagnostic}");
+        }
         Some(command) => return Err(format!("unknown evaluator report command: {command}").into()),
-        None => return Err("expected start, profile, report, or compare".into()),
+        None => return Err("expected start, profile, report, compare, or fail".into()),
     }
     Ok(())
 }

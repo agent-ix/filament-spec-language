@@ -1,0 +1,186 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 33e103cfa1..916bfe4eab 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -865,5 +865,6 @@ name = "fsl-bench"
+ version = "0.1.0"
+ dependencies = [
++ "allocation-counter",
+  "criterion",
+  "filament-checked",
+  "filament-eval",
+diff --git a/fsl-bench/Cargo.toml b/fsl-bench/Cargo.toml
+index f0c651a0d8..2c798d6c07 100644
+--- a/fsl-bench/Cargo.toml
++++ b/fsl-bench/Cargo.toml
+@@ -13,5 +13,6 @@ description = "The committed performance benchmarks (parser, checker, CST ident
+ # through `src/model.rs` so such a change is one edit there.
+ [dependencies]
++allocation-counter = { version = "0.8.1", optional = true }
+ fsl-cst = { path = "../fsl-cst" }
+ fsl-foundation = { path = "../fsl-foundation" }
+ fsl-forms = { path = "../fsl-forms" }
+@@ -50,0 +51 @@
++allocation-probe = ["dep:allocation-counter", "fsl-semantics/child-traversal-profile"]
+@@ -114,0 +117,4 @@
++[[bin]]
++name = "fsl-bench-evaluator-report"
++path = "src/bin/fsl-bench-evaluator-report.rs"
++required-features = ["allocation-probe"]
+diff --git a/fsl-bench/src/lib.rs b/fsl-bench/src/lib.rs
+index 716de8f2aa..d4a2fedbf3 100644
+--- a/fsl-bench/src/lib.rs
++++ b/fsl-bench/src/lib.rs
+@@ -43,4 +43,5 @@ pub fn widen(count: usize) -> u64 {
+ }
+ 
+ pub mod check;
++pub mod evaluator_cost;
+ #[cfg(feature = "counters")]
+ pub mod counters;
+diff --git a/fsl-semantics/Cargo.toml b/fsl-semantics/Cargo.toml
+index 2d4ded1663..13826c1655 100644
+--- a/fsl-semantics/Cargo.toml
++++ b/fsl-semantics/Cargo.toml
+@@ -16,5 +16,6 @@ rust-version = "1.98"
+ [features]
+ default = []
++child-traversal-profile = []
+ # Test-only fixtures and views (`ReaderAuthority::fixture`,
+ # `DeclarationKey::fixture`, `DomainPackageRef::fixture{,_with_version}`,
+ # `check::family::fixtures`, `model::refusal::fixtures` and the items widened
+ diff --git a/fsl-semantics/src/check/mod.rs b/fsl-semantics/src/check/mod.rs
+index c788ac4c20..70247e78d1 100644
+--- a/fsl-semantics/src/check/mod.rs
++++ b/fsl-semantics/src/check/mod.rs
+@@ -136,4 +136,6 @@ pub(crate) mod imports;
+ #[cfg(not(any(test, feature = "test-support")))]
+ pub(crate) mod imports;
+ mod ir;
++#[cfg(feature = "child-traversal-profile")]
++mod child_traversal_profile;
+ mod key_order;
+@@ -498,4 +500,9 @@ pub use ir::{
+     EqualityUnitIdentityFact, EqualityUnitOperandRole, EqualityUnitTypeFact, Node, NodeId, Slot,
+ };
++#[cfg(feature = "child-traversal-profile")]
++pub use child_traversal_profile::{
++    begin_child_traversal_profile, end_child_traversal_profile, AllocatorMeasure,
++    ChildTraversalProfile,
++};
+ 
+ pub(crate) use assemble::dense_model_data_environment;
+diff --git a/fsl-semantics/src/check/ir.rs b/fsl-semantics/src/check/ir.rs
+index a88e358c65..5741026f4a 100644
+--- a/fsl-semantics/src/check/ir.rs
++++ b/fsl-semantics/src/check/ir.rs
+@@ -750,7 +750,17 @@ impl<'a> CheckedNode<'a> {
+     /// Direct operands in evaluation order.
+     pub fn children(self) -> Vec<CheckedNode<'a>> {
+-        node_children(self.kind())
++        let build_children = || node_children(self.kind())
+             .into_iter()
+             .map(|id| self.at(id))
+-            .collect()
++            .collect::<Vec<_>>();
++        #[cfg(feature = "child-traversal-profile")]
++        {
++            super::child_traversal_profile::measure_child(true, || {
++                let children = build_children();
++                super::child_traversal_profile::note_children_yielded(children.len());
++                children
++            })
++        }
++        #[cfg(not(feature = "child-traversal-profile"))]
++        build_children()
+     }
+diff --git a/fsl-semantics/src/check/child_traversal_profile.rs b/fsl-semantics/src/check/child_traversal_profile.rs
+new file mode 100644
+--- /dev/null
++++ b/fsl-semantics/src/check/child_traversal_profile.rs
+@@ -0,0 +1,85 @@
++// SPDX-License-Identifier: AGPL-3.0-or-later
++//! Feature-gated dynamic accounting for checked-node child iteration.
++
++use std::cell::Cell;
++
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++/// Dynamic counters for one evaluation's checked-node child traversal.
++pub struct ChildTraversalProfile {
++    /// Number of child iterators constructed during the profiled evaluation.
++    pub iterator_count: u64,
++    /// Number of child items yielded during the profiled evaluation.
++    pub child_count: u64,
++    /// Allocations made while constructing or advancing those iterators.
++    pub allocation_count: u64,
++}
++
++thread_local! {
++    static ACTIVE: Cell<Option<(ChildTraversalProfile, AllocatorMeasure)>> = const { Cell::new(None) };
++}
++
++/// Callback that measures allocations made by one child-iteration operation.
++pub type AllocatorMeasure = fn(&mut dyn FnMut()) -> u64;
++
++/// Start dynamic child-traversal accounting on the current thread.
++pub fn begin_child_traversal_profile(measure: AllocatorMeasure) {
++    ACTIVE.with(|active| active.set(Some((ChildTraversalProfile::default(), measure))));
++}
++
++/// Finish dynamic child-traversal accounting on the current thread.
++pub fn end_child_traversal_profile() -> ChildTraversalProfile {
++    ACTIVE.with(|active| {
++        active
++            .take()
++            .map_or_else(ChildTraversalProfile::default, |(profile, _)| profile)
++    })
++}
++
++pub(crate) fn measure_child<T>(iterator_construction: bool, operation: impl FnOnce() -> T) -> T {
++    let measure = ACTIVE.with(|active| {
++        if let Some((mut profile, measure)) = active.get() {
++            if iterator_construction {
++                profile.iterator_count += 1;
++            }
++            active.set(Some((profile, measure)));
++            Some(measure)
++        } else {
++            None
++        }
++    });
++    let Some(measure) = measure else {
++        return operation();
++    };
++
++    let mut value = None;
++    let mut pending = Some(operation);
++    let mut invoke = || {
++        if let Some(operation) = pending.take() {
++            value = Some(operation());
++        }
++    };
++    let allocation_count = measure(&mut invoke);
++    ACTIVE.with(|active| {
++        if let Some((mut profile, measure)) = active.get() {
++            profile.allocation_count += allocation_count;
++            active.set(Some((profile, measure)));
++        }
++    });
++    match value {
++        Some(value) => value,
++        None => unreachable!("the measured child operation always returns"),
++    }
++}
++
++pub(crate) fn note_child_yielded() {
++    note_children_yielded(1);
++}
++
++pub(crate) fn note_children_yielded(count: usize) {
++    ACTIVE.with(|active| {
++        if let Some((mut profile, measure)) = active.get() {
++            profile.child_count += u64::try_from(count).unwrap_or(u64::MAX);
++            active.set(Some((profile, measure)));
++        }
++    });
++}

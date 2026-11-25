@@ -35,6 +35,8 @@ pub const REPORT_FIELDS: [&str; 5] = [
 
 const RUN_MARKER: &str = "evaluator-cost-run-start-nanos";
 const PROBES: &str = "evaluator-cost-allocation-probes.jsonl";
+const ROUND_MARKER: &str = "evaluator-cost-recorded-round.json";
+const AB_SESSION_MANIFEST: &str = "evaluator-cost-ab-session.json";
 
 /// One measured allocation probe for an evaluator input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +103,11 @@ impl ReportRole {
 /// Start an invocation and return its unique run identifier.
 pub fn start_invocation(target: &Path) -> io::Result<u128> {
     fs::create_dir_all(target)?;
+    match fs::remove_file(target.join(ROUND_MARKER)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let run_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(io::Error::other)?
@@ -108,6 +115,138 @@ pub fn start_invocation(target: &Path) -> io::Result<u128> {
     fs::write(target.join(RUN_MARKER), run_id.to_string())?;
     fs::write(target.join(PROBES), "")?;
     Ok(run_id)
+}
+
+/// Start a round that `emit_report` will append to the A or B result file.
+pub fn start_recorded_invocation(
+    target: &Path,
+    side: &str,
+    round: usize,
+    axis: &str,
+    result_file: &Path,
+) -> Result<u128, Box<dyn Error>> {
+    if !matches!(side, "A" | "B") || !(1..=5).contains(&round) {
+        return Err(
+            io::Error::other("recorded round requires side A or B and round 1 through 5").into(),
+        );
+    }
+    if !PROFILE_AXES.iter().any(|(name, _)| *name == axis) {
+        return Err(io::Error::other(format!("unknown evaluator profile axis: {axis}")).into());
+    }
+    let result_file = result_file
+        .to_str()
+        .ok_or_else(|| io::Error::other("A/B result path is not valid UTF-8"))?;
+    register_ab_result_path(target, side, axis, result_file)?;
+    let load_before = system_load_average()?;
+    let run_id = start_invocation(target)?;
+    let marker = serde_json::json!({
+        "format": "fsl-evaluator-ab-round-v1",
+        "side": side,
+        "round": round,
+        "axis": axis,
+        "result_file": result_file,
+        "load_before": load_before,
+    });
+    fs::write(
+        target.join(ROUND_MARKER),
+        serde_json::to_vec_pretty(&marker)?,
+    )?;
+    Ok(run_id)
+}
+
+fn register_ab_result_path(
+    target: &Path,
+    side: &str,
+    axis: &str,
+    result_file: &str,
+) -> Result<(), Box<dyn Error>> {
+    let path = target.join(AB_SESSION_MANIFEST);
+    let mut manifest = if path.exists() {
+        read_json(&path)?
+    } else {
+        serde_json::json!({ "format": "fsl-evaluator-ab-session-v1", "paths": {} })
+    };
+    if manifest["format"].as_str() != Some("fsl-evaluator-ab-session-v1") {
+        return Err(io::Error::other("invalid evaluator A/B session manifest").into());
+    }
+    let key = format!("{side}:{axis}");
+    if let Some(existing) = manifest["paths"][&key].as_str() {
+        if existing != result_file {
+            return Err(io::Error::other(format!(
+                "A/B session path for {key} is immutable: expected {existing}"
+            ))
+            .into());
+        }
+    } else {
+        manifest["paths"][&key] = serde_json::Value::String(result_file.to_owned());
+    }
+    fs::create_dir_all(target)?;
+    write_json_atomically(&path, &manifest)?;
+    Ok(())
+}
+
+/// Persist a failed recorded round so a retry cannot erase its outcome.
+pub fn record_round_failure(target: &Path, diagnostic: &str) -> Result<(), Box<dyn Error>> {
+    let marker: serde_json::Value = read_json(&target.join(ROUND_MARKER))?;
+    let result_file = marker["result_file"]
+        .as_str()
+        .ok_or_else(|| io::Error::other("round marker has no result file"))?;
+    let side = marker["side"]
+        .as_str()
+        .ok_or_else(|| io::Error::other("round marker has no side"))?;
+    let round = marker["round"]
+        .as_u64()
+        .and_then(|round| usize::try_from(round).ok())
+        .ok_or_else(|| io::Error::other("round marker has no round number"))?;
+    let axis = marker["axis"]
+        .as_str()
+        .ok_or_else(|| io::Error::other("round marker has no axis"))?;
+    let load_before = marker["load_before"].clone();
+    validate_load(&load_before)?;
+    let load_after = system_load_average()?;
+    let path = Path::new(result_file);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut results = if path.exists() {
+        read_json(path)?
+    } else {
+        serde_json::json!({
+            "format": "fsl-evaluator-ab-v1",
+            "side": side,
+            "axis": axis,
+            "rounds": [],
+        })
+    };
+    if results["format"].as_str() != Some("fsl-evaluator-ab-v1")
+        || results["side"].as_str() != Some(side)
+        || results["axis"].as_str() != Some(axis)
+    {
+        return Err(
+            io::Error::other("existing A/B result file has a different side or axis").into(),
+        );
+    }
+    let rounds = results["rounds"]
+        .as_array_mut()
+        .ok_or_else(|| io::Error::other("existing A/B result file has no rounds array"))?;
+    if rounds.len() + 1 != round {
+        return Err(io::Error::other(format!(
+            "expected round {} after {} recorded rounds",
+            rounds.len() + 1,
+            rounds.len()
+        ))
+        .into());
+    }
+    rounds.push(serde_json::json!({
+        "round": round,
+        "status": "failed",
+        "run_id": fs::read_to_string(target.join(RUN_MARKER))?.trim(),
+        "load_before": load_before,
+        "load_after": load_after,
+        "diagnostic": diagnostic,
+    }));
+    write_json_atomically(path, &results)?;
+    Ok(())
 }
 
 /// Read the invocation identifier written by [`start_invocation`].
@@ -210,7 +349,142 @@ pub fn emit_report(target: &Path, axis: &str, role: ReportRole) -> Result<PathBu
         axis.replace('/', "_")
     ));
     fs::write(&path, serde_json::to_vec_pretty(&report)?)?;
+    let round_marker = target.join(ROUND_MARKER);
+    if round_marker.exists() {
+        let recording: serde_json::Value = serde_json::from_slice(&fs::read(round_marker)?)?;
+        append_recorded_round(
+            recording["result_file"]
+                .as_str()
+                .ok_or_else(|| io::Error::other("round marker has no result file"))?,
+            recording["side"]
+                .as_str()
+                .ok_or_else(|| io::Error::other("round marker has no side"))?,
+            recording["round"]
+                .as_u64()
+                .and_then(|round| usize::try_from(round).ok())
+                .ok_or_else(|| io::Error::other("round marker has no round number"))?,
+            axis,
+            &recording["load_before"],
+            &system_load_average()?,
+            &report,
+        )?;
+    }
     Ok(path)
+}
+
+fn append_recorded_round(
+    result_file: &str,
+    side: &str,
+    round: usize,
+    axis: &str,
+    load_before: &serde_json::Value,
+    load_after: &serde_json::Value,
+    report: &serde_json::Value,
+) -> Result<(), Box<dyn Error>> {
+    let role = if side == "A" { "baseline" } else { "candidate" };
+    if !matches!(side, "A" | "B")
+        || report["axis"].as_str() != Some(axis)
+        || report["role"].as_str() != Some(role)
+    {
+        return Err(io::Error::other("round report does not match its side or axis").into());
+    }
+    validate_load(load_before)?;
+    validate_load(load_after)?;
+    let path = Path::new(result_file);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut results = if path.exists() {
+        read_json(path)?
+    } else {
+        serde_json::json!({
+            "format": "fsl-evaluator-ab-v1",
+            "side": side,
+            "axis": axis,
+            "rounds": [],
+        })
+    };
+    if results["format"].as_str() != Some("fsl-evaluator-ab-v1")
+        || results["side"].as_str() != Some(side)
+        || results["axis"].as_str() != Some(axis)
+    {
+        return Err(
+            io::Error::other("existing A/B result file has a different side or axis").into(),
+        );
+    }
+    let rounds = results["rounds"]
+        .as_array_mut()
+        .ok_or_else(|| io::Error::other("existing A/B result file has no rounds array"))?;
+    if rounds.len() + 1 != round {
+        return Err(io::Error::other(format!(
+            "expected round {} after {} recorded rounds",
+            rounds.len() + 1,
+            rounds.len()
+        ))
+        .into());
+    }
+    rounds.push(serde_json::json!({
+        "round": round,
+        "load_before": load_before,
+        "load_after": load_after,
+        "report": report,
+    }));
+    write_json_atomically(path, &results)?;
+    Ok(())
+}
+
+fn write_json_atomically(path: &Path, value: &serde_json::Value) -> Result<(), Box<dyn Error>> {
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, serde_json::to_vec_pretty(value)?)?;
+    fs::rename(temporary, path)
+}
+
+#[cfg(target_os = "macos")]
+fn system_load_average() -> Result<serde_json::Value, Box<dyn Error>> {
+    let output = std::process::Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("sysctl could not read vm.loadavg").into());
+    }
+    let text = String::from_utf8(output.stdout)?;
+    let values = text
+        .trim_matches(|character: char| {
+            character == '{' || character == '}' || character.is_whitespace()
+        })
+        .split_whitespace()
+        .take(3)
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()?;
+    load_average_value(values)
+}
+
+#[cfg(target_os = "linux")]
+fn system_load_average() -> Result<serde_json::Value, Box<dyn Error>> {
+    let values = fs::read_to_string("/proc/loadavg")?
+        .split_whitespace()
+        .take(3)
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()?;
+    load_average_value(values)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn system_load_average() -> Result<serde_json::Value, Box<dyn Error>> {
+    Err(io::Error::other("load average capture is unsupported on this platform").into())
+}
+
+fn load_average_value(values: Vec<f64>) -> Result<serde_json::Value, io::Error> {
+    if values.len() != 3
+        || values
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+    {
+        return Err(
+            io::Error::other("system load average did not contain three valid values").into(),
+        );
+    }
+    Ok(serde_json::json!({ "1m": values[0], "5m": values[1], "15m": values[2] }))
 }
 
 #[derive(Debug)]
@@ -286,6 +560,36 @@ pub fn compare_ab_result_files(
 ) -> Result<serde_json::Value, Box<dyn Error>> {
     let a_input = read_json(a_path)?;
     let b_input = read_json(b_path)?;
+    let invalid_rounds = [(&a_input, "A"), (&b_input, "B")]
+        .into_iter()
+        .flat_map(|(input, side)| {
+            input["rounds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|round| round["status"].as_str() == Some("failed"))
+                .map(move |round| {
+                    serde_json::json!({
+                        "side": side,
+                        "round": round["round"],
+                        "run_id": round["run_id"],
+                        "diagnostic": round["diagnostic"],
+                        "load_before": round["load_before"],
+                        "load_after": round["load_after"],
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    if !invalid_rounds.is_empty() {
+        return Ok(serde_json::json!({
+            "format": "fsl-evaluator-ab-comparison-v1",
+            "axis": axis,
+            "session_valid": false,
+            "passed": false,
+            "invalid_rounds": invalid_rounds,
+            "raw_inputs": { "A": a_input, "B": b_input },
+        }));
+    }
     let a = parse_side(a_input, "A", axis)?;
     let b = parse_side(b_input, "B", axis)?;
     let mut run_ids = BTreeSet::new();

@@ -31,11 +31,15 @@ The evaluator targets run `fsl-bench-evaluator-report` before and after
 Criterion so the report includes only estimates from that invocation.
 
 `make bench-evaluator` and `make bench-evaluator_kernel` also run a separate
-allocation-probe process after Criterion. That process traverses every checked
-node in each input once and measures the allocations made by
-`CheckedNode::children`; it separately measures allocations for one evaluator
-call. The report joins those probe rows with the fresh Criterion estimate and
-writes `target/evaluator-cost-<axis>-<run-id>.json`. Each per-size row contains
+allocation-probe process after Criterion. That process runs each evaluator
+workload under the child-traversal profiler. The profile counts each dynamic
+`CheckedNode::children` traversal during evaluation, including recursive
+revisits and branches the evaluator skips; it does not substitute a static walk
+of the checked-node list. The baseline profiler measures the existing
+Vec-producing child operation, while the candidate profiler measures the
+allocation-free iterator. The report joins those probe rows with the fresh
+Criterion estimate and writes
+`target/evaluator-cost-<axis>-<run-id>.json`. Each per-size row contains
 `wall_time_ns`, `child_traversal_allocation_count`,
 `child_traversal_allocation_share`, and `evaluation_allocation_count`. The
 baseline report preserves observed nonzero child-traversal allocations so the A
@@ -43,6 +47,12 @@ measurement remains reportable. Candidate reports, selected with `--candidate`,
 require zero child-traversal allocations. Both reports refuse stale or missing
 rows. Allocation probing runs in its own process, so its allocator does not
 affect the timed Criterion process.
+
+For QSL-1921's live five-round A/B evidence, use the recorded-session commands
+in [`QSL-1921-AB.md`](QSL-1921-AB.md). They retain one raw result file per side
+and axis, capture load before and after each round, and compare every requested
+size with the NFR-141 session-noise rule. A failed round is recorded as an
+invalid session and cannot be retried under a different result path.
 
 ### Evaluator kernels
 
