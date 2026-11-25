@@ -453,6 +453,10 @@ pub fn check_protocol_initial(
 /// FR-148: check an initial state while charging protocol closure to the
 /// caller's total transition limit.
 #[implements("FR-148-AC-8")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the bounded initial check uses both admitted systems and product accounting"
+)]
 pub fn check_protocol_initial_with_transition_limit(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
@@ -572,6 +576,10 @@ pub fn check_protocol_step(
 /// FR-148: decide a protocol step while charging closure to the caller's
 /// total transition limit.
 #[implements("FR-148-AC-8")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the bounded step check uses both admitted systems and product accounting"
+)]
 pub fn check_protocol_step_with_transition_limit(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
