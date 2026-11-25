@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Identifier, Integer, ScalarLimits};
 use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
-use fsl_foundation::{Code, Setting, SettingLimits, SourceIdentity};
+use fsl_foundation::{Code, Setting, SourceIdentity};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
 use ix_trace_rs::trace;
