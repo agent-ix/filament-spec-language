@@ -47,8 +47,8 @@ pub use protocol_system::{
 };
 pub use step::{
     check_initial, check_protocol_initial, check_protocol_state_relations, check_protocol_step,
-    check_step, protocol_observation_label, ConcreteStep, ProtocolRelationError,
-    ProtocolStateRelation, RefinementPosition,
+    check_step, check_step_for_model, protocol_observation_label, ConcreteStep,
+    ProtocolRelationError, ProtocolStateRelation, RefinementPosition,
 };
 
 /// Canonical abstract step class spelling for one admitted protocol
