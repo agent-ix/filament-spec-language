@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use filament_exact::ScalarLimits;
 use filament_semantic_value::catalog::Category;
-use fsl_foundation::diagnostic::{Code, SpineStage};
+use fsl_foundation::diagnostic::Code;
+use fsl_replay::spine::SpineStage;
 use fsl_replay::{
     CallSiteUnit, CanonicalAssignment, DependencyInput, DisagreementCause, Identifier,
     QualifiedName, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource,
@@ -103,7 +104,10 @@ fn accounting_work_limit_stops_execution_and_s3_limit_stays_a_stage_refusal() {
             replayed: Verdict::from_category(Category::Incomplete),
         })
     );
-    assert_eq!(result.value(), None);
+    let fsl_replay::ReplayResult::Input(input) = &result else {
+        panic!("accounting exhaustion returns an input arm, got {result:?}");
+    };
+    assert_eq!(input.value(), None);
     let limit = result.limit().expect("execution names its denied charge");
     assert_eq!(limit.limit_kind, filament_exact::LimitKind::WorkUnits);
     assert_eq!(limit.limit, 1);
