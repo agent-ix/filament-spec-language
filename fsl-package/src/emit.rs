@@ -1976,6 +1976,9 @@ type Recorded<'g> = Vec<(CheckedOccurrence, RecordedLocation<'g>)>;
 /// member never takes its enclosing declaration's region.
 enum RecordedLocation<'g> {
     Expression(&'g Location),
+    /// A source clause function's `declaration` occurrence (FR-569): where
+    /// `check` recorded it, and the region of the declaration it is at.
+    Declaration(&'g Location, SourceRegion),
     Parameter(Option<SourceRegion>),
     Captured(SourceRegion),
 }
@@ -2013,7 +2016,9 @@ impl Candidate<'_> {
             .ok()?;
         match &expression_occurrences[index].1 {
             RecordedLocation::Expression(location) => regions(location),
-            RecordedLocation::Parameter(_) | RecordedLocation::Captured(_) => None,
+            RecordedLocation::Declaration(..)
+            | RecordedLocation::Parameter(_)
+            | RecordedLocation::Captured(_) => None,
         }
     }
 }
@@ -2179,7 +2184,8 @@ impl<'g> Candidate<'g> {
                 )
             })
             .find_map(|(_, location)| match location {
-                RecordedLocation::Expression(location) => match &location.origin {
+                RecordedLocation::Expression(location)
+                | RecordedLocation::Declaration(location, _) => match &location.origin {
                     ExpressionOwner::Body { index, .. } => Some(*index),
                     _ => None,
                 },
@@ -3605,6 +3611,8 @@ fn recorded_occurrences(
         };
         let location = if graph.parameter_span(key.clone(), &origin).is_some() {
             RecordedLocation::Parameter(graph.occurrence_region(key.clone(), &origin))
+        } else if let Some(region) = graph.clause_declaration_region(&key, &origin) {
+            RecordedLocation::Declaration(location, region)
         } else {
             RecordedLocation::Expression(location)
         };
@@ -5223,6 +5231,7 @@ fn source_map(
             // region places the occurrence nowhere.
             let region = match location {
                 RecordedLocation::Expression(location) => regions(location),
+                RecordedLocation::Declaration(_, region) => Some(region.clone()),
                 RecordedLocation::Parameter(region) => region.clone(),
                 RecordedLocation::Captured(region) => Some(region.clone()),
             }

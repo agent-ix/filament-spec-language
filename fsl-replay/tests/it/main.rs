@@ -72,6 +72,7 @@ mod replay_result_rows;
 mod request_clocks_for_replay;
 #[path = "../../../tests/support/ring_world.rs"]
 mod ring_world;
+mod root_name_collision;
 mod run_axes;
 mod script_search;
 mod smt_setting_operation;

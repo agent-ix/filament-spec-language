@@ -52,6 +52,7 @@ use fsl_foundation::Span;
 use fsl_foundation::source::node_table::{
     DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
 };
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -517,6 +518,16 @@ pub struct PackageDeclarations {
     /// function resolves to that span. `link_dispatch` fills it for the
     /// precondition functions it synthesizes from the unit's `pre` clauses.
     pub synthesized_spans: BTreeMap<usize, fsl_foundation::Span>,
+    /// FR-569: the span of each source-declared `operation` member, by the
+    /// operation's key. The FR-091 assembler fills it.
+    pub(super) source_operation_spans:
+        BTreeMap<filament_checked::key::DeclarationKey, fsl_foundation::Span>,
+    /// FR-569: the span of the declaration of each source operation's body and
+    /// effective-precondition function, by index into [`Self::functions`]. It
+    /// places the function's `declaration` occurrence only; positions inside
+    /// the function resolve as FR-096 states.
+    /// `link_dispatch` fills it.
+    pub(super) clause_declaration_spans: BTreeMap<usize, fsl_foundation::Span>,
     /// FR-096-AC-1, ADR-013 C-21: the map of a body embedded in a document.
     /// The spans above are body offsets; with a map, each region resolves
     /// under the document's `RawSourceRef`, shifted by the body's offset in
@@ -848,6 +859,8 @@ impl PackageDeclarations {
             declared_type_spans: BTreeMap::new(),
             declared_site_spans: BTreeMap::new(),
             synthesized_spans: BTreeMap::new(),
+            source_operation_spans: BTreeMap::new(),
+            clause_declaration_spans: BTreeMap::new(),
             embedding: None,
             units: filament_semantic_value::unit::UnitGraph::default(),
             nominal_spans: BTreeMap::new(),
@@ -3099,6 +3112,7 @@ fn is_text_constructor(callee: &str) -> bool {
 }
 
 /// Whether an expression takes its type from its context.
+#[implements("FSpec-FR-143-AC-21")]
 fn contextual(mut expression: ExprRef<'_>) -> bool {
     // `Some(e)` takes its payload's type from context exactly when `e` does
     // (FSpec FR-143-AC-21: `Some(3) = y` against an `Option<Int[0, 9]>`).
@@ -4247,6 +4261,9 @@ impl<'a> Typer<'a> {
     /// item 4), a case the type does not declare, a bare case name where a
     /// variant value is expected, which is no variant value, or a name nothing
     /// binds.
+    #[implements("FR-360-AC-4")]
+    #[implements("FR-360-AC-5")]
+    #[implements("FR-317-AC-6")]
     fn variant_case(
         &self,
         name: &str,
@@ -4789,6 +4806,10 @@ impl<'a> Typer<'a> {
     /// `left op right` for `+`, `-`, `*` and `/`, over its two typed
     /// operands. Both operands are of one numeric family; mixing families
     /// needs an explicit conversion.
+    #[implements("FR-104-AC-12")]
+    #[implements("FR-104-AC-13")]
+    #[implements("FR-104-AC-16")]
+    #[implements("FSpec-FR-140-AC-7")]
     fn arithmetic(
         &mut self,
         operator: ArithmeticOperator,
@@ -5670,6 +5691,7 @@ impl<'a> Typer<'a> {
     /// fields and selectors, and the steps with `field` and its slot name a
     /// clock place of the unit. The node is typed as the collection of clock
     /// references, as [`Self::clock_collection_field`] types an object's own.
+    #[implements("FR-230-AC-67")]
     fn record_clock_collection(
         &mut self,
         operand: &Node,
@@ -6049,6 +6071,7 @@ impl<'a> Typer<'a> {
     }
 
     /// `e.f` over the typed record `e`.
+    #[implements("FR-230-AC-67")]
     fn field(
         &mut self,
         operand: Node,

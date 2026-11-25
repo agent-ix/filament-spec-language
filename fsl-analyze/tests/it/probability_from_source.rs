@@ -1974,6 +1974,50 @@ fn a_value_bounds_item_writes_its_counterpart_at_item_level() {
     assert!(item["record"].get("counterpart").is_none(), "{item}");
 }
 
+/// FSpec FR-411-AC-8: a shifted quantile proved on the product `max_states`
+/// stops writes a `lower` document alone, upper `1 - q`, and a `value-bounds`
+/// basis whose method carries the pinned schema's positive precision. The
+/// per-initial `entries` FSL adds are not members of `ProofBasis`.
+#[trace("TC-3151", "FSpec-FR-411-AC-8")]
+#[test]
+fn a_partial_shifted_proof_writes_a_schema_valid_basis() {
+    const PARTIAL: &str =
+        "probabilistic Partial using ev on M over (m: M::Msg) under every scheduler on origin \
+         { quantile 0.5 of (steps from holds(true) until holds(m.delivered) within 4) <= 2 }";
+    let document = run(
+        "partial-shifted-basis",
+        PARTIAL,
+        json!([{"claim": "Partial", "probabilistic": {
+            "evidence": "exact", "limits": {"max_states": 3}}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["kind"], "lower", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert!(item.get("counterpart").is_none(), "{item}");
+    let mut basis = item["record"]["basis"]
+        .as_object()
+        .expect("a basis")
+        .clone();
+    assert_eq!(basis["exploration"], "partial", "{item}");
+    assert_eq!(
+        basis["upper"],
+        json!({"numerator": "1", "denominator": "2"}),
+        "{item}"
+    );
+    basis.remove("entries");
+    assert_valid(
+        &provider_definition("ProofBasis"),
+        &Value::Object(basis),
+        "the partial basis",
+    );
+    assert_valid(
+        &provider_definition("ProbabilityCertificate"),
+        &item["certificate"]["document"],
+        "the partial lower document",
+    );
+}
+
 /// FR-322, FR-331: a real `refuted` item's claim locus is a schema-valid
 /// `Locus` whose node id holds index segments, never a nested node id.
 #[trace("TC-3154", "FR-621-AC-16")]

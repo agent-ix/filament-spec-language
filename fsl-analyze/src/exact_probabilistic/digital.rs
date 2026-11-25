@@ -40,6 +40,7 @@ use fsl_semantics::check::{
     ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler,
     UnaryTemporal, Workload,
 };
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
@@ -61,6 +62,7 @@ pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
 /// [`ProductRefusal`]: the admission causes of FR-204, a model that is not a
 /// Markov decision process or chain at some digital state, a budget or the
 /// cancellation.
+#[implements("FR-204-AC-1")]
 pub(super) fn build<'s, 'a>(
     system: &'s ModelSystem<'a>,
     timed: TimedSystem<'s, 'a>,
@@ -210,6 +212,7 @@ enum Form<'c> {
 }
 
 impl<'c> Form<'c> {
+    #[implements("FR-204-AC-21")]
     fn of(claim: &'c CheckedProbabilisticClaim) -> Result<Self, ProductRefusal> {
         let shape = || ProductRefusal::TimedFormShape {
             span: claim.span,
@@ -377,6 +380,7 @@ impl<'c> Form<'c> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn reads(&self) -> &[(UndefinedRead, &'c CheckedPredicate)] {
         match self {
             Self::Deadline { reads, .. }
@@ -483,6 +487,7 @@ fn add_rewards(
 
 /// The least common denominator of every time constant of the model and the
 /// claim (ADR-028 TA-3), as one positive integer.
+#[implements("FR-204-AC-1")]
 fn scale_of(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -957,6 +962,7 @@ impl<'c> Builder<'_, '_, 'c> {
         units(bound, self.scale).ok_or_else(|| fault("constant-scales").into())
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_bound(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
@@ -968,6 +974,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_lower(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { lower, .. } => self.bound_units(lower).map(Some),
@@ -1118,6 +1125,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- keys and truths ---------------------------------------------------
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn key_of(
         &self,
         state: &DState,
@@ -1136,6 +1144,7 @@ impl<'c> Builder<'_, '_, 'c> {
         })
     }
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn certificate_key(
         &self,
         state: &DState,
@@ -1451,6 +1460,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_start(&self, truths: &[bool], state: &mut DState) -> Step<Option<MonitorState>> {
         match &self.form {
             Form::Elapsed { .. } => {
@@ -1516,6 +1526,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The control after the source's delay and the letters of `posts` (the
     /// discrete steps that follow the delay, none for a pure delay).
+    #[implements("FR-204-AC-21")]
     fn control_after(
         &mut self,
         source: Option<MonitorState>,
@@ -1927,6 +1938,7 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     /// A pure delay move to `clocks`/`deadline` with the tail `tail`.
+    #[implements("FR-204-AC-5")]
     fn delay_move(&mut self, movement: DelayMove<'_>) -> Step<Planned> {
         let DelayMove {
             at,
@@ -2269,6 +2281,7 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     /// The edges of one enabled identity at `state`, scaled by `share`.
+    #[implements("FR-204-AC-3", "FR-204-AC-18", "FR-204-AC-19")]
     fn identity_edges(
         &mut self,
         at: usize,
@@ -2772,6 +2785,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The edges of one race outcome: the state after the winning delay, then
     /// each tied identity in order while it is still enabled.
+    #[implements("FR-204-AC-20")]
     fn chain_edges(
         &mut self,
         at: usize,

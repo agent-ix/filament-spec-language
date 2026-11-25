@@ -2,7 +2,7 @@
 //! The replay handoff supply admits one artifact per library identity
 //! (FR-850 "Admission").
 
-use super::{HandoffSupply, ReplayRefusal};
+use super::{handoff_join_refusal, HandoffSupply, ReplayRefusal};
 use crate::execute::PackageReadRefusal;
 use filament_contract_model::{
     encode_checked_package_v2, CheckedDependencySelection, CheckedPackageSidecarsRef,
@@ -11,6 +11,7 @@ use filament_contract_model::{
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{DependencyArtifact, Emission, EmitLimits, V2ReadLimits};
 use fsl_semantics::check::PackageDeclarations;
+use ix_trace_rs::trace;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -70,16 +71,9 @@ fn emitted(name: &str, declarations: &str) -> (Emission, CheckedPackageV2) {
     (emission, admitted)
 }
 
-/// Library `dep`, whose one source difference between calls is the ratio of
-/// its dimension equivalence.
-fn library(ratio: u8) -> DependencyArtifact {
-    let (emission, package) = emitted(
-        "dep",
-        &format!(
-            "dimension Time;\ndimension Period;\nunit s : Time = rational(1, 1);\n\
-             unit sec : Period = rational(1, 1);\ndimension Period ~ Time by 1 sec = {ratio} s;\n"
-        ),
-    );
+/// The artifact of `declarations` emitted under `name`, with its witness files.
+fn artifact(name: &str, declarations: &str) -> DependencyArtifact {
+    let (emission, package) = emitted(name, declarations);
     let mut budget = join_budget();
     let identities = emission
         .identity_rows(&package, &mut budget)
@@ -101,15 +95,30 @@ fn library(ratio: u8) -> DependencyArtifact {
     }
 }
 
-/// A root package whose lock selects `dep`, with its witness files.
-fn root_selecting_dep() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let (emission, package) = emitted(
-        "root",
+/// Library `dep`, whose one source difference between calls is the ratio of
+/// its dimension equivalence.
+fn library(ratio: u8) -> DependencyArtifact {
+    artifact(
+        "dep",
+        &format!(
+            "dimension Time;\ndimension Period;\nunit s : Time = rational(1, 1);\n\
+             unit sec : Period = rational(1, 1);\ndimension Period ~ Time by 1 sec = {ratio} s;\n"
+        ),
+    )
+}
+
+/// A package `name` whose lock selects `selected`, with its witness files. The
+/// selection is added to the emitted lock, so `package` stays the emission:
+/// handoff admission reads `bytes` alone.
+fn selecting(name: &str, selected: &str) -> DependencyArtifact {
+    let mut artifact = artifact(
+        name,
         "dimension Beat;\nunit beat : Beat = rational(1, 1);\n",
     );
+    let package = &artifact.package;
     let mut lock = package.lock().clone();
     lock.dependency_selections.push(CheckedDependencySelection {
-        identity: "dep".into(),
+        identity: selected.into(),
     });
     let bytes = encode_checked_package_v2(
         package.name(),
@@ -132,19 +141,29 @@ fn root_selecting_dep() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         package.diagnostics(),
         quire_canonical::Limits::new(1 << 32),
     )
-    .expect("the root encodes with its selection");
-    let mut budget = join_budget();
-    let identities = emission
-        .identity_rows(&package, &mut budget)
-        .expect("identity rows")
-        .to_bytes(&package)
-        .expect("identity bytes");
-    let equality = emission
-        .equality_witness(&package, &mut budget)
-        .expect("equality rows")
-        .to_bytes(&package)
-        .expect("equality bytes");
-    (bytes, identities, equality)
+    .expect("the package encodes with its selection");
+    artifact.bytes = bytes.into();
+    artifact
+}
+
+/// The number of dependencies handoff admission keeps for `root` over
+/// `dependencies`, or its refusal.
+fn admit(
+    root: &DependencyArtifact,
+    dependencies: &[DependencyArtifact],
+) -> Result<usize, ReplayRefusal> {
+    HandoffSupply {
+        dependencies,
+        identities: &root.identity_bytes,
+        equality: Some(&root.equality_bytes),
+    }
+    .admit_package(
+        &root.bytes,
+        &Default::default(),
+        read_limits(),
+        &mut join_budget(),
+    )
+    .map(|(_, admitted)| admitted.len())
 }
 
 fn wire(artifact: &DependencyArtifact) -> Value {
@@ -155,6 +174,7 @@ fn wire(artifact: &DependencyArtifact) -> Value {
 /// its name, before reading it: byte-identical artifacts and two contents
 /// differing only in an equivalence's `root_scale` refuse alike. No content is
 /// compared here; the link diamond rule does that.
+#[trace("TC-1331", "FR-531-AC-60")]
 #[test]
 fn a_second_supplied_artifact_of_one_name_refuses_whatever_its_content() {
     let one = wire(&library(1));
@@ -176,29 +196,15 @@ fn a_second_supplied_artifact_of_one_name_refuses_whatever_its_content() {
         "the control pair is byte-identical"
     );
 
-    let (root, identities, equality) = root_selecting_dep();
-    let admit = |dependencies: &[DependencyArtifact]| {
-        HandoffSupply {
-            dependencies,
-            identities: &identities,
-            equality: Some(&equality),
-        }
-        .admit_package(
-            &root,
-            &Default::default(),
-            read_limits(),
-            &mut join_budget(),
-        )
-        .map(|(_, admitted)| admitted.len())
-    };
+    let root = selecting("root", "dep");
     for ratio in [1, 2] {
         assert!(
-            matches!(admit(&[library(ratio)]), Ok(1)),
+            matches!(admit(&root, &[library(ratio)]), Ok(1)),
             "each content admits alone"
         );
     }
     for ratios in [[1, 1], [1, 2], [2, 1]] {
-        let refusal = admit(&ratios.map(library)).expect_err("a repeated name refuses");
+        let refusal = admit(&root, &ratios.map(library)).expect_err("a repeated name refuses");
         assert!(
             matches!(
                 refusal,
@@ -207,4 +213,93 @@ fn a_second_supplied_artifact_of_one_name_refuses_whatever_its_content() {
             "{ratios:?}: {refusal:?}"
         );
     }
+}
+
+/// Handoff admission refuses with the code it gives a repeated name.
+fn assert_refuses(outcome: Result<usize, ReplayRefusal>, case: &str) {
+    assert!(
+        matches!(
+            outcome,
+            Err(ReplayRefusal::PackageRead(PackageReadRefusal::Malformed))
+        ),
+        "{case}: {outcome:?}"
+    );
+}
+
+/// Handoff admission refuses an artifact that carries the root package's name,
+/// with the root's own content or another: that name already holds the root.
+#[trace("TC-1331", "FR-531-AC-59")]
+#[test]
+fn an_artifact_named_as_the_root_refuses() {
+    for (root_ratio, supplied_ratio) in [(1, 1), (1, 2), (2, 1)] {
+        assert_refuses(
+            admit(&library(root_ratio), &[library(supplied_ratio)]),
+            &format!("root ratio {root_ratio}, supplied ratio {supplied_ratio}"),
+        );
+    }
+}
+
+/// A root whose lock selects its own name refuses.
+#[trace("TC-1331", "FR-531-AC-59")]
+#[test]
+fn a_root_selecting_its_own_name_refuses() {
+    let control = admit(&selecting("root", "dep"), &[library(2)]);
+    assert!(matches!(control, Ok(1)), "{control:?}");
+    assert_refuses(
+        admit(&selecting("dep", "dep"), &[library(2)]),
+        "the root selects its own name",
+    );
+}
+
+/// The same refusal holds when a selected library selects the root's name.
+#[trace("TC-1331", "FR-531-AC-59")]
+#[test]
+fn a_library_selecting_the_root_name_refuses() {
+    let closure = [library(2), selecting("mid", "dep")];
+    let control = admit(&selecting("root", "mid"), &closure);
+    assert!(matches!(control, Ok(2)), "{control:?}");
+    assert_refuses(
+        admit(&selecting("dep", "mid"), &closure),
+        "a library selects the root's name",
+    );
+}
+
+/// An artifact is named by the package in its bytes: a root-named one refuses
+/// under whatever identity it is supplied.
+#[trace("TC-1331", "FR-531-AC-59")]
+#[test]
+fn a_root_named_artifact_supplied_under_another_identity_refuses() {
+    let mut relabelled = library(2);
+    relabelled.identity = "other".to_owned();
+    assert_refuses(
+        admit(&library(1), &[relabelled]),
+        "a root-named package supplied as `other`",
+    );
+}
+
+/// A join that refuses an artifact name gives a replay the refusal handoff
+/// admission gives it, and a native denial is not turned into it.
+#[trace("TC-1331", "FR-531-AC-61")]
+#[test]
+fn a_join_refusal_of_an_artifact_name_is_the_handoff_refusal() {
+    let root = library(1);
+    for (artifacts, case) in [
+        (vec![library(2)], "an artifact named as the root"),
+        (
+            vec![selecting("mid", "dep"), selecting("mid", "dep")],
+            "a repeated artifact name",
+        ),
+    ] {
+        let joined = fsl_package::BarePackage::new(&root.package)
+            .with_dependency_artifacts(&artifacts, &mut join_budget());
+        let Err(refusal) = joined else {
+            panic!("{case}: the join attached the artifacts");
+        };
+        assert_refuses(Err(handoff_join_refusal(refusal)), case);
+    }
+    let denial = fsl_package::NativeJoinFailure::UnitDefinitions {
+        setting: fsl_foundation::Setting::I2WorkUnits,
+    };
+    let control = handoff_join_refusal(denial.into());
+    assert!(matches!(control, ReplayRefusal::Fault(_)), "{control:?}");
 }

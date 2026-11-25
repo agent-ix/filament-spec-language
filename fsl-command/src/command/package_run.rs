@@ -1000,27 +1000,17 @@ fn execute_inner(
     let bare = fsl_package::BarePackage::new(&package)
         .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
-            package.with_supply(
-                fsl_package::BareSupply {
-                    identities: &identities,
-                    equality: equality.as_ref(),
-                },
-                &mut budget,
-            )
+            package
+                .with_supply(
+                    fsl_package::BareSupply {
+                        identities: &identities,
+                        equality: equality.as_ref(),
+                    },
+                    &mut budget,
+                )
+                .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(|failure| {
-            let setting = failure
-                .setting()
-                .map_or_else(|| "i2.work_units".to_owned(), |setting| setting.to_string());
-            RunCause::AnalyzePackage {
-                code: fsl_foundation::Code::StageLimitExceeded,
-                cause: failure
-                    .limit()
-                    .map(|limit| limit.kind().catalog_cause().to_owned()),
-                pointer: None,
-                message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
-            }
-        })?;
+        .map_err(super::analyze::dependency_join_cause)?;
     let (call, requirements) = match work {
         Work::Call(call, requirements) => (*call, requirements),
         Work::Clause(work) => {

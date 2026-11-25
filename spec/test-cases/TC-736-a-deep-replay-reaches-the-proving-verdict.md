@@ -25,9 +25,11 @@ a recursive list assignment needs a composite `WitnessValue`.
 Run every step on a thread spawned with a 512 KiB stack unless the step says otherwise.
 
 1. Compile a function whose body is a 100,000-term sum over a recursive list
-   parameter under raised `s1.*` and `s3.*` settings, and record a
-   counterexample whose value is a 100,000-long recursive list.
-2. Replay it with those settings in the request's `stage_limits`.
+   parameter under raised `s1.*`, `s3.*` and `emit.output_bytes` settings, and
+   record a counterexample whose value is a 100,000-long recursive list.
+2. Replay it with raised `s1.*`, `s3.*`, `i2.*` and `emit.output_bytes`
+   settings in the request's `stage_limits`, and with `replay.input_bytes`
+   raised to fit the request.
 3. Write the same value as a `Witness` transcript entry in FR-070's
    witness value text, with `replay.input_bytes` raised to fit the
    envelope. Decode it, then clone, compare, `Debug`-render and drop the

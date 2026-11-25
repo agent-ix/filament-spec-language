@@ -350,7 +350,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         let over = match (read.claim.over(), instance.as_ref()) {
             (None, None) => None,
             (Some(parameter), Some(instance)) => {
-                match system.bound_reference(parameter.object.clone(), instance) {
+                match system.written_reference(parameter.object.clone(), instance) {
                     Ok(reference) => Some(reference),
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
@@ -1111,7 +1111,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         let over = match (read.claim.over(), instance.as_ref()) {
             (None, None) => None,
             (Some(parameter), Some(instance)) => {
-                match system.bound_reference(parameter.object.clone(), instance) {
+                match system.written_reference(parameter.object.clone(), instance) {
                     Ok(reference) => Some(reference),
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
@@ -1447,7 +1447,7 @@ fn bound_instance(
         .into_iter()
         .find(|instance| {
             system
-                .bound_reference(over.object.clone(), instance)
+                .written_reference(over.object.clone(), instance)
                 .is_ok_and(|bound| &bound == reference)
         })
         .map(Some)
