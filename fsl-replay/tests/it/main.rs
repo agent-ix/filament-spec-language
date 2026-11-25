@@ -45,6 +45,7 @@ mod intake_refusal_outcome;
 mod integer_division_check;
 mod large_check_node_limit;
 mod native_fence_failure;
+mod native_run_result_reader;
 mod outcome_facade;
 mod parse_outcome_facade;
 mod probability_certificate;

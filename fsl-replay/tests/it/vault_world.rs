@@ -1902,7 +1902,7 @@ mod en1_closure_certificate {
                 {
                     TemporalCertificateCheck::Rejected(rejection)
                         if rejection.rule == CertificateRule::SuccessorMissing
-                            && matches!(rejection.at, CertificateLocus::ProductState(ref state) if state == &removed) =>
+                            && matches!(&rejection.at, CertificateLocus::ProductState(state) if state == &removed) =>
                     {
                         Some(removed)
                     }
