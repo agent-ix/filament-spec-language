@@ -149,106 +149,106 @@ pub(super) fn checked_body_locations(
     let applications = applications_at(graph, &origins);
     let mut pending = Vec::new();
 
-    meter.section(|writer| {
-        for (id, name, index, root, origin) in &functions {
-            let mut paths = Paths::default();
-            let mut captured = Vec::new();
-            term_rows(
-                graph,
-                *root,
-                &applications,
-                emitted_node_ids,
-                &mut captured,
-                &|at, _, _| (&at.origin == origin).then(|| (name.clone(), at.clone())),
-                true,
-            )?;
-            let captured = ordered(captured, |application, occurrence, ordinal, location| {
-                (application, occurrence, ordinal, location)
-            });
-            let mut by_application: BTreeMap<_, Vec<_>> = BTreeMap::new();
-            for (application, occurrence, _, location) in &captured {
-                by_application
-                    .entry(application)
-                    .or_default()
-                    .push((occurrence, location));
-            }
-            let mut visits: BTreeMap<&CheckedNodeId, usize> = BTreeMap::new();
-            let mut previous = 0;
-            let mut walk = nodes
-                .get(id)
-                .and_then(|node| body(node))
-                .and_then(|body| match body {
-                    CheckedTerm::Reference { target }
-                        if target.package.as_ref() == graph.package_name() =>
-                    {
-                        nodes.get(target).copied()
-                    }
-                    _ => None,
-                })
-                .into_iter()
-                .collect::<Vec<_>>();
-            while let Some(node) = walk.pop() {
-                if is_term(node) {
-                    let rank = visits.entry(&node.node_id).or_default();
-                    let candidates = by_application
-                        .get(&node.node_id)
-                        .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    // Sharing through distinct value parents can reach a captured
-                    // application again. Retain that application's genuine last
-                    // capture; the new visit gets its own term coordinate.
-                    let (occurrence, location) = candidates
-                        .get(*rank)
-                        .or_else(|| candidates.last())
-                        .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    *rank += 1;
-                    let current = paths.intern(location);
-                    let (up, down) = paths
-                        .delta(previous, current)
-                        .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    previous = current;
-                    let location = CheckedBodyLocation {
-                        origin: CheckedBodyLocationOrigin::FunctionBody {
-                            function: (*id).clone(),
-                            name: super::emitted_function_name(name, source_keys).into(),
-                            index: u64::try_from(*index)
-                                .map_err(|_| EmitRefusal::SourceMapInvariant)?,
-                        },
-                        up,
-                        down,
-                    };
-                    let row = CheckedBodySemanticLocation {
-                        application: node.node_id.clone(),
-                        occurrence: (*occurrence).clone(),
-                        term_ordinal: 0,
-                        location,
-                    };
-                    writer.push(&row)?;
-                    pending.push(PendingRow {
-                        application: row.application,
-                        occurrence: row.occurrence,
-                        origin_name: name.clone(),
-                        visit: pending.len(),
-                        location: row.location,
-                    });
+    for (id, name, index, root, origin) in &functions {
+        let mut captured = Vec::new();
+        term_rows(
+            graph,
+            *root,
+            &applications,
+            emitted_node_ids,
+            &mut captured,
+            &|at, _, _| (&at.origin == origin).then(|| (name.clone(), at.clone())),
+            true,
+        )?;
+        let captured = ordered(captured, |application, occurrence, ordinal, location| {
+            (application, occurrence, ordinal, location)
+        });
+        let mut by_application: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (application, occurrence, _, location) in &captured {
+            by_application
+                .entry(application)
+                .or_default()
+                .push((occurrence, location));
+        }
+        let mut visits: BTreeMap<&CheckedNodeId, usize> = BTreeMap::new();
+        let mut walk = nodes
+            .get(id)
+            .and_then(|node| body(node))
+            .and_then(|body| match body {
+                CheckedTerm::Reference { target }
+                    if target.package.as_ref() == graph.package_name() =>
+                {
+                    nodes.get(target).copied()
                 }
-                walk.extend(
-                    references(&node.body, &nodes, graph.package_name())
-                        .into_iter()
-                        .rev(),
-                );
+                _ => None,
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        while let Some(node) = walk.pop() {
+            if is_term(node) {
+                let rank = visits.entry(&node.node_id).or_default();
+                let candidates = by_application
+                    .get(&node.node_id)
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                // Sharing through distinct value parents can reach a captured
+                // application again. Retain that application's genuine last
+                // capture; the new visit gets its own term coordinate.
+                let (occurrence, location) = candidates
+                    .get(*rank)
+                    .or_else(|| candidates.last())
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                *rank += 1;
+                pending.push(PendingRow {
+                    application: node.node_id.clone(),
+                    occurrence: (*occurrence).clone(),
+                    origin_name: name.clone(),
+                    visit: pending.len(),
+                    location: ((*id).clone(), name.clone(), *index, (*location).clone()),
+                });
             }
+            walk.extend(
+                references(&node.body, &nodes, graph.package_name())
+                    .into_iter()
+                    .rev(),
+            );
+        }
+    }
+    let ordered = ordered(
+        pending,
+        |application, occurrence, term_ordinal, location| {
+            (application, occurrence, term_ordinal, location)
+        },
+    );
+    let mut paths = Paths::default();
+    let mut previous = BTreeMap::<CheckedNodeId, usize>::new();
+    let mut rows = Vec::with_capacity(ordered.len());
+    meter.section(|writer| {
+        for (application, occurrence, term_ordinal, (function, name, index, path)) in ordered {
+            let current = paths.intern(&path);
+            let previous_at = previous.entry(function.clone()).or_default();
+            let (up, down) = paths
+                .delta(*previous_at, current)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            *previous_at = current;
+            let row = CheckedBodySemanticLocation {
+                application,
+                occurrence,
+                term_ordinal,
+                location: CheckedBodyLocation {
+                    origin: CheckedBodyLocationOrigin::FunctionBody {
+                        function,
+                        name: super::emitted_function_name(&name, source_keys).into(),
+                        index: u64::try_from(index).map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                    },
+                    up,
+                    down,
+                },
+            };
+            writer.push(&row)?;
+            rows.push(row);
         }
         Ok(())
     })?;
-    let rows = ordered(
-        pending,
-        |application, occurrence, term_ordinal, location| CheckedBodySemanticLocation {
-            application,
-            occurrence,
-            term_ordinal,
-            location,
-        },
-    );
     // Each row was charged with term ordinal zero; its ordinal's further
     // digits are bytes the package also carries.
     let digits = rows.iter().fold(0_u64, |total, row| {
