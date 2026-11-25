@@ -84,8 +84,11 @@ always present and is exactly one of:
 
 A snapshot or invocation admission refusal (FR-106 checks 1 to 11) SHALL
 carry the document locus of the first failing member: the snapshot's
-labels, the pointer to the member (to the object for a missing member),
-the object's population and key, and the member name.
+labels, the pointer to the member, the object's population and key, and
+the member name. For a missing declared object field or a missing
+required operation parameter the pointer names the absent member
+(FR-106-AC-82, FR-106-AC-71); for a missing context field, or a member
+missing inside a value, it stops at the containing object.
 
 Every non-null locus is one of the six tagged forms of FR-267's
 **Refusal locus wire** (`region`, `located`, `occurrence`, `artifact`,
