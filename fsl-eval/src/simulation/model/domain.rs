@@ -5,8 +5,8 @@
 
 use filament_exact::{
     from_admitted, from_admitted_slots, ClockPlaceReference, CollectionKind, CollectionType,
-    EnumMember, FieldValue, Integer, NodeKey, ObjectReference, OptionValue, Presence, TextType,
-    UnionMember, UnionValue, Value, ValueType,
+    EnumMember, FieldValue, Integer, NodeKey, ObjectId, ObjectReference, OptionValue, Presence,
+    TextType, UnionMember, UnionValue, Value, ValueType,
 };
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
@@ -17,6 +17,17 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// Selector maxima authenticated by a timed subject's live-clock bound.
 pub(super) type ClockSelectorMaxima = BTreeMap<NodeKey, Vec<u64>>;
+
+/// Adapt a validated clock-place value to the common Reference domain form.
+pub(super) fn clock_reference_as_object(
+    reference: &ClockPlaceReference,
+) -> Option<ObjectReference> {
+    Some(ObjectReference::new(
+        reference.universe().clone(),
+        fsl_semantics::check::clock_reference_target(),
+        ObjectId::new(reference.text()).ok()?,
+    ))
+}
 
 /// Each record type's slot indices in declaration order, the first the most
 /// significant component of its enumerated domain (FR-120, FR-215). A record
@@ -601,22 +612,16 @@ impl Domain {
                 &mut Vec::new(),
             )
             .map(|space| Self::Space(Box::new(space))),
-            // FR-106 "Clock-reference domains": the candidates are the declared
-            // clock-place identities of the admitted owners, supplied among
-            // `objects` by the model system, never derived from an owner.
+            // FR-106 "Clock-reference domains": use the exact candidates the
+            // model system admitted and derived, never ordinary object values.
             ValueType::Reference(target)
                 if fsl_semantics::model::clock_reference::is_clock_type(target) =>
             {
                 Some(Self::Reference(
-                    objects
+                    clock_references
                         .iter()
-                        .filter(|object| {
-                            fsl_semantics::model::clock_reference::is_clock_type(
-                                object.object_type(),
-                            )
-                        })
-                        .cloned()
-                        .collect(),
+                        .map(clock_reference_as_object)
+                        .collect::<Option<Vec<_>>>()?,
                 ))
             }
             ValueType::ClockReference => Some(Self::ClockReference(clock_references.to_vec())),
