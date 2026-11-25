@@ -3716,6 +3716,15 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     {
                         (l == r) == (*operator == EqualityOperator::Equal)
                     }
+                    // FR-1040-AC-10: a clock reference from a foreign
+                    // universe compares false and never refuses, though
+                    // the kernel's equality refuses it as a
+                    // `ForeignReference`.
+                    (Value::ClockReference(l), Value::ClockReference(r))
+                        if l.universe() != r.universe() =>
+                    {
+                        *operator == EqualityOperator::NotEqual
+                    }
                     _ => outcome_into_stop(checked.evaluate(
                         self.world.types(),
                         &left,

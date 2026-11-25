@@ -1733,6 +1733,12 @@ fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
 #[test]
 fn source_generates_clock_references_from_ordinary_admitted_owners() {
     let body = format!("{}
+        protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{
+            capture chosen: Reference<Clock> = ref(call.x);
+            role Observer on C::Call;
+            run sequence Main {{ check Ready using v {{ true }}; }}
+            finish End as (outcome: Boolean) {{ true }};
+        }}
         invariant Stored using m on C::Call at current {{ ref(self.x) = ref(self.x) }}
         function same_clock(left: Reference<Clock>, right: Reference<Clock>): Boolean pure {{ left = right }}
         ",
