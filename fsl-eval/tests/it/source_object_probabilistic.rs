@@ -277,7 +277,7 @@ fn the_package_route_rebuilds_each_unit_of_a_package_under_its_own_source_identi
 }
 
 /// FR-740-AC-6: a Text and a Decimal parameter of an operation a workload
-/// weighs read back from their renderings, equal to S3's.
+/// weighs read back from their type nodes, equal to S3's.
 #[trace("TC-3012", "FR-740-AC-6")]
 #[test]
 fn the_package_route_rebuilds_a_workload_over_text_and_decimal_parameters() {
@@ -291,7 +291,7 @@ fn the_package_route_rebuilds_a_workload_over_text_and_decimal_parameters() {
     assert_equal_to_s3(&model, package.graph().probabilistic_model());
 }
 
-/// FR-740-AC-6: a parameter whose rendering a reader does not rebuild
+/// FR-740-AC-6: a parameter whose type a reader does not rebuild
 /// (`Rational`) leaves its operation out of the source package. A workload on
 /// another operation still rebuilds; a node that names the operation is
 /// refused at the row's node.
@@ -402,9 +402,9 @@ fn a_malformed_source_operation_identity_is_refused_at_the_row() {
 }
 
 /// FR-740-AC-6: a collection-valued scalar parameter rebuilds with the
-/// multiplicity, presence and key S3's record gives it, which the rendering
-/// of the element type does not carry: the row spells it as a collection
-/// layer.
+/// multiplicity, presence and key S3's record gives it, which the element
+/// type alone does not carry: the row names the whole collection type's
+/// node.
 #[trace("TC-3012", "FR-740-AC-6")]
 #[test]
 fn the_package_route_rebuilds_the_multiplicity_of_a_collection_parameter() {
@@ -499,6 +499,114 @@ fn the_package_route_rebuilds_every_collection_kind_of_a_parameter() {
                 .source_model()
                 .expect("the rows describe the source model");
             assert_eq!(parameters(&model.packages), expected, "{spelling}");
+        });
+    }
+}
+
+/// One parameter as a source package's record holds it.
+fn parameter_records(
+    packages: &[fsl_semantics::model::domain_package::DomainPackage],
+) -> Vec<String> {
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    packages
+        .iter()
+        .flat_map(|package| &package.records)
+        .filter_map(|record| match record {
+            DomainPackageRecord::OperationMember(operation) => Some(&operation.parameters),
+            _ => None,
+        })
+        .flatten()
+        .map(|parameter| {
+            format!(
+                "{:?} {:?} {:?} {}",
+                parameter.key, parameter.multiplicity, parameter.presence, parameter.value_type
+            )
+        })
+        .collect()
+}
+
+/// A unit whose one operation takes a parameter of the type `spelling`, which
+/// a workload weighs.
+fn with_parameter_type(spelling: &str) -> CheckedPackage {
+    checked(&format!(
+        "enum Tier {{ Gold, Standard }}\n\
+         record Point {{ x: Integer; }}\n\
+         type Small = Int[1, 3];\n\
+         object O {{ n: Integer; operation step(p: {spelling}) modifies self.n; }}\n\
+         workload W on O {{ weight O::step = 1; }}\n"
+    ))
+}
+
+/// FR-740-AC-6: a parameter type the route rebuilds is the one S3's record
+/// holds, with its bounds, its layers and the object type it references, and
+/// the probabilistic model builds over it.
+#[trace("TC-3012", "FR-740-AC-6")]
+#[test]
+fn a_rebuilt_parameter_type_equals_s3s_with_its_bounds() {
+    for spelling in [
+        "Boolean",
+        "Integer",
+        "Int[1, 3]",
+        "Small",
+        "Text[0, 8; nfc]",
+        "Decimal[0, 100; 2, 2; exact]",
+        "Tier",
+        "Point",
+        "Reference<O>",
+        "Option<Int[1, 3]>",
+        "Option<Set<Text[0, 8; nfc]>[0, 2]>",
+        "Sequence<Reference<O>>[0, 2]",
+        "Sequence<Set<Int[1, 3]>[0, 2]>[1, 2]",
+        "Set<Option<Small>>[0, 2]",
+        "Quantity<ms>",
+        "Option<Quantity<ms>>",
+        "Sequence<Quantity<ms>>[0, 2]",
+        "Quantity<ms^2>",
+        "Set<Quantity<ms^2>>[0, 2]",
+    ] {
+        let package = with_parameter_type(spelling);
+        let expected = parameter_records(package.graph().source_packages());
+        assert_eq!(expected.len(), 1, "{spelling}");
+        through_the_route("source-object-probabilistic", &package, |bare| {
+            let model = bare
+                .source_model()
+                .expect("the rows describe the source model");
+            assert!(model.unread.is_empty(), "{spelling}: {:?}", model.unread);
+            assert_eq!(parameter_records(&model.packages), expected, "{spelling}");
+        });
+        let model = rebuilt("source-object-probabilistic", &package)
+            .unwrap_or_else(|pending| panic!("{spelling}: {pending}"));
+        assert_equal_to_s3(&model, package.graph().probabilistic_model());
+    }
+}
+
+/// FR-740-AC-6: a bounded parameter type the route does not rebuild leaves
+/// its operation out, inside a layer too; it is never rebuilt as its
+/// unbounded base.
+#[trace("TC-3012", "FR-740-AC-6")]
+#[test]
+fn a_parameter_type_the_route_does_not_rebuild_is_never_widened() {
+    for spelling in [
+        "Rational[0, 4; 1, 4]",
+        "Option<Rational[0, 4; 1, 4]>",
+        "Sequence<Rational[0, 4; 1, 4]>[0, 2]",
+        "Float32[exact]",
+        "Option<Float64[nearest-even]>",
+        "Sequence<Float32[toward-zero]>[0, 2]",
+        "Quantity<ms, Int[0, 10]>",
+        "Option<Quantity<ms, Int[0, 10]>>",
+    ] {
+        let package = with_parameter_type(spelling);
+        through_the_route("source-object-probabilistic", &package, |bare| {
+            let model = bare
+                .source_model()
+                .expect("the rows describe the source model");
+            assert_eq!(model.unread.len(), 1, "{spelling}");
+            assert_eq!(
+                parameter_records(&model.packages),
+                Vec::<String>::new(),
+                "{spelling}"
+            );
         });
     }
 }

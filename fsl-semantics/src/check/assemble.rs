@@ -3699,7 +3699,7 @@ fn resolve_source_object_members(
 }
 
 /// A source member separates exactly one outer collection into multiplicity.
-fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
+pub(super) fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
     let (element, multiplicity) = match value_type {
         ValueType::Collection(collection) => {
             let (ordered, unique) = match collection.kind() {

@@ -22,7 +22,7 @@ use fsl_forms::{
 };
 use fsl_foundation::Span;
 
-use super::assemble::{AssemblyCause, AssemblyError, SourceObjectFault};
+use super::assemble::{AssemblyCause, AssemblyError, SourceObjectFault, source_member_type};
 use super::lowering::strongly_connected;
 use super::type_form::{TypeNames, resolve_form};
 use crate::model::domain_package::{
@@ -917,8 +917,24 @@ pub struct SourceRowParameter {
     pub optional: bool,
     /// How many values the parameter takes.
     pub multiplicity: Multiplicity,
-    /// The parameter's value type; `None` for a `Clock` parameter.
-    pub value_type: Option<filament_exact::ValueType>,
+    /// The type of one value of the parameter.
+    pub value_type: ValueTypeRef,
+}
+
+impl SourceRowParameter {
+    /// A parameter of the declared type `declared`, held as S3 holds a source
+    /// member: one outer collection is the multiplicity, and a reference
+    /// element names its object type.
+    #[must_use]
+    pub fn declared(name: String, optional: bool, declared: &filament_exact::ValueType) -> Self {
+        let (value_type, multiplicity) = source_member_type(declared);
+        Self {
+            name,
+            optional,
+            multiplicity,
+            value_type,
+        }
+    }
 }
 
 /// One operation a source object type declares itself, as a checked
@@ -981,12 +997,7 @@ pub fn package_of_source_rows(identity: &str, objects: &[SourceRowObject]) -> Do
                         .iter()
                         .map(|parameter| OperationParameterRecord {
                             key: member_key(identity, &site, &parameter.name),
-                            value_type: match &parameter.value_type {
-                                Some(value_type) => {
-                                    ValueTypeRef::Resolved(Box::new(value_type.clone()))
-                                }
-                                None => ValueTypeRef::Clock,
-                            },
+                            value_type: parameter.value_type.clone(),
                             multiplicity: parameter.multiplicity,
                             presence: if parameter.optional {
                                 Presence::Optional
