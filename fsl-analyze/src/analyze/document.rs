@@ -3851,6 +3851,58 @@ pub fn analyze_document(
     settle_run(run, negotiate, cancel).map(|settled| (settled.document, settled.exit_code))
 }
 
+/// Write an FR-621 document with already checked temporal SMT proof evidence.
+///
+/// Evidence is joined to the run by request index. Its certified terminal
+/// value and checker identity replace the ordinary engine result before the
+/// existing FR-621 writer projects the item. Callers obtain evidence by
+/// passing CG's [`fsl_replay::SmtProofOutcome`] through
+/// [`crate::model_check::smt::settle_temporal_smt_proof`] and qualifying it
+/// with [`SmtProofEvidence::new`].
+///
+/// # Errors
+///
+/// As [`analyze_document`], and [`AnalyzeDocumentError::Fault`] when an
+/// evidence entry does not match a settled run item.
+pub fn analyze_document_with_smt_proofs(
+    run: AnalyzeRun<'_>,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+    evidence: &BTreeMap<RequestIndex, SmtProofEvidence>,
+) -> Result<(Value, u8), AnalyzeDocumentError> {
+    settle_run_with_smt_proofs(run, negotiate, cancel, evidence)
+        .map(|settled| (settled.document, settled.exit_code))
+}
+
+/// A verified SMT settlement and the backend that produced its solver result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SmtProofEvidence {
+    backend: BackendId,
+    settlement: fsl_replay::SmtProofSettlement,
+}
+
+impl SmtProofEvidence {
+    /// Qualify a settlement for the FR-621 writer.
+    ///
+    /// Returns `None` unless FR-314 accepted the certificate and the
+    /// settlement carries the SMT proof checker identity.
+    #[must_use]
+    pub fn new(backend: BackendId, settlement: fsl_replay::SmtProofSettlement) -> Option<Self> {
+        (settlement.checker() == Some(fsl_replay::CertificateChecker::SmtProof)
+            && matches!(
+                settlement.value(),
+                TerminalValue::Proved {
+                    certification: fsl_replay::Certification::Certified,
+                    ..
+                }
+            ))
+        .then_some(Self {
+            backend,
+            settlement,
+        })
+    }
+}
+
 /// One FR-635 `registry` entry: a registered backend and its FSpec FR-331
 /// tool record.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3906,6 +3958,18 @@ pub fn settle_run(
     run: AnalyzeRun<'_>,
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
+) -> Result<SettledRun, AnalyzeDocumentError> {
+    settle_run_with_smt_proofs(run, negotiate, cancel, &BTreeMap::new())
+}
+
+/// [`settle_run`] with FR-314-verified SMT proof results supplied by request
+/// index. This is the production handoff from an SMT runner to the common
+/// FR-621 item writer.
+pub fn settle_run_with_smt_proofs(
+    run: AnalyzeRun<'_>,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+    evidence: &BTreeMap<RequestIndex, SmtProofEvidence>,
 ) -> Result<SettledRun, AnalyzeDocumentError> {
     let AnalyzeRun {
         package,
@@ -3964,6 +4028,50 @@ pub fn settle_run(
         _ => AnalyzeDocumentError::Fault,
     })?
     .into_value();
+    for (index, evidence) in evidence {
+        let mut matching_items = negotiated.iter().filter(|item| {
+            item.item.request_index == *index && item.item.kind == Capability::TemporalSatisfaction
+        });
+        let Some(matching_item) = matching_items.next() else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        let duplicate_item = matching_items.next().is_some();
+        if duplicate_item
+            || settled.contains_key(index)
+            || unrouted_items.contains(index)
+            || matching_item.disposition.target().map(|target| target.id())
+                != Some(&evidence.backend)
+        {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let mut matching_records = outcome
+            .records
+            .iter_mut()
+            .filter(|record| record.request_index() == *index);
+        let Some(record) = matching_records.next() else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        if matching_records.next().is_some() {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        *record = fsl_replay::TerminalRecord::proved_by_smt_proof(
+            *index,
+            evidence.backend.clone(),
+            &evidence.settlement,
+        )
+        .ok_or(AnalyzeDocumentError::Fault)?;
+        let mut matching_details = outcome
+            .details
+            .iter_mut()
+            .filter(|detail| detail.request_index == *index);
+        let Some(detail) = matching_details.next() else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        if matching_details.next().is_some() {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        detail.checker = Some(fsl_replay::CertificateChecker::SmtProof);
+    }
     gate_compositions(&mut outcome.records, &gates);
     let (targets, routes) = negotiated_routes(&negotiated, &unrouted_items, engines);
     // FR-634: each simulation item's document at its request index; it
@@ -4777,33 +4885,6 @@ fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
     member.insert("kind".to_owned(), certificate_kind(&document).into());
     member.insert("document".to_owned(), document);
     Value::Object(member)
-}
-
-/// Write FR-621's certificate member for a verified temporal SMT settlement.
-///
-/// This is the writer projection used by callers that settle a CG-produced
-/// [`fsl_replay::SmtProofOutcome`] through
-/// [`crate::model_check::smt::settle_temporal_smt_proof`]. No certificate is
-/// written when the core did not verify it.
-#[must_use]
-pub fn smt_proof_certificate_member(
-    identity: Value,
-    settlement: &fsl_replay::SmtProofSettlement,
-) -> Option<Value> {
-    if !matches!(
-        settlement.value(),
-        fsl_replay::TerminalValue::Proved {
-            certification: fsl_replay::Certification::Certified,
-            ..
-        }
-    ) {
-        return None;
-    }
-    let checker = settlement.checker()?;
-    if checker != fsl_replay::CertificateChecker::SmtProof {
-        return None;
-    }
-    Some(checker_certificate_member(identity, checker, true))
 }
 
 fn checker_certificate_member(
