@@ -2,11 +2,8 @@
 //! The standard's published fixtures for the two source runners (QSL-2048),
 //! and the rule that decides what a case that does not match may do.
 //!
-//! The standard is read from the checkout `FSPEC_DIR` names when that
-//! variable is set, and from the pinned published package otherwise. A set
-//! variable that names no directory is an error, never a fallback to the
-//! pinned copy: a run that believes it reads one standard and reads another
-//! is not evidence.
+//! The standard is read only from the pinned published package so the
+//! fixtures always identify the same reviewed source.
 //!
 //! A case that does not match its fixture, or that no source adapter can
 //! execute, fails the run unless the checked-in registry in
@@ -14,33 +11,14 @@
 //! starts to match fails the run too, so a fixed gap cannot stay on the list.
 
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
-use std::path::Path;
 
 use crate::fspec_pending::{Pending, ALLOWED_TICKETS, PENDING, RUNNERS};
 
-/// Reads `path` (relative to the standard's root) from `directory` when one
-/// is named, otherwise from the pinned package.
-pub(crate) fn read_from(directory: Option<&OsStr>, path: &str) -> Result<Vec<u8>, String> {
-    let Some(directory) = directory.filter(|directory| !directory.is_empty()) else {
-        return filament_specification::published_file(path)
-            .map(<[u8]>::to_vec)
-            .ok_or_else(|| format!("the pinned FSpec package does not publish {path}"));
-    };
-    let root = Path::new(directory);
-    if !root.is_dir() {
-        return Err(format!(
-            "FSPEC_DIR={} is not a directory; unset it to read the pinned FSpec package",
-            root.display()
-        ));
-    }
-    std::fs::read(root.join(path))
-        .map_err(|error| format!("FSPEC_DIR={} does not hold {path}: {error}", root.display()))
-}
-
-/// Reads `path` from the standard this run is configured to read.
+/// Reads `path` from the pinned standard package.
 pub(crate) fn read(path: &str) -> Result<Vec<u8>, String> {
-    read_from(std::env::var_os("FSPEC_DIR").as_deref(), path)
+    filament_specification::published_file(path)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| format!("the pinned FSpec package does not publish {path}"))
 }
 
 /// Reads `path` as JSON.
