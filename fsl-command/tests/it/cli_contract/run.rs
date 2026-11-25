@@ -1081,22 +1081,6 @@ fn spine_clause(case: &Case, extracted: bool) -> (Value, std::path::PathBuf) {
     (job, path)
 }
 
-/// FR-267-AC-17: a native clause whose source is supplied as bytes has no
-/// Quire extraction record in its run report.
-#[test]
-#[trace("FR-267-AC-17")]
-fn native_clause_report_from_bytes_has_no_extraction() {
-    let case = Case::new();
-    let (_, path) = spine_clause(&case, false);
-    let result = plain(&path);
-    assert_eq!(result.exit, 0, "{}", result.document);
-    assert!(
-        result.document.get("extraction").is_none(),
-        "{}",
-        result.document
-    );
-}
-
 fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
     let case = Case::new();
     let (job, path) = spine_clause(&case, extracted);

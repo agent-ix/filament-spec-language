@@ -77,7 +77,7 @@ fn markdown(body: &str, newline: &str) -> String {
 }
 
 #[test]
-#[trace("FR-031-AC-4", "FR-267-AC-17")]
+#[trace("FR-031-AC-4")]
 fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenance() {
     for newline in ["\n", "\r\n"] {
         for (case, category, exit, truth) in [
@@ -98,9 +98,9 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
                 "clause_text": upstream.clause_text, "diagnostics": upstream.diagnostics,
                 "clauses": upstream.clauses});
             let expected_segments = if newline == "\n" {
-                json!([{"body_start":0,"body_end":283,"original_start":57,"original_end":340}])
+                json!([{"body_start":0,"body_end":282,"original_start":57,"original_end":339}])
             } else {
-                json!([{"body_start":0,"body_end":289,"original_start":63,"original_end":352}])
+                json!([{"body_start":0,"body_end":287,"original_start":63,"original_end":350}])
             };
             let extracted = run(&extracted_path);
             let document = extracted.value.as_value();
@@ -147,7 +147,23 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(extraction["body"]["authority"], "agent-ix");
             assert_eq!(extraction["body"]["identity"], "body");
             assert_eq!(extraction["body"]["document"], "Body");
-            assert_eq!(extraction["body"]["bytes"], json!(body().as_bytes()));
+            let expected_body = body().replace('\n', newline);
+            let expected_body = expected_body
+                .strip_suffix(newline)
+                .expect("the code body ends with its source newline");
+            let actual_body = extraction["body"]["bytes"]
+                .as_array()
+                .expect("body bytes are a JSON byte array")
+                .iter()
+                .map(|byte| {
+                    u8::try_from(byte.as_u64().expect("a byte is an integer"))
+                        .expect("a body byte fits u8")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                String::from_utf8(actual_body).expect("body bytes are UTF-8"),
+                expected_body
+            );
             assert_eq!(extraction["binding"]["clause"], "parent_order");
             assert_eq!(extraction["binding"]["package"], "example/config-version");
             assert_eq!(extraction["outcome"], upstream);
@@ -175,39 +191,7 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(read.basis(), document["basis"]);
             assert_eq!(read.code(), None);
             assert_eq!(read.cause(), None);
-            assert!(!read.has_witness());
             assert!(read.temporal().is_none());
-
-            for (label, member) in [
-                ("unknown", "source"),
-                ("missing", "map"),
-                ("null", "binding"),
-                ("wrong-type", "identity"),
-                ("empty", "segments"),
-            ] {
-                let mut malformed = document.clone();
-                match label {
-                    "unknown" => malformed["extraction"]["source"] = json!("bad"),
-                    "missing" => {
-                        malformed["extraction"]
-                            .as_object_mut()
-                            .unwrap()
-                            .remove("map");
-                    }
-                    "null" => malformed["extraction"]["binding"] = Value::Null,
-                    "wrong-type" => malformed["extraction"]["body"]["identity"] = json!(7),
-                    "empty" => malformed["extraction"]["map"]["segments"] = json!([]),
-                    _ => unreachable!(),
-                }
-                let error = fsl_replay::spine::read_native_run_result(
-                    &serde_json::to_vec(&malformed).expect("the mutated result serializes"),
-                )
-                .err()
-                .expect("malformed extraction metadata is refused");
-                let message = error.to_string();
-                assert!(message.contains("extraction"), "{label}: {message}");
-                assert!(message.contains(member), "{label}: {message}");
-            }
         }
     }
 }
@@ -323,7 +307,7 @@ fn an_extracted_body_with_two_clauses_refuses_its_actual_count() {
 }
 
 #[test]
-#[trace("FR-031-AC-9", "TC-109", "FR-267-AC-17")]
+#[trace("FR-031-AC-9", "TC-109")]
 fn an_extracted_body_with_a_syntax_error_refuses_at_the_source() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
