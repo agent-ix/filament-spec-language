@@ -2232,205 +2232,168 @@ fn conforms(types: &TypeEnvironment, actual: &ValueType, required: &ValueType) -
 }
 
 /// Whether `actual` supplies `required` after the object rows lift references
-/// in the required type. Composite declarations are paired by their declared
-/// structure because the abstract and concrete sides have separate keys.
+/// in the required type.
 fn conforms_lifted(
     types: &TypeEnvironment,
     lifting: &BTreeMap<EffectiveId, EffectiveId>,
     actual: &ValueType,
     required: &ValueType,
 ) -> bool {
-    match (actual, required) {
-        (ValueType::Reference(actual), ValueType::Reference(required)) => {
-            let lifted = lifting.get(required).unwrap_or(required);
-            types.conforms(actual.clone(), lifted.clone())
-        }
-        (ValueType::Option(actual), ValueType::Option(required)) => {
-            conforms_lifted(types, lifting, actual, required)
-        }
-        (ValueType::Collection(actual), ValueType::Collection(required)) => {
-            actual.kind() == required.kind()
-                && actual.bound() == required.bound()
-                && conforms_lifted(types, lifting, actual.element(), required.element())
-        }
-        (ValueType::Map(actual), ValueType::Map(required)) => {
-            actual.bound() == required.bound()
-                && conforms_lifted(types, lifting, actual.key(), required.key())
-                && conforms_lifted(types, lifting, actual.values(), required.values())
-        }
-        (ValueType::Composite(actual), ValueType::Composite(required)) => {
-            composite_conforms_lifted(types, lifting, actual, required)
-        }
-        _ => conforms(types, actual, required),
-    }
+    lifted_mismatch(types, lifting, actual, required).is_none()
 }
 
-fn composite_conforms_lifted(
-    types: &TypeEnvironment,
-    lifting: &BTreeMap<EffectiveId, EffectiveId>,
-    actual: &NodeKey,
-    required: &NodeKey,
-) -> bool {
-    if types.composite_conforms(actual.clone(), required.clone()) {
-        return true;
-    }
-    let (Some(actual), Some(required)) = (
-        types.composite(actual.clone()),
-        types.composite(required.clone()),
-    ) else {
-        return false;
-    };
-    match (actual.shape(), required.shape()) {
-        (CompositeShape::Record(actual), CompositeShape::Record(required)) => {
-            actual.len() == required.len()
-                && required.iter().all(|required| {
-                    actual
-                        .iter()
-                        .find(|actual| actual.name() == required.name())
-                        .is_some_and(|actual| {
-                            actual.presence() == required.presence()
-                                && conforms_lifted(
-                                    types,
-                                    lifting,
-                                    actual.value_type(),
-                                    required.value_type(),
-                                )
-                        })
-                })
-        }
-        (CompositeShape::Tuple(actual), CompositeShape::Tuple(required)) => {
-            actual.len() == required.len()
-                && actual
-                    .iter()
-                    .zip(required)
-                    .all(|(actual, required)| conforms_lifted(types, lifting, actual, required))
-        }
-        (CompositeShape::Union(actual), CompositeShape::Union(required)) => {
-            actual.len() == required.len()
-                && required.iter().all(|required| {
-                    actual
-                        .iter()
-                        .find(|actual| actual.identifier() == required.identifier())
-                        .is_some_and(|actual| {
-                            actual.positions().len() == required.positions().len()
-                                && actual.positions().iter().zip(required.positions()).all(
-                                    |(actual, required)| {
-                                        conforms_lifted(types, lifting, actual, required)
-                                    },
-                                )
-                        })
-                })
-        }
-        _ => false,
-    }
-}
-
-/// The first semantic component at which two lifted composite declarations
-/// stop pairing, in required-side declaration order.
-fn composite_mismatch_path(
+/// The first semantic component, in required-side declaration order, at which
+/// `actual` stops supplying `required`. The path is empty when the value
+/// itself does not supply it, and `None` means it does.
+fn lifted_mismatch(
     types: &TypeEnvironment,
     lifting: &BTreeMap<EffectiveId, EffectiveId>,
     actual: &ValueType,
     required: &ValueType,
 ) -> Option<String> {
-    if conforms_lifted(types, lifting, actual, required) {
-        return None;
+    LiftedPairing {
+        types,
+        lifting,
+        paired: BTreeSet::new(),
     }
-    match (actual, required) {
-        (ValueType::Option(actual), ValueType::Option(required)) => {
-            composite_mismatch_path(types, lifting, actual, required)
-        }
-        (ValueType::Collection(actual), ValueType::Collection(required)) => {
-            if actual.kind() != required.kind() || actual.bound() != required.bound() {
-                return Some("[0]".to_owned());
+    .mismatch(actual, required, false)
+}
+
+/// One walk pairing a concrete type with an abstract one.
+struct LiftedPairing<'a> {
+    types: &'a TypeEnvironment,
+    lifting: &'a BTreeMap<EffectiveId, EffectiveId>,
+    /// Composite pairs already entered. A recursive declaration reaches its
+    /// own pair again, which holds unless another component of it fails.
+    paired: BTreeSet<(NodeKey, NodeKey)>,
+}
+
+impl LiftedPairing<'_> {
+    /// [`lifted_mismatch`] at one position. `component` says the position is
+    /// inside a composite. The caller has lifted the references outside
+    /// composites in `required`; those inside are still abstract, so each
+    /// must have an object row.
+    fn mismatch(
+        &mut self,
+        actual: &ValueType,
+        required: &ValueType,
+        component: bool,
+    ) -> Option<String> {
+        match (actual, required) {
+            (ValueType::Reference(actual), ValueType::Reference(required)) => {
+                let lifted = match self.lifting.get(required) {
+                    Some(mapped) => Some(mapped),
+                    None => (!component).then_some(required),
+                };
+                lifted
+                    .is_none_or(|lifted| !self.types.conforms(actual.clone(), lifted.clone()))
+                    .then(String::new)
             }
-            composite_mismatch_path(types, lifting, actual.element(), required.element())
-                .map(|path| format!("[0]{path}"))
-        }
-        (ValueType::Map(actual), ValueType::Map(required)) => {
-            if actual.bound() != required.bound() {
-                return Some("[key]".to_owned());
+            (ValueType::Option(actual), ValueType::Option(required)) => {
+                self.mismatch(actual, required, component)
             }
-            composite_mismatch_path(types, lifting, actual.key(), required.key()).or_else(|| {
-                composite_mismatch_path(types, lifting, actual.values(), required.values())
-            })
+            (ValueType::Collection(actual), ValueType::Collection(required)) => {
+                if actual.kind() != required.kind() || actual.bound() != required.bound() {
+                    return Some("[0]".to_owned());
+                }
+                self.mismatch(actual.element(), required.element(), component)
+                    .map(|rest| component_path("[0]", &rest))
+            }
+            (ValueType::Map(actual), ValueType::Map(required)) => {
+                if actual.bound() != required.bound() {
+                    return Some("[key]".to_owned());
+                }
+                if let Some(rest) = self.mismatch(actual.key(), required.key(), component) {
+                    return Some(component_path("[key]", &rest));
+                }
+                self.mismatch(actual.values(), required.values(), component)
+                    .map(|rest| component_path("[value]", &rest))
+            }
+            (ValueType::Composite(actual), ValueType::Composite(required)) => {
+                self.composite_mismatch(actual, required)
+            }
+            _ => (!conforms(self.types, actual, required)).then(String::new),
         }
-        (ValueType::Composite(actual), ValueType::Composite(required)) => {
-            let (Some(actual), Some(required)) = (
-                types.composite(actual.clone()),
-                types.composite(required.clone()),
-            ) else {
-                return Some("value".to_owned());
-            };
-            match (actual.shape(), required.shape()) {
-                (CompositeShape::Record(actual), CompositeShape::Record(required)) => {
-                    for field in required {
-                        let Some(paired) =
-                            actual.iter().find(|paired| paired.name() == field.name())
-                        else {
-                            return Some(field.name().to_owned());
-                        };
-                        if paired.presence() != field.presence() {
-                            return Some(field.name().to_owned());
-                        }
-                        if let Some(path) = composite_mismatch_path(
-                            types,
-                            lifting,
-                            paired.value_type(),
-                            field.value_type(),
-                        ) {
-                            return Some(format!("{}.{path}", field.name()));
-                        }
+    }
+
+    /// Composite declarations pair by their declared structure, because the
+    /// abstract and concrete sides have separate keys. A declaration both
+    /// sides share is walked too: its references still need object rows.
+    fn composite_mismatch(&mut self, actual: &NodeKey, required: &NodeKey) -> Option<String> {
+        if !self.paired.insert((actual.clone(), required.clone())) {
+            return None;
+        }
+        let types = self.types;
+        let (Some(actual), Some(required)) = (
+            types.composite(actual.clone()),
+            types.composite(required.clone()),
+        ) else {
+            return Some(String::new());
+        };
+        match (actual.shape(), required.shape()) {
+            (CompositeShape::Record(actual), CompositeShape::Record(required)) => {
+                for field in required {
+                    let Some(paired) = actual.iter().find(|paired| paired.name() == field.name())
+                    else {
+                        return Some(field.name().to_owned());
+                    };
+                    if paired.presence() != field.presence() {
+                        return Some(field.name().to_owned());
                     }
-                    actual
+                    if let Some(rest) = self.mismatch(paired.value_type(), field.value_type(), true)
+                    {
+                        return Some(component_path(field.name(), &rest));
+                    }
+                }
+                actual
+                    .iter()
+                    .find(|field| {
+                        !required
+                            .iter()
+                            .any(|required| required.name() == field.name())
+                    })
+                    .map(|field| field.name().to_owned())
+            }
+            (CompositeShape::Tuple(actual), CompositeShape::Tuple(required)) => {
+                for (index, (paired, position)) in actual.iter().zip(required).enumerate() {
+                    if let Some(rest) = self.mismatch(paired, position, true) {
+                        return Some(component_path(&format!("[{index}]"), &rest));
+                    }
+                }
+                (actual.len() != required.len())
+                    .then(|| format!("[{}]", actual.len().min(required.len())))
+            }
+            (CompositeShape::Union(actual), CompositeShape::Union(required)) => {
+                for member in required {
+                    let Some(paired) = actual
                         .iter()
-                        .find(|field| {
-                            !required
-                                .iter()
-                                .any(|required| required.name() == field.name())
-                        })
-                        .map(|field| field.name().to_owned())
-                }
-                (CompositeShape::Tuple(actual), CompositeShape::Tuple(required)) => {
-                    for (index, (actual, required)) in actual.iter().zip(required).enumerate() {
-                        if let Some(path) =
-                            composite_mismatch_path(types, lifting, actual, required)
-                        {
-                            return Some(format!("[{index}]{path}"));
+                        .find(|paired| paired.identifier() == member.identifier())
+                    else {
+                        return Some("variant".to_owned());
+                    };
+                    if paired.positions().len() != member.positions().len() {
+                        return Some("variant".to_owned());
+                    }
+                    let positions = paired.positions().iter().zip(member.positions());
+                    for (index, (paired, position)) in positions.enumerate() {
+                        if let Some(rest) = self.mismatch(paired, position, true) {
+                            return Some(component_path(&format!("variant[{index}]"), &rest));
                         }
                     }
-                    Some(format!("[{}]", actual.len().min(required.len())))
                 }
-                (CompositeShape::Union(actual), CompositeShape::Union(required)) => {
-                    for required in required {
-                        let Some(actual) = actual
-                            .iter()
-                            .find(|actual| actual.identifier() == required.identifier())
-                        else {
-                            return Some("variant".to_owned());
-                        };
-                        if actual.positions().len() != required.positions().len() {
-                            return Some("variant".to_owned());
-                        }
-                        for (index, (actual, required)) in actual
-                            .positions()
-                            .iter()
-                            .zip(required.positions())
-                            .enumerate()
-                        {
-                            if let Some(path) =
-                                composite_mismatch_path(types, lifting, actual, required)
-                            {
-                                return Some(format!("variant[{index}]{path}"));
-                            }
-                        }
-                    }
-                    Some("variant".to_owned())
-                }
-                _ => Some("value".to_owned()),
+                (actual.len() != required.len()).then(|| "variant".to_owned())
             }
+            _ => Some(String::new()),
         }
-        _ => Some("value".to_owned()),
+    }
+}
+
+/// `rest` under the component `head`; an index follows its component directly.
+fn component_path(head: &str, rest: &str) -> String {
+    match rest {
+        "" => head.to_owned(),
+        index if index.starts_with('[') => format!("{head}{index}"),
+        member => format!("{head}.{member}"),
     }
 }
 
@@ -3708,17 +3671,14 @@ impl<'c, 'a> Checker<'c, 'a> {
             let body = typer.infer(&expression.expression, type_context, &location)?;
             if let Some(required) = required {
                 if requires_composite_pairing(required) {
-                    if let Some(component) = composite_mismatch_path(
-                        types,
-                        &self.lifting,
-                        body.root().value_type(),
-                        required,
-                    ) {
+                    if let Some(component) =
+                        lifted_mismatch(types, &self.lifting, body.root().value_type(), required)
+                    {
                         let field = label.rsplit('.').next().unwrap_or(&label);
                         let path = if component.starts_with('[') {
                             component
                         } else {
-                            format!("{field}.{component}")
+                            component_path(field, &component)
                         };
                         return Err(CheckRefusal {
                             location: location.clone(),
@@ -4891,5 +4851,58 @@ mod tests {
             &composite(parcel_actual),
             &composite(parcel_required),
         ));
+    }
+
+    /// A recursive record pairs through its own recursion and still fails at a
+    /// component declared after the recursive one.
+    #[test]
+    fn a_recursive_composite_pairs_through_its_own_cycle() {
+        let [actual, required, shared, extra] = [1, 2, 3, 4].map(node);
+        let chain = |key: &NodeKey, owner: u8, last: ValueType| {
+            CompositeDeclaration::new(
+                key.clone(),
+                "Chain",
+                CompositeShape::Record(vec![
+                    FieldDeclaration::new(
+                        "next",
+                        ValueType::Composite(key.clone()),
+                        Presence::Optional,
+                    ),
+                    FieldDeclaration::new(
+                        "owner",
+                        ValueType::Reference(effective(owner)),
+                        Presence::Required,
+                    ),
+                    FieldDeclaration::new("last", last, Presence::Required),
+                ]),
+            )
+        };
+        let types = TypeEnvironment::new(
+            [
+                chain(&actual, 2, ValueType::Boolean),
+                chain(&required, 1, ValueType::Boolean),
+                chain(&shared, 3, ValueType::Boolean),
+                chain(&extra, 2, ValueType::Integer),
+            ],
+            [
+                ObjectTypeDeclaration::new(effective(1), "Queue", vec![]),
+                ObjectTypeDeclaration::new(effective(2), "Ring", vec![]),
+                ObjectTypeDeclaration::new(effective(3), "Ghost", vec![]),
+            ],
+        )
+        .expect("the recursive records admit");
+        let lifting = BTreeMap::from([(effective(1), effective(2))]);
+        let mismatch = |actual: &NodeKey, required: &NodeKey| {
+            lifted_mismatch(
+                &types,
+                &lifting,
+                &ValueType::Composite(actual.clone()),
+                &ValueType::Composite(required.clone()),
+            )
+        };
+
+        assert_eq!(mismatch(&actual, &required), None);
+        assert_eq!(mismatch(&extra, &required), Some("last".to_owned()));
+        assert_eq!(mismatch(&shared, &shared), Some("owner".to_owned()));
     }
 }

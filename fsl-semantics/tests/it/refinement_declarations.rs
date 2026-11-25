@@ -1444,6 +1444,90 @@ fn composite_pairing_refuses_unmapped_references_through_carriers() {
     }
 }
 
+/// FR-135-AC-6 (TC-540): a record, tuple or union declaration that both
+/// sides share still needs an object row for each reference nested in it. A
+/// shared `Reference<Queue>` that the `Queue` row maps is admitted; a shared
+/// `Reference<Ghost>` that no row maps refuses at the row's expression.
+#[trace("TC-540", "FR-135-AC-6")]
+#[test]
+fn a_shared_composite_holding_an_unmapped_reference_is_refused() {
+    let (spec, _) = nested_models();
+    let shared_refinement = |row: &str| {
+        format!(
+            "refinement SharedRows using inf abstract Q concrete Q {{\n\
+             population Q::queues from Q::queues;\n\
+             population Q::cells from Q::cells;\n\
+             object Q::Queue from Q::Queue {{ size = self.size; {row} }}\n\
+             object Q::Cell from Q::Cell {{ value = self.value; }}\n\
+             }}"
+        )
+    };
+
+    let mapped = [("Q", NESTED_SPEC, &spec[..])];
+    for row in [
+        "box = self.box;",
+        "pair = self.pair;",
+        "holder = self.holder;",
+    ] {
+        let graph = check_with("", &mapped, &shared_refinement(row)).unwrap_or_else(|refusals| {
+            panic!(
+                "{row}: {:?}",
+                refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
+            )
+        });
+        assert_eq!(only_refinement(&graph).objects().len(), 2, "{row}");
+    }
+
+    let mut unmapped: Value = serde_json::from_slice(&spec).expect("a model");
+    let declarations = unmapped["types"].as_array_mut().expect("types");
+    let ghost = node(NESTED_SPEC, "Ghost");
+    for declared in declarations.iter_mut() {
+        if declared["identity"] == node(NESTED_SPEC, "Box") {
+            declared["fields"][0]["typeRef"] = json!(ghost);
+        } else if declared["identity"] == node(NESTED_SPEC, "Pair") {
+            declared["positions"][0]["typeRef"] = json!(ghost);
+        } else if declared["identity"] == node(NESTED_SPEC, "Holder") {
+            declared["variants"][1]["payloadType"] = json!(ghost);
+        }
+    }
+    declarations.push(object_type(
+        NESTED_SPEC,
+        "Ghost",
+        &[("value", INTEGER)],
+        Vec::new(),
+    ));
+    let unmapped = unmapped.to_string().into_bytes();
+    let models = [("Q", NESTED_SPEC, &unmapped[..])];
+
+    for (row, expression, path) in [
+        ("box = self.box;", "self.box", "box.target"),
+        ("pair = self.pair;", "self.pair", "[0]"),
+        ("holder = self.holder;", "self.holder", "holder.variant[0]"),
+    ] {
+        let found = refused(&models, &shared_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{row}"
+        );
+        assert_eq!(refusal.at, expression, "{row}");
+        let CheckCause::Refinement(refinement) = refusal.refusal.cause.as_ref() else {
+            panic!("the unmapped reference has a refinement refusal");
+        };
+        let RefinementCause::Check(CheckCause::Refinement(nested)) = &refinement.cause else {
+            panic!("the nested refusal retains its typed mismatch path");
+        };
+        assert_eq!(
+            nested.cause,
+            RefinementCause::CompositeTypeMismatch {
+                path: path.to_owned(),
+            },
+            "{row}"
+        );
+    }
+}
+
 /// FR-135-AC-17 (TC-540): a record with no same-name component refuses at
 /// S3, so it cannot produce a checked refinement.
 #[trace("TC-540", "FR-135-AC-17")]
