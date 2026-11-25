@@ -686,10 +686,12 @@ There is no totality check.
   FR-290's per-item `invalid-request` does (ADR-012 §7.2).
 - **Relation revision.** The relation is a v2 node (FSpec FR-451), so
   rebinding changes the node's body and the checked package's value; the
-  package identity (O-02) does not depend on a binding. Every generated
-  contract carries the `package_id` it was generated from (O-25), and a
-  rebinding must not reinterpret it (FSpec FR-353-AC-5). There is no separate
-  revision field.
+  package identity (O-02) does not depend on a binding. A rebinding must not
+  reinterpret a contract generated from the earlier package (FSpec
+  FR-353-AC-5). The two revisions are told apart by comparing checked-package
+  values: their relation nodes have an equal `node_id` (FSpec FR-451
+  `node_id`), and the two packages are unequal values, so they are not the
+  same package (FSpec FR-322). There is no separate revision field.
 
 #### AR-5 Capability dispatch and proof/replay
 

@@ -25,5 +25,5 @@ Scope: FR-306-AC-1, FR-306-AC-2.
    in-process `CheckedAbstractionRelation`'s.
 2. The unchanged recompile gives an equal relation node id and body. The
    changed one gives an equal relation node id and a body whose `objects`
-   entry holds the new `RustField` where the first holds the old one, under the
-   same package identity, and reads back.
+   entry holds the new `RustField` where the first holds the old one, and
+   reads back.

@@ -92,7 +92,7 @@ Tag all tests `#[trace("TC-540", "FR-135-AC-n")]` for their owning criteria.
 - Step 4: with the row removed, `hidden = [value]`. With `value = self.tmpA`,
   a node key equal to step 1's (equal `package` and `path`, ordinal 0 in
   both); the `value` field row reads `self.tmpA` where step 1's reads
-  `self.value`; neither check has a hidden field; the same package identity.
+  `self.value`; neither check has a hidden field.
 - Step 5: `CasTwice` refuses `unsupported_construct`/`not-yet-implemented` at `Twice` naming `protocol-abstract-side`, `CasTwice` and the profile, with no `subject` member; the internal-list refinement refuses the same pair naming `refinement-internal-list`; each classifies `unsupported`; no `CheckedRefinement` for either; `CasRefinesCounter` and `RegisterHistory` check.
 - Step 6: the sequence, option, plain-reference and depth-two rows check, each
   nested reference lifted through the `Queue` from `Ring` row; the `Slot` row
