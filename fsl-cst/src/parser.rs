@@ -956,9 +956,10 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
             at += 1;
         }
         let payload = &bytes[payload_start..at];
-        let uppercase_hex = payload
-            .get(2..)
-            .is_some_and(|hex| hex.iter().any(|byte| (b'A'..=b'F').contains(byte)));
+        let uppercase_hex = payload.starts_with(b"0x")
+            && payload
+                .get(2..)
+                .is_some_and(|hex| hex.iter().any(|byte| (b'A'..=b'F').contains(byte)));
         let valid_payload = payload.len() == digits + 2
             && payload.starts_with(b"0x")
             && payload[2..]
