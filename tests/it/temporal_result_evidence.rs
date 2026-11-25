@@ -206,7 +206,7 @@ fn every_result_names_the_checked_subject_it_was_evaluated_for() {
                     assert_eq!(stopped.usage.get(counter), used - 1, "{kind} {counter:?}");
                 } else {
                     assert!(
-                        stopped.usage.get(counter) <= used - 1,
+                        stopped.usage.get(counter) < used,
                         "{kind} {counter:?}: a denied peak charge was retained"
                     );
                 }
