@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fsl_forms::{BinderKind, ProtocolDeclarationForm, ProtocolNodeKind};
 use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 use super::refusal;
 use crate::check::check::SourceScope;
@@ -26,6 +27,7 @@ use crate::check::{Scope, Signatures};
 /// own declaration scope because neither is enclosed by a named control.
 /// A package-level alias or native declaration is checked regardless of
 /// binder scope.
+#[implements("FR-513-AC-12")]
 pub(super) fn shadow_refusals(
     protocol: &ProtocolDeclarationForm,
     alias_names: &BTreeMap<String, AliasKind>,
@@ -41,7 +43,7 @@ pub(super) fn shadow_refusals(
             .get(binder.name.name.as_str())
             .and_then(|earlier| {
                 earlier.iter().rev().find_map(|(earlier_scope, span)| {
-                    scope_is_prefix(earlier_scope, &binder_scope)
+                    scopes_overlap_at_declaration(protocol, earlier_scope, &binder_scope)
                         .then_some(ShadowedDeclaration::Binder(*span))
                 })
             })
@@ -79,6 +81,76 @@ enum ScopeSegment {
 
 fn scope_is_prefix(earlier: &[ScopeSegment], later: &[ScopeSegment]) -> bool {
     earlier.len() <= later.len() && earlier.iter().zip(later).all(|(left, right)| left == right)
+}
+
+/// Whether `earlier` is still active where `later` is declared. A binder
+/// inherited from an enclosing scope remains active in its descendants; a
+/// binder in one parallel branch can also be active while another branch is
+/// checked.
+fn scopes_overlap_at_declaration(
+    protocol: &ProtocolDeclarationForm,
+    earlier: &[ScopeSegment],
+    later: &[ScopeSegment],
+) -> bool {
+    if scope_is_prefix(earlier, later) {
+        return true;
+    }
+
+    let shared = earlier
+        .iter()
+        .zip(later)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let (Some(ScopeSegment::Control(earlier)), Some(ScopeSegment::Control(later))) =
+        (earlier.get(shared), later.get(shared))
+    else {
+        return false;
+    };
+
+    parallel_branch_siblings(protocol, *earlier, *later)
+}
+
+/// Whether these distinct control scopes are sibling branches of one
+/// `parallel` control.
+fn parallel_branch_siblings(
+    protocol: &ProtocolDeclarationForm,
+    earlier: usize,
+    later: usize,
+) -> bool {
+    let (Some(earlier_scope), Some(later_scope)) =
+        (protocol.scopes.get(earlier), protocol.scopes.get(later))
+    else {
+        return false;
+    };
+    let Some(parent) = earlier_scope.parent else {
+        return false;
+    };
+    if later_scope.parent != Some(parent) || earlier == later {
+        return false;
+    }
+
+    let Some(parent_scope) = protocol.scopes.get(parent.index()) else {
+        return false;
+    };
+    let parent_is_parallel = protocol.parallels.iter().any(|parallel| {
+        protocol
+            .declarations
+            .get(parallel.declaration)
+            .is_some_and(|declaration| declaration.name.span == parent_scope.name.span)
+    });
+    if !parent_is_parallel {
+        return false;
+    }
+
+    [earlier_scope, later_scope]
+        .into_iter()
+        .all(|branch_scope| {
+            protocol.declarations.iter().any(|declaration| {
+                declaration.kind == ProtocolNodeKind::Branch
+                    && declaration.name.span == branch_scope.name.span
+                    && declaration.scope == Some(parent)
+            })
+        })
 }
 
 fn binder_scope(

@@ -41,6 +41,7 @@ use fsl_replay::value_check::ValueTarget;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
+use ix_trace_rs::implements;
 use serde_json::{Map, json};
 
 use super::super::hyper_route::PackageRelationSubject;
@@ -445,6 +446,9 @@ struct ClauseRoute<'a> {
 /// package form yet, and for a package whose model-check input meets a form
 /// it does not read yet, before any engine runs;
 /// [`PackageRunError::Document`] as [`super::settle_run`] refuses or faults.
+#[implements("FSpec-FR-348-AC-3")]
+#[implements("FSpec-FR-290-AC-14")]
+#[implements("FR-335-AC-2")]
 pub fn settle_package_run(
     run: PackageRun<'_>,
     negotiate: &dyn Negotiate,
@@ -4119,6 +4123,7 @@ fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
 /// list, then the start byte of the declaration span), then each task-set
 /// schedulability claim, then the derived deadlock-freedom item of each model
 /// selection. Each item carries the published default of every setting.
+#[implements("FR-620-AC-5", "FR-620-AC-10", "FR-1044-AC-10")]
 fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     use filament_contract_model::CheckedSourceRegion;
 

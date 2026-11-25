@@ -58,7 +58,8 @@ settlement, not the solver.
 5. Call the settings operation with `smt_encoding.max_constants=8`, with
    `smt.max_solver_steps=1000` and `smt.max_solver_time=5`, with no operand,
    with `smt.max_solver_time=0` and with `smt_encoding.max_monitor_states=0`;
-   replay with the `stage_limits` entry `smt_encoding.max_constants` at 8.
+   decode a replay request with the `stage_limits` entry
+   `smt_encoding.max_constants` at 8.
 6. Build FR-315-AC-42's `ModelCheckRequest`s with no SMT setting, with
    `smt_encoding.max_constants` 7 and 8, and with `smt.max_solver_time` 5
    and 10; compute their request identities; settle an SMT
@@ -97,7 +98,8 @@ Tag the tests `#[trace("TC-1250", "<criterion id>")]`.
 - Step 5: the limits with the named members set and the others at their
   defaults; both types at their defaults with no operand; usage refusals
   naming `smt.max_solver_time=0` and `smt_encoding.max_monitor_states=0`;
-  the replay's encoding under 8 (FR-255-AC-14).
+  the replay request refused naming `smt_encoding.max_constants`
+  (FR-255-AC-14).
 - Step 6: `Default` limits on the plain request; different identities and
   keys for the two `max_constants` requests and no reuse between them;
   equal ones for the two `max_solver_time` requests; the certificate
