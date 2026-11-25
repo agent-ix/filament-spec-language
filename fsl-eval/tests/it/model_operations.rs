@@ -266,5 +266,8 @@ fn a_run_passes_present_or_absent_for_an_optional_parameter() {
     assert_eq!(missing_required.0, "invalid_runtime_input");
     assert_eq!(missing_required.1, "missing-member");
     assert_eq!(missing_required.2.as_deref(), Some("firstApprover"));
-    assert_eq!(missing_required.3.as_deref(), Some("/parameters"));
+    assert_eq!(
+        missing_required.3.as_deref(),
+        Some("/parameters/firstApprover")
+    );
 }
