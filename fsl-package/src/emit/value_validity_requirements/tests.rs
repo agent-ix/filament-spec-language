@@ -10,8 +10,8 @@ use filament_contract_model::{
 use fsl_semantics::check::wire_id::WireGraph;
 use ix_trace_rs::trace;
 
+use crate::emit::{emit_checked, Emission};
 use crate::CheckedPackage;
-use crate::emit::{Emission, emit_checked};
 
 const GUARDED: &str = "function Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }";
 
@@ -192,19 +192,15 @@ fn both_guard_holds_outcomes_survive_native_admission() {
 fn unguarded_record_keeps_an_empty_path_condition() {
     let (package, _, admitted, records) =
         emitted_records("function Plain using v(x: Int[0, 9]): Integer pure { x + 1 }");
-    assert!(
-        package
-            .graph()
-            .requirements()
-            .values()
-            .all(|source| source.path_condition().is_empty())
-    );
-    assert!(
-        records
-            .iter()
-            .all(|record| record.path_condition_frame.is_none()
-                && admitted.path_condition(record).is_empty())
-    );
+    assert!(package
+        .graph()
+        .requirements()
+        .values()
+        .all(|source| source.path_condition().is_empty()));
+    assert!(records
+        .iter()
+        .all(|record| record.path_condition_frame.is_none()
+            && admitted.path_condition(record).is_empty()));
     assert!(admitted.path_condition_frames().is_empty());
 }
 
@@ -752,11 +748,11 @@ fn bounded_mutual_recursion_emits_guarded_range_records() {
     assert_eq!(region_start(&regions[&3]), source_b_start);
 }
 
-/// FR-322-AC-490 and FR-825-AC-11: a function-call walk does not enter the
-/// callee body, and each lexical use retains its own source region and guard.
-#[trace("FSpec-FR-322-AC-490", "FSpec-FR-825-AC-11", "FR-062-AC-17")]
+/// FSpec FR-322 and FSpec FR-825-AC-11: repeated structurally equal uses keep the
+/// source region belonging to each lexical occurrence through transitive walks.
+#[trace("FSpec-FR-825-AC-11", "FSpec-FR-322", "FR-062-AC-17")]
 #[test]
-fn mutual_recursion_keeps_visits_in_each_lexical_body() {
+fn mutual_recursion_preserves_repeated_syntax_owner_regions() {
     let declarations = "function a using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then b(n - 1) + b(n - 1) else 0 }\n\
          function b using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then a(n - 1) + a(n - 1) else 0 }\n";
     let (package, emission, admitted, records) = emitted_records(declarations);
@@ -813,8 +809,16 @@ fn mutual_recursion_keeps_visits_in_each_lexical_body() {
         .collect();
     a_ordinals.sort_unstable();
     b_ordinals.sort_unstable();
-    assert_eq!(a_ordinals, [0, 1], "a's claims name its body visits");
-    assert_eq!(b_ordinals, [2, 3], "b's claims name its body visits");
+    assert_eq!(
+        a_ordinals,
+        [2, 5],
+        "a's claims name its two root-body visits"
+    );
+    assert_eq!(
+        b_ordinals,
+        [8, 11],
+        "b's claims name its two root-body visits"
+    );
 
     for (name, owner) in [("a", owner_a), ("b", owner_b)] {
         let decrement_application = serde_json::to_value(&decrements[0].application).unwrap();
@@ -851,7 +855,7 @@ fn mutual_recursion_keeps_visits_in_each_lexical_body() {
     }
     assert_eq!(
         regions.keys().copied().collect::<Vec<_>>(),
-        (0..4).collect::<Vec<_>>()
+        (0..12).collect::<Vec<_>>()
     );
     let source_prefix = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n";
     let source_starts: Vec<u64> = declarations
@@ -861,11 +865,25 @@ fn mutual_recursion_keeps_visits_in_each_lexical_body() {
     assert_eq!(source_starts.len(), 4);
     let region_start =
         |regions: &serde_json::Value| regions[0]["start"].as_u64().expect("source region start");
-    let actual_starts: Vec<u64> = (0..4)
+    let actual_starts: Vec<u64> = (0..12)
         .map(|ordinal| region_start(&regions[&ordinal]))
         .collect();
     assert_eq!(
-        actual_starts, source_starts,
-        "only the four lexical body occurrences are visited"
+        actual_starts,
+        [
+            source_starts[2],
+            source_starts[3],
+            source_starts[0],
+            source_starts[2],
+            source_starts[3],
+            source_starts[1],
+            source_starts[0],
+            source_starts[1],
+            source_starts[2],
+            source_starts[0],
+            source_starts[1],
+            source_starts[3],
+        ],
+        "synthetic slots copy the matching lexical occurrence's region"
     );
 }

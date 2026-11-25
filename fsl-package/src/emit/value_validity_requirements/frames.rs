@@ -21,7 +21,6 @@ use filament_exact::NodeKey;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::wire_id::{StructuralIds, StructuralKeys, WireGraph};
 use fsl_semantics::check::{Capability, CheckedGraph, RequirementRecord};
-use ix_trace_rs::implements;
 
 use super::{EmitRefusal, Omitted};
 use crate::emit::node_id;
@@ -59,8 +58,8 @@ struct Table {
     touched: Vec<bool>,
     /// The rows the current owner's walk touched first, in visit order.
     first_touched: Vec<usize>,
-    /// The node position of each visit, in visit order.
-    visited: Vec<usize>,
+    /// The node, syntax owner, scope and per-node syntax ordinal of each visit.
+    visited: Vec<(usize, usize, bool, usize)>,
 }
 
 impl Table {
@@ -100,11 +99,18 @@ impl Table {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SyntaxContext {
+    owner: usize,
+    measure: bool,
+    scope: usize,
+}
+
 enum Task<'a> {
     /// Leave the node at the position: its body is fully walked.
     Leave(usize),
-    Node(&'a CheckedNodeId, Option<usize>),
-    Term(&'a CheckedTerm, Option<usize>),
+    Node(&'a CheckedNodeId, Option<usize>, SyntaxContext),
+    Term(&'a CheckedTerm, Option<usize>, SyntaxContext),
 }
 
 fn reference(term: &CheckedTerm) -> Option<&CheckedNodeId> {
@@ -244,36 +250,65 @@ impl<'a, 'k> Walk<'a, 'k> {
 
     /// Walk the body rooted at `root`: the terminal frame of every
     /// application occurrence, keyed by node position and occurrence.
-    #[implements("FSpec-FR-322-AC-490", "FSpec-FR-825-AC-11")]
     fn owner(
         &mut self,
+        root_owner: usize,
         root: &'a CheckedNodeId,
         derive: bool,
+        syntax_measure: bool,
         visits: &mut HashMap<usize, usize>,
         table: &mut Table,
     ) -> HashMap<(usize, u64), Option<usize>> {
         let mut derived = HashMap::new();
-        let mut pending = vec![Task::Node(root, None)];
-        // Stop cycles in graph references. Function bodies are walked by their
-        // own package owner, so a call never enters a callee declaration.
+        let mut pending = vec![Task::Node(
+            root,
+            None,
+            SyntaxContext {
+                owner: root_owner,
+                measure: syntax_measure,
+                scope: 0,
+            },
+        )];
+        let mut next_scope = 1_usize;
+        let mut syntax_visits = HashMap::<(usize, usize), usize>::new();
+        // The nodes whose bodies the walk is inside. A reference back to one is
+        // a recursive call: the walk does not enter it again, so a recursive
+        // owner is walked once, not without end. The root function itself is
+        // already being walked even though this walk starts at its body node.
         let mut active = HashSet::<usize>::new();
+        active.insert(root_owner);
         while let Some(task) = pending.pop() {
             match task {
                 Task::Leave(position) => {
                     active.remove(&position);
                 }
-                Task::Node(id, terminal) => {
+                Task::Node(id, terminal, mut syntax) => {
                     let Some(position) = self.position(id) else {
                         continue;
                     };
-                    if self.nodes[position].node_tag.as_ref() == "function" {
-                        continue;
-                    }
                     if !active.insert(position) {
                         continue;
                     }
+                    // A call reaches the callee's declaration node. Follow its
+                    // body so transitive syntax uses take their package
+                    // ordinals, but reset the syntax owner and scope so those
+                    // uses retain the callee's lexical source region. The
+                    // active set stops recursive call cycles; the package-wide
+                    // owner loop still derives each function's records under
+                    // that function's own owner.
+                    if self.nodes[position].node_tag.as_ref() == "function" {
+                        syntax.owner = position;
+                        syntax.measure = false;
+                        syntax.scope = next_scope;
+                        next_scope = next_scope.saturating_add(1);
+                    }
+                    let syntax_counter = syntax_visits.entry((syntax.scope, position)).or_default();
+                    let syntax_ordinal = *syntax_counter;
+                    *syntax_counter += 1;
                     let visit = visits.entry(position).or_default();
-                    table.visited.push(position);
+                    table
+                        .visited
+                        .push((position, syntax.owner, syntax.measure, syntax_ordinal));
                     let occurrence = self.expression_ordinal(position, *visit);
                     *visit += 1;
                     let node = &self.nodes[position];
@@ -283,11 +318,11 @@ impl<'a, 'k> Walk<'a, 'k> {
                         derived.insert((position, expression_ordinal), terminal);
                     }
                     pending.push(Task::Leave(position));
-                    pending.push(Task::Term(&node.body, terminal));
+                    pending.push(Task::Term(&node.body, terminal, syntax));
                 }
-                Task::Term(term, terminal) => match term {
+                Task::Term(term, terminal, syntax) => match term {
                     CheckedTerm::Reference { target } => {
-                        pending.push(Task::Node(target, terminal));
+                        pending.push(Task::Node(target, terminal, syntax));
                     }
                     CheckedTerm::Application {
                         operation,
@@ -302,27 +337,27 @@ impl<'a, 'k> Walk<'a, 'k> {
                             let Some((guard, occurrence)) = self.guard(&arguments[0], visits)
                             else {
                                 for argument in arguments.iter().rev() {
-                                    pending.push(Task::Term(argument, terminal));
+                                    pending.push(Task::Term(argument, terminal, syntax));
                                 }
                                 continue;
                             };
                             match self.literal(&arguments[0]) {
                                 Some(true) => {
                                     let then = table.intern(terminal, guard, occurrence, true);
-                                    pending.push(Task::Term(&arguments[1], Some(then)));
+                                    pending.push(Task::Term(&arguments[1], Some(then), syntax));
                                 }
                                 Some(false) => {
                                     let other = table.intern(terminal, guard, occurrence, false);
-                                    pending.push(Task::Term(&arguments[2], Some(other)));
+                                    pending.push(Task::Term(&arguments[2], Some(other), syntax));
                                 }
                                 None => {
                                     let then = table.intern(terminal, guard, occurrence, true);
                                     let other = table.intern(terminal, guard, occurrence, false);
-                                    pending.push(Task::Term(&arguments[2], Some(other)));
-                                    pending.push(Task::Term(&arguments[1], Some(then)));
+                                    pending.push(Task::Term(&arguments[2], Some(other), syntax));
+                                    pending.push(Task::Term(&arguments[1], Some(then), syntax));
                                 }
                             }
-                            pending.push(Task::Term(&arguments[0], terminal));
+                            pending.push(Task::Term(&arguments[0], terminal, syntax));
                         } else if derive
                             && matches!(
                                 identity,
@@ -353,22 +388,31 @@ impl<'a, 'k> Walk<'a, 'k> {
                                 terminal
                             };
                             if !short_circuited {
-                                pending.push(Task::Term(&arguments[1], right));
+                                pending.push(Task::Term(&arguments[1], right, syntax));
                             }
-                            pending.push(Task::Term(&arguments[0], terminal));
+                            pending.push(Task::Term(&arguments[0], terminal, syntax));
                         } else {
                             for argument in arguments.iter().rev() {
-                                pending.push(Task::Term(argument, terminal));
+                                pending.push(Task::Term(argument, terminal, syntax));
                             }
                         }
                     }
                     CheckedTerm::Aggregate { members, .. } => {
                         for member in members.iter().rev() {
-                            pending.push(Task::Term(member, terminal));
+                            pending.push(Task::Term(member, terminal, syntax));
                         }
                     }
-                    CheckedTerm::Binding { value, .. } => {
-                        pending.push(Task::Term(value, terminal));
+                    CheckedTerm::Binding { name, value, .. } => {
+                        let measure = match name.kind() {
+                            CheckedBindingNameKind::Body => false,
+                            CheckedBindingNameKind::Other("decreases" | "measure") => true,
+                            _ => syntax.measure,
+                        };
+                        pending.push(Task::Term(
+                            value,
+                            terminal,
+                            SyntaxContext { measure, ..syntax },
+                        ));
                     }
                     _ => {}
                 },
@@ -380,7 +424,6 @@ impl<'a, 'k> Walk<'a, 'k> {
 
 /// The function owners with a body in FR-322's package-wide walk order:
 /// declaration source position, then node id.
-#[implements("FSpec-FR-322-AC-490")]
 pub(super) fn owner_order(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
@@ -417,11 +460,17 @@ pub(super) fn owner_order(
 }
 
 /// One visit of the package-wide owner walk (FSpec FR-322 "Expression
-/// occurrence ordinals"): the function whose walk made this visit, its
-/// measure/body context, and the node.
+/// occurrence ordinals"): the root function whose walk made this visit, the
+/// function whose syntax is visited, their measure/body contexts, and the node.
 pub(super) struct Visit {
-    /// The function whose package-wide walk made this visit.
+    /// The root function whose package-wide walk made this visit.
     pub(super) owner: usize,
+    /// The function body that lexically owns the visited syntax.
+    pub(super) syntax_owner: usize,
+    /// Whether the visited syntax belongs to that owner's measure.
+    pub(super) syntax_measure: bool,
+    /// The ordinal of this node among visits in the current syntax scope.
+    pub(super) syntax_ordinal: usize,
     pub(super) measure: bool,
     pub(super) node: usize,
 }
@@ -438,7 +487,6 @@ pub(super) fn key_index(node_keys: &[NodeKey]) -> HashMap<NodeKey, usize> {
 /// Every visit of the package-wide owner walk over `nodes`, in walk order: the
 /// function owners in FR-322's order, each owner's body and then its
 /// termination measure, with the guard-literal pruning of FSpec FR-825.
-#[implements("FSpec-FR-322-AC-490", "FSpec-FR-825-AC-11")]
 pub(super) fn visits(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
@@ -465,30 +513,40 @@ pub(super) fn visits(
         let Some(root) = function_body_root(&nodes[owner].body) else {
             continue;
         };
-        walk.owner(root, true, &mut counters, &mut table);
+        walk.owner(owner, root, true, false, &mut counters, &mut table);
         found.extend(
             table
                 .visited
                 .drain(..)
-                .filter(|&node| keep[node])
-                .map(|node| Visit {
-                    owner,
-                    measure: false,
-                    node,
-                }),
+                .filter(|&(node, _, _, _)| keep[node])
+                .map(
+                    |(node, syntax_owner, syntax_measure, syntax_ordinal)| Visit {
+                        owner,
+                        syntax_owner,
+                        syntax_measure,
+                        syntax_ordinal,
+                        measure: false,
+                        node,
+                    },
+                ),
         );
         if let Some(measure) = function_measure_root(&nodes[owner].body) {
-            walk.owner(measure, false, &mut counters, &mut table);
+            walk.owner(owner, measure, false, true, &mut counters, &mut table);
             found.extend(
                 table
                     .visited
                     .drain(..)
-                    .filter(|&node| keep[node])
-                    .map(|node| Visit {
-                        owner,
-                        measure: true,
-                        node,
-                    }),
+                    .filter(|&(node, _, _, _)| keep[node])
+                    .map(
+                        |(node, syntax_owner, syntax_measure, syntax_ordinal)| Visit {
+                            owner,
+                            syntax_owner,
+                            syntax_measure,
+                            syntax_ordinal,
+                            measure: true,
+                            node,
+                        },
+                    ),
             );
         }
     }
@@ -546,7 +604,6 @@ fn canonical(
 /// The shared table of `graph`'s written value-validity records and each
 /// guarded record's terminal frame, derived from the emitted owner bodies in
 /// `nodes` and compared with the checker's own guard chain.
-#[implements("FSpec-FR-825-AC-11")]
 pub(super) fn derive(
     ids: &StructuralIds,
     graph: &CheckedGraph,
@@ -626,10 +683,10 @@ pub(super) fn derive(
         let owner_id = &nodes[position].node_id;
         let root =
             function_body_root(&nodes[position].body).ok_or(EmitRefusal::SourceMapInvariant)?;
-        let derived = walk.owner(root, true, &mut visits, &mut table);
+        let derived = walk.owner(position, root, true, false, &mut visits, &mut table);
         // The termination measure takes occurrences but derives no frame.
         if let Some(measure) = function_measure_root(&nodes[position].body) {
-            walk.owner(measure, false, &mut visits, &mut table);
+            walk.owner(position, measure, false, true, &mut visits, &mut table);
         }
         touched_by.push((position, table.take_owner_touches()));
         table.visited.clear();
@@ -697,7 +754,6 @@ pub(super) struct CarriedRecord<'a> {
 /// walk (FSpec FR-825), and each record's terminal frame in it. A writer that
 /// rekeys functions changes the owner order and with it the table's order, so
 /// the carried table is derived again, never permuted.
-#[implements("FSpec-FR-825-AC-11")]
 pub(super) fn rederive(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
@@ -738,9 +794,9 @@ pub(super) fn rederive(
     for position in owner_order(nodes, source_map) {
         let root =
             function_body_root(&nodes[position].body).ok_or(EmitRefusal::SourceMapInvariant)?;
-        let derived = walk.owner(root, true, &mut visits, &mut table);
+        let derived = walk.owner(position, root, true, false, &mut visits, &mut table);
         if let Some(measure) = function_measure_root(&nodes[position].body) {
-            walk.owner(measure, false, &mut visits, &mut table);
+            walk.owner(position, measure, false, true, &mut visits, &mut table);
         }
         touched_by.push((position, table.take_owner_touches()));
         table.visited.clear();

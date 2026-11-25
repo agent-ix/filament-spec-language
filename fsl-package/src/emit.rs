@@ -8228,7 +8228,9 @@ fn emit_package_nodes(
                     .iter()
                     .map(|(key, id)| (key.clone(), id.clone())),
             );
-            value_validity.renumbering.relabel_term_data(&row_ids, data);
+            value_validity
+                .renumbering
+                .relabel_term_data_without_body_locations(&row_ids, data);
         }
     }
     let selected_operation_member_rows = selected_operation_member_rows
