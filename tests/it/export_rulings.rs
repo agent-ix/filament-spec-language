@@ -357,7 +357,7 @@ fn the_type_ok_comment_names_the_bound_region() {
 /// The `test/float-export` package: object type `Gauge` (population
 /// `gauges`) with the `Float64` field `a` and the operation `flip()`
 /// (`modifies a`).
-fn float_model() -> Value {
+pub(crate) fn float_model() -> Value {
     let id = |suffix: &str| format!("ix://test/float-export/{suffix}");
     let origin = |identity: &str| {
         json!({"generated": {"generatorIdentity": identity, "generatorVersion": "1.0.0",

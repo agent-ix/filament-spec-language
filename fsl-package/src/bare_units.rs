@@ -17,6 +17,7 @@ use filament_semantic_value::quantity::UnitTable;
 use fsl_semantics::value::{
     admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, OwnerSubject, UnitPreimage,
 };
+use ix_trace_rs::implements;
 
 use crate::checked_v2::wire_graph;
 
@@ -154,6 +155,9 @@ pub(crate) enum UnitDefinitionRefusal {
     Graph,
     /// A selected row names no node of the package.
     Unjoined,
+    /// Two views define one dimension, unit or dimension-equivalence node key
+    /// differently.
+    Disagreement,
 }
 
 /// A checked rational as `Rational`, only when its spelling is the reduced one:
@@ -307,26 +311,45 @@ pub(crate) fn read_unit_table(
 
 /// Rebuild the world's graph from its admitted package definitions, then apply
 /// the same equivalence classes and runtime projection as the source route.
+///
+/// # Errors
+///
+/// [`UnitDefinitionRefusal::Disagreement`] when two views hold unequal unit,
+/// dimension or dimension-equivalence definitions under one node key: neither
+/// replaces the other.
+#[implements("FR-531-AC-62")]
 pub(crate) fn world_units(
     package: &crate::bare::BarePackage<'_>,
 ) -> Result<UnitTable, UnitDefinitionRefusal> {
     use filament_contract_model::{CheckedDimensionOperand, CheckedNodeKind, CheckedTerm};
     use fsl_semantics::check::EquivalenceClasses;
-    use UnitDefinitionRefusal::Graph;
+    use UnitDefinitionRefusal::{Disagreement, Graph};
 
     let mut dimensions = std::collections::BTreeMap::new();
     let mut units = std::collections::BTreeMap::new();
     let mut owners = Vec::new();
+    let mut equivalences = std::collections::BTreeMap::new();
     let mut pairs = Vec::new();
     for view in std::iter::once(package).chain(package.dependency_views()) {
         for (definition, key) in &view.units.dimensions {
-            dimensions.insert(key.clone(), definition.clone());
+            if dimensions
+                .insert(key.clone(), definition.clone())
+                .is_some_and(|held| held != *definition)
+            {
+                return Err(Disagreement);
+            }
         }
         for (definition, key) in &view.units.units {
-            units.insert(key.clone(), definition.clone());
+            if units
+                .insert(key.clone(), definition.clone())
+                .is_some_and(|held| held != *definition)
+            {
+                return Err(Disagreement);
+            }
         }
         owners.extend(view.units.owners.iter().cloned());
         let admitted = view.package();
+        let mut view_keys = None;
         for node in &admitted.resolved_graph().nodes {
             let Some(CheckedTerm::NominalBody(body)) = admitted.term(&node.node_id) else {
                 continue;
@@ -362,11 +385,26 @@ pub(crate) fn world_units(
                     .key(id)
                     .map_err(|_| Graph)
             };
-            pairs.push((
+            let pair = (
                 resolve(first)?,
                 resolve(second)?,
                 rational(ratio).ok_or(Graph)?,
-            ));
+            );
+            if view_keys.is_none() {
+                view_keys = Some(wire_graph(admitted).map_err(|_| Graph)?);
+            }
+            let key = view_keys
+                .as_ref()
+                .ok_or(Graph)?
+                .key(&node.node_id)
+                .map_err(|_| Graph)?;
+            if equivalences
+                .insert(key, pair.clone())
+                .is_some_and(|held| held != pair)
+            {
+                return Err(Disagreement);
+            }
+            pairs.push(pair);
         }
     }
     let graph = admit_unit_graph(

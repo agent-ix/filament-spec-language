@@ -38,6 +38,8 @@ mod settle;
 mod unbounded;
 mod witness;
 
+use ix_trace_rs::implements;
+
 /// Actual product-construction events on the current test thread.
 #[cfg(feature = "test-support")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -453,6 +455,7 @@ impl PartialOrd for ProbKey {
 }
 
 impl Ord for ProbKey {
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn cmp(&self, other: &Self) -> Ordering {
         self.binding
             .cmp(&other.binding)

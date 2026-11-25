@@ -28,6 +28,7 @@ use super::syntax::{
 use filament_exact::{CollectionKind, Integer};
 use fsl_cst::{CstElement, CstNode, CstToken, LosslessCst, Production, TokenClass, TokenKind};
 use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 /// One significant child of a CST node: a token or a node.
 #[derive(Clone, Copy)]
@@ -1728,6 +1729,7 @@ impl<'c> Mapping<'c> {
     }
 
     /// `postfix @ trace`: the member read, indexed by its trace variable.
+    #[implements("FR-171-AC-1")]
     fn indexed_read(&mut self, task: Task<'c>, items: &[Item<'c>]) -> Result<(), FormsRefusal> {
         let node = task.node;
         let read = only(items, Production::HyperPostfix, node)?;
@@ -2551,6 +2553,7 @@ impl<'c> Mapping<'c> {
 
     /// `trace.step.op`, `trace.step.receiver` or
     /// `trace.step.Operation::name.parameter`.
+    #[implements("FR-171-AC-1")]
     fn step_label(
         &mut self,
         task: Task<'c>,

@@ -1170,6 +1170,36 @@ fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
     }
 }
 
+/// FR-290-AC-14 and FR-255-AC-20: the context's request carries the run's
+/// `emit.output_bytes`, and replay's recompile emits under the request's
+/// entry.
+#[trace("TC-774", "FR-290-AC-14", "TC-721", "FR-255-AC-20")]
+#[test]
+fn tc_774_the_request_carries_the_emit_limit_and_replay_emits_under_it() {
+    use fsl_foundation::Setting;
+
+    let fixture = fixture();
+    let raised = 1 << 25;
+    let mut limits = CallerLimits::default();
+    limits.spine.package = crate::spine::PackageLimits::default().with_output_bytes(raised);
+    let context = context(&fixture, limits);
+    let (p, p_x) = declaration(&fixture, "p");
+    let mut wire = context
+        .request(&p, &[bound_at(p_x.clone())], &plugin(), input(p_x, 0))
+        .expect("a function-contract item");
+    assert_eq!(wire.stage_limits.get("emit.output_bytes"), Some(&raised));
+    crate::replay(wire.clone(), ReplayLimits::default()).expect("the raised limit replays");
+
+    wire.stage_limits.insert("emit.output_bytes".to_owned(), 1);
+    let replayed = crate::replay(wire, ReplayLimits::default());
+    let Err(crate::ReplayRefusal::Recompile { refusal, .. }) = &replayed else {
+        panic!("the recompile emits under the request's bound: {replayed:?}");
+    };
+    let limit = refusal.limit().expect("the refusal carries its limit");
+    assert_eq!(limit.setting(), Setting::EmitOutputBytes);
+    assert_eq!(limit.configured_bound(), 1);
+}
+
 /// FR-290-AC-14: a record no function holds (an operation frame's or a state
 /// clause's `operation-contract` record) is non-replayable.
 #[trace("TC-774", "FR-290-AC-14")]
