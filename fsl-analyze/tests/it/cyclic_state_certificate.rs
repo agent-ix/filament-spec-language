@@ -2132,7 +2132,7 @@ fn the_cyclic_check_of_a_refutation_spends_the_items_work_allowance() {
     assert!(
         matches!(
             record.terminal().expect("a settled claim").value(),
-            TerminalValue::Refuted { .. }
+            TerminalValue::Refuted
         ),
         "{record:#?}"
     );
