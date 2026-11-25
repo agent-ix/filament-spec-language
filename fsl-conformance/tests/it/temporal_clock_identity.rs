@@ -29,8 +29,8 @@ const SOURCE: &[u8] = br#"language "ix:native" edition "1-draft";
 profile v = "filament.model.complete/v1";
 profile t = "filament.temporal.timestamped-event.finite-window/v1";
 model M = "acme/rpc";
-event Tick { timestamp: Timestamp; occurs timestamp; }
-temporal Window using t over (e: Tick) clock "plant-ms" on origin {
+record Reading { serial: Integer; }
+temporal Window using t over (r: Reading) clock "plant-ms" on origin {
   always[0,1] holds(true)
 }
 possible CounterClaim using v over (c: M::Counter) { true }
