@@ -28,3 +28,19 @@ CONDITIONAL. The `always` fallback in analyze/exact.rs now complements every out
 - Examined: reachability_threshold (all return paths), exceeds_rational_budget, decide_reachability_threshold_with_blocked, fair_interval.rs consumer, analyze/exact.rs scalar gate and interval fallback (until, always, expected reward, reach arms), the interval_result mapping into Interval/ValueBounds, the new and changed tests, FR-198, FR-1042 Bases/Inputs, ADR-028 UR-4/LM-1/LM-2/XV-1, FR-125, FR-201-AC-65, FR-202-AC-20.
 - Concurrent PR #3907 (head f168d5ef4c9442fcaca04fc0710e4a8946112785) touches build.rs, component_certificate.rs, exact_probabilistic.rs (tests) and prob_world.rs; at that head it does not touch analyze/exact.rs or cyclic.rs. Its change to prob_world::with_object_initials only adds support for `{"objects": {key: null}}` entries. That is compatible with this PR's use and applies the same FR-125 repair to a different test. No semantic conflict.
 - Not run: any cargo test (memory gate refused).
+
+## New findings (disposition pass 1)
+
+Head b5cb1997fc474dbfc800092ccf0fb065ebf2d2c1.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | `reachability` returns graph-fixed values early, before any budget check, so with max_rational_bits 0 the public solve returns Exact 0/1, although the denominator 1 takes one bit. FR-198 "Rational budget" applies the budget to every state value the solve returns. The analyzer is masked by its per-part gate in exact.rs. | fsl-analyze/src/exact_probabilistic/unbounded.rs:401-413 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | b5cb1997fc: `Ok(result) => return Ok(UnboundedOutcome::Exact(result))`; the rounded path and exceeds_rational_budget are gone; the analyzer gate is per part (FR-198 Rational budget, #3917) |
+| FND-002 | fixed | the too_long scan is deleted with the rounded path |
+| FND-003 | fixed | the new tests bind FR-198-AC-7, FR-198-AC-8, FR-198-AC-9 and FR-201-AC-65 at AC level |

@@ -399,6 +399,14 @@ fn reachability(
     }
     let initial_policy = initial_policy(&graph, &fixed, objective)?;
     if fixed.iter().all(Option::is_some) {
+        // FR-198: the budget covers every state value, graph-decided ones too.
+        if fixed
+            .iter()
+            .flatten()
+            .any(|value| value.max_part_bits() > limits.max_rational_bits)
+        {
+            return Err(UnboundedError::MaxRationalBits);
+        }
         return Ok(UnboundedResult {
             values: fixed
                 .into_iter()
@@ -3452,6 +3460,35 @@ mod tests {
             panic!("both parts of 1/2 fit two bits: {outcome:?}");
         };
         assert_eq!(exact.values[0], ExtRational::Finite(ratio(1, 2)));
+    }
+
+    /// A value the graph alone decides still takes bits: `0` and `1` have a
+    /// one-bit denominator, so no solve keeps them under a budget of zero.
+    #[trace("TC-633", "FR-198-AC-8")]
+    #[test]
+    fn a_graph_only_solve_past_the_rational_budget_keeps_no_value() {
+        // A target and a state that never reaches it: nothing is left to solve.
+        let product = graph(
+            ProductKind::Dtmc,
+            vec![edge(0, 0, one()), edge(1, 1, one())],
+        );
+        let solve = |max_rational_bits| {
+            decide_reachability(
+                &product,
+                &[true, false],
+                UnboundedObjective::Max,
+                &ExactProbLimits {
+                    max_rational_bits,
+                    ..ExactProbLimits::default()
+                },
+                &Cancel::new(),
+            )
+        };
+        assert_eq!(solve(0), Err(UnboundedError::MaxRationalBits));
+        assert_eq!(
+            solve(1).expect("one bit holds 0 and 1").values,
+            [one(), zero()].map(ExtRational::Finite)
+        );
     }
 
     /// A solve past the budget keeps no value: interval iteration reruns at

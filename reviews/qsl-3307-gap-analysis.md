@@ -28,3 +28,9 @@ CONDITIONAL. FR-198-AC-3, FR-198-AC-4, FR-201-AC-65, FR-202-AC-20 and FR-1042-AC
 - Stubs: none.
 - Semantic review: skipped as a separate pass; covered for the changed paths by SR-202611251158301.
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Ruled by #3917 (a2677a0e0a): FR-198 "Rational budget", ADR-028 UR-4/LM-1 and FR-1042 Bases state the per-part measure, that no value is kept past the budget, the IntervalIteration method with cumulative sweeps, PrecisionBudget at the cap, and the always complement; AC-7 to AC-9 are tested in this PR and AC-10 is QSL-3328 |
