@@ -2481,7 +2481,11 @@ fn node_row_verdict(
         world.refinement(),
         &world.concrete_request(RING_UNLIMITED),
         world.package(),
-        vec![world.abstract_initial()],
+        // The twin mapping holds a `Queue` `r` in `queues` and a `Cell` `r` in
+        // `cells` (FR-140-AC-17); an authored snapshot of that state is refused
+        // as a key with two types (FR-125-AC-13), so the abstract initial
+        // states are the mapped ones.
+        None::<Vec<_>>,
         over,
         &[],
     )
