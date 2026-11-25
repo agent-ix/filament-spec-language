@@ -190,14 +190,39 @@ pub(super) fn run(
     );
     let (values, policy) = match result {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
-        Err(QualifiedFhError::RationalBits { .. })
-            if lower_product.is_none() && matches!(kind, MeasurePayoffKind::Fraction) =>
+        Ok(FhResult::Bounds {
+            lower,
+            upper,
+            precision_bits,
+            policy,
+        }) if lower_product.is_none()
+            && matches!(
+                kind,
+                MeasurePayoffKind::Fraction | MeasurePayoffKind::Shifted
+            ) =>
         {
-            let threshold = match &claim.form {
-                ProbForm::MeanOfFraction {
-                    bound: Bound::AtLeast(value) | Bound::AtMost(value),
-                    ..
-                } => value.clone(),
+            let values = lower.iter().map(Dyadic::rational).collect();
+            interval = Some((lower, upper, precision_bits));
+            (values, policy)
+        }
+        Err(QualifiedFhError::RationalBits { .. })
+            if lower_product.is_none()
+                && matches!(
+                    kind,
+                    MeasurePayoffKind::Fraction | MeasurePayoffKind::Shifted
+                ) =>
+        {
+            let threshold = match (&claim.form, kind) {
+                (
+                    ProbForm::MeanOfFraction {
+                        bound: Bound::AtLeast(value) | Bound::AtMost(value),
+                        ..
+                    },
+                    MeasurePayoffKind::Fraction,
+                ) => value.clone(),
+                (ProbForm::Quantile { .. }, MeasurePayoffKind::Shifted) => {
+                    Rational::from_integer(0_i64.into())
+                }
                 _ => return not_yet(),
             };
             match backward_induction(
@@ -240,7 +265,9 @@ pub(super) fn run(
         Err(error) => {
             return document_failure(induction_failure(error, cancel), subject);
         }
-        Ok(_) => return broken(),
+        Ok(_other) => {
+            return broken();
+        }
     };
     let values = values
         .into_iter()
@@ -622,7 +649,9 @@ fn finish_measure_interval(
     );
     let (lower_check, upper_check) = match checked {
         (Ok(lower), Ok(upper)) => (lower, upper),
-        (Err(error), _) | (_, Err(error)) => return document_failure(error, subject),
+        (Err(error), _) | (_, Err(error)) => {
+            return document_failure(error, subject);
+        }
     };
     let (
         fsl_replay::ExactProbabilityCertificateCheck::Accepted(accepted),

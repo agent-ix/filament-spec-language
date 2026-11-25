@@ -865,7 +865,10 @@ fn tied_case_guards_take_their_own_origin_in_either_label_order() {
         let got = record(
             world.types(),
             "Flag",
-            vec![("ready", filament_exact::Value::Boolean(true))],
+            vec![
+                ("ready", filament_exact::Value::Boolean(true)),
+                ("count", filament_exact::Value::Integer(0_i64.into())),
+            ],
         );
         let mut charges = Vec::new();
         let expected = if labels_follow_source {
@@ -1420,7 +1423,10 @@ fn the_retry_relation_evaluates_from_the_handoff_files_alone() {
     let flag = record(
         types,
         "Flag",
-        vec![("ready", filament_exact::Value::Boolean(false))],
+        vec![
+            ("ready", filament_exact::Value::Boolean(false)),
+            ("count", filament_exact::Value::Integer(0_i64.into())),
+        ],
     );
     let given = supply_of(
         &selected,
