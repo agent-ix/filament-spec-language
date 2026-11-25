@@ -92,6 +92,10 @@ fn uppercase_hex_reports_the_lowercase_digit_rule() {
             .any(|message| message == "expected a lowercase hex digit"),
         "{output:?}"
     );
+    assert!(
+        output.iter().all(|message| !message.contains("malformed")),
+        "{output:?}"
+    );
 }
 
 #[trace("TC-2198", "FR-762-AC-5")]
