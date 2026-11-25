@@ -4,7 +4,7 @@
 //! reader with the request's supplied domain package documents as evidence,
 //! with no fallback to source compilation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use filament_contract_model::{
@@ -326,28 +326,12 @@ impl PackageAdmissionRefusal {
     /// otherwise). The reader's causes are a closed set, so interning them
     /// holds a bounded number of strings for the process.
     #[must_use]
-    pub fn catalog_cause(&self) -> &'static str {
-        use std::sync::{Mutex, OnceLock};
-        static CAUSES: OnceLock<Mutex<BTreeSet<&'static str>>> = OnceLock::new();
-        match &self.cause {
-            Some(cause) => {
-                let mut known = CAUSES
-                    .get_or_init(Mutex::default)
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(known) = known.get(cause.as_str()) {
-                    return known;
-                }
-                let leaked: &'static str = Box::leak(cause.clone().into_boxed_str());
-                known.insert(leaked);
-                leaked
-            }
-            None => match self.code {
-                Code::ResourceExhausted => "insufficient-next-charge",
-                Code::MissingImport => "missing-selection",
-                _ => "invalid-value",
-            },
-        }
+    pub fn catalog_cause(&self) -> &str {
+        self.cause.as_deref().unwrap_or(match self.code {
+            Code::ResourceExhausted => "insufficient-next-charge",
+            Code::MissingImport => "missing-selection",
+            _ => "invalid-value",
+        })
     }
 
     /// The strict reader's refusal inside a failed evaluation read of a
