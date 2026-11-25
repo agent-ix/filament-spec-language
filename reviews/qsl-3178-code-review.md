@@ -3,7 +3,7 @@ id: SR-967175026302197768900474181941935084826
 title: "Code and Rust review of QSL-3178 AC-9 analysis tests"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language@3256ca5658e85a4a4ab7c5ea728229767af7986e; git diff origin/main...HEAD; fsl-analyze/tests/it/analyze.rs; fsl-analyze/tests/it/claim_family.rs; fsl-analyze/tests/it/graph_world.rs; FR-281-AC-9; QSL-3178"
+scope: "agent-ix/filament-spec-language@a23fb6fda3b5b15496914618795389f7f4d9cd3a; git diff origin/main...HEAD; fsl-analyze/tests/it/analyze.rs; fsl-analyze/tests/it/claim_family.rs; fsl-analyze/tests/it/graph_world.rs; fsl-analyze/tests/it/provider_test_support.rs; FR-281-AC-9; FR-281-AC-13; QSL-3178"
 review_set: subset
 date: 2026-11-25
 relationships:
@@ -13,7 +13,7 @@ relationships:
 
 ## Summary
 
-Ticket: QSL-3178. Reviewed head `3256ca5658e85a4a4ab7c5ea728229767af7986e` against the requested `origin/main...HEAD` scope. The additions exercise both FR-281-AC-9 clauses: ordered records, and binding refusal before provider execution. The new edits also leave the three changed Rust files failing the repository rustfmt check.
+Ticket: QSL-3178. Final disposition review is against head `a23fb6fda3b5b15496914618795389f7f4d9cd3a` and the requested `origin/main...HEAD` scope. The additions exercise both FR-281-AC-9 clauses and the request-level FR-281-AC-13 handoff cases, including the required `family: state-model` payload on each state-clause refusal record. The duplicate provider test doubles have been consolidated into `provider_test_support.rs`.
 
 ## Scope examined
 
@@ -29,13 +29,13 @@ Ticket: QSL-3178. Reviewed head `3256ca5658e85a4a4ab7c5ea728229767af7986e` again
 
 ## Verdict
 
-**CONDITIONAL** — the FR-281-AC-9 assertions and both trace bindings are sound; FND-001 is a low-severity formatting defect in changed lines. Rust-specific review found no behavior, unsafe-code, or test-double-boundary defects.
+**PASS** — FND-001 and FND-002 are fixed. The scoped tests use public provider APIs, assert the relevant literal output, and share one counting provider fixture. No production behavior changed.
 
 ## Verification
 
 - `quire matrix --scope . --format json`: completed; FR-281-AC-9 is `tagged` with both changed test functions as binders.
 - `quoin matrix --repo . --json`: unavailable; native runtime refused the matrix request as exceeding the accepted size. No run evidence was read.
-- `cargo fmt --all -- --check`: failed on extensive formatting differences throughout the existing workspace. The focused rustfmt check reports differences in the changed files; FND-001 records the diff-attributable style defect. The workspace-wide check additionally reports numerous existing differences outside the reviewed diff.
+- `cargo fmt --all -- --check`: failed on extensive formatting differences throughout the existing workspace. The focused rustfmt check on `analyze.rs`, `claim_family.rs`, and `provider_test_support.rs` passes; `main.rs` retains unrelated pre-existing module-order drift and has only the added helper registration in this fix.
 - `git diff --check origin/main...HEAD`: passed.
 - Coder reported both focused tests passing on the merged head. An independent filtered run was canceled before completion while compiling dependencies; no independent test result is claimed.
 
@@ -52,11 +52,27 @@ Ticket: QSL-3178. Reviewed head `3256ca5658e85a4a4ab7c5ea728229767af7986e` again
 | --- | --- | --- | --- |
 | FND-002 | medium | The request-level AC-13 test checks the state-clause records' result, diagnostic code/cause, and absent backend, but never asserts the required diagnostic payload `family: state-model` on those records. The neighboring `analyze_items` test checks a similar payload, but does not exercise the `AnalyzeRequest` handoff cases whose output AC-13 specifies. | fsl-analyze/tests/it/claim_family.rs:797-815 |
 
+### FND-002 disposition
+
+Fixed on final head `a23fb6fda3b5b15496914618795389f7f4d9cd3a`. The request-level test now asserts on each of the three state-clause records:
+
+```rust
+assert_eq!(
+    record
+        .disposition_detail()
+        .expect("state-clause refusal includes its family detail")["family"],
+    "state-model"
+);
+```
+
+Evidence: `fsl-analyze/tests/it/claim_family.rs:797-815`.
+
 ## Dispositions
 
 | FND | outcome | reason |
 | --- | --- | --- |
-| FND-001 | fixed | - |
+| FND-001 | fixed | Focused rustfmt check on changed test files passes; pre-existing module-order drift in `main.rs` is outside this review finding. |
+| FND-002 | fixed | The request-level test asserts the literal family payload for each state-clause record. |
 
 ### Disposition details
 
@@ -75,5 +91,5 @@ dispositions:
 
 ### Round 1 evidence
 
-- FND-001: focused `rustfmt --check` on all three changed files now passes; `git diff --check origin/main...HEAD` passes.
-- New FND-002 was found during this pass and has no disposition yet; it needs an assertion over the state-clause records' `disposition_detail()` for the `state-model` family payload.
+- FND-001: focused rustfmt checks pass on the changed test files; `git diff --check origin/main...HEAD` passes.
+- FND-002: closed by the literal request-level payload assertion documented above.
