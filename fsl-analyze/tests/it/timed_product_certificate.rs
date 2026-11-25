@@ -1834,17 +1834,18 @@ fn wrong_timed_unit_and_clock_node_domains_refuse_before_membership() {
         });
         fsl_replay::reset_product_key_membership_checks();
         let result = check(&world, "Deadline", &changed);
-        if name == "unit domain" || name == "deadline node domain" {
+        if [
+            "unit domain",
+            "clock node domain",
+            "deadline node domain",
+            "reordered clock vector",
+        ]
+        .contains(&name)
+        {
             assert!(
                 matches!(result, Err(ProbabilityDocumentError::Malformed)),
                 "the strict digital-key reader refuses the foreign {name}: {result:?}"
             );
-        } else if matches!(
-            &result,
-            Err(ProbabilityDocumentError::ObjectiveMismatch)
-        ) {
-            // The strict key decoder admits the shape, then the rebuilt timed
-            // product rejects its foreign digital identity before value checks.
         } else {
             match result {
                 Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) => {

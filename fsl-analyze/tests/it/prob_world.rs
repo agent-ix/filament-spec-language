@@ -539,6 +539,7 @@ impl World {
             "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
              profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
              profile inf = \"filament.temporal.infinite-trace/v1\";\n{}\
+             profile sup = \"filament.temporal.infinite-trace/v1\";\n\
              model M = \"{}\";\n{selection}{}\n{supplement}",
             if value_profile {
                 "profile vc = \"filament.value.complete/v1\";\n"

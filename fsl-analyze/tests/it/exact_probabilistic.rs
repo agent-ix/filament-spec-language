@@ -2038,14 +2038,22 @@ fn malformed_product_key_admission_stops_before_certificate_membership() {
     };
 
     let mut extra = key.clone();
-    extra
-        .as_array_mut()
-        .unwrap()
-        .push(serde_json::json!("extra"));
+    extra.as_array_mut().unwrap().push(serde_json::json!(0));
+    extra.as_array_mut().unwrap().push(serde_json::json!("extra"));
     reject(
         "unknown/extra key member",
         serde_json::to_vec(&extra).unwrap(),
         ProbabilityDocumentError::Unsupported,
+    );
+    let mut wrong_root_type = key.clone();
+    wrong_root_type
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!("not-an-integer-root"));
+    reject(
+        "wrong root-index type",
+        serde_json::to_vec(&wrong_root_type).unwrap(),
+        ProbabilityDocumentError::Malformed,
     );
     let mut missing = key.clone();
     missing.as_array_mut().unwrap().pop();

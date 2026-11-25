@@ -26,12 +26,12 @@ pub fn product_key_membership_checks() -> usize {
 }
 
 #[cfg(feature = "test-support")]
-fn observe_product_key_membership_check() {
+pub(super) fn observe_product_key_membership_check() {
     PRODUCT_KEY_MEMBERSHIP_CHECKS.with(|count| count.set(count.get() + 1));
 }
 
 #[cfg(not(feature = "test-support"))]
-fn observe_product_key_membership_check() {}
+pub(super) fn observe_product_key_membership_check() {}
 
 pub(super) mod measure;
 pub use measure::{
@@ -764,11 +764,11 @@ fn decode_key_with(
     let quire_canonical::Node::Array(parts) = key.root().node() else {
         return Err(ProbabilityDocumentError::Malformed);
     };
-    if parts.len() != 8 {
+    if parts.len() != 8 && parts.len() != 9 {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let parts = parts.collect::<Vec<_>>();
-    if parts.len() != 8
+    if (parts.len() != 8 && parts.len() != 9)
         || !parts.first().is_some_and(|part| {
             matches!(
                 part.node(),
@@ -2376,7 +2376,6 @@ fn check_document_bytes(
         Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
         Some(SubsystemBoundKind::Upper) => reward_upper,
     };
-    observe_product_key_membership_check();
     for (key, state) in graph
         .states
         .iter()

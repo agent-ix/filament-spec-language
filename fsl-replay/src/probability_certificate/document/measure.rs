@@ -1960,12 +1960,16 @@ fn checked_values(
         .map(|row| &row.state)
         .collect::<Vec<_>>();
     if (partial_floor.is_none() && document.values.len() != graph.states.len())
-        || keys.iter().any(|key| !graph.states.contains_key(*key))
         || keys.windows(2).any(|pair| pair[0] >= pair[1])
     {
         return Ok(Err(shape("values")));
     }
-    super::observe_product_key_membership_check();
+    for key in &keys {
+        super::observe_product_key_membership_check();
+        if !graph.states.contains_key(*key) {
+            return Ok(Err(shape("values")));
+        }
+    }
     if document.ranking.len() != document.values.len()
         || document
             .ranking

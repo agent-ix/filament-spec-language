@@ -70,6 +70,51 @@ struct Product<'a> {
     model: NodeRef<'a>,
     monitor: Option<NodeRef<'a>>,
 }
+
+struct RootIndexedProduct<'a> {
+    key: NodeRef<'a>,
+    root: u64,
+}
+
+impl Encode for RootIndexedProduct<'_> {
+    fn encode_into<S: Sink + ?Sized>(
+        &self,
+        writer: &mut Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        let Node::Array(parts) = self.key.node() else {
+            return Err(quire_canonical::Error::Serialize("a key is an array".into()));
+        };
+        writer.begin_array()?;
+        for part in parts {
+            part.encode_into(writer)?;
+        }
+        writer.integer(i128::from(self.root))?;
+        writer.end_array()
+    }
+}
+
+pub(super) fn with_root_index(
+    key: &ProbabilityProductKey,
+    root: usize,
+    limits: ProbabilityDocumentIoLimits,
+    cancel: &Cancel,
+) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+    poll(cancel)?;
+    let admission = RefCell::new(writer::Admission::with_used(
+        limits.storage_bytes,
+        cancel,
+        0,
+    ));
+    let parsed = read(key.as_bytes(), limits.bytes, &admission)?;
+    let root = u64::try_from(root).map_err(|_| ProbabilityDocumentError::Malformed)?;
+    let bytes = writer::encode_reserved(
+        &RootIndexedProduct { key: parsed.root(), root },
+        limits.bytes,
+        &admission,
+    )?;
+    poll(cancel)?;
+    Ok(ProbabilityProductKey::from_canonical_bytes(bytes))
+}
 impl Encode for Product<'_> {
     fn encode_into<S: Sink + ?Sized>(
         &self,
@@ -296,6 +341,7 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
     let unit = unit.collect::<Vec<_>>();
     if unit.len() != 2
         || !matches!(unit[0].node(), Node::String("declared"))
+        || !node_key_form(unit[1])
         || canonical_count(parts[3]).is_none_or(|scale| scale == 0)
     {
         return false;
@@ -304,6 +350,7 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
         return false;
     };
     let clocks = clocks.collect::<Vec<_>>();
+    let mut previous_clock = None;
     for clock in &clocks {
         let Node::Array(clock) = clock.node() else {
             return false;
@@ -314,6 +361,25 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
         {
             return false;
         }
+        let Node::Array(identity) = clock[0].node() else {
+            return false;
+        };
+        let identity = identity.collect::<Vec<_>>();
+        if !node_key_has_model_object_domain(identity[0]) {
+            return false;
+        }
+        let encoded_identity =
+            match quire_canonical::to_vec(&clock[0], quire_canonical::Limits::new(u64::MAX)) {
+                Ok(encoded) => encoded,
+                Err(_) => return false,
+            };
+        if previous_clock
+            .as_ref()
+            .is_some_and(|previous: &Vec<u8>| previous >= &encoded_identity)
+        {
+            return false;
+        }
+        previous_clock = Some(encoded_identity);
         let Some(value) = canonical_count(clock[1]) else {
             return false;
         };
@@ -363,6 +429,37 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
         parts[6].node(),
         Node::String("running" | "idle-ready" | "idle-delayed")
     )
+}
+
+fn node_key_form(node: NodeRef<'_>) -> bool {
+    let Node::Object(members) = node.node() else {
+        return false;
+    };
+    members.len() == 3
+        && node.get("package").is_some_and(
+            |value| matches!(value.node(), Node::String(package) if !package.is_empty()),
+        )
+        && node
+            .get("path")
+            .is_some_and(|value| matches!(value.node(), Node::Array(path) if path.len() > 0))
+        && node.get("ordinal").is_some()
+}
+
+fn node_key_has_model_object_domain(node: NodeRef<'_>) -> bool {
+    if !node_key_form(node) {
+        return false;
+    }
+    let Some(path) = node.get("path") else {
+        return false;
+    };
+    let Node::Array(path) = path.node() else {
+        return false;
+    };
+    let path = path.collect::<Vec<_>>();
+    path.len() == 3
+        && matches!(path[0].node(), Node::String("model"))
+        && matches!(path[1].node(), Node::String("object_type"))
+        && matches!(path[2].node(), Node::String(name) if !name.is_empty())
 }
 
 fn canonical_count(node: NodeRef<'_>) -> Option<u64> {
@@ -479,7 +576,7 @@ pub(crate) fn activated_product_key(
     let Node::Array(parts) = parsed.root().node() else {
         return Err(ProbabilityDocumentError::Malformed);
     };
-    if parts.len() != 8 {
+    if parts.len() != 8 && parts.len() != 9 {
         return Err(ProbabilityDocumentError::Malformed);
     }
     let activated = Activated {
@@ -568,11 +665,24 @@ pub(super) fn admit_parts(
         }
         _ => return Err(ProbabilityDocumentError::Unsupported),
     }
-    if parts[6..]
+    if parts[6..8]
         .iter()
         .any(|part| !matches!(part.node(), Node::Null))
     {
         return Err(ProbabilityDocumentError::Unsupported);
+    }
+    if let Some(root) = parts.get(8) {
+        let Node::Number(number) = root.node() else {
+            return Err(ProbabilityDocumentError::Malformed);
+        };
+        if number
+            .text()
+            .parse::<u64>()
+            .ok()
+            .is_none_or(|value| value.to_string() != number.text())
+        {
+            return Err(ProbabilityDocumentError::Malformed);
+        }
     }
     Ok(())
 }

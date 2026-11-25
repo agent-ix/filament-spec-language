@@ -2397,8 +2397,16 @@ fn certificate_values(
         if values
             .insert(entry.state.clone(), entry.value.clone())
             .is_some()
-            || !graph.states.contains_key(&entry.state)
         {
+            return Ok(CertificateValues::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::Malformed,
+                    at: ProbabilityCertificateLocus::Member("values"),
+                },
+            ));
+        }
+        document::observe_product_key_membership_check();
+        if !graph.states.contains_key(&entry.state) {
             return Ok(CertificateValues::Rejected(
                 ProbabilityCertificateRejection {
                     rule: ProbabilityCertificateRule::Malformed,

@@ -207,15 +207,36 @@ pub(super) fn check(
     if replay_targets != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    if graph.states.len() != document.values.len()
-        || document
-            .values
-            .iter()
-            .any(|row| !graph.states.contains_key(&row.state))
-    {
+    if graph.states.len() != document.values.len() {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    super::observe_product_key_membership_check();
+    let mut formula_monitors = BTreeSet::new();
+    for key in graph.states.keys() {
+        poll(cancel)?;
+        if let Some(monitor) = formula_monitor_identity(key, limits)? {
+            reserve_storage(&mut storage, monitor.len(), limits)?;
+            formula_monitors.insert(monitor);
+        }
+    }
+    for row in &document.values {
+        poll(cancel)?;
+        if formula_monitor_identity(&row.state, limits)?
+            .is_some_and(|monitor| !formula_monitors.contains(&monitor))
+        {
+            return Ok(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::Malformed,
+                    at: ProbabilityCertificateLocus::Member("values"),
+                },
+            ));
+        }
+    }
+    for row in &document.values {
+        super::observe_product_key_membership_check();
+        if !graph.states.contains_key(&row.state) {
+            return Err(ProbabilityDocumentError::ObjectiveMismatch);
+        }
+    }
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };
@@ -233,6 +254,31 @@ pub(super) fn check(
         accepted.document = Some(bytes.into());
     }
     Ok(checked)
+}
+
+fn formula_monitor_identity(
+    key: &ProbabilityProductKey,
+    limits: ProbabilityDocumentLimits,
+) -> Result<Option<Vec<u8>>, ProbabilityDocumentError> {
+    let parsed = quire_canonical::read_bounded(key.as_bytes(), limits.bytes, limits.storage_bytes)
+        .map_err(|_| ProbabilityDocumentError::Malformed)?;
+    let quire_canonical::Node::Array(parts) = parsed.root().node() else {
+        return Err(ProbabilityDocumentError::Malformed);
+    };
+    let parts = parts.collect::<Vec<_>>();
+    let monitor = parts
+        .get(5)
+        .ok_or(ProbabilityDocumentError::Malformed)?;
+    let quire_canonical::Node::Array(fields) = monitor.node() else {
+        return Ok(None);
+    };
+    let fields = fields.collect::<Vec<_>>();
+    if !matches!(fields.first().map(|field| field.node()), Some(quire_canonical::Node::String("formula"))) {
+        return Ok(None);
+    }
+    quire_canonical::to_vec(monitor, quire_canonical::Limits::new(limits.bytes))
+        .map(Some)
+        .map_err(|_| ProbabilityDocumentError::Malformed)
 }
 
 #[allow(clippy::too_many_arguments)]

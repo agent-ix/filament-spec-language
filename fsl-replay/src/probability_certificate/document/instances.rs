@@ -44,6 +44,7 @@ struct Edge {
 }
 
 /// One state of an instance's phase graph.
+#[derive(Clone)]
 struct WalkState {
     /// The activation guard has held at or before this state.
     active: bool,
@@ -56,6 +57,7 @@ struct WalkState {
 }
 
 /// The phase graph of one instance from one initial state.
+#[derive(Clone)]
 struct Walk {
     root: Key,
     states: BTreeMap<Key, WalkState>,
@@ -64,6 +66,7 @@ struct Walk {
 
 /// One instance read from one initial state.
 struct Root {
+    initial_index: usize,
     over: Option<(ModelInstance, ObjectReference)>,
     reference: ObjectReference,
     start: ModelSimState,
@@ -283,6 +286,19 @@ fn phase_key(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<Key, ProbabilityDocumentError> {
+    phase_key_with_root(system, over, instance, state, phase, None, limits, cancel)
+}
+
+fn phase_key_with_root(
+    system: &ModelSystem<'_>,
+    over: Option<&ObjectReference>,
+    instance: &ObjectReference,
+    state: &ModelSimState,
+    phase: ActivationPhase,
+    root: Option<usize>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Key, ProbabilityDocumentError> {
     let io = ProbabilityDocumentIoLimits {
         bytes: limits.bytes,
         storage_bytes: limits.storage_bytes,
@@ -290,8 +306,12 @@ fn phase_key(
     let (model, _) = system
         .state_key(state)
         .map_err(|_| ProbabilityDocumentError::Malformed)?;
-    ProbabilityProductKey::for_model_state_with_limits(over, &model, io, cancel)
-        .and_then(|key| key.with_activation(instance, phase, io, cancel))
+    let key = ProbabilityProductKey::for_model_state_with_limits(over, &model, io, cancel)?
+        .with_activation(instance, phase, io, cancel)?;
+    match root {
+        Some(root) => key::with_root_index(&key, root, io, cancel),
+        None => Ok(key),
+    }
 }
 
 fn phase_of(active: bool) -> ActivationPhase {
@@ -496,6 +516,38 @@ struct Instances {
     each: Vec<(ModelInstance, ObjectReference)>,
 }
 
+fn canonical_initials(
+    system: &ModelSystem<'_>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<ModelSimState>, ProbabilityDocumentError> {
+    let mut ordered = BTreeMap::new();
+    let mut storage = 0_u64;
+    for state in system.initial() {
+        poll(cancel)?;
+        let (key, _) = system
+            .state_key(&state)
+            .map_err(|_| ProbabilityDocumentError::Malformed)?;
+        if !ordered.contains_key(&key) {
+            let states = ordered.len().saturating_add(1);
+            if states > limits.states {
+                return Err(ExactProbabilityGraphError::LimitReached.into());
+            }
+            let actual = storage.saturating_add(u64::try_from(key.len()).unwrap_or(u64::MAX));
+            if actual > limits.storage_bytes {
+                return Err(exceeded(
+                    ProbabilityDocumentLimit::StorageBytes,
+                    limits.storage_bytes,
+                    actual,
+                ));
+            }
+            storage = actual;
+            ordered.insert(key, state);
+        }
+    }
+    Ok(ordered.into_values().collect())
+}
+
 impl Instances {
     /// Read the populations only; the claim's profile is not consulted.
     fn of(
@@ -543,7 +595,7 @@ fn roots_over(
 ) -> Result<Vec<Root>, ProbabilityDocumentError> {
     let mut spent = Spent::default();
     let mut found = Vec::new();
-    for start in &instances.initials {
+    for (initial_index, start) in canonical_initials(system, limits, cancel)?.iter().enumerate() {
         for over in &instances.overs {
             for (_, reference) in &instances.each {
                 let walked = walk(
@@ -556,6 +608,7 @@ fn roots_over(
                     cancel,
                 )?;
                 found.push(Root {
+                    initial_index,
                     over: over.clone(),
                     reference: reference.clone(),
                     start: start.clone(),
@@ -874,44 +927,74 @@ fn reset_optimum_outcome(
     let mut reset_ranks = BTreeMap::new();
     let mut reset_policy = BTreeMap::new();
     let mut any_activation = false;
+    let mut reset_meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut reset_process = false;
     for root in roots {
-        poll(cancel)?;
-        let mut active_memo = BTreeMap::new();
-        let mut active_ranks = BTreeMap::new();
-        let mut visiting = BTreeSet::new();
-        let active_keys = root
+        let starts_waiting = root
             .walk
             .states
-            .iter()
-            .filter_map(|(key, state)| state.active.then_some(key.clone()))
-            .collect::<Vec<_>>();
-        for key in &active_keys {
-            let _ = post_value(
-                &root.walk,
-                key,
-                minimum,
-                &mut active_memo,
-                &mut active_ranks,
-                &mut visiting,
-                cancel,
-            )?;
+            .get(&root.walk.root)
+            .is_some_and(|state| !state.active);
+        if starts_waiting && can_activate(&root.walk, &root.walk.root, cancel)? {
+            reset_process = true;
+        }
+    }
+    let initial_count = roots
+        .iter()
+        .map(|root| root.initial_index)
+        .collect::<BTreeSet<_>>()
+        .len();
+    let root_qualified = initial_count > 1 && reset_process;
+    for root in roots {
+        poll(cancel)?;
+        let starts_waiting = root
+            .walk
+            .states
+            .get(&root.walk.root)
+            .is_some_and(|state| !state.active);
+        if starts_waiting && !can_activate(&root.walk, &root.walk.root, cancel)? {
+            continue;
+        }
+        let walk = if root_qualified {
+            indexed_walk(&root.walk, root.initial_index, limits, cancel)?
+        } else {
+            root.walk.clone()
+        };
+        let (active_memo, active_ranks) = post_graph_optimum(
+            &walk,
+            minimum,
+            limits,
+            &mut reset_meter,
+            cancel,
+        )?;
+        if walk
+            .states
+            .get(&walk.root)
+            .is_some_and(|state| state.active)
+        {
+            merge_root_rows(&mut post_values, active_memo)?;
+            merge_root_rows(&mut post_ranks, active_ranks)?;
+            any_activation = true;
+            continue;
         }
         let result = reset_graph_optimum(
             system,
-            &root.walk,
-            &root.walk.root,
+            &walk,
+            &walk.root,
             &active_memo,
             minimum,
+            limits,
+            &mut reset_meter,
             cancel,
         )?;
-        post_values.extend(active_memo);
-        post_ranks.extend(active_ranks);
+        merge_root_rows(&mut post_values, active_memo)?;
+        merge_root_rows(&mut post_ranks, active_ranks)?;
         if result.reaches_activation {
             any_activation = true;
         }
-        reset_values.extend(result.values);
-        reset_ranks.extend(result.ranks);
-        reset_policy.extend(result.policy);
+        merge_root_rows(&mut reset_values, result.values)?;
+        merge_root_rows(&mut reset_ranks, result.ranks)?;
+        merge_root_rows(&mut reset_policy, result.policy)?;
     }
     if !any_activation {
         return Ok(OnEachOutcome::Holds {
@@ -948,60 +1031,362 @@ fn reset_optimum_outcome(
     Ok(OnEachOutcome::Holds { document })
 }
 
-fn post_value(
-    walk: &Walk,
-    key: &Key,
-    minimum: bool,
-    values: &mut BTreeMap<Key, Rational>,
-    ranks: &mut BTreeMap<Key, u64>,
-    visiting: &mut BTreeSet<Key>,
+fn indexed_walk(
+    source: &Walk,
+    initial_index: usize,
+    limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
-) -> Result<Rational, ProbabilityDocumentError> {
-    poll(cancel)?;
-    if let Some(value) = values.get(key) {
-        return Ok(value.clone());
+) -> Result<Walk, ProbabilityDocumentError> {
+    let io = ProbabilityDocumentIoLimits {
+        bytes: limits.bytes,
+        storage_bytes: limits.storage_bytes,
+    };
+    let mut mapped = BTreeMap::new();
+    for key in source.states.keys() {
+        poll(cancel)?;
+        mapped.insert(key.clone(), key::with_root_index(key, initial_index, io, cancel)?);
     }
-    if !visiting.insert(key.clone()) {
-        return Err(ExactProbabilityGraphError::Cycle.into());
+    let remap = |key: &Key| {
+        mapped
+            .get(key)
+            .cloned()
+            .ok_or(ProbabilityDocumentError::Malformed)
+    };
+    let mut states = BTreeMap::new();
+    for (key, state) in &source.states {
+        poll(cancel)?;
+        let mut state = state.clone();
+        for edge in &mut state.edges {
+            edge.to = remap(&edge.to)?;
+        }
+        for choice in &mut state.choices {
+            for (to, _) in choice {
+                *to = remap(to)?;
+            }
+        }
+        states.insert(remap(key)?, state);
     }
-    let state = walk
+    let models = source
+        .models
+        .iter()
+        .map(|(key, model)| Ok((remap(key)?, model.clone())))
+        .collect::<Result<BTreeMap<_, _>, ProbabilityDocumentError>>()?;
+    Ok(Walk {
+        root: remap(&source.root)?,
+        states,
+        models,
+    })
+}
+
+fn merge_root_rows<T: Eq>(
+    rows: &mut BTreeMap<Key, T>,
+    additions: BTreeMap<Key, T>,
+) -> Result<(), ProbabilityDocumentError> {
+    for (key, value) in additions {
+        if rows.get(&key).is_some_and(|previous| previous != &value) {
+            // A canonical product row cannot encode two different root-local
+            // reset values or policies for the same key.
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+        rows.insert(key, value);
+    }
+    Ok(())
+}
+
+fn post_graph_optimum(
+    walk: &Walk,
+    minimum: bool,
+    limits: ProbabilityDocumentLimits,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<(BTreeMap<Key, Rational>, BTreeMap<Key, u64>), ProbabilityDocumentError> {
+    let active = walk
         .states
-        .get(key)
-        .ok_or(ProbabilityDocumentError::Malformed)?;
-    if !state.active {
-        return Err(ProbabilityDocumentError::Malformed);
-    }
-    let (value, rank) = match state.terminal {
-        Some(true) => (rational(1), 0),
-        Some(false) => (rational(0), 0),
-        None => {
-            let mut candidates = Vec::new();
-            let mut rank = 0_u64;
-            for choice in &state.choices {
-                let mut mass = rational(0);
-                let mut total = rational(0);
-                let mut choice_rank = 0_u64;
-                for (to, probability) in choice {
-                    let next = post_value(walk, to, minimum, values, ranks, visiting, cancel)?;
-                    total = total.add(&probability.mul(&next));
-                    mass = mass.add(probability);
-                    choice_rank =
-                        choice_rank.max(*ranks.get(to).ok_or(ProbabilityDocumentError::Malformed)?);
+        .iter()
+        .filter_map(|(key, state)| state.active.then_some(key.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut choices = BTreeMap::new();
+    let mut targets = BTreeSet::new();
+    let mut zero = BTreeSet::new();
+    let mut edges = 0_u64;
+    for key in &active {
+        poll(cancel)?;
+        let state = walk
+            .states
+            .get(key)
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        match state.terminal {
+            Some(true) => {
+                targets.insert(key.clone());
+            }
+            Some(false) => {
+                zero.insert(key.clone());
+            }
+            None => {
+                let mut state_choices = Vec::new();
+                for choice in &state.choices {
+                    poll(cancel)?;
+                    let mut mass = rational(0);
+                    for (to, probability) in choice {
+                        poll(cancel)?;
+                        if !active.contains(to) || probability.is_zero() {
+                            return Err(ProbabilityDocumentError::Malformed);
+                        }
+                        mass = mass.add(probability);
+                        edges = edges.saturating_add(1);
+                    }
+                    if mass != rational(1) {
+                        return Err(ProbabilityDocumentError::Malformed);
+                    }
+                    state_choices.push(choice.clone());
                 }
-                if mass != rational(1) {
+                if state_choices.is_empty() {
                     return Err(ProbabilityDocumentError::Malformed);
                 }
-                candidates.push(total);
-                rank = rank.max(choice_rank.saturating_add(1));
+                choices.insert(key.clone(), state_choices);
             }
-            let value = choose_extreme(candidates, minimum)?;
-            (value, rank)
         }
-    };
-    visiting.remove(key);
-    values.insert(key.clone(), value.clone());
-    ranks.insert(key.clone(), rank);
-    Ok(value)
+    }
+    if active.len() > limits.states || edges > limits.edges as u64 {
+        return Err(ProbabilityDocumentError::Limit {
+            limit: if active.len() > limits.states {
+                ProbabilityDocumentLimit::States
+            } else {
+                ProbabilityDocumentLimit::Edges
+            },
+            bound: if active.len() > limits.states {
+                limits.states as u64
+            } else {
+                limits.edges as u64
+            },
+            actual: if active.len() > limits.states {
+                active.len() as u64
+            } else {
+                edges
+            },
+        });
+    }
+    // Compute qualitative zero states first. For minimum reachability, a
+    // state has value zero when some action can remain entirely in a
+    // non-target set; start from every non-target state to retain end
+    // components such as a self-loop that avoids the target forever.
+    // for maximum, it is zero when no action graph path reaches a target.
+    if minimum {
+        zero.extend(active.difference(&targets).cloned());
+        loop {
+            poll(cancel)?;
+            let mut removed = Vec::new();
+            for (key, actions) in &choices {
+                poll(cancel)?;
+                if !zero.contains(key) {
+                    continue;
+                }
+                if !actions
+                    .iter()
+                    .any(|action| action.iter().all(|(to, _)| zero.contains(to)))
+                {
+                    removed.push(key.clone());
+                }
+            }
+            if removed.is_empty() {
+                break;
+            }
+            for key in removed {
+                zero.remove(&key);
+            }
+        }
+    } else {
+        let mut can_reach = targets.clone();
+        loop {
+            poll(cancel)?;
+            let mut changed = false;
+            for (key, actions) in &choices {
+                poll(cancel)?;
+                if can_reach.contains(key)
+                    || actions
+                        .iter()
+                        .any(|action| action.iter().any(|(to, _)| can_reach.contains(to)))
+                {
+                    changed |= can_reach.insert(key.clone());
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        zero.extend(active.difference(&can_reach).cloned());
+    }
+    let positive = active
+        .difference(&zero)
+        .filter(|key| !targets.contains(*key))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut values = zero
+        .iter()
+        .cloned()
+        .map(|key| (key, rational(0)))
+        .collect::<BTreeMap<_, _>>();
+    values.extend(targets.iter().cloned().map(|key| (key, rational(1))));
+    let mut ranks = zero
+        .iter()
+        .chain(targets.iter())
+        .cloned()
+        .map(|key| (key, 0_u64))
+        .collect::<BTreeMap<_, _>>();
+    if positive.is_empty() {
+        return Ok((values, ranks));
+    }
+
+    // Build a proper seed strategy from CE-3 progress ranks. Every action
+    // at a positive minimum state must progress; maximum needs one such action.
+    let mut policy = BTreeMap::new();
+    loop {
+        poll(cancel)?;
+        let mut changed = false;
+        for key in &positive {
+            poll(cancel)?;
+            if ranks.contains_key(key) {
+                continue;
+            }
+            let actions = choices.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+            let selected = actions.iter().enumerate().find_map(|(index, action)| {
+                let has_progress = action.iter().any(|(to, probability)| {
+                    !probability.is_zero()
+                        && (positive.contains(to) || targets.contains(to))
+                        && ranks.contains_key(to)
+                });
+                has_progress.then_some(index)
+            });
+            if let Some(index) = selected {
+                let progress_rank = actions[index]
+                    .iter()
+                    .filter_map(|(to, probability)| {
+                        (!probability.is_zero()
+                            && (positive.contains(to) || targets.contains(to)))
+                            .then(|| ranks.get(to).copied())
+                            .flatten()
+                    })
+                    .min()
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                if !minimum
+                    || actions.iter().all(|action| {
+                        action.iter().any(|(to, probability)| {
+                            !probability.is_zero()
+                                && ranks.contains_key(to)
+                                && (positive.contains(to) || targets.contains(to))
+                        })
+                    })
+                {
+                    ranks.insert(key.clone(), progress_rank.saturating_add(1));
+                    policy.insert(key.clone(), index);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if positive.iter().any(|key| !policy.contains_key(key)) {
+        return Err(ProbabilityDocumentError::Malformed);
+    }
+    let positive_choices = choices
+        .iter()
+        .filter(|(key, _)| positive.contains(*key))
+        .map(|(key, actions)| (key.clone(), actions.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut iterations = 0_u64;
+    loop {
+        poll(cancel)?;
+        iterations = iterations.saturating_add(1);
+        meter
+            .charge(
+                filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                    .work(filament_exact::Integer::from(edges.max(1))),
+            )
+            .map_err(|error| match cancel.tripped() {
+                Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+                None => ProbabilityDocumentError::Accounting(Box::new(error)),
+            })?;
+        if iterations > edges.saturating_mul(10_000).max(10_000) {
+            return Err(ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::Edges,
+                bound: limits.edges as u64,
+                actual: iterations,
+            });
+        }
+        values = evaluate_reset_policy(
+            &positive,
+            &positive_choices,
+            &policy,
+            &values,
+            limits,
+            meter,
+            cancel,
+        )?;
+        let current = values.clone();
+        let mut improved = false;
+        for key in &positive {
+            poll(cancel)?;
+            let selected = *policy.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+            let current_value = expectation_value(&choices[key][selected], &current)?;
+            for (candidate, action) in choices[key].iter().enumerate() {
+                poll(cancel)?;
+                let candidate_value = expectation_value(action, &current)?;
+                let better = if minimum {
+                    candidate_value < current_value
+                } else {
+                    candidate_value > current_value
+                };
+                if !better {
+                    continue;
+                }
+                let mut candidate_policy = policy.clone();
+                candidate_policy.insert(key.clone(), candidate);
+                if let Some(candidate_ranks) = proper_policy_ranks(
+                    &positive,
+                    &positive_choices,
+                    &candidate_policy,
+                    &targets,
+                    meter,
+                    cancel,
+                )? {
+                    policy = candidate_policy;
+                    if !minimum {
+                        ranks.extend(candidate_ranks);
+                    }
+                    improved = true;
+                    break;
+                }
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+    for key in &positive {
+        poll(cancel)?;
+        let rank = ranks.get(key).copied().ok_or(ProbabilityDocumentError::Malformed)?;
+        let progresses = |action: &Vec<(Key, Rational)>| {
+            action.iter().any(|(to, probability)| {
+                !probability.is_zero()
+                    && values.get(to).is_some_and(|value| !value.is_zero())
+                    && ranks.get(to).is_some_and(|next| *next < rank)
+            })
+        };
+        if (minimum && !choices[key].iter().all(progresses))
+            || (!minimum
+                && !choices[key].iter().enumerate().any(|(index, action)| {
+                    policy.get(key) == Some(&index)
+                        && progresses(action)
+                        && expectation_value(action, &values)
+                            .is_ok_and(|value| value == values[key])
+                }))
+        {
+            return Err(ProbabilityDocumentError::Malformed);
+        }
+    }
+    Ok((values, ranks))
 }
 
 struct ResetSolution {
@@ -1017,6 +1402,8 @@ fn reset_graph_optimum(
     root: &Key,
     post: &BTreeMap<Key, Rational>,
     minimum: bool,
+    limits: ProbabilityDocumentLimits,
+    meter: &mut filament_exact::Meter,
     cancel: &Cancel,
 ) -> Result<ResetSolution, ProbabilityDocumentError> {
     let mut waiting = BTreeSet::from([root.clone()]);
@@ -1053,18 +1440,24 @@ fn reset_graph_optimum(
             choice_ids.insert(key.clone(), vec![None]);
             continue;
         }
-        let mut actions = state.choices.clone();
-        let mut ids = state.choice_ids.clone();
-        if state
-            .choices
-            .iter()
-            .any(|action| !action.is_empty() && action.iter().all(|(to, _)| to == key))
-        {
-            actions.push(vec![(owner.clone(), rational(1))]);
-            ids.push(None);
-        }
+        let actions = state.choices.clone();
+        let ids = state.choice_ids.clone();
         choices.insert(key.clone(), actions);
         choice_ids.insert(key.clone(), ids);
+    }
+    let reset_eligible = waiting_end_component_members(&waiting, &choices, meter, cancel)?;
+    for key in &reset_eligible {
+        if !activates[key] {
+            continue;
+        }
+        choices
+            .get_mut(key)
+            .ok_or(ProbabilityDocumentError::Malformed)?
+            .push(vec![(root.clone(), rational(1))]);
+        choice_ids
+            .get_mut(key)
+            .ok_or(ProbabilityDocumentError::Malformed)?
+            .push(None);
     }
     let targets = waiting
         .iter()
@@ -1116,7 +1509,7 @@ fn reset_graph_optimum(
     // Proper policy iteration: each single-state improvement is retained
     // only when the selected policy still has a decreasing progress rank.
     for _ in 0..10_000 {
-        values = evaluate_reset_policy(&waiting, &choices, &policy, post)?;
+        values = evaluate_reset_policy(&waiting, &choices, &policy, post, limits, meter, cancel)?;
         let mut improved = false;
         for key in &waiting {
             let current = *policy.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
@@ -1133,9 +1526,14 @@ fn reset_graph_optimum(
                 }
                 let mut candidate_policy = policy.clone();
                 candidate_policy.insert(key.clone(), candidate);
-                if let Some(candidate_ranks) =
-                    proper_policy_ranks(&waiting, &choices, &candidate_policy, &targets)
-                {
+                if let Some(candidate_ranks) = proper_policy_ranks(
+                    &waiting,
+                    &choices,
+                    &candidate_policy,
+                    &targets,
+                    meter,
+                    cancel,
+                )? {
                     policy = candidate_policy;
                     ranks.extend(candidate_ranks);
                     improved = true;
@@ -1147,7 +1545,7 @@ fn reset_graph_optimum(
             break;
         }
     }
-    values = evaluate_reset_policy(&waiting, &choices, &policy, post)?;
+    values = evaluate_reset_policy(&waiting, &choices, &policy, post, limits, meter, cancel)?;
     let action_map = waiting
         .iter()
         .map(|key| {
@@ -1190,6 +1588,9 @@ fn evaluate_reset_policy(
     choices: &BTreeMap<Key, Vec<Vec<(Key, Rational)>>>,
     policy: &BTreeMap<Key, usize>,
     post: &BTreeMap<Key, Rational>,
+    limits: ProbabilityDocumentLimits,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
 ) -> Result<BTreeMap<Key, Rational>, ProbabilityDocumentError> {
     let keys = waiting.iter().cloned().collect::<Vec<_>>();
     let indices = keys
@@ -1198,8 +1599,68 @@ fn evaluate_reset_policy(
         .map(|(index, key)| (key.clone(), index))
         .collect::<BTreeMap<_, _>>();
     let size = keys.len();
+    let cells = size
+        .checked_mul(size.checked_add(1).ok_or(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::StorageBytes,
+            bound: limits.storage_bytes,
+            actual: u64::MAX,
+        })?)
+        .ok_or(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::StorageBytes,
+            bound: limits.storage_bytes,
+            actual: u64::MAX,
+        })?;
+    let matrix_storage = u64::try_from(cells)
+        .ok()
+        .and_then(|cells| cells.checked_mul(std::mem::size_of::<Rational>() as u64))
+        .ok_or(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::StorageBytes,
+            bound: limits.storage_bytes,
+            actual: u64::MAX,
+        })?;
+    let row_storage = u64::try_from(size)
+        .ok()
+        .and_then(|rows| rows.checked_mul(std::mem::size_of::<Vec<Rational>>() as u64))
+        .ok_or(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::StorageBytes,
+            bound: limits.storage_bytes,
+            actual: u64::MAX,
+        })?;
+    let actual_storage = matrix_storage
+        .checked_add(row_storage)
+        .ok_or(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::StorageBytes,
+            bound: limits.storage_bytes,
+            actual: u64::MAX,
+        })?;
+    if actual_storage > limits.storage_bytes {
+        return Err(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::StorageBytes,
+            bound: limits.storage_bytes,
+            actual: actual_storage,
+        });
+    }
+    let n = u64::try_from(size).unwrap_or(u64::MAX);
+    let elimination_work = n
+        .checked_mul(n)
+        .and_then(|work| work.checked_mul(n.saturating_add(1)))
+        .ok_or(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::Edges,
+            bound: u64::try_from(limits.edges).unwrap_or(u64::MAX),
+            actual: u64::MAX,
+        })?;
+    meter
+        .charge(
+            filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                .work(filament_exact::Integer::from(elimination_work)),
+        )
+        .map_err(|error| match cancel.tripped() {
+            Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+            None => ProbabilityDocumentError::Accounting(Box::new(error)),
+        })?;
     let mut matrix = vec![vec![rational(0); size + 1]; size];
     for (row, key) in keys.iter().enumerate() {
+        poll(cancel)?;
         matrix[row][row] = rational(1);
         let selected = *policy.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         let action = choices
@@ -1221,17 +1682,20 @@ fn evaluate_reset_policy(
         }
     }
     for column in 0..size {
+        poll(cancel)?;
         let pivot = (column..size)
             .find(|row| !matrix[*row][column].is_zero())
             .ok_or(ExactProbabilityGraphError::Cycle)?;
         matrix.swap(column, pivot);
         let divisor = matrix[column][column].clone();
         for cell in column..=size {
+            poll(cancel)?;
             matrix[column][cell] = matrix[column][cell]
                 .div(&divisor)
                 .ok_or(ProbabilityDocumentError::Malformed)?;
         }
         for row in 0..size {
+            poll(cancel)?;
             if row == column || matrix[row][column].is_zero() {
                 continue;
             }
@@ -1253,20 +1717,37 @@ fn proper_policy_ranks(
     choices: &BTreeMap<Key, Vec<Vec<(Key, Rational)>>>,
     policy: &BTreeMap<Key, usize>,
     terminal: &BTreeSet<Key>,
-) -> Option<BTreeMap<Key, u64>> {
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<Option<BTreeMap<Key, u64>>, ProbabilityDocumentError> {
     let mut ranks = terminal
         .iter()
         .cloned()
         .map(|key| (key, 0_u64))
         .collect::<BTreeMap<_, _>>();
     loop {
+        poll(cancel)?;
         let mut changed = false;
         for key in waiting {
+            poll(cancel)?;
+            meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                        .work(filament_exact::Integer::from(1_u64)),
+                )
+                .map_err(|error| match cancel.tripped() {
+                    Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+                    None => ProbabilityDocumentError::Accounting(Box::new(error)),
+                })?;
             if ranks.contains_key(key) {
                 continue;
             }
-            let index = *policy.get(key)?;
-            let action = choices.get(key)?.get(index)?;
+            let Some(index) = policy.get(key) else {
+                return Ok(None);
+            };
+            let Some(action) = choices.get(key).and_then(|actions| actions.get(*index)) else {
+                return Ok(None);
+            };
             let next = action
                 .iter()
                 .filter(|(_, probability)| !probability.is_zero())
@@ -1282,12 +1763,133 @@ fn proper_policy_ranks(
             break;
         }
     }
-    waiting.iter().all(|key| ranks.contains_key(key)).then(|| {
+    Ok(waiting.iter().all(|key| ranks.contains_key(key)).then(|| {
         ranks
             .into_iter()
             .filter(|(key, _)| waiting.contains(key))
             .collect()
-    })
+    }))
+}
+
+fn waiting_end_component_members(
+    waiting: &BTreeSet<Key>,
+    choices: &BTreeMap<Key, Vec<Vec<(Key, Rational)>>>,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<BTreeSet<Key>, ProbabilityDocumentError> {
+    fn reachable(
+        start: &Key,
+        choices: &BTreeMap<Key, Vec<Vec<(Key, Rational)>>>,
+        candidate: &BTreeSet<Key>,
+        meter: &mut filament_exact::Meter,
+        cancel: &Cancel,
+    ) -> Result<BTreeSet<Key>, ProbabilityDocumentError> {
+        let mut seen = BTreeSet::from([start.clone()]);
+        let mut stack = vec![start.clone()];
+        while let Some(key) = stack.pop() {
+            poll(cancel)?;
+            charge_reset_graph_work(meter, cancel)?;
+            for action in choices
+                .get(&key)
+                .ok_or(ProbabilityDocumentError::Malformed)?
+            {
+                charge_reset_graph_work(meter, cancel)?;
+                if action.is_empty()
+                    || action.iter().any(|(next, probability)| {
+                        !probability.is_zero() && !candidate.contains(next)
+                    })
+                {
+                    continue;
+                }
+                for (next, probability) in action {
+                    charge_reset_graph_work(meter, cancel)?;
+                    if !probability.is_zero() && seen.insert(next.clone())
+                    {
+                        stack.push(next.clone());
+                    }
+                }
+            }
+        }
+        Ok(seen)
+    }
+
+    let mut eligible = BTreeSet::new();
+    let mut candidates = vec![waiting.clone()];
+    while let Some(mut candidate) = candidates.pop() {
+        poll(cancel)?;
+        loop {
+            let mut retained = BTreeSet::new();
+            for key in &candidate {
+                poll(cancel)?;
+                charge_reset_graph_work(meter, cancel)?;
+                let actions = choices
+                    .get(key)
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                let mut has_closed_action = false;
+                for action in actions {
+                    let mut closed = !action.is_empty();
+                    for (next, probability) in action {
+                        charge_reset_graph_work(meter, cancel)?;
+                        if !probability.is_zero() && !candidate.contains(next) {
+                            closed = false;
+                        }
+                    }
+                    has_closed_action |= closed;
+                }
+                if has_closed_action {
+                    retained.insert(key.clone());
+                }
+            }
+            if retained == candidate {
+                break;
+            }
+            candidate = retained;
+            if candidate.is_empty() {
+                break;
+            }
+        }
+        if candidate.is_empty() {
+            continue;
+        }
+        let mut remaining = candidate.clone();
+        let mut components = Vec::new();
+        while let Some(seed) = remaining.iter().next().cloned() {
+            let forward = reachable(&seed, choices, &candidate, meter, cancel)?;
+            let mut component = BTreeSet::new();
+            for key in &remaining {
+                let back = reachable(key, choices, &candidate, meter, cancel)?;
+                if forward.contains(key) && back.contains(&seed) {
+                    component.insert(key.clone());
+                }
+            }
+            if component.is_empty() {
+                component.insert(seed);
+            }
+            remaining.retain(|key| !component.contains(key));
+            components.push(component);
+        }
+        if components.len() == 1 && components[0] == candidate {
+            eligible.extend(candidate);
+        } else {
+            candidates.extend(components);
+        }
+    }
+    Ok(eligible)
+}
+
+fn charge_reset_graph_work(
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<(), ProbabilityDocumentError> {
+    meter
+        .charge(
+            filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                .work(filament_exact::Integer::one()),
+        )
+        .map_err(|error| match cancel.tripped() {
+            Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+            None => ProbabilityDocumentError::Accounting(Box::new(error)),
+        })
 }
 
 fn can_activate(
@@ -2065,6 +2667,20 @@ fn identity_of(wire: WireIdentity) -> Result<ObligationIdentity, ProbabilityDocu
     ))
 }
 
+fn member_error(
+    error: ProbabilityDocumentError,
+    member: &'static str,
+) -> ProbabilityDocumentError {
+    match error {
+        ProbabilityDocumentError::Malformed
+        | ProbabilityDocumentError::Noncanonical
+        | ProbabilityDocumentError::Unsupported => {
+            ProbabilityDocumentError::MalformedMember(member)
+        }
+        other => other,
+    }
+}
+
 fn decode(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
@@ -2123,22 +2739,28 @@ fn decode(
                 for row in part.values {
                     poll(cancel)?;
                     values.push(ExactProbabilityValue {
-                        state: decode_key_with(&row.state, limits, true)?,
-                        value: ratio(row.value, limits.scalar_bits, meter, cancel)?,
+                        state: decode_key_with(&row.state, limits, true)
+                            .map_err(|error| member_error(error, "values"))?,
+                        value: ratio(row.value, limits.scalar_bits, meter, cancel)
+                            .map_err(|error| member_error(error, "values"))?,
                     });
                 }
                 ordered(values.iter().map(|row| row.state.clone()))
-                    .map_err(|_| ProbabilityDocumentError::MalformedMember(name))?;
+                    .map_err(|_| ProbabilityDocumentError::MalformedMember("values"))?;
                 let mut ranks = Vec::with_capacity(part.ranking.len());
                 for row in part.ranking {
                     poll(cancel)?;
                     if row.rank > MAX_COUNT {
-                        return Err(ProbabilityDocumentError::MalformedMember(name));
+                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                     }
-                    ranks.push((decode_key_with(&row.state, limits, true)?, row.rank));
+                    ranks.push((
+                        decode_key_with(&row.state, limits, true)
+                            .map_err(|error| member_error(error, "ranking"))?,
+                        row.rank,
+                    ));
                 }
                 ordered(ranks.iter().map(|(state, _)| state.clone()))
-                    .map_err(|_| ProbabilityDocumentError::MalformedMember(name))?;
+                    .map_err(|_| ProbabilityDocumentError::MalformedMember("ranking"))?;
                 Ok::<_, ProbabilityDocumentError>(PartRows {
                     values,
                     ranks,
@@ -2186,26 +2808,33 @@ fn decode(
                 for row in part.values {
                     poll(cancel)?;
                     values.push(ExactProbabilityValue {
-                        state: decode_key_with(&row.state, limits, true)?,
-                        value: ratio(row.value, limits.scalar_bits, meter, cancel)?,
+                        state: decode_key_with(&row.state, limits, true)
+                            .map_err(|error| member_error(error, "values"))?,
+                        value: ratio(row.value, limits.scalar_bits, meter, cancel)
+                            .map_err(|error| member_error(error, "values"))?,
                     });
                 }
                 ordered(values.iter().map(|row| row.state.clone()))
-                    .map_err(|_| ProbabilityDocumentError::MalformedMember(name))?;
+                    .map_err(|_| ProbabilityDocumentError::MalformedMember("values"))?;
                 let mut ranks = Vec::with_capacity(part.ranking.len());
                 for row in part.ranking {
                     poll(cancel)?;
                     if row.rank > MAX_COUNT {
-                        return Err(ProbabilityDocumentError::MalformedMember(name));
+                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                     }
-                    ranks.push((decode_key_with(&row.state, limits, true)?, row.rank));
+                    ranks.push((
+                        decode_key_with(&row.state, limits, true)
+                            .map_err(|error| member_error(error, "ranking"))?,
+                        row.rank,
+                    ));
                 }
                 ordered(ranks.iter().map(|(state, _)| state.clone()))
-                    .map_err(|_| ProbabilityDocumentError::MalformedMember(name))?;
+                    .map_err(|_| ProbabilityDocumentError::MalformedMember("ranking"))?;
                 let mut policy = Vec::new();
                 for row in part.policy.unwrap_or_default() {
                     poll(cancel)?;
-                    let state = decode_key_with(&row.state, limits, true)?;
+                    let state = decode_key_with(&row.state, limits, true)
+                        .map_err(|error| member_error(error, "policy"))?;
                     let choice: serde_json::Value = serde_json::from_str(row.choice.get())
                         .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
                     let bytes = serde_json::to_vec(&choice)
@@ -2283,6 +2912,16 @@ mod rebuilt {
         limits: ProbabilityDocumentLimits,
         cancel: &Cancel,
     ) -> Result<Graph, ProbabilityDocumentError> {
+        build_with_root_index(system, subject, limits, cancel, false)
+    }
+
+    pub(super) fn build_with_root_index(
+        system: &ModelSystem<'_>,
+        subject: &Subject<'_>,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+        root_indexed: bool,
+    ) -> Result<Graph, ProbabilityDocumentError> {
         let claim = subject.claim;
         let overs: Vec<Option<(ModelInstance, ObjectReference)>> = match &claim.over {
             None => vec![None],
@@ -2297,7 +2936,7 @@ mod rebuilt {
             nodes: BTreeMap::new(),
             roots: Vec::new(),
         };
-        for (position, start) in system.initial().into_iter().enumerate() {
+        for (position, start) in canonical_initials(system, limits, cancel)?.into_iter().enumerate() {
             let initial =
                 u32::try_from(position).map_err(|_| ProbabilityDocumentError::Malformed)?;
             for over in &overs {
@@ -2312,6 +2951,7 @@ mod rebuilt {
                         limits,
                         &mut spent,
                         &mut graph.nodes,
+                        root_indexed.then_some(initial as usize),
                         cancel,
                     )?;
                     let (binding, bound_instance) = entry_binding(over.as_ref(), instance);
@@ -2338,6 +2978,7 @@ mod rebuilt {
         limits: ProbabilityDocumentLimits,
         spent: &mut Spent,
         nodes: &mut BTreeMap<Key, Node>,
+        root_index: Option<usize>,
         cancel: &Cancel,
     ) -> Result<Key, ProbabilityDocumentError> {
         let guard_holds = |state: &ModelSimState| match &subject.guard {
@@ -2345,12 +2986,13 @@ mod rebuilt {
             None => Ok(true),
         };
         let first = guard_holds(start)?;
-        let root = phase_key(
+        let root = phase_key_with_root(
             system,
             over,
             instance,
             start,
             phase_of(first),
+            root_index,
             limits,
             cancel,
         )?;
@@ -2381,12 +3023,13 @@ mod rebuilt {
             for step in steps {
                 poll(cancel)?;
                 let next_active = active || guard_holds(&step.post)?;
-                let to = phase_key(
+                let to = phase_key_with_root(
                     system,
                     over,
                     instance,
                     &step.post,
                     phase_of(next_active),
+                    root_index,
                     limits,
                     cancel,
                 )?;
@@ -2515,6 +3158,122 @@ fn part_locus(key: &Key, part: Part) -> ProbabilityCertificateLocus {
     }
 }
 
+fn check_cyclic_post_values(
+    graph: &rebuilt::Graph,
+    values: &BTreeMap<Key, Rational>,
+    minimum: bool,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<Option<ProbabilityCertificateRejection>, ProbabilityDocumentError> {
+    let active = graph
+        .nodes
+        .iter()
+        .filter_map(|(key, node)| node.active.then_some(key.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut targets = BTreeSet::new();
+    for key in &active {
+        poll(cancel)?;
+        charge_post_check(meter, cancel)?;
+        if graph.nodes.get(key).is_some_and(|node| node.leaf == Some(true)) {
+            targets.insert(key.clone());
+        }
+    }
+    let mut zero = BTreeSet::new();
+    if minimum {
+        zero.extend(active.difference(&targets).cloned());
+        loop {
+            poll(cancel)?;
+            let mut removed = Vec::new();
+            for key in &zero {
+                poll(cancel)?;
+                charge_post_check(meter, cancel)?;
+                let node = graph.nodes.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+                if node.leaf == Some(false) {
+                    continue;
+                }
+                let remains_zero = node.choices.iter().any(|choice| {
+                    choice
+                        .iter()
+                        .all(|(to, probability)| probability.is_zero() || zero.contains(to))
+                });
+                if !remains_zero {
+                    removed.push(key.clone());
+                }
+            }
+            if removed.is_empty() {
+                break;
+            }
+            for key in removed {
+                zero.remove(&key);
+            }
+        }
+    } else {
+        let mut can_reach = targets.clone();
+        loop {
+            poll(cancel)?;
+            let mut added = Vec::new();
+            for key in &active {
+                poll(cancel)?;
+                charge_post_check(meter, cancel)?;
+                if can_reach.contains(key) {
+                    continue;
+                }
+                let node = graph.nodes.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+                if node.choices.iter().any(|choice| {
+                    choice
+                        .iter()
+                        .any(|(to, probability)| !probability.is_zero() && can_reach.contains(to))
+                }) {
+                    added.push(key.clone());
+                }
+            }
+            if added.is_empty() {
+                break;
+            }
+            can_reach.extend(added);
+        }
+        zero.extend(active.difference(&can_reach).cloned());
+    }
+    for key in &active {
+        poll(cancel)?;
+        charge_post_check(meter, cancel)?;
+        let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        let node = graph.nodes.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        let valid = if node.leaf == Some(true) {
+            value == &rational(1)
+        } else if zero.contains(key) {
+            value.is_zero()
+        } else {
+            !value.is_zero()
+        };
+        if !valid {
+            return Ok(Some(ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::InequalityFails,
+                at: ProbabilityCertificateLocus::ProductPart {
+                    key: key.clone(),
+                    part: ProbabilityCertificatePart::Post,
+                },
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn charge_post_check(
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<(), ProbabilityDocumentError> {
+    meter
+        .charge(
+            filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                .work(filament_exact::Integer::from(1_u64)),
+        )
+        .map_err(|error| match cancel.tripped() {
+            Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+            None => ProbabilityDocumentError::Accounting(Box::new(error)),
+        })
+}
+
 fn check_optimum_document(
     system: &ModelSystem<'_>,
     subject: &Subject<'_>,
@@ -2580,6 +3339,13 @@ fn check_optimum_document(
     }
 
     let minimum = matches!(subject.bound, Bound::AtLeast(_));
+    // The independent cyclic Exact pass rejects arbitrary positive fixed
+    // points in active end components before reset values are read.
+    if let Some(rejection) =
+        check_cyclic_post_values(graph, &post_values, minimum, meter, cancel)?
+    {
+        return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
+    }
     let mut arith = Arith {
         meter,
         cancel,
@@ -2614,18 +3380,81 @@ fn check_optimum_document(
             ));
         }
     }
+    for (key, node) in graph.nodes.iter().filter(|(_, node)| node.active) {
+        poll(cancel)?;
+        let value = post_values
+            .get(key)
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        let rank = post_ranks
+            .get(key)
+            .copied()
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        let is_target = node.leaf == Some(true);
+        if is_target || value.is_zero() {
+            if rank != 0 {
+                return Ok(reject(
+                    ProbabilityCertificateRule::RankBroken,
+                    ProbabilityCertificateLocus::ProductPart {
+                        key: key.clone(),
+                        part: ProbabilityCertificatePart::Post,
+                    },
+                ));
+            }
+            continue;
+        }
+        if rank == 0 {
+            return Ok(reject(
+                ProbabilityCertificateRule::RankBroken,
+                ProbabilityCertificateLocus::ProductPart {
+                    key: key.clone(),
+                    part: ProbabilityCertificatePart::Post,
+                },
+            ));
+        }
+        let progresses = |choice: &Vec<(Key, Rational)>| {
+            choice.iter().any(|(next, probability)| {
+                !probability.is_zero()
+                    && post_values
+                        .get(next)
+                        .is_some_and(|next_value| !next_value.is_zero())
+                    && post_ranks
+                        .get(next)
+                        .is_some_and(|next_rank| *next_rank < rank)
+            })
+        };
+        let progress = if minimum {
+            !node.choices.is_empty() && node.choices.iter().all(progresses)
+        } else {
+            let mut found = false;
+            for choice in &node.choices {
+                if expectation(choice, &post_values, &mut arith)? == *value && progresses(choice) {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !progress {
+            return Ok(reject(
+                ProbabilityCertificateRule::RankBroken,
+                ProbabilityCertificateLocus::ProductPart {
+                    key: key.clone(),
+                    part: ProbabilityCertificatePart::Post,
+                },
+            ));
+        }
+    }
 
     // Assign every reachable waiting key to its independently discovered
     // initial key. The reset action always returns to that key.
-    let mut owner = BTreeMap::new();
+    let mut owners: BTreeMap<Key, BTreeSet<Key>> = BTreeMap::new();
+    let mut root_actions: BTreeMap<Key, BTreeMap<Key, Vec<(Vec<(Key, Rational)>, bool)>>> =
+        BTreeMap::new();
     for root in &graph.roots {
-        let mut seen = BTreeSet::from([root.key.clone()]);
+        let mut reached = BTreeSet::from([root.key.clone()]);
         let mut stack = vec![root.key.clone()];
         while let Some(key) = stack.pop() {
             poll(cancel)?;
-            if graph.nodes.get(&key).is_some_and(|node| !node.active) {
-                owner.entry(key.clone()).or_insert_with(|| root.key.clone());
-            }
             for (next, _) in graph
                 .nodes
                 .get(&key)
@@ -2633,39 +3462,56 @@ fn check_optimum_document(
                 .next
                 .iter()
             {
-                if seen.insert(next.clone()) {
+                if reached.insert(next.clone()) {
                     stack.push(next.clone());
                 }
             }
         }
-    }
-    let mut activating = BTreeMap::new();
-    for key in &waiting {
-        activating.insert(
-            key.clone(),
-            rebuilt::reaches_activation(graph, key, cancel)?,
-        );
-    }
-    let mut actions_by_key = BTreeMap::new();
-    for key in &waiting {
-        let node = graph
-            .nodes
-            .get(key)
-            .ok_or(ProbabilityDocumentError::Malformed)?;
-        let root = owner.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
-        let actions =
-            if !activating[key] {
-                vec![vec![(root.clone(), rational(1))]]
+        let partition = reached
+            .iter()
+            .filter(|key| graph.nodes.get(*key).is_some_and(|node| !node.active))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let partition_choices = partition
+            .iter()
+            .map(|key| {
+                graph
+                    .nodes
+                    .get(key)
+                    .map(|node| (key.clone(), node.choices.clone()))
+                    .ok_or(ProbabilityDocumentError::Malformed)
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let reset_eligible =
+            waiting_end_component_members(&partition, &partition_choices, arith.meter, cancel)?;
+        for key in &partition {
+            owners
+                .entry(key.clone())
+                .or_default()
+                .insert(root.key.clone());
+            let node = graph
+                .nodes
+                .get(key)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            let actions = if !rebuilt::reaches_activation(graph, key, cancel)? {
+                vec![(vec![(root.key.clone(), rational(1))], true)]
             } else {
-                let mut choices = node.choices.clone();
-                if node.choices.iter().any(|choice| {
-                    !choice.is_empty() && choice.iter().all(|(target, _)| target == key)
-                }) {
-                    choices.push(vec![(root.clone(), rational(1))]);
+                let mut actions = node
+                    .choices
+                    .iter()
+                    .cloned()
+                    .map(|choice| (choice, false))
+                    .collect::<Vec<_>>();
+                if reset_eligible.contains(key) {
+                    actions.push((vec![(root.key.clone(), rational(1))], true));
                 }
-                choices
+                actions
             };
-        actions_by_key.insert(key.clone(), actions);
+            root_actions
+                .entry(key.clone())
+                .or_default()
+                .insert(root.key.clone(), actions);
+        }
     }
 
     // Every action, including the synthetic reset at a waiting end component,
@@ -2674,28 +3520,32 @@ fn check_optimum_document(
         let value = reset_values
             .get(key)
             .ok_or(ProbabilityDocumentError::Malformed)?;
-        let actions = actions_by_key
-            .get(key)
-            .ok_or(ProbabilityDocumentError::Malformed)?;
-        if actions.is_empty() {
-            return Err(ProbabilityDocumentError::Malformed);
-        }
-        for action in actions {
-            let expectation =
-                expectation_lookup(action, &post_values, &reset_values, graph, &mut arith)?;
-            let respects = if minimum {
-                value <= &expectation
-            } else {
-                &expectation <= value
-            };
-            if !respects {
-                return Ok(reject(
-                    ProbabilityCertificateRule::InequalityFails,
-                    ProbabilityCertificateLocus::ProductPart {
-                        key: key.clone(),
-                        part: ProbabilityCertificatePart::Reset,
-                    },
-                ));
+        let owners = owners.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        for owner in owners {
+            let actions = root_actions
+                .get(key)
+                .and_then(|by_owner| by_owner.get(owner))
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            if actions.is_empty() {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+            for (action, _) in actions {
+                let expectation =
+                    expectation_lookup(action, &post_values, &reset_values, graph, &mut arith)?;
+                let respects = if minimum {
+                    value <= &expectation
+                } else {
+                    &expectation <= value
+                };
+                if !respects {
+                    return Ok(reject(
+                        ProbabilityCertificateRule::InequalityFails,
+                        ProbabilityCertificateLocus::ProductPart {
+                            key: key.clone(),
+                            part: ProbabilityCertificatePart::Reset,
+                        },
+                    ));
+                }
             }
         }
     }
@@ -2708,78 +3558,75 @@ fn check_optimum_document(
             .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
         let action = crate::ProductAction::parse(&choice_bytes)
             .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
-        let actions = actions_by_key
-            .get(key)
-            .ok_or(ProbabilityDocumentError::Malformed)?;
         let node = graph
             .nodes
             .get(key)
             .ok_or(ProbabilityDocumentError::Malformed)?;
-        let selected = match action {
-            crate::ProductAction::Reset => {
-                if !activating[key] {
-                    Some(0)
-                } else if actions.len() == node.choices.len() + 1 {
-                    Some(actions.len() - 1)
-                } else {
-                    None
-                }
-            }
-            crate::ProductAction::Identity(schedule) => node
-                .choice_ids
-                .iter()
-                .enumerate()
-                .find_map(|(index, identity)| {
-                    let identity = identity.as_ref()?;
-                    let known = crate::Schedule::of(system, identity).ok()?;
-                    (known == schedule).then_some(index)
-                }),
-            _ => None,
-        }
-        .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?;
-        let selected_edges = actions
-            .get(selected)
-            .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?;
-        let expected = if !activating[key] {
-            reset_values
-                .get(owner.get(key).ok_or(ProbabilityDocumentError::Malformed)?)
-                .cloned()
-                .ok_or(ProbabilityDocumentError::Malformed)?
-        } else {
-            expectation_lookup(
+        let selected_choice = match action {
+            crate::ProductAction::Reset => None,
+            crate::ProductAction::Identity(schedule) => Some(
+                node.choice_ids
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, identity)| {
+                        let identity = identity.as_ref()?;
+                        let known = crate::Schedule::of(system, identity).ok()?;
+                        (known == schedule).then_some(index)
+                    })
+                    .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?,
+            ),
+            _ => return Err(ProbabilityDocumentError::MalformedMember("policy")),
+        };
+        let owners = owners.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        for owner in owners {
+            let actions = root_actions
+                .get(key)
+                .and_then(|by_owner| by_owner.get(owner))
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            let (selected_edges, _) = match selected_choice {
+                Some(index) => actions
+                    .get(index)
+                    .filter(|(_, is_reset)| !is_reset)
+                    .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?,
+                None => actions
+                    .iter()
+                    .find(|(_, is_reset)| *is_reset)
+                    .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?,
+            };
+            let expected = expectation_lookup(
                 selected_edges,
                 &post_values,
                 &reset_values,
                 graph,
                 &mut arith,
-            )?
-        };
-        if reset_values.get(key) != Some(&expected) {
-            return Ok(reject(
-                ProbabilityCertificateRule::InequalityFails,
-                ProbabilityCertificateLocus::ProductPart {
-                    key: key.clone(),
-                    part: ProbabilityCertificatePart::Reset,
-                },
-            ));
-        }
-        let rank = reset_ranks.get(key).copied().unwrap_or(0);
-        let progresses = selected_edges.iter().any(|(to, probability)| {
-            !probability.is_zero()
-                && if graph.nodes.get(to).is_some_and(|node| node.active) {
-                    0 < rank
-                } else {
-                    reset_ranks.get(to).is_some_and(|next| *next < rank)
-                }
-        });
-        if !progresses {
-            return Ok(reject(
-                ProbabilityCertificateRule::RankBroken,
-                ProbabilityCertificateLocus::ProductPart {
-                    key: key.clone(),
-                    part: ProbabilityCertificatePart::Reset,
-                },
-            ));
+            )?;
+            if reset_values.get(key) != Some(&expected) {
+                return Ok(reject(
+                    ProbabilityCertificateRule::InequalityFails,
+                    ProbabilityCertificateLocus::ProductPart {
+                        key: key.clone(),
+                        part: ProbabilityCertificatePart::Reset,
+                    },
+                ));
+            }
+            let rank = reset_ranks.get(key).copied().unwrap_or(0);
+            let progresses = selected_edges.iter().any(|(to, probability)| {
+                !probability.is_zero()
+                    && if graph.nodes.get(to).is_some_and(|node| node.active) {
+                        0 < rank
+                    } else {
+                        reset_ranks.get(to).is_some_and(|next| *next < rank)
+                    }
+            });
+            if !progresses {
+                return Ok(reject(
+                    ProbabilityCertificateRule::RankBroken,
+                    ProbabilityCertificateLocus::ProductPart {
+                        key: key.clone(),
+                        part: ProbabilityCertificatePart::Reset,
+                    },
+                ));
+            }
         }
     }
 
@@ -2792,12 +3639,18 @@ fn check_optimum_document(
     let mut instances = Vec::new();
     let mut least: Option<Rational> = None;
     for root in &graph.roots {
-        if !rebuilt::reaches_activation(graph, &root.key, cancel)? {
-            continue;
-        }
-        let value = reset_values
+        let node = graph
+            .nodes
             .get(&root.key)
             .ok_or(ProbabilityDocumentError::Malformed)?;
+        let value = if node.active {
+            post_values.get(&root.key)
+        } else if rebuilt::reaches_activation(graph, &root.key, cancel)? {
+            reset_values.get(&root.key)
+        } else {
+            continue;
+        }
+        .ok_or(ProbabilityDocumentError::Malformed)?;
         if !meets(subject.bound, value) {
             return Ok(reject(
                 ProbabilityCertificateRule::ThresholdMissed,
@@ -2935,7 +3788,34 @@ pub(super) fn check(
         ));
     }
     let subject = subject(system, claims, item, cancel)?;
-    let graph = rebuilt::build(system, &subject, limits, cancel)?;
+    let preliminary = rebuilt::build(system, &subject, limits, cancel)?;
+    let mut reset_process = false;
+    if matches!(&document.mode, Mode::Optimum { .. }) {
+        for root in &preliminary.roots {
+            let starts_waiting = preliminary
+                .nodes
+                .get(&root.key)
+                .is_some_and(|node| !node.active);
+            if starts_waiting
+                && rebuilt::reaches_activation(&preliminary, &root.key, cancel)?
+            {
+                reset_process = true;
+                break;
+            }
+        }
+    }
+    let initial_count = preliminary
+        .roots
+        .iter()
+        .map(|root| root.initial)
+        .collect::<BTreeSet<_>>()
+        .len();
+    let root_indexed = reset_process && initial_count > 1;
+    let graph = if root_indexed {
+        rebuilt::build_with_root_index(system, &subject, limits, cancel, true)?
+    } else {
+        preliminary
+    };
     if graph.roots.is_empty() {
         return Err(ProbabilityDocumentError::Unsupported);
     }
@@ -3159,4 +4039,361 @@ fn free_scheduler(
 ) -> Result<bool, ProbabilityDocumentError> {
     let claim = bind_claim(claims, item, cancel)?;
     Ok(claim_workload(system, claim)?.is_none())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn test_walk(states: BTreeMap<Key, WalkState>, root: Key) -> Walk {
+        Walk {
+            root,
+            states,
+            models: BTreeMap::new(),
+        }
+    }
+
+    fn fraction(numerator: u64, denominator: u64) -> Rational {
+        Rational::new(
+            filament_exact::Integer::from(numerator),
+            filament_exact::Integer::from(denominator),
+        )
+        .expect("nonzero test denominator")
+    }
+
+    fn test_limits() -> ProbabilityDocumentLimits {
+        ProbabilityDocumentLimits {
+            bytes: 1_000_000,
+            storage_bytes: 1_000_000,
+            states: 10_000,
+            edges: 100_000,
+            scalar_bits: 512,
+            accounting: crate::AccountingLimits::default().0,
+        }
+    }
+
+    fn active_state(choices: Vec<Vec<(Key, Rational)>>, terminal: Option<bool>) -> WalkState {
+        WalkState {
+            active: true,
+            terminal,
+            edges: Vec::new(),
+            choices,
+            choice_ids: Vec::new(),
+        }
+    }
+
+    #[trace("FR-196-AC-16")]
+    #[test]
+    fn reset_candidates_cover_each_member_of_a_waiting_end_component() {
+        let u = ProbabilityProductKey::from_canonical_bytes(b"u".to_vec());
+        let v = ProbabilityProductKey::from_canonical_bytes(b"v".to_vec());
+        let active = ProbabilityProductKey::from_canonical_bytes(b"active".to_vec());
+        let waiting = BTreeSet::from([u.clone(), v.clone()]);
+        let choices = BTreeMap::from([
+            (
+                u.clone(),
+                vec![
+                    vec![(v.clone(), rational(1))],
+                    vec![(active.clone(), rational(1))],
+                ],
+            ),
+            (
+                v.clone(),
+                vec![
+                    vec![(u.clone(), rational(1))],
+                    vec![(active, rational(1))],
+                ],
+            ),
+        ]);
+        assert_eq!(
+            waiting_end_component_members(
+                &waiting,
+                &choices,
+                &mut filament_exact::Meter::new(crate::AccountingLimits::default().0),
+                &Cancel::new(),
+            )
+                .expect("the two-state SCC is finite"),
+            waiting,
+            "u and v each have a closed action inside the same waiting SCC"
+        );
+    }
+
+    #[trace("FR-196-AC-16")]
+    #[test]
+    fn reset_candidates_keep_separate_closed_components_and_skip_nonprogress() {
+        let u = ProbabilityProductKey::from_canonical_bytes(b"u".to_vec());
+        let v = ProbabilityProductKey::from_canonical_bytes(b"v".to_vec());
+        let w = ProbabilityProductKey::from_canonical_bytes(b"w".to_vec());
+        let dead = ProbabilityProductKey::from_canonical_bytes(b"dead".to_vec());
+        let active = ProbabilityProductKey::from_canonical_bytes(b"active".to_vec());
+        let waiting = BTreeSet::from([u.clone(), v.clone(), w.clone(), dead.clone()]);
+        let choices = BTreeMap::from([
+            (u.clone(), vec![vec![(v.clone(), rational(1))], vec![(active.clone(), rational(1))]]),
+            (v.clone(), vec![vec![(u.clone(), rational(1))], vec![(active.clone(), rational(1))]]),
+            (w.clone(), vec![vec![(w.clone(), rational(1))], vec![(active.clone(), rational(1))]]),
+            (dead.clone(), vec![vec![(active, rational(1))]]),
+        ]);
+        assert_eq!(
+            waiting_end_component_members(
+                &waiting,
+                &choices,
+                &mut filament_exact::Meter::new(crate::AccountingLimits::default().0),
+                &Cancel::new(),
+            )
+            .expect("the closed supports are finite"),
+            BTreeSet::from([u, v, w]),
+            "u/v form one multi-state component, w a separate closed component, and dead has no closed support"
+        );
+    }
+
+    #[trace("FR-196-AC-16")]
+    #[test]
+    fn reset_policy_storage_is_refused_before_dense_matrix_allocation() {
+        let u = ProbabilityProductKey::from_canonical_bytes(b"u".to_vec());
+        let v = ProbabilityProductKey::from_canonical_bytes(b"v".to_vec());
+        let waiting = BTreeSet::from([u.clone(), v.clone()]);
+        let choices = BTreeMap::from([
+            (u.clone(), vec![vec![(v.clone(), rational(1))]]),
+            (v.clone(), vec![vec![(u.clone(), rational(1))]]),
+        ]);
+        let policy = BTreeMap::from([(u.clone(), 0), (v.clone(), 0)]);
+        let post = BTreeMap::new();
+        let limits = ProbabilityDocumentLimits {
+            bytes: 1_000,
+            storage_bytes: 0,
+            states: 10,
+            edges: 10,
+            scalar_bits: 64,
+            accounting: crate::AccountingLimits::default().0,
+        };
+        assert!(matches!(
+            evaluate_reset_policy(
+                &waiting,
+                &choices,
+                &policy,
+                &post,
+                limits,
+                &mut filament_exact::Meter::new(limits.accounting),
+                &Cancel::new(),
+            ),
+            Err(ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::StorageBytes,
+                bound: 0,
+                actual,
+            }) if actual > 0
+        ));
+    }
+
+    #[trace("FR-196-AC-16")]
+    #[test]
+    fn reset_policy_cancellation_is_observed_before_dense_matrix_allocation() {
+        let u = ProbabilityProductKey::from_canonical_bytes(b"u".to_vec());
+        let v = ProbabilityProductKey::from_canonical_bytes(b"v".to_vec());
+        let waiting = BTreeSet::from([u.clone(), v.clone()]);
+        let choices = BTreeMap::from([
+            (u.clone(), vec![vec![(v.clone(), rational(1))]]),
+            (v.clone(), vec![vec![(u.clone(), rational(1))]]),
+        ]);
+        let policy = BTreeMap::from([(u.clone(), 0), (v.clone(), 0)]);
+        let post = BTreeMap::new();
+        let limits = ProbabilityDocumentLimits {
+            bytes: 1_000,
+            storage_bytes: 8_000,
+            states: 10,
+            edges: 10,
+            scalar_bits: 64,
+            accounting: crate::AccountingLimits::default().0,
+        };
+        let cancel = Cancel::new();
+        cancel.cancel(filament_exact::CancelCause::Deadline);
+        assert!(matches!(
+            evaluate_reset_policy(
+                &waiting,
+                &choices,
+                &policy,
+                &post,
+                limits,
+                &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+                &cancel,
+            ),
+            Err(ProbabilityDocumentError::Cancelled(
+                filament_exact::CancelCause::Deadline
+            ))
+        ));
+    }
+
+    #[trace("FR-196-AC-16")]
+    #[test]
+    fn exact_post_rejects_a_forged_positive_active_self_loop() {
+        let state = ProbabilityProductKey::from_canonical_bytes(b"active-self-loop".to_vec());
+        let graph = rebuilt::Graph {
+            nodes: BTreeMap::from([(
+                state.clone(),
+                rebuilt::Node {
+                    active: true,
+                    leaf: None,
+                    next: vec![(state.clone(), rational(1))],
+                    choices: vec![vec![(state.clone(), rational(1))]],
+                    choice_ids: vec![None],
+                },
+            )]),
+            roots: Vec::new(),
+        };
+        let forged = BTreeMap::from([(state.clone(), rational(1))]);
+        let limits = test_limits();
+        let mut meter = filament_exact::Meter::new(limits.accounting);
+        let rejection = check_cyclic_post_values(
+            &graph,
+            &forged,
+            false,
+            &mut meter,
+            &Cancel::new(),
+        )
+            .expect("the finite cyclic checker settles")
+            .expect("a positive fixed point in a closed non-target component is rejected");
+        assert_eq!(
+            rejection.rule,
+            ProbabilityCertificateRule::InequalityFails,
+            "the forged one violates exact qualitative reachability"
+        );
+        assert_eq!(
+            rejection.at,
+            ProbabilityCertificateLocus::ProductPart {
+                key: state,
+                part: ProbabilityCertificatePart::Post,
+            },
+            "the failure is attributed to post before reset checks"
+        );
+    }
+
+    #[trace("FR-196-AC-16")]
+    #[test]
+    fn exact_post_solves_cyclic_minimum_and_maximum_values_with_ranks() {
+        let x = ProbabilityProductKey::from_canonical_bytes(b"x".to_vec());
+        let target = ProbabilityProductKey::from_canonical_bytes(b"target".to_vec());
+        let dead = ProbabilityProductKey::from_canonical_bytes(b"dead".to_vec());
+        let half = fraction(1, 2);
+        let quarter = fraction(1, 4);
+        let three_quarters = fraction(3, 4);
+        let mut states = BTreeMap::from([
+            (
+                target.clone(),
+                active_state(Vec::new(), Some(true)),
+            ),
+            (dead.clone(), active_state(Vec::new(), Some(false))),
+            (
+                x.clone(),
+                active_state(
+                    vec![
+                        vec![(target.clone(), half.clone()), (x.clone(), half.clone())],
+                        vec![
+                            (target.clone(), quarter.clone()),
+                            (dead.clone(), three_quarters),
+                        ],
+                        vec![(x.clone(), rational(1))],
+                    ],
+                    None,
+                ),
+            ),
+        ]);
+        let walk = test_walk(states.clone(), x.clone());
+        let limits = test_limits();
+        let mut meter = filament_exact::Meter::new(limits.accounting);
+        let (maximum, maximum_ranks) =
+            post_graph_optimum(&walk, false, limits, &mut meter, &Cancel::new())
+                .expect("maximum on the active cycle is finite");
+        assert_eq!(maximum[&x], rational(1));
+        assert_eq!(maximum[&target], rational(1));
+        assert_eq!(maximum[&dead], rational(0));
+        assert_eq!(maximum_ranks[&x], 1);
+        assert_eq!(maximum_ranks[&target], 0);
+        let mut rebuilt_graph = rebuilt::Graph {
+            nodes: BTreeMap::from([
+                (
+                    target.clone(),
+                    rebuilt::Node {
+                        active: true,
+                        leaf: Some(true),
+                        next: Vec::new(),
+                        choices: Vec::new(),
+                        choice_ids: Vec::new(),
+                    },
+                ),
+                (
+                    dead.clone(),
+                    rebuilt::Node {
+                        active: true,
+                        leaf: Some(false),
+                        next: Vec::new(),
+                        choices: Vec::new(),
+                        choice_ids: Vec::new(),
+                    },
+                ),
+                (
+                    x.clone(),
+                    rebuilt::Node {
+                        active: true,
+                        leaf: None,
+                        next: Vec::new(),
+                        choices: walk.states[&x].choices.clone(),
+                        choice_ids: Vec::new(),
+                    },
+                ),
+            ]),
+            roots: Vec::new(),
+        };
+        assert!(check_cyclic_post_values(
+            &rebuilt_graph,
+            &maximum,
+            false,
+            &mut meter,
+            &Cancel::new(),
+        )
+        .expect("independent maximum post check")
+        .is_none());
+
+        let (minimum, minimum_ranks) =
+            post_graph_optimum(&walk, true, limits, &mut meter, &Cancel::new())
+                .expect("minimum closed-cycle value is finite");
+        assert_eq!(minimum[&x], rational(0));
+        assert_eq!(minimum_ranks[&x], 0);
+        assert_eq!(minimum_ranks[&target], 0);
+        let zero_minimum_check = check_cyclic_post_values(
+            &rebuilt_graph,
+            &minimum,
+            true,
+            &mut meter,
+            &Cancel::new(),
+        )
+        .expect("independent zero minimum post check");
+        assert_eq!(zero_minimum_check, None, "minimum cycle is exact");
+
+        states.get_mut(&x).expect("x state").choices.pop();
+        let positive_minimum_walk = test_walk(states, x.clone());
+        rebuilt_graph
+            .nodes
+            .get_mut(&x)
+            .expect("rebuilt x")
+            .choices = positive_minimum_walk.states[&x].choices.clone();
+        let (positive_minimum, positive_minimum_ranks) = post_graph_optimum(
+            &positive_minimum_walk,
+            true,
+            limits,
+            &mut meter,
+            &Cancel::new(),
+        )
+        .expect("minimum positive cyclic reachability value is finite");
+        assert_eq!(positive_minimum[&x], quarter);
+        assert_eq!(positive_minimum_ranks[&x], 1);
+        assert!(check_cyclic_post_values(
+            &rebuilt_graph,
+            &positive_minimum,
+            true,
+            &mut meter,
+            &Cancel::new(),
+        )
+        .expect("independent positive minimum post check")
+        .is_none());
+    }
 }
