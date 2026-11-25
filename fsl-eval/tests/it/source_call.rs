@@ -381,7 +381,8 @@ fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
                 role: LawRole::IntegerDivision
             }
         ));
-        assert_eq!(refusal.location.path(), vec![0], "{refusal:?}");
+        // The authored operator is the function body's root expression.
+        assert!(refusal.location.path().is_empty(), "{refusal:?}");
     }
     integer_operator_with_mode("mod", None, "a: Integer, b: Int[1, 9]", CheckMode::Linked);
 }
