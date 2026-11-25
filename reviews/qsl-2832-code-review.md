@@ -9,11 +9,11 @@ review_set: subset
 
 ## Summary
 
-Reviewed PR #3740 at `fc3377f2458a1795838e3c676138eb52d929a29b` against the package schedulability changes and owning acceptance criteria. The source/package non-release parity case and package release-marker row checks are sound, but no test runs package candidate resolution for a release-backed claim.
+Initial review was performed against `fc3377f2458a1795838e3c676138eb52d929a29b`. This disposition update covers the release-backed route test fix on the rebased QSL-2832 branch, based on `origin/main` `d4ad338ea0`.
 
 ## Verdict
 
-**CONDITIONAL** — one medium test-coverage finding remains; the focused package schedulability integration tests pass. The branch is also behind `origin/main` by three commits and remains on the stated provisional contract-IR pin pending its merge.
+**Disposition update: FND-001 addressed in the test source.** The release-backed package-route test now asserts both the captured `en-6` candidate and the exact later `Pending(TaskProduct)` result. The branch is rebased on `d4ad338ea0`; Cargo.toml and Cargo.lock pin contract-ir to `dc9b220b92390eb8c5999a1b26ac8ff94cfffd33`. The focused rerun is paused by the host build guard; no result is claimed for the new assertion. A fresh independent review remains pending.
 
 ## Scope
 
@@ -25,17 +25,17 @@ Reviewed PR #3740 at `fc3377f2458a1795838e3c676138eb52d929a29b` against the pack
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | medium | The release-backed package marker is asserted only in serialized rows; package candidate resolution is exercised only for the non-release-backed case, leaving the new `release_backed = true` filtering branch unverified. | fsl-analyze/tests/it/analyze_package_schedulability.rs:150-191; fsl-analyze/src/analyze/document/package_run/schedule.rs:205-214 |
+| FND-001 | medium | The release-backed package marker was asserted only in serialized rows; package candidate resolution for `release_backed = true` was unverified. | fsl-analyze/tests/it/analyze_package_schedulability.rs; fsl-analyze/src/analyze/document/package_run/schedule.rs |
 
 ## Review Notes
 
-The changed `Cargo.toml` and `Cargo.lock` both pin `filament-contract-model` to `032fcce91cfdfcbb2d599624856d69da7d8cf862`. The current `origin/main` (`a6426a76261e7c1ef2960fb75eb0a36c41908b34`) has three commits absent from this branch (`5c075bccee`, `92e8c8e921`, `a6426a7626`). A read-only `git merge-tree` found no textual conflicts. The pin remains the explicitly provisional QSL-3121 dependency and should be repinned after its upstream merge, per the dispatch brief.
+The changed `Cargo.toml` and `Cargo.lock` pin `filament-contract-model` to `dc9b220b92390eb8c5999a1b26ac8ff94cfffd33`, and this branch is rebased onto `origin/main` `d4ad338ea0`.
 
-`cargo test --locked -p fsl-analyze --test it package_schedulability -- --nocapture` passed: 10 passed, 0 failed.
+Before the fix, `cargo test --locked -p fsl-analyze --test it package_schedulability -- --nocapture` passed: 10 passed, 0 failed. The post-fix rerun is pending; the host guard paused its cargo/rustc processes. `quire matrix --scope . --format tsv` completed with exit 0; the three owning ACs remain tagged but matrix-level uncovered due their broader cases.
 `cargo fmt --check` failed on widespread existing formatting diffs in unrelated files; the diff contains no workflow changes.
 
 ## Dispositions
 
 | FND | outcome | reason |
 | --- | --- | --- |
-| FND-001 | still-open | The new test reads the package row's `release_backed` value, then directly calls `Registry::candidates` and `Registry::restrict_to_task_product`. It does not invoke the package analysis route (`ClaimReads::schedule`), so it still passes if that production path ignores the release-backed row. Add an assertion over a named EN-6 package request's actual candidate output. |
+| FND-001 | fixed | The package analysis route is exercised for a named release-backed EN-6 request. The test asserts the route captured exactly `en-6` and returned `PackageRunError::Pending` with `PendingFamily::TaskProduct`, proving it reached the later task-product refusal. |

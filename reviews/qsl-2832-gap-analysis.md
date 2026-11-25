@@ -14,24 +14,24 @@ relationships:
 
 ## Summary
 
-Manually checked the owning criteria, their tagged tests, and the changed package route and row-emission code. The matrix command did not return within 30 seconds, so this is a partial, scoped traceability review rather than an engine-backed repository audit.
+Manually checked the owning criteria, their tagged tests, and the changed package route and row-emission code. Follow-up disposition is based on the QSL-2832 branch rebased onto `origin/main` `d4ad338ea0`; the new release-backed route test asserts the exact later task-product refusal. The confined matrix now completes, but the broad ACs still include cases outside this ticket's tests.
 
 ## Verdict
 
-**CONDITIONAL** — the scoped ACs have tagged tests, but package candidate resolution lacks an assertion for the release-backed path, and the computed matrix and repository-wide reverse-gap/stub checks remain incomplete.
+**Disposition update: FND-001 addressed in the test source.** The release-backed route is exercised and asserts `en-6` plus `Pending(TaskProduct)`. Its focused rerun is paused by the host build guard, so the new assertion's execution is pending. Scoped matrix coverage remains partial for the broader ACs; repository-wide reverse-gap/stub checks were not performed.
 
 ## Findings
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | medium | The new package route's release-backed candidate branch has no test that resolves a package request; the marker test checks only emitted package rows. | fsl-analyze/tests/it/analyze_package_schedulability.rs:150-191; fsl-analyze/src/analyze/document/package_run/schedule.rs:205-214 |
+| FND-001 | medium | The package route's release-backed candidate branch lacked a test that resolved a package request. | fsl-analyze/tests/it/analyze_package_schedulability.rs; fsl-analyze/src/analyze/document/package_run/schedule.rs |
 
 ## Coverage
 
-- FR-246-AC-4: tagged package/source parity regression for named `en-6` on a non-release-backed claim; the existing TC-2961 tests cover the requirement-record path.
-- FR-246-AC-5: tagged package-row test asserts schedulable `true` and response `false`; the existing source-route test covers release-backed classification and candidate routing.
-- FR-075-AC-23: existing tagged source-route tests cover the specified release-backed and non-release-backed candidate sets; the new package test covers only the non-release-backed named case.
-- `quoin matrix --repo . --json` and `quire matrix --scope . --format json` each timed out after 30 seconds without output. Manual scoped tag inspection found tags for all three owning ACs, but this is not a computed matrix result.
+- FR-246-AC-4: tagged package/source parity regression covers the named non-release-backed `en-6` case; the release-backed package route test also checks candidate output and its later refusal. The broader several-claim and ordering cases remain outside this ticket's package test.
+- FR-246-AC-5: tagged package-row checks assert schedulable `true` and response `false`; source-route tests cover release-backed classification. Package route coverage asserts the release-backed candidate and later task-product refusal.
+- FR-075-AC-23: tagged source-route tests cover release-backed and non-release-backed candidate sets; package tests cover the named no-release and release-backed `en-6` route cases. Registration-order invariance remains outside this ticket's package test.
+- `quire matrix --scope . --format tsv` completed with exit 0 after rebasing. It reports FR-246-AC-4, FR-246-AC-5, and FR-075-AC-23 as `uncovered tagged` because remaining cases are broader than these ticket-scoped tests; tag presence alone is not full AC coverage.
 - Reverse-gap and stub checks were limited to the changed production files: no new unowned behavior or source stubs were found. A repository-wide audit was not completed.
 - Plan completion: not assessed.
 
@@ -39,4 +39,4 @@ Manually checked the owning criteria, their tagged tests, and the changed packag
 
 | FND | outcome | reason |
 | --- | --- | --- |
-| FND-001 | still-open | The new test reads the package row's `release_backed` value, then directly calls `Registry::candidates` and `Registry::restrict_to_task_product`. It does not invoke the package analysis route (`ClaimReads::schedule`), so it still passes if that production path ignores the release-backed row. Add an assertion over a named EN-6 package request's actual candidate output. |
+| FND-001 | fixed | The package route is exercised for a named release-backed EN-6 request; literal assertions require captured candidates `['en-6']` and `PendingFamily::TaskProduct` from the later refusal. |

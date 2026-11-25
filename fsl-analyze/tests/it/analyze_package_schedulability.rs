@@ -372,6 +372,15 @@ fn package_release_backing_admits_task_product_candidates() {
         Ok(run) => format!("settled exit={} items={:?}", run.exit_code, run.items),
         Err(error) => format!("refused {error:?}"),
     };
+    assert!(
+        matches!(
+            &result,
+            Err(fsl_analyze::analyze::document::PackageRunError::Pending(pending))
+                if pending.family
+                    == fsl_analyze::analyze::document::PendingFamily::TaskProduct
+        ),
+        "the named EN-6 item reaches the later task-product refusal: {settled}"
+    );
     assert_eq!(
         *capture.candidates.borrow(),
         ["en-6"],
