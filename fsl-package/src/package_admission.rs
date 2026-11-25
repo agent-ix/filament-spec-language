@@ -449,6 +449,7 @@ fn cause_spelling(cause: CheckedPackageRefusalCause) -> &'static str {
         CheckedPackageRefusalCause::InexactInteger => "inexact-integer",
         CheckedPackageRefusalCause::InexactNumber => "inexact-number",
         CheckedPackageRefusalCause::InvalidTaskSet => "invalid-task-set",
+        CheckedPackageRefusalCause::StaleNodeKey => "stale-node-key",
         CheckedPackageRefusalCause::ClockReadOutsideConstraint => "clock-read-outside-constraint",
     }
 }

@@ -4,7 +4,6 @@
 //! This module is available only with `test-support`. It derives complete
 //! units directly from the parser's rule table; no parallel grammar is kept.
 
-use ix_trace_rs::implements;
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
