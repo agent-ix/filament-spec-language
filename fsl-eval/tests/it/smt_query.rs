@@ -910,10 +910,13 @@ fn a_hand_built_guards_only_failure_is_one_instances_at_position_two() {
 #[trace("TC-1201", "FR-315-AC-38")]
 #[test]
 fn monitor_queries_encode_one_monitor_per_over_binding() {
+    // `inc` writes the receiver's `value` only (FR-154).
+    let mut inc = operation("Counter", "inc", &[]);
+    inc["frame"]["modifies_receiver"] = json!([ident("Counter/value")]);
     let document = document(
         "Counter",
         vec![field("Counter", "value", &ident("Level"), "required")],
-        vec![operation("Counter", "inc", &["value"])],
+        vec![inc],
     );
     let contract = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
         post Inc using v on M::Counter::inc { self.value = pre(self.value) + 1 }\n";
