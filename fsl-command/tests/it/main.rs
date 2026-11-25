@@ -11,6 +11,7 @@ mod dependency_handoff;
 mod effect_decision;
 mod export_selection;
 mod extraction_request_refusals;
+mod fr311_s3_forms;
 mod inspect_handoff_locus;
 mod integer_division_request;
 mod missing_selection_schema;
