@@ -394,40 +394,41 @@ impl PopulationProvenance {
 /// `Value::Population(population_id)` argument that names it.
 #[derive(Clone, Debug, Default)]
 pub struct ObjectEnvironment {
-    objects: ObjectClosure,
+    /// Immutable admitted object data, shared by cloned observations.
+    objects: Arc<ObjectClosure>,
     populations: BTreeMap<PopulationId, Arc<PopulationBinding>>,
     /// The post-state integers FR-106 check 6.5's witnessing admitted
     /// outside their declared range; empty for every other environment.
-    out_of_range: Vec<OutOfRange>,
+    out_of_range: Arc<Vec<OutOfRange>>,
     unresolved_references: bool,
     /// The relationship instances this observation lists (FR-364); `None`
     /// for an environment no snapshot admitted.
-    extents: Option<RelationshipExtents>,
+    extents: Option<Arc<RelationshipExtents>>,
     /// How many objects each population of the snapshot lists, by the
     /// population's declaration identity (FR-380); empty for an environment
     /// no snapshot admitted.
-    population_sizes: BTreeMap<String, u64>,
+    population_sizes: Arc<BTreeMap<String, u64>>,
     /// Every object the snapshot admitted, ascending; empty for an
     /// environment no snapshot admitted.
-    references: Vec<ObjectReference>,
+    references: Arc<Vec<ObjectReference>>,
     /// The objects each population of the snapshot lists, by the
     /// population's declaration identity, in ascending key order (FR-139);
     /// empty for an environment no snapshot admitted.
-    population_members: BTreeMap<String, Vec<ObjectReference>>,
+    population_members: Arc<BTreeMap<String, Vec<ObjectReference>>>,
     /// Whether the snapshot marks each population it lists `complete`, by
     /// the population's declaration identity (FR-106); empty for an
     /// environment no snapshot document admitted.
-    population_completeness: BTreeMap<String, bool>,
+    population_completeness: Arc<BTreeMap<String, bool>>,
     /// Exact declared population nodes and their normalized member types.
-    population_provenance: BTreeMap<NodeKey, PopulationProvenance>,
+    population_provenance: Arc<BTreeMap<NodeKey, PopulationProvenance>>,
     field_origins: Option<Arc<FieldOriginIndex>>,
     context_origins: Option<Arc<ContextOriginIndex>>,
     /// The FR-106 check-7 population closure rooted at each declared
     /// population, retaining the snapshot's exact reference provenance.
-    population_reference_closures: BTreeMap<String, Vec<String>>,
+    population_reference_closures: Arc<BTreeMap<String, Vec<String>>>,
     /// The history fields a refinement keeps for these objects, by object
     /// and field name (FR-138); empty for every other environment.
-    history: BTreeMap<(ObjectReference, String), Value>,
+    history: Arc<BTreeMap<(ObjectReference, String), Value>>,
     /// Where an evaluation over this environment records what it reads.
     read_log: Option<ReadLog>,
     /// The presence of each guarded clock place of a timed model's
@@ -453,20 +454,20 @@ impl ObjectEnvironment {
     /// The environment over `objects`, with no population recorded yet.
     pub fn new(objects: ObjectClosure) -> Self {
         Self {
-            objects,
+            objects: Arc::new(objects),
             populations: BTreeMap::new(),
-            out_of_range: Vec::new(),
+            out_of_range: Arc::new(Vec::new()),
             unresolved_references: false,
             extents: None,
-            population_sizes: BTreeMap::new(),
-            references: Vec::new(),
-            population_members: BTreeMap::new(),
-            population_completeness: BTreeMap::new(),
-            population_provenance: BTreeMap::new(),
+            population_sizes: Arc::new(BTreeMap::new()),
+            references: Arc::new(Vec::new()),
+            population_members: Arc::new(BTreeMap::new()),
+            population_completeness: Arc::new(BTreeMap::new()),
+            population_provenance: Arc::new(BTreeMap::new()),
             field_origins: None,
             context_origins: None,
-            population_reference_closures: BTreeMap::new(),
-            history: BTreeMap::new(),
+            population_reference_closures: Arc::new(BTreeMap::new()),
+            history: Arc::new(BTreeMap::new()),
             read_log: None,
             place_presence: PlacePresences::default(),
         }
@@ -505,7 +506,7 @@ impl ObjectEnvironment {
     /// a refinement row that reads one finds its value (FR-138).
     #[must_use]
     pub fn with_history(mut self, history: BTreeMap<(ObjectReference, String), Value>) -> Self {
-        self.history = history;
+        self.history = Arc::new(history);
         self
     }
 
@@ -519,7 +520,7 @@ impl ObjectEnvironment {
     /// lists, by the population's declaration identity (FR-380).
     #[must_use]
     pub fn with_population_sizes(mut self, sizes: BTreeMap<String, u64>) -> Self {
-        self.population_sizes = sizes;
+        self.population_sizes = Arc::new(sizes);
         self
     }
 
@@ -538,7 +539,7 @@ impl ObjectEnvironment {
         mut self,
         members: BTreeMap<String, Vec<ObjectReference>>,
     ) -> Self {
-        self.population_members = members;
+        self.population_members = Arc::new(members);
         self
     }
 
@@ -553,7 +554,7 @@ impl ObjectEnvironment {
     /// `complete`, by the population's declaration identity (FR-106).
     #[must_use]
     pub fn with_population_completeness(mut self, completeness: BTreeMap<String, bool>) -> Self {
-        self.population_completeness = completeness;
+        self.population_completeness = Arc::new(completeness);
         self
     }
 
@@ -579,10 +580,12 @@ impl ObjectEnvironment {
         mut self,
         provenance: impl IntoIterator<Item = PopulationProvenance>,
     ) -> Self {
-        self.population_provenance = provenance
-            .into_iter()
-            .map(|entry| (entry.node.clone(), entry))
-            .collect();
+        self.population_provenance = Arc::new(
+            provenance
+                .into_iter()
+                .map(|entry| (entry.node.clone(), entry))
+                .collect(),
+        );
         self
     }
 
@@ -691,7 +694,7 @@ impl ObjectEnvironment {
         mut self,
         closures: BTreeMap<String, Vec<String>>,
     ) -> Self {
-        self.population_reference_closures = closures;
+        self.population_reference_closures = Arc::new(closures);
         self
     }
 
@@ -707,7 +710,7 @@ impl ObjectEnvironment {
     #[must_use]
     pub fn with_references(mut self, mut references: Vec<ObjectReference>) -> Self {
         references.sort();
-        self.references = references;
+        self.references = Arc::new(references);
         self
     }
 
@@ -721,14 +724,14 @@ impl ObjectEnvironment {
     /// environment's snapshot admitted (FR-364).
     #[must_use]
     pub fn with_extents(mut self, extents: RelationshipExtents) -> Self {
-        self.extents = Some(extents);
+        self.extents = Some(Arc::new(extents));
         self
     }
 
     /// The relationship extents this environment holds, when a snapshot
     /// admitted it.
     pub fn extents(&self) -> Option<&RelationshipExtents> {
-        self.extents.as_ref()
+        self.extents.as_deref()
     }
 
     /// This environment with its references left unresolved: it holds no
@@ -754,7 +757,7 @@ impl ObjectEnvironment {
     /// witnessed value from a value that breaks the checked types.
     #[must_use]
     pub fn with_out_of_range(mut self, out_of_range: Vec<OutOfRange>) -> Self {
-        self.out_of_range = out_of_range;
+        self.out_of_range = Arc::new(out_of_range);
         self
     }
 
