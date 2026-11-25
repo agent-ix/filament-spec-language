@@ -967,7 +967,7 @@ replayed with.
   the root and of every attached library view. When two of those definitions
   under one node key are unequal, `BarePackage::world()` and
   `BarePackage::world_with_source_objects()` SHALL refuse with a world fault, the
-  internal fault whose invariant is `authenticated-unit-declarations-agree`, as
+  internal fault whose invariant is `authenticated-unit-definitions-agree`, as
   they refuse `authenticated-composite-declarations-agree` for two unequal
   composite declarations under one key. No definition replaces an unequal
   one. Equal definitions under one key are
@@ -978,9 +978,9 @@ A package whose dependency closure holds its own name, directly or through a
 library, is an import cycle and is never admitted, so no `BarePackage` exists
 for it. `read_checked_package`, supplied the packages the closure selects,
 refuses it as `invalid_package`/`definition-cycle` at the full selection path to
-the entry that names it (FSpec FR-322-AC-545; Contract IR FR-038-AC-637), and
+the entry that names it (FSpec FR-322-AC-550; Contract IR FR-038-AC-637), and
 reports the first failing entry in depth-first lock order (FSpec
-FR-322-AC-546). It checks supply first: a direct entry naming the package with
+FR-322-AC-551). It checks supply first: a direct entry naming the package with
 no package supplied under that name refuses `missing_import`/`missing-selection`
 at that entry. The FR-850 directory loader finds the cycle before admission and
 refuses `invalid_package`/`definition-cycle` at the location FR-850 states, for
@@ -1260,7 +1260,7 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-59 | Over a root package named `dep` that declares `unit ms : Time = rational(1, 1000) * s`, a replay given a `HandoffSupply` holding one artifact whose admitted bytes name `dep`, once with the root's own content, once declaring `unit ms : Time = rational(1, 2000) * s`, and once supplied under the identity `lib` while its admitted bytes still name `dep`, returns `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`, code `invalid_package` with no cause, and no result, both where the selected function converts a quantity and where it compares a function call's result with a quantity literal (`three_seconds_in_ms() = 3000 ms`). | Test (TC-1331) |
 | FR-531-AC-60 | A replay given a `HandoffSupply` holding two artifacts whose admitted bytes name one package, identical in one case and differing in another, in either order, returns `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`, code `invalid_package` with no cause, and no result; the same supply with that package name held once, and no artifact whose package name is the root's, is not refused for its names. | Test (TC-1331) |
 | FR-531-AC-61 | `BarePackage::with_dependency_artifacts` given an artifact whose package name is the root's, equal in content to the root or differing from it, or two artifacts of one package name, identical or differing, returns `DependencyJoinRefusal::Name` carrying that package name, whose `code()` is `invalid_package` and which has no cause, and returns no `BarePackage`. A caller keeps this refusal out of the stage-limit path: it carries no `LimitExceeded` and is never reported as `stage_limit_exceeded`. Given artifacts of distinct package names, none of them the root's, it returns the `BarePackage`. | Test (TC-1331) |
-| FR-531-AC-62 | A `BarePackage` whose root and library views hold unequal unit definitions, or unequal dimension definitions, under one node key refuses `world()` and `world_with_source_objects()` with the internal fault whose invariant is `authenticated-unit-declarations-agree` and yields no unit table; views whose definitions under one key are equal give one world holding that definition once. A crate-internal `fsl-package` test that sets the view unit tables verifies this: no public route builds unequal definitions under one key once the artifact names are checked. | Test (TC-1331) |
+| FR-531-AC-62 | A `BarePackage` whose root and library views hold unequal unit definitions, or unequal dimension definitions, under one node key refuses `world()` and `world_with_source_objects()` with the internal fault whose invariant is `authenticated-unit-definitions-agree` and yields no unit table; views whose definitions under one key are equal give one world holding that definition once. A crate-internal `fsl-package` test that sets the view unit tables verifies this: no public route builds unequal definitions under one key once the artifact names are checked. | Test (TC-1331) |
 | FR-531-AC-63 | For a package whose dependency closure holds its own name, directly and through a library, the FR-850 directory loader refuses `invalid_package`/`definition-cycle`, with or without an artifact supplied under that name. `read_checked_package`, supplied every package the closure selects, refuses the same code and cause, whatever the content of the package supplied under that name, and refuses a direct selection of the name with no package supplied under it as `missing_import`/`missing-selection`. Each refusal precedes any item evaluation, and no `BarePackage` is built. | Test (TC-1331) |
 
 ## Dependencies
