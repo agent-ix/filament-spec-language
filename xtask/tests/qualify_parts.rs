@@ -196,46 +196,6 @@ fn a_parity_backed_run_names_the_three_parts_and_qualifies() {
     assert_eq!(part(&report, "parity")["result"], "passed");
 }
 
-/// The source-tree half of FR-567-AC-5: the report's FSL version is the
-/// `filament-spec-language` root package's own `CARGO_PKG_VERSION`, not xtask's,
-/// and it is the version the root manifest declares. The scratch-copy half
-/// (a copy whose version is `9.9.9` reports `9.9.9`) needs a rebuild of the
-/// copy and is not run here (docs/outcome-parity.md, Known gaps).
-#[cfg(feature = "test-support")]
-#[trace("TC-1396")]
-#[test]
-fn a_parity_backed_report_names_the_root_package_version() {
-    use filament_eval::ExecutionBackendChoice;
-    use fsl_eval::execution::Interpreter;
-    let (_fspec, mut inputs) = inputs();
-    let interpreter = Interpreter;
-    let corpus = Path::new(&inputs.operands[1]);
-    inputs.parity = Some(xtask::qualify::ParityTestOverride {
-        reference: &interpreter,
-        backends: vec![(ExecutionBackendChoice::Jit, &interpreter, None)],
-        inputs: fsl_conformance::ParityInputs::new(corpus),
-        limits: fsl_conformance::ParityLimits::default(),
-    });
-    let outcome = qualify::run(&inputs).expect("the gate runs");
-    let version = report(&outcome)["fsl_version"].clone();
-    assert_eq!(version, filament_spec_language::VERSION);
-    assert_ne!(
-        version,
-        env!("CARGO_PKG_VERSION"),
-        "xtask's own version is not the FSL version"
-    );
-    let manifest =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml"))
-            .expect("the root manifest");
-    assert!(
-        manifest.contains(&format!(
-            "version = \"{}\"",
-            filament_spec_language::VERSION
-        )),
-        "the root manifest declares the reported version"
-    );
-}
-
 /// FR-567-AC-2: with the matrix replaced by one whose `check`/`refusal` case
 /// expects exit 21, the run is `not-qualified`, names
 /// `lifecycle-matrix/check/refusal` and exits 1, although the corpus passes.
@@ -610,12 +570,11 @@ fn every_staging_row_names_its_owner_and_deletion_condition() {
     }
 }
 
-/// The no-backend half of FR-567-AC-4 and the passing run of AC-1 without a
-/// linked backend: not tagged, because AC-1 needs a linked delegating backend
-/// and AC-4 a reference fault, and the FR-563 runner they need is not in this
-/// repository yet. Over the passing fixture corpus
-/// with every matrix case passing, the report names the three parts, the
-/// `parity` part `no-backend`, `complete-v1: qualified`, exit 0.
+/// The default run, with no substitution: the linked JIT backend is compared
+/// with the interpreter. Over the passing fixture corpus with every matrix case
+/// passing, the report names the three parts as passed,
+/// `complete-v1: qualified`, exit 0. Carries no AC tag: FR-567-AC-1 is stated
+/// over a delegating test backend.
 #[trace("TC-1396")]
 #[test]
 fn a_passing_run_names_the_three_parts_and_qualifies() {
@@ -627,7 +586,7 @@ fn a_passing_run_names_the_three_parts_and_qualifies() {
     assert_eq!(report["qualification"], "complete-v1");
     assert_eq!(part(&report, "corpus")["result"], "passed");
     assert_eq!(part(&report, "lifecycle-matrix")["result"], "passed");
-    assert_eq!(part(&report, "parity")["result"], "no-backend");
+    assert_eq!(part(&report, "parity")["result"], "passed");
 }
 
 /// FR-567-AC-5's source-tree half (so this test carries no AC tag): the

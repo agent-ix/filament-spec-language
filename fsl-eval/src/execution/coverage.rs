@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-560: check a function body's checked constructs against backend coverage.
 
+use std::collections::BTreeSet;
+
 use filament_checked::node::{
     Arithmetic, Connective, IntegerDivisionOperator, NodeKind, OrderedKind, Visit,
 };
@@ -13,7 +15,10 @@ use filament_semantic_value::location::ExpressionLocation;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedGraph, CheckedNode};
 
-use super::{BackendCoverage, CoverageOperation, CoverageOperator, CoverageValueType};
+use super::{
+    BackendCoverage, CoverageOperation, CoverageOperator, CoverageValueType, EntryKind,
+    EntrySelection,
+};
 
 /// The first checked construct outside a coverage set and its source location.
 #[derive(Clone, Debug)]
@@ -36,18 +41,8 @@ pub fn first_outside(
     coverage: &BackendCoverage,
 ) -> Result<Option<OutsideCoverage>, InternalFault> {
     let graph = package.graph();
-    let callable = graph.callable(entry).ok_or_else(|| {
-        InternalFault::new(
-            "execution-coverage",
-            "selected-function-exists-in-checked-package",
-        )
-    })?;
-    let function = graph
-        .function_by_identity(callable.identity.clone())
-        .ok_or_else(|| {
-            InternalFault::new("execution-coverage", "callable-function-state-is-retained")
-        })?;
-    first_outside_body(graph, callable.parameters, function.body, coverage)
+    let (parameters, body) = function_entry(graph, entry)?;
+    first_outside_body(graph, parameters, body, coverage)
 }
 
 /// Find the first uncovered construct in a checked body when the backend
@@ -83,58 +78,88 @@ pub fn first_outside_body(
     Ok(None)
 }
 
-/// Whether the complete function entry lies in coverage.
-#[must_use]
+/// Whether every construct of the selected entry, and of every function it
+/// calls directly or transitively, lies in coverage. A call to a function
+/// outside coverage is itself outside it (FR-560).
+///
+/// # Errors
+/// Returns an internal fault if the package does not hold the selected entry,
+/// or a checked function or operation has lost its retained state.
 pub fn entry_within_coverage(
     package: &CheckedPackage,
-    entry: &str,
-    coverage: &BackendCoverage,
-) -> Result<bool, InternalFault> {
-    first_outside(package, entry, coverage).map(|outside| outside.is_none())
-}
-
-/// Whether the exact untranslatable construct named by a backend is included
-/// in its advertised coverage declaration.
-///
-/// This is intentionally narrower than checking whether the whole entry is
-/// covered: another unsupported form elsewhere in the entry must not hide a
-/// coverage gap for this construct.
-pub fn construct_within_coverage(
-    package: &CheckedPackage,
-    entry: &str,
-    construct: &UntranslatableConstruct,
+    entry: &EntrySelection,
     coverage: &BackendCoverage,
 ) -> Result<bool, InternalFault> {
     let graph = package.graph();
-    match construct {
-        UntranslatableConstruct::ExpressionForm(form) => Ok(coverage.contains_form(form)),
-        UntranslatableConstruct::ValueType(value_type) => {
-            Ok(coverage.lists_type(graph, value_type))
-        }
-        UntranslatableConstruct::Operation(key) => {
-            let callable = graph.callable(entry).ok_or_else(|| {
+    let name = entry.name.to_string();
+    let (parameters, body): (&[(String, ValueType)], _) = match entry.kind {
+        EntryKind::Function => function_entry(graph, &name)?,
+        // A clause binds its inputs itself; only its body is translated.
+        EntryKind::Clause => {
+            let clause = graph.state_clause(&name).ok_or_else(|| {
                 InternalFault::new(
                     "execution-coverage",
-                    "selected-function-exists-in-checked-package",
+                    "selected-clause-exists-in-checked-package",
                 )
             })?;
-            let function = graph
-                .function_by_identity(callable.identity.clone())
-                .ok_or_else(|| {
-                    InternalFault::new("execution-coverage", "callable-function-state-is-retained")
-                })?;
-            let mut pending = vec![function.body];
-            while let Some(node) = pending.pop() {
-                let children = node.children();
-                if graph.node_key(node) == Some(key) {
-                    return Ok(operation_of(graph, node, &children)
-                        .is_some_and(|operation| coverage.lists_operation(&operation)));
-                }
-                pending.extend(children.into_iter().rev());
-            }
-            Ok(false)
+            (&[], clause.body())
         }
+    };
+    if first_outside_body(graph, parameters, body, coverage)?.is_some() {
+        return Ok(false);
     }
+    // An explicit stack and a visited set: recursion and deep call chains
+    // terminate without consuming native call stack.
+    let mut visited = BTreeSet::new();
+    let mut pending = vec![body];
+    while let Some(node) = pending.pop() {
+        if let NodeKind::Call {
+            function: callee, ..
+        } = node.kind()
+        {
+            if visited.insert(*callee) {
+                let (Some(function), Some(identity)) = (
+                    graph.function_state(*callee),
+                    graph.function_identity_at(*callee),
+                ) else {
+                    return Err(InternalFault::new(
+                        "execution-coverage",
+                        "called-function-state-is-retained",
+                    ));
+                };
+                let Some(callable) = graph.callable_by_identity(identity) else {
+                    return Ok(false);
+                };
+                if first_outside_body(graph, callable.parameters, function.body, coverage)?
+                    .is_some()
+                {
+                    return Ok(false);
+                }
+                pending.push(function.body);
+            }
+        }
+        pending.extend(node.children());
+    }
+    Ok(true)
+}
+
+/// The parameters and body of the function callable as `entry`.
+fn function_entry<'g>(
+    graph: &'g CheckedGraph,
+    entry: &str,
+) -> Result<(&'g [(String, ValueType)], CheckedNode<'g>), InternalFault> {
+    let callable = graph.callable(entry).ok_or_else(|| {
+        InternalFault::new(
+            "execution-coverage",
+            "selected-function-exists-in-checked-package",
+        )
+    })?;
+    let function = graph
+        .function_by_identity(callable.identity.clone())
+        .ok_or_else(|| {
+            InternalFault::new("execution-coverage", "callable-function-state-is-retained")
+        })?;
+    Ok((callable.parameters, function.body))
 }
 
 impl BackendCoverage {

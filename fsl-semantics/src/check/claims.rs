@@ -495,7 +495,6 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::ConvertDecimal(..)
         | NodeKind::Order(..)
         | NodeKind::IeeeToRational(..) => true,
-        NodeKind::BytesLength(_) => true,
         NodeKind::ConvertScalar(target, operand) => {
             let source = node.at(*operand).value_type();
             scalar_conversion_target(target, source).is_some_and(|target| {
@@ -557,6 +556,7 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::Case { .. } => false,
         NodeKind::TupleProject { .. }
         | NodeKind::Index { .. }
+        | NodeKind::BytesLength(_)
         | NodeKind::BytesConcat(..) => false,
         #[cfg(seam_probe)]
         NodeKind::__SeamProbe => unreachable!("never constructed outside the probe build"),

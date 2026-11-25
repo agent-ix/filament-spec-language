@@ -664,6 +664,153 @@ impl PreparedEntries for UnsupportedPrepared<'_> {
     }
 }
 
+/// Lists `entry` unsupported, naming `construct` whatever the entry holds.
+#[derive(Clone, Copy)]
+struct NamingBackend {
+    entry: &'static str,
+    construct: &'static str,
+}
+
+impl ExecutionBackend for NamingBackend {
+    type Prepared<'p> = UnsupportedPrepared<'p>;
+
+    fn prepare<'p>(
+        &self,
+        package: &'p CheckedPackage,
+        entries: &[EntrySelection],
+        limits: &PrepareLimits,
+        cancel: &Cancel,
+    ) -> Result<Self::Prepared<'p>, PrepareFailure> {
+        use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
+        let inner = Interpreter.prepare(package, entries, limits, cancel)?;
+        let unsupported = entries
+            .iter()
+            .filter(|selection| selection.name.to_string() == self.entry)
+            .cloned()
+            .map(|entry| {
+                (
+                    entry,
+                    filament_eval::UnsupportedEntry {
+                        backend: ExecutionBackendChoice::Jit,
+                        cause: filament_eval::UnsupportedCause::Untranslatable {
+                            construct: filament_eval::UntranslatableConstruct::ExpressionForm(
+                                self.construct.into(),
+                            ),
+                            location: ExpressionLocation::at(ExpressionOwner::Expression, &[0]),
+                        },
+                    },
+                )
+            })
+            .collect();
+        Ok(UnsupportedPrepared { inner, unsupported })
+    }
+}
+
+/// Refuses every preparation with an internal fault.
+#[derive(Clone, Copy)]
+struct PrepareFaultBackend;
+
+impl ExecutionBackend for PrepareFaultBackend {
+    type Prepared<'p> = InterpreterPrepared<'p>;
+
+    fn prepare<'p>(
+        &self,
+        _package: &'p CheckedPackage,
+        _entries: &[EntrySelection],
+        _limits: &PrepareLimits,
+        _cancel: &Cancel,
+    ) -> Result<Self::Prepared<'p>, PrepareFailure> {
+        Err(PrepareFailure::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "parity-test",
+                "injected prepare fault",
+            ),
+        ))
+    }
+}
+
+/// The interpreter with no work bound on a call, whatever the runner supplies.
+#[derive(Clone, Copy)]
+struct UnmeteredCallBackend;
+
+struct UnmeteredCallPrepared<'p>(InterpreterPrepared<'p>);
+
+impl ExecutionBackend for UnmeteredCallBackend {
+    type Prepared<'p> = UnmeteredCallPrepared<'p>;
+
+    fn prepare<'p>(
+        &self,
+        package: &'p CheckedPackage,
+        entries: &[EntrySelection],
+        limits: &PrepareLimits,
+        cancel: &Cancel,
+    ) -> Result<Self::Prepared<'p>, PrepareFailure> {
+        Interpreter
+            .prepare(package, entries, limits, cancel)
+            .map(UnmeteredCallPrepared)
+    }
+}
+
+impl PreparedEntries for UnmeteredCallPrepared<'_> {
+    fn unsupported(&self) -> &[(EntrySelection, filament_eval::UnsupportedEntry)] {
+        self.0.unsupported()
+    }
+
+    fn call(
+        &self,
+        entry: &QualifiedName,
+        arguments: &[Value],
+        environment: &ObjectEnvironment,
+        limits: &CallLimits,
+        run: &mut SuppliedRun,
+        cancel: &Cancel,
+    ) -> Result<Evaluation, CallFailure> {
+        let mut unmetered = *limits;
+        unmetered.accounting.work_units = u64::MAX;
+        self.0
+            .call(entry, arguments, environment, &unmetered, run, cancel)
+    }
+
+    fn evaluate(
+        &self,
+        clause: &QualifiedName,
+        input: &AdmittedObservations,
+        accounting: &ScalarLimits,
+        cancel: &Cancel,
+    ) -> Result<Evaluation, CallFailure> {
+        self.0.evaluate(clause, input, accounting, cancel)
+    }
+}
+
+/// The interpreter, counting the units it is asked to prepare.
+#[derive(Default)]
+struct CountingBackend {
+    prepares: AtomicUsize,
+}
+
+impl ExecutionBackend for CountingBackend {
+    type Prepared<'p> = InterpreterPrepared<'p>;
+
+    fn prepare<'p>(
+        &self,
+        package: &'p CheckedPackage,
+        entries: &[EntrySelection],
+        limits: &PrepareLimits,
+        cancel: &Cancel,
+    ) -> Result<Self::Prepared<'p>, PrepareFailure> {
+        self.prepares.fetch_add(1, Ordering::Relaxed);
+        Interpreter.prepare(package, entries, limits, cancel)
+    }
+}
+
+/// The corpus at `path` alone, with no generated unit.
+fn corpus_only(path: &std::path::Path) -> ParityInputs {
+    ParityInputs {
+        count: 0,
+        ..ParityInputs::new(path)
+    }
+}
+
 /// Runs a generated decimal division unit and counts only admitted units.
 #[test]
 fn generated_decimal_probe_is_admitted_and_compared() {
@@ -749,6 +896,66 @@ fn interpreter_backend_passes_default_generated_scope() {
     assert!(report.backends[0].compared > 0);
     assert_eq!(report.backends[0].total_findings, 0);
     assert_eq!(report.exit_code(), 0);
+}
+
+/// TC-1386 FR-563-AC-1: an interpreter-delegating backend passes a selected
+/// corpus vector, which is compared and not skipped.
+#[trace("TC-1386", "FR-563-AC-1")]
+#[test]
+fn interpreter_backend_passes_a_selected_corpus_vector() {
+    let corpus = inc_corpus();
+    let interpreter = Interpreter;
+    let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &interpreter, None)];
+    let report = run_parity(
+        &backends,
+        &corpus_only(corpus.path()),
+        &ParityLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the corpus vector is admitted");
+    assert_eq!(report.units, 1);
+    assert_eq!(report.backends[0].compared, 1);
+    assert!(report.backends[0].unsupported.is_empty());
+    assert_eq!(report.backends[0].total_findings, 0);
+    assert_eq!(report.exit_code(), 0);
+}
+
+/// A generator whose draws checking keeps refusing stops at the discard bound
+/// and fails the gate by name; a run that stays within the bound does not.
+#[test]
+fn refused_draws_beyond_the_bound_fail_the_gate() {
+    let corpus = empty_corpus();
+    let interpreter = Interpreter;
+    let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &interpreter, None)];
+    let inputs = ParityInputs {
+        count: 100,
+        ..ParityInputs::new(corpus.path())
+    };
+    let run = |max_discarded| {
+        let limits = ParityLimits {
+            max_discarded,
+            ..ParityLimits::default()
+        };
+        run_parity(&backends, &inputs, &limits, &Cancel::new())
+            .expect("the discard bound is a report, not a refusal")
+    };
+
+    let unbounded = run(u64::MAX);
+    assert!(unbounded.discarded > 0, "the control needs a refused draw");
+    let within = run(unbounded.discarded);
+    assert_eq!(within.units, 100);
+    assert_eq!(within.exit_code(), 0);
+
+    let exhausted = run(unbounded.discarded - 1);
+    assert!(exhausted.units < 100);
+    assert_eq!(exhausted.discarded, unbounded.discarded);
+    let finding = exhausted.backends[0]
+        .findings
+        .iter()
+        .find(|finding| finding.kind == FindingKind::GeneratorExhausted)
+        .expect("the exhausted generator is named");
+    assert!(!finding.source.is_empty());
+    assert_eq!(exhausted.exit_code(), 1);
 }
 
 /// TC-1386 FR-563-AC-9: only the function `runtime`/`run` vector is selected;
@@ -922,7 +1129,7 @@ fn comparison_member_differences_are_named_and_reproducible() {
 }
 
 /// FR-563's corpus adapter reads the FR-350 `bytes` input form as raw octets.
-#[trace("TC-1387", "FR-563-AC-1")]
+#[trace("TC-1386", "FR-563-AC-9")]
 #[test]
 fn corpus_bytes_argument_is_decoded_for_selected_runtime_vector() {
     let corpus = bytes_corpus();
@@ -1103,6 +1310,168 @@ fn coverage_gap_depends_on_declared_forms() {
     assert_eq!(no_gap.backends[0].compared, 1);
     assert_eq!(no_gap.backends[0].unsupported.len(), 1);
     assert_eq!(no_gap.backends[0].unsupported[0].entry, "usesLet");
+}
+
+/// TC-1387 FR-563-AC-4: the gap is decided on all of the entry's constructs,
+/// not on the one the backend names.
+#[trace("TC-1387", "FR-563-AC-4")]
+#[test]
+fn coverage_gap_ignores_which_construct_the_backend_names() {
+    let corpus = let_corpus();
+    let mut coverage = BackendCoverage {
+        expression_forms: ["literal", "name", "operator", "let"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        value_types: [CoverageValueType::Integer].into_iter().collect(),
+        operations: BTreeSet::from([CoverageOperation {
+            operator: CoverageOperator::Add,
+            operand_types: vec![CoverageValueType::Integer, CoverageValueType::Integer],
+            result_type: CoverageValueType::Integer,
+        }]),
+    };
+    let gaps = |backend: NamingBackend, coverage: &BackendCoverage| {
+        let backends: [BackendEntry<'_>; 1] =
+            [(ExecutionBackendChoice::Jit, &backend, Some(coverage))];
+        let report = run_parity(
+            &backends,
+            &corpus_only(corpus.path()),
+            &ParityLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("an unsupported entry is a report");
+        assert_eq!(report.backends[0].unsupported.len(), 1);
+        report.backends[0]
+            .findings
+            .iter()
+            .filter(|finding| finding.kind == FindingKind::CoverageGap)
+            .map(|finding| finding.entry.clone())
+            .collect::<Vec<_>>()
+    };
+
+    // A covered entry is a gap although the named form is not covered.
+    let covered_entry = NamingBackend {
+        entry: "simple",
+        construct: "case",
+    };
+    assert_eq!(gaps(covered_entry, &coverage), ["simple"]);
+
+    // An entry outside the coverage is no gap although the named form is
+    // covered.
+    coverage.expression_forms.remove("let");
+    let uncovered_entry = NamingBackend {
+        entry: "usesLet",
+        construct: "operator",
+    };
+    assert!(gaps(uncovered_entry, &coverage).is_empty());
+}
+
+/// TC-1387 FR-563-AC-6: a reference that faults while preparing a unit gives a
+/// `reference-fault` for its entry and the later units still run; a reference
+/// preparation limit refuses.
+#[trace("TC-1387", "FR-563-AC-6")]
+#[test]
+fn reference_preparation_failures_are_a_finding_or_a_refusal() {
+    let corpus = inc_corpus_with_count(3);
+    let interpreter = Interpreter;
+    let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &interpreter, None)];
+    let report = fsl_conformance::run_parity_with_reference(
+        &PrepareFaultBackend,
+        &backends,
+        &corpus_only(corpus.path()),
+        &ParityLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("a reference prepare fault is a reported result");
+    assert_eq!(report.units, 3);
+    assert_eq!(report.backends[0].compared, 0);
+    assert_eq!(
+        report.backends[0]
+            .findings
+            .iter()
+            .filter(|finding| finding.kind == FindingKind::ReferenceFault)
+            .map(|finding| (finding.unit.as_str(), finding.entry.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("run-inc-0", "inc"),
+            ("run-inc-1", "inc"),
+            ("run-inc-2", "inc")
+        ]
+    );
+    assert_eq!(report.exit_code(), 1);
+
+    let refusal = fsl_conformance::run_parity_with_reference(
+        &PrepareLimitBackend,
+        &backends,
+        &corpus_only(corpus.path()),
+        &ParityLimits::default(),
+        &Cancel::new(),
+    )
+    .expect_err("a reference prepare limit refuses");
+    assert!(matches!(
+        refusal,
+        ParityRefusal::ReferencePrepareLimit(ref limit)
+            if limit.setting() == fsl_foundation::Setting::PrepareCompileWorkUnits
+    ));
+    assert_eq!(refusal.exit_code(), 2);
+}
+
+/// Comparing two completed values draws on no call budget, so a run with an
+/// exhausted accounting bound still reaches a verdict.
+#[test]
+fn comparison_is_not_charged_to_the_call_budget() {
+    let corpus = inc_corpus();
+    let backends: [BackendEntry<'_>; 1] =
+        [(ExecutionBackendChoice::Jit, &UnmeteredCallBackend, None)];
+    let mut limits = ParityLimits::default();
+    limits.accounting.work_units = 0;
+    let report = fsl_conformance::run_parity_with_reference(
+        &UnmeteredCallBackend,
+        &backends,
+        &corpus_only(corpus.path()),
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("the comparison completes");
+    assert_eq!(report.backends[0].compared, 1);
+    assert_eq!(report.backends[0].total_findings, 0);
+    assert_eq!(report.exit_code(), 0);
+}
+
+/// TC-1387 FR-563-AC-6: a selected vector whose source does not compile refuses
+/// before any unit runs, the ones ahead of it included.
+#[trace("TC-1387", "FR-563-AC-6")]
+#[test]
+fn an_uncompilable_selected_vector_refuses_before_any_unit_runs() {
+    let corpus = inc_corpus_with_count(2);
+    fs::write(
+        corpus.path().join("broken.native"),
+        "language \"ix:native\" edition \"1-draft\";\nfunction broken using missing(x: Integer): Integer pure { x }\n",
+    )
+    .expect("broken source");
+    let document_path = corpus.path().join("complete-v1.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&fs::read(&document_path).expect("corpus file"))
+            .expect("corpus JSON");
+    document["vectors"][1]["input"]["files"][0]["path"] = serde_json::json!("broken.native");
+    fs::write(
+        &document_path,
+        serde_json::to_vec(&document).expect("corpus JSON"),
+    )
+    .expect("corpus file");
+
+    let counting = CountingBackend::default();
+    let backends: [BackendEntry<'_>; 1] = [(ExecutionBackendChoice::Jit, &counting, None)];
+    let refusal = run_parity(
+        &backends,
+        &corpus_only(corpus.path()),
+        &ParityLimits::default(),
+        &Cancel::new(),
+    )
+    .expect_err("an uncompilable selected vector refuses");
+    assert!(matches!(refusal, ParityRefusal::UnreadableCorpus(_)));
+    assert_eq!(refusal.exit_code(), 2);
+    assert_eq!(counting.prepares.load(Ordering::Relaxed), 0);
 }
 
 /// TC-1387 FR-563-AC-6: reference faults are reported, while an empty backend

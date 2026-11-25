@@ -12,13 +12,16 @@ use filament_eval::{
 use filament_exact::{
     planned_equality, Cancel, Decimal, Integer, Meter, Outcome, ScalarLimits, Value,
 };
+use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
+use fsl_eval::execution::coverage::entry_within_coverage;
 use fsl_eval::execution::{
-    BackendCoverage, CallLimits, EntrySelection, Interpreter, PrepareLimits, PreparedEntries,
-    SuppliedBackend,
+    BackendCoverage, CallLimits, EntrySelection, Interpreter, PrepareFailure, PrepareLimits,
+    PreparedEntries, SuppliedBackend,
 };
 use fsl_eval::value::QualifiedName;
+use fsl_foundation::diagnostic::LimitExceeded;
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
 use fsl_replay::spine::{
@@ -79,11 +82,30 @@ pub struct ParityClauseCase {
     pub observations: AdmittedObservations,
 }
 
-/// Bounds for parity calls and report retention.
+/// Accounting under which no budget is reached: comparing two results costs no
+/// more than the values the bounded calls already built.
+const UNMETERED: ScalarLimits = ScalarLimits {
+    integer_bits: u64::MAX,
+    decimal_digits: u64::MAX,
+    scale_expansion: u64::MAX,
+    text_input_bytes: u64::MAX,
+    text_scalars: u64::MAX,
+    normalized_scalars: u64::MAX,
+    unit_edges: u64::MAX,
+    value_occurrences: u64::MAX,
+    work_units: u64::MAX,
+    result_units: u64::MAX,
+};
+
+/// Bounds for parity calls, unit generation and report retention.
 #[derive(Clone, Copy, Debug)]
 pub struct ParityLimits {
     /// Maximum number of retained findings per backend (default 100).
     pub max_reported: usize,
+    /// Maximum number of generated draws checking may refuse (default 10,000).
+    /// The next refused draw ends generation with a
+    /// [`FindingKind::GeneratorExhausted`] finding.
+    pub max_discarded: u64,
     /// Backend preparation bounds.
     pub prepare: PrepareLimits,
     /// Evaluation accounting bounds.
@@ -94,18 +116,11 @@ impl Default for ParityLimits {
     fn default() -> Self {
         Self {
             max_reported: 100,
+            max_discarded: 10_000,
             prepare: PrepareLimits::default(),
             accounting: ScalarLimits {
-                integer_bits: u64::MAX,
-                decimal_digits: u64::MAX,
-                scale_expansion: u64::MAX,
-                text_input_bytes: u64::MAX,
-                text_scalars: u64::MAX,
-                normalized_scalars: u64::MAX,
-                unit_edges: u64::MAX,
-                value_occurrences: u64::MAX,
                 work_units: 1_000_000,
-                result_units: u64::MAX,
+                ..UNMETERED
             },
         }
     }
@@ -145,8 +160,13 @@ pub enum FindingKind {
     PrepareFailed,
     /// The backend compared no entry.
     EmptyComparison,
-    /// The interpreter returned an internal `Fault`.
+    /// The interpreter returned an internal `Fault`, from a call or from
+    /// preparing a unit.
     ReferenceFault,
+    /// Checking refused more generated draws than
+    /// [`ParityLimits::max_discarded`], so the generated units were not all
+    /// run. The finding's unit and source are the last refused draw's.
+    GeneratorExhausted,
 }
 
 /// One finding with the reproducibility fields FR-295 requires.
@@ -173,7 +193,7 @@ pub struct Finding {
     /// Typed backend result, absent only for findings that occur before a call.
     pub result: Option<Result<Evaluation, CallFailure>>,
     /// Typed backend preparation failure when `kind` is `PrepareFailed`.
-    pub prepare_failure: Option<fsl_eval::execution::PrepareFailure>,
+    pub prepare_failure: Option<PrepareFailure>,
 }
 
 /// One exact source file that forms a parity unit.
@@ -220,7 +240,7 @@ pub struct ParityReport {
     pub units: u64,
     /// Corpus vectors not selected as parity cases.
     pub not_selected: u64,
-    /// Generated units that checking refused and the generator replaced.
+    /// Generated draws that checking refused.
     pub discarded: u64,
     /// One report per supplied backend, preserving caller order.
     pub backends: Vec<BackendReport>,
@@ -250,12 +270,9 @@ pub enum ParityRefusal {
     /// The caller cancelled the run before it finished.
     #[error("cancelled")]
     Cancelled,
-    /// The interpreter could not prepare the checked reference entries.
-    #[error("reference-prepare-failed: {0:?}")]
-    ReferencePrepareFailed(fsl_eval::execution::PrepareFailure),
-    /// Comparing two completed values exhausted its caller-supplied budget.
-    #[error("comparison-incomplete: {0:?}")]
-    ComparisonIncomplete(filament_exact::Incomplete),
+    /// Preparing the reference entries reached a [`PrepareLimits`] bound.
+    #[error("reference-prepare-limit: {0:?}")]
+    ReferencePrepareLimit(LimitExceeded),
 }
 
 impl ParityRefusal {
@@ -277,7 +294,8 @@ pub type BackendEntry<'a> = (
 ///
 /// # Errors
 /// Returns [`ParityRefusal`] when the backend set is empty, the corpus cannot
-/// be read, or `cancel` requests cancellation before completion.
+/// be read, preparing the reference reaches a limit, or `cancel` requests
+/// cancellation before completion.
 pub fn run_parity(
     backends: &[BackendEntry<'_>],
     inputs: &ParityInputs,
@@ -413,16 +431,34 @@ fn run_with_reference(
             Err(()) => {
                 check_cancel(cancel)?;
                 discarded = discarded.saturating_add(1);
-                continue;
+                if discarded <= limits.max_discarded {
+                    continue;
+                }
+                for report in &mut reports {
+                    record_finding(
+                        report,
+                        limits.max_reported,
+                        make_finding(
+                            FindingKind::GeneratorExhausted,
+                            report.backend,
+                            inputs.seed,
+                            index.to_string(),
+                            source.clone(),
+                            vec![generated_source_file(index, &source)],
+                            String::new(),
+                            Vec::new(),
+                            None,
+                            None,
+                        ),
+                    );
+                }
+                break;
             }
         };
         materialize_composite_arguments(checked.package(), &mut functions);
         let unit = ParityUnit {
             id: index.to_string(),
-            source_files: vec![SourceFile {
-                path: format!("generated-{index}.native"),
-                bytes: source.clone(),
-            }],
+            source_files: vec![generated_source_file(index, &source)],
             source,
             package: UnitPackage::Checked(checked),
             environment: ObjectEnvironment::default(),
@@ -479,6 +515,52 @@ fn check_cancel(cancel: &Cancel) -> Result<(), ParityRefusal> {
     }
 }
 
+fn generated_source_file(index: u64, source: &[u8]) -> SourceFile {
+    SourceFile {
+        path: format!("generated-{index}.native"),
+        bytes: source.to_vec(),
+    }
+}
+
+/// The reference could not prepare `unit`, so none of its entries has an
+/// oracle: each is a `reference-fault` for every backend and none is compared.
+fn record_reference_prepare_fault(
+    reports: &mut [BackendReport],
+    unit: &ParityUnit,
+    seed: u64,
+    max_reported: usize,
+    fault: &InternalFault,
+) {
+    let functions = unit.functions.iter().map(|function| {
+        let arguments = function.arguments.first().cloned().unwrap_or_default();
+        (&function.name, arguments)
+    });
+    let clauses = unit
+        .clauses
+        .iter()
+        .map(|clause| (&clause.name, clause_arguments(&clause.observations)));
+    for (entry, arguments) in functions.chain(clauses) {
+        for report in reports.iter_mut() {
+            record_finding(
+                report,
+                max_reported,
+                make_finding(
+                    FindingKind::ReferenceFault,
+                    report.backend,
+                    seed,
+                    unit.id.clone(),
+                    unit.source.clone(),
+                    unit.source_files.clone(),
+                    entry.clone(),
+                    arguments.clone(),
+                    Some(Err(CallFailure::Fault(fault.clone()))),
+                    None,
+                ),
+            );
+        }
+    }
+}
+
 fn compare_unit(
     reference: &dyn SuppliedBackend,
     backends: &[BackendEntry<'_>],
@@ -507,14 +589,17 @@ fn compare_unit(
     let reference_prepared =
         match reference.prepare_entries(package, &selections, &limits.prepare, cancel) {
             Ok(prepared) => prepared,
-            Err(fsl_eval::execution::PrepareFailure::Cancelled(_)) => {
+            Err(PrepareFailure::Cancelled(_)) => {
                 return Err(ParityRefusal::Cancelled);
             }
-            Err(failure) => {
-                if cancel.cause().is_some() {
-                    return Err(ParityRefusal::Cancelled);
-                }
-                return Err(ParityRefusal::ReferencePrepareFailed(failure));
+            Err(PrepareFailure::Limit(limit)) => {
+                check_cancel(cancel)?;
+                return Err(ParityRefusal::ReferencePrepareLimit(limit));
+            }
+            Err(PrepareFailure::Fault(fault)) => {
+                check_cancel(cancel)?;
+                record_reference_prepare_fault(reports, unit, seed, limits.max_reported, &fault);
+                return Ok(());
             }
         };
     let call_limits = CallLimits {
@@ -579,9 +664,7 @@ fn compare_unit(
         let prepared = match backend.prepare_entries(package, &selections, &limits.prepare, cancel)
         {
             Ok(prepared) => prepared,
-            Err(failure)
-                if matches!(failure, fsl_eval::execution::PrepareFailure::Cancelled(_)) =>
-            {
+            Err(failure) if matches!(failure, PrepareFailure::Cancelled(_)) => {
                 return Err(ParityRefusal::Cancelled);
             }
             Err(failure) => {
@@ -629,7 +712,13 @@ fn compare_unit(
             if let (Some(coverage), UnsupportedCause::Untranslatable { .. }) =
                 (coverage, &reason.cause)
             {
-                if unsupported_is_within_coverage(package, &entry, &reason, coverage) {
+                // The gap is decided on every construct of the entry, whichever
+                // construct the backend names. An entry whose constructs cannot
+                // be read is not shown to be outside the coverage, so it fails.
+                if !matches!(
+                    entry_within_coverage(package, selection, coverage),
+                    Ok(false)
+                ) {
                     record_finding(
                         report,
                         limits.max_reported,
@@ -715,7 +804,7 @@ fn compare_unit(
                     return Err(ParityRefusal::Cancelled);
                 }
                 report.compared = report.compared.saturating_add(1);
-                if difference(&first, &second, limits.accounting, cancel)?.is_some() {
+                if difference(&first, &second, cancel)?.is_some() {
                     record_finding(
                         report,
                         limits.max_reported,
@@ -734,7 +823,7 @@ fn compare_unit(
                     );
                     continue;
                 }
-                if let Some(member) = difference(&expected, &first, limits.accounting, cancel)? {
+                if let Some(member) = difference(&expected, &first, cancel)? {
                     record_finding(
                         report,
                         limits.max_reported,
@@ -816,7 +905,7 @@ fn compare_unit(
                 return Err(ParityRefusal::Cancelled);
             }
             report.compared = report.compared.saturating_add(1);
-            if difference(&first, &second, limits.accounting, cancel)?.is_some() {
+            if difference(&first, &second, cancel)?.is_some() {
                 record_finding(
                     report,
                     limits.max_reported,
@@ -835,7 +924,7 @@ fn compare_unit(
                 );
                 continue;
             }
-            if let Some(member) = difference(&expected, &first, limits.accounting, cancel)? {
+            if let Some(member) = difference(&expected, &first, cancel)? {
                 record_finding(
                     report,
                     limits.max_reported,
@@ -856,19 +945,6 @@ fn compare_unit(
         }
     }
     Ok(())
-}
-
-fn unsupported_is_within_coverage(
-    package: &CheckedPackage,
-    entry: &str,
-    unsupported: &filament_eval::UnsupportedEntry,
-    coverage: &BackendCoverage,
-) -> bool {
-    let UnsupportedCause::Untranslatable { construct, .. } = &unsupported.cause else {
-        return false;
-    };
-    fsl_eval::execution::coverage::construct_within_coverage(package, entry, construct, coverage)
-        .unwrap_or(false)
 }
 
 fn call(
@@ -912,7 +988,6 @@ fn clause_arguments(observations: &AdmittedObservations) -> Vec<Value> {
 fn difference(
     expected: &Result<Evaluation, CallFailure>,
     actual: &Result<Evaluation, CallFailure>,
-    accounting: ScalarLimits,
     cancel: &Cancel,
 ) -> Result<Option<ParityMember>, ParityRefusal> {
     match (expected, actual) {
@@ -920,14 +995,13 @@ fn difference(
         (Err(expected), Err(actual)) => {
             Ok((expected != actual).then_some(ParityMember::CallFailurePayload))
         }
-        (Ok(expected), Ok(actual)) => compare_evaluations(expected, actual, accounting, cancel),
+        (Ok(expected), Ok(actual)) => compare_evaluations(expected, actual, cancel),
     }
 }
 
 fn compare_evaluations(
     expected: &Evaluation,
     actual: &Evaluation,
-    accounting: ScalarLimits,
     cancel: &Cancel,
 ) -> Result<Option<ParityMember>, ParityRefusal> {
     match (&expected.outcome, &actual.outcome) {
@@ -958,7 +1032,7 @@ fn compare_evaluations(
             if cancel.cause().is_some() {
                 return Err(ParityRefusal::Cancelled);
             }
-            let equal = completed_values_equal(a, b, accounting, cancel)?;
+            let equal = completed_values_equal(a, b, cancel)?;
             if !equal {
                 return Ok(Some(ParityMember::CompletedValue));
             }
@@ -1010,20 +1084,20 @@ fn compare_evaluations(
 fn completed_values_equal(
     left: &Value,
     right: &Value,
-    accounting: ScalarLimits,
     cancel: &Cancel,
 ) -> Result<bool, ParityRefusal> {
     check_cancel(cancel)?;
     let outcome = planned_equality(
         left,
         right,
-        &mut Meter::new(accounting).with_cancel(cancel.clone()),
+        &mut Meter::new(UNMETERED).with_cancel(cancel.clone()),
     );
     check_cancel(cancel)?;
     match outcome {
         Outcome::Completed(equal) => Ok(equal),
-        Outcome::Incomplete(incomplete) => Err(ParityRefusal::ComparisonIncomplete(incomplete)),
-        Outcome::Undefined(_) | Outcome::Refused(_) => Ok(false),
+        // With no budget to reach and the run not cancelled, a comparison that
+        // does not complete has not shown the values equal.
+        Outcome::Incomplete(_) | Outcome::Undefined(_) | Outcome::Refused(_) => Ok(false),
     }
 }
 
@@ -1655,22 +1729,10 @@ impl ProgramGenerator {
 }
 
 fn generated_text(text: &str) -> Value {
-    use filament_exact::{admit_text, Meter, ScalarLimits, TextPayload, TextProfile, TextType};
-    let limits = ScalarLimits {
-        integer_bits: u64::MAX,
-        decimal_digits: u64::MAX,
-        scale_expansion: u64::MAX,
-        text_input_bytes: u64::MAX,
-        text_scalars: u64::MAX,
-        normalized_scalars: u64::MAX,
-        unit_edges: u64::MAX,
-        value_occurrences: u64::MAX,
-        work_units: u64::MAX,
-        result_units: u64::MAX,
-    };
+    use filament_exact::{admit_text, TextPayload, TextProfile, TextType};
     let payload = TextPayload::from_utf8(text.as_bytes()).expect("generated UTF-8 text");
     let text_type = TextType::new(0, 8, TextProfile::Nfc).expect("bounded NFC text type");
-    match admit_text(&payload, &text_type, &mut Meter::new(limits)) {
+    match admit_text(&payload, &text_type, &mut Meter::new(UNMETERED)) {
         Outcome::Completed(value) => Value::Text(value),
         other => panic!("generated text is admitted: {other:?}"),
     }

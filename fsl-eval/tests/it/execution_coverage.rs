@@ -4,8 +4,9 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::execution::coverage::{entry_within_coverage, first_outside};
 use fsl_eval::execution::{
-    BackendCoverage, CoverageOperation, CoverageOperator, CoverageValueType,
+    BackendCoverage, CoverageOperation, CoverageOperator, CoverageValueType, EntrySelection,
 };
+use fsl_eval::value::QualifiedName;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
@@ -18,7 +19,8 @@ fn package() -> CheckedPackage {
     let source = SourceIdentity::new("fsl-eval", "coverage.native");
     let bytes = b"language \"ix:native\" edition \"1-draft\";\n\
         profile v = \"filament.value.complete/v1\";\n\
-        function inc using v(x: Int[0, 9]): Int[0, 10] pure { let y = x in y + 1 }\n";
+        function inc using v(x: Int[0, 9]): Int[0, 10] pure { let y = x in y + 1 }\n\
+        function calls_inc using v(x: Int[0, 9]): Int[0, 10] pure { inc(x) }\n";
     let parsed = fsl_cst::parse(source, "coverage.native", bytes, fsl_cst::Limits::default())
         .expect("source parses");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
@@ -61,6 +63,12 @@ fn coverage(with_let: bool) -> BackendCoverage {
     }
 }
 
+fn within(package: &CheckedPackage, function: &str, coverage: &BackendCoverage) -> bool {
+    let name = QualifiedName::unqualified(function).expect("a function name");
+    entry_within_coverage(package, &EntrySelection::function(name), coverage)
+        .expect("coverage traversal succeeds")
+}
+
 /// A parameter/let read is the ADR-012 `name` form and is never silently
 /// treated as an uncovered-free local node.
 #[trace("TC-1381", "FR-560-AC-8")]
@@ -76,7 +84,7 @@ fn local_reads_require_name_form_coverage() {
         outside.construct,
         filament_eval::UntranslatableConstruct::ExpressionForm("name".into())
     );
-    assert!(!entry_within_coverage(&package, "inc", &covered).unwrap());
+    assert!(!within(&package, "inc", &covered));
 }
 
 /// The coverage walk finds a `let` even when its nested local reads and
@@ -92,5 +100,23 @@ fn let_is_a_covered_form_only_when_explicitly_listed() {
         outside.construct,
         filament_eval::UntranslatableConstruct::ExpressionForm("let".into())
     );
-    assert!(entry_within_coverage(&package, "inc", &coverage(true)).unwrap());
+    assert!(within(&package, "inc", &coverage(true)));
+}
+
+/// An entry is within coverage only when every function it calls is too, even
+/// though none of its own constructs is outside.
+#[trace("TC-1381", "FR-560-AC-3")]
+#[test]
+fn a_call_to_an_uncovered_function_is_outside_coverage() {
+    let package = package();
+    let mut without_let = coverage(false);
+    without_let.expression_forms.insert("call".to_owned());
+    assert!(first_outside(&package, "calls_inc", &without_let)
+        .expect("coverage traversal succeeds")
+        .is_none());
+    assert!(!within(&package, "calls_inc", &without_let));
+
+    let mut with_let = coverage(true);
+    with_let.expression_forms.insert("call".to_owned());
+    assert!(within(&package, "calls_inc", &with_let));
 }

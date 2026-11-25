@@ -5,11 +5,11 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use crate::error::{Error, Result};
+use crate::Outcome;
 use filament_eval::ExecutionBackendChoice;
 use filament_exact::Cancel;
 use fsl_conformance::{run_parity, BackendEntry, ParityInputs, ParityLimits, ParityRefusal};
-use crate::error::{Error, Result};
-use crate::Outcome;
 
 const USAGE: &str = "usage: cargo xtask parity [--corpus <dir>]";
 
@@ -79,11 +79,8 @@ fn refusal_message(refusal: ParityRefusal) -> String {
         ParityRefusal::EmptyScope => "empty-scope".to_owned(),
         ParityRefusal::UnreadableCorpus(path) => format!("unreadable-corpus: {}", path.display()),
         ParityRefusal::Cancelled => "cancelled".to_owned(),
-        ParityRefusal::ReferencePrepareFailed(failure) => {
-            format!("reference-prepare-failed: {failure:?}")
-        }
-        ParityRefusal::ComparisonIncomplete(incomplete) => {
-            format!("comparison-incomplete: {incomplete:?}")
+        ParityRefusal::ReferencePrepareLimit(limit) => {
+            format!("reference-prepare-limit: {limit:?}")
         }
     }
 }

@@ -1258,8 +1258,8 @@ fn try_for_each_node_child<E>(
         | NodeKind::DecimalNegate(operand, _)
         | NodeKind::ConvertDecimal(operand, _)
         | NodeKind::Flatten(operand)
-        | NodeKind::BytesLength(operand)
         | NodeKind::Size(operand)
+        | NodeKind::BytesLength(operand)
         | NodeKind::DropFirst(operand)
         | NodeKind::Pre(operand) => [*operand].into_iter().try_for_each(child),
         NodeKind::PlaceReference {
