@@ -78,8 +78,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    ClockPlaceReference, EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey,
-    ObjectReference, Refusal, ScalarLimits, Undefined, UniverseId, ValueType,
+    ClockPlaceReference, EffectiveId, Incomplete, Integer, IntegerDecimalBudget, IntegerInterval,
+    Meter, NodeKey, ObjectReference, Refusal, Reservation, ReservationDenied, ScalarLimits,
+    Undefined, UniverseId, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -99,6 +100,26 @@ use fsl_semantics::model::observation::{
 use fsl_semantics::model::operation::OperationDeclaration;
 use fsl_semantics::model::state::{StateField, StateModel};
 use ix_trace_rs::implements;
+
+struct UnmeteredModelKeyBudget;
+
+impl Reservation for UnmeteredModelKeyBudget {
+    fn reserve(&mut self, _bytes: usize) -> Result<(), ReservationDenied> {
+        Ok(())
+    }
+}
+
+impl IntegerDecimalBudget for UnmeteredModelKeyBudget {
+    fn work(&mut self, _units: u64) -> Result<(), ReservationDenied> {
+        Ok(())
+    }
+}
+
+impl ModelKeyBudget for UnmeteredModelKeyBudget {
+    fn integer(&mut self, _value: &Integer) -> Result<(), ReservationDenied> {
+        Ok(())
+    }
+}
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
@@ -1743,18 +1764,46 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// The RFC 8785 key bytes and `filament.simulation.state-key/v1` state key of
-    /// `state`, under the identity limits exploration encodes with.
+    /// `state`, under the caller's identity byte bound.
     ///
     /// # Errors
     ///
     /// [`crate::simulation::EncodingRefusal`] when the key has no RFC 8785
-    /// encoding under those limits.
+    /// encoding under the supplied bound.
+    #[implements("FR-262-AC-2")]
+    #[implements("FR-259-AC-3")]
     pub fn state_key(
         &self,
         state: &ModelSimState,
+        identity: IdentityLimits,
     ) -> Result<(Vec<u8>, crate::simulation::StateKey), crate::simulation::EncodingRefusal> {
-        let key = self.canonical_state_key_ref(state)?;
-        Ok((key.as_bytes().to_vec(), key.clone()))
+        let mut budget = UnmeteredModelKeyBudget;
+        let bytes = encode::bounded::model_bytes(
+            &self.model,
+            state.state(),
+            self.typing(),
+            identity,
+            &mut budget,
+            &filament_exact::Cancel::default(),
+        )
+        .map_err(|error| match error {
+            ModelKeyError::Encoding(refusal) => refusal,
+            ModelKeyError::Unsupported(reason) => {
+                crate::simulation::EncodingRefusal::NoEncoding(reason.to_owned())
+            }
+            ModelKeyError::SizeOverflow => crate::simulation::EncodingRefusal::Limit(
+                fsl_foundation::diagnostic::LimitExceeded::new(
+                    fsl_foundation::setting::Setting::IdentityInputBytes,
+                    identity.input_bytes,
+                    u128::MAX,
+                ),
+            ),
+            ModelKeyError::Denied | ModelKeyError::Cancelled(_) => unreachable!(
+                "the unmetered state-key budget and fresh cancellation token cannot refuse"
+            ),
+        })?;
+        let key = crate::simulation::StateKey::from_canonical_bytes(bytes.clone());
+        Ok((bytes, key))
     }
 
     /// Canonical raw model identity bytes under cumulative caller admission.
@@ -3517,9 +3566,11 @@ fn rebuild_model_trace(
                 }
                 let state_findings = system.findings_at_stop(&current);
                 if !state_findings.is_empty() {
-                    let (_, state_key) = system.state_key(&current).map_err(|refusal| {
-                        ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
-                    })?;
+                    let (_, state_key) = system
+                        .state_key(&current, fsl_foundation::IdentityLimits::default())
+                        .map_err(|refusal| {
+                            ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                        })?;
                     findings.push(StateFindings {
                         state: state_key,
                         depth: index,
@@ -3531,9 +3582,11 @@ fn rebuild_model_trace(
             }
         };
         if !at_state.is_empty() {
-            let (_, state_key) = system.state_key(&current).map_err(|refusal| {
-                ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
-            })?;
+            let (_, state_key) = system
+                .state_key(&current, fsl_foundation::IdentityLimits::default())
+                .map_err(|refusal| {
+                    ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                })?;
             findings.push(StateFindings {
                 state: state_key,
                 depth: index,
