@@ -351,7 +351,7 @@ fn bit_constructors_keep_expected_types_and_exact_payloads() {
 
 /// FR-397-AC-11 (TC-1091): malformed bit syntax refuses as a located invalid
 /// token; a valid constructor with an incompatible expected type is ill-typed.
-#[trace("TC-1091", "FR-397-AC-11")]
+#[trace("TC-1091", "FR-397-AC-11", "FR-091-AC-49")]
 #[test]
 fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
     use fsl_cst::{CompleteCause, CompleteCode};
