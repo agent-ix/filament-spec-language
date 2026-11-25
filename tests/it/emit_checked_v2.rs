@@ -205,8 +205,6 @@ fn parameter_name(node: &CheckedSemanticNodeV2) -> String {
 /// count is frozen. FSL reads IR only through `filament-contract-model`'s public
 /// reader, so there is no IR to FSL dependency.
 #[trace("TC-1271", "FR-105-AC-13")]
-#[trace("FSpec-TC-2053", "FSpec-FR-825-AC-3")]
-#[trace("FSpec-TC-2053", "FSpec-FR-825-AC-10")]
 #[test]
 fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() {
     let model = Path::new(SWITCH_MODEL);
@@ -368,13 +366,51 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
         Some(filament_contract_model::StateClauseKind::Postcondition)
     );
 
+    // The package holds exactly two requirement rows: the operation frame's
+    // generated one, then Q1's.
+    let [frame_requirement, post_requirement] = package.requirement_items() else {
+        panic!(
+            "exactly two requirement rows, the frame's and Q1's: {:?}",
+            package.requirement_items()
+        );
+    };
+    assert_eq!(
+        node(&package, &frame_requirement.claim)
+            .semantic_form
+            .as_ref(),
+        "frame"
+    );
+    assert_eq!(
+        frame_requirement.occurrence.role,
+        CheckedOccurrenceRole::Generated
+    );
+    assert_eq!(frame_requirement.occurrence.ordinal, 0);
+    assert_eq!(
+        frame_requirement.kind,
+        filament_contract_model::CapabilityKind::OperationContract
+    );
+    assert_eq!(
+        frame_requirement.extent,
+        filament_contract_model::RequirementExtent::Bounded
+    );
+    let Some(filament_contract_model::RequirementRecord::OperationContract(frame_record)) =
+        &frame_requirement.record
+    else {
+        panic!("the frame's bounded operation-contract row names its typed record");
+    };
+    assert_eq!(
+        node(&package, &frame_record.node).semantic_form.as_ref(),
+        "operation_contract"
+    );
+    assert_eq!(frame_record.result_bound, *result_type);
+    assert!(!frame_record.invariant);
+    assert_eq!(frame_record.operation.as_ref(), Some(&anchor.node_id));
+    assert!(frame_record.model_objects.is_empty());
+    assert!(frame_record.populations.is_empty());
+
     // The producer's bounded operation-contract request for Q1 carries the
     // exact record node that the strict reader joined into this typed row.
-    let post_requirement = package
-        .requirement_items()
-        .iter()
-        .find(|row| row.claim == post.node_id)
-        .expect("Q1 has its operation-contract requirement row");
+    assert_eq!(post_requirement.claim, post.node_id);
     assert_eq!(
         post_requirement.occurrence.role,
         CheckedOccurrenceRole::Claim
