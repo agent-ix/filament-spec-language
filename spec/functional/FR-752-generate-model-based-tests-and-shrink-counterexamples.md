@@ -85,7 +85,11 @@ pub fn run_model_based_test(
   `ModelSystem::new` does not admit, with FR-120's admission refusal; the
   empty-domain refusal `invalid_model_binding`/`malformed-declaration`; and
   FR-120's `NotSimulated::RequiresBound` when a population has no finite
-  universe for the initial-state domain.
+  universe for the initial-state domain. That refusal is represented by
+  `member: "subject"`, `code: "requires_bound"`, `cause: "requires-bound"`
+  and `details.domains`, the ordered FR-120 root list with each existing
+  root's structural `key` and `kind`; it does not become a model-based-test
+  record and no case runs.
   A `max_trace_length` supplied for a value clause is accepted and unused,
   as FR-753 hands it to every consuming step alike.
 - `ModelBasedTestRecord` is FSpec FR-190's result record, and every FSpec
@@ -119,8 +123,9 @@ pub fn run_model_based_test(
 - The plan coordinator (FR-753) calls this entry for a `model_based_test`
   step with the checked package, the step's clause, the request's `seed`,
   `max_trace_length` and `max_value_bits`, for a clause over a state model the model subject
-  whose `initial` is the step's admitted `initial` snapshot from
-  `PlanInputs`, the accounting, observation and normalization limits from
+  whose `initial` is the step's admitted `initial` snapshot and whose
+  `universes` are from the admitted `universe_snapshot` when present (FR-1038),
+  otherwise from its initial snapshots, the accounting, observation and normalization limits from
   `AnalyzeLimits` and the exploration and position limits from
   `AnalyzeLimits.simulation` (FR-281),
   passes `NativeAdmission`, and maps the record's `result` and `cause` to
@@ -248,7 +253,7 @@ pub fn run_model_based_test(
 | FR-752-AC-10 | Over a value clause `Huge` with parameter `t: Text[0, 1099511627776; nfc]` (`max` 2^40) and body `size(t) >= 0`, seed 7, `max_cases` 30, no subject, `max_trace_length` `None` and `accounting.work_units` 1000000, `run_model_based_test` returns `Ok` with a record settled `incomplete`, cause `{"kind": "limit-reached", "limit": "work_units", "setting": "accounting.work_units", "value": 1000000}`, and `cases.generated` 0; it does not panic or abort, the record is not `unsupported`, and `provenance.size_bounded` is empty. The same clause over `Text[0, 1099511627776; unicode-scalars]` settles the same way. Over `Text[0, 4; nfc]` with the same limits the run is `tested` with `cases.generated` 30, and with `accounting.work_units` 2559, one below the 2560 FSpec FR-190 "Text domains" charges for its count table, it settles `incomplete` naming `accounting.work_units` with `cases.generated` 0. | Test (TC-3068) |
 | FR-752-AC-11 | `run_model_based_test` returns `Err(ModelBasedTestRefusal)` naming the member, and runs no case, for `max_cases` 0, `max_trace_length` `Some(0)`, an unknown clause identity, and `invalid_model_binding`/`malformed-declaration` for a clause over an empty domain. For AC-7's clause `Inc` it returns `invalid_runtime_input`/`missing-member` naming `max_trace_length` when that is `None`, and naming `subject` when the subject is `None`; for the value clause `Square` with a subject it returns `invalid_runtime_input`/`unknown-member` naming `subject`, and with `max_trace_length` `None` it runs. With `NativeAdmission`, AC-7's clause `Inc` (package, subject with `initial` value 0, seed 7, `max_cases` 100, `max_trace_length` `Some(8)`) returns `Ok` settled `tested`, and its `by` 0 and `by` 7 refusal cases are refused by `admit_arguments` over the argument vector `[by]`. The same request with `explore.states` 1 returns `Ok` settled `tested`; its `by` 6 partition is `uncovered` with reason `undetermined` naming `{"limit": "max_states", "setting": "explore.states", "value": 1}` (FR-255-AC-13), no case is generated for it, and `jam`'s `operations` entry is `undetermined` naming the same limit. As a `model_based_test` plan step running `Inc` with `AnalyzeLimits.simulation` `max_states` 1, the step's record equals that direct run's. | Test (TC-3068) |
 
-| FR-752-AC-12 | Over a state model with population `cells`, supplied universe `{c1, c2}`, and `value: Int[0, 1]` on each `Cell`, a state-clause model-based-test request with no initial snapshots, seed 7, `max_cases` 100 and `max_trace_length` 8 settles `tested`; every case's initial state belongs to the four-state product domain `{((c1,0),(c2,0)), ((c1,0),(c2,1)), ((c1,1),(c2,0)), ((c1,1),(c2,1))}`, and the reachability exploration uses that same domain. The first seeded case's initial state is the uniform draw over that domain at the FR-190 `step` 0, `choice` 0 coordinates; repeated equal requests produce byte-equal records. No other object key or population universe is present. Adding a population root of class P without a finite universe returns FR-120's `NotSimulated::RequiresBound` before any case runs. | Test (TC-3018) |
+| FR-752-AC-12 | Over a state model with population `cells`, whose admitted `universe_snapshot` row is `complete: true` with object keys `[c1, c2]`, and `value: Int[0, 1]` on each `Cell`, a state-clause model-based-test request with no initial snapshots, seed 7, `max_cases` 100 and `max_trace_length` 8 settles `tested`; every case's initial state belongs to the four-state product domain `{((c1,0),(c2,0)), ((c1,0),(c2,1)), ((c1,1),(c2,0)), ((c1,1),(c2,1))}`, and the reachability exploration uses that same domain. The first seeded case's initial state is the uniform draw over that domain at the FR-190 `step` 0, `choice` 0 coordinates; repeated equal requests produce byte-equal records. No other object key or population universe is present. Adding class-P root `unbounded_cells` with declaration node id `{package: "test/no-initial", path: ["NoInitial", "unbounded_cells"], ordinal: 0}` and an absent or `complete: false` row returns `Err(ModelBasedTestRefusal { member: "subject", code: "requires_bound", cause: "requires-bound", details: {domains: [{key: DomainKey::Population {member_type: <Cell node key>, ordinal: 1}, kind: Population(None)}]} })` before any case runs. | Test (TC-3018) |
 
 ## Dependencies
 
