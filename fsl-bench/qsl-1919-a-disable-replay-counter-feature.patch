@@ -1,0 +1,9 @@
+diff --git a/fsl-bench/Cargo.toml b/fsl-bench/Cargo.toml
+index 648c7fcb48..6c5192d2e8 100644
+--- a/fsl-bench/Cargo.toml
++++ b/fsl-bench/Cargo.toml
+@@ -49,3 +49,3 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
+ [features]
+-counters = ["fsl-replay/bench-counters"]
++counters = []
+ property-generators = ["dep:proptest", "dep:fsl-proptest-policy"]

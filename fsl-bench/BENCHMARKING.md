@@ -77,14 +77,15 @@ includes artifact decoding and request reconstruction, but excludes the
 fixture-preparation process. The report requires numeric positive RSS in KiB.
 
 For the five-round A/B protocol, build both variants in this ticket's single
-worktree. A's Criterion binary is current `origin/main` plus this PR's FSL
-benchmark harness. Also apply the replay counter-seam patch before building A:
-the harness declares the `fsl-replay/bench-counters` feature and Cargo validates
-that dependency feature during resolution even when the `counters` feature is
-disabled. The A Criterion build does not enable `counters`, so the replay
-instrumentation is not compiled into the timed benchmark. A's separate probe
-binary enables `counters`. B's Criterion binary is the candidate; B's separate
-probe binary includes the same replay counter seam and harness. The report JSON
+worktree. A's Criterion binary is current `origin/main` production code plus
+this PR's benchmark-only FSL patch. Its A-only feature patch temporarily changes
+the bench crate's `counters` feature to an empty feature so Cargo can resolve the
+real-main `fsl-replay` without the candidate-only seam. The Criterion build does
+not enable `counters`; the replay seam is absent from A's production sources.
+Reverse the A-only patch before applying the replay counter-seam patch and
+building A's separate probe with `counters` enabled. B's Criterion binary is the
+candidate; B's separate probe binary includes the same counter harness and
+replay seam. The report JSON
 intentionally records side labels and measurements only; it does not infer a
 binary's source from the checkout that happens to run the report.
 
@@ -96,8 +97,10 @@ git diff --binary origin/main...HEAD -- Cargo.toml Cargo.lock fsl-bench > target
 git diff --binary origin/main...HEAD -- fsl-replay > target/package-replay-counter.patch
 git switch --detach origin/main
 git apply target/package-bench-harness.patch
-git apply target/package-replay-counter.patch
+git apply fsl-bench/qsl-1919-a-disable-replay-counter-feature.patch
 CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-bench target/package-a-bench
+git apply --reverse fsl-bench/qsl-1919-a-disable-replay-counter-feature.patch
+git apply target/package-replay-counter.patch
 CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-probe target/package-a-probe
 git reset --hard origin/main
 git switch <candidate-branch>
