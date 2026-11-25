@@ -80,6 +80,10 @@ mod orders_model {
     include!("../../../../fsl-semantics/tests/fixtures/orders_model.rs");
 }
 
+#[path = "../../../../fsl-semantics/tests/support/tc235_k2.rs"]
+#[allow(dead_code, reason = "the correspondence fixture uses a small subset")]
+mod correspondence_fixture;
+
 /// TC-1408 variant S-M: S with `model M = "test/orders";` selecting fixture
 /// D's package and the protocol `Sell`, whose roles and `over` name the model
 /// and the source `Order`. The package emits both ownership routes.
@@ -137,6 +141,420 @@ fn fixture_s_m_emits_the_selected_and_source_object_routes() {
     let wire = wire(&emission);
     source_object_node(&wire, "Order");
     source_object_node(&wire, "Sub");
+}
+
+fn correspondence_fixture(diamond: bool) -> (Emission, Vec<u8>) {
+    use correspondence_fixture::{construct, declaration, domain_document, field, id};
+
+    let mut types = vec![
+        declaration(
+            "A",
+            "thing",
+            json!({
+                "identityFields": [id("A/id")],
+                "supertypes": [],
+                "fields": [
+                    field("A", "id", "ix://filament/native/UUID"),
+                    field("A", "x", "ix://filament/native/Integer"),
+                ],
+                "operations": [],
+            }),
+        ),
+        declaration(
+            "B",
+            "thing",
+            json!({
+                "identityFields": [id("B/bid")],
+                "supertypes": [id("A")],
+                "fields": [field("B", "bid", "ix://filament/native/UUID")],
+                "operations": [],
+            }),
+        ),
+    ];
+    if diamond {
+        types.extend([
+            declaration(
+                "C",
+                "thing",
+                json!({
+                    "identityFields": [id("C/cid")],
+                    "supertypes": [id("A")],
+                    "fields": [field("C", "cid", "ix://filament/native/UUID")],
+                    "operations": [],
+                }),
+            ),
+            declaration(
+                "D",
+                "thing",
+                json!({
+                    "identityFields": [id("D/did")],
+                    "supertypes": [id("B"), id("C")],
+                    "fields": [field("D", "did", "ix://filament/native/UUID")],
+                    "operations": [],
+                }),
+            ),
+        ]);
+    }
+    let document = crate::emit::tests::wire_bytes(&domain_document(
+        types,
+        vec![construct(
+            "thing",
+            fsl_semantics::model::intake::meaning::OBJECT_TYPE,
+        )],
+    ))
+    .expect("the TC-195 domain package encodes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the TC-195 model package admits");
+    let text =
+        format!("{HEADER}model M = \"test/orders\";\nfunction keep(): Boolean pure {{ true }}\n");
+    let mut declarations = assemble_with_models(text.as_bytes(), &packages)
+        .expect("the unit assembles against the TC-195 package");
+    let pending = declarations
+        .link_dispatch(Default::default())
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package).expect("the package emits");
+    (emission, document)
+}
+
+fn read_correspondence(
+    emission: &Emission,
+    document: &[u8],
+) -> Vec<fsl_semantics::model::key::EffectiveDeclarationPreimage> {
+    let mut evidence = emission.evidence().clone();
+    evidence
+        .insert_domain_package_document(package_identity(document), document.to_vec())
+        .expect("the selected TC-195 model document is reader evidence");
+    let read = crate::checked_v2::read_checked_package_v2(
+        emission.package().bytes(),
+        library(),
+        crate::checked_v2::V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .expect("IR and the FSL typed model-correspondence projection admit");
+    read.into_value().package.model_correspondence().to_vec()
+}
+
+fn correspondence_test_evidence(emission: &Emission, document: &[u8]) -> CheckedPackageEvidence {
+    let mut evidence = emission.evidence().clone();
+    evidence
+        .insert_domain_package_document(package_identity(document), document.to_vec())
+        .expect("the selected TC-195 model document is reader evidence");
+    evidence
+}
+
+fn read_mutated_correspondence(wire: &Value, document: &[u8], emission: &Emission) -> Read {
+    let mut slotted = wire.clone();
+    fsl_semantics::check::wire_id::write_operand_rows(&mut slotted);
+    let bytes = quire_canonical::to_vec(&slotted, ceiling().canonical()).expect("canonical");
+    read_v2(
+        &bytes,
+        library(),
+        V2ReadLimits::fixture(),
+        &correspondence_test_evidence(emission, document),
+    )
+}
+
+fn correspondence_members_mut(wire: &mut Value) -> &mut Vec<Value> {
+    let node = wire["semantic_graph"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|node| {
+            node["node_tag"] == "correspondence" && node["semantic_form"] == "model_correspondence"
+        })
+        .expect("the package emits a correspondence node");
+    node["body"]["members"].as_array_mut().unwrap()
+}
+
+fn literal_text(members: &[Value], at: usize) -> &str {
+    members[at]["value"].as_str().expect("text literal")
+}
+
+fn literal_usize(members: &[Value], at: usize) -> usize {
+    members[at]["value"]
+        .as_str()
+        .expect("integer literal uses its decimal spelling")
+        .parse()
+        .expect("integer literal is a non-negative count")
+}
+
+fn skip_effective_id(members: &[Value], at: &mut usize) {
+    match literal_text(members, *at) {
+        "none" => *at += 1,
+        "some" => {
+            let mut depth = 0;
+            while literal_text(members, *at) == "some" {
+                depth += 1;
+                *at += 1;
+            }
+            assert_eq!(literal_text(members, *at), "none");
+            *at += 1 + depth * 2;
+        }
+        marker => panic!("closed effective-id marker: {marker}"),
+    }
+}
+
+fn skip_declaration(at: &mut usize) {
+    *at += 2;
+}
+
+fn find_first_derivation_ordinal(members: &[Value]) -> usize {
+    let mut at = 1;
+    skip_effective_id(members, &mut at);
+    skip_declaration(&mut at);
+    assert!(literal_usize(members, at) > 0);
+    at + 1
+}
+
+fn first_inherit_parent_key(members: &[Value]) -> (usize, usize) {
+    let row_count = literal_usize(members, 0);
+    let mut at = 1;
+    for _ in 0..row_count {
+        skip_effective_id(members, &mut at);
+        skip_declaration(&mut at);
+        let fact_count = literal_usize(members, at);
+        at += 1;
+        for _ in 0..fact_count {
+            at += 1;
+            let rule = literal_text(members, at);
+            at += 1;
+            let input_count = literal_usize(members, at);
+            at += 1 + input_count * 2;
+            let parent_start = at;
+            let has_parent = literal_text(members, at) == "some";
+            skip_effective_id(members, &mut at);
+            if rule == "filament.model.normalize.inherit/v2" && has_parent {
+                let depth = members[parent_start..at]
+                    .iter()
+                    .filter(|term| term["value"] == "some")
+                    .count();
+                let package = parent_start + depth * 3 - 1;
+                return (package, package + 1);
+            }
+        }
+    }
+    panic!("N01 has an inherited parent link")
+}
+
+fn effective_id_json(identity: &filament_exact::EffectiveId) -> Value {
+    let owner = identity
+        .owner_effective_type()
+        .map(|owner| effective_id_json(&owner))
+        .unwrap_or(Value::Null);
+    json!({
+        "owner_effective_type": owner,
+        "original": {
+            "package": identity.original().package(),
+            "node": identity.original().node(),
+        },
+    })
+}
+
+fn preimages_for_original<'a>(
+    rows: &'a [fsl_semantics::model::key::EffectiveDeclarationPreimage],
+    original: &str,
+) -> Vec<&'a fsl_semantics::model::key::EffectiveDeclarationPreimage> {
+    rows.iter()
+        .filter(|row| row.original.package == "test/orders" && row.original.node == original)
+        .collect()
+}
+
+#[trace("FR-400-AC-14", "FSpec-TC-195")]
+#[test]
+fn tc195_n01_checked_package_reader_exposes_structural_preimages() {
+    let (emission, document) = correspondence_fixture(false);
+    let rows = read_correspondence(&emission, &document);
+    let a_rows = preimages_for_original(&rows, "ix://test/orders/A");
+    let [a] = a_rows.as_slice() else {
+        panic!("N01 exposes type A once")
+    };
+    assert_eq!(
+        effective_id_json(&a.identity()),
+        json!({
+            "owner_effective_type": null,
+            "original": {"package": "test/orders", "node": "ix://test/orders/A"},
+        })
+    );
+    let b_rows = preimages_for_original(&rows, "ix://test/orders/B");
+    let [b] = b_rows.as_slice() else {
+        panic!("N01 exposes type B once")
+    };
+    assert_eq!(
+        effective_id_json(&b.identity()),
+        json!({
+            "owner_effective_type": null,
+            "original": {"package": "test/orders", "node": "ix://test/orders/B"},
+        })
+    );
+    let b_ax_rows = preimages_for_original(&rows, "ix://test/orders/A/x")
+        .into_iter()
+        .filter(|row| {
+            row.owner_effective_type
+                .as_ref()
+                .is_some_and(|owner| owner.original().node() == "ix://test/orders/B")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(b_ax_rows.len(), 1, "N01 exposes member (B, A/x) once");
+    let [b_ax] = b_ax_rows.as_slice() else {
+        panic!("N01 exposes member (B, A/x) once")
+    };
+    assert_eq!(
+        effective_id_json(&b_ax.identity()),
+        json!({
+            "owner_effective_type": {
+                "owner_effective_type": null,
+                "original": {"package": "test/orders", "node": "ix://test/orders/B"},
+            },
+            "original": {"package": "test/orders", "node": "ix://test/orders/A/x"},
+        })
+    );
+    assert_eq!(
+        effective_id_json(&b_ax.identity())
+            .as_object()
+            .expect("identity is an object")
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["original".to_owned(), "owner_effective_type".to_owned()]),
+        "FR-150 identity is the structural pair and contains no digest"
+    );
+}
+
+#[trace("FR-400-AC-14", "FSpec-TC-195")]
+#[test]
+fn tc195_n02_checked_package_reader_retains_one_diamond_member_with_direct_links() {
+    let (emission, document) = correspondence_fixture(true);
+    let rows = read_correspondence(&emission, &document);
+    let d_rows = preimages_for_original(&rows, "ix://test/orders/D");
+    let [d] = d_rows.as_slice() else {
+        panic!("N02 exposes type D once")
+    };
+    assert_eq!(
+        effective_id_json(&d.identity()),
+        json!({
+            "owner_effective_type": null,
+            "original": {"package": "test/orders", "node": "ix://test/orders/D"},
+        })
+    );
+    let d_ax_rows = preimages_for_original(&rows, "ix://test/orders/A/x")
+        .into_iter()
+        .filter(|row| {
+            row.owner_effective_type
+                .as_ref()
+                .is_some_and(|owner| owner.original().node() == "ix://test/orders/D")
+        })
+        .collect::<Vec<_>>();
+    let [d_ax] = d_ax_rows.as_slice() else {
+        panic!("N02 exposes member (D, A/x) exactly once")
+    };
+    assert_eq!(
+        effective_id_json(&d_ax.identity()),
+        json!({
+            "owner_effective_type": {
+                "owner_effective_type": null,
+                "original": {"package": "test/orders", "node": "ix://test/orders/D"},
+            },
+            "original": {"package": "test/orders", "node": "ix://test/orders/A/x"},
+        })
+    );
+    assert_eq!(d_ax.derivation.len(), 2);
+    assert_eq!(
+        d_ax.derivation[0].rule.identity,
+        "filament.model.normalize.inherit/v2"
+    );
+    assert_eq!(
+        d_ax.derivation[1].rule.identity,
+        "filament.model.normalize.inherit/v2"
+    );
+    assert_eq!(
+        d_ax.derivation
+            .iter()
+            .map(|fact| {
+                effective_id_json(fact.parent.as_ref().expect("inherit fact has parent"))
+            })
+            .collect::<Vec<_>>(),
+        [
+            json!({
+                "owner_effective_type": {
+                    "owner_effective_type": null,
+                    "original": {"package": "test/orders", "node": "ix://test/orders/B"},
+                },
+                "original": {"package": "test/orders", "node": "ix://test/orders/A/x"},
+            }),
+            json!({
+                "owner_effective_type": {
+                    "owner_effective_type": null,
+                    "original": {"package": "test/orders", "node": "ix://test/orders/C"},
+                },
+                "original": {"package": "test/orders", "node": "ix://test/orders/A/x"},
+            }),
+        ]
+    );
+    assert_eq!(
+        d_ax.derivation
+            .iter()
+            .map(|fact| fact
+                .inputs
+                .iter()
+                .map(|key| key.node.as_str())
+                .collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+        [
+            vec!["ix://test/orders/B", "ix://test/orders/A/x"],
+            vec!["ix://test/orders/C", "ix://test/orders/A/x"],
+        ]
+    );
+}
+
+#[trace("FR-400-AC-14", "FSpec-TC-195")]
+#[test]
+fn tc195_reader_refuses_a_malformed_derivation_ordinal() {
+    let (emission, document) = correspondence_fixture(false);
+    let mut edited = wire(&emission);
+    let members = correspondence_members_mut(&mut edited);
+    let ordinal = find_first_derivation_ordinal(members);
+    members[ordinal]["value"] = json!("7");
+
+    assert_eq!(
+        read_mutated_correspondence(&edited, &document, &emission),
+        Read::Refused(crate::checked_v2::V2ReadRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "I2",
+                "admitted-model-correspondence-has-closed-preimage-shape",
+            ),
+        )),
+        "a derivation ordinal that disagrees with its position is refused",
+    );
+}
+
+#[trace("FR-400-AC-14", "FR-081-AC-9", "FSpec-TC-195")]
+#[test]
+fn tc195_reader_refuses_an_inherit_parent_with_the_wrong_original() {
+    let (emission, document) = correspondence_fixture(false);
+    let mut edited = wire(&emission);
+    let members = correspondence_members_mut(&mut edited);
+    let (package, node) = first_inherit_parent_key(members);
+    members[package]["value"] = json!("test/orders");
+    members[node]["value"] = json!("ix://test/orders/not-the-parent");
+
+    assert_eq!(
+        read_mutated_correspondence(&edited, &document, &emission),
+        Read::Refused(crate::checked_v2::V2ReadRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "I2",
+                "admitted-model-correspondence-has-closed-preimage-shape",
+            ),
+        )),
+        "an inherit parent that is not the selected model's declared parent is refused",
+    );
 }
 
 use super::protocol_controls::tc1070 as tc1070_source;

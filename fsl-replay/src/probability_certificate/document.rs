@@ -560,7 +560,7 @@ struct WireDocument {
     kind: String,
     values: Vec<WireValue>,
     ranking: Vec<WireRank>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     policy: Option<Vec<WirePolicy>>,
 }
 
@@ -931,6 +931,20 @@ fn read_document_profile(
     )?;
     let root = parsed.root();
     let objective = root.get("objective");
+    let timed_fair_profile = allow_fair
+        && matches!(
+            objective
+                .and_then(|node| node.get("profile"))
+                .map(|node| node.node()),
+            Some(quire_canonical::Node::String(TIMED_PROFILE))
+        )
+        && matches!(
+            objective
+                .and_then(|node| node.get("timed"))
+                .and_then(|node| node.get("form"))
+                .map(|node| node.node()),
+            Some(quire_canonical::Node::String("expected-elapsed"))
+        );
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
         || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) } else { !(allow_fair && matches!(profile, BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE)) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
@@ -950,6 +964,7 @@ fn read_document_profile(
                                 BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
                             ))
                         ))
+                    && !timed_fair_profile
             }
             _ => false,
         };
@@ -999,7 +1014,7 @@ fn read_document_profile(
         Some(quire_canonical::Node::String(
             BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
         ))
-    );
+    ) || timed_fair_profile;
     if fair_profile {
         let mut admission =
             ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
@@ -1043,6 +1058,7 @@ fn read_document_profile(
             .timed
             .as_ref()
             .is_some_and(|timed| timed.form == "elapsed-quantile");
+    let timed_fair_profile = timed_fair_profile && !wire.objective.fairness.is_empty();
     if (wire.kind != "exact" && !upper_kind)
         || if cyclic_mdp {
             !matches!(
@@ -1070,13 +1086,15 @@ fn read_document_profile(
                 wire.objective.profile.as_str(),
                 BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
             )
+            && !timed_fair_profile
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if matches!(
         wire.objective.profile.as_str(),
         BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
-    ) {
+    ) || timed_fair_profile
+    {
         let destination = fairness.ok_or(ProbabilityDocumentError::Unsupported)?;
         *destination = fairness::read(&wire.objective.fairness, limits, cancel, meter, storage)?;
         if destination.is_empty() {
@@ -1269,8 +1287,21 @@ pub fn write_value_bounds_measure_certificate(
             .map(|row| row.state.clone())
             .collect::<std::collections::BTreeSet<_>>();
         document.ranking.retain(|(state, _)| states.contains(state));
+    } else {
+        document.ranking.clear();
     }
-    let exact = write_measure_probability_certificate(&document, limits, cancel)?;
+    // Interval endpoints may round just outside a shifted payoff's exact range
+    // (for example, below -2/5). Their Bellman inequalities establish the
+    // outward bound, so validate the canonical base shape without applying the
+    // exact-document range check here.
+    let exact = measure::encode(&document, limits, cancel)?;
+    measure::decode_measure_probability_certificate(
+        &exact,
+        limits,
+        cancel,
+        &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+        &mut 0,
+    )?;
     value_bounds::wrap(&exact, side, limits)
 }
 
@@ -1281,6 +1312,34 @@ pub fn write_probability_certificate(
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
     writer::write(document, limits, cancel)
+}
+
+/// Write an expected-elapsed certificate carrying the checked timed claim's
+/// fairness objective.
+pub fn write_timed_fair_probability_certificate(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    document: &ProbabilityCertificateDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let claim = bind_claim(claims, item, cancel)?;
+    if !std::ptr::eq(system.input().probabilistic.claims(), claims)
+        || !matches!(
+            document.timed.as_ref().map(|timed| timed.form),
+            Some(TimedProbabilityForm::ExpectedElapsed)
+        )
+    {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let fairness = fairness::checked(system, claim, limits, cancel, &mut meter, &mut storage)?;
+    if fairness.is_empty() {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    writer::encode_fair_profile(document, limits, cancel, false, false, &fairness)
 }
 
 type SubjectGraph = (
@@ -2105,18 +2164,8 @@ fn check_document_bytes(
     }
     match dispatch {
         ProfileDispatch::Measure => {
-            let partial_lower = bound_side == Some(SubsystemBoundKind::Lower)
-                && offer.role == CertificateRole::Claim;
             return measure::check(
-                system,
-                claims,
-                item,
-                bytes,
-                partial_lower,
-                bound_side.filter(|_| !partial_lower),
-                offer.role,
-                limits,
-                cancel,
+                system, claims, item, bytes, false, bound_side, offer.role, limits, cancel,
             );
         }
         ProfileDispatch::Timed => {
@@ -2849,6 +2898,23 @@ mod tests {
         assert_eq!(read, original);
         assert_eq!(
             write_probability_certificate(&read, limits(), &Cancel::new()).unwrap(),
+            bytes
+        );
+    }
+
+    #[trace("FR-201-AC-9")]
+    #[test]
+    fn policy_omitted_document_roundtrips_without_noncanonical_refusal() {
+        let original = document();
+        let bytes = write_probability_certificate(&original, limits(), &Cancel::new()).unwrap();
+        let wire: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(wire.get("policy").is_none());
+
+        let decoded = read_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
+
+        assert_eq!(decoded, original);
+        assert_eq!(
+            write_probability_certificate(&decoded, limits(), &Cancel::new()).unwrap(),
             bytes
         );
     }

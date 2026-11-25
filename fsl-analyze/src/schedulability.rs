@@ -29,7 +29,9 @@ pub(crate) const DEFAULT_MAX_DEMAND_POINTS: u64 = 1_048_576;
 /// EN-7's caller-set limits (FR-247).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScheduleLimits {
-    /// How many demand points QPA may check.
+    /// How many demand points QPA may check and how many busy-period and
+    /// fixed-priority window iterations the recurrences may take: each costs one
+    /// unit.
     pub max_demand_points: u64,
 }
 
@@ -49,13 +51,37 @@ enum Stop {
 
 type Analysed<T> = Result<T, Stop>;
 
-fn poll(cancel: &Cancel) -> Analysed<()> {
-    if cancel.poll() {
-        if let Some(cause) = cancel.cause() {
-            return Err(Stop::Cancelled(cause));
+/// Cancellation and the one count every recurrence step charges: a QPA demand
+/// point, a busy-period window iteration or a fixed-priority window iteration
+/// each cost one unit of `max_demand_points` (FR-247-AC-5).
+struct Pace<'a> {
+    cancel: &'a Cancel,
+    limit: u64,
+    used: u64,
+}
+
+impl<'a> Pace<'a> {
+    fn new(cancel: &'a Cancel, limit: u64) -> Self {
+        Self {
+            cancel,
+            limit,
+            used: 0,
         }
     }
-    Ok(())
+
+    /// Poll cancellation, then charge one unit before the step it pays for.
+    fn step(&mut self) -> Analysed<()> {
+        if self.cancel.poll() {
+            if let Some(cause) = self.cancel.cause() {
+                return Err(Stop::Cancelled(cause));
+            }
+        }
+        if self.used >= self.limit {
+            return Err(Stop::DemandPoints);
+        }
+        self.used += 1;
+        Ok(())
+    }
 }
 
 /// Decide `subject` under `limits`, polling `cancel` as it iterates.
@@ -64,11 +90,12 @@ pub fn analyze(
     limits: &ScheduleLimits,
     cancel: &Cancel,
 ) -> ClosedFormOutcome {
+    let mut pace = Pace::new(cancel, limits.max_demand_points);
     let decided = match subject.claim() {
-        ScheduleClaim::Schedulable(SchedulingPolicy::Edf) => edf::analyse(subject, limits, cancel),
-        ScheduleClaim::Schedulable(SchedulingPolicy::Amc) => amc::analyse(subject, cancel),
+        ScheduleClaim::Schedulable(SchedulingPolicy::Edf) => edf::analyse(subject, &mut pace),
+        ScheduleClaim::Schedulable(SchedulingPolicy::Amc) => amc::analyse(subject, &mut pace),
         ScheduleClaim::Schedulable(SchedulingPolicy::FixedPriority)
-        | ScheduleClaim::Response { .. } => fixed_priority::analyse(subject, cancel),
+        | ScheduleClaim::Response { .. } => fixed_priority::analyse(subject, &mut pace),
     };
     decided.unwrap_or_else(|stop| {
         ClosedFormOutcome::Stopped(match stop {

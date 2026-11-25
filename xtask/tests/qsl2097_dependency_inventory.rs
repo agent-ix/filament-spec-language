@@ -117,17 +117,16 @@ fn direct_workspace_dependencies_are_present_in_the_lockfile() {
     }
 }
 
-fn manifest_version(manifest: &Value, name: &str) -> &str {
+fn manifest_version<'manifest>(manifest: &'manifest Value, name: &str) -> &'manifest str {
     let declaration = manifest["dependencies"]
         .get(name)
         .unwrap_or_else(|| panic!("xtask declares {name}"));
-    let required = declaration
+    declaration
         .as_table()
         .and_then(|declaration| declaration.get("version"))
         .and_then(Value::as_str)
         .or_else(|| declaration.as_str())
-        .unwrap_or_else(|| panic!("{name} version"));
-    required
+        .unwrap_or_else(|| panic!("{name} version"))
 }
 
 fn assert_registry_dependency_grant(

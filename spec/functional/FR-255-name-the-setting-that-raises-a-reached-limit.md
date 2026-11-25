@@ -300,7 +300,7 @@ its row (FR-315 "Size limits").
 | `zone_check.max_zone_bytes` | `max_zone_bytes` | EN-6 zone search | `ZoneCheckLimits` max_zone_bytes | 1073741824 bytes | FR-239 |
 | `certificate_check.max_certificate_edges` | `max_certificate_edges` | certificate checkers | `CertificateCheckLimits` max_certificate_edges | 16777216 edges | FR-245 |
 | `certificate_check.max_certificate_bytes` | `max_certificate_bytes` | certificate checkers | `CertificateCheckLimits` max_certificate_bytes; EN-5 `ExactProbLimits.document.bytes` | 1073741824 bytes | FR-245, FR-201 |
-| `certificate_check.max_working_bytes` | `max_working_bytes` | probability document writer/reader | `ExactProbLimits.document.storage_bytes`; source checker document storage ceiling | 1073741824 working bytes | FR-201, FR-282 |
+| `certificate_check.max_working_bytes` | `max_working_bytes` | probability document writer/reader, the EN-5 dense linear solver (`dense_system`, FR-203-AC-28) | `ExactProbLimits.document.storage_bytes`; source checker document storage ceiling | 1073741824 working bytes | FR-201, FR-203, FR-282 |
 | `certificate_check.max_rank` | `max_rank` | exact reachability document writer | closed-profile Count representability ceiling; a stop requires a different supported representation, not a larger Count | 9007199254740991 rank units | FR-201 |
 | `schedule.max_demand_points` | `max_demand_points` | schedulability analysis | `ScheduleLimits` max_demand_points | 1048576 points | FR-247 |
 | `monitor.max_activations` | `max_activations` | unbounded temporal monitor instances | `MonitorTarget.max_activations` / plan-root `activation_capacity` (FR-251) | required caller value when `native-monitor/1` has `target`; no default for target preparation | FR-251 |

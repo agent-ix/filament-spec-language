@@ -148,12 +148,12 @@ pub enum LinkCheckOutcome {
     /// Every dispatch charge was admitted; see the substantive
     /// [`DispatchLinkOutcome`].
     Completed(DispatchLinkOutcome),
-    /// A real defect (a dangling operation reference, or a family/dominance
-    /// walk reaching the caller's own configured `family_steps`/
-    /// `ancestor_steps` ceiling, ADR-011 §7.3) refused the check
-    /// outright.
+    /// A real defect (a dangling operation reference, or a dominance walk
+    /// reaching the caller's own configured `ancestor_steps` ceiling,
+    /// ADR-011 §7.3) refused the check outright.
     Refused(ModelRefusal),
-    /// A `ModelNormalizationLimitsV1` counter was exhausted mid-link.
+    /// A `ModelNormalizationLimitsV1` ceiling denied a charge mid-link: a
+    /// meter counter, or `family_steps` in the family walk.
     Incomplete(NormalizationIncomplete),
     /// The generalization closure was not [`GeneralizationClosure::Closed`].
     OpenClosure(UnclosedMethodSet),

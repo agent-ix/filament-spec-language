@@ -259,10 +259,20 @@ pub enum ModelStateProvenance {
 }
 
 /// A model state and its explicit provenance. Provenance is not part of its key.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ModelSimState {
     state: ModelState,
     provenance: ModelStateProvenance,
+    canonical_key: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,
+}
+
+impl std::fmt::Debug for ModelSimState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelSimState")
+            .field("state", &self.state)
+            .field("provenance", &self.provenance)
+            .finish()
+    }
 }
 
 impl ModelSimState {
@@ -273,6 +283,7 @@ impl ModelSimState {
                 anchor,
                 effect: None,
             },
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -286,7 +297,11 @@ impl ModelSimState {
                 effect: Some(effect),
             },
         };
-        Self { state, provenance }
+        Self {
+            state,
+            provenance,
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
+        }
     }
 
     fn without_effect(&self, state: ModelState) -> Self {
@@ -299,7 +314,11 @@ impl ModelSimState {
                 ModelStateProvenance::RestoredFromKey { effect: None }
             }
         };
-        Self { state, provenance }
+        Self {
+            state,
+            provenance,
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
+        }
     }
 
     /// The closed population state.
@@ -832,7 +851,14 @@ pub struct ModelSystem<'a> {
     /// The clock-reference candidates of this model universe, built on first
     /// use for each distinct set of exploration selector maxima.
     clock_candidates: ClockCandidateCache,
-    initial: Vec<ModelSimState>,
+    /// The initial documents' states, before any clock range.
+    initial_base: Vec<ModelSimState>,
+    /// The clock-collection and presence-bit ranges each initial state takes
+    /// every combination of; the combinations are generated on demand.
+    initial_stages: Vec<InitialStage>,
+    /// The generated initial states, built by the first caller that needs a
+    /// slice or an index; [`TransitionSystem::initial_iter`] never builds it.
+    initial_all: std::sync::OnceLock<Vec<ModelSimState>>,
     /// FR-1000: subject-specific resolutions for checked reference literals.
     reference_bindings: ReferenceBindings,
     clauses: Clauses,
@@ -1732,17 +1758,13 @@ impl<'a> ModelSystem<'a> {
                 declared.push(field.clone());
             }
         }
-        let mut initial = with_clock_counts(initial, &counts, types);
+        let mut initial_stages = clock_count_stages(&counts, types);
         for (type_key, field) in &bits {
-            initial = ranged(
-                initial,
-                type_key,
-                &field.key,
-                &[
-                    filament_exact::Value::Boolean(false),
-                    filament_exact::Value::Boolean(true),
-                ],
-            );
+            initial_stages.push(InitialStage {
+                type_key: type_key.clone(),
+                field: field.key.clone(),
+                values: domain::Domain::Boolean,
+            });
         }
 
         let record_orders = domain::record_orders(types, &model.record_orders());
@@ -1774,7 +1796,9 @@ impl<'a> ModelSystem<'a> {
             clauses,
             model,
             universes,
-            initial,
+            initial_base: initial,
+            initial_stages,
+            initial_all: std::sync::OnceLock::new(),
             reference_bindings,
             applications,
             fields,
@@ -1819,11 +1843,8 @@ impl<'a> ModelSystem<'a> {
         &self,
         state: &ModelSimState,
     ) -> Result<(Vec<u8>, crate::simulation::StateKey), crate::simulation::EncodingRefusal> {
-        crate::simulation::key::state_key_of(
-            &self.canonical,
-            &encode::model_key(&self.model, &state.state, self.typing()).0,
-            identity_limits(),
-        )
+        let key = self.canonical_state_key_ref(state)?;
+        Ok((key.as_bytes().to_vec(), key.clone()))
     }
 
     /// Canonical raw model identity bytes under cumulative caller admission.
@@ -1857,11 +1878,25 @@ impl<'a> ModelSystem<'a> {
         &self,
         state: &ModelSimState,
     ) -> Result<crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
-        crate::simulation::key::canonical_state_key_of(
+        self.canonical_state_key_ref(state).map(Clone::clone)
+    }
+
+    pub(crate) fn canonical_state_key_ref<'s>(
+        &self,
+        state: &'s ModelSimState,
+    ) -> Result<&'s crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
+        if let Some(key) = state.canonical_key.get() {
+            return Ok(key.as_ref());
+        }
+        let key = crate::simulation::key::canonical_state_key_of(
             &self.canonical,
             &encode::model_key(&self.model, &state.state, self.typing()).0,
             identity_limits(),
-        )
+        )?;
+        Ok(state
+            .canonical_key
+            .get_or_init(|| std::sync::Arc::new(key))
+            .as_ref())
     }
 
     /// The canonical writer of this system's keys.
@@ -2466,7 +2501,7 @@ impl<'a> ModelSystem<'a> {
             }
         }
         let held: BTreeSet<&DeclarationKey> = self
-            .initial
+            .initial_base
             .iter()
             .flat_map(|state| state.state.populations.keys())
             .collect();
@@ -2488,10 +2523,9 @@ impl<'a> ModelSystem<'a> {
     /// type `over` under this subject's universes, in the canonical order.
     ///
     /// A population admits `T` when one of its member types is `T`, a
-    /// subtype or a supertype of `T`; each key of each admitting
-    /// population's universe is one instance, however many of its member
-    /// types are comparable with `T`. Admitting populations are ordered by
-    /// declaration identity text, and the keys of each by its universe list.
+    /// subtype or a supertype of `T`. Each key held by at least one initial
+    /// state is one instance. A key held in multiple admitting populations
+    /// is listed at its first occurrence in canonical population and key order.
     /// A type no population admits, and a type that is not an object
     /// reference, has no instance.
     ///
@@ -2505,6 +2539,35 @@ impl<'a> ModelSystem<'a> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
+        let mut seen_instance_keys = BTreeSet::new();
+        let mut instances = Vec::new();
+        for (population, key) in self.universe_members(parameter)? {
+            // Generated stages change field values only. The base states
+            // supply every initial object's type identity and population.
+            let admitted = self.initial_base.iter().any(|state| {
+                state
+                    .state
+                    .populations
+                    .get(population)
+                    .is_some_and(|objects| objects.contains_key(key))
+            });
+            if admitted && seen_instance_keys.insert(key) {
+                instances.push(ModelInstance {
+                    population: population.clone(),
+                    key: key.to_owned(),
+                });
+            }
+        }
+        Ok(instances)
+    }
+
+    /// Every declared key in each admitting population, including keys no
+    /// initial state holds. Populations follow declaration identity text
+    /// order and their keys keep the order of each universe list.
+    fn universe_members<'s>(
+        &'s self,
+        parameter: &EffectiveId,
+    ) -> Result<impl Iterator<Item = (&'s DeclarationKey, &'s str)> + 's, NotSimulated> {
         let mut admitting = Vec::new();
         for population in &self.populations {
             if self.overlaps(population, parameter.clone()) {
@@ -2537,26 +2600,13 @@ impl<'a> ModelSystem<'a> {
             .collect();
         crate::simulation::not_simulated::check_requires_bound(&roots, self.types, u64::MAX)?;
         admitting.sort_by(|left, right| left.0.cmp(&right.0));
-        let mut seen_instance_keys = BTreeSet::new();
-        let mut instances = Vec::new();
-        for (_, population) in admitting {
-            for key in self.universes.get(population).into_iter().flatten() {
-                let admitted = self.initial.iter().any(|state| {
-                    state
-                        .state
-                        .populations
-                        .get(population)
-                        .is_some_and(|objects| objects.contains_key(key))
-                });
-                if admitted && seen_instance_keys.insert(key.clone()) {
-                    instances.push(ModelInstance {
-                        population: population.clone(),
-                        key: key.clone(),
-                    });
-                }
-            }
-        }
-        Ok(instances)
+        Ok(admitting.into_iter().flat_map(move |(_, population)| {
+            self.universes
+                .get(population)
+                .into_iter()
+                .flatten()
+                .map(move |key| (population, key.as_str()))
+        }))
     }
 
     /// The universe keys that do not have an admitted initial member for an
@@ -2953,8 +3003,10 @@ impl TransitionSystem for ModelSystem<'_> {
     type Key = ModelKey;
     type Finding = ModelFinding;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.generated_initial().map(Ok)
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -3053,8 +3105,10 @@ impl TransitionSystem for ModelRunView<'_, '_> {
     type Key = ModelKey;
     type Finding = ModelFinding;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.system.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.system.generated_initial().map(Ok)
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -3889,9 +3943,8 @@ pub fn sample_model_walk_keyed(
     end: impl FnMut(&ModelSimState, &crate::simulation::StateKey) -> bool,
 ) -> Result<Trace<ModelTransition, ModelFinding>, NotSimulated> {
     let start = system
-        .initial
-        .get(initial)
-        .cloned()
+        .generated_initial()
+        .nth(initial)
         .ok_or(NotSimulated::EmptyInitial)?;
     let view = OneInitial {
         system,
@@ -3926,21 +3979,16 @@ pub fn sample_model_walk_keyed(
 /// successor is selected.
 pub fn sample_model_walk_observed_keyed(
     system: &ModelSystem<'_>,
-    initial: usize,
+    initial: &ModelSimState,
     settings: ModelWalkSettings<'_>,
     memo: &WalkMemo,
     observer: impl FnMut(
         &SampleObservation<'_, ModelSimState, ModelTransition, ModelFinding>,
     ) -> ObserverDecision,
 ) -> Result<ObservedSample<ModelTransition, ModelFinding>, NotSimulated> {
-    let start = system
-        .initial
-        .get(initial)
-        .cloned()
-        .ok_or(NotSimulated::EmptyInitial)?;
     let view = OneInitial {
         system,
-        start,
+        start: initial.clone(),
         memo: None,
     };
     check_model_bounds(system, settings.position_limit)?;
@@ -3979,8 +4027,10 @@ impl TransitionSystem for OneInitial<'_, '_> {
     type Key = ModelKey;
     type Finding = ModelFinding;
 
-    fn initial(&self) -> Vec<Self::State> {
-        vec![self.start.clone()]
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        std::iter::once(Ok(self.start.clone()))
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -4025,9 +4075,8 @@ pub fn sample_model_walk(
     end: impl FnMut(&ModelSimState) -> bool,
 ) -> Result<Trace<ModelTransition, ModelFinding>, NotSimulated> {
     let start = system
-        .initial
-        .get(initial)
-        .cloned()
+        .generated_initial()
+        .nth(initial)
         .ok_or(NotSimulated::EmptyInitial)?;
     let view = OneInitial {
         system,
@@ -4122,85 +4171,221 @@ fn state_document() -> DocumentRef {
     }
 }
 
-/// Each of `initial` with every combination of the clock-collection counts
-/// `counts` on each object of the count's type: every count from `min` to
-/// `max`, none when `min` exceeds `max`, or `min` alone with no maximum
-/// (the timed subject ranges it further).
-fn with_clock_counts(
-    initial: Vec<ModelSimState>,
-    counts: &[ClockCount],
-    types: &filament_semantic_value::declaration::TypeEnvironment,
-) -> Vec<ModelSimState> {
-    let mut states = initial;
-    for (type_key, field, min, max) in counts {
-        // A `Sequence<Option<Clock>>`'s bits: every sequence of `min` to
-        // `max` bits, each element's initial presence ranging over both.
-        let bits = matches!(field.value_type, ValueType::Collection(_))
-            .then(|| {
-                domain::Domain::of(&field.value_type, &[], types, &domain::RecordOrders::new())
-            })
-            .flatten();
-        let values: Vec<filament_exact::Value> = match bits {
-            Some(domain) => (0..domain.len()).map_while(|at| domain.nth(at)).collect(),
-            None => (*min..=max.unwrap_or(*min))
-                .map(|count| filament_exact::Value::Integer(filament_exact::Integer::from(count)))
-                .collect(),
-        };
-        states = ranged(states, type_key, &field.key, &values);
-    }
-    states
+/// One range of the initial set: the member `field` of every object of type
+/// `type_key` takes each of `values`, every combination over the objects;
+/// none when `values` is empty.
+struct InitialStage {
+    type_key: DeclarationKey,
+    field: DeclarationKey,
+    values: domain::Domain,
 }
 
-/// Each of `states` with the member `field` of every object of type
-/// `type_key` taking each of `values`, every combination over the objects;
-/// none when `values` is empty.
-fn ranged(
-    states: Vec<ModelSimState>,
-    type_key: &DeclarationKey,
-    field: &DeclarationKey,
-    values: &[filament_exact::Value],
-) -> Vec<ModelSimState> {
-    let mut next = Vec::new();
-    for state in states {
-        let holders: Vec<(DeclarationKey, String)> = state
-            .state
-            .populations
-            .iter()
-            .flat_map(|(population, objects)| {
-                objects
-                    .iter()
-                    .filter(|(_, object)| object.type_identity == *type_key)
-                    .map(move |(key, _)| (population.clone(), key.clone()))
-            })
-            .collect();
-        let mut partial = vec![state];
-        for (population, key) in &holders {
-            let mut grown = Vec::new();
-            for state in partial {
-                for value in values {
-                    let mut held = state.clone();
-                    if let Some(object) = held
-                        .state
-                        .populations
-                        .get_mut(population)
-                        .and_then(|objects| objects.get_mut(key))
-                    {
-                        object.fields.insert(field.clone(), value.clone());
-                    }
-                    grown.push(held);
-                }
-            }
-            partial = grown;
+/// A finite input domain admitted against the candidate ceiling.
+pub(super) struct BoundedDomain {
+    domain: domain::Domain,
+    cardinality: u128,
+}
+
+impl BoundedDomain {
+    pub(super) fn single(value: filament_exact::Value) -> Self {
+        Self {
+            domain: domain::Domain::Listed(vec![value]),
+            cardinality: 1,
         }
-        next.extend(partial);
     }
-    next
+
+    pub(super) fn len(&self) -> u128 {
+        self.cardinality
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = filament_exact::Value> + '_ {
+        (0..self.cardinality).map_while(|index| self.domain.nth(index))
+    }
+}
+
+/// The ranges of the clock-collection counts `counts` on each object of the
+/// count's type: every count from `min` to `max`, none when `min` exceeds
+/// `max`, or `min` alone with no maximum (the timed subject ranges it
+/// further).
+fn clock_count_stages(
+    counts: &[ClockCount],
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+) -> Vec<InitialStage> {
+    counts
+        .iter()
+        .map(|(type_key, field, min, max)| {
+            // A `Sequence<Option<Clock>>`'s bits: every sequence of `min` to
+            // `max` bits, each element's initial presence ranging over both.
+            let bits = matches!(field.value_type, ValueType::Collection(_))
+                .then(|| {
+                    domain::Domain::of(&field.value_type, &[], types, &domain::RecordOrders::new())
+                })
+                .flatten();
+            let values = bits.unwrap_or_else(|| domain::Domain::Int {
+                lower: filament_exact::Integer::from(*min),
+                len: (u128::from(max.unwrap_or(*min)) + 1).saturating_sub(u128::from(*min)),
+            });
+            InitialStage {
+                type_key: type_key.clone(),
+                field: field.key.clone(),
+                values,
+            }
+        })
+        .collect()
+}
+
+/// `state` under each of the combinations `stage` ranges over its holders, the
+/// first holder varying slowest, produced one at a time.
+fn ranged<'s>(
+    state: ModelSimState,
+    stage: &'s InitialStage,
+) -> Box<dyn Iterator<Item = ModelSimState> + 's> {
+    let holders: Vec<(DeclarationKey, String)> = state
+        .state
+        .populations
+        .iter()
+        .flat_map(|(population, objects)| {
+            objects
+                .iter()
+                .filter(|(_, object)| object.type_identity == stage.type_key)
+                .map(move |(key, _)| (population.clone(), key.clone()))
+        })
+        .collect();
+    if holders.is_empty() {
+        return Box::new(std::iter::once(state));
+    }
+    let cardinality = stage.values.len();
+    if cardinality == 0 {
+        return Box::new(std::iter::empty());
+    }
+    // An odometer over the holders' value indices.
+    let mut digits = Some(vec![0_u128; holders.len()]);
+    Box::new(std::iter::from_fn(move || {
+        let current = digits.take()?;
+        let mut held = state.clone();
+        for ((population, key), digit) in holders.iter().zip(&current) {
+            if let Some(object) = held
+                .state
+                .populations
+                .get_mut(population)
+                .and_then(|objects| objects.get_mut(key))
+            {
+                object
+                    .fields
+                    .insert(stage.field.clone(), stage.values.nth(*digit)?);
+            }
+        }
+        let mut next = current;
+        let mut place = next.len();
+        while place > 0 {
+            place -= 1;
+            next[place] += 1;
+            if next[place] < cardinality {
+                digits = Some(next);
+                return Some(held);
+            }
+            next[place] = 0;
+        }
+        Some(held)
+    }))
+}
+
+/// Every state of `base` under every combination of `stages`, in `stages`
+/// order: each stage's combinations of a state follow it in place.
+fn generated<'s>(
+    base: &'s [ModelSimState],
+    stages: &'s [InitialStage],
+) -> Box<dyn Iterator<Item = ModelSimState> + 's> {
+    fn through<'s>(
+        state: ModelSimState,
+        stages: &'s [InitialStage],
+    ) -> Box<dyn Iterator<Item = ModelSimState> + 's> {
+        match stages.split_first() {
+            None => Box::new(std::iter::once(state)),
+            Some((stage, rest)) => {
+                Box::new(ranged(state, stage).flat_map(move |next| through(next, rest)))
+            }
+        }
+    }
+    let states = base
+        .iter()
+        .flat_map(move |state| through(state.clone(), stages));
+    let states = states.inspect(|_| count_generated_initial_state());
+    Box::new(states)
+}
+
+#[cfg(feature = "test-support")]
+thread_local! {
+    static GENERATED_INITIAL: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Number of initial model states generated by this thread.
+#[cfg(feature = "test-support")]
+pub fn generated_initial_states() -> u64 {
+    GENERATED_INITIAL.with(std::cell::Cell::get)
+}
+
+pub(super) fn count_generated_initial_state() {
+    #[cfg(feature = "test-support")]
+    GENERATED_INITIAL.with(|count| count.set(count.get().saturating_add(1)));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
+
+    /// FR-126-AC-26 (TC-521): a clock-range set of 2^40 initial states is
+    /// generated on demand, the last holder varying fastest, so pulling three
+    /// builds three and never holds the set.
+    #[trace("TC-521", "FR-126-AC-26")]
+    #[test]
+    fn an_exponential_initial_set_is_generated_one_state_at_a_time() {
+        use filament_exact::Value;
+        let key = |node: &str| DeclarationKey {
+            package: "fixture".to_owned(),
+            node: node.to_owned(),
+        };
+        let (population, thing, flag) = (key("things"), key("Thing"), key("flag"));
+        let objects = (0..40)
+            .map(|index| {
+                (
+                    format!("o{index:02}"),
+                    fsl_semantics::model::state::StateObject {
+                        type_identity: thing.clone(),
+                        fields: BTreeMap::new(),
+                    },
+                )
+            })
+            .collect();
+        let base = vec![ModelSimState::anchored(
+            ModelState {
+                populations: BTreeMap::from([(population.clone(), objects)]),
+                extents: Vec::new(),
+            },
+            SelectedAnchor {
+                kind: AnchorKind::Initialization,
+                name: String::new(),
+            },
+        )];
+        let stages = [InitialStage {
+            type_key: thing,
+            field: flag.clone(),
+            values: domain::Domain::Boolean,
+        }];
+        let pulled: Vec<ModelSimState> = generated(&base, &stages).take(3).collect();
+        assert_eq!(pulled.len(), 3);
+        let set = |state: &ModelSimState| -> Vec<bool> {
+            state.state.populations[&population]
+                .values()
+                .map(|object| matches!(object.fields[&flag], Value::Boolean(true)))
+                .collect()
+        };
+        let at = |bits: &[usize]| -> Vec<bool> { (0..40).map(|i| bits.contains(&i)).collect() };
+        assert_eq!(set(&pulled[0]), at(&[]));
+        assert_eq!(set(&pulled[1]), at(&[39]));
+        assert_eq!(set(&pulled[2]), at(&[38]));
+    }
 
     /// Quantity roots become integral before `classify_extent` decides
     /// whether the root is bounded.

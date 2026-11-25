@@ -217,7 +217,10 @@ fn explore(
     };
     let mut initial = Vec::new();
     for state in system.initial() {
-        initial.push(admit(state, &mut pending)?);
+        initial.push(admit(
+            state.map_err(StepViewRefusal::Protocol)?,
+            &mut pending,
+        )?);
     }
     initial.sort();
     initial.dedup();

@@ -302,6 +302,17 @@ pub(super) fn parse(
     diagnostics.extend(reference_literal_spacing(&source, &cst));
     diagnostics.extend(interval_bounds(&source, &cst));
     diagnostics.extend(decimal_constructor_numbers(&source, &cst));
+    for diagnostic in bit_constructor_diagnostics(&source, &cst) {
+        let span = diagnostic.byte_span();
+        diagnostics.retain(|existing| {
+            existing.byte_span().is_none_or(|existing_span| {
+                span.is_some_and(|span| {
+                    existing_span.end <= span.start || span.end <= existing_span.start
+                })
+            })
+        });
+        diagnostics.push(diagnostic);
+    }
     diagnostics
         .sort_by_key(|diagnostic| diagnostic.byte_span().map_or(usize::MAX, |span| span.start));
     Ok(ParsedSource::from_parts(
@@ -873,6 +884,110 @@ fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Spa
         },
         |token| token.span,
     )
+}
+
+/// Bit constructors have a closed, width-specific hexadecimal token shape.
+/// If a constructor-shaped call violates that shape, report the malformed
+/// spelling at the constructor instead of exposing parser recovery's later
+/// `)`/identifier as an unrelated unexpected token (FR-397-AC-11).
+fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic> {
+    let text = source.text();
+    let bytes = text.as_bytes();
+    let constructor_starts: BTreeSet<usize> = cst
+        .tokens()
+        .iter()
+        .filter(|token| {
+            token.class() == TokenClass::Token
+                && matches!(token.spelling(), b"float32" | b"float64")
+        })
+        .map(|token| token.span().start)
+        .collect();
+    let mut diagnostics = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let (name, digits) = if bytes[cursor..].starts_with(b"float32") {
+            (b"float32".as_slice(), 8)
+        } else if bytes[cursor..].starts_with(b"float64") {
+            (b"float64".as_slice(), 16)
+        } else {
+            cursor += 1;
+            continue;
+        };
+        let start = cursor;
+        if !constructor_starts.contains(&start) {
+            cursor += 1;
+            continue;
+        }
+        if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+            cursor += 1;
+            continue;
+        }
+        let after_name = cursor + name.len();
+        if after_name < bytes.len()
+            && (bytes[after_name].is_ascii_alphanumeric() || bytes[after_name] == b'_')
+        {
+            cursor = after_name;
+            continue;
+        }
+        let mut at = after_name;
+        skip_ascii_space(bytes, &mut at);
+        if bytes.get(at) != Some(&b'(') {
+            cursor = after_name;
+            continue;
+        }
+        at += 1;
+        skip_ascii_space(bytes, &mut at);
+        let has_bits = bytes.get(at..at + 4) == Some(b"bits");
+        if has_bits {
+            at += 4;
+            skip_ascii_space(bytes, &mut at);
+        }
+        let has_colon = bytes.get(at) == Some(&b':');
+        if has_colon {
+            at += 1;
+            skip_ascii_space(bytes, &mut at);
+        }
+        let payload_start = at;
+        while bytes
+            .get(at)
+            .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b')')
+        {
+            at += 1;
+        }
+        let payload = &bytes[payload_start..at];
+        let valid_payload = payload.len() == digits + 2
+            && payload.starts_with(b"0x")
+            && payload[2..]
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
+        skip_ascii_space(bytes, &mut at);
+        let has_close = bytes.get(at) == Some(&b')');
+        let valid = has_bits && has_colon && valid_payload && has_close;
+        if !valid {
+            let end = if has_close {
+                at + 1
+            } else {
+                at.max(payload_start)
+            };
+            diagnostics.push(*super::diagnostic::error(
+                source,
+                CompleteCode::InvalidSyntax,
+                CompleteCause::InvalidToken,
+                Phase::Parse,
+                start,
+                end.max(start + name.len()),
+                format!("malformed {name:?} bit constructor"),
+            ));
+        }
+        cursor = (at + usize::from(has_close)).max(start + name.len());
+    }
+    diagnostics
+}
+
+fn skip_ascii_space(bytes: &[u8], at: &mut usize) {
+    while bytes.get(*at).is_some_and(u8::is_ascii_whitespace) {
+        *at += 1;
+    }
 }
 
 fn append_omitted_diagnostic(

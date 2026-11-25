@@ -1776,19 +1776,30 @@ fn protocol_package_is_independently_admitted_and_identity_mutations_refuse() {
         "{source_refusal:?}"
     );
 
-    // R's source-owned dimension `Money` names the lock's source as its owner
-    // (FR-517-AC-13), so a lock that names another source leaves it without
-    // its selection before any source-map region is read.
+    // Changing the selected source identity leaves a temporal binding's
+    // source-unit selection absent from the lock. Contract IR validates that
+    // binding before checking source-map regions and refuses it as an
+    // invalid package value.
     let mut lock = serde_json::from_slice::<Value>(bytes).unwrap();
     lock["lock"]["sources"][0]["identity"] = serde_json::json!("source:foreign");
     let lock_refusal = refusal(lock);
     assert_eq!(
         lock_refusal.code,
-        CheckedPackageRefusalCode::MissingDeclaration
+        CheckedPackageRefusalCode::InvalidPackage,
+        "the temporal binding no longer names a selected lock source: {lock_refusal:?}"
     );
     assert_eq!(
         lock_refusal.cause,
-        Some(CheckedPackageRefusalCause::MissingSelection)
+        Some(CheckedPackageRefusalCause::InvalidValue),
+        "{lock_refusal:?}"
+    );
+    assert_eq!(
+        lock_refusal.loci[0]
+            .path
+            .as_ref()
+            .map(|path| path.as_str()),
+        Some("/temporal_bindings/2/source_unit"),
+        "{lock_refusal:?}"
     );
 
     let mut model = serde_json::from_slice::<Value>(bytes).unwrap();

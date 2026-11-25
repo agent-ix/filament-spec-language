@@ -327,6 +327,24 @@ impl Stream {
 /// `fsl monitor <request>` over the record stream `records` (the bytes of
 /// `--input` or stdin), split into lines as the driver splits them.
 pub(crate) fn monitor_under(path: &Path, records: &[u8], cancel: &Cancel) -> Stream {
+    monitor_under_limits(
+        path,
+        records,
+        cancel,
+        &command::CommandLimits::monitor(command::MonitorPreparationLimits {
+            work: 16_777_216,
+            storage: 268_435_456,
+        }),
+    )
+}
+
+/// [`monitor_under`] with explicit caller settings.
+pub(crate) fn monitor_under_limits(
+    path: &Path,
+    records: &[u8],
+    cancel: &Cancel,
+    limits: &command::CommandLimits,
+) -> Stream {
     let lines = std::io::Cursor::new(records.to_vec()).split(b'\n');
     let mut events = Vec::new();
     let mut bytes = Vec::new();
@@ -347,10 +365,7 @@ pub(crate) fn monitor_under(path: &Path, records: &[u8], cancel: &Cancel) -> Str
             options: &ProviderOptions::default(),
         },
         RunLimits::default(),
-        &command::CommandLimits::monitor(command::MonitorPreparationLimits {
-            work: 16_777_216,
-            storage: 268_435_456,
-        }),
+        limits,
         cancel,
     );
     match summary {

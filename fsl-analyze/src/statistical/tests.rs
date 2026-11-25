@@ -131,6 +131,7 @@ fn request<'a>(
     sampler: &'a DefinitionRef,
 ) -> SampledRequest<'a> {
     SampledRequest {
+        workers: 1,
         claim,
         tests,
         method,
@@ -170,11 +171,24 @@ pub trait ClaimSampler {
 impl<T: ClaimSampler> BehaviourSampler for T {
     type Walk = T::Walk;
 
+    fn sample_batch_width(&self) -> usize {
+        1
+    }
+
     fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt> {
         self.read(test, seed, trace).map(|sample| Drawn {
             sample,
             steps: Vec::new(),
         })
+    }
+
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+        super::serial_sample_batch(self, test, seed, traces)
     }
 
     fn walk(&mut self, test: &TestSubject, seed: u64, trace: u64) -> T::Walk {
@@ -1980,6 +1994,10 @@ fn attempt_probability(duration: usize, failed: bool) -> Rational {
 impl BehaviourSampler for ServiceSteps {
     type Walk = NoWalk;
 
+    fn sample_batch_width(&self) -> usize {
+        1
+    }
+
     fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt> {
         let sample = self.0.read(test, seed, trace)?;
         let attempts = self.0.attempts.get(&trace).cloned().unwrap_or_default();
@@ -2001,6 +2019,15 @@ impl BehaviourSampler for ServiceSteps {
             })
             .collect();
         Ok(Drawn { sample, steps })
+    }
+
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+        super::serial_sample_batch(self, test, seed, traces)
     }
 
     fn walk(&mut self, _test: &TestSubject, _seed: u64, _trace: u64) -> NoWalk {
@@ -2249,6 +2276,7 @@ fn the_first_violating_samples_are_kept_in_trace_order() {
     let mut witnessed = ServiceSteps(Service::new(2));
     let verdict = completed(run(
         SampledRequest {
+            workers: 1,
             max_witnesses: 3,
             ..request(&two, &tests, StatisticalMethod::Sprt, &sampler)
         },
@@ -2301,6 +2329,7 @@ fn witnesses_interleave_across_tests_by_trace_index() {
     let mut witnessed = ServiceSteps(Service::new(2));
     let verdict = completed(run(
         SampledRequest {
+            workers: 1,
             max_witnesses: 4,
             ..request(&two, &tests, StatisticalMethod::Sprt, &sampler)
         },
@@ -2354,6 +2383,7 @@ fn an_undefined_sample_is_kept_whatever_max_witnesses_is() {
     let sampler = sampler_ref();
     let verdict = completed(run(
         SampledRequest {
+            workers: 1,
             max_witnesses: 0,
             ..request(&claim, &tests, StatisticalMethod::Okamoto, &sampler)
         },

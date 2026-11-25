@@ -42,8 +42,9 @@ pub struct ModelNormalizationLimits {
     /// `dispatch::link_dispatch` and the effective-precondition walks of
     /// `check::checked_dispatch_operation`, each distinct edge once. It
     /// counts edges, never a chain depth: a linear chain of `n`
-    /// redefinitions is admitted at `family_steps == n`. Reaching it
-    /// refuses `ModelRefusalCause::FamilySteps` naming this bound.
+    /// redefinitions is admitted at `family_steps == n`. A denied edge stops
+    /// the family enumeration `Incomplete`; an effective-precondition walk
+    /// refuses `ModelRefusalCause::FamilySteps`. Both name this bound.
     pub family_steps: u64,
     /// The byte limit one domain package document is read under
     /// (`intake.input_bytes`, FR-260): it rides here so every stage that

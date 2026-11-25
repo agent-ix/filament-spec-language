@@ -33,7 +33,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{
-    ActivationForm, AnchorSite, BinderKind, CaptureForm, ClauseKind, CompensationCommit,
+    ActivationForm, AnchorSite, BinderKind, CaptureForm, ClauseKind, CompensationCommit, ExprNode,
     CompensationForm, DeclaredName, ExpressionForm, IntervalUpper, ProtocolDeclarationForm,
     StateClauseKind, TypeForm, TypeFormHead,
 };
@@ -1267,6 +1267,18 @@ impl Checker<'_, '_> {
         goal: Goal<'_>,
         cx: &mut CheckContext<'_, Scope>,
     ) -> Option<(CheckedBody, Vec<String>)> {
+        if let Some(name) = readable_source_query_binder(form, &site.bound) {
+            let location = site.location.as_ref().unwrap_or(self.input.location);
+            let refusal = CheckRefusal {
+                location: location.clone(),
+                cause: Box::new(CheckCause::AmbiguousName {
+                    name,
+                    loci: vec![location.clone()],
+                }),
+            };
+            self.convert(site, form, goal, refusal, cx);
+            return None;
+        }
         let mut nodes = self.nodes;
         let declarations = ClauseDeclarations {
             location: site.location.as_ref().unwrap_or(self.input.location),
@@ -1389,6 +1401,37 @@ impl Checker<'_, '_> {
             )),
         }
     }
+}
+
+/// FR-390-AC-68: a query binder in a protocol slot cannot shadow one of the
+/// values the slot already reads. Ordinary expression checking permits a
+/// local binder to shadow a parameter, so protocol slots enforce this source
+/// boundary before passing their inputs to the shared typer.
+fn readable_source_query_binder(
+    form: &ExpressionForm,
+    inputs: &[(String, ValueType)],
+) -> Option<String> {
+    let input_names: BTreeSet<&str> = inputs.iter().map(|(name, _)| name.as_str()).collect();
+    let expression = &form.expression;
+    let mut pending = vec![expression.root_id()];
+    let mut visited = BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        let node = expression.get(id)?.node();
+        let binder = match node {
+            ExprNode::Query { binder, .. }
+            | ExprNode::Count { binder, .. }
+            | ExprNode::Sum { binder, .. } => Some(binder.as_str()),
+            _ => None,
+        };
+        if let Some(name) = binder.filter(|name| input_names.contains(name)) {
+            return Some(name.to_owned());
+        }
+        pending.extend(node.children());
+    }
+    None
 }
 
 /// Whether the clause checker's `cause` is one a stage reports as its own

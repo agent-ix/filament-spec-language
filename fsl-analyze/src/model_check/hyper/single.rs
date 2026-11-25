@@ -724,12 +724,7 @@ impl<'a> Run<'_, 'a> {
             self.request.max_depth,
             || self.cancel.poll() && self.cancel.cause().is_some(),
         )
-        .map_err(|error| {
-            ModelCheckRefusal::Encoding(fsl_eval::simulation::EncodingRefusal::of(
-                &error,
-                IdentityLimits::default(),
-            ))
-        })?;
+        .map_err(|error| error.model_refusal(IdentityLimits::default()))?;
         let transitions = match &exploration.outcome {
             Outcome::Exhaustive(stats) => stats.transitions,
             Outcome::BoundReached { stats, .. }

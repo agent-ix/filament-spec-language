@@ -273,6 +273,7 @@ impl Case {
     ) {
         let outcome = check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: self.subject_within(selection, max_candidates, absent),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -339,6 +340,7 @@ impl Case {
     ) -> ModelCheckOutcome<ProtocolTransition> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: self.subject(selection),
                 item,
@@ -799,6 +801,7 @@ fn unset_bounds_default_to_four_and_stay_out_of_the_obligation() {
         let temporal_clock_selections =
             crate::fill::tcb_01_event_position_selection(case.checked());
         let request = ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &temporal_clock_selections,
             subject: case.subject(&tso),
             item: ModelCheckItem::DeadlockFreedom,
@@ -907,7 +910,12 @@ fn nested_any_joins_explore_under_a_weak_selection() {
     let case = Case::new(&(contracts() + &protocol("SB", run)));
     let selection = [select("SB::Both", MemoryModelName::Tso)];
     let system = case.system(&selection, Tso::default()).expect("builds");
-    let initial = system.initial().into_iter().next().expect("initial");
+    let initial = system
+        .try_initial()
+        .expect("initial states settle")
+        .into_iter()
+        .next()
+        .expect("initial");
     let setup = system.successors(&initial).expect("expands initial state");
     let forked = setup
         .successors
@@ -1204,7 +1212,10 @@ fn enabled_sharing_is_recomputed_after_a_guarded_store() {
                 .find(|(transition, _)| transition.node() == Some(node))
                 .unwrap_or_else(|| panic!("no step at {node}; findings={:?}", expansion.findings))
         };
-        let (_, forked) = step(&system.initial()[0], "Both");
+        let (_, forked) = step(
+            &system.try_initial().expect("initial states settle")[0],
+            "Both",
+        );
         let (left_transition, after_left) = step(&forked, "Both/left/L/Sx");
         let left_footprint = system
             .footprint(&forked, &left_transition)
@@ -1562,7 +1573,10 @@ fn store_buffering_under_tso_reaches_38_states_and_is_refuted() {
     assert_eq!(steps.len(), 5);
     assert_eq!(attempts, expected.iter().collect());
     // Walk the counterexample's steps through the system to its last state.
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     for step in &counterexample.prefix {
         state = system
             .successors(&state)
@@ -1784,7 +1798,11 @@ fn a_store_buffer_is_fifo_and_a_locked_access_waits_for_it() {
             .map(|(_, next)| next)
             .expect("a flush")
     };
-    let forked = next(&system.initial()[0], "Both").expect("fork");
+    let forked = next(
+        &system.try_initial().expect("initial states settle")[0],
+        "Both",
+    )
+    .expect("fork");
     let stored = next(
         &next(&forked, "Both/left/L/S1").expect("S1"),
         "Both/left/L/S2",
@@ -1951,9 +1969,10 @@ fn the_memory_member_holds_the_buffers_while_the_parallel_is_active() {
             .map(|(_, next)| next)
             .expect("enabled")
     };
-    let forked = next(&system.initial()[0], &|transition| {
-        transition.kind() == StepKind::Fork
-    });
+    let forked = next(
+        &system.try_initial().expect("initial states settle")[0],
+        &|transition| transition.kind() == StepKind::Fork,
+    );
     let stored = next(&forked, &|transition| {
         transition.node() == Some("Both/left/L/Sx")
     });
@@ -2085,9 +2104,10 @@ fn a_flush_is_a_position_with_a_memory_anchor_and_atoms_read_memory() {
             .into_iter()
             .find(|(transition, _)| pick(transition))
     };
-    let (fork, forked) = step(&system.initial()[0], &|transition| {
-        transition.kind() == StepKind::Fork
-    })
+    let (fork, forked) = step(
+        &system.try_initial().expect("initial states settle")[0],
+        &|transition| transition.kind() == StepKind::Fork,
+    )
     .expect("the fork");
     assert_eq!(
         fork.anchor(),
@@ -2201,9 +2221,10 @@ fn a_flush_is_a_position_with_a_memory_anchor_and_atoms_read_memory() {
     };
     let node =
         |name: &'static str| move |transition: &ProtocolTransition| transition.node() == Some(name);
-    let (_, forked) = step(&system.initial()[0], &|transition| {
-        transition.kind() == StepKind::Fork
-    })
+    let (_, forked) = step(
+        &system.try_initial().expect("initial states settle")[0],
+        &|transition| transition.kind() == StepKind::Fork,
+    )
     .expect("the fork");
     assert!(step(&forked, &node("Both/right/R/L4")).is_none());
     let (_, stored) = step(&forked, &node("Both/left/L/Sx")).expect("Sx");
@@ -2240,7 +2261,10 @@ fn a_tso_counterexample_replays_only_under_tso() {
     // Each carried component is the memory member of the state its step
     // reaches.
     let system = case.system(&tso, Tso::default()).expect("builds");
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut carried = Vec::new();
     for step in &counterexample.prefix {
         state = system
@@ -2971,9 +2995,10 @@ fn tso_steps_carry_store_buffer_footprints() {
             .find(|(transition, _)| pick(transition))
             .expect("enabled")
     };
-    let (_, forked) = step_from(&system.initial()[0], &|transition| {
-        transition.kind() == StepKind::Fork
-    });
+    let (_, forked) = step_from(
+        &system.try_initial().expect("initial states settle")[0],
+        &|transition| transition.kind() == StepKind::Fork,
+    );
     let (sx, stored) = step_from(&forked, &|transition| {
         transition.node() == Some("Both/left/L/Sx")
     });

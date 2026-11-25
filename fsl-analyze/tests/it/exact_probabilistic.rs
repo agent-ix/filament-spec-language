@@ -179,6 +179,7 @@ fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
     ] {
         let refusal = check_statistical(
             StatisticalRequest {
+                workers: 1,
                 subject: world.subject(),
                 claim: world.claim(name),
                 method: StatisticalMethod::Okamoto,
@@ -196,6 +197,7 @@ fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
 
     let passed_gate = check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: workload.subject(),
             claim: workload.claim("P95"),
             method: StatisticalMethod::Okamoto,
@@ -447,6 +449,7 @@ fn no_fault_uses_exact_then_dyadic_backward_induction() {
             max_rational_bits: 23_254,
             ..ExactProbLimits::default()
         },
+        &Cancel::new(),
     )
     .expect("acyclic bounded product");
     let FhResult::Exact { values, .. } = exact else {
@@ -464,6 +467,7 @@ fn no_fault_uses_exact_then_dyadic_backward_induction() {
             max_rational_bits: 1024,
             ..ExactProbLimits::default()
         },
+        &Cancel::new(),
     )
     .expect("dyadic fallback");
     let FhResult::Bounds {
@@ -850,6 +854,7 @@ fn deliver_backward_induction_matches_the_published_scheduler_vectors() {
         &minimum_product,
         &fsl_semantics::check::Bound::AtLeast(ratio(97, 100)),
         &limits,
+        &Cancel::new(),
     )
     .expect("the bounded scheduler product is acyclic")
     else {
@@ -876,6 +881,7 @@ fn deliver_backward_induction_matches_the_published_scheduler_vectors() {
         &maximum_product,
         &fsl_semantics::check::Bound::AtMost(ratio(97, 100)),
         &limits,
+        &Cancel::new(),
     )
     .expect("the bounded scheduler product is acyclic")
     else {
@@ -889,6 +895,7 @@ fn deliver_backward_induction_matches_the_published_scheduler_vectors() {
         &workload_product,
         &fsl_semantics::check::Bound::AtLeast(ratio(97, 100)),
         &limits,
+        &Cancel::new(),
     )
     .expect("the workload product is acyclic")
     else {
@@ -924,6 +931,7 @@ fn fair_deliver_keeps_the_24_over_25_minimum_and_records_weak_fairness() {
         &fair,
         &fsl_semantics::check::Bound::AtLeast(ratio(97, 100)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("bounded event is unchanged under fairness");
     let fsl_analyze::exact_probabilistic::FhResult::Exact { values, .. } = result.outcome else {
@@ -962,6 +970,7 @@ fn fair_availability_uses_long_run_limit_and_randomized_refutation() {
         None,
         &fsl_semantics::check::Bound::AtLeast(ratio(9995, 10000)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("exact fair long-run decision");
     assert_eq!(result.components[0].rho, ratio(1000, 1001));
@@ -1104,6 +1113,7 @@ fn fair_max_expected_reward_preserves_zero_reward_mec_exits() {
         "cost",
         UnboundedObjective::Max,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the strong-fair expected maximum is finite");
     assert_eq!(
@@ -1159,6 +1169,7 @@ fn fair_long_run_routes_away_from_a_nonfair_mec() {
         None,
         &fsl_semantics::check::Bound::AtLeast(ratio(9, 10)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("fair long-run routes through the non-fair MEC");
     assert_eq!(
@@ -1835,6 +1846,7 @@ fn fair_coin_has_no_nonterminal_fair_end_component() {
             &target,
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("exact fair reachability");
         assert!(
@@ -1861,6 +1873,7 @@ fn fair_coin_has_no_nonterminal_fair_end_component() {
         &target,
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("exact unrestricted reachability");
     assert_eq!(
@@ -1889,6 +1902,7 @@ fn fair_coin_has_no_nonterminal_fair_end_component() {
         &target,
         UnboundedObjective::Max,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("fair maximum reachability");
     assert_eq!(
@@ -2630,6 +2644,7 @@ fn non_target_terminal_stutter_belongs_to_fair_reachability_u() {
         &target,
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("non-target terminal stutter is a fair end component");
     let terminal_stutter = result
@@ -2692,6 +2707,7 @@ fn fair_expected_reward_minimum_excludes_an_unfair_free_bottom_class() {
         "cost",
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("FR-198 minimum over the same fixture");
     assert_eq!(
@@ -2717,6 +2733,7 @@ fn fair_expected_reward_minimum_excludes_an_unfair_free_bottom_class() {
         "cost",
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("fair minimum uses the unit-cost exit");
     assert_eq!(
@@ -2790,6 +2807,7 @@ fn coin2_stall_is_a_fair_end_component_and_witness() {
         &target,
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("exact fair reachability");
     assert_eq!(
@@ -2910,6 +2928,7 @@ fn coin2_stall_is_a_fair_end_component_and_witness() {
         "cost",
         UnboundedObjective::Max,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the fair reward maximum is unbounded");
     assert_eq!(
@@ -2955,6 +2974,7 @@ fn coin2_stall_is_a_fair_end_component_and_witness() {
         "cost",
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the fair reward minimum uses FR-198");
     let fr198_minimum = fsl_analyze::exact_probabilistic::decide_expected_reward(
@@ -2963,6 +2983,7 @@ fn coin2_stall_is_a_fair_end_component_and_witness() {
         "cost",
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the FR-198 minimum is exact");
     assert_eq!(minimum.values, fr198_minimum.values);
@@ -3299,6 +3320,7 @@ fn fair_witness_validates_multiple_bottom_sccs() {
         &target,
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the returned scheduler is checked over every bottom SCC");
     assert_eq!(
@@ -4337,6 +4359,7 @@ fn until_minimum_retains_absorbing_failure_in_qualitative_analysis() {
             &target,
             objective,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .unwrap();
         assert_eq!(
@@ -4388,6 +4411,7 @@ fn until_avoidance_cannot_cross_an_already_reached_target() {
         &[false, true, false],
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .unwrap();
     assert_eq!(

@@ -54,6 +54,7 @@ fn request<'a>(
         tests: &TESTS,
         method,
         seed: 7,
+        workers: 1,
         sampler,
         limits,
         max_witnesses: 0,
@@ -77,6 +78,10 @@ struct FixedSample {
 impl BehaviourSampler for FixedSample {
     type Walk = UnusedWalk;
 
+    fn sample_batch_width(&self) -> usize {
+        1
+    }
+
     fn sample(
         &mut self,
         _test: &TestSubject,
@@ -88,6 +93,20 @@ impl BehaviourSampler for FixedSample {
             sample: self.sample.clone(),
             steps: Vec::new(),
         })
+    }
+
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+        traces
+            .first()
+            .copied()
+            .map(|trace| (trace, self.sample(test, seed, trace)))
+            .into_iter()
+            .collect()
     }
 
     fn walk(&mut self, _test: &TestSubject, _seed: u64, _trace: u64) -> Self::Walk {
@@ -215,6 +234,10 @@ struct CycleSampler;
 impl BehaviourSampler for CycleSampler {
     type Walk = CycleWalk;
 
+    fn sample_batch_width(&self) -> usize {
+        1
+    }
+
     fn sample(
         &mut self,
         _test: &TestSubject,
@@ -222,6 +245,20 @@ impl BehaviourSampler for CycleSampler {
         _trace: u64,
     ) -> Result<Drawn, SampleHalt> {
         panic!("regenerative methods use a walk")
+    }
+
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+        traces
+            .first()
+            .copied()
+            .map(|trace| (trace, self.sample(test, seed, trace)))
+            .into_iter()
+            .collect()
     }
 
     fn walk(&mut self, _test: &TestSubject, _seed: u64, _trace: u64) -> Self::Walk {

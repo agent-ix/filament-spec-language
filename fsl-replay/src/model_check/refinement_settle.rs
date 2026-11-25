@@ -231,7 +231,7 @@ fn record_of(
         basis: row.basis,
         execution: row.execution,
         truth: row.truth,
-        method: EXPLICIT_STATE,
+        method: EXPLICIT_STATE.to_owned(),
         depth,
         limits: limits.used(),
         limit_reached: row.limit_reached,

@@ -1045,7 +1045,8 @@ fn concrete_unknown_delivery_reachability_stops_at_its_state_budget() {
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
     let concrete = ProtocolSystem::new(model, &subject, Sc).expect("the concrete system builds");
     let initial = concrete
-        .initial()
+        .try_initial()
+        .expect("initial states settle")
         .into_iter()
         .next()
         .expect("one initial state");

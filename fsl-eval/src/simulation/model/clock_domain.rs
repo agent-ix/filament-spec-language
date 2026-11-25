@@ -207,7 +207,7 @@ impl ModelSystem<'_> {
             };
             for key in keys {
                 let Some(object) = self
-                    .initial
+                    .initial_base
                     .iter()
                     .find_map(|state| state.state.populations.get(&population.key)?.get(key))
                 else {
@@ -256,7 +256,7 @@ impl ModelSystem<'_> {
             }
         }
         let mut admitted = Vec::new();
-        for state in &self.initial {
+        for state in &self.initial_base {
             for object in state
                 .state
                 .populations

@@ -44,6 +44,7 @@ mod derived_request;
 mod digital_clocks;
 mod exact_mdp_avoidance;
 mod exact_probabilistic;
+mod exact_probabilistic_fr196;
 mod exact_probabilistic_item;
 mod exact_probabilistic_zero_binding;
 mod exact_route;
@@ -142,6 +143,7 @@ mod protocol_step_view;
 mod protocol_system;
 mod provider_external_contract;
 mod provider_request_seam;
+mod provider_test_support;
 mod provision_contract;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;

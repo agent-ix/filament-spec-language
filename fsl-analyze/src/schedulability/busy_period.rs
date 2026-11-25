@@ -2,11 +2,11 @@
 //! The fixed-priority recurrence over the jobs of a task's level-`i` busy
 //! period (ADR-026 RT-4), shared by fixed priority and both AMC modes.
 
-use filament_exact::{Cancel, Rational};
+use filament_exact::Rational;
 use fsl_replay::{JobIterates, Task};
 
 use super::arith::{ceil, int, quotient};
-use super::{poll, Analysed};
+use super::{Analysed, Pace};
 
 /// One higher-priority task's term: `ceil((w + J) / T) * C`.
 pub(super) struct Term<'a> {
@@ -55,7 +55,7 @@ pub(super) fn jobs(
     task: &Task,
     level: &Level<'_>,
     bound: &Rational,
-    cancel: &Cancel,
+    pace: &mut Pace<'_>,
 ) -> Analysed<Jobs> {
     let period = task.arrival.interval();
     let mut met = Vec::new();
@@ -64,7 +64,7 @@ pub(super) fn jobs(
         let mut window = level.start(job);
         let mut iterates = vec![window.clone()];
         loop {
-            poll(cancel)?;
+            pace.step()?;
             if window.add(&shift) > *bound {
                 return Ok(Jobs::Missed { job, iterates });
             }

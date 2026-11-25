@@ -231,9 +231,8 @@ fn each_leading_word_builds_only_its_own_form() {
     assert!(matches!(unit.forms(), [form] if matches!(form.form(), DeclarationForm::Workload(_))));
 }
 
-/// TC-890 step 3, the S2 half of FR-311-AC-3: a zero weight and a workload
-/// that omit nothing S2 checks both build. That S3 refuses them is asserted in
-/// `fsl-semantics`, for the zero weight only, so this test tags no criterion.
+/// TC-890 step 3: a zero random weight and a workload that omits a required
+/// operation both build as forms at S2.
 #[trace("TC-890")]
 #[test]
 fn a_zero_weight_and_an_incomplete_workload_build_at_s2() {

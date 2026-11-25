@@ -45,6 +45,11 @@ impl CompiledPackage {
     pub fn bytes(&self) -> &[u8] {
         self.emitted.package().bytes()
     }
+
+    /// The content identity of the emitted checked-package bytes.
+    pub fn package_id(&self) -> crate::PackageId {
+        crate::PackageId::of(self.bytes())
+    }
 }
 
 /// Compile `bytes`, displayed as `path` and labelled `source`, with

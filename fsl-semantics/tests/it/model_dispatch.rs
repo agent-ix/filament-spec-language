@@ -813,14 +813,13 @@ fn the_checked_bridge_counts_every_walk_against_one_family_steps() {
 
 /// TC-225: a family of exactly `family_steps` redefinition steps links with
 /// its unique winner. One step more -- a redefiner that, if the walk went on
-/// to find it, would make `model.A` ambiguous -- refuses with the distinct
-/// `resource_exhausted` outcome naming the configured bound: not a linked
-/// table naming a "unique" winner the truncated walk happened to reach, and
-/// not an ambiguity result.
+/// to find it, would make `model.A` ambiguous -- stops `Incomplete` naming
+/// the configured bound: not a linked table naming a "unique" winner the
+/// truncated walk happened to reach, and not an ambiguity result.
 #[trace("TC-720", "FR-255-AC-1")]
 #[trace("TC-225", "FR-083-AC-4")]
 #[test]
-fn a_family_at_the_configured_bound_links_and_one_step_more_refuses() {
+fn a_family_at_the_configured_bound_links_and_one_step_more_stops_incomplete() {
     const BOUND: u64 = 50;
     let limits = ModelNormalizationLimits {
         family_steps: BOUND,
@@ -846,40 +845,18 @@ fn a_family_at_the_configured_bound_links_and_one_step_more_refuses() {
         ),
         "the fixture must be genuinely ambiguous once the whole family is walked"
     );
-    match link_chain(&over, limits) {
-        LinkCheckOutcome::Refused(refusal) => {
-            assert_eq!(refusal.code, Code::ResourceExhausted);
-            assert_eq!(
-                refusal.cause,
-                ModelRefusalCause::family_steps(
-                    DeclarationKey::fixture("ix://test/orders/A/op0"),
-                    BOUND
-                )
-            );
-            let exceeded = refusal
-                .cause
-                .denial()
-                .expect("a step ceiling is a denied charge");
-            assert_eq!(
-                exceeded.setting(),
-                fsl_foundation::Setting::ModelFamilySteps
-            );
-            assert_eq!(
-                exceeded.actual(),
-                u128::from(match &refusal.cause {
-                    ModelRefusalCause::AncestorSteps { limit, .. }
-                    | ModelRefusalCause::FamilySteps { limit, .. } => *limit,
-                    other => panic!("unexpected {other:?}"),
-                }) + 1
-            );
-            assert_eq!(refusal.cause.as_str(), "family-steps");
-            assert!(
-                refusal.detail.contains(&BOUND.to_string()),
-                "refusal detail must name the configured bound, got {refusal:?}"
-            );
-        }
-        other => panic!("expected Refused(FamilySteps), got {other:?}"),
-    }
+    let LinkCheckOutcome::Incomplete(stop) = link_chain(&over, limits) else {
+        panic!("the family walk is denied at the first edge past the bound");
+    };
+    assert_eq!(stop.limit_kind, NormalizationLimitKind::FamilySteps);
+    assert_eq!(
+        (stop.limit, stop.consumed, stop.next_charge),
+        (BOUND, BOUND, 1)
+    );
+    assert_eq!(stop.charge_point, NormalizationChargePoint::ModelFamilyEdge);
+    let denial = stop.denial();
+    assert_eq!(denial.setting(), fsl_foundation::Setting::ModelFamilySteps);
+    assert_eq!(denial.actual(), 51);
 }
 
 /// TC-196 C10, zero limit: on a nonempty family, `family_steps: 0` denies the
@@ -890,7 +867,7 @@ fn a_family_at_the_configured_bound_links_and_one_step_more_refuses() {
 ///
 /// Mutation used (derived by reading, not executed): treating a zero limit as
 /// "unlimited", or admitting the first edge before comparing, links the
-/// family and fails the `Refused` match.
+/// family and fails the `Incomplete` match.
 #[trace("FSpec-TC-196", "FSpec-FR-150-AC-18")]
 #[test]
 fn c10_a_zero_family_steps_limit_denies_the_first_followed_edge() {
@@ -898,14 +875,10 @@ fn c10_a_zero_family_steps_limit_denies_the_first_followed_edge() {
         family_steps: 0,
         ..ModelNormalizationLimits::UNLIMITED
     };
-    let LinkCheckOutcome::Refused(refusal) = link_chain(&chain_package(3), limits) else {
+    let LinkCheckOutcome::Incomplete(stop) = link_chain(&chain_package(3), limits) else {
         panic!("a nonempty family at family_steps 0 must be denied at its first edge");
     };
-    assert_eq!(refusal.code, Code::ResourceExhausted);
-    let fields = refusal
-        .cause
-        .catalog_fields()
-        .expect("a walk ceiling carries its denied-charge record");
+    let fields = stop.denial().catalog_fields();
     for (name, expected) in [
         ("stage", "model-normalization"),
         ("limit_kind", "family_steps"),

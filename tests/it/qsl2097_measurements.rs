@@ -117,10 +117,15 @@ fn native_parse_and_format_run_without_node_or_jvm_on_path() {
         .env("PATH", empty_path.path())
         .output()
         .expect("run Rust-only parser/formatter probe");
+    let report = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "native probe failed without external runtimes: {}",
+        "native probe failed without external runtimes: {report}{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        report.contains("test result: ok. 1 passed"),
+        "the child ran exactly the probe: {report}"
     );
 }
 

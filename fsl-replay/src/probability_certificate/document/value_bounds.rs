@@ -216,11 +216,6 @@ pub(super) fn unwrap(
                     }
                     root.insert("ranking".into(), json!([]));
                 }
-            } else if side == SubsystemBoundKind::Upper {
-                if root.contains_key("ranking") {
-                    return Err(ProbabilityDocumentError::MalformedMember("ranking"));
-                }
-                root.insert("ranking".into(), json!([]));
             }
             match side {
                 SubsystemBoundKind::Upper => {

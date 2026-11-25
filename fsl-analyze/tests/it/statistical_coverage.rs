@@ -52,6 +52,7 @@ fn world(claim: &str) -> World {
 fn decide(world: &World, seed: u64) -> StatisticalVerdict {
     let outcome = check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim("CoinGone"),
             method: StatisticalMethod::ClopperPearson,
