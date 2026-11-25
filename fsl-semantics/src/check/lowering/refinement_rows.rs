@@ -188,19 +188,23 @@ impl Lowering<'_> {
         declared: &ValueType,
         location: &Location,
     ) -> Result<LeafTerm, CheckRefusal> {
-        // An enum member is written inline: the refinement's history initial is a
-        // literal or a reference to a literal node, and a member's own node is an
-        // enum value, not a literal (FSpec FR-375 `histories`).
-        if let Value::Enum(member) = value {
+        // An enum member and an absent option are written inline: the refinement's
+        // history initial is a literal or a reference to a literal node, and a
+        // member's own node is an enum value and an `Option` field's initial
+        // cannot reference a `literal` node, which the reader refuses at an
+        // option-typed history (FSpec FR-375 `histories`).
+        let inline = match value {
+            Value::Enum(member) => Some(LiteralValue::Enum(member.variant().case().to_owned())),
+            Value::Option(option) if option.payload().is_none() => Some(LiteralValue::None),
+            _ => None,
+        };
+        if let Some(literal) = inline {
             let ty = self
                 .type_ref(declared, location)?
                 .admitted()
                 .cloned()
                 .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
-            return Ok(LeafTerm::literal(
-                ty,
-                LiteralValue::Enum(member.variant().case().to_owned()),
-            ));
+            return Ok(LeafTerm::literal(ty, literal));
         }
         self.literal_at(location, value, declared, None)
     }

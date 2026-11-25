@@ -4118,7 +4118,9 @@ fn history_initials_of_each_literal_form_are_written() {
         let histories = node["body"]["histories"].as_array().expect("histories");
         assert_eq!(histories.len(), 1, "{declared}: {histories:?}");
         assert_eq!(histories[0]["name"], "last", "{declared}");
-        assert_eq!(histories[0]["initial"]["term"], "reference", "{declared}");
+        // An enum or absent-option initial is written inline; others reference a node.
+        let form = if initial == "none" { "literal" } else { "reference" };
+        assert_eq!(histories[0]["initial"]["term"], form, "{declared}");
         assert_eq!(
             histories[0]["updates"].as_array().map(Vec::len),
             Some(1),
