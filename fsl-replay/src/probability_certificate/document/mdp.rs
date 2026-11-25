@@ -96,16 +96,6 @@ pub fn read_probability_proof_document(
 }
 
 #[implements("FR-203-AC-29")]
-pub(super) fn read_probability_proof_document_with_work_scope(
-    bytes: &[u8],
-    limits: ProbabilityDocumentLimits,
-    cancel: &Cancel,
-    work: &filament_exact::WorkScope,
-) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
-    read_probability_proof_document_in_scope(bytes, limits, cancel, Some(work))
-}
-
-#[implements("FR-203-AC-29")]
 fn read_probability_proof_document_in_scope(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
@@ -149,6 +139,7 @@ pub fn write_probability_proof_document(
     write_probability_proof_document_in_scope(document, limits, cancel, None)
 }
 
+/// Write and validate an exact proof document against the caller's item budget.
 #[implements("FR-203-AC-29")]
 pub fn write_probability_proof_document_with_work_scope(
     document: &ProbabilityProofDocument,
@@ -193,6 +184,7 @@ pub fn write_value_bounds_proof_document(
     value_bounds::wrap(&exact, side, limits)
 }
 
+/// Write an interval-bound proof document using the caller's item work scope.
 #[implements("FR-203-AC-29")]
 pub fn write_value_bounds_proof_document_with_work_scope(
     document: &ProbabilityProofDocument,
@@ -219,6 +211,7 @@ pub fn probability_proof_document(
 }
 
 #[implements("FR-203-AC-29")]
+/// Produce an exact proof document using the caller's remaining item allowance.
 pub fn probability_proof_document_with_work_scope(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -386,6 +379,7 @@ pub fn cyclic_mdp_probability_certificate_document(
 }
 
 #[implements("FR-203-AC-29")]
+/// Produce cyclic MDP certificate evidence using the caller's item work scope.
 pub fn cyclic_mdp_probability_certificate_document_with_work_scope(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -455,6 +449,7 @@ pub fn cyclic_mdp_reward_probability_certificate_document(
 }
 
 #[implements("FR-203-AC-29")]
+/// Produce cyclic reward certificate evidence using the caller's item work scope.
 pub fn cyclic_mdp_reward_probability_certificate_document_with_work_scope(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

@@ -115,6 +115,7 @@ pub fn partial_lower_probability_proof_document(
     )
 }
 
+/// Produce a partial lower proof while charging the caller's item work scope.
 #[implements("FR-203-AC-29")]
 pub fn partial_lower_probability_proof_document_with_work_scope(
     system: &ModelSystem<'_>,

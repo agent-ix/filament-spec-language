@@ -127,11 +127,13 @@ thread_local! {
 }
 
 #[cfg(feature = "test-support")]
+/// Clear phase checkpoints collected by the exact-item integration adapter.
 pub fn reset_exact_work_checkpoints() {
     EXACT_WORK_CHECKPOINTS.with(|checkpoints| checkpoints.borrow_mut().clear());
 }
 
 #[cfg(feature = "test-support")]
+/// Return the exact-item phase checkpoints collected on this thread.
 pub fn exact_work_checkpoints() -> Vec<ExactWorkCheckpoint> {
     EXACT_WORK_CHECKPOINTS.with(|checkpoints| checkpoints.borrow().clone())
 }
