@@ -375,7 +375,7 @@ fn raw_clock_data_outcomes_on_the_refinement_route() {
                 let owner = environment
                     .population_members(&crate::ring_queue::node(CLOCKS, "calls"))
                     .expect("calls population")
-                    .into_iter()
+                    .iter()
                     .find(|owner| owner.object().as_str() == "c1")
                     .expect("c1 owner");
                 let mut meter = Meter::new(UNLIMITED);
