@@ -2623,7 +2623,6 @@ fn float_snapshot(world: &mut World, name: &str, overrides: Json) -> DocumentRef
 
 #[trace("TC-3006", "FR-056-AC-60")]
 #[test]
-#[ignore = "QSL-2878: the explored float model yields no IEEE-bits state where the test expects [13830554455654793216]"]
 fn a_float_field_model_explores_by_its_ieee_bits() {
     let mut world = float_world();
     let one = float_start(&mut world, "one", "3ff0000000000000");
@@ -2635,7 +2634,22 @@ fn a_float_field_model_explores_by_its_ieee_bits() {
         .map(|(_, state)| float_bits(&state.0, "c1"))
         .collect();
     assert_eq!(successors, [0xbff0_0000_0000_0000]);
-    assert_eq!(stats(&explore(&from_one)).0, 2);
+    let from_one_stats = stats(&explore(&from_one));
+    assert_eq!(from_one_stats.0, 2, "the two IEEE states are reachable");
+    assert_eq!(from_one_stats.1, 2, "one candidate leaves each state");
+
+    let sampled = sample_model(&from_one, 10_000, &sampler(), 424_242, 0, 2)
+        .expect("the two-step float simulation completes");
+    assert_eq!(sampled.trace.steps.len(), 2);
+    assert!(sampled.trace.findings.is_empty(), "the run has no flag");
+    let last_change = sampled.effects[1]
+        .changed
+        .iter()
+        .find(|change| change.field == "a")
+        .expect("the second flip changes a");
+    let last_bits: Json = serde_json::from_str(last_change.post.as_deref().expect("post value"))
+        .expect("the float effect is canonical JSON");
+    assert_eq!(last_bits["bits"], "3ff0000000000000");
 
     let from_zero = system(&world, vec![zero], &["c1"], UNLIMITED);
     let mut successors: Vec<u64> = successors_of(&from_zero, 0)
@@ -2644,7 +2658,9 @@ fn a_float_field_model_explores_by_its_ieee_bits() {
         .collect();
     successors.sort_unstable();
     assert_eq!(successors, [0x0000_0000_0000_0000, 0x8000_0000_0000_0000]);
-    assert_eq!(stats(&explore(&from_zero)).0, 2);
+    let from_zero_stats = stats(&explore(&from_zero));
+    assert_eq!(from_zero_stats.0, 2, "the signed-zero states are distinct");
+    assert_eq!(from_zero_stats.1, 4, "each signed zero has two candidates");
 }
 
 /// FR-056-AC-58 (TC-3005): model state identity retains the Float64 bits of
