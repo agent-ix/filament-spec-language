@@ -46,12 +46,14 @@ mod composition_context;
 pub use composition_context::{CompositionModelContext, CompositionModelContextRefusal};
 #[cfg(feature = "std")]
 mod composition_view;
+#[cfg(feature = "std")]
 mod refinement_view;
 #[cfg(feature = "std")]
 pub use composition_view::{
     CompositionMember, CompositionMemberValue, CompositionView, CompositionViewRefusal,
     OwnedNodeRef,
 };
+#[cfg(feature = "std")]
 pub use refinement_view::{
     RefinementRowRefusal, RefinementView, RefinementViewCode, RefinementViewRefusal,
 };
@@ -133,6 +135,8 @@ mod protocol_occurrence;
 #[cfg(feature = "std")]
 mod protocol_occurrence_key;
 mod protocol_selection;
+mod source_operation;
+pub use source_operation::SourceOperationClause;
 #[cfg(feature = "std")]
 pub mod protocol_view;
 #[cfg(feature = "std")]
@@ -147,9 +151,7 @@ pub use bare::{
     IdentityMember, IdentityWitnessRefusal, ReadIdentityRows, IDENTITIES_FORMAT,
 };
 #[cfg(feature = "std")]
-pub use bare_slot::{
-    BareSelectionFailure, BareSlot, BareSource, BareSourceOperationFailure, SourceOperationClause,
-};
+pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource, BareSourceOperationFailure};
 #[cfg(feature = "std")]
 #[cfg(feature = "std")]
 pub use bare_state_graph::BareStatePredicate;

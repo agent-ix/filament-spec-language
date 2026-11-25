@@ -66,6 +66,7 @@ use filament_semantic_value::supplied_stop::{
 use fsl_semantics::check::StepRead;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::SelfKind;
+use ix_trace_rs::implements;
 use s6a::{ReferenceEvaluation, S6aFamilyKind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -1304,6 +1305,23 @@ pub fn admit_arguments(
     slot_admission::admit_objects(objects, types, run, parameters.len())
 }
 
+/// [`admit_arguments`] for an entry whose caller passes no supplied-value run:
+/// the run has the default limits and polls the cancel handle installed on
+/// `meter`, so a handle cancelled before the call stops admission before any
+/// charge.
+fn admit_arguments_under_meter(
+    parameters: &[(String, ValueType)],
+    arguments: &[Value],
+    objects: &ObjectEnvironment,
+    types: &TypeEnvironment,
+    meter: &Meter,
+) -> Result<(), CallFailure> {
+    let cancel = meter.cancel().cloned().unwrap_or_default();
+    let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel)
+        .map_err(|stop| CallFailure::from(SuppliedFailure::Stop(stop)))?;
+    admit_arguments(parameters, arguments, objects, types, &mut run)
+}
+
 /// [`admit_arguments`] without the object environment: every argument's
 /// arity, membership and reference resolution.
 fn admit_argument_values(
@@ -2337,6 +2355,50 @@ fn evaluate_expression(
         .peak_live_occurrences
         .max(peak_live_occurrences.load(Ordering::Relaxed));
     Ok(evaluation)
+}
+
+/// Evaluate the clause function of an authored source operation contract
+/// clause over a checked package, selected by its checked operation anchor:
+/// the source route's form of [`evaluate_bare_source_operation_clause`]
+/// (FR-531). A value loss or stop is located in the clause function's body, as
+/// on the bytes route, and the call charges no `function.call`.
+/// [`CheckedPackageEvaluation::evaluate_clause`] instead evaluates the clause
+/// as a state clause and locates in it.
+///
+/// # Errors
+///
+/// The selection, argument admission or evaluator failure, as the bytes-only
+/// entry reports it.
+#[implements("FR-531-AC-40")]
+pub fn evaluate_source_operation_clause(
+    package: &CheckedPackage,
+    anchor: &NodeKey,
+    clause: &fsl_package::SourceOperationClause,
+    arguments: Vec<Value>,
+    objects: &ObjectEnvironment,
+    meter: &mut Meter,
+) -> Result<Evaluation, CallFailure> {
+    let function = package
+        .select_source_operation_clause(anchor, clause)
+        .map_err(protocol_slot::resolve::selection_failure)?;
+    let graph = package.graph();
+    admit_arguments_under_meter(
+        function.parameters,
+        &arguments,
+        objects,
+        graph.scope().types(),
+        meter,
+    )?;
+    Machine::new(
+        graph.scope(),
+        graph,
+        objects,
+        meter,
+        graph.dispatch_tables(),
+    )
+    .with_formed_units(function.formed_units)
+    .run(function.body, function.slots, arguments)
+    .map_err(CallFailure::Fault)
 }
 
 /// Call a checked package under an explicit live-occurrence session bound.
