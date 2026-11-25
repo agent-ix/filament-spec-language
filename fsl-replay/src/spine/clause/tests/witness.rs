@@ -730,7 +730,7 @@ fn a_refused_field_value_locus_names_the_object_and_the_member() {
                 "path": null,
                 "pointer": "/populations/0/objects/0/fields/versionNumber",
                 "object": {
-                    "population": "ix://example/config-version/config_history",
+                    "population": "ix://test/config-version/config_history",
                     "key": "root"
                 },
                 "member": "versionNumber"
@@ -755,7 +755,7 @@ fn a_refused_field_value_locus_names_the_object_and_the_member() {
             "path": null,
             "pointer": "/populations/0/objects/2/key",
             "object": {
-                "population": "ix://example/config-version/config_history",
+                "population": "ix://test/config-version/config_history",
                 "key": "root"
             },
             "member": "key"
