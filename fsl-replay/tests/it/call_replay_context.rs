@@ -425,10 +425,12 @@ fn provider_counterexamples_settle_contract_application_parity_and_refusal() {
             )
             .expect("the provider request is formed before replay refusal"),
     );
+    // FR-290-AC-2 requires the `replay_refused` cause; this fixture's
+    // particular invalid parameter is reported as `invalid_runtime_input`.
     assert_eq!(
         wrong_parameter.value(),
         &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
-            fsl_foundation::Code::UnknownRequiredFeature
+            fsl_foundation::Code::InvalidRuntimeInput
         ))
     );
     assert!(wrong_parameter.replay_result().is_none());
