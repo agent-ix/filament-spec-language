@@ -560,6 +560,7 @@ fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
     let other_checks = [
         "conformance",
         "check-no-committed-binaries",
+        "test-deep-measurements",
         "ci-clean-build",
         "seam-probe",
         "string-edge",

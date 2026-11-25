@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-488 "Reserved slot names": the checker refuses a source identifier in
 //! FSpec FR-402's reserved slot-parameter form where it would name a
 //! `value`/`parameter` node, at the identifier, and admits near misses

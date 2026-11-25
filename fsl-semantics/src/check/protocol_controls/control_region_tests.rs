@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! QSL-1678: S3 checking charges a protocol only for its own control region.
 //!
 //! The composed binder once proved this with a read-count ceiling over 200

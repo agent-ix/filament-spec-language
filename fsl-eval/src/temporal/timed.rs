@@ -583,22 +583,7 @@ pub fn evaluate_timed_at<L: TemporalLetters>(
             profile: clause.profile(),
         });
     }
-    evaluate_timed_formula_at(clause.formula(), trace, position, letters, meter)
-}
-
-/// Evaluate a checked timed probabilistic event formula at one position.
-///
-/// Unlike [`evaluate_timed_at`], this entry point accepts the formula owned by
-/// a checked probability claim, whose claim profile and atom binding are
-/// supplied by the caller. The same timed formula evaluator and closed-trace
-/// semantics are used.
-pub fn evaluate_timed_formula_at<L: TemporalLetters>(
-    formula: &CheckedFormula,
-    trace: &TimedTrace,
-    position: TemporalPosition,
-    letters: &mut L,
-    meter: &mut Meter,
-) -> Result<TemporalOutcome, TemporalRefusal> {
+    let formula = clause.formula();
     let represented = trace.stamps.len();
     let (stamps, tail, loop_start) = match &trace.looping {
         None => (trace.stamps.clone(), None, 0),

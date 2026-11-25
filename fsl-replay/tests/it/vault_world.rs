@@ -203,8 +203,9 @@ fn operation(name: &str, input: bool, modifies: &[&str]) -> Json {
 }
 
 /// The domain package, with the `busy` field and the `mix` operation when
-/// `busy`.
-fn document(busy: bool, reset: bool) -> Vec<u8> {
+/// `busy`, and the population `docks` of the type `Dock`, which precedes
+/// `vaults` in declaration order, when `docks`.
+fn document(busy: bool, reset: bool, docks: bool) -> Vec<u8> {
     let vault = ident("Vault");
     let constructs: Vec<Json> = [
         ("object_type", meaning::OBJECT_TYPE),
@@ -231,7 +232,38 @@ fn document(busy: bool, reset: bool) -> Vec<u8> {
         operations.push(operation("mix", false, &["busy"]));
         fields.push(field("busy"));
     }
-    let population = ident("vaults");
+    let vaults = ident("vaults");
+    let mut types = vec![
+        bit(),
+        wire_type(
+            &vault,
+            "object_type",
+            json!({
+                "supertypes": [],
+                "fields": fields,
+                "operations": operations,
+                "relationships": [],
+            }),
+        ),
+    ];
+    let mut populations = vec![json!({
+        "identity": vaults, "displayName": vaults,
+        "kind": {"module": PACKAGE, "name": "population"},
+        "members": [vault], "extent": "closed", "origin": origin(&vaults),
+    })];
+    if docks {
+        let (dock, docks) = (ident("Dock"), ident("docks"));
+        types.push(wire_type(
+            &dock,
+            "object_type",
+            json!({"supertypes": [], "fields": [], "operations": [], "relationships": []}),
+        ));
+        populations.push(json!({
+            "identity": docks, "displayName": docks,
+            "kind": {"module": PACKAGE, "name": "population"},
+            "members": [dock], "extent": "closed", "origin": origin(&docks),
+        }));
+    }
     json!({
         "contractVersion": "2.0.0",
         "canonicalization": {"algorithm": "rfc8785-v1"},
@@ -240,20 +272,8 @@ fn document(busy: bool, reset: bool) -> Vec<u8> {
             "mappingVersions": [], "profileVersions": []},
         "occurrences": [], "extensions": [],
         "constructs": constructs,
-        "types": [
-            bit(),
-            wire_type(&vault, "object_type", json!({
-                "supertypes": [],
-                "fields": fields,
-                "operations": operations,
-                "relationships": [],
-            })),
-        ],
-        "populations": [{
-            "identity": population, "displayName": population,
-            "kind": {"module": PACKAGE, "name": "population"},
-            "members": [vault], "extent": "closed", "origin": origin(&population),
-        }],
+        "types": types,
+        "populations": populations,
     })
     .to_string()
     .into_bytes()
@@ -421,6 +441,25 @@ impl World {
             declaration,
             build,
             CheckMode::Linked,
+            false,
+        )
+    }
+
+    /// [`World::new`] of a model that also declares the population `docks`,
+    /// which precedes `vaults` in declaration order.
+    pub fn behind_another_population(universe: &[&str], declaration: &str) -> Self {
+        let build = Build {
+            reset: true,
+            ..SECURE
+        };
+        Self::assemble(
+            universe,
+            None,
+            None,
+            declaration,
+            &build,
+            CheckMode::Linked,
+            true,
         )
     }
 
@@ -437,7 +476,15 @@ impl World {
             post: build.post,
             extra: &extra,
         };
-        Self::assemble(universe, None, None, declaration, &build, CheckMode::Kernel)
+        Self::assemble(
+            universe,
+            None,
+            None,
+            declaration,
+            &build,
+            CheckMode::Kernel,
+            false,
+        )
     }
 
     /// A clause over two aliases whose subjects have disjoint universes:
@@ -452,6 +499,7 @@ impl World {
             declaration,
             build,
             CheckMode::Linked,
+            false,
         )
     }
 
@@ -462,9 +510,10 @@ impl World {
         declaration: &str,
         build: &Build<'_>,
         mode: CheckMode,
+        docks: bool,
     ) -> Self {
         let second = other_universe.is_some();
-        let document = document(false, build.reset);
+        let document = document(false, build.reset, docks);
         let other = second.then(|| other_document(&document));
         let other = other.as_deref();
         let documents: Vec<&[u8]> = std::iter::once(document.as_slice()).chain(other).collect();
@@ -1759,5 +1808,161 @@ mod tp4 {
                 if rejection.rule == CertificateRule::ShapeMismatch
                     && rejection.at == CertificateLocus::ProductState(at)
         ));
+    }
+}
+
+mod en1_closure_certificate {
+    use std::collections::BTreeSet;
+
+    use filament_exact::{Cancel, Meter};
+    use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
+    use fsl_eval::simulation::model::ModelSimState;
+    use fsl_eval::temporal::AtomReading;
+    use fsl_replay::{
+        check_closure, CertificateLocus, CertificateRequest, CertificateRule, ClosureCertificate,
+        ModelCheckItem, ModelCheckLimits, ProductStateRef, TemporalCertificateCheck,
+    };
+    use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
+    use fsl_semantics::check::FormulaNodeId;
+    use ix_trace_rs::trace;
+
+    use super::{World, FORALL_EXISTS};
+
+    struct TrueLetters;
+
+    impl ModelLetters for TrueLetters {
+        fn atom(
+            &self,
+            _atom: FormulaNodeId,
+            _instance: &ModelInstance,
+            _state: &ModelSimState,
+            _meter: &mut Meter,
+        ) -> Result<AtomReading, AtomStop> {
+            Ok(AtomReading::True)
+        }
+
+        fn activation(
+            &self,
+            _instance: &ModelInstance,
+            _state: &ModelSimState,
+            _meter: &mut Meter,
+        ) -> Result<AtomReading, AtomStop> {
+            Ok(AtomReading::True)
+        }
+
+        fn activation_reads(&self) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+            Ok(BTreeSet::new())
+        }
+
+        fn reads(
+            &self,
+            _atom: FormulaNodeId,
+        ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+            Ok(BTreeSet::new())
+        }
+    }
+
+    static LETTERS: TrueLetters = TrueLetters;
+
+    fn world() -> World {
+        let temporal = "temporal Invariant using inf over (v: V::Vault) clock \"model-steps\" on origin { always holds(v.l = v.l) }";
+        World::new(&["v"], false, &format!("{FORALL_EXISTS}\n{temporal}"))
+    }
+
+    fn request(world: &World) -> CertificateRequest<'_> {
+        CertificateRequest {
+            subject: world.subject(),
+            temporal_clock_selections: &[],
+            item: ModelCheckItem::Clause {
+                clause: world
+                    .temporal_clause
+                    .as_ref()
+                    .expect("the invariant checks"),
+                letters: &LETTERS,
+            },
+            smt_encoding: Default::default(),
+        }
+    }
+
+    /// The state set the closure checker itself asks for: each state it
+    /// reports missing is added until it accepts. No EN-1 run produces it.
+    fn complete_certificate(world: &World) -> ClosureCertificate {
+        let request = request(world);
+        let mut certificate = ClosureCertificate { states: Vec::new() };
+        for _ in 0..256 {
+            match check_closure(
+                &request,
+                &certificate,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            )
+            .expect("the finite invariant subject admits")
+            {
+                TemporalCertificateCheck::Accepted => return certificate,
+                TemporalCertificateCheck::Rejected(rejection)
+                    if matches!(
+                        rejection.rule,
+                        CertificateRule::InitialMissing | CertificateRule::SuccessorMissing
+                    ) =>
+                {
+                    let CertificateLocus::ProductState(missing) = rejection.at else {
+                        panic!("a missing closure member names its product state");
+                    };
+                    certificate.states.push(missing);
+                    certificate.states.sort();
+                    certificate.states.dedup();
+                }
+                other => panic!("the invariant closure reaches an unexpected result: {other:?}"),
+            }
+        }
+        panic!("the finite model's reachable closure terminates");
+    }
+
+    /// TC-764, the checker's rejection half: removing a reached state from an
+    /// accepted closure names that state as a missing successor.
+    #[trace("TC-764")]
+    #[test]
+    fn en1_closure_accepts_the_finite_invariant_and_names_a_removed_successor() {
+        let world = world();
+        let request = request(&world);
+        let certificate = complete_certificate(&world);
+        assert!(
+            certificate.states.len() > 1,
+            "the model reaches successor states"
+        );
+        assert!(matches!(
+            check_closure(
+                &request,
+                &certificate,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            Ok(TemporalCertificateCheck::Accepted)
+        ));
+
+        let removed_successor: ProductStateRef = (0..certificate.states.len())
+            .find_map(|index| {
+                let removed = certificate.states[index].clone();
+                let mut altered = certificate.clone();
+                altered.states.remove(index);
+                match check_closure(
+                    &request,
+                    &altered,
+                    &ModelCheckLimits::default(),
+                    &Cancel::new(),
+                )
+                .expect("the finite invariant subject admits")
+                {
+                    TemporalCertificateCheck::Rejected(rejection)
+                        if rejection.rule == CertificateRule::SuccessorMissing
+                            && matches!(&rejection.at, CertificateLocus::ProductState(state) if state == &removed) =>
+                    {
+                        Some(removed)
+                    }
+                    _ => None,
+                }
+            })
+            .expect("removing one reached product state names its missing successor");
+        assert!(certificate.states.contains(&removed_successor));
     }
 }

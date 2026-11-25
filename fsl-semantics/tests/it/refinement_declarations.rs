@@ -798,10 +798,7 @@ fn refinement_bindings_use_canonical_package_identity_not_source_aliases() {
         .replace("Impl", "ConcreteModel");
     let graph = check_with(
         "",
-        &[
-            ("AbstractModel", SPEC, &spec),
-            ("ConcreteModel", CAS, &cas),
-        ],
+        &[("AbstractModel", SPEC, &spec), ("ConcreteModel", CAS, &cas)],
         &body,
     )
     .unwrap_or_else(|refusals| {
@@ -1068,6 +1065,22 @@ fn shaped(mut value: Value, (lower, upper, ordered): (u32, u32, bool), presence:
 /// chain, link }` over `Slot { value }`, whose `chain` is a
 /// `Sequence<Reference<Ring>>[0, 2]` and `link` an `Option<Reference<Ring>>`.
 fn nested_models() -> (Vec<u8>, Vec<u8>) {
+    fn tuple_construct(package: &str) -> Value {
+        json!({
+            "kind": {"module": package, "name": "tuple_type"},
+            "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "tuple", "members": {"positions": "required"}, "meaning": meaning::TUPLE_VALUE_TYPE}
+        })
+    }
+
+    fn variant_construct(package: &str) -> Value {
+        json!({
+            "kind": {"module": package, "name": "variant_type"},
+            "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "enumeration", "members": {"variants": "required"}, "meaning": meaning::VARIANT_TYPE}
+        })
+    }
+
     /// The record value type `Box { target }`, holding a `Reference<object>`.
     fn boxed(package: &str, object: &str) -> Value {
         declaration(
@@ -1088,18 +1101,89 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         })
     }
 
+    /// The value type `BoxOption`, an `Option<Box>`.
+    fn box_option(package: &str) -> Value {
+        json!({
+            "identity": node(package, "BoxOption"), "displayName": node(package, "BoxOption"),
+            "kind": "option", "roles": [], "origin": origin(package, "BoxOption"),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "inner": node(package, "Box"),
+        })
+    }
+
+    /// The value type `BoxMap`, a `Map<Text, Option<Box>>`.
+    fn box_map(package: &str) -> Value {
+        json!({
+            "identity": node(package, "BoxMap"), "displayName": node(package, "BoxMap"),
+            "kind": "map", "roles": [], "origin": origin(package, "BoxMap"),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "keys": "ix://filament/native/Text", "values": node(package, "BoxOption"),
+            "bound": {"lower": 0},
+        })
+    }
+
+    fn pair(package: &str, object: &str) -> Value {
+        declaration(
+            package,
+            "Pair",
+            "tuple_type",
+            json!({"positions": [
+                {"identity": node(package, "Pair/p0"), "typeRef": node(package, object), "origin": origin(package, "Pair/p0")},
+                {"identity": node(package, "Pair/p1"), "typeRef": BOOLEAN, "origin": origin(package, "Pair/p1")},
+            ]}),
+        )
+    }
+
+    fn holder(package: &str, object: &str) -> Value {
+        let source = |line| {
+            json!({"source": {
+                "sourceIdentity": node(package, "spec"), "path": "spec.fspec",
+                "startLine": line, "startColumn": 1,
+            }})
+        };
+        declaration(
+            package,
+            "Holder",
+            "variant_type",
+            json!({"variants": [
+                {"identity": node(package, "variant/Holder-Empty"), "name": "Empty", "origin": source(1)},
+                {"identity": node(package, "variant/Holder-Has"), "name": "Has", "payloadType": node(package, object), "origin": source(2)},
+            ]}),
+        )
+    }
+
+    /// The record value type `Parcel { owners: Sequence<Option<Reference<object>>> }`.
+    fn parcel(package: &str) -> Value {
+        let owners = shaped(
+            field(package, "Parcel", "owners", &node(package, "Maybe")),
+            (0, 2, true),
+            "required",
+        );
+        declaration(
+            package,
+            "Parcel",
+            "record_value_type",
+            json!({"fields": [owners]}),
+        )
+    }
+
     let (queue, cell) = (node(NESTED_SPEC, "Queue"), node(NESTED_SPEC, "Cell"));
     let single = (1, 1, false);
     let spec = document_with(
         NESTED_SPEC,
-        vec![construct(
-            NESTED_SPEC,
-            "record_value_type",
-            meaning::RECORD_VALUE_TYPE,
-        )],
+        vec![
+            construct(NESTED_SPEC, "record_value_type", meaning::RECORD_VALUE_TYPE),
+            tuple_construct(NESTED_SPEC),
+            variant_construct(NESTED_SPEC),
+        ],
         vec![
             boxed(NESTED_SPEC, "Queue"),
             maybe(NESTED_SPEC, "Queue"),
+            pair(NESTED_SPEC, "Queue"),
+            holder(NESTED_SPEC, "Queue"),
+            parcel(NESTED_SPEC),
+            box_option(NESTED_SPEC),
+            box_map(NESTED_SPEC),
             object_type(
                 NESTED_SPEC,
                 "Queue",
@@ -1111,6 +1195,11 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("maybes", &node(NESTED_SPEC, "Maybe")),
                     ("cells", &cell),
                     ("box", &node(NESTED_SPEC, "Box")),
+                    ("pair", &node(NESTED_SPEC, "Pair")),
+                    ("holder", &node(NESTED_SPEC, "Holder")),
+                    ("parcel", &node(NESTED_SPEC, "Parcel")),
+                    ("box_list", &node(NESTED_SPEC, "Box")),
+                    ("box_map", &node(NESTED_SPEC, "BoxMap")),
                 ],
                 Vec::new(),
             ),
@@ -1129,6 +1218,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     Some("chain" | "maybes") => ((0, 2, true), "required"),
                     Some("link") => (single, "optional"),
                     Some("cells") => ((0, 2, false), "required"),
+                    Some("box_list") => ((0, 2, true), "required"),
                     _ => continue,
                 };
                 *member = shaped(member.clone(), shape.0, shape.1);
@@ -1138,14 +1228,19 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
     let ring = node(NESTED_IMPL, "Ring");
     let concrete = document_with(
         NESTED_IMPL,
-        vec![construct(
-            NESTED_IMPL,
-            "record_value_type",
-            meaning::RECORD_VALUE_TYPE,
-        )],
+        vec![
+            construct(NESTED_IMPL, "record_value_type", meaning::RECORD_VALUE_TYPE),
+            tuple_construct(NESTED_IMPL),
+            variant_construct(NESTED_IMPL),
+        ],
         vec![
             boxed(NESTED_IMPL, "Ring"),
             maybe(NESTED_IMPL, "Ring"),
+            pair(NESTED_IMPL, "Ring"),
+            holder(NESTED_IMPL, "Ring"),
+            parcel(NESTED_IMPL),
+            box_option(NESTED_IMPL),
+            box_map(NESTED_IMPL),
             object_type(
                 NESTED_IMPL,
                 "Ring",
@@ -1156,6 +1251,11 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("maybes", &node(NESTED_IMPL, "Maybe")),
                     ("cargo", &node(NESTED_IMPL, "Slot")),
                     ("box", &node(NESTED_IMPL, "Box")),
+                    ("pair", &node(NESTED_IMPL, "Pair")),
+                    ("holder", &node(NESTED_IMPL, "Holder")),
+                    ("parcel", &node(NESTED_IMPL, "Parcel")),
+                    ("box_list", &node(NESTED_IMPL, "Box")),
+                    ("box_map", &node(NESTED_IMPL, "BoxMap")),
                 ],
                 Vec::new(),
             ),
@@ -1175,6 +1275,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                         *member = shaped(member.clone(), (0, 2, true), "required");
                     }
                     Some("link") => *member = shaped(member.clone(), single, "optional"),
+                    Some("box_list") => *member = shaped(member.clone(), (0, 2, true), "required"),
                     _ => {}
                 }
             }
@@ -1240,42 +1341,341 @@ fn a_row_nesting_a_reference_is_lifted_element_by_element() {
     assert_eq!(wrong.at, "self.cargo");
 }
 
-/// FR-135-AC-6 (TC-540 step 6), composite carriers: a reference nested in a
-/// record, tuple or union row is lifted too. Pending the pairing rule that
-/// says which abstract composite the lifted value takes; today such a row
-/// refuses `ill_typed`/`type-mismatch`.
-#[trace("TC-540", "FR-135-AC-6")]
+/// FR-135-AC-6 and AC-13..16: record fields, tuple positions, active union
+/// payloads, and a nested sequence of optional references lift recursively.
+#[trace(
+    "TC-540",
+    "FR-135-AC-6",
+    "FR-135-AC-13",
+    "FR-135-AC-14",
+    "FR-135-AC-15",
+    "FR-135-AC-16"
+)]
 #[test]
-#[ignore = "QSL-2959: composite nested-reference lifting"]
 fn a_row_nesting_a_reference_in_a_composite_is_lifted() {
     let (spec, concrete) = nested_models();
     let models = [
         ("Q", NESTED_SPEC, &spec[..]),
         ("R", NESTED_IMPL, &concrete[..]),
     ];
-    for (declarations, row) in [
-        ("", "box = self.box;"),
-        (
-            "tuple Pair(Reference<R::Ring>, Boolean);",
-            "box = Pair(self, true);",
-        ),
-        (
-            "union Holder { Empty, Has(Reference<R::Ring>) }",
-            "box = Holder::Has(self);",
-        ),
+    for row in [
+        "box = self.box;",
+        "pair = self.pair;",
+        "holder = self.holder;",
+        "parcel = self.parcel;",
     ] {
-        let graph = check_with(
-            "",
-            &models,
-            &format!("{declarations}\n{}", nested_refinement(row)),
-        )
-        .unwrap_or_else(|refusals| {
+        let graph = check_with("", &models, &nested_refinement(row)).unwrap_or_else(|refusals| {
             panic!(
                 "{row}: {:?}",
                 refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
             )
         });
         assert_eq!(only_refinement(&graph).objects().len(), 2, "{row}");
+    }
+}
+
+/// FR-135-AC-6 (TC-540): composite pairing reaches a record through a
+/// sequence and through a map value nested under an option.
+#[trace("TC-540", "FR-135-AC-6")]
+#[test]
+fn composite_pairing_reaches_through_sequence_and_map_option() {
+    let (spec, concrete) = nested_models();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+
+    let sequence = check_with("", &models, &nested_refinement("box_list = self.box_list;"))
+        .unwrap_or_else(|refusals| {
+            panic!(
+                "Sequence<Box> must pair its record element: {:?}",
+                refusals
+                    .iter()
+                    .map(|refusal| &refusal.refusal)
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(only_refinement(&sequence).objects().len(), 2);
+
+    let map_option = check_with("", &models, &nested_refinement("box_map = self.box_map;"))
+        .unwrap_or_else(|refusals| {
+            panic!(
+                "Map<Text, Option<Box>> must pair its record value: {:?}",
+                refusals
+                    .iter()
+                    .map(|refusal| &refusal.refusal)
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(only_refinement(&map_option).objects().len(), 2);
+}
+
+/// FR-135-AC-6 (TC-540): an unpaired reference inside a collection or a
+/// map/option value refuses the row instead of producing a checked graph.
+#[trace("TC-540", "FR-135-AC-6")]
+#[test]
+fn composite_pairing_refuses_unmapped_references_through_carriers() {
+    for (row, field_name) in [
+        ("box_list = self.box_list;", "box_list"),
+        ("box_map = self.box_map;", "box_map"),
+    ] {
+        let (spec, concrete) = nested_models();
+        let mut concrete: Value = serde_json::from_slice(&concrete).expect("a concrete model");
+        let boxed = concrete["types"]
+            .as_array_mut()
+            .expect("types")
+            .iter_mut()
+            .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Box"))
+            .expect("Box");
+        boxed["fields"][0]["typeRef"] = json!(node(NESTED_IMPL, "Slot"));
+        let concrete = concrete.to_string().into_bytes();
+        let models = [
+            ("Q", NESTED_SPEC, &spec[..]),
+            ("R", NESTED_IMPL, &concrete[..]),
+        ];
+
+        let found = refused(&models, &nested_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{field_name}"
+        );
+        assert_eq!(refusal.at, format!("self.{field_name}"));
+    }
+}
+
+/// FR-135-AC-6 (TC-540): both sides sharing a declaration does not map the
+/// object type it references. At top level, in an option, collection or map,
+/// and in a record, tuple or union, a shared `Reference<Queue>` that the
+/// `Queue` row maps is admitted; a shared `Reference<Ghost>` that no row maps
+/// refuses at the row's expression.
+#[trace("TC-540", "FR-135-AC-6")]
+#[test]
+fn a_shared_reference_without_an_object_row_is_refused() {
+    let (spec, _) = nested_models();
+    // The shared model with `head`, `link`, `chain`, the `box_map` values and
+    // the `Box`, `Pair` and `Holder` components referencing `object`.
+    let referencing = |object: &str| {
+        let mut model: Value = serde_json::from_slice(&spec).expect("a model");
+        let declarations = model["types"].as_array_mut().expect("types");
+        let target = node(NESTED_SPEC, object);
+        for declared in declarations.iter_mut() {
+            if declared["identity"] == node(NESTED_SPEC, "Queue") {
+                for member in declared["fields"].as_array_mut().expect("fields") {
+                    if matches!(member["name"].as_str(), Some("head" | "link" | "chain")) {
+                        member["typeRef"] = json!(target);
+                    }
+                }
+            } else if declared["identity"] == node(NESTED_SPEC, "BoxOption") {
+                declared["inner"] = json!(target);
+            } else if declared["identity"] == node(NESTED_SPEC, "Box") {
+                declared["fields"][0]["typeRef"] = json!(target);
+            } else if declared["identity"] == node(NESTED_SPEC, "Pair") {
+                declared["positions"][0]["typeRef"] = json!(target);
+            } else if declared["identity"] == node(NESTED_SPEC, "Holder") {
+                declared["variants"][1]["payloadType"] = json!(target);
+            }
+        }
+        declarations.push(object_type(
+            NESTED_SPEC,
+            "Ghost",
+            &[("value", INTEGER)],
+            Vec::new(),
+        ));
+        model.to_string().into_bytes()
+    };
+    let shared_refinement = |row: &str| {
+        format!(
+            "refinement SharedRows using inf abstract Q concrete Q {{\n\
+             population Q::queues from Q::queues;\n\
+             population Q::cells from Q::cells;\n\
+             object Q::Queue from Q::Queue {{ size = self.size; {row} }}\n\
+             object Q::Cell from Q::Cell {{ value = self.value; }}\n\
+             }}"
+        )
+    };
+    // Each row with its expression and, inside a composite, the component
+    // path the refusal names.
+    let rows = [
+        ("head = self.head;", "self.head", None),
+        ("link = self.link;", "self.link", None),
+        ("chain = self.chain;", "self.chain", None),
+        ("box_map = self.box_map;", "self.box_map", None),
+        ("box = self.box;", "self.box", Some("box.target")),
+        ("pair = self.pair;", "self.pair", Some("[0]")),
+        (
+            "holder = self.holder;",
+            "self.holder",
+            Some("holder.variant[0]"),
+        ),
+    ];
+
+    let mapped = referencing("Queue");
+    let unmapped = referencing("Ghost");
+    for (row, expression, path) in rows {
+        let models = [("Q", NESTED_SPEC, &mapped[..])];
+        let graph = check_with("", &models, &shared_refinement(row)).unwrap_or_else(|refusals| {
+            panic!(
+                "{row}: {:?}",
+                refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
+            )
+        });
+        assert_eq!(only_refinement(&graph).objects().len(), 2, "{row}");
+
+        let models = [("Q", NESTED_SPEC, &unmapped[..])];
+        let found = refused(&models, &shared_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{row}"
+        );
+        assert_eq!(refusal.at, expression, "{row}");
+        let Some(path) = path else {
+            continue;
+        };
+        let CheckCause::Refinement(refinement) = refusal.refusal.cause.as_ref() else {
+            panic!("the unmapped reference has a refinement refusal");
+        };
+        let RefinementCause::Check(CheckCause::Refinement(nested)) = &refinement.cause else {
+            panic!("the nested refusal retains its typed mismatch path");
+        };
+        assert_eq!(
+            nested.cause,
+            RefinementCause::CompositeTypeMismatch {
+                path: path.to_owned(),
+            },
+            "{row}"
+        );
+    }
+}
+
+/// FR-135-AC-17 (TC-540): a record with no same-name component refuses at
+/// S3, so it cannot produce a checked refinement.
+#[trace("TC-540", "FR-135-AC-17")]
+#[test]
+fn a_record_with_a_missing_paired_field_is_refused() {
+    let (spec, concrete) = nested_models();
+    let mut concrete: Value = serde_json::from_slice(&concrete).expect("a concrete model");
+    let declarations = concrete["types"].as_array_mut().expect("types");
+    let boxed = declarations
+        .iter_mut()
+        .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Box"))
+        .expect("Box");
+    boxed["fields"] = json!([field(
+        NESTED_IMPL,
+        "Box",
+        "link",
+        &node(NESTED_IMPL, "Ring")
+    )]);
+    let concrete = concrete.to_string().into_bytes();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+    let found = refused(&models, &nested_refinement("box = self.box;"));
+    let wrong = only(&found);
+    assert_eq!(
+        wrong.code_and_cause(),
+        (Code::IllTyped, Some("type-mismatch"))
+    );
+    assert_eq!(wrong.at, "self.box");
+}
+
+/// FR-135-AC-17..19 (TC-540): every structural mismatch refuses the S3
+/// refinement, so none can be represented by a `CheckedRefinement`.
+#[trace("TC-540", "FR-135-AC-17", "FR-135-AC-18", "FR-135-AC-19")]
+#[test]
+fn mismatched_composite_reference_shapes_are_refused() {
+    for mismatch in ["record field", "tuple arity", "union tag"] {
+        let (spec, concrete) = nested_models();
+        let mut concrete: Value = serde_json::from_slice(&concrete).expect("a concrete model");
+        let declarations = concrete["types"].as_array_mut().expect("types");
+        match mismatch {
+            "record field" => {
+                let boxed = declarations
+                    .iter_mut()
+                    .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Box"))
+                    .expect("Box");
+                boxed["fields"] = json!([field(
+                    NESTED_IMPL,
+                    "Box",
+                    "link",
+                    &node(NESTED_IMPL, "Ring")
+                )]);
+            }
+            "tuple arity" => {
+                let pair = declarations
+                    .iter_mut()
+                    .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Pair"))
+                    .expect("Pair");
+                pair["positions"]
+                    .as_array_mut()
+                    .expect("positions")
+                    .push(json!({
+                        "identity": node(NESTED_IMPL, "Pair/p2"),
+                        "typeRef": BOOLEAN,
+                        "origin": origin(NESTED_IMPL, "Pair/p2"),
+                    }));
+            }
+            "union tag" => {
+                let holder = declarations
+                    .iter_mut()
+                    .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Holder"))
+                    .expect("Holder");
+                holder["variants"][1]["name"] = json!("Points");
+                holder["variants"][1]["identity"] =
+                    json!(node(NESTED_IMPL, "variant/Holder-Points"));
+            }
+            _ => unreachable!("the fixture lists only owned mismatches"),
+        }
+        let concrete = concrete.to_string().into_bytes();
+        let models = [
+            ("Q", NESTED_SPEC, &spec[..]),
+            ("R", NESTED_IMPL, &concrete[..]),
+        ];
+        let row = match mismatch {
+            "record field" => "box = self.box;",
+            "tuple arity" => "pair = self.pair;",
+            "union tag" => "holder = self.holder;",
+            _ => unreachable!(),
+        };
+        let found = refused(&models, &nested_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{mismatch}"
+        );
+        assert_eq!(
+            refusal.at,
+            match mismatch {
+                "record field" => "self.box",
+                "tuple arity" => "self.pair",
+                "union tag" => "self.holder",
+                _ => unreachable!(),
+            }
+        );
+        let CheckCause::Refinement(refinement) = refusal.refusal.cause.as_ref() else {
+            panic!("the structural mismatch has a refinement refusal");
+        };
+        let RefinementCause::Check(CheckCause::Refinement(structural)) = &refinement.cause else {
+            panic!("the nested structural refusal retains its typed mismatch path");
+        };
+        assert_eq!(
+            structural.cause,
+            RefinementCause::CompositeTypeMismatch {
+                path: match mismatch {
+                    "record field" => "box.target",
+                    "tuple arity" => "[2]",
+                    "union tag" => "holder.variant",
+                    _ => unreachable!(),
+                }
+                .to_owned(),
+            },
+            "{mismatch}"
+        );
     }
 }
 
@@ -1301,11 +1701,7 @@ fn an_abstract_field_with_no_row_is_hidden() {
 fn changing_a_field_mapping_changes_the_refinement_node_identity() {
     let base = cas_refines_counter();
     let direct = checked_counter(&base);
-    let changed = checked_counter(&mutated(
-        &base,
-        "value = self.value;",
-        "value = self.tmpA;",
-    ));
+    let changed = checked_counter(&mutated(&base, "value = self.value;", "value = self.tmpA;"));
     let direct_node = only_refinement(&direct)
         .requirement_occurrence()
         .expect("the checked refinement has a V2 occurrence")

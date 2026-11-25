@@ -15,7 +15,7 @@ use filament_semantic_value::location::{
 };
 
 use super::state::AnchorInput;
-use super::{fault, Binder, Binders, Lowering};
+use super::{Binder, Binders, Lowering, fault};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{BindingValue, BodyTerm, LeafTerm, LiteralValue, MemberTerm};

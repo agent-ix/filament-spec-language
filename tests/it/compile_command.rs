@@ -1277,10 +1277,7 @@ fn a_library_source_over_the_default_dependent_byte_ceiling_can_be_raised() {
     .expect("raising the aggregate ceiling does not raise the per-source S1 ceiling");
     let s1_failure = s1_error.value().unwrap();
     assert_eq!(s1_failure["code"], "stage_limit_exceeded", "{s1_failure}");
-    assert_eq!(
-        s1_failure["cause"], "input-bytes-exceeded",
-        "{s1_failure}"
-    );
+    assert_eq!(s1_failure["cause"], "input-bytes-exceeded", "{s1_failure}");
     assert_eq!(s1_failure["stage"], "source", "{s1_failure}");
     assert!(
         s1_failure["message"]
@@ -1318,6 +1315,56 @@ fn a_library_source_over_the_default_dependent_byte_ceiling_can_be_raised() {
     )
     .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert!(!outcome.package_bytes().is_empty());
+}
+
+/// NFR-011-M-5: a rational literal one bit over the published default is
+/// refused by S3 at the literal, with the rational-bits setting and bound.
+#[test]
+#[trace("TC-620", "NFR-011-M-5")]
+fn rational_literal_over_the_default_bit_ceiling_refuses_at_its_literal() {
+    let numerator = filament_exact::Integer::one()
+        .shifted_left(65_536)
+        .to_string();
+    let program = format!(
+        "{SPINE_HEADER}function F using v(): Rational[0, 1; 1, 1] pure {{ rational({numerator}, {numerator}) }}\n"
+    );
+    let directory = tempfile::tempdir().expect("scratch compile directory");
+    spine_request(directory.path(), program.as_bytes());
+
+    let limits = fsl_replay::spine::SpineLimits::default();
+    assert_eq!(limits.checking.rational_bits(), 65_536);
+    let overrides = fsl_command::command::RequestOverrides {
+        limits: Some(&limits),
+        ..Default::default()
+    };
+    let error = match fsl_command::command::compile_outcome_with_limits_and_overrides(
+        &directory.path().join("compile.json"),
+        fsl_command::command::RunLimits::default(),
+        &overrides,
+    ) {
+        Ok(_) => panic!("a 65,537-bit literal exceeds the 65,536-bit default"),
+        Err(error) => error,
+    };
+    let fsl_command::command::RunCause::Spine(spine) = error.cause else {
+        panic!("the refusal belongs to S3: {error}");
+    };
+    let fsl_replay::spine::CompileRefusal::Limit(limit) = spine.refusal else {
+        panic!(
+            "the front end returns a typed limit refusal: {:?}",
+            spine.refusal
+        );
+    };
+    assert_eq!(limit.setting().name(), "s3.rational_bits");
+    assert_eq!((limit.configured_bound(), limit.actual()), (65_536, 65_537));
+    assert!(
+        limit.locus().is_some(),
+        "the refused literal has a source locus"
+    );
+
+    let span = spine.span.expect("the refusal has a source locus");
+    let literal_start = program.find(&numerator).expect("the authored numerator");
+    assert!(span.start.byte <= literal_start, "{span:?}");
+    assert!(span.end.byte > literal_start, "{span:?}");
 }
 
 /// FR-480-AC-19 (TC-2179): a compile request whose `program` is `[]` is a

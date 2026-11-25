@@ -1360,9 +1360,10 @@ fn a_body_may_use_enum_members_declared_functions_and_let() {
     }
 }
 
-/// The same forms refuse when they are misused: a member of no enum, an enum
-/// compared with an integer, a call of no function or with the wrong
-/// arguments, and a `let` binder used past its body.
+/// The same forms refuse when they are misused: a case a declared enum lacks,
+/// a member whose qualifier names no type, an enum compared with an integer,
+/// a call of no function or with the wrong arguments, and a `let` binder used
+/// past its body.
 #[trace("TC-597", "FR-013-AC-3")]
 #[test]
 fn misused_enum_members_calls_and_let_binders_refuse() {
@@ -1373,6 +1374,10 @@ fn misused_enum_members_calls_and_let_binders_refuse() {
     for (declarations, code) in [
         (
             format!("{PHASE}{}", relation_over("Phase::NONE = Phase::OPEN")),
+            Code::IllTyped,
+        ),
+        (
+            format!("{PHASE}{}", relation_over("Nope::OPEN = Phase::OPEN")),
             Code::MissingDeclaration,
         ),
         (
@@ -1534,8 +1539,9 @@ fn relation_and_hyper_atom_bodies_share_value_typer_refusals() {
     }
 }
 
-/// A `let` may not rebind a binder in scope or a variable of the clause, as
-/// the value typer refuses a `let` that rebinds a parameter.
+/// A `let` may not rebind a binder in scope or a variable of the clause. A
+/// function parameter is neither: the value typer admits a `let` that shadows
+/// it.
 #[trace("TC-597")]
 #[test]
 fn a_let_binder_may_not_shadow_a_binder_or_a_variable() {
@@ -1558,7 +1564,7 @@ fn a_let_binder_may_not_shadow_a_binder_or_a_variable() {
             "{body}: {faults:?}"
         );
     }
-    assert!(!value_typer_admits("", "x: Integer", "let x = 1 in x = 1"));
+    assert!(value_typer_admits("", "x: Integer", "let x = 1 in x = 1"));
     // Two lets in separate operands do not shadow each other.
     body_outcome(&relation_over(
         "(let n = 1 in n = 1) and (let n = true in n)",
