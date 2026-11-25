@@ -1845,8 +1845,8 @@ fn bounded_fair_eventual_remains_in_the_bounded_profile() {
 #[trace("FR-1042-AC-22")]
 #[test]
 fn fair_exact_fallback_is_not_yet() {
-    const CLAIM: &str = "probabilistic FairHalf using inf on M over (w: M::W) under every scheduler fair strong W::go on origin { probability >= 0.4 [ eventually holds(w.g) ] }";
-    let world = World::new(&prob_world::fair_bounds_w(CLAIM));
+    const CLAIM: &str = "probabilistic FairHalf using inf on M over (o: M::Once) under every scheduler fair strong Once::go on origin { probability >= 0.4 [ eventually holds(o.done) ] }";
+    let world = World::new(&prob_world::one_shot(CLAIM));
     let item = exact_probabilistic_item(
         RequestIndex::new(0),
         world.request("FairHalf", ModelCheckLimits::default()),
