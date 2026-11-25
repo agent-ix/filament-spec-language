@@ -92,6 +92,7 @@ required-features = ["allocation-probe"]
 [[test]]
 name = "evaluator_cost_report"
 path = "tests/it/evaluator_cost_report.rs"
+required-features = ["allocation-probe"]
 
 [[bench]]
 name = "text_cluster"
