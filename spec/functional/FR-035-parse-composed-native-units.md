@@ -48,12 +48,15 @@ If a selected edition is unavailable, then the parser SHALL return the typed unk
 If a syntax budget is exhausted, then the parser SHALL return `stage_limit_exceeded` with the budget's `<kind>-exceeded` cause (`filament.native.diagnostics/v1`; the token budget is `token-count-exceeded`) without an admitted unit.
 
 Qualified model/member positions accept edition-reserved ASCII words under the
-shared grammar; native binder positions do not. So a model-declared
-operation parameter whose name is a reserved word (such as `by`) parses only
-in its qualified form `M::T::op::by`, which FR-104 resolves to the parameter
-in a `pre` or `post` body; the bare word is no expression. The parser does not scan a second
-expression string inside `holds`, guards, captures, queries or choreography
-nodes. It retains explicit grouping, precedence, the temporal-constant versus
+shared grammar. Native binder positions continue to reject reserved words,
+except that a complete-V1 object-operation parameter name admits the single
+reserved spelling `by` through FR-569's `operation-parameter` production. No
+other binder position changes. A model-declared operation parameter named
+`by` is read in a `pre` or `post` body only through its qualified form
+`M::T::op::by`, which FR-104 resolves to the parameter; bare `by` remains no
+expression. The parser does not scan a second expression string inside
+`holds`, guards, captures, queries or choreography nodes. It retains explicit
+grouping, precedence, the temporal-constant versus
 `holds(true)` distinction and all authored selectors. Parsing a valid form is
 separate from admitting its selected profile; balanced text is never a
 substitute for a family syntax tree.
