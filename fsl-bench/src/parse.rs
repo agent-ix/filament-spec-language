@@ -2,6 +2,8 @@
 //! S1 parser inputs: complete-V1 source text for `fsl_cst::parse`, and the
 //! classification of what one parse returned.
 
+use ix_trace_rs::implements;
+
 use fsl_cst::{Limits, ParsedSource, ParserContext};
 use fsl_foundation::SourceIdentity;
 
@@ -17,6 +19,7 @@ pub const PRELUDE: &str = concat!(
 pub const IDENTITY: &str = "bench:qsl-196";
 
 /// One benchmark process's reused caller-owned parser context.
+#[implements("NFR-141-AC-10")]
 pub struct ParseSession {
     context: ParserContext,
 }
@@ -24,6 +27,7 @@ pub struct ParseSession {
 impl ParseSession {
     /// Construct the parser context once for this benchmark process.
     #[must_use]
+    #[implements("NFR-141-AC-10")]
     pub fn new() -> Self {
         Self {
             context: ParserContext::new(),
@@ -31,11 +35,19 @@ impl ParseSession {
     }
 
     /// Parse `text` under the default limits using this session's context.
+    #[implements("NFR-141-AC-10")]
     pub fn parse(&self, text: &str) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
         self.parse_with(text, Limits::default())
     }
 
-    /// Parse `text` under `limits` using this session's context.
+    /// The context reused by this process-owned benchmark session.
+    #[implements("NFR-141-AC-10")]
+    pub fn context(&self) -> &ParserContext {
+        &self.context
+    }
+
+    /// Parse  under  using this session’s context.
+    #[implements("NFR-141-AC-10")]
     pub fn parse_with(
         &self,
         text: &str,
@@ -75,25 +87,22 @@ pub fn volume_source(functions: usize) -> String {
     text
 }
 
-/// Parse `text` under [`IDENTITY`] at the default [`Limits`].
-///
-/// The outer `Err` is `fsl_cst::parse`'s own fatal source or resource
-/// refusal, returned as is.
-pub fn parse(text: &str) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
-    parse_with(text, Limits::default())
+/// Parse text at the default limits, reusing the caller-owned session.
+#[implements("NFR-141-AC-10")]
+pub fn parse(session: &ParseSession, text: &str) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
+    session.parse(text)
 }
 
-/// Parse `text` under [`IDENTITY`] at `limits`.
-///
-/// # Errors
-///
-/// `fsl_cst::parse`'s own fatal source or resource refusal, returned as is.
+/// Parse text at the requested limits, reusing the caller-owned session.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with(
+    session: &ParseSession,
     text: &str,
     limits: Limits,
 ) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
-    ParseSession::new().parse_with(text, limits)
+    session.parse_with(text, limits)
 }
+
 
 /// What one parse returned, reduced to benchmark outcome metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -170,16 +179,16 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    #[trace("NFR-141-AC-10", "NFR-141-AC-11")]
     #[test]
     fn depth_zero_uses_the_ticket_150_byte_input() {
         assert_eq!(nested_source(0).len(), 150);
     }
-
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn smallest_inputs_parse() {
+        let session = ParseSession::new();
         for text in [nested_source(0), volume_source(1)] {
-            assert!(ParseOutcome::of(&parse(&text)).is_admitted(), "{text}");
+            assert!(ParseOutcome::of(&session.parse(&text)).is_admitted(), "{text}");
         }
     }
 

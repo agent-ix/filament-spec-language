@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! One bounded interpreter for the declarative complete-V1 grammar.
+use ix_trace_rs::implements;
+
 use std::collections::BTreeSet;
 
 use logos::Logos;
@@ -137,7 +139,7 @@ fn format_expected(
     format!("expected {}", alternatives.join(" or "))
 }
 
-#[implements("FR-762-AC-7")]
+#[implements("FR-762-AC-7", "NFR-141-AC-10")]
 #[ix_trace_rs::string_edge]
 pub(super) fn parse(
     source: Source,

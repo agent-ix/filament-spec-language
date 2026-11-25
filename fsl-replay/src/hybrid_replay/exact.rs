@@ -4,6 +4,8 @@
 //! instant that makes a reproduced trace a `formula` or an
 //! `undefined-evaluation` counterexample.
 
+use ix_trace_rs::implements;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::Rational;

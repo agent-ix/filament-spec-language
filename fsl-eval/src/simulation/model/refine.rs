@@ -7,6 +7,7 @@
 //! system's own states by FR-101's state key. Both need the system's private
 //! state model, so this module is the one place the refinement reads it.
 
+use ix_trace_rs::implements;
 use filament_checked::key::DeclarationKey;
 use filament_eval::{FamilyOutcome, FamilyResult};
 use filament_exact::{Meter, ObjectReference, Outcome, Value};
@@ -81,12 +82,32 @@ impl ModelSystem<'_> {
     /// and the clock-count and presence-bit ranges, in the order
     /// [`Self::initial_states`] lists them. No state past the last one pulled is
     /// cloned or built, so an exponential set is never held.
+    #[implements("FR-126-AC-26")]
     pub fn generated_initial(&self) -> Box<dyn Iterator<Item = ModelSimState> + '_> {
-        super::generated(&self.initial_base, &self.initial_stages)
+        #[cfg(feature = "test-support")]
+        {
+            super::generated(
+                &self.initial_base,
+                &self.initial_stages,
+                &self.generated_initial,
+            )
+        }
+        #[cfg(not(feature = "test-support"))]
+        {
+            super::generated(&self.initial_base, &self.initial_stages)
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    #[implements("FR-126-AC-26")]
+    pub fn generated_initial_count(&self) -> u64 {
+        self.generated_initial
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Admit model initial-state recipes without materializing a generated
     /// `ModelSimState` delivered past the distinct-root budget.
+    #[implements("FR-126-AC-26")]
     pub(crate) fn generated_initial_for_check<'s>(
         &'s self,
         max_states: usize,
@@ -354,7 +375,14 @@ impl ModelSystem<'_> {
                     "recipe projection key agrees"
                 );
             }
-            super::count_generated_initial_state();
+            #[cfg(feature = "test-support")]
+            {
+                let _ = self.generated_initial.fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |count| Some(count.saturating_add(1)),
+                );
+            }
             Some(Ok(generated))
         }))
     }

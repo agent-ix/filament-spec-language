@@ -37,6 +37,8 @@
 //! `p(u, .)` by counting them with a Sturm-Tarski query, not by a squarefree
 //! reduction.
 
+use ix_trace_rs::implements;
+
 use std::cell::RefCell;
 use std::cmp::Ordering;
 

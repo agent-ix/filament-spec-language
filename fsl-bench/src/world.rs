@@ -10,6 +10,8 @@
 //! a measured result, so every constructor returns it as an error for the
 //! axis's smallest-size test to fail on.
 
+use ix_trace_rs::implements;
+
 use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
@@ -368,22 +370,18 @@ impl ModelSetupCache {
     ///
     /// # Errors
     /// [`WorldError`] naming the stage that refused this case.
+    #[implements("NFR-141-AC-10")]
     pub fn build(&mut self, model: &Model) -> Result<World, WorldError> {
         World::build_using(model, Some(&mut self.entries), &self.parser)
     }
 }
 
 impl World {
-    /// `model`, checked.
+    /// Builds the world using an explicit parser context.
     ///
     /// # Errors
-    ///
-    /// [`WorldError`] naming the stage that refused the generated unit.
-    pub fn build(model: &Model) -> Result<Self, WorldError> {
-        Self::build_with_context(model, &fsl_cst::ParserContext::new())
-    }
-
-    /// Build a world using a process-owned parser context.
+    /// WorldError naming the stage that refused the generated unit.
+    #[implements("NFR-141-AC-10")]
     pub fn build_with_context(
         model: &Model,
         parser: &fsl_cst::ParserContext,

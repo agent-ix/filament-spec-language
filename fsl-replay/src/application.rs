@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-485: in-process checked-closure acquisition and application through the replay facade.
 
+use ix_trace_rs::implements;
+
 use filament_checked::node::NodeKind;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};

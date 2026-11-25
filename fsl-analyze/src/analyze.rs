@@ -1453,6 +1453,7 @@ impl AnalyzeRefusal {
         self.refusal_document().with_empty_analyze_members()
     }
 
+    #[implements("FR-110-AC-16")]
     fn refusal_document(&self) -> OutcomeDocument {
         match self {
             Self::EffectDecision(refusal) => {

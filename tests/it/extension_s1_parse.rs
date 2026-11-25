@@ -67,7 +67,7 @@ fn held(keywords: &[&str]) -> HeldExtensions {
 }
 
 fn parse(held: &HeldExtensions, declarations: &str) -> ParsedSource {
-    parse_with_extensions(
+    parse_with_extensions(&filament_spec_language::complete::CompleteParser::new(),
         identity(),
         "unit.native",
         format!("{HEADER}{declarations}\n").as_bytes(),

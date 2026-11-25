@@ -100,6 +100,8 @@ mod closed;
 mod lift;
 mod reductions;
 
+use ix_trace_rs::implements;
+
 use std::cell::{Cell, Ref};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
@@ -538,8 +540,13 @@ impl Totals {
         }
     }
 
+    #[implements("FR-126-AC-26")]
     fn stats(&self) -> RunStats {
         RunStats {
+            #[cfg(feature = "test-support")]
+            generated_model_initial_states: 0,
+            #[cfg(feature = "test-support")]
+            constructed_protocol_initial_states: 0,
             product_states: self.states,
             product_edges: self.edges,
             stutter_edges: 0,

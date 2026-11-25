@@ -4,6 +4,8 @@
 //! Every branch's polynomials are collected before CAD projection or witness
 //! search, so an early witness cannot hide a later time-cell boundary.
 
+use ix_trace_rs::implements;
+
 use std::cmp::Ordering;
 use std::rc::Rc;
 

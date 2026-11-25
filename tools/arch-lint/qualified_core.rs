@@ -55,6 +55,8 @@
 //! A path method (`.exists()`, `.metadata()`) is matched by name, so a
 //! same-named method on another type matches too; it is renamed.
 
+use ix_trace_rs::implements;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt, fs,
@@ -741,6 +743,7 @@ pub(crate) struct AmbientFinding {
 
 /// The line of every `static mut` and every `static` whose type names one
 /// of [`MUTABLE_STATIC_TYPES`], including mutable types reached through aliases.
+#[implements("FR-284-AC-4")]
 fn mutable_static_lines(parsed: &syn::File) -> BTreeSet<usize> {
     fn mutable_type(
         ty: &syn::Type,
@@ -795,6 +798,7 @@ fn mutable_static_lines(parsed: &syn::File) -> BTreeSet<usize> {
 
 /// Scan one file. `exempt` names a function whose findings of one category
 /// are not reported ([`FCD_LIFT_SCRATCH`]).
+#[implements("FR-284-AC-4")]
 fn scan_file(
     path: &Path,
     compiled: &[(Ambient, Vec<CallPattern>)],
@@ -835,6 +839,7 @@ fn scan_file(
 
 /// FR-284's ambient-input scan over the shipped source of every core crate
 /// under `fsl_root`.
+#[implements("FR-284-AC-4")]
 pub(crate) fn scan_ambient(fsl_root: &Path) -> Result<Vec<AmbientFinding>> {
     let compiled: Vec<(Ambient, Vec<CallPattern>)> = AMBIENT
         .iter()

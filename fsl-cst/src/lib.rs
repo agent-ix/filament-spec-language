@@ -103,6 +103,7 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
     fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "input-bytes-exceeded"),
 ];
 
+use ix_trace_rs::implements;
 use filament_exact::Cancel;
 use fsl_foundation::selection::SourceSelections;
 use fsl_foundation::{Source, SourceIdentity, Span};
@@ -286,6 +287,7 @@ fn shifted_selections(selections: &SourceSelections, at: usize, added: usize) ->
 /// Construct one context at the process entry point and reuse it for each source
 /// that uses the default grammar. Caller-supplied extension forms are assembled
 /// for that parse and do not change these default tables.
+#[implements("NFR-141-AC-10")]
 pub struct ParserContext {
     grammar: grammar::Grammar,
     reserved_words: BTreeSet<&'static str>,
@@ -295,6 +297,7 @@ pub struct ParserContext {
 impl ParserContext {
     /// Construct one complete-V1 grammar context.
     #[must_use]
+    #[implements("NFR-141-AC-10")]
     pub fn new() -> Self {
         let grammar = grammar::complete_v1();
         let reserved_words = grammar::default_reserved_words(&grammar);
@@ -307,6 +310,7 @@ impl ParserContext {
     }
 
     /// Parse bytes with the default complete-V1 grammar.
+    #[implements("NFR-141-AC-10")]
     pub fn parse(
         &self,
         identity: SourceIdentity,
@@ -318,6 +322,7 @@ impl ParserContext {
     }
 
     /// Parse bytes under a caller-owned [`Cancel`] handle (FR-276).
+    #[implements("NFR-141-AC-10")]
     pub fn parse_with_cancel(
         &self,
         identity: SourceIdentity,
@@ -331,6 +336,7 @@ impl ParserContext {
     }
 
     /// Parse bytes where each supplied form is also a top-level declaration form (FR-354).
+    #[implements("NFR-141-AC-10")]
     pub fn parse_with_extensions(
         &self,
         identity: SourceIdentity,
@@ -345,6 +351,7 @@ impl ParserContext {
     }
 
     /// Parse an already admitted exact source.
+    #[implements("NFR-141-AC-10")]
     pub fn parse_source(
         &self,
         source: Source,
@@ -360,6 +367,7 @@ impl ParserContext {
     }
 }
 
+#[implements("NFR-141-AC-10")]
 impl Default for ParserContext {
     fn default() -> Self {
         Self::new()
@@ -369,6 +377,7 @@ impl Default for ParserContext {
 /// Parse complete-V1 source while retaining every original source byte.
 /// Invalid syntax returns a recovered [`ParsedSource`]; only fatal source or
 /// resource failures use the outer error result.
+#[implements("NFR-141-AC-10")]
 pub fn parse(
     identity: SourceIdentity,
     path: impl Into<String>,
@@ -379,6 +388,7 @@ pub fn parse(
 }
 
 /// Parse with a caller-owned cancellation handle (FR-276).
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_cancel(
     identity: SourceIdentity,
     path: impl Into<String>,
@@ -390,6 +400,7 @@ pub fn parse_with_cancel(
 }
 
 /// Parse with caller-supplied extension forms (FR-354).
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_extensions(
     identity: SourceIdentity,
     path: impl Into<String>,
@@ -402,6 +413,7 @@ pub fn parse_with_extensions(
 }
 
 /// Parse an already admitted exact source.
+#[implements("NFR-141-AC-10")]
 pub fn parse_source(
     source: Source,
     limits: Limits,

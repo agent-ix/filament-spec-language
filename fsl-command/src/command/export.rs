@@ -10,6 +10,8 @@ mod lower;
 mod map;
 mod request;
 
+use ix_trace_rs::implements;
+
 use super::{
     check_sources, intake_with_bytes, output::NativeResult, output_file, wire, ExportSelection,
     FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult,
@@ -821,6 +823,7 @@ fn assembled(
 
 /// The cause of an admission refusal of the compiled package: the refusal's
 /// own catalogued code, typed cause and pointer, and the identity at fault.
+#[implements("FR-110-AC-16")]
 fn admission_cause(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
     if let Some(failure) = refusal.host_allocation_failure {
         return RunCause::AnalyzePackage {

@@ -19,6 +19,8 @@ pub use editor::{
     DocumentNavigation, DocumentSnapshot, DocumentSymbol, FormatCorrespondence, FormatResponse,
 };
 
+use ix_trace_rs::implements;
+
 use fsl_cst::ParserContext;
 use fsl_cst::{CompleteDiagnostic, Limits, ParsedSource};
 use fsl_foundation::selection::ProfileCatalog;
@@ -34,6 +36,7 @@ pub struct CompleteParser {
 impl CompleteParser {
     /// Construct the parser context once for a process entry.
     #[must_use]
+    #[implements("NFR-141-AC-10")]
     pub fn new() -> Self {
         Self {
             context: ParserContext::new(),
@@ -41,6 +44,7 @@ impl CompleteParser {
     }
 
     /// Parse while validating profiles against `catalog`, reusing this process context.
+    #[implements("NFR-141-AC-10")]
     pub fn parse_with_catalog(
         &self,
         identity: SourceIdentity,
@@ -53,6 +57,7 @@ impl CompleteParser {
     }
 
     /// Parse with held extension forms using this process context.
+    #[implements("NFR-141-AC-10")]
     pub fn parse_with_extensions(
         &self,
         identity: SourceIdentity,
@@ -89,14 +94,16 @@ pub fn header_profile_catalog() -> ProfileCatalog {
 /// Parse while validating every selected profile against an exact definition
 /// catalog. An older catalog retains all bytes and reports the unknown profile
 /// at its source selection.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_catalog(
+    parser: &CompleteParser,
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
     catalog: &ProfileCatalog,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    CompleteParser::new().parse_with_catalog(identity, path, bytes, catalog, limits)
+    parser.parse_with_catalog(identity, path, bytes, catalog, limits)
 }
 
 fn parse_with_catalog_using(
@@ -131,14 +138,16 @@ fn parse_with_catalog_using(
 /// held definitions' productions only: a held leading keyword begins a
 /// declaration form at the first token of a top-level declaration and is an
 /// ordinary identifier anywhere else.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_extensions(
+    parser: &CompleteParser,
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
     held: &HeldExtensions,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    CompleteParser::new().parse_with_extensions(identity, path, bytes, held, limits)
+    parser.parse_with_extensions(identity, path, bytes, held, limits)
 }
 
 fn parse_with_extensions_using(

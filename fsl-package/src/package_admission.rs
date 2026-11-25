@@ -4,6 +4,8 @@
 //! reader with the request's supplied domain package documents as evidence,
 //! with no fallback to source compilation.
 
+use ix_trace_rs::implements;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -19,6 +21,7 @@ use crate::checked_v2::{ImportViewRefusal, V2ReadLimits, V2ReadRefusal};
 
 /// A package the strict reader refused.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[implements("FR-110-AC-16")]
 pub struct PackageAdmissionRefusal {
     /// Original cumulative read-budget denial, when admission exhausted it.
     pub limit: Option<Box<fsl_foundation::diagnostic::LimitExceeded>>,
@@ -153,6 +156,7 @@ pub fn admit_checked_package_with_budget(
 ///
 /// # Errors
 /// Preserves strict-reader refusals and cumulative typed budget denials.
+#[implements("FR-110-AC-16")]
 pub fn admit_checked_package_with_evidence(
     bytes: &[u8],
     evidence: &CheckedPackageEvidence,
@@ -217,6 +221,7 @@ pub fn admit_checked_package_with_evidence(
 ///
 /// # Errors
 /// Refuses conflicting documents or library identities through IR's insertion API.
+#[implements("FR-110-AC-16")]
 pub fn checked_package_evidence(
     documents: &BTreeMap<String, Vec<u8>>,
     dependencies: &BTreeMap<String, Arc<CheckedPackageV2>>,
@@ -258,6 +263,7 @@ pub fn checked_package_evidence(
 /// The refusal IR's reader raised, with its pointer and typed cause. The
 /// identity at fault is the caller's to read from the bytes.
 #[ix_trace_rs::string_edge]
+#[implements("FR-110-AC-16")]
 fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal {
     let pointer = refusal
         .loci
@@ -293,6 +299,7 @@ fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal
 impl PackageAdmissionRefusal {
     /// The strict reader's cause, when the reader supplied one.
     #[must_use]
+    #[implements("FR-110-AC-16")]
     pub fn reader_cause(&self) -> Option<&'static str> {
         self.cause.map(cause_spelling)
     }
@@ -327,6 +334,7 @@ impl PackageAdmissionRefusal {
     /// catalog default of the code (`insufficient-next-charge` for a reached
     /// ceiling, `missing-selection` for a missing import, `invalid-value`
     #[must_use]
+    #[implements("FR-110-AC-16")]
     pub fn catalog_cause(&self) -> &'static str {
         let default = match self.code {
             Code::ResourceExhausted => "insufficient-next-charge",
@@ -390,6 +398,7 @@ impl PackageAdmissionRefusal {
     }
 }
 
+#[implements("FR-110-AC-16")]
 fn cause_spelling(cause: CheckedPackageRefusalCause) -> &'static str {
     match cause {
         CheckedPackageRefusalCause::MalformedJson => "malformed-json",

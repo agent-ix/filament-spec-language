@@ -210,14 +210,17 @@ fn bound_parameter() -> Rule {
     s(vec![x("("), r(P::Parameter), x(")")])
 }
 
+#[implements("FR-284-AC-4", "NFR-141-AC-10")]
 pub(super) fn complete_v1() -> Grammar {
     complete_v1_with(&ExtensionForms::default())
 }
 
+#[implements("FR-284-AC-4", "NFR-141-AC-10")]
 pub(super) fn default_reserved_words(grammar: &Grammar) -> BTreeSet<&'static str> {
     complete_reserved_words(grammar)
 }
 
+#[implements("FR-284-AC-4", "NFR-141-AC-10")]
 pub(super) fn default_compound_spellings(grammar: &Grammar) -> Box<[&'static str]> {
     complete_compound_spellings(grammar).into_boxed_slice()
 }

@@ -10,6 +10,8 @@
 //! [`fsl_package::BarePackage`] of the admitted package. No source is read or
 //! compiled, and no refusal falls back to source.
 
+use ix_trace_rs::implements;
+
 use std::path::Path;
 
 use fsl_replay::CertificationPolicy;
@@ -142,6 +144,7 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
 /// The request-stage refusal of a package the strict reader refused, with
 /// the reader's pointer under `/request/package` (FR-1039).
 #[ix_trace_rs::string_edge]
+#[implements("FR-110-AC-16")]
 fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
     if let Some(failure) = refusal.host_allocation_failure {
         return RunCause::AnalyzePackage {

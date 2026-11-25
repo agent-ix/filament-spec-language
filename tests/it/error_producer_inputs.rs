@@ -210,7 +210,7 @@ fn source_preflight_inputs_reach_retained_host_causes_before_parsing() {
 fn real_host_edits_reach_predecessor_and_range_causes() {
     let value = editor_source();
     let original = value.source().text().as_bytes().to_vec();
-    let wrong = complete::apply_edits(
+    let wrong = complete::apply_edits(&complete::CompleteParser::new(),
         &value,
         SourceIdentity::new("other", "foreign"),
         &[],
@@ -232,7 +232,7 @@ fn real_host_edits_reach_predecessor_and_range_causes() {
         },
         replacement: " ".into(),
     };
-    let wrong = complete::apply_edits(&value, identity(), &[malformed], Limits::default())
+    let wrong = complete::apply_edits(&complete::CompleteParser::new(), &value, identity(), &[malformed], Limits::default())
         .expect_err("edit splits UTF-8");
     produced(
         &wrong,

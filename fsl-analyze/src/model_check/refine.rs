@@ -36,6 +36,8 @@
 //! successor of the class from the state's mapped abstract state, and taken by
 //! an edge when the edge's `check_step` result lists an identity of it.
 
+use ix_trace_rs::implements;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::Cancel;
@@ -252,6 +254,7 @@ type ClassesOf = fn(
     &[ModelTransition],
 ) -> Result<Vec<AbstractClass>, InternalFault>;
 
+#[implements("FR-126-AC-26")]
 fn check_with(
     request: RefinementCheckRequest<'_>,
     cancel: &Cancel,
@@ -314,6 +317,10 @@ fn check_with(
         // stopped on a budget, which settles the run V-7 naming it.
         Err(ProtocolSystemsRefusal::Subject(SubjectRefusal::Stopped(stop))) => {
             let stats = RunStats {
+                #[cfg(feature = "test-support")]
+                generated_model_initial_states: 0,
+                #[cfg(feature = "test-support")]
+                constructed_protocol_initial_states: 0,
                 product_states: 0,
                 product_edges: 0,
                 stutter_edges: 0,
@@ -2072,8 +2079,13 @@ impl Run<'_, '_> {
         }))
     }
 
+    #[implements("FR-126-AC-26")]
     fn stats(&self) -> RunStats {
         RunStats {
+            #[cfg(feature = "test-support")]
+            generated_model_initial_states: 0,
+            #[cfg(feature = "test-support")]
+            constructed_protocol_initial_states: 0,
             product_states: widen(self.nodes.len()),
             product_edges: widen(self.edges),
             stutter_edges: 0,
@@ -2112,7 +2124,7 @@ impl Run<'_, '_> {
     }
 
     /// The breadth-first safety phase.
-    #[implements("FR-148-AC-8")]
+    #[implements("FR-148-AC-8", "FR-126-AC-26")]
     fn explore(
         &mut self,
         states: impl Iterator<Item = Result<ModelSimState, InitialStateRefusal>>,

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared bytes-only directory admission (FR-850, FR-1039).
 
+use ix_trace_rs::implements;
+
 use super::{dependency_manifest::Manifest, Intake, Result, RunCause};
 use filament_contract_model::CheckedPackageV2;
 use std::{
@@ -149,6 +151,7 @@ pub(super) fn read_file(
     intake.file(&selected.to_string_lossy(), intake.remaining)
 }
 
+#[implements("FR-110-AC-16")]
 fn package_failure(file: &str, error: fsl_package::PackageAdmissionRefusal) -> RunCause {
     if let Some(failure) = error.host_allocation_failure {
         return RunCause::AnalyzePackage {

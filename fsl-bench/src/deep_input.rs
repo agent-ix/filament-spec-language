@@ -7,11 +7,13 @@
 //! [`DeepInput::from_bytes`] turns fuzzer bytes into one complete-V1 unit
 //! nested 1 to 100,000 levels deep: nested brackets, a sum, an `else if`
 //! chain, nested `let`s, a mix of those four chosen level by level, or a
-//! nested `Option` type. [`DeepInput::compile`] runs it through the S1
+//! nested `Option` type. [`DeepInput::compile_with_context`] runs it through the S1
 //! parser, S2 forms and the S3 checker (`fsl_replay::spine`'s `parse`,
 //! `select`, `check` and `package`)
 //! under size and work limits raised to fit it, so a refusal is the stage's
 //! own outcome for the input, not a default size limit.
+
+use ix_trace_rs::implements;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -210,12 +212,8 @@ impl DeepInput {
         limits
     }
 
-    /// Compile the input through S1 to S4.
-    pub fn compile(&self) -> Result<EmittedUnit, FrontEndFailure> {
-        self.compile_with_context(&ParserContext::new())
-    }
-
     /// Compile the input using a parser context owned by the process entry.
+    #[implements("NFR-141-AC-10")]
     pub fn compile_with_context(
         &self,
         parser: &ParserContext,

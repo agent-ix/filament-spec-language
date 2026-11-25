@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use ix_trace_rs::implements;
 use fsl_cst::{
-    parse, CompleteCause, CompleteCode, CompleteDiagnostic, HostCause, Limits, ParsedSource,
+    CompleteCause, CompleteCode, CompleteDiagnostic, HostCause, Limits, ParsedSource,
 };
+use super::CompleteParser;
 use fsl_foundation::selection::ProfileCatalog;
 use fsl_foundation::{Phase, SourceIdentity, Span, SyntaxLimit};
 
@@ -15,49 +17,59 @@ pub struct SourceEdit {
 }
 
 /// Apply one edit and reparse under the source's own identity.
+#[implements("NFR-141-AC-10")]
 pub fn apply_edit(
+    parser: &CompleteParser,
     parsed: &ParsedSource,
     new_identity: SourceIdentity,
     edit: SourceEdit,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    apply_edits_selected(parsed, new_identity, &[edit], limits, None)
+    apply_edits_selected(parser, parsed, new_identity, &[edit], limits, None)
 }
 
 /// Apply one edit and reparse with the same exact definition catalog used to
 /// validate selected profiles.
+#[implements("NFR-141-AC-10")]
 pub fn apply_edit_with_catalog(
+    parser: &CompleteParser,
     parsed: &ParsedSource,
     new_identity: SourceIdentity,
     edit: SourceEdit,
     catalog: &ProfileCatalog,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    apply_edits_selected(parsed, new_identity, &[edit], limits, Some(catalog))
+    apply_edits_selected(parser, parsed, new_identity, &[edit], limits, Some(catalog))
 }
 
 /// Apply ordered, non-overlapping edits and reparse under the source's own identity.
+#[implements("NFR-141-AC-10")]
 pub fn apply_edits(
+    parser: &CompleteParser,
     parsed: &ParsedSource,
     new_identity: SourceIdentity,
     edits: &[SourceEdit],
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    apply_edits_selected(parsed, new_identity, edits, limits, None)
+    apply_edits_selected(parser, parsed, new_identity, edits, limits, None)
 }
 
 /// Apply ordered edits and reparse with exact profile-catalog validation.
+#[implements("NFR-141-AC-10")]
 pub fn apply_edits_with_catalog(
+    parser: &CompleteParser,
     parsed: &ParsedSource,
     new_identity: SourceIdentity,
     edits: &[SourceEdit],
     catalog: &ProfileCatalog,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    apply_edits_selected(parsed, new_identity, edits, limits, Some(catalog))
+    apply_edits_selected(parser, parsed, new_identity, edits, limits, Some(catalog))
 }
 
+#[implements("NFR-141-AC-10")]
 fn apply_edits_selected(
+    parser: &CompleteParser,
     parsed: &ParsedSource,
     new_identity: SourceIdentity,
     edits: &[SourceEdit],
@@ -168,8 +180,8 @@ fn apply_edits_selected(
         }
     }
     if let Some(catalog) = catalog {
-        super::parse_with_catalog(new_identity, source.path(), &bytes, catalog, limits)
+        parser.parse_with_catalog(new_identity, source.path(), &bytes, catalog, limits)
     } else {
-        parse(new_identity, source.path(), &bytes, limits)
+        parser.context.parse(new_identity, source.path(), &bytes, limits)
     }
 }

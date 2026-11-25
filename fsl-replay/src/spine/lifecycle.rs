@@ -80,6 +80,8 @@
 //! }
 //! ```
 
+use ix_trace_rs::implements;
+
 use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -1459,6 +1461,7 @@ impl EmittedUnit {
 /// S1 and S2: read `request`'s bytes into syntax (FR-278). Refuses
 /// `invalid_syntax` for a source the parser recovered from, and with S2's
 /// own refusal for a unit no form represents.
+#[implements("NFR-141-AC-10")]
 pub fn parse(
     request: &ParseRequest<'_>,
     limits: SourceLimits,
@@ -1475,6 +1478,7 @@ pub fn parse(
 }
 
 /// S1 and S2 using a caller-owned parser context reused by the process entry.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_context(
     request: &ParseRequest<'_>,
     limits: SourceLimits,
@@ -1495,6 +1499,7 @@ pub fn parse_with_context(
 /// held leading keyword begins a declaration form at the first token of a
 /// top-level declaration, and S2 builds the form as the `Extension` variant.
 /// The held definitions stay with the parsed unit, and S3 reads them.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_extensions(
     request: &ParseRequest<'_>,
     held: &HeldExtensions,
@@ -1505,6 +1510,7 @@ pub fn parse_with_extensions(
 }
 
 /// S1 and S2 with held extensions and a caller-owned parser context.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_extensions_context(
     request: &ParseRequest<'_>,
     held: &HeldExtensions,
@@ -1551,6 +1557,7 @@ pub fn parse_selecting_extensions(
 /// catalog holds as an `Extension` definition (the E3 classification), and
 /// hold the selected definitions against the core vocabulary. The header
 /// parse is charged to `s1`.
+#[implements("NFR-141-AC-10")]
 fn select_extensions(
     request: &ParseRequest<'_>,
     catalog: ProfileCatalogInput<'_>,
@@ -2950,6 +2957,7 @@ fn lifecycle_emission_results(
 
 /// S1 then S2 over one unit's bytes: the part of every unit's compile that
 /// does not depend on its imports.
+#[implements("NFR-141-AC-10")]
 fn parse_unit(
     source: SourceIdentity,
     path: &str,

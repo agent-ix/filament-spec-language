@@ -3,6 +3,7 @@
 //! of a declared type, indexed rather than materialized so a caller walks a
 //! product of domains one element at a time.
 
+use ix_trace_rs::implements;
 use filament_exact::{
     from_admitted, from_admitted_slots, ClockPlaceReference, CollectionKind, CollectionType,
     EnumMember, FieldValue, Integer, NodeKey, ObjectId, ObjectReference, OptionValue, Presence,
@@ -768,11 +769,16 @@ impl Domain {
 
     /// How many values the domain holds, saturating at `u128::MAX`.
     pub(super) fn len(&self) -> u128 {
+        self.len_with_cache(&mut TextCache::default())
+    }
+
+    #[implements("FR-752-AC-9", "FR-752-AC-10")]
+    pub(super) fn len_with_cache(&self, cache: &mut TextCache) -> u128 {
         match self {
             Self::Boolean => 2,
             Self::SizeInteger { bits } => (1_u128 << (u32::from(*bits) + 1)) - 1,
             Self::Int { len, .. } => *len,
-            Self::Option { inner, .. } => inner.len().saturating_add(1),
+            Self::Option { inner, .. } => inner.len_with_cache(cache).saturating_add(1),
             Self::Reference(objects) => objects.len() as u128,
             Self::ClockReference(references) => references.len() as u128,
             Self::Listed(values) => values.len() as u128,
@@ -780,7 +786,7 @@ impl Domain {
             Self::Sequence {
                 element, min, max, ..
             } => {
-                let base = element.len();
+                let base = element.len_with_cache(cache);
                 (*min..=*max).fold(0u128, |total, length| {
                     total.saturating_add(power(base, length))
                 })
@@ -792,7 +798,7 @@ impl Domain {
                 repeat,
                 ..
             } => {
-                let base = element.len();
+                let base = element.len_with_cache(cache);
                 (*min..=*max).fold(0u128, |total, count| {
                     total.saturating_add(combinations(base, u128::from(count), *repeat))
                 })
@@ -800,12 +806,12 @@ impl Domain {
             Self::Arrangements {
                 element, min, max, ..
             } => {
-                let base = element.len();
+                let base = element.len_with_cache(cache);
                 (*min..=*max).fold(0u128, |total, length| {
                     total.saturating_add(arrangements(base, u128::from(length)))
                 })
             }
-            Self::Text(text_type) => text_domain_count(text_type, &mut TextCache::default())
+            Self::Text(text_type) => text_domain_count(text_type, cache)
                 .and_then(|count| count.to_string().parse::<u128>().ok())
                 .unwrap_or(u128::MAX),
         }
@@ -813,6 +819,11 @@ impl Domain {
 
     /// The value at `index`; `None` past the end.
     pub(super) fn nth(&self, index: u128) -> Option<Value> {
+        self.nth_with_cache(index, &mut TextCache::default())
+    }
+
+    #[implements("FR-752-AC-9", "FR-752-AC-10")]
+    pub(super) fn nth_with_cache(&self, index: u128, cache: &mut TextCache) -> Option<Value> {
         match self {
             Self::Boolean => match index {
                 0 => Some(Value::Boolean(false)),
@@ -834,7 +845,7 @@ impl Domain {
                 None => Some(OptionValue::none(payload_type.clone())),
                 Some(payload) => Some(OptionValue::from_admitted(
                     payload_type.clone(),
-                    Some(inner.nth(payload)?),
+                    Some(inner.nth_with_cache(payload, cache)?),
                 )),
             },
             Self::Reference(objects) => objects
@@ -853,7 +864,7 @@ impl Domain {
                 min,
                 max,
             } => {
-                let base = element.len();
+                let base = element.len_with_cache(cache);
                 let mut remaining = index;
                 for length in *min..=*max {
                     let count = power(base, length);
@@ -866,7 +877,7 @@ impl Domain {
                         digits.reverse();
                         let elements = digits
                             .into_iter()
-                            .map(|digit| element.nth(digit))
+                            .map(|digit| element.nth_with_cache(digit, cache))
                             .collect::<Option<Vec<Value>>>()?;
                         return Some(from_admitted(collection.clone(), elements));
                     }
@@ -881,7 +892,7 @@ impl Domain {
                 max,
                 repeat,
             } => {
-                let base = element.len();
+                let base = element.len_with_cache(cache);
                 let mut remaining = index;
                 for count in *min..=*max {
                     let count = u128::from(count);
@@ -915,7 +926,7 @@ impl Domain {
                     }
                     let elements = indices
                         .into_iter()
-                        .map(|digit| element.nth(digit))
+                        .map(|digit| element.nth_with_cache(digit, cache))
                         .collect::<Option<Vec<Value>>>()?;
                     return Some(from_admitted(collection.clone(), elements));
                 }
@@ -927,7 +938,7 @@ impl Domain {
                 min,
                 max,
             } => {
-                let base = element.len();
+                let base = element.len_with_cache(cache);
                 let mut remaining = index;
                 for length in *min..=*max {
                     let length = u128::from(length);
@@ -953,7 +964,7 @@ impl Domain {
                         }
                         used.push(digit);
                         used.sort_unstable();
-                        elements.push(element.nth(digit)?);
+                        elements.push(element.nth_with_cache(digit, cache)?);
                     }
                     return Some(from_admitted(collection.clone(), elements));
                 }
@@ -961,7 +972,7 @@ impl Domain {
             }
             Self::Text(text_type) => {
                 let index = Integer::from_str(&index.to_string()).ok()?;
-                text_unrank(text_type, &index, &mut TextCache::default())
+                text_unrank(text_type, &index, cache)
                     .and_then(|text| admitted_text_value(text_type, &text))
             }
         }
@@ -969,25 +980,40 @@ impl Domain {
 
     /// The exact number of values when this domain has a supported exact
     /// count. Text counts may exceed the machine integer used by iteration.
-    pub(super) fn exact_len(&self) -> Option<Integer> {
+
+
+    #[implements("FR-752-AC-9", "FR-752-AC-10")]
+    pub(super) fn exact_len_with_cache(&self, cache: &mut TextCache) -> Option<Integer> {
         match self {
-            Self::Text(text_type) => text_domain_count(text_type, &mut TextCache::default()),
-            _ => Integer::from_str(&self.len().to_string()).ok(),
+            Self::Text(text_type) => text_domain_count(text_type, cache),
+            _ => Integer::from_str(&self.len_with_cache(cache).to_string()).ok(),
         }
     }
 
     /// The value at an exact integer index, including Text domains wider than
     /// the machine index used by finite graph enumeration.
-    pub(super) fn nth_exact(&self, index: &Integer) -> Option<Value> {
+
+
+    #[implements("FR-752-AC-9", "FR-752-AC-10")]
+    pub(super) fn nth_exact_with_cache(
+        &self,
+        index: &Integer,
+        cache: &mut TextCache,
+    ) -> Option<Value> {
         match self {
-            Self::Text(text_type) => text_unrank(text_type, index, &mut TextCache::default())
+            Self::Text(text_type) => text_unrank(text_type, index, cache)
                 .and_then(|text| admitted_text_value(text_type, &text)),
-            _ => self.nth(index.to_string().parse().ok()?),
+            _ => self.nth_with_cache(index.to_string().parse().ok()?, cache),
         }
     }
 
     /// The zero-based FR-120/FR-190 domain index of `value`.
     pub(super) fn index_of(&self, value: &Value) -> Option<u128> {
+        self.index_of_with_cache(value, &mut TextCache::default())
+    }
+
+    #[implements("FR-752-AC-9", "FR-752-AC-10")]
+    pub(super) fn index_of_with_cache(&self, value: &Value, cache: &mut TextCache) -> Option<u128> {
         match (self, value) {
             (Self::Boolean, Value::Boolean(false)) => Some(0),
             (Self::Boolean, Value::Boolean(true)) => Some(1),
@@ -1015,7 +1041,7 @@ impl Domain {
             }
             _ => {
                 let mut index = 0_u128;
-                while let Some(candidate) = self.nth(index) {
+                while let Some(candidate) = self.nth_with_cache(index, cache) {
                     if super::probabilistic::same_value(&candidate, value) {
                         return Some(index);
                     }
@@ -1333,7 +1359,7 @@ type DecomposedCounts = Vec<Vec<Integer>>;
 type ComposedCounts = Vec<Vec<Vec<Integer>>>;
 
 #[derive(Default)]
-struct TextCache {
+pub(super) struct TextCache {
     normalized: [Option<Arc<Vec<(char, u8)>>>; 2],
     decomposed_counts: [BTreeMap<usize, Arc<DecomposedCounts>>; 2],
     composed_tables: [Option<Arc<ComposedTextTables>>; 2],

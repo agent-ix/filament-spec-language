@@ -28,8 +28,9 @@ use fsl_bench::check::{self, call_head, completed_with_five, linked_chain};
 use fsl_bench::mc::{self, AxisError, Work};
 use fsl_bench::model::{self, ModelShape};
 use fsl_bench::package;
-use fsl_bench::parse::{self, ParseOutcome};
+use fsl_bench::parse::{self, ParseOutcome, ParseSession};
 use fsl_bench::rss::peak_rss_kib;
+use fsl_cst::ParserContext;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_semantics::model::domain_package::DomainPackageRecord;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -70,11 +71,11 @@ fn describe(outcome: &ParseOutcome) -> String {
     }
 }
 
-fn probe_parse() {
+fn probe_parse(session: &ParseSession) {
     let mut max_admitted = None;
     for depth in 0..=64 {
         let text = parse::nested_source(depth);
-        let outcome = ParseOutcome::of(&parse::parse(&text));
+        let outcome = ParseOutcome::of(&parse::parse(session, &text));
         println!(
             "parse.depth depth={depth} bytes={} {}",
             text.len(),
@@ -90,7 +91,7 @@ fn probe_parse() {
     );
     for functions in VOLUME_SIZES {
         let text = parse::volume_source(functions);
-        let outcome = ParseOutcome::of(&parse::parse(&text));
+        let outcome = ParseOutcome::of(&parse::parse(session, &text));
         println!(
             "parse.volume functions={functions} bytes={} {}",
             text.len(),
@@ -99,7 +100,7 @@ fn probe_parse() {
     }
 }
 
-fn probe_cst() {
+fn probe_cst(session: &ParseSession) {
     let mut inputs: Vec<(String, String)> = VOLUME_SIZES
         .iter()
         .map(|&functions| {
@@ -113,7 +114,7 @@ fn probe_cst() {
         (0..=4).map(|depth| (format!("nested depth={depth}"), parse::nested_source(depth))),
     );
     for (label, text) in inputs {
-        match parse::parse(&text) {
+        match parse::parse(session, &text) {
             Ok(parsed) if parsed.is_admissible() => {
                 println!(
                     "cst.nodes {label} source_bytes={} nodes={}",
@@ -442,14 +443,14 @@ fn probe_model(shape: ModelShape, members: usize) -> ExitCode {
 
 /// One parse of `functions` declarations with every S1 limit raised to fit
 /// it: wall time and outcome.
-fn probe_parse_volume(functions: usize) -> ExitCode {
+fn probe_parse_volume(functions: usize, session: &ParseSession) -> ExitCode {
     let text = parse::volume_source(functions);
     let limits = fsl_cst::Limits::default()
         .with_source_bytes(usize::MAX)
         .with_tokens(usize::MAX)
         .with_nodes(usize::MAX);
     let started = Instant::now();
-    let parsed = parse::parse_with(&text, limits);
+    let parsed = parse::parse_with(session, &text, limits);
     let s1 = started.elapsed().as_millis();
     let outcome = ParseOutcome::of(&parsed);
     let started = Instant::now();
@@ -467,7 +468,8 @@ fn probe_parse_volume(functions: usize) -> ExitCode {
 /// timed. The `Work` and the seconds the run took.
 /// `#[string_edge]`: this CLI boundary selects a benchmark axis from its word.
 #[string_edge]
-fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
+#[implements("NFR-141-AC-10")]
+fn run_axis(axis: &str, sizes: &[usize], parser: &ParserContext) -> Result<(Work, f64), AxisError> {
     let at = |index: usize| {
         sizes
             .get(index)
@@ -482,27 +484,27 @@ fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
     match axis {
         "state_graph" | "state_graph_symmetric" => {
             let symmetric = axis == "state_graph_symmetric";
-            let world = mc::ring_state_graph(at(0)?, at(1)?, symmetric)?;
+            let world = mc::ring_state_graph(at(0)?, at(1)?, symmetric, parser)?;
             timed(&mut || mc::run_state_graph(&world, symmetric))
         }
         "safety" | "deadlock" => {
-            let world = mc::ring_safety(at(0)?, at(1)?)?;
+            let world = mc::ring_safety(at(0)?, at(1)?, parser)?;
             timed(&mut || mc::run_safety(&world, axis == "deadlock").map(|(work, _)| work))
         }
         "liveness" => {
-            let world = mc::ring_liveness(at(0)?, at(1)?)?;
+            let world = mc::ring_liveness(at(0)?, at(1)?, parser)?;
             timed(&mut || mc::run_liveness(&world).map(|(work, _)| work))
         }
         "frame_candidates" => {
-            let world = mc::wide(at(0)?, at(1)?)?;
+            let world = mc::wide(at(0)?, at(1)?, parser)?;
             timed(&mut || mc::run_frame_candidates(&world))
         }
         "observation" => {
-            let world = mc::observation(at(0)?)?;
+            let world = mc::observation(at(0)?, parser)?;
             timed(&mut || mc::run_observation(&world))
         }
         "reach_1" | "reach_2" | "reach_4" | "reach_all" => {
-            let world = mc::protocol(at(0)?)?;
+            let world = mc::protocol(at(0)?, parser)?;
             let limit = match axis {
                 "reach_1" => workers(1),
                 "reach_2" => workers(2),
@@ -512,14 +514,14 @@ fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
             timed(&mut || mc::run_reach(&world, limit))
         }
         "encode" => {
-            let world = mc::keys(at(0)?, at(1)?)?;
+            let world = mc::keys(at(0)?, at(1)?, parser)?;
             let system =
                 ModelSystem::new(world.simulation()).map_err(|e| AxisError(format!("{e:?}")))?;
             timed(&mut || mc::run_encode(&system))
         }
         "sample" => {
             let epsilon = u32::try_from(at(0)?).map_err(|e| AxisError(e.to_string()))?;
-            let world = mc::service(epsilon)?;
+            let world = mc::service(epsilon, parser)?;
             timed(&mut || mc::run_sample(&world))
         }
         other => Err(AxisError(format!("unknown axis {other}"))),
@@ -544,8 +546,9 @@ fn size_lists(arguments: &[String]) -> Result<(Vec<usize>, Vec<usize>), String> 
 
 /// `mc <axis> <sizes...>`: one run, one process: states/s, edges/s or
 /// samples/s, and peak RSS.
-fn probe_axis(axis: &str, sizes: &[usize]) -> ExitCode {
-    match run_axis(axis, sizes) {
+#[implements("NFR-141-AC-10")]
+fn probe_axis(axis: &str, sizes: &[usize], parser: &ParserContext) -> ExitCode {
+    match run_axis(axis, sizes, parser) {
         Ok((work, seconds)) => {
             println!(
                 "axis={axis} sizes={sizes:?} {} secs={seconds:.6} peak_rss_kib={}",
@@ -564,7 +567,8 @@ fn probe_axis(axis: &str, sizes: &[usize]) -> ExitCode {
 /// `mc-marginal <axis> <small sizes...> -- <large sizes...>`: the small run
 /// then the large one in one process, so the peak is monotone, and the
 /// bytes the large run added per state it added.
-fn probe_marginal(axis: &str, arguments: &[String]) -> ExitCode {
+#[implements("NFR-141-AC-10")]
+fn probe_marginal(axis: &str, arguments: &[String], parser: &ParserContext) -> ExitCode {
     let (small, large) = match size_lists(arguments) {
         Ok(lists) => lists,
         Err(error) => {
@@ -572,11 +576,11 @@ fn probe_marginal(axis: &str, arguments: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let (Ok((first, _)), Some(before)) = (run_axis(axis, &small), peak_rss_kib()) else {
+    let (Ok((first, _)), Some(before)) = (run_axis(axis, &small, parser), peak_rss_kib()) else {
         eprintln!("marginal: the small run or its peak RSS is unavailable");
         return ExitCode::FAILURE;
     };
-    let (Ok((second, _)), Some(after)) = (run_axis(axis, &large), peak_rss_kib()) else {
+    let (Ok((second, _)), Some(after)) = (run_axis(axis, &large, parser), peak_rss_kib()) else {
         eprintln!("marginal: the large run or its peak RSS is unavailable");
         return ExitCode::FAILURE;
     };
@@ -612,19 +616,21 @@ fn rates(work: &Work, seconds: f64) -> String {
 
 /// `#[string_edge]`: dispatches the probe's command-line subcommand words.
 #[string_edge]
+#[implements("NFR-141-AC-10")]
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let parser = ParseSession::new();
     match arguments.first().map(String::as_str) {
         Some("parse") => {
-            probe_parse();
+            probe_parse(&parser);
             ExitCode::SUCCESS
         }
         Some("parse-volume") => match size(arguments.get(1)) {
-            Some(functions) => probe_parse_volume(functions),
+            Some(functions) => probe_parse_volume(functions, &parser),
             None => usage(),
         },
         Some("cst") => {
-            probe_cst();
+            probe_cst(&parser);
             ExitCode::SUCCESS
         }
         Some("check") => match (arguments.get(1), size(arguments.get(2))) {
@@ -665,7 +671,7 @@ fn main() -> ExitCode {
         },
         Some("mc") => match arguments.get(1) {
             Some(axis) => match size_lists(&arguments[2..]) {
-                Ok((sizes, rest)) if rest.is_empty() => probe_axis(axis, &sizes),
+                Ok((sizes, rest)) if rest.is_empty() => probe_axis(axis, &sizes, parser.context()),
                 Ok(_) => usage(),
                 Err(error) => {
                     eprintln!("{error}");
@@ -675,7 +681,7 @@ fn main() -> ExitCode {
             None => usage(),
         },
         Some("mc-marginal") => match arguments.get(1) {
-            Some(axis) => probe_marginal(axis, &arguments[2..]),
+            Some(axis) => probe_marginal(axis, &arguments[2..], parser.context()),
             None => usage(),
         },
         _ => usage(),
