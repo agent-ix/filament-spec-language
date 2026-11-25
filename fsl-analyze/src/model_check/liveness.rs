@@ -1323,6 +1323,7 @@ struct LassoSystem<'r, S: LiveSubject> {
     automaton: RefCell<PropertyAutomaton>,
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
+    /// One worker batch of raw expansions, consumed by model-state identity.
     prefetched: PrefetchedExpansions<S::State, Tr<S>>,
     /// Complete product keys reused for repeated model/property pairs in this
     /// pass. The exact bytes remain the FR-101 identity.

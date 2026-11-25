@@ -181,7 +181,7 @@ fn zero() -> Rational {
     Rational::from_integer(Integer::zero())
 }
 
-/// The claim forms the digital route admits (ADR-028 TA-4).
+/// The occurrences, bounds and reads of [`Form::NestedDeadline`].
 struct NestedDeadline<'c> {
     outer_occurrence: u64,
     outer_lower: Rational,
@@ -192,6 +192,7 @@ struct NestedDeadline<'c> {
     reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
 }
 
+/// The claim forms the digital route admits (ADR-028 TA-4).
 enum Form<'c> {
     /// Any checked timed bounded-window formula, retained as its complete
     /// AST and evaluated over exact timestamped product observations.
