@@ -11,10 +11,12 @@
 //! conforms to `P`'s `self`. The state graph alone decides; no fairness
 //! constraint is read.
 
+use ix_trace_rs::implements;
 use std::collections::BTreeSet;
 
 use super::input::{ModelTerminalDeclaration, TerminalWhen};
 use filament_exact::Meter;
+use filament_semantic_value::location::ExpressionLocation;
 
 use super::contracts::{verdict, Verdict};
 use super::walk::{exhausted, stop, walk_of};
@@ -137,6 +139,14 @@ enum Reading {
 }
 
 impl ModelSystem<'_> {
+    /// Where the `terminal when` predicate of the declaration `model` is, on
+    /// either route (FR-170 "Undefined"); `None` for a declaration with no
+    /// predicate.
+    #[implements("FR-168-AC-12")]
+    pub fn terminal_locus(&self, model: &TerminalModel) -> Option<ExpressionLocation> {
+        self.input.terminal_location(model)
+    }
+
     /// FR-124: the class of `state`, whose expansion gave a successor
     /// exactly when `has_successor`. `Any` intends every terminal state;
     /// `When(P)` intends it when `P` is true. The state is intended when any
@@ -150,6 +160,7 @@ impl ModelSystem<'_> {
     /// meter when `P`'s evaluation exhausts it;
     /// `runtime_invariant`/`established-invariant-broken` when the state
     /// cannot be observed or the evaluator faults.
+    #[implements("FR-124-AC-11", "FR-168-AC-16")]
     pub fn terminal_class(
         &self,
         state: &ModelSimState,
