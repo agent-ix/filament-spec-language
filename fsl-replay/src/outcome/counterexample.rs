@@ -2011,6 +2011,10 @@ fn assignments_wire_using(
 ///
 /// [`CounterexampleWireError::Unspelled`] when a state or value has no
 /// encoding.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the witness, its claim, the declarations that type its values and the state spelling"
+)]
 pub fn probabilistic_wire(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
