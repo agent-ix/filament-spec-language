@@ -846,33 +846,36 @@ fn a_scratch_build_reports_its_changed_root_package_version() {
         .expect("scratch tree initializes for patch application");
     assert!(initialized.success(), "scratch repository initializes");
 
-    // Apply this checkout's uncommitted source edits as well as its committed
-    // tree, so the child exercises the exact code under test.
+    // Apply this checkout's uncommitted edits to tracked and staged files on top
+    // of its committed tree, so the child exercises the code under test. A clean
+    // checkout has an empty diff, which `git apply` rejects.
     let changes = Command::new("git")
         .current_dir(repository)
         .args(["diff", "--binary", "HEAD"])
         .output()
         .expect("git reads the working diff");
     assert!(changes.status.success(), "git diff succeeds");
-    let applied = Command::new("git")
-        .current_dir(scratch.path())
-        .arg("apply")
-        .stdin(Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child
-                .stdin
-                .as_mut()
-                .expect("git apply stdin")
-                .write_all(&changes.stdout)?;
-            child.wait()
-        })
-        .expect("working changes apply to the scratch tree");
-    assert!(
-        applied.success(),
-        "the scratch tree includes working changes"
-    );
+    if !changes.stdout.is_empty() {
+        let applied = Command::new("git")
+            .current_dir(scratch.path())
+            .arg("apply")
+            .stdin(Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child
+                    .stdin
+                    .as_mut()
+                    .expect("git apply stdin")
+                    .write_all(&changes.stdout)?;
+                child.wait()
+            })
+            .expect("working changes apply to the scratch tree");
+        assert!(
+            applied.success(),
+            "the scratch tree includes working changes"
+        );
+    }
 
     let manifest_path = scratch.path().join("Cargo.toml");
     let manifest = std::fs::read_to_string(&manifest_path).expect("root manifest");
