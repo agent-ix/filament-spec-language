@@ -161,8 +161,10 @@ impl Encode for MeasureProductKey<'_, '_> {
                     "collecting"
                 })?;
             }
-            MonitorState::Formula(_) | MonitorState::Deadline { .. } => {
-                return Err(Error::Serialize("control is not a bounded measure".into()))
+            MonitorState::Formula(_)
+            | MonitorState::Deadline { .. }
+            | MonitorState::TimedFormula { .. } => {
+                return Err(Error::Serialize("control is not a bounded measure".into()));
             }
         }
         writer.end_array()?;

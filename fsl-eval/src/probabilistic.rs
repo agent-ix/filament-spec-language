@@ -73,6 +73,13 @@ pub enum MonitorState {
         /// Where the event stands.
         phase: DeadlinePhase,
     },
+    /// A timed formula with distinct root and nested operator occurrences.
+    TimedFormula {
+        /// The checked root operator occurrence.
+        root: TimedOperatorState,
+        /// The nested checked operator occurrence, when present.
+        nested: Option<TimedOperatorState>,
+    },
 }
 
 /// The shape of a timed deadline event (FR-204 "Admission").
@@ -98,6 +105,23 @@ pub enum DeadlinePhase {
     Reject,
 }
 
+/// One checked timed temporal operator occurrence retained in EN-5's product.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TimedOperatorState {
+    /// The checked formula node identifying this occurrence.
+    pub occurrence: u64,
+    /// The operator kind.
+    pub kind: DeadlineKind,
+    /// The closed lower bound, in digital units.
+    pub lower: u64,
+    /// The closed upper bound, in digital units.
+    pub upper: u64,
+    /// Elapsed digital units since activation.
+    pub elapsed: u64,
+    /// The occurrence's control phase.
+    pub phase: DeadlinePhase,
+}
+
 impl MonitorState {
     /// Whether the control is decided: nothing it reads can change it, so
     /// the product does not expand the state.
@@ -110,6 +134,7 @@ impl MonitorState {
             ),
             Self::Fraction { remaining } => remaining == 0,
             Self::Deadline { phase, .. } => !matches!(phase, DeadlinePhase::Pending),
+            Self::TimedFormula { root, .. } => !matches!(root.phase, DeadlinePhase::Pending),
         }
     }
 }
@@ -651,7 +676,7 @@ impl MeasurePayoff {
             | Self::Satisfied(comparison, threshold)
             | Self::Shifted(comparison, threshold, _) => (*comparison, threshold),
             Self::Activated | Self::Fraction => {
-                return Err(MeasureError::Broken("comparison-payoff"))
+                return Err(MeasureError::Broken("comparison-payoff"));
             }
         };
         let operator = match comparison {
@@ -761,8 +786,8 @@ mod tests {
                 })
             );
         }
-        assert!(plan
-            .step(
+        assert!(
+            plan.step(
                 control,
                 amount.as_ref(),
                 &[true, false],
@@ -770,7 +795,8 @@ mod tests {
                 &[],
                 &mut meter
             )
-            .is_err());
+            .is_err()
+        );
     }
 
     #[trace("TC-631", "FR-196-AC-7", "FR-196-AC-11")]

@@ -124,6 +124,53 @@ fn elapsed_quantile_certificate_passes_the_separate_checker() {
     );
 }
 
+/// FR-198-AC-6: fair timed expected-elapsed extrema are accepted by fresh
+/// `fsl-probability-check` processes, one process for each emitted document.
+#[trace("TC-633", "FR-198-AC-6")]
+#[test]
+fn fair_expected_elapsed_documents_pass_the_separate_checker() {
+    for (form, optimization) in [
+        (
+            "expected elapsed until holds(m.delivered) >= 1 ms",
+            "minimum",
+        ),
+        (
+            "expected elapsed until holds(m.delivered) <= 3 ms",
+            "maximum",
+        ),
+    ] {
+        let source = retx(">= 1 ms", NO_TOGGLE, form)
+            .replace(
+                "profile ev = \"filament.temporal.timed/v1\";",
+                "profile ev = \"filament.temporal.timed/v1\";\n\
+                 profile inf = \"filament.temporal.infinite-trace/v1\";",
+            )
+            .replace("using ev on M", "using inf on M")
+            .replace(
+                "under every scheduler on origin",
+                "under every scheduler fair strong Msg::send_a on origin",
+            );
+        let request = certified(&source);
+        let doc = document(&request);
+        assert_eq!(doc["objective"]["optimization"], optimization);
+        assert_eq!(
+            doc["objective"]["profile"],
+            "filament.probability-objective/timed-product/v1"
+        );
+        assert_eq!(doc["objective"]["timed"]["form"], "expected-elapsed");
+        assert_eq!(doc["objective"]["fairness"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["objective"]["fairness"][0]["fairness_kind"], "strong");
+        assert_eq!(doc["objective"]["fairness"][0]["granularity"], "whole");
+        assert_eq!(doc["objective"]["fairness"][0]["target"]["name"], "send_a");
+
+        let (status, checked) = run(&request);
+        assert_eq!(
+            status, 0,
+            "the separate checker accepts {optimization}: {checked}"
+        );
+    }
+}
+
 /// FR-1042: a timed deadline's wrong-kind bound is still rejected as the
 /// claim side at `kind`, while the timed profile keeps its existing shape.
 #[trace("TC-3212", "FR-1042-AC-16")]
