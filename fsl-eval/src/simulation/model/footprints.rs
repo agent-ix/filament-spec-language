@@ -944,7 +944,7 @@ impl<'a> ModelSystem<'a> {
         state: &ModelSimState,
     ) -> BTreeSet<Location> {
         let object = state
-            .state
+            .state()
             .populations
             .get(&instance.population)
             .and_then(|objects| objects.get(&instance.key))

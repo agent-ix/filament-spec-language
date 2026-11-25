@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use filament_exact::{
-    ClockPlaceReference, FieldValue, NodeKey, ObjectId, ObjectReference, Value, ValueType,
+    ClockPlaceReference, FieldValue, NodeKey, ObjectReference, Value, ValueType,
 };
 use fsl_semantics::model::clock_reference::identity::{
     Decimal, PathEntry, PlaceIdentity, SlotIndex,
@@ -16,7 +16,9 @@ use fsl_semantics::model::clock_reference::identity::{
 use fsl_semantics::model::clock_reference::{encode_identity, is_clock_type};
 
 use super::ModelSystem;
-use super::domain::{ClockSelectorMaxima, Domain, clock_reference_paths};
+use super::domain::{
+    ClockSelectorMaxima, Domain, clock_reference_as_object, clock_reference_paths,
+};
 
 /// Why a `Reference<Clock>` domain cannot be enumerated. None of these is an
 /// empty domain: a caller never ranges a hidden field or parameter over fewer
@@ -51,14 +53,6 @@ pub enum ClockDomainRefusal {
 }
 
 type Candidates = Result<Vec<ClockPlaceReference>, ClockDomainRefusal>;
-
-fn clock_reference_as_object(reference: &ClockPlaceReference) -> Option<ObjectReference> {
-    Some(ObjectReference::new(
-        reference.universe().clone(),
-        fsl_semantics::check::clock_reference_target(),
-        ObjectId::new(reference.text()).ok()?,
-    ))
-}
 
 impl ModelSystem<'_> {
     /// Every valid `Reference<Clock>` identity of this model universe under the
@@ -209,7 +203,7 @@ impl ModelSystem<'_> {
                 let Some(object) = self
                     .initial_base
                     .iter()
-                    .find_map(|state| state.state.populations.get(&population.key)?.get(key))
+                    .find_map(|state| state.state().populations.get(&population.key)?.get(key))
                 else {
                     continue;
                 };
@@ -258,7 +252,7 @@ impl ModelSystem<'_> {
         let mut admitted = Vec::new();
         for state in &self.initial_base {
             for object in state
-                .state
+                .state()
                 .populations
                 .values()
                 .flat_map(|objects| objects.values())

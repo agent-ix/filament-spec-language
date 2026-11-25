@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FSpec FR-322 "Operand index segments" for an analyze result: a document
 //! outside the package writes each operand of a node id as the index segment
-//! `{"node": i}` naming `semantic_graph.nodes[i]`, and FR-412's
-//! `CertificateIdentity` names its owning `model`.
+//! `{"node": i}` naming `semantic_graph.nodes[i]`. FR-412's
+//! `CertificateIdentity` names its owning `model`, and its `node_id` stays the
+//! structural id with every operand nested (FSpec `CertificateNodeId`).
 //!
 //! The engines build a certificate, a counterexample and a locus with the
 //! structural node id of each node, every operand a nested id. [`hold`]
@@ -17,7 +18,8 @@
 use std::collections::BTreeMap;
 
 use fsl_semantics::check::wire_id::{
-    component_key_held, foreign_id_container, key_subject_package, peer_graphs, WireGraph,
+    certificate_identity, component_key_held, foreign_id_container, key_subject_package,
+    peer_graphs, WireGraph,
 };
 use fsl_semantics::check::ComponentPackages;
 use serde_json::Value;
@@ -39,16 +41,11 @@ pub enum HeldIdentityError {
 
 /// Whether `value` is a FR-412 `{node_id, model, ordinal}` identity.
 fn is_certificate_identity(value: &Value) -> bool {
-    value.as_object().is_some_and(|object| {
-        object.len() == 3
-            && object.contains_key("node_id")
-            && object.contains_key("model")
-            && object.contains_key("ordinal")
-    })
+    value.as_object().is_some_and(certificate_identity)
 }
 
-/// Whether `value` holds a node id with a nested operand id, or an identity
-/// whose `model` is null.
+/// Whether `value` holds a node id with a nested operand id outside a
+/// certificate identity, or an identity whose `model` is null.
 pub(super) fn needs_hold(value: &Value) -> bool {
     let mut pending = vec![value];
     while let Some(current) = pending.pop() {
@@ -57,11 +54,17 @@ pub(super) fn needs_hold(value: &Value) -> bool {
                 continue;
             }
         }
+        if is_certificate_identity(current) {
+            if current["model"].is_null() {
+                return true;
+            }
+            continue;
+        }
         let nested = current
             .get("path")
             .and_then(Value::as_array)
             .is_some_and(|path| path.iter().any(|segment| segment.get("package").is_some()));
-        if nested || (is_certificate_identity(current) && current["model"].is_null()) {
+        if nested {
             return true;
         }
         match current {
@@ -101,7 +104,8 @@ impl ComponentScope<'_> {
 }
 
 /// Write every node id under `value` in the document-held form of `graph`,
-/// and fill each identity's null `model` with `model`.
+/// except each certificate identity's `node_id`, which stays structural, and
+/// fill each identity's null `model` with `model`.
 ///
 /// `composition` is the scope of an item whose `request.kind` is
 /// `composition` and that has no `package` member: each `component-guarantee`
@@ -298,6 +302,27 @@ mod tests {
             json!({"node": 1})
         );
         assert_eq!(held["claim"]["path"][1], json!({"node": 0}));
+    }
+
+    /// FR-621-AC-16, FSpec FR-412-AC-34: a certificate identity keeps its
+    /// structural `node_id` and takes the owning model, while every other id
+    /// of the item is held.
+    #[trace("TC-3154", "FR-621-AC-16")]
+    #[test]
+    fn a_certificate_identity_stays_structural() {
+        let structural = id("own", "own", "leaf");
+        let identity = json!({"node_id": structural, "model": null, "ordinal": 0});
+        let value = json!({
+            "request": {"claim": {"node": structural}},
+            "certificate": {"identity": identity, "document": {"identity": identity}}});
+        let held = hold(&value, &graph("own"), None, Some("test/m")).expect("held");
+        assert_eq!(
+            held["request"]["claim"]["node"]["path"][1],
+            json!({"node": 0})
+        );
+        let written = json!({"node_id": structural, "model": "test/m", "ordinal": 0});
+        assert_eq!(held["certificate"]["identity"], written);
+        assert_eq!(held["certificate"]["document"]["identity"], written);
     }
 
     /// FR-621-AC-17, FSpec FR-322 "Scope": a peer assumption id of a key is

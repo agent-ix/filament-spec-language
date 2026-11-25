@@ -226,7 +226,7 @@ impl ModelSystem<'_> {
         state: &ModelSimState,
         permutation: &Permutation,
     ) -> Result<ModelSimState, ExpansionStop> {
-        Ok(state.without_effect(self.permute_state(&state.state, permutation)?))
+        Ok(state.without_effect(self.permute_state(state.state(), permutation)?))
     }
 
     /// The state-only projection of [`Self::permute`], for initial recipes
@@ -387,7 +387,7 @@ impl ModelSystem<'_> {
                     .map(|(_, _, _, enc)| enc.clone())
             };
             for class in &group.classes {
-                let objects = state.state.populations.get(&class.population);
+                let objects = state.state().populations.get(&class.population);
                 let mut sorted = Vec::with_capacity(class.keys.len());
                 for key in &class.keys {
                     let bytes = match objects.and_then(|objects| objects.get(key)) {
@@ -461,7 +461,7 @@ mod tests {
         let class = &group.classes[0];
         let mut state = system.initial().into_iter().next().expect("initial state");
         let objects = state
-            .state
+            .state_mut()
             .populations
             .get_mut(&class.population)
             .expect("class population exists");
@@ -584,27 +584,29 @@ mod tests {
         let system = world.system();
         let mut state = system.initial().into_iter().next().expect("initial state");
         let class = &group.classes[0];
-        let object = state
-            .state
+        let object_type = state
+            .state()
             .populations
             .get(&class.population)
             .and_then(|objects| objects.get("a"))
-            .expect("initial class object exists");
+            .expect("initial class object exists")
+            .type_identity
+            .clone();
         let relationship = DeclarationKey {
             package: "test/symmetry".to_owned(),
             node: "ix://test/symmetry/links".to_owned(),
         };
-        state.state.extents.push(RelationshipExtent {
+        state.state_mut().extents.push(RelationshipExtent {
             relationship,
             complete: true,
             instances: vec![RelationshipInstance {
                 source: system
                     .model
-                    .object_reference(&object.type_identity, "a")
+                    .object_reference(&object_type, "a")
                     .expect("source reference resolves"),
                 target: system
                     .model
-                    .object_reference(&object.type_identity, "b")
+                    .object_reference(&object_type, "b")
                     .expect("target reference resolves"),
                 positions: Default::default(),
             }],
@@ -622,13 +624,13 @@ mod tests {
             .collect();
         let projected = super::super::encode::initial_model_key(
             &system.model,
-            &state.state,
+            state.state(),
             system.typing(),
             &Default::default(),
             &renaming,
         );
         let permuted = system
-            .permute_state(&state.state, &permutation)
+            .permute_state(state.state(), &permutation)
             .expect("permutation applies");
         let expected = super::super::encode::model_key(&system.model, &permuted, system.typing());
 

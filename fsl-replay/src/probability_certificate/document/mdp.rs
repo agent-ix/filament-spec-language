@@ -14,6 +14,17 @@ pub struct ProbabilityProofDocument {
 }
 
 impl ProbabilityProofDocument {
+    /// A document of a base with no fairness and no every-scheduler cyclic
+    /// route.
+    pub(super) fn unfair(document: ProbabilityCertificateDocument) -> Self {
+        Self {
+            document,
+            cyclic_mdp: false,
+            fair_mdp: false,
+            fairness: Vec::new(),
+        }
+    }
+
     /// Borrow the untrusted identity, values, ranks and objective data.
     pub fn document(&self) -> &ProbabilityCertificateDocument {
         &self.document
@@ -126,6 +137,36 @@ pub fn probability_proof_document(
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel, None);
+    proof_document_in(system, claims, item, certificate, &mut cx)
+}
+
+/// [`probability_proof_document`], with the arithmetic and retained-storage
+/// scope its attempts spent, for a further attempt to continue.
+pub(super) fn probability_proof_document_spending(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> (
+    Result<ProbabilityProofDocument, ProbabilityDocumentError>,
+    filament_exact::Meter,
+    u64,
+) {
+    let mut cx = Context::new(limits, cancel, None);
+    let proof = proof_document_in(system, claims, item, certificate, &mut cx);
+    (proof, cx.meter, cx.storage)
+}
+
+fn proof_document_in(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    cx: &mut Context<'_, '_>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    let (limits, cancel) = (cx.limits, cx.cancel);
     let claim = bind_claim(claims, item, cancel)?;
     if !claim.fairness.is_empty() {
         super::fairness::admit(claim)?;
@@ -146,7 +187,7 @@ pub fn probability_proof_document(
         )?;
         if fair_mdp {
             cx.fair_mdp = true;
-            let mut proof = construct(system, claims, item, certificate, &mut cx)?;
+            let mut proof = construct(system, claims, item, certificate, cx)?;
             proof.document.cyclic_dtmc = false;
             proof.cyclic_mdp = false;
             proof.fair_mdp = true;
@@ -193,7 +234,7 @@ pub fn probability_proof_document(
                 || (error == ProbabilityDocumentError::ObjectiveMismatch
                     && super::super::cyclic_state::is_claim(claim)) =>
         {
-            construct(system, claims, item, certificate, &mut cx)
+            construct(system, claims, item, certificate, cx)
         }
         Err(error) => Err(error),
     }
@@ -517,6 +558,7 @@ fn reward_subject(
         cancel,
         identity,
         super::super::reward::RewardProfile::CyclicMdp,
+        None,
         meter,
         storage,
         control,
