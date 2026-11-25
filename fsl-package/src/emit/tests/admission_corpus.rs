@@ -4290,19 +4290,42 @@ fn history_refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<fsl_semantics::che
 const HISTORY_STEP: &str =
     "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
 
-/// FR-901-AC-1 (TC-2540): a `Boolean` or integer initial is a reference to a
-/// `literal` node, an absent-option initial is an inline `literal` term and a
-/// present-option initial is a reference to an `option_value` node of the
-/// history's type; each package is admitted by the strict reader, and the
-/// refinement body holds the `histories` row.
+/// FR-901-AC-1 (TC-2540): an initial that is not a present option, an absent
+/// option included, is an inline `literal` term typed at the history's node,
+/// and a present-option initial is a reference to an `option_value` node of
+/// that type (FSpec FR-375 `histories`); each package is admitted by the
+/// strict reader, and the refinement body holds the `histories` row.
 #[trace("TC-2540", "FR-901-AC-1")]
 #[test]
 fn history_initials_of_each_literal_form_are_written() {
-    for (declared, initial, update, referenced) in [
-        ("Int[0, 1]", "0", "0", Some("literal")),
-        ("Boolean", "false", "false", Some("literal")),
-        ("Option<Int[0, 1]>", "none", "none", None),
-        ("Option<Int[0, 1]>", "0", "none", Some("option_value")),
+    for (declared, initial, update, inline) in [
+        ("Int[0, 1]", "0", "0", Some(("integer", json!("0")))),
+        ("Boolean", "false", "false", Some(("boolean", json!(false)))),
+        (
+            "Text[0, 8; nfc]",
+            "\"boot\"",
+            "self.last",
+            Some(("text", json!("boot"))),
+        ),
+        (
+            "Rational[0, 10; 1, 2]",
+            "rational(1, 2)",
+            "self.last",
+            Some(("rational", json!("1/2"))),
+        ),
+        (
+            "Decimal[0, 1000; 0, 2; nearest-even]",
+            "decimal(150, 1)",
+            "self.last",
+            Some(("decimal", json!("15.0"))),
+        ),
+        (
+            "Option<Int[0, 1]>",
+            "none",
+            "none",
+            Some(("none", Value::Null)),
+        ),
+        ("Option<Int[0, 1]>", "0", "none", None),
     ] {
         let rows = format!(
             "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : {declared} = {initial} \
@@ -4314,8 +4337,20 @@ fn history_initials_of_each_literal_form_are_written() {
         assert_eq!(histories.len(), 1, "{declared}: {histories:?}");
         assert_eq!(histories[0]["name"], "last", "{declared}");
         let term = &histories[0]["initial"];
-        match referenced {
-            Some(form) => {
+        match inline {
+            Some((value_kind, value)) => {
+                assert_eq!(
+                    *term,
+                    json!({
+                        "term": "literal",
+                        "type": histories[0]["type"],
+                        "value_kind": value_kind,
+                        "value": value,
+                    }),
+                    "{declared} = {initial}"
+                );
+            }
+            None => {
                 assert_eq!(term["term"], "reference", "{declared} = {initial}");
                 let wire = wire(&emitted.emission);
                 let node_of = |target: &Value| {
@@ -4325,23 +4360,13 @@ fn history_initials_of_each_literal_form_are_written() {
                         .expect("the referenced node")
                 };
                 let target = node_of(&term["target"]);
-                assert_eq!(target["semantic_form"], form, "{declared} = {initial}");
-                assert_eq!(
-                    target["semantic_type"], histories[0]["type"],
-                    "{declared} = {initial}"
-                );
-                if form == "option_value" {
-                    let member = &target["body"]["members"][0];
-                    assert_eq!(member["name"], "value", "{target}");
-                    let payload = node_of(&member["value"]["target"]);
-                    assert_eq!(payload["semantic_form"], "literal", "{payload}");
-                    assert_eq!(payload["body"]["value"], "0", "{payload}");
-                }
-            }
-            None => {
-                assert_eq!(term["term"], "literal", "{declared} = {initial}");
-                assert_eq!(term["value_kind"], "none", "{declared} = {initial}");
-                assert_eq!(term["type"], histories[0]["type"], "{declared} = {initial}");
+                assert_eq!(target["semantic_form"], "option_value", "{target}");
+                assert_eq!(target["semantic_type"], histories[0]["type"], "{target}");
+                let member = &target["body"]["members"][0];
+                assert_eq!(member["name"], "value", "{target}");
+                let payload = node_of(&member["value"]["target"]);
+                assert_eq!(payload["semantic_form"], "literal", "{payload}");
+                assert_eq!(payload["body"]["value"], "0", "{payload}");
             }
         }
         assert_eq!(
@@ -4479,10 +4504,9 @@ fn the_reader_refuses_a_history_row_whose_concrete_type_is_not_an_object_type() 
         .expect("one refinement relation node");
     assert_eq!(refinement_verdict(&emitted, &wire, position), "admitted");
     let mut bad = wire.clone();
-    let literal = bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["initial"]
-        ["target"]
-        .clone();
-    bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["concrete_type"] = literal;
+    let scalar_type =
+        bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["type"].clone();
+    bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["concrete_type"] = scalar_type;
     let verdict = refinement_verdict(&emitted, &bad, position);
     assert!(
         verdict.contains(&format!(

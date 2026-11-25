@@ -7461,8 +7461,7 @@ impl<'a> Lowering<'a> {
     }
 
     /// The literal term of `value` typed at `declared`, located at
-    /// `location`: the one value-to-literal decision a checked literal node
-    /// and a refinement history row's initial value both use.
+    /// `location`: a `literal` node, or an enum member's `enum_value` node.
     pub(super) fn literal_at(
         &mut self,
         location: &Location,
@@ -7470,7 +7469,48 @@ impl<'a> Lowering<'a> {
         declared: &ValueType,
         scalar: Option<&'static str>,
     ) -> Result<LeafTerm, CheckRefusal> {
-        let literal = match value {
+        if let Value::Enum(member) = value {
+            // FR-093: the enum member's FSpec `enum_value` node, whose
+            // key is its `VariantId` (ADR-013 O-14). A model variant
+            // type's nodes are built where it is first named, here.
+            self.type_ref(declared, location)?;
+            let variant = member.variant();
+            let key = crate::value::enumeration::enum_value_key_in(
+                &self.package_name,
+                variant.owner(),
+                variant.case(),
+            )
+            .map_err(|_| {
+                fault(
+                    location,
+                    KeyFault::InvalidMemberKey(variant.owner().clone()),
+                )
+            })?;
+            self.record(key.clone(), OccurrenceRole::Expression, location.clone());
+            return Ok(LeafTerm::reference_node(key.into()));
+        }
+        let literal = Self::literal_value(location, value, scalar)?;
+        let semantic_type = match scalar {
+            Some(form) => NodeRef::from(self.scalar(form, location)?),
+            None => self.type_ref(declared, location)?,
+        };
+        self.value_node_at(
+            location,
+            "literal",
+            semantic_type.clone(),
+            BodyTerm::literal_node(semantic_type, literal),
+        )
+    }
+
+    /// The `literal` term value of `value`: the one value-to-literal decision
+    /// a checked literal node and a refinement history row's inline initial
+    /// both use.
+    pub(super) fn literal_value(
+        location: &Location,
+        value: &Value,
+        scalar: Option<&'static str>,
+    ) -> Result<LiteralValue, CheckRefusal> {
+        Ok(match value {
             Value::Boolean(value) => LiteralValue::Boolean(*value),
             Value::Integer(value) => LiteralValue::Integer(value.clone()),
             Value::Rational(value) => LiteralValue::Rational(value.clone()),
@@ -7481,26 +7521,7 @@ impl<'a> Lowering<'a> {
                 }
                 filament_exact::IeeeWidth::Binary64 => LiteralValue::Float64Bits(value.bits()),
             },
-            Value::Enum(member) => {
-                // FR-093: the enum member's FSpec `enum_value` node, whose
-                // key is its `VariantId` (ADR-013 O-14). A model variant
-                // type's nodes are built where it is first named, here.
-                self.type_ref(declared, location)?;
-                let variant = member.variant();
-                let key = crate::value::enumeration::enum_value_key_in(
-                    &self.package_name,
-                    variant.owner(),
-                    variant.case(),
-                )
-                .map_err(|_| {
-                    fault(
-                        location,
-                        KeyFault::InvalidMemberKey(variant.owner().clone()),
-                    )
-                })?;
-                self.record(key.clone(), OccurrenceRole::Expression, location.clone());
-                return Ok(LeafTerm::reference_node(key.into()));
-            }
+            Value::Enum(member) => LiteralValue::Enum(member.variant().case().to_owned()),
             // FR-093-AC-33: a quantity literal is a `quantity` literal typed
             // by its unit's node; the magnitude is already reduced.
             Value::Quantity(quantity) => LiteralValue::Quantity(quantity.magnitude().clone()),
@@ -7528,17 +7549,7 @@ impl<'a> Lowering<'a> {
             // bare `text` scalar (IR joins the two).
             Value::String(value) if scalar == Some("text") => LiteralValue::Text(value.clone()),
             Value::String(value) => LiteralValue::String(value.clone()),
-        };
-        let semantic_type = match scalar {
-            Some(form) => NodeRef::from(self.scalar(form, location)?),
-            None => self.type_ref(declared, location)?,
-        };
-        self.value_node_at(
-            location,
-            "literal",
-            semantic_type.clone(),
-            BodyTerm::literal_node(semantic_type, literal),
-        )
+        })
     }
 
     fn unbuilt_map_literal(location: &Location) -> CheckRefusal {
