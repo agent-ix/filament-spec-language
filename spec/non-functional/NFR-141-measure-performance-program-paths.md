@@ -18,12 +18,7 @@ the region-mapping cost group in QSL-2854,
 the FSL benchmark gate SHALL run the applicable named axis, check its
 acceptance criterion below, and compare candidate B with current
 `origin/main` A using live measurements from the same session as specified in
-`fsl-bench/BENCHMARKING.md`. For QSL-1919, baseline A SHALL use `origin/main`
-production sources and candidate B SHALL use candidate production sources.
-The wall-time axes in AC-1 through AC-3 SHALL be built without a
-replay-counter seam on both sides. Only the isolated parse-counter probe in
-AC-5 SHALL use the benchmark-only replay-counter seam, applying the identical
-harness files unchanged to both sides. Stored measurements are not thresholds.
+`fsl-bench/BENCHMARKING.md`. Stored measurements are not thresholds.
 
 ## Scope
 
@@ -82,6 +77,10 @@ result may be selectively replaced within a session.
 | NFR-141-AC-17, workspace structure | One `it` binary each and duplicate major versions removed | Exactly one each; zero duplicate `syn`/`jsonschema` majors | Build graph and binary inventory |
 | NFR-141-AC-18, build time | Cold/incremental build and test no-run wall time | Each B median <= A median × (1 + noise), and one < A median × (1 − noise) | Five-round live A/B build measurements |
 | NFR-141-AC-19, region lookup work | Source-map segment-group index build visits and lookup probes for nested prefix spans at 5,000, 10,000 and 20,000 segments | At most N index visits and N × (2 × ceil(log2 N) + 4) query probes at each size; exact mapped-region results equal the existing multi-region mapping filtered to exactly one region | Deterministic operation-count test and exact output comparison |
+| NFR-141-AC-20, baseline provenance | FSL production source revision used for A | `origin/main` at session start | Live A/B provenance report |
+| NFR-141-AC-21, candidate provenance | FSL production source revision used for B | Candidate production sources | Live A/B provenance report |
+| NFR-141-AC-22, timing instrumentation | Replay-counter seam on AC-1 through AC-3 wall-time axes | No seam on either side | Live A/B harness and provenance inspection |
+| NFR-141-AC-23, parse-counter instrumentation | Identical benchmark-only seam on AC-5 isolated probe | Same unchanged harness files on A and B; seam revision reported separately from production source revisions | Isolated probe and provenance report |
 
 ## Acceptance Criteria
 
@@ -106,6 +105,10 @@ result may be selectively replaced within a session.
 | NFR-141-AC-17 | For QSL-1930, qsl-replay and qsl-package each build exactly one `it` test binary; duplicate `syn` and `jsonschema` major versions are removed from the resolved workspace dependency graph. | Cargo build graph and test-binary inventory |
 | NFR-141-AC-18 | For QSL-1930, cold and incremental `cargo build --timings` and `cargo test --no-run` wall time are measured before and after; each candidate median is no greater than its baseline median plus session noise, and at least one is lower by more than session noise. | Live five-round A/B build measurements |
 | NFR-141-AC-19 | For the region-mapping cost group in QSL-2854, construct a `SourceMap` with N = 5,000, 10,000 and 20,000 ordered one-line body segments separated by an allowed two-byte indentation deletion in the original source, then query each of the N nonempty body prefixes `[0, 2k)` for `1 <= k <= N`. Building the contiguous original-region group index visits at most N input segments. Across the N queries at each size, binary-search and examined-group probes total at most `N × (2 × ceil(log2 N) + 4)`. In this fixture, the exact result is the original first-line region for k = 1 and `None` for k > 1; a boundary differential test compares the specialized result with `map_regions` for every span of a 12-segment fixture. The old scan-per-query implementation fails this bound: at N = 5,000, the deterministic probe recorded 12,577,499 segment steps against a bound of 150,000. | Focused deterministic operation-count unit test at all three sizes and exact boundary comparison against `map_regions` |
+| NFR-141-AC-20 | For each QSL-1919 live A/B session, baseline A uses the FSL production sources at `origin/main` when the session begins; the report records A's production source revision. | Live A/B provenance report |
+| NFR-141-AC-21 | For each QSL-1919 live A/B session, candidate B uses the FSL candidate production sources; the report records B's production source revision. | Live A/B provenance report |
+| NFR-141-AC-22 | For QSL-1919, the `package/emit`, `package/read` and `replay/request` wall-time axes in AC-1 through AC-3 use no replay-counter seam on either side. | Live A/B harness and provenance inspection |
+| NFR-141-AC-23 | For QSL-1919 AC-5, the isolated parse-counter probe applies identical benchmark-only replay-counter harness files unchanged to baseline A and candidate B; the report records the seam revision separately from each production source revision. | Isolated probe and provenance report |
 
 ## Verification
 
