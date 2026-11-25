@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Typed checked-subject replay and EN-5 refutation integration.
 use crate::prob_world::{self, World};
-use crate::value_validity::source_color;
+use crate::source_value_support::source_color;
 use filament_exact::{Cancel, CancelCause, Integer, Rational, Undefined, Value};
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};

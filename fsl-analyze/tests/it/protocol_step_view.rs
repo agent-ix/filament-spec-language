@@ -16,7 +16,7 @@ use ix_trace_rs::trace;
 use crate::fill;
 use crate::protocol_projection::{admitted, clause, root as assessed_root};
 use crate::protocol_realizability::{refuted, worked, Fixture, CANCELLED, PICK};
-use crate::weak_memory::{load, select, store, Case};
+use crate::weak_memory_support::{load, select, store, Case};
 
 const LIMIT: usize = 4096;
 
