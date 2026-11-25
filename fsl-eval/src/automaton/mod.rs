@@ -61,6 +61,7 @@ mod qualified_bounded;
 mod state;
 mod timed_claim;
 mod timed_window;
+mod timed_formula;
 mod translate;
 
 pub use bounded::{bounded_shape, closure_shape, BoundedKind, BoundedState, BoundedTranslation};
@@ -93,6 +94,10 @@ pub use timed_claim::{
 pub use timed_window::{
     bounded_formula_verdict, bounded_window_verdict, Atoms, Read, Stamp, Undefined, WindowClaim,
     WindowFault, WindowRefusal, WindowState,
+};
+pub use timed_formula::{
+    validate_timed_formula_monitor_key, TimedFormulaMonitor, TimedFormulaMonitorError,
+    TimedFormulaMonitorLimits,
 };
 pub use translate::{
     translate, translate_body, translate_counted, translate_itself, translate_negation,

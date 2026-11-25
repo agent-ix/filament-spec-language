@@ -37,6 +37,9 @@ unicode-normalization = "0.1.25"
 # ADR-011 X-8: the simulation state key and the pinned sampler's draw
 # preimage encode through the one RFC 8785 implementation (FR-101).
 quire-canonical = { workspace = true }
+num-bigint = "0.4.8"
+num-integer = "0.1.47"
+num-traits = "0.2.19"
 sha2 = "0.10.9"
 # The pinned sampler's draw preimage and the simulation-state typed
 # canonical form fixtures are `Serialize` (FR-101; ADR-011 X-8).

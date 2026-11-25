@@ -17,6 +17,54 @@ use serde_json::{Value as JsonValue, json};
 
 mod elapsed;
 use super::formula_monitor::Monitor as FormulaMonitor;
+use super::formula_monitor::{MonitorError, MonitorLimits};
+
+fn monitor_limits(limits: ProbabilityDocumentLimits) -> MonitorLimits {
+    MonitorLimits {
+        states: u64::try_from(limits.states).unwrap_or(u64::MAX),
+        storage_bytes: limits.storage_bytes,
+    }
+}
+
+fn monitor_error(error: MonitorError, cancel: &Cancel) -> ProbabilityDocumentError {
+    match error {
+        MonitorError::Unsupported => ProbabilityDocumentError::Unsupported,
+        MonitorError::States { bound, actual } => ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::States,
+            bound,
+            actual,
+        },
+        MonitorError::StorageBytes { bound, actual } => ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::StorageBytes,
+            bound,
+            actual,
+        },
+        MonitorError::Cancelled => ProbabilityDocumentError::Cancelled(
+            cancel
+                .tripped()
+                .or_else(|| cancel.cause())
+                .expect("cancelled monitor has a cancellation cause"),
+        ),
+    }
+}
+
+fn monitor_key_error(error: MonitorError) -> ProbabilityDocumentError {
+    match error {
+        MonitorError::Unsupported | MonitorError::Cancelled => {
+            ProbabilityDocumentError::Unsupported
+        }
+        MonitorError::States { bound, actual } => ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::States,
+            bound,
+            actual,
+        },
+        MonitorError::StorageBytes { bound, actual } => ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::StorageBytes,
+            bound,
+            actual,
+        },
+    }
+}
 
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -1491,8 +1539,8 @@ fn phase_value(phase: &Phase) -> Option<bool> {
     }
 }
 
-fn monitor_json(phase: &Phase) -> JsonValue {
-    match phase {
+fn monitor_json(phase: &Phase) -> Result<JsonValue, ProbabilityDocumentError> {
+    Ok(match phase {
         Phase::FormulaMonitor {
             horizon,
             monitor,
@@ -1500,7 +1548,11 @@ fn monitor_json(phase: &Phase) -> JsonValue {
         } => json!([
             "bounded-timed-formula-monitor",
             horizon.to_string(),
-            monitor.as_ref().map(FormulaMonitor::key),
+            monitor
+                .as_ref()
+                .map(FormulaMonitor::key_value)
+                .transpose()
+                .map_err(monitor_key_error)?,
             match verdict {
                 None => "pending",
                 Some(true) => "accept",
@@ -1528,7 +1580,7 @@ fn monitor_json(phase: &Phase) -> JsonValue {
         Phase::Accepted => json!(["deadline", "eventually", "accept"]),
         Phase::Rejected => json!(["deadline", "eventually", "reject"]),
         _ => JsonValue::Null,
-    }
+    })
 }
 
 /// FR-877's elapsed measure and its quantile transform, as the checker
@@ -1625,44 +1677,48 @@ impl Watch<'_> {
                             let delta = at
                                 .checked_sub(monitor.time())
                                 .ok_or(ProbabilityDocumentError::Unsupported)?;
-                            verdict = monitor.observe(
-                                formula,
-                                *scale,
-                                delta,
-                                &previous_values,
-                                *limits,
-                                cancel,
-                            )?;
+                            verdict = monitor
+                                .observe(
+                                    formula,
+                                    *scale,
+                                    delta,
+                                    &previous_values,
+                                    monitor_limits(*limits),
+                                    cancel,
+                                )
+                                .map_err(|error| monitor_error(error, cancel))?;
                             at = at.saturating_add(1);
                         }
-                        if verdict.is_none()
-                            && elapsed > previous_time
-                            && truths != previous_values
+                        if verdict.is_none() && elapsed > previous_time && truths != previous_values
                         {
                             let delta = elapsed
                                 .checked_sub(monitor.time())
                                 .ok_or(ProbabilityDocumentError::Unsupported)?;
-                            verdict = monitor.observe(
-                                formula,
-                                *scale,
-                                delta,
-                                &previous_values,
-                                *limits,
-                                cancel,
-                            )?;
+                            verdict = monitor
+                                .observe(
+                                    formula,
+                                    *scale,
+                                    delta,
+                                    &previous_values,
+                                    monitor_limits(*limits),
+                                    cancel,
+                                )
+                                .map_err(|error| monitor_error(error, cancel))?;
                         }
                         if verdict.is_none() {
                             let delta = elapsed
                                 .checked_sub(monitor.time())
                                 .ok_or(ProbabilityDocumentError::Unsupported)?;
-                            verdict = monitor.observe(
-                                formula,
-                                *scale,
-                                delta,
-                                &truths,
-                                *limits,
-                                cancel,
-                            )?;
+                            verdict = monitor
+                                .observe(
+                                    formula,
+                                    *scale,
+                                    delta,
+                                    &truths,
+                                    monitor_limits(*limits),
+                                    cancel,
+                                )
+                                .map_err(|error| monitor_error(error, cancel))?;
                         }
                         Ok((
                             Phase::FormulaMonitor {
@@ -1690,9 +1746,10 @@ impl Watch<'_> {
                             formula,
                             *scale,
                             &truths,
-                            *limits,
+                            monitor_limits(*limits),
                             cancel,
-                        )?;
+                        )
+                        .map_err(|error| monitor_error(error, cancel))?;
                         Ok((
                             Phase::FormulaMonitor {
                                 horizon: *horizon,
@@ -2886,7 +2943,7 @@ fn region_key(
         Phase::Censored => Some(("censored", Some(state.elapsed))),
         _ => None,
     };
-    let monitor = monitor_json(&state.phase);
+    let monitor = monitor_json(&state.phase)?;
     let mut keyed_clocks = clocks
         .into_iter()
         .map(|(identity, value, cap)| {
@@ -3061,7 +3118,7 @@ fn digital_key(
         Phase::Censored => Some(("censored", Some(state.elapsed))),
         _ => None,
     };
-    let monitor = monitor_json(&state.phase);
+    let monitor = monitor_json(&state.phase)?;
     digital_probability_product_key(DigitalProductKeyInput {
         binding,
         discrete,

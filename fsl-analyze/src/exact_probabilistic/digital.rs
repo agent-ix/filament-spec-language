@@ -185,6 +185,36 @@ fn fault(invariant: &'static str) -> ProductRefusal {
     ProductRefusal::Internal(InternalFault::new("exact-probabilistic-digital", invariant))
 }
 
+fn monitor_refusal(
+    error: fsl_eval::automaton::TimedFormulaMonitorError,
+    cancel: &Cancel,
+) -> ProductRefusal {
+    match error {
+        fsl_eval::automaton::TimedFormulaMonitorError::States { actual, .. } => {
+            ProductRefusal::Stopped(ProductStop::Limit {
+                limit: ModelCheckLimit::ExactProbMaxAutomatonStates,
+                value: actual,
+            })
+        }
+        fsl_eval::automaton::TimedFormulaMonitorError::StorageBytes { actual, .. } => {
+            ProductRefusal::Stopped(ProductStop::Limit {
+                limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                value: actual,
+            })
+        }
+        fsl_eval::automaton::TimedFormulaMonitorError::Cancelled => {
+            ProductRefusal::Stopped(ProductStop::Cancelled(
+                cancel
+                    .cause()
+                    .unwrap_or(filament_exact::CancelCause::Requested),
+            ))
+        }
+        fsl_eval::automaton::TimedFormulaMonitorError::Unsupported => {
+            fault("bounded-timed-formula-monitor-input-is-admitted")
+        }
+    }
+}
+
 fn one() -> Rational {
     Rational::from_integer(Integer::one())
 }
@@ -1338,7 +1368,7 @@ impl<'c> Builder<'_, '_, 'c> {
         self.poll()?;
         if matches!(self.form, Form::FormulaMonitor { .. }) {
             if let Some(formula_monitor) = state.formula_monitor.as_ref() {
-                let cells = u64::try_from(formula_monitor.cells()).unwrap_or(u64::MAX);
+                let cells = formula_monitor.cells();
                 if cells > self.max_automaton_states {
                     return Err(ProductRefusal::Stopped(ProductStop::Limit {
                         limit: ModelCheckLimit::ExactProbMaxAutomatonStates,
@@ -1346,6 +1376,18 @@ impl<'c> Builder<'_, '_, 'c> {
                     })
                     .into());
                 }
+                formula_monitor
+                    .check_key_size(self.max_certificate_key_bytes)
+                    .map_err(|error| match error {
+                        fsl_eval::automaton::TimedFormulaMonitorError::StorageBytes {
+                            actual,
+                            ..
+                        } => ProductRefusal::Stopped(ProductStop::Limit {
+                            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                            value: actual,
+                        }),
+                        _ => fault("bounded-timed-formula-monitor-key-fits"),
+                    })?;
             }
         }
         let certificate_state = self.certificate_key(state, binding, monitor, pending.as_ref())?;
@@ -1513,7 +1555,9 @@ impl<'c> Builder<'_, '_, 'c> {
                 self.deadline_bound()?
                     .ok_or_else(|| fault("bounded-timed-formula-horizon-exists"))?
                     .to_string(),
-                formula_monitor.key(),
+                formula_monitor
+                    .key_checked(self.max_certificate_key_bytes)
+                    .map_err(|_| fault("bounded-timed-formula-monitor-key-fits"))?,
                 phase
             ]))
         } else {
@@ -1772,11 +1816,16 @@ impl<'c> Builder<'_, '_, 'c> {
             }
             Form::FormulaMonitor { formula, .. } => {
                 self.poll()?;
-                let mut monitor = formula_monitor::Monitor::new(formula, self.scale)
-                    .map_err(fault)?;
+                let monitor_limits = fsl_eval::automaton::TimedFormulaMonitorLimits {
+                    states: self.max_automaton_states,
+                    storage_bytes: self.max_certificate_key_bytes,
+                };
+                let mut monitor =
+                    formula_monitor::Monitor::new(formula, self.scale, monitor_limits)
+                        .map_err(|error| monitor_refusal(error, self.cancel))?;
                 let verdict = monitor
-                    .observe(state.deadline.unwrap_or(0), truths)
-                    .map_err(fault)?;
+                    .observe(formula, self.scale, 0, truths, monitor_limits, self.cancel)
+                    .map_err(|error| monitor_refusal(error, self.cancel))?;
                 self.poll()?;
                 state.formula_monitor = Some(monitor);
                 Ok(Some(MonitorState::Deadline {
@@ -1969,6 +2018,9 @@ impl<'c> Builder<'_, '_, 'c> {
             }));
         }
         if matches!(self.form, Form::FormulaMonitor { .. }) {
+            let Form::FormulaMonitor { formula, .. } = &self.form else {
+                return Err(fault("bounded-timed-formula-monitor-form-is-selected").into());
+            };
             let Some(mut monitor) = reached.formula_monitor.take() else {
                 return Err(fault("bounded-timed-formula-monitor-started-at-origin").into());
             };
@@ -1984,8 +2036,18 @@ impl<'c> Builder<'_, '_, 'c> {
                 while at < time && phase == DeadlinePhase::Pending {
                     self.poll()?;
                     phase = match monitor
-                        .observe(at, &previous_values)
-                        .map_err(fault)?
+                        .observe_at(
+                            formula,
+                            self.scale,
+                            at,
+                            &previous_values,
+                            fsl_eval::automaton::TimedFormulaMonitorLimits {
+                                states: self.max_automaton_states,
+                                storage_bytes: self.max_certificate_key_bytes,
+                            },
+                            self.cancel,
+                        )
+                        .map_err(|error| monitor_refusal(error, self.cancel))?
                     {
                         Some(true) => DeadlinePhase::Accept,
                         Some(false) => DeadlinePhase::Reject,
@@ -1995,12 +2057,24 @@ impl<'c> Builder<'_, '_, 'c> {
                 }
                 if phase == DeadlinePhase::Pending
                     && time > previous_time
-                    && letters.first().map_or(true, |next| *next != previous_values)
+                    && letters
+                        .first()
+                        .map_or(true, |next| *next != previous_values)
                 {
                     self.poll()?;
                     phase = match monitor
-                        .observe(time, &previous_values)
-                        .map_err(fault)?
+                        .observe_at(
+                            formula,
+                            self.scale,
+                            time,
+                            &previous_values,
+                            fsl_eval::automaton::TimedFormulaMonitorLimits {
+                                states: self.max_automaton_states,
+                                storage_bytes: self.max_certificate_key_bytes,
+                            },
+                            self.cancel,
+                        )
+                        .map_err(|error| monitor_refusal(error, self.cancel))?
                     {
                         Some(true) => DeadlinePhase::Accept,
                         Some(false) => DeadlinePhase::Reject,
@@ -2012,7 +2086,20 @@ impl<'c> Builder<'_, '_, 'c> {
                         break;
                     }
                     self.poll()?;
-                    phase = match monitor.observe(time, truths).map_err(fault)? {
+                    phase = match monitor
+                        .observe_at(
+                            formula,
+                            self.scale,
+                            time,
+                            truths,
+                            fsl_eval::automaton::TimedFormulaMonitorLimits {
+                                states: self.max_automaton_states,
+                                storage_bytes: self.max_certificate_key_bytes,
+                            },
+                            self.cancel,
+                        )
+                        .map_err(|error| monitor_refusal(error, self.cancel))?
+                    {
                         Some(true) => DeadlinePhase::Accept,
                         Some(false) => DeadlinePhase::Reject,
                         None => DeadlinePhase::Pending,
@@ -2136,8 +2223,15 @@ impl<'c> Builder<'_, '_, 'c> {
                             Form::FormulaMonitor { formula, .. } => {
                                 let mut state = state.clone();
                                 state.formula_monitor = Some(
-                                    formula_monitor::Monitor::new(formula, self.scale)
-                                        .map_err(fault)?,
+                                    formula_monitor::Monitor::new(
+                                        formula,
+                                        self.scale,
+                                        fsl_eval::automaton::TimedFormulaMonitorLimits {
+                                            states: self.max_automaton_states,
+                                            storage_bytes: self.max_certificate_key_bytes,
+                                        },
+                                    )
+                                    .map_err(|error| monitor_refusal(error, self.cancel))?,
                                 );
                                 Some(MonitorState::Deadline {
                                     kind: DeadlineKind::Eventually,
