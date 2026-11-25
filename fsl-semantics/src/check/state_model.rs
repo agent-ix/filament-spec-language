@@ -315,7 +315,7 @@ impl FamilyContract for StateModelFamily {
                             return Err(refuse(
                                 location,
                                 CheckCause::UnknownField {
-                                    owner,
+                                    owner: owner.into(),
                                     field: field.as_str().into(),
                                     span: *member_span,
                                 },
