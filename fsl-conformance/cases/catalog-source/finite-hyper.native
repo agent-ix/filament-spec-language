@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile t = "filament.temporal.event-position.false-extension/v1";
+record Obs { inp: Int[0, 3]; res: Int[0, 3]; }
+hyper Det using t over t in Obs bounded 3 forall trace a forall trace b { (a.inp = b.inp) implies (a.res = b.res) }
