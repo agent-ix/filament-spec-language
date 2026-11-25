@@ -552,6 +552,7 @@ impl ModelLetters for ByKey {
 /// `max_states` that lets a run finish is then more than `a`'s product plus
 /// those 16: `a`'s own model-only pass has been charged too, so the budget
 /// `b` gets is what `a`'s product and pass left.
+#[trace("TC-1085")]
 #[test]
 fn the_model_only_pass_spends_the_budget_the_next_instance_gets() {
     let fixture = fixture(
