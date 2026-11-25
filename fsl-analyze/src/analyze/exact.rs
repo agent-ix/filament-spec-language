@@ -49,11 +49,10 @@ use super::items::{admission, BROKEN, NOT_YET};
 use super::timed_item::subject_refusal;
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    ExtRational, FairReachabilityOutcome, FhError, FhResult, ProbBuild, ProbProduct,
-    ProductRefusal, ProductRequest, UnboundedError, UnboundedObjective, build_retaining_monitor,
-    decide_always, decide_bounded_event, decide_expected_reward,
+    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
     decide_fair_reachability_interval, decide_reachability, decide_until, manifest as en5,
-    settle_product_refusal,
+    settle_product_refusal, ExtRational, FairReachabilityOutcome, FhError, FhResult, ProbBuild,
+    ProbProduct, ProductRefusal, ProductRequest, UnboundedError, UnboundedObjective,
 };
 
 /// The FR-413 claim type for a checked exact form, using the shared type
@@ -1638,22 +1637,13 @@ fn run(
                 Bound::AtLeast(threshold) | Bound::AtMost(threshold) => threshold,
             };
             decide_fair_reachability_interval(
-                &product,
-                None,
-                &target,
-                objective,
-                threshold,
-                &limits,
+                &product, None, &target, objective, threshold, &limits, cancel,
             )
         } else {
             crate::exact_probabilistic::decide_fair_reachability(
-                &product,
-                None,
-                &target,
-                objective,
-                &limits,
-                cancel,
+                &product, None, &target, objective, &limits, cancel,
             )
+            .map(FairReachabilityOutcome::Exact)
         };
         let fair = match fair {
             Ok(fair) => fair,

@@ -386,6 +386,7 @@ pub fn decide_fair_reachability_interval(
     objective: UnboundedObjective,
     threshold: &Rational,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<FairReachabilityOutcome, FairProductError> {
     if product.kind != ProductKind::Mdp
         || target.len() != product.states.len()
@@ -437,6 +438,7 @@ pub fn decide_fair_reachability_interval(
                 UnboundedObjective::Max,
                 &transformed_threshold,
                 limits,
+                cancel,
             )?
         } else {
             decide_until_threshold(
@@ -446,6 +448,7 @@ pub fn decide_fair_reachability_interval(
                 objective,
                 &transformed_threshold,
                 limits,
+                cancel,
             )?
         }
     } else if objective == UnboundedObjective::Min {
@@ -458,9 +461,17 @@ pub fn decide_fair_reachability_interval(
             UnboundedObjective::Max,
             &transformed_threshold,
             limits,
+            cancel,
         )?
     } else {
-        decide_reachability_threshold(product, target, objective, &transformed_threshold, limits)?
+        decide_reachability_threshold(
+            product,
+            target,
+            objective,
+            &transformed_threshold,
+            limits,
+            cancel,
+        )?
     };
 
     Ok(match outcome {

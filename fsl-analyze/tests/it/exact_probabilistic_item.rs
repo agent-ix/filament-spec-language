@@ -1608,6 +1608,7 @@ fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
         &target,
         fsl_analyze::exact_probabilistic::UnboundedObjective::Min,
         &limits,
+        &cancel,
     )
     .expect("the fair reachability values are exact");
     let system = ModelSystem::new(world.subject().simulation).expect("the checked model admits");
@@ -1659,7 +1660,12 @@ fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
         fsl_replay::AccountingLimits::default().0,
     );
     let document = fsl_replay::fair_cyclic_probability_proof_document(
-        &system, claims, &item, &certificate, doc_limits, &cancel,
+        &system,
+        claims,
+        &item,
+        &certificate,
+        doc_limits,
+        &cancel,
     )
     .expect("the unchecked fair cyclic document can be written");
     assert!(document.is_fair_cyclic_mdp());

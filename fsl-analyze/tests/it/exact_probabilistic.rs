@@ -2642,6 +2642,7 @@ fn fair_one_shot_go_has_exactly_one_half_reachability() {
         &target,
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the fair one-shot MDP has exact reachability");
     assert_eq!(
