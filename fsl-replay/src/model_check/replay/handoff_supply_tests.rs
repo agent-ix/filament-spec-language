@@ -290,10 +290,11 @@ fn a_join_refusal_of_an_artifact_name_is_the_handoff_refusal() {
             "a repeated artifact name",
         ),
     ] {
-        let refusal = fsl_package::BarePackage::new(&root.package)
-            .with_dependency_artifacts(&artifacts, &mut join_budget())
-            .err()
-            .expect(case);
+        let joined = fsl_package::BarePackage::new(&root.package)
+            .with_dependency_artifacts(&artifacts, &mut join_budget());
+        let Err(refusal) = joined else {
+            panic!("{case}: the join attached the artifacts");
+        };
         assert_refuses(Err(handoff_join_refusal(refusal)), case);
     }
     let denial = fsl_package::NativeJoinFailure::UnitDefinitions {
