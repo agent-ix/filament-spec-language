@@ -13,14 +13,15 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use filament_contract_model::{
-    CheckedBindingNameKind, CheckedNodeId, CheckedOccurrenceRole, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm, LiteralKind, PathConditionFrame,
-    PathConditionFrameId,
+    CheckedBindingNameKind, CheckedNodeId, CheckedNodePathSegment, CheckedOccurrenceRole,
+    CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm, LiteralKind,
+    PathConditionFrame, PathConditionFrameId,
 };
 use filament_exact::NodeKey;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::wire_id::{StructuralIds, StructuralKeys, WireGraph};
 use fsl_semantics::check::{Capability, CheckedGraph, RequirementRecord};
+use ix_trace_rs::implements;
 
 use super::{EmitRefusal, Omitted};
 use crate::emit::node_id;
@@ -176,10 +177,64 @@ impl KeyResolver<'_> {
     }
 }
 
+/// A shallow identity for the graph-owned representation of a checked id.
+/// `CheckedNodeId` clones retain the same `Arc` operands, so their pointer
+/// identity is a safe fast key when it matches an emitted node. The canonical
+/// structural-key lookup below remains the fallback for independently built
+/// but value-equal ids.
+#[derive(Hash, PartialEq, Eq)]
+enum IdentitySegment {
+    Name(Box<str>),
+    Node(*const CheckedNodeId),
+    Index(u64),
+    Operand(u64),
+    Dependency { package: Box<str>, node: u64 },
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct IdentityKey {
+    package: Box<str>,
+    path: Vec<IdentitySegment>,
+    ordinal: u64,
+}
+
+fn identity_key(id: &CheckedNodeId) -> IdentityKey {
+    let path = id
+        .path
+        .iter()
+        .map(|segment| match segment {
+            CheckedNodePathSegment::Name(name) => IdentitySegment::Name(name.clone()),
+            CheckedNodePathSegment::Node(node) => {
+                IdentitySegment::Node(std::ptr::from_ref(node.as_ref()))
+            }
+            CheckedNodePathSegment::Index(index) => IdentitySegment::Index(*index),
+            CheckedNodePathSegment::Operand(operand) => IdentitySegment::Operand(*operand),
+            CheckedNodePathSegment::Dependency { package, node } => IdentitySegment::Dependency {
+                package: package.clone(),
+                node: *node,
+            },
+        })
+        .collect();
+    IdentityKey {
+        package: id.package.clone(),
+        path,
+        ordinal: id.ordinal,
+    }
+}
+
+fn identity_index(nodes: &[CheckedSemanticNodeV2]) -> HashMap<IdentityKey, usize> {
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (identity_key(&node.node_id), position))
+        .collect()
+}
+
 /// The walk of one owner's body over the emitted graph.
 struct Walk<'a, 'k> {
     nodes: &'a [CheckedSemanticNodeV2],
     index: &'a BTreeMap<&'a CheckedNodeId, usize>,
+    identity_index: &'k HashMap<IdentityKey, usize>,
     key_index: Option<&'k HashMap<NodeKey, usize>>,
     resolver: Option<KeyResolver<'k>>,
     /// Resolve each immutable reference term once. The same term is visited
@@ -190,9 +245,14 @@ struct Walk<'a, 'k> {
 }
 
 impl<'a, 'k> Walk<'a, 'k> {
+    #[implements("FSpec-FR-322-AC-490", "FSpec-FR-825-AC-11")]
     fn position(&mut self, id: &CheckedNodeId) -> Option<usize> {
         let pointer = std::ptr::from_ref(id);
         if let Some(&position) = self.resolved.get(&pointer) {
+            return Some(position);
+        }
+        if let Some(&position) = self.identity_index.get(&identity_key(id)) {
+            self.resolved.insert(pointer, position);
             return Some(position);
         }
         if let (Some(resolver), Some(key_index)) = (&mut self.resolver, self.key_index) {
@@ -499,9 +559,11 @@ pub(super) fn visits(
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
+    let identities = identity_index(nodes);
     let mut walk = Walk {
         nodes,
         index: &index,
+        identity_index: &identities,
         key_index: keys.as_ref(),
         resolver,
         resolved: HashMap::new(),
@@ -644,6 +706,7 @@ pub(super) fn derive(
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
+    let identities = identity_index(nodes);
     let mut keys = ids.key_reader();
     let node_keys = nodes
         .iter()
@@ -656,6 +719,7 @@ pub(super) fn derive(
     let mut walk = Walk {
         nodes,
         index: &index,
+        identity_index: &identities,
         key_index: Some(&key_index),
         resolver: Some(KeyResolver::Reader(&mut keys)),
         resolved: HashMap::new(),
@@ -764,12 +828,14 @@ pub(super) fn rederive(
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
+    let identities = identity_index(nodes);
     let graph = WireGraph::new(nodes.iter().map(|node| &node.node_id))
         .map_err(|_| EmitRefusal::SourceMapInvariant)?;
     let key_index = key_index(graph.keys());
     let mut walk = Walk {
         nodes,
         index: &index,
+        identity_index: &identities,
         key_index: Some(&key_index),
         resolver: Some(KeyResolver::Graph(&graph)),
         resolved: HashMap::new(),
