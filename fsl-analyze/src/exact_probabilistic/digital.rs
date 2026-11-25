@@ -151,6 +151,7 @@ pub(super) fn build<'s, 'a>(
         max_states: limits.model.limits.max_states,
         max_transitions: limits.model.limits.max_transitions,
         max_automaton_states: limits.model.max_automaton_states,
+        max_certificate_key_bytes: limits.document.storage_bytes,
         cancel,
         locals: BTreeMap::new(),
         nodes: Vec::new(),
@@ -1084,6 +1085,7 @@ struct Builder<'r, 'a, 'c> {
     max_states: usize,
     max_transitions: usize,
     max_automaton_states: u64,
+    max_certificate_key_bytes: u64,
     cancel: &'r Cancel,
     locals: BTreeMap<Vec<u8>, Rc<Local>>,
     nodes: Vec<Node>,
@@ -1333,9 +1335,9 @@ impl<'c> Builder<'_, '_, 'c> {
         monitor: Option<MonitorState>,
         pending: Option<Pending>,
     ) -> Step<ProbKey> {
-        let certificate_state = self.certificate_key(state, binding, monitor, pending.as_ref())?;
-        let timed_history = match (&self.form, state.formula_monitor.as_ref()) {
-            (Form::FormulaMonitor { .. }, Some(formula_monitor)) => {
+        self.poll()?;
+        if matches!(self.form, Form::FormulaMonitor { .. }) {
+            if let Some(formula_monitor) = state.formula_monitor.as_ref() {
                 let cells = u64::try_from(formula_monitor.cells()).unwrap_or(u64::MAX);
                 if cells > self.max_automaton_states {
                     return Err(ProductRefusal::Stopped(ProductStop::Limit {
@@ -1344,18 +1346,22 @@ impl<'c> Builder<'_, '_, 'c> {
                     })
                     .into());
                 }
-                let encoded = serde_json::to_vec(&formula_monitor.key())
-                    .map_err(|_| fault("timed-formula-monitor-key-serializes"))?;
-                let values = encoded
-                    .iter()
-                    .flat_map(|byte| (0..8).map(move |bit| byte & (1 << bit) != 0))
-                    .collect();
-                Some(vec![TimedObservation {
-                    time: formula_monitor.time(),
-                    values,
-                }])
             }
-            _ => state.timed_history.clone(),
+        }
+        let certificate_state = self.certificate_key(state, binding, monitor, pending.as_ref())?;
+        let timed_history = if matches!(self.form, Form::FormulaMonitor { .. }) {
+            let key_bytes = u64::try_from(certificate_state.as_bytes().len()).unwrap_or(u64::MAX);
+            if key_bytes > self.max_certificate_key_bytes {
+                return Err(ProductRefusal::Stopped(ProductStop::Limit {
+                    limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                    value: key_bytes,
+                })
+                .into());
+            }
+            self.poll()?;
+            None
+        } else {
+            state.timed_history.clone()
         };
         Ok(ProbKey {
             binding: self.bindings[binding].0.clone(),
@@ -1765,11 +1771,13 @@ impl<'c> Builder<'_, '_, 'c> {
                 }))
             }
             Form::FormulaMonitor { formula, .. } => {
+                self.poll()?;
                 let mut monitor = formula_monitor::Monitor::new(formula, self.scale)
                     .map_err(fault)?;
                 let verdict = monitor
                     .observe(state.deadline.unwrap_or(0), truths)
                     .map_err(fault)?;
+                self.poll()?;
                 state.formula_monitor = Some(monitor);
                 Ok(Some(MonitorState::Deadline {
                     kind: DeadlineKind::Eventually,
@@ -1974,6 +1982,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 let previous_values = monitor.last_values().to_vec();
                 let mut at = previous_time.saturating_add(1);
                 while at < time && phase == DeadlinePhase::Pending {
+                    self.poll()?;
                     phase = match monitor
                         .observe(at, &previous_values)
                         .map_err(fault)?
@@ -1988,6 +1997,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     && time > previous_time
                     && letters.first().map_or(true, |next| *next != previous_values)
                 {
+                    self.poll()?;
                     phase = match monitor
                         .observe(time, &previous_values)
                         .map_err(fault)?
@@ -2001,6 +2011,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     if phase != DeadlinePhase::Pending {
                         break;
                     }
+                    self.poll()?;
                     phase = match monitor.observe(time, truths).map_err(fault)? {
                         Some(true) => DeadlinePhase::Accept,
                         Some(false) => DeadlinePhase::Reject,
@@ -2121,6 +2132,17 @@ impl<'c> Builder<'_, '_, 'c> {
                             Form::TimedTrace { .. } => {
                                 let mut state = state.clone();
                                 self.deadline_start(&[], &mut state)?
+                            }
+                            Form::FormulaMonitor { formula, .. } => {
+                                let mut state = state.clone();
+                                state.formula_monitor = Some(
+                                    formula_monitor::Monitor::new(formula, self.scale)
+                                        .map_err(fault)?,
+                                );
+                                Some(MonitorState::Deadline {
+                                    kind: DeadlineKind::Eventually,
+                                    phase: DeadlinePhase::Pending,
+                                })
                             }
                             Form::Elapsed { .. } => Some(MonitorState::Measure {
                                 remaining: 0,

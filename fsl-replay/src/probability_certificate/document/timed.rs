@@ -16,6 +16,7 @@ use num_traits::Zero;
 use serde_json::{Value as JsonValue, json};
 
 mod elapsed;
+use super::formula_monitor::Monitor as FormulaMonitor;
 
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -88,7 +89,7 @@ pub(super) fn check(
     if objective.form != TimedProbabilityForm::Deadline {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    let Some((bound, watch)) = bounded_event(claim, objective.scale) else {
+    let Some((bound, watch)) = bounded_event(claim, objective.scale, limits) else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
     let optimization = match (&claim.scheduler, &bound) {
@@ -1331,7 +1332,11 @@ fn deadline_event(
 
 /// The independently checked FR-204 bounded monitor shape. Operator node
 /// positions are retained so nested occurrences remain distinct in the key.
-fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound, Watch<'_>)> {
+fn bounded_event(
+    claim: &CheckedProbabilisticClaim,
+    scale: u64,
+    limits: ProbabilityDocumentLimits,
+) -> Option<(Bound, Watch<'_>)> {
     use fsl_semantics::check::ProbForm;
     let ProbForm::Probability {
         bound,
@@ -1346,13 +1351,11 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
         return None;
     };
     let checked = formula.formula();
-    use fsl_eval::probabilistic::{DeadlineKind, DeadlinePhase, TimedOperatorState};
     use fsl_semantics::check::{CheckedInterval, FormulaNode, UnaryTemporal};
 
     let root_index = checked.root().index();
     let root = checked.nodes().get(root_index)?;
     let horizon = time_units(timed_horizon, scale)?;
-    let mut admitted = true;
     let mut predicates = Vec::new();
     for (index, node) in checked.nodes().iter().enumerate() {
         match node {
@@ -1361,69 +1364,18 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
             FormulaNode::Holds { .. } => predicates.push(formula.condition(index)?),
             FormulaNode::Unary { interval, .. } | FormulaNode::Binary { interval, .. } => {
                 let Some(CheckedInterval::Timed(interval)) = interval else {
-                    admitted = false;
-                    break;
+                    return None;
                 };
                 if !interval.lower_closed()
                     || !interval.upper_closed()
                     || interval.upper().is_none()
                 {
-                    admitted = false;
-                    break;
+                    return None;
                 }
             }
-            FormulaNode::Aggregate { .. } => {
-                admitted = false;
-                break;
-            }
+            FormulaNode::Aggregate { .. } => return None,
         }
     }
-    if admitted {
-        let (lower, coalesce_same_time) = match root {
-            FormulaNode::Unary {
-                operator: UnaryTemporal::Eventually,
-                interval: Some(CheckedInterval::Timed(interval)),
-                operand,
-            } if matches!(checked.nodes().get(operand.index()), Some(FormulaNode::Holds { .. })) =>
-            {
-                (time_units(interval.lower(), scale)?, true)
-            }
-            _ => (0, false),
-        };
-        return Some((
-            bound.clone(),
-            Watch::TimedTrace {
-                formula,
-                predicates,
-                horizon,
-                lower,
-                coalesce_same_time,
-                scale,
-            },
-        ));
-    }
-    let condition = |index: usize| formula.condition(index);
-    let direct_holds = |index: usize| {
-        matches!(checked.nodes().get(index), Some(FormulaNode::Holds { .. }))
-            .then(|| condition(index))
-            .flatten()
-    };
-    let timed_operator =
-        |occurrence: usize, kind: DeadlineKind, interval: &fsl_foundation::bound::TimedInterval| {
-            let lower = time_units(interval.lower(), scale)?;
-            let upper = time_units(interval.upper()?, scale)?;
-            Some(TimedOperatorState {
-                occurrence: u64::try_from(occurrence).ok()?,
-                kind,
-                lower,
-                upper,
-                elapsed: 0,
-                phase: DeadlinePhase::Pending,
-            })
-        };
-
-    // Same-timestamp OR is valid only for the admitted direct Eventually
-    // letter: a hit at any observation at that timestamp satisfies it.
     if let FormulaNode::Unary {
         operator: UnaryTemporal::Eventually,
         interval: Some(CheckedInterval::Timed(interval)),
@@ -1433,13 +1385,13 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
         if interval.lower().is_zero()
             && interval.lower_closed()
             && interval.upper_closed()
-            && direct_holds(operand.index()).is_some()
+            && matches!(checked.nodes().get(operand.index()), Some(FormulaNode::Holds { .. }))
         {
             return Some((
                 bound.clone(),
                 Watch::TimedTrace {
                     formula,
-                    predicates: vec![condition(operand.index())?],
+                    predicates: vec![formula.condition(operand.index())?],
                     horizon,
                     lower: 0,
                     coalesce_same_time: true,
@@ -1449,83 +1401,14 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
         }
     }
 
-    let (kind, interval, predicates) = match root {
-        FormulaNode::Unary {
-            operator: UnaryTemporal::Eventually,
-            interval: Some(CheckedInterval::Timed(outer)),
-            operand,
-        } if !matches!(
-            checked.nodes().get(operand.index()),
-            Some(FormulaNode::Holds { .. })
-        ) =>
-        {
-            let FormulaNode::Unary {
-                operator: UnaryTemporal::Always,
-                interval: Some(CheckedInterval::Timed(inner)),
-                operand: atom,
-            } = checked.nodes().get(operand.index())?
-            else {
-                return None;
-            };
-            if inner.lower() != inner.upper()?
-                || !outer.lower_closed()
-                || !outer.upper_closed()
-                || !inner.lower_closed()
-                || !inner.upper_closed()
-            {
-                return None;
-            }
-            let predicate = direct_holds(atom.index())?;
-            return Some((
-                bound.clone(),
-                Watch::Nested {
-                    root: timed_operator(root_index, DeadlineKind::Eventually, outer)?,
-                    nested: timed_operator(operand.index(), DeadlineKind::Always, inner)?,
-                    predicate,
-                    horizon,
-                },
-            ));
-        }
-        FormulaNode::Unary {
-            operator: UnaryTemporal::Eventually,
-            interval: Some(CheckedInterval::Timed(interval)),
-            operand,
-        } => (
-            DeadlineKind::Eventually,
-            interval,
-            vec![direct_holds(operand.index())?],
-        ),
-        FormulaNode::Unary {
-            operator: UnaryTemporal::Always,
-            interval: Some(CheckedInterval::Timed(interval)),
-            operand,
-        } => (
-            DeadlineKind::Always,
-            interval,
-            vec![direct_holds(operand.index())?],
-        ),
-        FormulaNode::Binary {
-            operator: fsl_semantics::check::BinaryTemporal::Until,
-            interval: Some(CheckedInterval::Timed(interval)),
-            left,
-            right,
-        } => (
-            DeadlineKind::Until,
-            interval,
-            vec![direct_holds(left.index())?, direct_holds(right.index())?],
-        ),
-        _ => return None,
-    };
-    if !interval.lower_closed() || !interval.upper_closed() {
-        return None;
-    }
-    let root = timed_operator(root_index, kind, interval)?;
     Some((
         bound.clone(),
-        Watch::Bounded {
-            root,
+        Watch::FormulaMonitor {
+            formula,
             predicates,
             horizon,
+            scale,
+            limits,
         },
     ))
 }
@@ -1543,15 +1426,13 @@ enum Phase {
     Complete,
     /// The elapsed clock passed the window first.
     Censored,
-    /// One checked timed operator occurrence.
-    Bounded(fsl_eval::probabilistic::TimedOperatorState),
-    /// A nested formula retains both checked operator occurrences.
-    NestedBounded(
-        fsl_eval::probabilistic::TimedOperatorState,
-        fsl_eval::probabilistic::TimedOperatorState,
-    ),
-    /// The exact observation history needed to replay every occurrence in a
-    /// checked timed formula, retained through its complete closed horizon.
+    /// The finite residual state of the complete checked timed formula.
+    FormulaMonitor {
+        horizon: u64,
+        monitor: Option<FormulaMonitor>,
+        verdict: Option<bool>,
+    },
+    /// The bounded observation summary for the direct Eventually atom route.
     TimedTrace {
         horizon: u64,
         history: Vec<TimedFormulaObservation>,
@@ -1593,9 +1474,7 @@ impl Phase {
     fn decided(&self) -> bool {
         match self {
             Self::Pending | Self::Inactive | Self::Active => false,
-            Self::Bounded(operator) | Self::NestedBounded(operator, _) => {
-                operator.phase != fsl_eval::probabilistic::DeadlinePhase::Pending
-            }
+            Self::FormulaMonitor { verdict, .. } => verdict.is_some(),
             Self::TimedTrace { verdict, .. } => verdict.is_some(),
             _ => true,
         }
@@ -1603,62 +1482,31 @@ impl Phase {
 }
 
 fn phase_value(phase: &Phase) -> Option<bool> {
-    use fsl_eval::probabilistic::DeadlinePhase as MonitorPhase;
     match phase {
         Phase::Accepted => Some(true),
         Phase::Rejected => Some(false),
-        Phase::Bounded(operator) => match operator.phase {
-            MonitorPhase::Accept => Some(true),
-            MonitorPhase::Reject => Some(false),
-            MonitorPhase::Pending => None,
-        },
-        Phase::NestedBounded(root, _) => match root.phase {
-            MonitorPhase::Accept => Some(true),
-            MonitorPhase::Reject => Some(false),
-            MonitorPhase::Pending => None,
-        },
+        Phase::FormulaMonitor { verdict, .. } => *verdict,
         Phase::TimedTrace { verdict, .. } => *verdict,
         _ => None,
     }
 }
 
 fn monitor_json(phase: &Phase) -> JsonValue {
-    use fsl_eval::probabilistic::{DeadlineKind, DeadlinePhase, TimedOperatorState};
-    let kind_name = |kind| match kind {
-        DeadlineKind::Eventually => "eventually",
-        DeadlineKind::Always => "always",
-        DeadlineKind::Until => "until",
-    };
-    let phase_name = |phase| match phase {
-        DeadlinePhase::Pending => "pending",
-        DeadlinePhase::Accept => "accept",
-        DeadlinePhase::Reject => "reject",
-    };
-    let encode_operator = |operator: TimedOperatorState| {
-        json!([
-            operator.occurrence.to_string(),
-            kind_name(operator.kind),
-            operator.lower.to_string(),
-            operator.upper.to_string(),
-            operator.elapsed.to_string(),
-            phase_name(operator.phase)
-        ])
-    };
     match phase {
-        Phase::Bounded(operator) => {
-            json!([
-                "deadline",
-                kind_name(operator.kind),
-                phase_name(operator.phase)
-            ])
-        }
-        Phase::NestedBounded(root, nested) => {
-            json!([
-                "timed-formula",
-                encode_operator(*root),
-                Some(encode_operator(*nested))
-            ])
-        }
+        Phase::FormulaMonitor {
+            horizon,
+            monitor,
+            verdict,
+        } => json!([
+            "bounded-timed-formula-monitor",
+            horizon.to_string(),
+            monitor.as_ref().map(FormulaMonitor::key),
+            match verdict {
+                None => "pending",
+                Some(true) => "accept",
+                Some(false) => "reject",
+            }
+        ]),
         Phase::TimedTrace {
             horizon,
             history,
@@ -1697,6 +1545,13 @@ struct ElapsedWatch<'a> {
 /// FR-877's elapsed measure.
 enum Watch<'a> {
     Deadline(&'a fsl_semantics::check::CheckedPredicate),
+    FormulaMonitor {
+        formula: &'a fsl_semantics::check::CheckedTemporalFormula,
+        predicates: Vec<&'a fsl_semantics::check::CheckedPredicate>,
+        horizon: u64,
+        scale: u64,
+        limits: ProbabilityDocumentLimits,
+    },
     TimedTrace {
         formula: &'a fsl_semantics::check::CheckedTemporalFormula,
         predicates: Vec<&'a fsl_semantics::check::CheckedPredicate>,
@@ -1705,17 +1560,6 @@ enum Watch<'a> {
         coalesce_same_time: bool,
         scale: u64,
     },
-    Bounded {
-        root: fsl_eval::probabilistic::TimedOperatorState,
-        predicates: Vec<&'a fsl_semantics::check::CheckedPredicate>,
-        horizon: u64,
-    },
-    Nested {
-        root: fsl_eval::probabilistic::TimedOperatorState,
-        nested: fsl_eval::probabilistic::TimedOperatorState,
-        predicate: &'a fsl_semantics::check::CheckedPredicate,
-        horizon: u64,
-    },
     Elapsed(ElapsedWatch<'a>),
 }
 
@@ -1723,27 +1567,24 @@ impl Watch<'_> {
     fn start(&self) -> Phase {
         match self {
             Self::Deadline(_) => Phase::Pending,
+            Self::FormulaMonitor { horizon, .. } => Phase::FormulaMonitor {
+                horizon: *horizon,
+                monitor: None,
+                verdict: None,
+            },
             Self::TimedTrace { horizon, .. } => Phase::TimedTrace {
                 horizon: *horizon,
                 history: Vec::new(),
                 verdict: None,
             },
-            Self::Bounded { root, .. } => Phase::Bounded(*root),
-            Self::Nested { root, nested, .. } => {
-                let mut root = *root;
-                // The analyzer creates the nested monitor at the initial
-                // state without consuming its predicate letter.
-                root.elapsed = u64::MAX;
-                Phase::NestedBounded(root, *nested)
-            }
             Self::Elapsed(_) => Phase::Inactive,
         }
     }
 
     fn horizon(&self) -> u64 {
         match self {
+            Self::FormulaMonitor { horizon, .. } => *horizon,
             Self::TimedTrace { horizon, .. } => *horizon,
-            Self::Bounded { horizon, .. } | Self::Nested { horizon, .. } => *horizon,
             _ => 0,
         }
     }
@@ -1762,6 +1603,107 @@ impl Watch<'_> {
         cancel: &Cancel,
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         let watch = match self {
+            Self::FormulaMonitor {
+                formula,
+                predicates,
+                horizon,
+                scale,
+                limits,
+            } => {
+                let truths = read_truths(system, predicates, binding, state, cancel)?;
+                return match previous {
+                    Phase::FormulaMonitor {
+                        monitor: Some(mut monitor),
+                        verdict: None,
+                        ..
+                    } => {
+                        let previous_time = monitor.time();
+                        let previous_values = monitor.last_values().to_vec();
+                        let mut verdict = None;
+                        let mut at = previous_time.saturating_add(1);
+                        while at < elapsed && verdict.is_none() {
+                            let delta = at
+                                .checked_sub(monitor.time())
+                                .ok_or(ProbabilityDocumentError::Unsupported)?;
+                            verdict = monitor.observe(
+                                formula,
+                                *scale,
+                                delta,
+                                &previous_values,
+                                *limits,
+                                cancel,
+                            )?;
+                            at = at.saturating_add(1);
+                        }
+                        if verdict.is_none()
+                            && elapsed > previous_time
+                            && truths != previous_values
+                        {
+                            let delta = elapsed
+                                .checked_sub(monitor.time())
+                                .ok_or(ProbabilityDocumentError::Unsupported)?;
+                            verdict = monitor.observe(
+                                formula,
+                                *scale,
+                                delta,
+                                &previous_values,
+                                *limits,
+                                cancel,
+                            )?;
+                        }
+                        if verdict.is_none() {
+                            let delta = elapsed
+                                .checked_sub(monitor.time())
+                                .ok_or(ProbabilityDocumentError::Unsupported)?;
+                            verdict = monitor.observe(
+                                formula,
+                                *scale,
+                                delta,
+                                &truths,
+                                *limits,
+                                cancel,
+                            )?;
+                        }
+                        Ok((
+                            Phase::FormulaMonitor {
+                                horizon: *horizon,
+                                monitor: Some(monitor),
+                                verdict,
+                            },
+                            elapsed,
+                        ))
+                    }
+                    Phase::FormulaMonitor {
+                        monitor: Some(monitor),
+                        verdict: Some(verdict),
+                        ..
+                    } => Ok((
+                        Phase::FormulaMonitor {
+                            horizon: *horizon,
+                            monitor: Some(monitor),
+                            verdict: Some(verdict),
+                        },
+                        elapsed,
+                    )),
+                    _ => {
+                        let (monitor, verdict) = FormulaMonitor::start(
+                            formula,
+                            *scale,
+                            &truths,
+                            *limits,
+                            cancel,
+                        )?;
+                        Ok((
+                            Phase::FormulaMonitor {
+                                horizon: *horizon,
+                                monitor: Some(monitor),
+                                verdict,
+                            },
+                            elapsed,
+                        ))
+                    }
+                };
+            }
             Self::TimedTrace {
                 formula,
                 predicates,
@@ -1876,51 +1818,6 @@ impl Watch<'_> {
             Self::Deadline(predicate) => {
                 let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
                 return Ok((phase, elapsed));
-            }
-            Self::Bounded {
-                root, predicates, ..
-            } => {
-                let mut operator = match previous {
-                    Phase::Bounded(operator) => operator,
-                    _ => *root,
-                };
-                if operator.phase == fsl_eval::probabilistic::DeadlinePhase::Pending {
-                    let truths = read_truths(system, predicates, binding, state, cancel)?;
-                    operator.phase = deadline_read(
-                        operator.kind,
-                        operator.phase,
-                        &truths,
-                        elapsed,
-                        operator.lower,
-                    );
-                    if elapsed > operator.upper {
-                        operator.phase = deadline_timeout(operator.kind);
-                    }
-                }
-                operator.elapsed = elapsed.min(operator.upper);
-                return Ok((Phase::Bounded(operator), elapsed));
-            }
-            Self::Nested {
-                root,
-                nested,
-                predicate,
-                ..
-            } => {
-                let (mut root, mut nested) = match previous {
-                    Phase::NestedBounded(root, nested) => (root, nested),
-                    _ => (*root, *nested),
-                };
-                let truths = read_truths(system, &[*predicate], binding, state, cancel)?;
-                if root.elapsed == u64::MAX {
-                    root.elapsed = 0;
-                }
-                fsl_eval::probabilistic::advance_nested_deadline(
-                    &mut root,
-                    &mut nested,
-                    &truths,
-                    elapsed,
-                );
-                return Ok((Phase::NestedBounded(root, nested), elapsed));
             }
             Self::Elapsed(watch) => watch,
         };
@@ -2040,47 +1937,6 @@ impl TemporalLetters for TimedFormulaLetters<'_> {
         } else {
             AtomReading::False
         })
-    }
-}
-
-fn deadline_read(
-    kind: fsl_eval::probabilistic::DeadlineKind,
-    phase: fsl_eval::probabilistic::DeadlinePhase,
-    truths: &[bool],
-    elapsed: u64,
-    lower: u64,
-) -> fsl_eval::probabilistic::DeadlinePhase {
-    use fsl_eval::probabilistic::{DeadlineKind as Kind, DeadlinePhase as Phase};
-    if phase != Phase::Pending {
-        return phase;
-    }
-    match (kind, truths) {
-        (Kind::Eventually, [target]) if elapsed >= lower && *target => Phase::Accept,
-        (Kind::Always, [target]) if elapsed >= lower && !*target => Phase::Reject,
-        (Kind::Until, [from, until]) => {
-            if elapsed >= lower && *until {
-                Phase::Accept
-            } else if !*from {
-                Phase::Reject
-            } else {
-                Phase::Pending
-            }
-        }
-        _ => Phase::Pending,
-    }
-}
-
-fn deadline_timeout(
-    kind: fsl_eval::probabilistic::DeadlineKind,
-) -> fsl_eval::probabilistic::DeadlinePhase {
-    match kind {
-        fsl_eval::probabilistic::DeadlineKind::Always => {
-            fsl_eval::probabilistic::DeadlinePhase::Accept
-        }
-        fsl_eval::probabilistic::DeadlineKind::Eventually
-        | fsl_eval::probabilistic::DeadlineKind::Until => {
-            fsl_eval::probabilistic::DeadlinePhase::Reject
-        }
     }
 }
 
@@ -2230,8 +2086,7 @@ fn enumerate_digital_deadline(
             Phase::Pending
             | Phase::Inactive
             | Phase::Active
-            | Phase::Bounded(_)
-            | Phase::NestedBounded(_, _)
+            | Phase::FormulaMonitor { .. }
             | Phase::TimedTrace { .. } => {}
         }
         if current.tail != DigitalTail::Running {
@@ -2697,8 +2552,7 @@ fn enumerate_region_deadline(
             Phase::Pending
             | Phase::Inactive
             | Phase::Active
-            | Phase::Bounded(_)
-            | Phase::NestedBounded(_, _) => {
+            | Phase::FormulaMonitor { .. } => {
                 if current.phase == Phase::Active {
                     activated.insert(key.clone());
                 }

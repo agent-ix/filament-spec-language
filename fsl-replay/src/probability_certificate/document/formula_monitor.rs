@@ -3,14 +3,14 @@
 
 use std::collections::BTreeSet;
 
-use filament_exact::{Cancel, Integer, Rational};
+use filament_exact::{Cancel, Rational};
 use fsl_semantics::check::{
     BinaryTemporal, CheckedFormula, CheckedInterval, CheckedTemporalFormula, FormulaNode,
     UnaryTemporal,
 };
 use num_bigint::BigInt;
 use num_integer::Integer as _;
-use num_traits::Zero;
+use num_traits::{ToPrimitive, Zero};
 use serde_json::{json, Value};
 
 use super::{ProbabilityDocumentError, ProbabilityDocumentLimit, ProbabilityDocumentLimits};
@@ -27,7 +27,7 @@ enum TemporalKind {
     Triggered,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum NodeSpec {
     Constant(bool),
     Atom(usize),
@@ -65,12 +65,15 @@ struct Candidate {
 /// Future obligations are canonical residual formulas. Past occurrences keep
 /// only bounded-age candidate residuals; equal candidates at the same age are
 /// merged, while every observation is still processed in sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Monitor {
     root: usize,
     scale: u64,
     specs: Vec<NodeSpec>,
     past: Vec<BTreeSet<Candidate>>,
     residual: Residual,
+    time: u64,
+    last_values: Vec<bool>,
 }
 
 impl Monitor {
@@ -102,6 +105,8 @@ impl Monitor {
             past: vec![BTreeSet::new(); specs.len()],
             specs,
             residual: Residual::Constant(false),
+            time: 0,
+            last_values: initial_values.to_vec(),
         };
         let mut evaluator = Evaluator::new(
             &monitor.specs,
@@ -112,7 +117,9 @@ impl Monitor {
             cancel,
         );
         monitor.residual = evaluator.node(root)?;
+        poll(cancel)?;
         monitor.check_limits(limits)?;
+        poll(cancel)?;
         let verdict = monitor.verdict();
         Ok((monitor, verdict))
     }
@@ -135,7 +142,14 @@ impl Monitor {
             Evaluator::new(&self.specs, values, &mut self.past, delta, limits, cancel);
         evaluator.node(self.root)?;
         self.residual = evaluator.progress(&self.residual, delta)?;
+        self.time = self
+            .time
+            .checked_add(delta)
+            .ok_or(ProbabilityDocumentError::Unsupported)?;
+        self.last_values = values.to_vec();
+        poll(cancel)?;
         self.check_limits(limits)?;
+        poll(cancel)?;
         Ok(self.verdict())
     }
 
@@ -145,6 +159,16 @@ impl Monitor {
             Residual::Constant(value) => Some(value),
             _ => None,
         }
+    }
+
+    /// Exact elapsed units of the last reconstructed timed position.
+    pub(super) fn time(&self) -> u64 {
+        self.time
+    }
+
+    /// Truth values at the previous independently reconstructed position.
+    pub(super) fn last_values(&self) -> &[bool] {
+        &self.last_values
     }
 
     /// Canonical finite state included in the replayed product key.
@@ -392,6 +416,9 @@ impl<'a> Evaluator<'a> {
             } => {
                 if is_future(kind) {
                     let witness = self.node(right)?;
+                    if kind == TemporalKind::Always && upper == 0 {
+                        return Ok(witness);
+                    }
                     let guard = left.map(|id| self.node(id)).transpose()?;
                     future_step(index, kind, lower, upper, 0, witness, guard)
                 } else {
@@ -689,6 +716,8 @@ fn negate(term: Residual) -> Residual {
     match term {
         Residual::Constant(value) => Residual::Constant(!value),
         Residual::Not(inner) => *inner,
+        Residual::And(parts) => disjunction(parts.into_iter().map(negate)),
+        Residual::Or(parts) => conjunction(parts.into_iter().map(negate)),
         other => Residual::Not(Box::new(other)),
     }
 }

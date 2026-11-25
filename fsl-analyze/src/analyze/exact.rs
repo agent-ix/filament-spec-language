@@ -797,12 +797,12 @@ fn run_timed(
                 policy: None,
             };
             checked = (|| {
-                let bytes = match side {
+                let bytes = (match side {
                     Some(side) => {
-                        fsl_replay::write_value_bounds_certificate(&document, side, limits, cancel)?
+                        fsl_replay::write_value_bounds_certificate(&document, side, limits, cancel)
                     }
-                    None => write_probability_certificate(&document, limits, cancel)?,
-                };
+                    None => write_probability_certificate(&document, limits, cancel),
+                })?;
                 fsl_replay::check_probability_certificate_document_as(
                     &system,
                     source_package.graph().probabilistic_model().claims(),

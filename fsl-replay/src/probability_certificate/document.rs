@@ -16,6 +16,7 @@ pub use measure::{
     vacuous_measure_probability_certificate_document, write_measure_probability_certificate,
 };
 mod fairness;
+pub(super) mod formula_monitor;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;

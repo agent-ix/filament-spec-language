@@ -12,7 +12,9 @@ fn timed_bounded_operators_replay_with_literal_values_and_occurrences() {
         probabilistic LowerUntil using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ holds(not c.late) until[1 ms, 4 ms] holds(c.late) ] }\n\
         probabilistic NestedPunctual using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(c.late) ] }\n\
         probabilistic ConjunctionChildren using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[1 ms, 4 ms] holds(c.late) and eventually[0 ms, 4 ms] holds(c.late) ] }\n";
-    let world = retx(GUARD, true, TWO_DELAYS, claims);
+    // FR-204-AC-21 uses AC-1's scheduler-controlled [1, 2] delay subject;
+    // AC-3's discrete two-delay law has a different exact probability.
+    let world = retx(GUARD, true, "", claims);
     for (name, expected) in [
         ("LowerEventually", ratio(99, 100)),
         ("AlwaysFalse", ratio(0, 1)),
@@ -34,7 +36,7 @@ fn timed_bounded_operators_replay_with_literal_values_and_occurrences() {
 fn timed_non_punctual_nested_always_keeps_each_operator_window() {
     let claims = "\
         probabilistic NestedWindow using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 4 ms] always[1 ms, 2 ms] holds(c.late) ] }\n";
-    let world = retx(GUARD, true, TWO_DELAYS, claims);
+    let world = retx(GUARD, true, "", claims);
     let record = settle(&world, "NestedWindow");
     assert_eq!(proved_value(&record), ratio(99, 100));
     assert!(accepted(&world, "NestedWindow", &document(&record)));

@@ -189,28 +189,33 @@ impl Monitor {
     /// The finite canonical key state. It contains no unbounded observation
     /// history; equal residuals and past candidates are ordered and merged.
     pub(super) fn key(&self) -> Value {
-        json!([
-            "bounded-timed-formula-monitor/v1",
-            self.time.to_string(),
-            residual_json(&self.residual),
-            self.past
-                .iter()
-                .enumerate()
-                .filter(|(_, candidates)| !candidates.is_empty())
-                .map(|(node, candidates)| json!([
+        json!({
+            "occurrences": self.specs.iter().enumerate().filter_map(|(node, spec)| {
+                let Spec::Temporal { kind, lower, upper, .. } = spec else {
+                    return None;
+                };
+                Some(json!([
                     node.to_string(),
-                    candidates
-                        .iter()
-                        .map(|candidate| json!([
-                            candidate.age.to_string(),
-                            residual_json(&candidate.witness),
-                            residual_json(&candidate.guard),
-                        ]))
-                        .collect::<Vec<_>>()
+                    kind_name(*kind),
+                    lower.to_string(),
+                    upper.to_string(),
                 ]))
-                .collect::<Vec<_>>(),
-            self.last_values,
-        ])
+            }).collect::<Vec<_>>(),
+            "residual": residual_json(&self.residual),
+            "past": self.past.iter().enumerate().filter_map(|(node, candidates)| {
+                if candidates.is_empty() {
+                    return None;
+                }
+                Some(json!([
+                    node.to_string(),
+                    candidates.iter().map(|candidate| json!([
+                        candidate.age.to_string(),
+                        residual_json(&candidate.witness),
+                        residual_json(&candidate.guard),
+                    ])).collect::<Vec<_>>(),
+                ]))
+            }).collect::<Vec<_>>(),
+        })
     }
 
     pub(super) fn time(&self) -> u64 {
@@ -315,6 +320,18 @@ impl Evaluation<'_> {
         right: usize,
         delta: u64,
     ) -> Result<Residual, &'static str> {
+        if kind == Kind::Always
+            && matches!(
+                self.specs.get(node),
+                Some(Spec::Temporal {
+                    kind: Kind::Always,
+                    upper: 0,
+                    ..
+                })
+            )
+        {
+            return self.node(right);
+        }
         if delta > upper {
             return Ok(Residual::Constant(matches!(kind, Kind::Always | Kind::Release)));
         }
@@ -384,7 +401,9 @@ impl Evaluation<'_> {
             None
         };
         for candidate in std::mem::take(&mut previous) {
-            let age = candidate.age.saturating_add(self.delta);
+            let Some(age) = candidate.age.checked_add(self.delta) else {
+                continue;
+            };
             if age > upper {
                 continue;
             }
@@ -531,5 +550,18 @@ fn residual_json(residual: &Residual) -> Value {
         Residual::Future { node, lower, upper } => {
             json!(["future", node.to_string(), lower.to_string(), upper.to_string()])
         }
+    }
+}
+
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Eventually => "eventually",
+        Kind::Always => "always",
+        Kind::Until => "until",
+        Kind::Release => "release",
+        Kind::Once => "once",
+        Kind::Historically => "historically",
+        Kind::Since => "since",
+        Kind::Triggered => "triggered",
     }
 }
