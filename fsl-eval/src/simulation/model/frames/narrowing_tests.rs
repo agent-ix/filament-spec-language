@@ -27,9 +27,8 @@ use crate::simulation::TransitionSystem;
 
 const PACKAGE: &str = "test/rover";
 
-/// FR-120-AC-32: a solved integer equation selects one position in the
-/// size-ordered integer domain, including domains too large to scan.
-#[trace("FR-120-AC-32")]
+/// A solved integer equation selects its position in a size-ordered domain
+/// too large to scan, and an out-of-domain value selects no positions.
 #[test]
 fn a_solved_size_integer_assignment_uses_its_domain_index() {
     let domain = Domain::SizeInteger { bits: 24 };
@@ -49,6 +48,15 @@ fn a_solved_size_integer_assignment_uses_its_domain_index() {
         panic!("the selected position contains an integer")
     };
     assert_eq!(actual, Integer::from(1_234_567_i64));
+
+    let outside = FieldTargets {
+        equations: vec![Some(Value::Integer(Integer::from(1_i64 << 24)))],
+        bounds: Vec::new(),
+    };
+    assert!(matches!(
+        Allowed::of(&domain, &outside),
+        Some(Allowed::Listed(positions)) if positions.is_empty()
+    ));
 }
 
 /// `loseLidar`'s postcondition, with its speed bound `cap`.

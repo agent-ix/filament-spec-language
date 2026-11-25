@@ -259,12 +259,20 @@ pub enum ModelStateProvenance {
 }
 
 /// A model state and its explicit provenance. Provenance is not part of its key.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ModelSimState {
     state: ModelState,
     provenance: ModelStateProvenance,
-    canonical_key:
-        std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,
+    canonical_key: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,
+}
+
+impl std::fmt::Debug for ModelSimState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelSimState")
+            .field("state", &self.state)
+            .field("provenance", &self.provenance)
+            .finish()
+    }
 }
 
 impl ModelSimState {

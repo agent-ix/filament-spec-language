@@ -534,16 +534,6 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         stutter_closure: bool,
     ) -> Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>;
 
-    /// Expand raw model states concurrently; results are returned in the
-    /// supplied order and all lasso/automaton work remains on the coordinator.
-    fn expand_live_batch(
-        &self,
-        states: Vec<Self::State>,
-        enforce: bool,
-        stutter_closure: bool,
-        workers: usize,
-    ) -> Vec<Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>>;
-
     /// How the state constraint `name` reads at `state` (FR-158).
     fn constraint_value(
         &self,
@@ -636,18 +626,6 @@ impl<'a> LiveSubject for ModelSystem<'a> {
         .map(|expansion| (expansion, Cut::default()))
     }
 
-    fn expand_live_batch(
-        &self,
-        states: Vec<ModelSimState>,
-        enforce: bool,
-        stutter_closure: bool,
-        workers: usize,
-    ) -> Vec<Result<Bounded<ModelTransition, ModelSimState>, ExpansionStop>> {
-        parallel_map(states, workers, |state| {
-            self.expand_live(state, enforce, stutter_closure)
-        })
-    }
-
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
         Some(self)
     }
@@ -721,18 +699,6 @@ where
         self.successors_bounded(state)
     }
 
-    fn expand_live_batch(
-        &self,
-        states: Vec<Self::State>,
-        enforce: bool,
-        stutter_closure: bool,
-        workers: usize,
-    ) -> Vec<Result<Bounded<ProtocolTransition, Self::State>, ExpansionStop>> {
-        parallel_map(states, workers, |state| {
-            self.expand_live(state, enforce, stutter_closure)
-        })
-    }
-
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
         None
     }
@@ -780,33 +746,6 @@ struct Binding {
 
 fn widen(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
-}
-
-fn parallel_map<State, Output>(
-    states: Vec<State>,
-    workers: usize,
-    expand: impl Fn(&State) -> Output + Sync,
-) -> Vec<Output>
-where
-    State: Send,
-    Output: Send,
-{
-    if workers <= 1 || states.len() <= 1 {
-        return states.iter().map(expand).collect();
-    }
-    std::thread::scope(|scope| {
-        states
-            .into_iter()
-            .map(|state| {
-                let expand = &expand;
-                scope.spawn(move || expand(&state))
-            })
-            .map(|worker| match worker.join() {
-                Ok(output) => output,
-                Err(panic) => std::panic::resume_unwind(panic),
-            })
-            .collect()
-    })
 }
 
 fn stopped<T: SubjectTransition>(
@@ -1054,15 +993,212 @@ struct DeadRoot<State, T> {
     depth: usize,
 }
 
-/// A cached subject expansion and the exact canonical keys of its successors,
-/// once those keys have been observed during a pass.
-struct CachedExpansion<T, State> {
-    expansion: Bounded<T, State>,
-    successor_keys: Option<Vec<StateKey>>,
+const LASSO_CACHE_BYTES_PER_MAP: usize = 24 * 1024 * 1024;
+const CACHE_ENTRY_OVERHEAD_BYTES: usize = 128;
+
+struct Cached<V> {
+    value: V,
+    bytes: usize,
+    sequence: u64,
 }
 
-/// An expansion returned to a caller, with successor keys available only when
-/// the expansion cache already retained them.
+/// FIFO cache whose retained allocation estimate never exceeds its byte cap.
+struct ByteCache<K, V> {
+    entries: BTreeMap<K, Cached<V>>,
+    order: BTreeMap<u64, K>,
+    bytes: usize,
+    limit: usize,
+    next_sequence: u64,
+}
+
+impl<K: Clone + Ord, V> ByteCache<K, V> {
+    fn new(limit: usize) -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            order: BTreeMap::new(),
+            bytes: 0,
+            limit,
+            next_sequence: 0,
+        }
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        self.entries.get(key).map(|entry| &entry.value)
+    }
+
+    #[cfg(test)]
+    fn used_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    fn remove(&mut self, key: &K) -> Option<V> {
+        let removed = self.entries.remove(key)?;
+        self.bytes = self.bytes.saturating_sub(removed.bytes);
+        self.order.remove(&removed.sequence);
+        Some(removed.value)
+    }
+
+    fn insert(&mut self, key: K, value: V, bytes: usize) -> bool {
+        if bytes > self.limit {
+            return false;
+        }
+        self.remove(&key);
+        while self.bytes.saturating_add(bytes) > self.limit {
+            let Some((sequence, oldest)) = self.order.pop_first() else {
+                return false;
+            };
+            let Some(removed) = self.entries.remove(&oldest) else {
+                continue;
+            };
+            debug_assert_eq!(removed.sequence, sequence);
+            self.bytes = self.bytes.saturating_sub(removed.bytes);
+        }
+        let mut sequence = self.next_sequence;
+        while self.order.contains_key(&sequence) {
+            sequence = sequence.wrapping_add(1);
+        }
+        self.next_sequence = sequence.wrapping_add(1);
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.order.insert(sequence, key.clone());
+        self.entries.insert(
+            key,
+            Cached {
+                value,
+                bytes,
+                sequence,
+            },
+        );
+        true
+    }
+}
+
+fn product_key_cache_bytes(key: &(StateKey, PropertyKey, u64), value_bytes: usize) -> usize {
+    CACHE_ENTRY_OVERHEAD_BYTES
+        .saturating_add(std::mem::size_of_val(key).saturating_mul(2))
+        // The state key is owned by both the lookup tree and FIFO order; a
+        // factor of four covers both byte buffers plus spare Vec capacity.
+        .saturating_add(key.0.as_bytes().len().saturating_mul(4))
+        .saturating_add(value_bytes)
+}
+
+fn cache_product_key(
+    cache: &mut ByteCache<(StateKey, PropertyKey, u64), Arc<[u8]>>,
+    key: (StateKey, PropertyKey, u64),
+    bytes: &[u8],
+) {
+    let cached: Arc<[u8]> = Arc::from(bytes.to_vec());
+    let charge = product_key_cache_bytes(&key, cached.len());
+    cache.insert(key, cached, charge);
+}
+
+fn successor_keys_cache_bytes(
+    key: &StateKey,
+    successors: &[StateKey],
+    successor_capacity: usize,
+) -> usize {
+    successors.iter().fold(
+        CACHE_ENTRY_OVERHEAD_BYTES
+            .saturating_add(std::mem::size_of::<(StateKey, Vec<StateKey>)>())
+            .saturating_add(std::mem::size_of::<StateKey>())
+            .saturating_add(key.as_bytes().len().saturating_mul(4))
+            .saturating_add(successor_capacity.saturating_mul(std::mem::size_of::<StateKey>())),
+        |bytes, successor| bytes.saturating_add(successor.as_bytes().len().saturating_mul(2)),
+    )
+}
+
+fn cache_successor_keys(
+    cache: &mut ByteCache<StateKey, Vec<StateKey>>,
+    key: StateKey,
+    successors: Vec<StateKey>,
+) {
+    let charge = successor_keys_cache_bytes(&key, &successors, successors.capacity());
+    cache.insert(key, successors, charge);
+}
+
+#[cfg(test)]
+mod cache_budget_tests {
+    use super::{cache_product_key, cache_successor_keys, ByteCache, PropertyKey, StateKey};
+
+    #[test]
+    fn byte_cache_evicts_and_releases_charged_bytes() {
+        let mut cache = ByteCache::new(10);
+        assert!(cache.insert("first", 1, 6));
+        assert!(cache.insert("second", 2, 6));
+        assert_eq!(cache.used_bytes(), 6);
+        assert_eq!(cache.get(&"first"), None);
+        assert_eq!(cache.get(&"second"), Some(&2));
+
+        assert_eq!(cache.remove(&"second"), Some(2));
+        assert_eq!(cache.used_bytes(), 0);
+        assert!(!cache.insert("oversized", 3, 11));
+        assert_eq!(cache.used_bytes(), 0);
+    }
+
+    #[test]
+    fn key_caches_evict_at_their_production_byte_estimates() {
+        let first_key = (
+            StateKey::from_canonical_bytes(b"model-a".to_vec()),
+            PropertyKey::After(0),
+            256,
+        );
+        let first_value = b"[model,property]";
+        let mut product_cache = ByteCache::new(10_000);
+        cache_product_key(&mut product_cache, first_key.clone(), first_value);
+        let charged = product_cache.used_bytes();
+        assert!(charged > first_value.len());
+        assert!(product_cache.used_bytes() <= product_cache.limit);
+
+        let mut capped_product_cache = ByteCache::new(charged - 1);
+        cache_product_key(&mut capped_product_cache, first_key.clone(), first_value);
+        assert_eq!(capped_product_cache.used_bytes(), 0);
+
+        let second_key = (
+            StateKey::from_canonical_bytes(b"model-b".to_vec()),
+            PropertyKey::After(0),
+            256,
+        );
+        let mut product_cache = ByteCache::new(charged);
+        cache_product_key(&mut product_cache, first_key.clone(), first_value);
+        cache_product_key(&mut product_cache, second_key.clone(), first_value);
+        assert!(product_cache.get(&first_key).is_none());
+        assert!(product_cache
+            .get(&second_key)
+            .is_some_and(|value| value.as_ref() == first_value));
+        assert!(product_cache.used_bytes() <= charged);
+
+        let root = StateKey::from_canonical_bytes(b"root".to_vec());
+        let successors = vec![
+            StateKey::from_canonical_bytes(b"successor-1".to_vec()),
+            StateKey::from_canonical_bytes(b"successor-2".to_vec()),
+        ];
+        let mut successor_cache = ByteCache::new(10_000);
+        cache_successor_keys(&mut successor_cache, root.clone(), successors.clone());
+        let charged = successor_cache.used_bytes();
+        assert!(charged > successors.iter().map(|key| key.as_bytes().len()).sum());
+
+        let mut capped_successor_cache = ByteCache::new(charged - 1);
+        cache_successor_keys(
+            &mut capped_successor_cache,
+            root.clone(),
+            successors.clone(),
+        );
+        assert_eq!(capped_successor_cache.used_bytes(), 0);
+
+        let replacement = StateKey::from_canonical_bytes(b"rrot".to_vec());
+        let mut successor_cache = ByteCache::new(charged);
+        cache_successor_keys(&mut successor_cache, root.clone(), successors.clone());
+        cache_successor_keys(
+            &mut successor_cache,
+            replacement.clone(),
+            successors.clone(),
+        );
+        assert!(successor_cache.get(&root).is_none());
+        assert_eq!(successor_cache.get(&replacement), Some(&successors));
+        assert!(successor_cache.used_bytes() <= charged);
+    }
+}
+
+/// An expansion returned to a caller, with successor keys reused separately.
 struct ExpansionReuse<T, State> {
     expansion: Bounded<T, State>,
     successor_keys: Option<Vec<StateKey>>,
@@ -1077,19 +1213,12 @@ struct LassoSystem<'r, S: LiveSubject> {
     automaton: RefCell<PropertyAutomaton>,
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
-    /// Validated model-key values, reused while this product pass emits keys
-    /// for its different property states.
-    model_values: RefCell<BTreeMap<StateKey, Arc<canonical_api::CanonicalValue>>>,
     /// Complete product keys reused for repeated model/property pairs in this
     /// pass. The exact bytes remain the FR-101 identity.
-    product_keys: RefCell<BTreeMap<(StateKey, PropertyKey), Arc<[u8]>>>,
-    /// Successful subject expansions, shared by product states that carry
-    /// the same canonical model state. Each `LassoSystem` is one binding's
-    /// exploration pass, so this cache never crosses a pass boundary.
-    expansions: RefCell<BTreeMap<StateKey, CachedExpansion<Tr<S>, S::State>>>,
-    /// The model-only finding pass re-derives expansions in its own cache.
-    model_only_expansions: RefCell<BTreeMap<StateKey, CachedExpansion<Tr<S>, S::State>>>,
-    prefetched: RefCell<BTreeMap<RawExpansionKey, Result<Bounded<Tr<S>, S::State>, ExpansionStop>>>,
+    product_keys: RefCell<ByteCache<(StateKey, PropertyKey, u64), Arc<[u8]>>>,
+    /// Exact successor keys reused within this product pass. Expansion values
+    /// are not retained because their generic payloads have no deep-size API.
+    successor_keys: RefCell<ByteCache<StateKey, Vec<StateKey>>>,
     /// Where the clause fixes its captures (FR-337).
     captured: CaptureSite,
     initial: Vec<LState<S::State>>,
@@ -1111,8 +1240,6 @@ struct LassoSystem<'r, S: LiveSubject> {
     halt: RefCell<Option<Halt>>,
 }
 
-type RawExpansionKey = (StateKey, usize);
-
 impl<S: LiveSubject> LassoSystem<'_, S> {
     fn encoded_key(
         &self,
@@ -1123,40 +1250,22 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             Property::After(state) => PropertyKey::After(state.index()),
             Property::Undefined { .. } => PropertyKey::Undefined,
         };
-        let key = (state.model_key.clone(), property);
+        let key = (state.model_key.clone(), property, identity.input_bytes);
         let cached_key = self.product_keys.borrow().get(&key).cloned();
         if let Some(cached_key) = cached_key {
-            return copy_product_key(
-                &cached_key,
-                state.model_key.as_bytes().len(),
-                property,
-                identity.input_bytes,
-            );
+            return copy_product_key(&cached_key);
         }
-        let cached_model = self.model_values.borrow().get(&state.model_key).cloned();
-        let model = match cached_model {
-            Some(model) => model,
-            None => {
-                let model = Arc::new(
-                    ProductKey::<canonical_api::CanonicalValue, PropertyKey>::read_model_value(
-                        state.model_key.as_bytes(),
-                        identity.input_bytes,
-                    )?,
-                );
-                self.model_values
-                    .borrow_mut()
-                    .insert(state.model_key.clone(), Arc::clone(&model));
-                model
-            }
-        };
+        let model = ProductKey::<canonical_api::CanonicalValue, PropertyKey>::read_model_value(
+            state.model_key.as_bytes(),
+            identity.input_bytes,
+        )?;
         let bytes =
             ProductKey::<canonical_api::CanonicalValue, _>::canonical_bytes_with_model_value(
                 &model,
                 property,
                 identity.input_bytes,
             )?;
-        let cached_key: Arc<[u8]> = Arc::from(bytes.clone());
-        self.product_keys.borrow_mut().insert(key, cached_key);
+        cache_product_key(&mut self.product_keys.borrow_mut(), key, &bytes);
         Ok(bytes)
     }
 
@@ -1195,77 +1304,36 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         &self,
         state: &LState<S::State>,
     ) -> Result<ExpansionReuse<Tr<S>, S::State>, ExpansionStop> {
-        let prefetched_key = Self::raw_expansion_key(state);
-        let prefetched = self.prefetched.borrow_mut().remove(&prefetched_key);
-        self.expand_cached(&state.model, &state.model_key, &self.expansions, || {
-            prefetched.unwrap_or_else(|| self.expand_raw(&state.model))
+        self.poll()?;
+        let expansion = self.expand_raw(&state.model).inspect_err(|&stop| {
+            self.record(Halt::Expansion(stop));
+        })?;
+        let successor_keys = self.successor_keys.borrow().get(&state.model_key).cloned();
+        Ok(ExpansionReuse {
+            expansion,
+            successor_keys,
         })
     }
 
-    /// Expand in the model-only finding pass, with a cache separate from the
-    /// retained product pass.
+    /// Expand in the model-only finding pass without retaining opaque states.
     fn expand_model_only(
         &self,
         state: &S::State,
-        key: &StateKey,
-        prefetched: Option<Result<Bounded<Tr<S>, S::State>, ExpansionStop>>,
-    ) -> Result<ExpansionReuse<Tr<S>, S::State>, ExpansionStop> {
-        self.expand_cached(state, key, &self.model_only_expansions, || {
-            prefetched.unwrap_or_else(|| self.expand_raw(state))
-        })
-    }
-
-    fn expand_cached<F>(
-        &self,
-        state: &S::State,
-        key: &StateKey,
-        cache: &RefCell<BTreeMap<StateKey, CachedExpansion<Tr<S>, S::State>>>,
-        expand: F,
-    ) -> Result<ExpansionReuse<Tr<S>, S::State>, ExpansionStop>
-    where
-        F: FnOnce() -> Result<Bounded<Tr<S>, S::State>, ExpansionStop>,
-    {
+    ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
         self.poll()?;
-        let cached = cache.borrow().get(key).map(|cached| ExpansionReuse {
-            expansion: cached.expansion.clone(),
-            successor_keys: cached.successor_keys.clone(),
-        });
-        if let Some(cached) = cached {
-            return Ok(ExpansionReuse {
-                expansion: cached.expansion,
-                successor_keys: cached.successor_keys,
-            });
-        }
-        let expansion = expand().inspect_err(|&stop| {
+        let expansion = self.expand_raw(state).inspect_err(|&stop| {
             self.record(Halt::Expansion(stop));
         })?;
-        cache.borrow_mut().insert(
-            key.clone(),
-            CachedExpansion {
-                expansion: expansion.clone(),
-                successor_keys: None,
-            },
-        );
-        Ok(ExpansionReuse {
-            expansion,
-            successor_keys: None,
-        })
+        Ok(expansion)
     }
 
-    /// Retain keys already computed while reading an expansion's successors.
-    /// Keeping them alongside only this pass's cached expansion lets a later
-    /// cache hit reuse the exact FR-101 bytes without changing the reading key.
-    fn retain_successor_keys(
-        &self,
-        cache: &RefCell<BTreeMap<StateKey, CachedExpansion<Tr<S>, S::State>>>,
-        key: &StateKey,
-        successor_keys: Vec<StateKey>,
-    ) {
-        if let Some(cached) = cache.borrow_mut().get_mut(key) {
-            if cached.successor_keys.is_none() {
-                cached.successor_keys = Some(successor_keys);
-            }
-        }
+    /// Retain exact successor keys; generic expansion payloads are not cached.
+    fn retain_successor_keys(&self, key: &StateKey, successor_keys: Vec<StateKey>) {
+        cache_successor_keys(
+            &mut self.successor_keys.borrow_mut(),
+            key.clone(),
+            successor_keys,
+        );
     }
 
     /// Expand a raw model state outside the product cache. The dead-root
@@ -1276,33 +1344,9 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             .expand_live(state, self.enforce, self.stutter_closure)
     }
 
-    fn prefetch_expansions(&self, states: &[LState<S::State>], workers: usize) {
-        let mut jobs = Vec::new();
-        for state in states {
-            let key = Self::raw_expansion_key(state);
-            if !self.prefetched.borrow().contains_key(&key)
-                && !jobs.iter().any(|(known, _)| *known == key)
-            {
-                jobs.push((key, state.model.clone()));
-            }
-        }
-        if jobs.is_empty() {
-            return;
-        }
-        let (keys, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
-        let results =
-            self.system
-                .expand_live_batch(states, self.enforce, self.stutter_closure, workers);
-        let results: Vec<_> = keys.into_iter().zip(results).collect();
-        self.prefetched.borrow_mut().extend(results);
-    }
-
-    fn raw_expansion_key(state: &LState<S::State>) -> RawExpansionKey {
-        let property = match &state.property {
-            Property::After(at) => at.index(),
-            Property::Undefined { .. } => usize::MAX,
-        };
-        (state.model_key.clone(), property)
+    fn prefetch_expansions(&self, _states: &[LState<S::State>], _workers: usize) {
+        // Generic expansion values may own nested buffers that have no
+        // measurable size, so they cannot be safely retained under the cap.
     }
 
     fn state_key_of(&self, state: &S::State) -> Result<StateKey, ExpansionStop> {
@@ -1808,7 +1852,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 ));
             }
         }
-        self.retain_successor_keys(&self.expansions, &state.model_key, observed_keys);
+        self.retain_successor_keys(&state.model_key, observed_keys);
         Ok(Expansion {
             successors,
             findings,
@@ -1866,48 +1910,9 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
     }
 }
 
-/// Copy a cached product key when the same canonical bytes fit this caller's
-/// output bound. Count the same writer chunks as the original ProductKey
-/// encoder so a cache hit reports the same first exceeded byte count.
-fn copy_product_key(
-    bytes: &[u8],
-    model_bytes: usize,
-    property: PropertyKey,
-    max_bytes: u64,
-) -> Result<Vec<u8>, quire_canonical::Error> {
-    let integer_bytes = match property {
-        PropertyKey::After(index) => {
-            Some(i128::try_from(index).unwrap_or(i128::MAX).to_string().len())
-        }
-        PropertyKey::Undefined => None,
-    };
-    let property_bytes = match property {
-        PropertyKey::After(_) => 7,
-        PropertyKey::Undefined => 11,
-    };
-    let mut produced = 0_u64;
-    for chunk in [
-        1,
-        model_bytes,
-        1,
-        1,
-        property_bytes,
-        integer_bytes.unwrap_or(0),
-        usize::from(integer_bytes.is_some()),
-        1,
-        1,
-    ] {
-        produced = produced.saturating_add(u64::try_from(chunk).unwrap_or(u64::MAX));
-        if produced > max_bytes {
-            return Err(quire_canonical::Error::Limit(
-                quire_canonical::LimitExceeded {
-                    kind: quire_canonical::LimitKind::CanonicalBytes,
-                    bound: max_bytes,
-                    required: produced,
-                },
-            ));
-        }
-    }
+/// Copy a cached product key. The cache key includes the caller's canonical
+/// byte limit, so the canonical encoder already admitted these exact bytes.
+fn copy_product_key(bytes: &[u8]) -> Result<Vec<u8>, quire_canonical::Error> {
     let mut copied = Vec::new();
     copied
         .try_reserve_exact(bytes.len())
@@ -2422,11 +2427,8 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             automaton: RefCell::new(automaton),
             start,
             readings: RefCell::new(BTreeMap::new()),
-            model_values: RefCell::new(BTreeMap::new()),
-            product_keys: RefCell::new(BTreeMap::new()),
-            expansions: RefCell::new(BTreeMap::new()),
-            model_only_expansions: RefCell::new(BTreeMap::new()),
-            prefetched: RefCell::new(BTreeMap::new()),
+            product_keys: RefCell::new(ByteCache::new(LASSO_CACHE_BYTES_PER_MAP)),
+            successor_keys: RefCell::new(ByteCache::new(LASSO_CACHE_BYTES_PER_MAP)),
             captured: self.clause.capture_site(),
             initial: Vec::new(),
             dead: RefCell::new(Vec::new()),
@@ -2734,7 +2736,6 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
         }
         let mut found: Option<usize> = None;
-        let mut prefetched = BTreeMap::new();
         let stop = |phase: &mut DeadPhase<Tr<S>>| -> Result<(), ModelCheckRefusal> {
             phase.stopped = self.halt_ending(&run.product)?;
             Ok(())
@@ -2746,34 +2747,11 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             let Some(model) = nodes.get(index).map(|node| node.model.clone()) else {
                 return Err(fault("a-frontier-index-names-a-node"));
             };
-            if self.request.workers > 1 && !prefetched.contains_key(&index) {
-                let mut jobs = vec![(index, model.clone())];
-                jobs.extend(
-                    frontier
-                        .iter()
-                        .filter(|(next_depth, next)| {
-                            !bound.is_some_and(|bound| *next_depth >= bound)
-                                && !prefetched.contains_key(next)
-                        })
-                        .take(self.request.workers.saturating_sub(1))
-                        .filter_map(|(_, next)| {
-                            nodes.get(*next).map(|node| (*next, node.model.clone()))
-                        }),
-                );
-                let (indices, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
-                let expansions = run.product.system.expand_live_batch(
-                    states,
-                    run.product.enforce,
-                    run.product.stutter_closure,
-                    self.request.workers,
-                );
-                prefetched.extend(indices.into_iter().zip(expansions));
-            }
             if run.product.poll().is_err() {
                 stop(&mut phase)?;
                 return Ok(phase);
             }
-            let (model_key, reading) = match run.product.reading_at(&model, false) {
+            let (_, reading) = match run.product.reading_at(&model, false) {
                 Ok(reading) => reading,
                 Err(_) => {
                     stop(&mut phase)?;
@@ -2806,26 +2784,17 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     }
                 }
             }
-            let (expansion, cut, successor_keys) = if constraint_undefined.is_some()
-                || boundary_unexpanded
-            {
+            let (expansion, cut) = if constraint_undefined.is_some() || boundary_unexpanded {
                 (
                     Expansion {
                         successors: Vec::new(),
                         findings: Vec::new(),
                     },
                     Cut::default(),
-                    None,
                 )
             } else {
-                match run
-                    .product
-                    .expand_model_only(&model, &model_key, prefetched.remove(&index))
-                {
-                    Ok(reuse) => {
-                        let (expanded, cut) = reuse.expansion;
-                        (expanded, cut, reuse.successor_keys)
-                    }
+                match run.product.expand_model_only(&model) {
+                    Ok((expanded, cut)) => (expanded, cut),
                     Err(_) => {
                         stop(&mut phase)?;
                         return Ok(phase);
@@ -2904,24 +2873,13 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 continue;
             }
             let root = nodes.get(index).map_or(0, |node| node.root);
-            let successor_count = expansion.successors.len();
-            let mut observed_keys = Vec::with_capacity(successor_count);
-            for (successor_index, (transition, next)) in
-                expansion.successors.into_iter().enumerate()
-            {
+            for (transition, next) in expansion.successors {
                 if *edges_left == 0 {
                     phase.stopped = out_of(ModelCheckLimit::MaxTransitions, limits.max_transitions);
                     return Ok(phase);
                 }
                 *edges_left -= 1;
-                let next_key = match successor_keys
-                    .as_ref()
-                    .and_then(|keys| keys.get(successor_index))
-                {
-                    Some(key) => key.clone(),
-                    None => self.state_key(&next)?,
-                };
-                observed_keys.push(next_key.clone());
+                let next_key = self.state_key(&next)?;
                 if examined.reach(next_key.clone(), depth.saturating_add(1)) {
                     if *states_left == 0 {
                         phase.stopped = out_of(ModelCheckLimit::MaxStates, limits.max_states);
@@ -2950,13 +2908,6 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         break;
                     }
                 }
-            }
-            if observed_keys.len() == successor_count {
-                run.product.retain_successor_keys(
-                    &run.product.model_only_expansions,
-                    &model_key,
-                    observed_keys,
-                );
             }
         }
         Ok(phase)

@@ -740,7 +740,6 @@ fn check_system<S: SubjectSystem>(
         reached: 0,
         edges: 0,
         keys: BTreeSet::new(),
-        expansions: BTreeMap::new(),
         limited: BTreeSet::new(),
         instance_limited: BTreeSet::new(),
         recording: proof.components.map(|_| Recording::new()),
@@ -906,8 +905,6 @@ struct Check<'c, S: SubjectSystem> {
     reached: usize,
     edges: usize,
     keys: BTreeSet<AutomatonStateKey>,
-    /// Successful subject expansions in this independent certificate check.
-    expansions: BTreeMap<StateKey, SubjectExpansion<S>>,
     /// The reached model states whose expansion cut a step at the memory
     /// bound (ADR-025 MB-3).
     limited: BTreeSet<StateKey>,
@@ -2167,18 +2164,14 @@ impl<S: SubjectSystem> Check<'_, S> {
     /// `activate` step of unexpanded as instance-limited (ADR-027 AE-4).
     fn expand(&mut self, state: &S::State, at: &ProductStateRef) -> Step<SubjectExpansion<S>> {
         self.poll()?;
-        let key = self.system.canonical_state_key(state)?;
-        let (expansion, cut) = match self.expansions.get(&key) {
-            Some(expansion) => expansion.clone(),
-            None => {
-                let expansion = self
-                    .system
-                    .successors_bounded(state)
-                    .map_err(|stop| self.expansion_stop(stop))?;
-                self.expansions.insert(key, expansion.clone());
-                expansion
-            }
-        };
+        // Subject states and transitions may contain nested allocations whose
+        // byte sizes are not exposed by `SubjectSystem`; do not retain them in
+        // an unaccounted state-keyed cache.
+        self.system.canonical_state_key(state)?;
+        let (expansion, cut) = self
+            .system
+            .successors_bounded(state)
+            .map_err(|stop| self.expansion_stop(stop))?;
         if cut.memory {
             self.limited.insert(at.model_state.clone());
         }

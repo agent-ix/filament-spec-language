@@ -28,9 +28,9 @@ use crate::model::index::ModelIndex;
 use crate::model::intake::{NormalizedModel, PackageInput};
 use crate::model::normalize::EffectiveView;
 use crate::model::observation::{
-    admit_initial_state, model_views, observe_state, state_fields, state_reference,
-    AdmissionFailure, DocumentRef, ModelFacts, ModelSelections, ModelView, Observation,
-    ObservationLimits, PathStep, SelectedAnchor, observation_facts,
+    admit_initial_state, model_views, observation_facts, observe_state, state_fields,
+    state_reference, AdmissionFailure, DocumentRef, ModelFacts, ModelSelections, ModelView,
+    Observation, ObservationLimits, PathStep, SelectedAnchor,
 };
 use filament_checked::key::DeclarationKey;
 

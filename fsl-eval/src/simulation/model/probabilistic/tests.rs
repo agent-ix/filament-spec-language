@@ -1312,7 +1312,9 @@ fn model_state_key_memo_tracks_clones_and_cell_mutation() {
         &state.canonical_key,
         &cloned.canonical_key
     ));
+    let cold_debug = format!("{state:?}");
     let original = system.state_key(&state).expect("key").0;
+    assert_eq!(format!("{state:?}"), cold_debug);
     assert_eq!(system.state_key(&cloned).expect("cloned key").0, original);
 
     let (population, objects) = state
@@ -1337,6 +1339,13 @@ fn model_state_key_memo_tracks_clones_and_cell_mutation() {
     ));
     let changed_key = system.state_key(&changed).expect("changed key").0;
     assert_ne!(changed_key, original);
+    let mut freshly_changed = initial(&system);
+    freshly_changed.set_cell(&cell, None);
+    let freshly_computed_key = system
+        .state_key(&freshly_changed)
+        .expect("freshly computed key for the changed state")
+        .0;
+    assert_eq!(changed_key, freshly_computed_key);
     assert_eq!(system.state_key(&state).expect("original key").0, original);
 }
 
