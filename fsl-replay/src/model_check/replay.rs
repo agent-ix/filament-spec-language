@@ -2995,7 +2995,9 @@ fn check_formula<S: SubjectSystem>(
 /// behaviour supplied as a request, not as a counterexample to settle.
 #[derive(Debug)]
 pub struct ModelTraceRun {
-    /// The typed reference actually bound in the admitted initial state.
+    /// The written binding of the clause's `over` parameter (FSpec FR-364's
+    /// `over_binding`), with the admitted member type, when the behaviour
+    /// names an instance.
     pub bound_over: Option<filament_exact::ObjectReference>,
     /// The actual final state's canonical key, including an initial terminal state.
     pub terminal_state: fsl_eval::simulation::StateKey,
@@ -3095,19 +3097,15 @@ pub fn evaluate_model_trace(
         }
         _ => None,
     };
-    let initial = positions
-        .first()
-        .ok_or_else(|| fault("a-replayed-initial-state-exists"))?;
     let bound_over = payload
         .over_binding
         .as_ref()
         .map(|instance| {
             letters
-                .over_reference(instance, &system.atom_state(&initial.state))
-                .map_err(|_| fault("the-replayed-clause-binding-is-readable"))
+                .instance_reference(instance)
+                .ok_or_else(|| fault("the-replayed-clause-binding-is-readable"))
         })
-        .transpose()?
-        .flatten();
+        .transpose()?;
     let terminal_state = positions
         .last()
         .ok_or_else(|| fault("a-replayed-final-state-exists"))?

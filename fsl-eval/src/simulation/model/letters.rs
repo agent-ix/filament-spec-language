@@ -594,7 +594,7 @@ impl ClauseLetters<'_, '_> {
     /// letters read at `state`, the environment the atom is evaluated over,
     /// with the reference the `over` parameter reads as under `instance`'s
     /// key in it. `None` when the state holds no conforming object under
-    /// the key, so no atom of it reads `false`.
+    /// the key.
     ///
     /// # Errors
     ///
@@ -612,17 +612,6 @@ impl ClauseLetters<'_, '_> {
                 environment: observed.observation.environment.clone(),
                 identity: observed.observation.identity.clone(),
             }))
-    }
-
-    /// The actual typed object reference bound to this clause instance in
-    /// an admitted state, without copying its observation environment.
-    pub fn over_reference(
-        &self,
-        instance: &ModelInstance,
-        state: &ModelSimState,
-    ) -> Result<Option<ObjectReference>, AtomStop> {
-        let observed = self.observe(state)?;
-        Ok(self.bound(&observed.rows, instance))
     }
 
     /// How many states these letters have observed: a state read again, by
