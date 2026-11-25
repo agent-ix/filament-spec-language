@@ -365,7 +365,15 @@ fn public_monitor_refuses_a_missing_clause_before_consuming_the_stream() {
 }
 
 #[test]
-#[trace("TC-1581", "FR-126-AC-26", "FR-330")]
+#[trace(
+    "TC-1581",
+    "FR-621-AC-19",
+    "FR-621-AC-20",
+    "FR-621-AC-21",
+    "FR-621-AC-22",
+    "FR-126-AC-26",
+    "FR-330"
+)]
 fn public_analyze_proves_fair_each_service_and_refutes_unfair_service() {
     let examples = rover_root().parent().unwrap().to_path_buf();
     let root = examples.join("lock");
@@ -387,7 +395,16 @@ fn public_analyze_proves_fair_each_service_and_refutes_unfair_service() {
         .as_array()
         .expect("analysis item records");
     assert_eq!(items.len(), 3, "{}", output.value);
-    for (index, result) in ["refuted", "refuted", "proved"].into_iter().enumerate() {
+    for (index, (claim_name, result)) in [
+        ("ServedWithoutFairness", "refuted"),
+        ("ServedIfAcquireIsStronglyFair", "refuted"),
+        ("ServedIfEachAcquireIsStronglyFair", "proved"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(items[index]["request_index"], index, "{}", items[index]);
+        assert_eq!(items[index]["claim_name"], claim_name, "{}", items[index]);
         assert_eq!(items[index]["record"]["result"], result, "{}", output.value);
         if result == "refuted" {
             assert!(
@@ -440,5 +457,13 @@ fn public_analyze_proves_fair_each_service_and_refutes_unfair_service() {
     let item = &limited.value.as_value()["items"][0];
     assert_eq!(item["record"]["result"], "incomplete", "{item}");
     assert_eq!(item["exploration"]["states"], "1", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "limit-reached", "{item}");
+    assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
+    assert_eq!(item["record"]["cause"]["value"], 1, "{item}");
+    assert_eq!(
+        item["record"]["cause"]["setting"],
+        "model_check.max_states",
+        "{item}"
+    );
     assert!(item.get("counterexample").is_none(), "{item}");
 }
