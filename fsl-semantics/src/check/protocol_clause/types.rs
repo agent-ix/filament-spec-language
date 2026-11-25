@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The checked protocol's identity types: [`ProtocolNodeId`], the S3-level
 //! [`BoundAttempt`] and the lowered [`CheckedAttempt`] and
 //! [`CheckedProtocol`] (FR-113 Outputs, FR-114 Outputs).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-218: a protocol's checked control tree and its compiled causal edge
 //! relation, with the two structural rules read off them: the relation
 //! without the `repeat` back edges is acyclic, and every `repeat` body
