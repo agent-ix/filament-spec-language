@@ -130,7 +130,8 @@ Mean refutation evidence SHALL follow the distinct role below.
 
 ### Product and payoff
 
-- Keys SHALL be FR-196's complete eight-member keys with the monitor
+- This finite-horizon measure profile has no reset process. Its keys SHALL
+  use FR-196's complete original eight-member representation with the monitor
   `["measure",remaining,phase]` or `["fraction",remaining,phase]` and the
   accumulator alternative FR-196 gives the measure, the above-bound and
   censored amounts included. `fsl-eval` SHALL own the measure and fraction
