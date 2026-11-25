@@ -132,7 +132,7 @@ use super::concretise::{Lift, LiftStop, PermuterOf};
 use super::fair_walk::{FairModel, fairness_constraints, tree_path};
 use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
-    RetainConfig, RetainedGraph,
+    RetainConfig, RetainHooks, RetainedGraph,
 };
 use super::product::{ProductKey, ProductTransition};
 use super::quotient::{
@@ -541,7 +541,7 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         enforce: bool,
         stutter_closure: bool,
         workers: usize,
-    ) -> Vec<Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>>;
+    ) -> Vec<BoundedExpansion<Tr<Self>, Self::State>>;
 
     /// How the state constraint `name` reads at `state` (FR-158).
     fn constraint_value(
@@ -586,6 +586,10 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
     ) -> Result<Second<Tr<Self>>, ModelCheckRefusal>;
 }
 
+type BoundedExpansion<Transition, State> = Result<Bounded<Transition, State>, ExpansionStop>;
+type PrefetchedExpansions<State, Transition> =
+    RefCell<BTreeMap<RawExpansionKey, BoundedExpansion<Transition, State>>>;
+
 /// The retained product of `product` under `group` and `ample`.
 fn retained<'l, S: LiveSubject>(
     run: &Run<'_, S>,
@@ -595,6 +599,13 @@ fn retained<'l, S: LiveSubject>(
     limits: Limits,
 ) -> Result<Exploration<S>, ModelCheckRefusal> {
     let identity = IdentityLimits::default();
+    let hooks = RetainHooks::<LassoSystem<'l, S>, _, _, _>::new(
+        |product: &LassoSystem<'l, S>, states: &[LState<S::State>], workers: usize| {
+            product.prefetch_expansions(states, workers)
+        },
+        || run.cancel.poll() && run.cancel.cause().is_some(),
+        |state: &LState<S::State>| product.encoded_key(state, identity),
+    );
     retain_reduced_with_key(
         product,
         group,
@@ -605,9 +616,7 @@ fn retained<'l, S: LiveSubject>(
             max_depth: None,
         },
         run.request.workers,
-        |product, states, workers| product.prefetch_expansions(states, workers),
-        || run.cancel.poll() && run.cancel.cause().is_some(),
-        |state| product.encoded_key(state, identity),
+        hooks,
     )
     .map_err(|error| error.model_refusal(IdentityLimits::default()))
 }
@@ -1061,7 +1070,7 @@ struct LassoSystem<'r, S: LiveSubject> {
     automaton: RefCell<PropertyAutomaton>,
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
-    prefetched: RefCell<BTreeMap<RawExpansionKey, Result<Bounded<Tr<S>, S::State>, ExpansionStop>>>,
+    prefetched: PrefetchedExpansions<S::State, Tr<S>>,
     /// Where the clause fixes its captures (FR-337).
     captured: CaptureSite,
     initial: Vec<LState<S::State>>,

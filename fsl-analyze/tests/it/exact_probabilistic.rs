@@ -2265,7 +2265,7 @@ fn fair_eventual_value_bounds_are_independently_checked() {
     let mut request = world.request("FairBound", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1;
     request.limits.max_precision_bits = 16;
-    let limits = request.limits.clone();
+    let limits = request.limits;
     let record = analyze_items(
         &Engines::fsl().expect("EN-5 is admitted"),
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
@@ -2367,7 +2367,7 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
     let mut request = world.request("FairBound", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1;
     request.limits.max_precision_bits = 16;
-    let limits = request.limits.clone();
+    let limits = request.limits;
     let record = analyze_items(
         &Engines::fsl().expect("EN-5 is admitted"),
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],

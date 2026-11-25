@@ -42,6 +42,9 @@ use fsl_replay::{
 };
 use num_bigint::BigInt;
 
+type CandidateStepEvidence = (usize, Vec<u8>, ModelTransition, Vec<Vec<PlaceConstraint>>);
+type DelayPiece = (usize, Dbm, Vec<PlaceConstraint>, Vec<usize>);
+
 mod fair_loops;
 
 use super::super::concretise::ClockTransform;
@@ -161,7 +164,7 @@ struct AbstractView {
     atoms: Vec<CellAtom>,
     /// Each step of each candidate, with its enabling parts (FR-232) on the
     /// candidate's own clock block.
-    steps: Vec<(usize, Vec<u8>, ModelTransition, Vec<Vec<PlaceConstraint>>)>,
+    steps: Vec<CandidateStepEvidence>,
 }
 
 /// A position's step judged: its position after and the abstract steps it
@@ -770,7 +773,7 @@ impl Product<'_, '_> {
         run: &Run<'_, '_, '_>,
         q: usize,
         zone: Dbm,
-    ) -> Result<Vec<(usize, Dbm, Vec<PlaceConstraint>, Vec<usize>)>, Halt> {
+    ) -> Result<Vec<DelayPiece>, Halt> {
         let Some(timed) = run.auxiliary_timed else {
             let count = self
                 .positions

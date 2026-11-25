@@ -212,6 +212,16 @@ fn zero() -> Rational {
 }
 
 /// The claim forms the digital route admits (ADR-028 TA-4).
+struct NestedDeadline<'c> {
+    outer_occurrence: u64,
+    outer_lower: Rational,
+    outer_upper: Rational,
+    inner_occurrence: u64,
+    inner_lower: Rational,
+    inner_upper: Rational,
+    reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
+}
+
 enum Form<'c> {
     /// Any checked timed bounded-window formula, retained as its complete
     /// AST and evaluated over exact timestamped product observations.
@@ -230,15 +240,7 @@ enum Form<'c> {
         reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
     },
     /// One punctual nested Always occurrence under a bounded Eventually.
-    NestedDeadline {
-        outer_occurrence: u64,
-        outer_lower: Rational,
-        outer_upper: Rational,
-        inner_occurrence: u64,
-        inner_lower: Rational,
-        inner_upper: Rational,
-        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
-    },
+    NestedDeadline(Box<NestedDeadline<'c>>),
     /// Expected elapsed time until a checked state predicate holds.
     MeanTime {
         /// The expected-time comparison threshold in the model's time unit.
@@ -368,7 +370,7 @@ impl<'c> Form<'c> {
                             {
                                 return Err(shape_at(&[root_at]));
                             }
-                            return Ok(Self::NestedDeadline {
+                            return Ok(Self::NestedDeadline(Box::new(NestedDeadline {
                                 outer_occurrence: u64::try_from(root_at)
                                     .map_err(|_| shape_at(&[root_at]))?,
                                 outer_lower: interval.lower().clone(),
@@ -381,7 +383,7 @@ impl<'c> Form<'c> {
                                 inner_lower: inner.lower().clone(),
                                 inner_upper: inner_upper.clone(),
                                 reads: vec![(UndefinedRead::Atom(id), predicate)],
-                            });
+                            })));
                         }
                         _ => return Err(shape_at(&[root_at, operand.index()])),
                     },
@@ -461,10 +463,10 @@ impl<'c> Form<'c> {
         match self {
             Self::TimedTrace { reads, .. }
             | Self::Deadline { reads, .. }
-            | Self::NestedDeadline { reads, .. }
             | Self::MeanTime { reads, .. }
             | Self::Elapsed { reads, .. }
             | Self::Labels(reads) => reads,
+            Self::NestedDeadline(deadline) => &deadline.reads,
         }
     }
 }
@@ -608,17 +610,11 @@ fn scale_of(
                 }
             }
         }
-        Form::NestedDeadline {
-            outer_lower,
-            outer_upper,
-            inner_lower,
-            inner_upper,
-            ..
-        } => {
-            note(outer_lower);
-            note(outer_upper);
-            note(inner_lower);
-            note(inner_upper);
+        Form::NestedDeadline(deadline) => {
+            note(&deadline.outer_lower);
+            note(&deadline.outer_upper);
+            note(&deadline.inner_lower);
+            note(&deadline.inner_upper);
         }
         Form::MeanTime { bound, .. } => note(bound),
         Form::Elapsed {
@@ -654,7 +650,7 @@ fn scale_of(
             .checked_add(usize::from(matches!(
                 form,
                 Form::Deadline { .. }
-                    | Form::NestedDeadline { .. }
+                    | Form::NestedDeadline(_)
                     | Form::TimedTrace { .. }
                     | Form::Elapsed { .. }
             )))
@@ -1118,11 +1114,9 @@ impl<'c> Builder<'_, '_, 'c> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
             Form::TimedTrace { horizon, .. } => self.bound_units(horizon).map(Some),
-            Form::NestedDeadline {
-                outer_upper,
-                inner_upper,
-                ..
-            } => self.bound_units(&outer_upper.add(inner_upper)).map(Some),
+            Form::NestedDeadline(deadline) => self
+                .bound_units(&deadline.outer_upper.add(&deadline.inner_upper))
+                .map(Some),
             Form::Elapsed { window, .. } => self.bound_units(window).map(Some),
             Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
@@ -1401,7 +1395,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 .map(|observation| {
                     json!([
                         observation.time.to_string(),
-                        observation.values.iter().copied().collect::<Vec<_>>()
+                        observation.values.to_vec()
                     ])
                 })
                 .collect::<Vec<_>>();
@@ -1688,28 +1682,20 @@ impl<'c> Builder<'_, '_, 'c> {
                     ),
                 }))
             }
-            Form::NestedDeadline {
-                outer_occurrence,
-                outer_lower,
-                outer_upper,
-                inner_occurrence,
-                inner_lower,
-                inner_upper,
-                ..
-            } => {
+            Form::NestedDeadline(deadline) => {
                 let mut root = TimedOperatorState {
-                    occurrence: *outer_occurrence,
+                    occurrence: deadline.outer_occurrence,
                     kind: DeadlineKind::Eventually,
-                    lower: self.bound_units(outer_lower)?,
-                    upper: self.bound_units(outer_upper)?,
+                    lower: self.bound_units(&deadline.outer_lower)?,
+                    upper: self.bound_units(&deadline.outer_upper)?,
                     elapsed: 0,
                     phase: DeadlinePhase::Pending,
                 };
                 let mut child = TimedOperatorState {
-                    occurrence: *inner_occurrence,
+                    occurrence: deadline.inner_occurrence,
                     kind: DeadlineKind::Always,
-                    lower: self.bound_units(inner_lower)?,
-                    upper: self.bound_units(inner_upper)?,
+                    lower: self.bound_units(&deadline.inner_lower)?,
+                    upper: self.bound_units(&deadline.inner_upper)?,
                     elapsed: 0,
                     phase: DeadlinePhase::Pending,
                 };
@@ -1748,7 +1734,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 }
                 if letters
                     .first()
-                    .map_or(true, |next| *next != previous.values)
+                    .is_none_or(|next| *next != previous.values)
                 {
                     push_timed_observation(&mut history, time, &previous.values);
                 }
@@ -1922,7 +1908,7 @@ impl<'c> Builder<'_, '_, 'c> {
                                 kind: *kind,
                                 phase: DeadlinePhase::Pending,
                             }),
-                            Form::NestedDeadline { .. } => {
+                            Form::NestedDeadline(_) => {
                                 let mut state = state.clone();
                                 self.deadline_start(&[], &mut state)?
                             }

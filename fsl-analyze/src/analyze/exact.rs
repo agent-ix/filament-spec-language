@@ -1586,7 +1586,7 @@ fn run(
     let mut fair_policy: Option<Vec<Option<crate::exact_probabilistic::SchedulerChoice>>> = None;
     let (values, policy) = if fair_eventual {
         let precision = limits.max_precision_bits;
-        let mut solve_limits = limits.clone();
+        let mut solve_limits = limits;
         let precision_scalar_cap = u64::from(precision).saturating_mul(8);
         let fair_bounds = limits.max_rational_bits < precision_scalar_cap;
         if fair_bounds {
@@ -1767,11 +1767,11 @@ fn run(
                             }) => Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
                                 lower: upper
                                     .iter()
-                                    .map(|bound| complement_dyadic(bound))
+                                    .map(complement_dyadic)
                                     .collect(),
                                 upper: lower
                                     .iter()
-                                    .map(|bound| complement_dyadic(bound))
+                                    .map(complement_dyadic)
                                     .collect(),
                                 precision_bits,
                                 sweeps,
@@ -1968,7 +1968,7 @@ fn run(
                     probabilistic.claims(),
                     &item,
                     &bytes,
-                    interval_role(side, &bound),
+                    interval_role(side, bound),
                     document_limits,
                     cancel,
                 )?;

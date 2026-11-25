@@ -77,6 +77,7 @@ mod hyper_witness;
 mod hyper_world;
 mod invariant_item;
 mod lasso_replay;
+mod letters;
 mod litmus;
 mod load_buffering;
 mod liveness;

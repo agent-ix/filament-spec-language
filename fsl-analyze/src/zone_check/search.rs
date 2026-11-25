@@ -53,6 +53,8 @@ use fsl_semantics::family::ClassifyFailure;
 use num_bigint::BigInt;
 
 use super::certificate::Proof;
+
+type ClockBounds = (Vec<Option<BigInt>>, Vec<Option<BigInt>>);
 use super::concretise::{concretise, Concrete, Target};
 use super::divergence::Escape;
 use super::liveness::Liveness;
@@ -1298,7 +1300,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn bounds_for(
         &self,
         dim: usize,
-    ) -> Result<(Vec<Option<BigInt>>, Vec<Option<BigInt>>), Halt> {
+    ) -> Result<ClockBounds, Halt> {
         let concrete = self.timed.places().len();
         let abstract_clocks = self.auxiliary_timed.map_or(0, |timed| timed.places().len());
         let horizon = usize::from(self.window.is_some());
@@ -1310,7 +1312,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             0
         } else {
             let extra = clocks - concrete - horizon;
-            if extra % abstract_clocks != 0 {
+            if !extra.is_multiple_of(abstract_clocks) {
                 return Err(ZoneCheckRefusal::Fault("zone-clock-layout").into());
             }
             extra / abstract_clocks

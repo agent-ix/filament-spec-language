@@ -39,7 +39,8 @@ pub use limits::{
     PreparationRefusal, SettingUnavailable,
 };
 pub use monitor::{
-    monitor, monitor_with_target_preparer, MonitorEvent, MonitorProviders, MonitorSummary,
+    monitor, monitor_with_target_preparer, MonitorEvent, MonitorPreparation, MonitorProviders,
+    MonitorSummary, TargetPreparer,
 };
 pub use output::NativeResult;
 pub use replay::replay_with_limits;
