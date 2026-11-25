@@ -85,7 +85,7 @@ required only when `reassigned` is true.
 | FR-1050-AC-3 | The complete closed trace contains a qualifying acknowledgement only at tick 6. The temporal item is a violation for the 0-through-5 window. | Test |
 | FR-1050-AC-4 | With a receipt at tick 3, no qualifying acknowledgement, an open scope, watermark 3 and completeness through 3, the temporal result is `Pending` with deadline 5. With a receipt at tick 3, no qualifying acknowledgement, a closed scope, watermark 5 and `Incomplete` completeness, the temporal result is `Indeterminate` with reason `IncompleteInput`. Neither result has a completed truth. | Test |
 | FR-1050-AC-5 | Each complete closed trace below has no qualifying acknowledgement by tick 5 and settles violation: (a) the reviewer equals the author; (b) the reviewed source-revision identity differs from the active source-revision identity; or (c) the event is reassigned but its assignment is not accepted. Changing only the failing condition to valid makes the event qualifying and the temporal result succeeds. | Test |
-| FR-1050-AC-6 | Each identity-bearing field used by `ReviewAccepted` is evaluated, not merely copied: changing one provider-event identity from its bound synthetic value while leaving the other event data unchanged makes the complete closed temporal result a violation. | Test |
+| FR-1050-AC-6 | Source identity is evaluated, not merely copied: changing the source-authority identity or a provider-event identity from its bound synthetic value while leaving all other event data unchanged makes the complete closed temporal result a violation. | Test |
 
 ## Dependencies
 
