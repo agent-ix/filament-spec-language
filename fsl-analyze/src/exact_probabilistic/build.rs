@@ -451,35 +451,26 @@ struct Node {
 /// A target of a model step, before it is a product state.
 struct Target {
     key: ProbKey,
+    /// What numbering the key reads. None when `max_states` denied the key a
+    /// slot, so that no representation of it is constructed (FR-203-AC-14).
+    state: Option<TargetState>,
+}
+
+impl Target {
+    /// Count the planned edge to this target, if the product keeps it.
+    fn observe_edge(&self) {
+        if self.state.is_some() {
+            super::observe_edge_construction();
+        }
+    }
+}
+
+/// An admitted target's model state and control reading.
+struct TargetState {
     model: ModelSimState,
     truths: Vec<bool>,
     /// Set for an intermediate state.
     resolution: Option<Resolution>,
-}
-
-/// The end of a planned edge.
-enum Successor {
-    /// The key holds a state slot, new or existing.
-    Admitted(Target),
-    /// `max_states` denied the key a slot, so no representation of the target
-    /// is constructed (FR-203-AC-14).
-    Denied(ProbKey),
-}
-
-impl Successor {
-    fn key(&self) -> &ProbKey {
-        match self {
-            Self::Admitted(target) => &target.key,
-            Self::Denied(key) => key,
-        }
-    }
-
-    /// Count the planned edge to this successor, if the product keeps it.
-    fn observe_edge(&self) {
-        if matches!(self, Self::Admitted(_)) {
-            super::observe_edge_construction();
-        }
-    }
 }
 
 /// Only the control and key needed to decide target admission.
@@ -493,7 +484,7 @@ struct Planned {
     choice: ProductAction,
     action: Option<ScheduledIdentity>,
     draw: Option<Vec<Value>>,
-    target: Successor,
+    target: Target,
     probability: Rational,
     rewards: Vec<(Identifier, Value)>,
     /// The model step the edge takes.
@@ -672,13 +663,12 @@ impl Builder<'_, '_, '_, '_> {
                 let key = self.key_of(&state, binding, monitor, accumulator, None)?;
                 self.admit_state(&key)?;
                 super::observe_target_construction();
-                let target = Target {
-                    key,
+                let admitted = TargetState {
                     model: state.clone(),
                     truths,
                     resolution: None,
                 };
-                let id = self.intern(target, None, None, at)?;
+                let id = self.intern(key, admitted, None, None, at)?;
                 starts.push((at, self.bindings[binding].0.clone(), ProbStateId(id)));
             }
         }
@@ -894,23 +884,20 @@ impl Builder<'_, '_, '_, '_> {
         Ok(())
     }
 
-    fn target(
-        &mut self,
-        arrival: Arrival,
-        model: &ModelSimState,
-        pending: usize,
-    ) -> Step<Successor> {
+    fn target(&mut self, arrival: Arrival, model: &ModelSimState, pending: usize) -> Step<Target> {
         self.admit_edge(pending)?;
-        if !self.admit_partial_state(&arrival.key)? {
-            return Ok(Successor::Denied(arrival.key));
-        }
-        super::observe_target_construction();
-        Ok(Successor::Admitted(Target {
+        let state = self.admit_partial_state(&arrival.key)?.then(|| {
+            super::observe_target_construction();
+            TargetState {
+                model: model.clone(),
+                truths: arrival.truths,
+                resolution: None,
+            }
+        });
+        Ok(Target {
             key: arrival.key,
-            model: model.clone(),
-            truths: arrival.truths,
-            resolution: None,
-        }))
+            state,
+        })
     }
 
     fn admit_partial_state(&mut self, key: &ProbKey) -> Step<bool> {
@@ -925,16 +912,17 @@ impl Builder<'_, '_, '_, '_> {
         Ok(true)
     }
 
-    /// The state of `target`, numbered at its first discovery. A state with
+    /// The state of `key`, numbered at its first discovery. A state with
     /// decided control is never expanded.
     fn intern(
         &mut self,
-        target: Target,
+        key: ProbKey,
+        target: TargetState,
         parent: Option<usize>,
         step: Option<TraceStep>,
         initial: u32,
     ) -> Step<usize> {
-        if let Some(known) = self.index.get(&target.key) {
+        if let Some(known) = self.index.get(&key) {
             return Ok(*known);
         }
         if self.nodes.len() >= self.max_states {
@@ -947,22 +935,20 @@ impl Builder<'_, '_, '_, '_> {
         let initial = parent
             .map(|parent| self.nodes[parent].initial)
             .unwrap_or(initial);
-        let decided = target.key.monitor.is_some_and(MonitorState::is_decided)
+        let decided = key.monitor.is_some_and(MonitorState::is_decided)
             || (self.target_mode != CandidateTargetMode::Continue
                 && target.truths.first() == Some(&true));
         self.reserve_key(
-            target
-                .key
-                .model
+            key.model
                 .len()
                 .saturating_add(std::mem::size_of::<ProbKey>())
                 .saturating_add(std::mem::size_of::<Node>())
                 .saturating_add(std::mem::size_of::<usize>()),
         )?;
-        self.index.insert(target.key.clone(), id);
-        self.pending_keys.remove(&target.key);
+        self.index.insert(key.clone(), id);
+        self.pending_keys.remove(&key);
         self.nodes.push(Node {
-            key: target.key,
+            key,
             model: target.model,
             truths: target.truths,
             parent: parent.map(|parent| (parent, step)),
@@ -1142,7 +1128,7 @@ impl Builder<'_, '_, '_, '_> {
             }
         };
         for edge in planned {
-            let Successor::Admitted(target) = edge.target else {
+            let Some(target) = edge.target.state else {
                 self.partial = true;
                 self.omitted.push((
                     at,
@@ -1162,7 +1148,8 @@ impl Builder<'_, '_, '_, '_> {
                     self.max_transitions,
                 ));
             }
-            let to = self.intern(target, Some(at), edge.step, self.nodes[at].initial)?;
+            let initial = self.nodes[at].initial;
+            let to = self.intern(edge.target.key, target, Some(at), edge.step, initial)?;
             self.edges.push(ProbEdge {
                 from: ProbStateId(at),
                 choice: edge.choice,
@@ -1187,7 +1174,7 @@ impl Builder<'_, '_, '_, '_> {
             let target = self.target(arrival, post, planned.len())?;
             target.observe_edge();
             planned.push(Planned {
-                choice: ProductAction::PostState(Box::new(target.key().clone())),
+                choice: ProductAction::PostState(Box::new(target.key.clone())),
                 action: None,
                 draw: None,
                 target,
@@ -1332,8 +1319,7 @@ impl Builder<'_, '_, '_, '_> {
                     // the same rewards are one edge with their summed
                     // probability.
                     if let Some(merged) = planned[first..].iter_mut().find(|edge| {
-                        *edge.target.key() == arrival.key
-                            && same_rewards(&edge.rewards, &draw.rewards)
+                        edge.target.key == arrival.key && same_rewards(&edge.rewards, &draw.rewards)
                     }) {
                         merged.probability = merged.probability.add(&draw.probability);
                         merged.draw = None;
@@ -1381,20 +1367,18 @@ impl Builder<'_, '_, '_, '_> {
                     // predicates read as the source's; the monitor and the
                     // accumulator advance at the resolution, once.
                     self.admit_edge(planned.len())?;
-                    let target = if self.admit_partial_state(&key)? {
+                    let state = self.admit_partial_state(&key)?.then(|| {
                         super::observe_target_construction();
-                        Successor::Admitted(Target {
-                            key,
+                        TargetState {
                             model: model.clone(),
                             truths: self.nodes[at].truths.clone(),
                             resolution: Some(Resolution {
                                 successors: successors.into_iter().map(|(_, post)| post).collect(),
                                 rewards: draw.rewards.clone(),
                             }),
-                        })
-                    } else {
-                        Successor::Denied(key)
-                    };
+                        }
+                    });
+                    let target = Target { key, state };
                     target.observe_edge();
                     planned.push(Planned {
                         choice: ProductAction::Identity(action.identity.clone()),
