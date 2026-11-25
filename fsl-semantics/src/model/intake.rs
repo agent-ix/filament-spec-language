@@ -68,6 +68,7 @@ use filament_exact::{
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 use fsl_foundation::source::{LocatedSpan, Position};
 use fsl_foundation::IntakeLimits;
+use ix_trace_rs::implements;
 use quire_canonical::Node;
 
 /// The declared-unit name an `ix://filament/unit/<name>` reference names, `None`
@@ -2272,6 +2273,7 @@ fn duplicate_member_identity_refusal(
 /// Identify the package graph namespace addressed by an unresolved edge.
 /// FCD's diagnostic constants for these edges are private, so classify them
 /// from the exact member path and whether the selected package has the target.
+#[implements("FR-056-AC-5")]
 fn missing_graph_reference_kind(document: &PackageDocument, pointer: &str) -> Option<&'static str> {
     let mut segments = pointer.strip_prefix('/')?.split('/');
     let collection = segments.next()?;
@@ -2310,6 +2312,7 @@ fn missing_graph_reference_kind(document: &PackageDocument, pointer: &str) -> Op
 
 /// The one identity segment after a selected package's dimension or unit
 /// namespace.
+#[implements("FR-056-AC-5")]
 fn package_graph_identity_segment<'a>(
     package_identity: &str,
     namespace: &str,
@@ -2330,6 +2333,7 @@ fn package_graph_identity_segment<'a>(
 /// Resolve the owning dimension or unit for one of the graph-reference
 /// pointers recognized above. Those declarations live beside `types` in the
 /// package document, so `declared_node_for_pointer` cannot resolve them.
+#[implements("FR-056-AC-5")]
 fn graph_reference_owner<'a>(document: &'a PackageDocument, pointer: &str) -> Option<&'a Value> {
     let mut segments = pointer.strip_prefix('/')?.split('/');
     let collection = segments.next()?;
@@ -2341,6 +2345,7 @@ fn graph_reference_owner<'a>(document: &'a PackageDocument, pointer: &str) -> Op
 }
 
 #[ix_trace_rs::string_edge]
+#[implements("FR-056-AC-5")]
 fn missing_reader_reference(
     document: &PackageDocument,
     located: &agent_ix_semantic_ir::diag::Located,

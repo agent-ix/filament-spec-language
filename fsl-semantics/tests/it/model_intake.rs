@@ -70,7 +70,7 @@ fn parse_document(bytes: &[u8]) -> PackageDocument {
         .expect("the test document parses as JSON")
 }
 
-#[trace("TC-145", "FR-056-AC-1")]
+#[trace("TC-145", "FR-056-AC-1", "FR-056-AC-5")]
 #[test]
 fn the_model_reader_cohort_admits_dimensions_and_scaled_units() {
     let mut document: Value = serde_json::from_slice(include_bytes!(
