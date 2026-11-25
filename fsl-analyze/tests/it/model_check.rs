@@ -316,11 +316,32 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
         )
         .expect("the worker request is admitted");
         let counterexample = violated(&outcome).clone();
-        assert_eq!(violated_fixture.values(&counterexample, "a"), [0, 1, 2, 3]);
+        let values = violated_fixture.values(&counterexample, "a");
+        // The expected path is the stem through a.value = 3. Other counters
+        // continue changing until the complete three-object subject reaches
+        // its terminal state, so the lasso entry can follow that stem.
         assert_eq!(
-            counterexample.lasso.as_ref().map(|lasso| lasso.entry),
-            Some(3)
+            values.get(..4),
+            Some(&[0, 1, 2, 3][..]),
+            "workers={workers}"
         );
+        assert_eq!(
+            counterexample
+                .lasso
+                .as_ref()
+                .map(|lasso| lasso.terminal_stutter),
+            Some(true)
+        );
+        let entry = counterexample
+            .lasso
+            .as_ref()
+            .expect("the lasso is recorded")
+            .entry;
+        assert!(
+            entry >= 3 && entry < values.len(),
+            "workers={workers}: {entry}"
+        );
+        assert!(values[3..=entry].iter().all(|value| *value == 3));
         assert!(counterexample
             .lasso
             .as_ref()
