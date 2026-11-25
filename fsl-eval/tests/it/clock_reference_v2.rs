@@ -376,7 +376,7 @@ impl fsl_eval::simulation::model::ModelRestoreBudget for RestoreBudget {
     }
 }
 
-#[trace("TC-3084", "FR-1040-AC-12")]
+#[trace("TC-3084", "FR-1040-AC-11", "FR-1040-AC-12")]
 #[test]
 fn clock_reference_values_restore_from_state_key_with_equality() {
     use fsl_eval::simulation::model::{
@@ -1733,9 +1733,9 @@ fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
 
 /// An ordinary snapshot supplies real owner population authority; generated
 /// Clock references do not require accepting transported Clock DATA.
-#[trace("FR-230-AC-71", "TC-3084", "FR-1040-AC-10")]
+#[trace("FR-230-AC-71", "TC-3084", "FR-1040-AC-10", "FR-1040-AC-11")]
 #[test]
-fn source_generates_clock_references_from_ordinary_admitted_owners() {
+fn source_and_bare_use_place_text_clock_reference_equality() {
     let body = format!("{}
         protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{
             capture chosen: Reference<Clock> = ref(call.x);
@@ -1871,6 +1871,57 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         compare_ne(clock("c1", "x"), foreign("c2", "x")),
         Value::Boolean(true)
     ));
+
+    // Exercise the same kernel equality through the admitted Bare package.
+    let read = fsl_package::read_evaluation_package(
+        &package,
+        fsl_semantics::library::LibraryName::new(package.graph().package_name()).expect("name"),
+        &checked.packages,
+        V2ReadLimits::fixture(),
+        EmitLimits::fixture(),
+    )
+    .expect("Source emits and the strict reader admits");
+    let rows = read
+        .emission()
+        .identity_rows(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("identity rows");
+    let equality = read
+        .emission()
+        .equality_witness(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("equality rows");
+    let bare = BarePackage::new(read.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("Bare supply");
+    for (function, left, right, expected) in [
+        ("same_clock", clock("c1", "x"), foreign("c1", "x"), true),
+        ("same_clock", clock("c1", "x"), foreign("c2", "x"), false),
+        ("differ", clock("c1", "x"), foreign("c1", "x"), false),
+        ("differ", clock("c1", "x"), foreign("c2", "x"), true),
+    ] {
+        let function = QualifiedName::unqualified(function).expect("function name");
+        let value = completed(
+            bare.call(
+                &function,
+                vec![left, right],
+                &ObjectEnvironment::default(),
+                &mut Meter::new(LIMITS),
+            )
+            .expect("Bare ClockReference comparison completes"),
+        );
+        assert!(matches!(value, Value::Boolean(result) if result == expected));
+    }
     let mut generated = Vec::new();
     for owner in ["c1", "c2"] {
         let Value::ClockReference(reference) =
