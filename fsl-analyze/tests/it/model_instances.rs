@@ -881,7 +881,10 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
                     {"population": ident("animals"), "complete": true, "objects": []},
                     {"population": ident("dogs"), "complete": true,
                      "objects": [{"key": "c", "type": ident("Dog"),
-                                 "fields": {"age": {"integer": "5"}}}]}
+                                 "fields": {
+                                     "age": {"integer": "5"},
+                                     "weight": {"kind": "float64", "bits": "3ff0000000000000"}
+                                 }}]}
                 ]
             })
             .to_string()
