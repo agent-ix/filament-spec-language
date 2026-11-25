@@ -1157,6 +1157,7 @@ name = "fsl-conformance"
 version = "0.1.0"
 dependencies = [
  "filament-checked",
+ "filament-contract-model",
  "filament-eval",
  "filament-exact",
  "filament-semantic-value",

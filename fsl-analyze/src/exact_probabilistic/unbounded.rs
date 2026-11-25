@@ -399,6 +399,14 @@ fn reachability(
     }
     let initial_policy = initial_policy(&graph, &fixed, objective)?;
     if fixed.iter().all(Option::is_some) {
+        // FR-198: the budget covers every state value, graph-decided ones too.
+        if fixed
+            .iter()
+            .flatten()
+            .any(|value| value.max_part_bits() > limits.max_rational_bits)
+        {
+            return Err(UnboundedError::MaxRationalBits);
+        }
         return Ok(UnboundedResult {
             values: fixed
                 .into_iter()
@@ -609,46 +617,7 @@ fn reachability_threshold(
             }
         }
         match reachability(product, target, blocked, objective, limits, cancel) {
-            Ok(result) => {
-                let lower = result
-                    .values
-                    .iter()
-                    .map(|value| match value {
-                        ExtRational::Finite(value) => round_dyadic(value, precision, false),
-                        ExtRational::PlusInfinity => round_dyadic(&one(), precision, false),
-                    })
-                    .collect::<Vec<_>>();
-                let upper = result
-                    .values
-                    .iter()
-                    .map(|value| match value {
-                        ExtRational::Finite(value) => round_dyadic(value, precision, true),
-                        ExtRational::PlusInfinity => round_dyadic(&one(), precision, true),
-                    })
-                    .collect::<Vec<_>>();
-                let initial = product
-                    .initial
-                    .first()
-                    .map(|(_, _, state)| state.index())
-                    .unwrap_or(0);
-                let separates =
-                    lower
-                        .get(initial)
-                        .zip(upper.get(initial))
-                        .is_some_and(|(lower, upper)| {
-                            lower.rational() >= *threshold || upper.rational() <= *threshold
-                        });
-                if separates {
-                    return Ok(UnboundedOutcome::Bounds {
-                        lower,
-                        upper,
-                        precision_bits: precision,
-                        sweeps,
-                        policy: result.policy,
-                    });
-                }
-                return Ok(UnboundedOutcome::Exact(result));
-            }
+            Ok(result) => return Ok(UnboundedOutcome::Exact(result)),
             Err(UnboundedError::MaxPolicyIterations) => {
                 return Ok(UnboundedOutcome::Stopped(
                     fsl_replay::ExactProbLimit::MaxPolicyIterations,
@@ -738,6 +707,16 @@ fn expected_reward(
         }
     }
     if fixed.iter().all(Option::is_some) {
+        // FR-198: as for reachability; a positive infinity holds no rational.
+        if fixed
+            .iter()
+            .zip(&infinite)
+            .filter(|(_, infinite)| !**infinite)
+            .filter_map(|(value, _)| value.as_ref())
+            .any(|value| value.max_part_bits() > limits.max_rational_bits)
+        {
+            return Err(UnboundedError::MaxRationalBits);
+        }
         return Ok(UnboundedResult {
             values: fixed
                 .into_iter()
@@ -3073,9 +3052,9 @@ mod tests {
         slot.set(cancel.clone()).expect("the slot is set once");
         let dense = Dense::unlimited(&cancel);
         let mut matrix = dense_system(4, dense).expect("a four-row system fits");
-        for row in 0..4 {
-            matrix[row][row] = one();
-            matrix[row][4] = one();
+        for (row_index, row) in matrix.iter_mut().enumerate() {
+            row[row_index] = one();
+            row[4] = one();
         }
         assert!(matches!(
             solve_linear(matrix, dense),
@@ -3453,6 +3432,149 @@ mod tests {
             panic!("equality is settled exactly: {first:?}");
         };
         assert_eq!(exact.values[0], ExtRational::Finite(ratio(1, 2)));
+    }
+
+    /// `Loop`: the live state steps to itself, to the goal and to failure.
+    fn loop_product() -> ProbProduct {
+        graph(
+            ProductKind::Mdp,
+            vec![
+                edge(0, 0, ratio(1, 3)),
+                edge(0, 1, ratio(1, 3)),
+                edge(0, 2, ratio(1, 3)),
+                edge(1, 1, one()),
+                edge(2, 2, one()),
+            ],
+        )
+    }
+
+    /// The budget bounds the numerator and the denominator separately: `1/2`
+    /// takes one bit and two.
+    #[trace("TC-633", "FR-198-AC-7")]
+    #[test]
+    fn a_value_whose_parts_fit_the_rational_budget_is_exact() {
+        let outcome = decide_reachability_threshold(
+            &loop_product(),
+            &[false, true, false],
+            UnboundedObjective::Max,
+            &ratio(1, 2),
+            &ExactProbLimits {
+                max_iterations: 3,
+                max_rational_bits: 2,
+                ..ExactProbLimits::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("policy iteration solves within the budget");
+        let UnboundedOutcome::Exact(exact) = outcome else {
+            panic!("both parts of 1/2 fit two bits: {outcome:?}");
+        };
+        assert_eq!(exact.values[0], ExtRational::Finite(ratio(1, 2)));
+    }
+
+    /// A value the graph alone decides still takes bits: `0` and `1` have a
+    /// one-bit denominator, so no solve keeps them under a budget of zero.
+    #[trace("TC-633", "FR-198-AC-8")]
+    #[test]
+    fn a_graph_only_solve_past_the_rational_budget_keeps_no_value() {
+        // A target and a state that never reaches it: nothing is left to solve.
+        let product = graph(
+            ProductKind::Dtmc,
+            vec![edge(0, 0, one()), edge(1, 1, one())],
+        );
+        let solve = |max_rational_bits| {
+            decide_reachability(
+                &product,
+                &[true, false],
+                UnboundedObjective::Max,
+                &ExactProbLimits {
+                    max_rational_bits,
+                    ..ExactProbLimits::default()
+                },
+                &Cancel::new(),
+            )
+        };
+        assert_eq!(solve(0), Err(UnboundedError::MaxRationalBits));
+        assert_eq!(
+            solve(1).expect("one bit holds 0 and 1").values,
+            [one(), zero()].map(ExtRational::Finite)
+        );
+    }
+
+    /// The target's reward `0` still takes a one-bit denominator when the
+    /// graph alone decides every state.
+    #[trace("TC-633", "FR-198-AC-8")]
+    #[test]
+    fn a_graph_only_expected_reward_past_the_rational_budget_keeps_no_value() {
+        // A target and a state that never reaches it, whose reward is infinite.
+        let product = graph(
+            ProductKind::Dtmc,
+            vec![edge(0, 0, one()), edge(1, 1, one())],
+        );
+        let solve = |max_rational_bits| {
+            decide_expected_reward(
+                &product,
+                &[true, false],
+                "cost",
+                UnboundedObjective::Max,
+                &ExactProbLimits {
+                    max_rational_bits,
+                    ..ExactProbLimits::default()
+                },
+                &Cancel::new(),
+            )
+        };
+        assert_eq!(solve(0), Err(UnboundedError::MaxRationalBits));
+        assert_eq!(
+            solve(1).expect("one bit holds 0").values,
+            [ExtRational::Finite(zero()), ExtRational::PlusInfinity]
+        );
+    }
+
+    /// A solve past the budget keeps no value: interval iteration reruns at
+    /// doubled precision, and its sweeps are counted over every precision.
+    #[trace("TC-633", "FR-198-AC-8")]
+    #[test]
+    fn a_solve_past_the_rational_budget_decides_from_interval_iteration_only() {
+        let threshold = ratio(12, 25);
+        let decide = |max_precision_bits| {
+            decide_reachability_threshold(
+                &loop_product(),
+                &[false, true, false],
+                UnboundedObjective::Min,
+                &threshold,
+                &ExactProbLimits {
+                    max_iterations: 100,
+                    max_rational_bits: 1,
+                    precision_bits: 4,
+                    max_precision_bits,
+                    ..ExactProbLimits::default()
+                },
+                &Cancel::new(),
+            )
+            .expect("a solve past the budget is not an error")
+        };
+        let raised = decide(16);
+        let UnboundedOutcome::Bounds {
+            lower,
+            upper,
+            precision_bits,
+            sweeps,
+            ..
+        } = raised
+        else {
+            panic!("precision 8 separates the threshold: {raised:?}");
+        };
+        assert_eq!((precision_bits, sweeps), (8, 103));
+        assert!(threshold < lower[0].rational());
+        assert!(lower[0].rational() <= ratio(1, 2));
+        assert!(ratio(1, 2) <= upper[0].rational());
+        assert!(lower[0].rational() < upper[0].rational());
+        let capped = decide(4);
+        let UnboundedOutcome::PrecisionBudget { lower, upper } = capped else {
+            panic!("precision 4 cannot separate the threshold: {capped:?}");
+        };
+        assert!(lower.rational() <= threshold && threshold <= upper.rational());
     }
 
     /// Trace: FR-198-AC-4.

@@ -59,6 +59,8 @@ use crate::refinement::{
 use crate::result::DisagreementCause;
 use crate::timed::explore::{explore, widen, Closure};
 
+type TimedPosition = (usize, Vec<u8>, Vec<ModelTransition>);
+
 /// FR-145's settlement of a refinement counterexample's replay.
 #[derive(Clone, Debug)]
 pub enum RefinementTraceSettlement {
@@ -1639,7 +1641,7 @@ fn replay_lasso(
             // run along the loop, FR-900 "Delay"); the step's rows leave the
             // last, from the candidates alive there, to those alive when the
             // next delay starts.
-            let mut timed_positions: Vec<Vec<(usize, Vec<u8>, Vec<ModelTransition>)>> = Vec::new();
+            let mut timed_positions: Vec<Vec<TimedPosition>> = Vec::new();
             let mut timed_rows: Vec<Vec<CandidateRow>> = Vec::new();
             for (index, step_segments) in segments.iter().enumerate() {
                 let known: Vec<(usize, &Vec<u8>)> = positions[index]

@@ -1,0 +1,805 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.variant-type/v1",
+        "members": {
+          "variants": "required"
+        },
+        "shape": "enumeration"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "tier"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.object-type/v1",
+        "members": {
+          "identityFields": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.record-value-type/v1",
+        "members": {
+          "identityFields": "optional"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.state-machine/v1",
+        "members": {
+          "states": "required",
+          "transitions": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "lifecycle"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.process/v1",
+        "members": {
+          "identityFields": "required",
+          "steps": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "saga"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.population/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/lifecycle",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1"
+  },
+  "populations": [
+    {
+      "displayName": "ix://catalog/lifecycle/accounts",
+      "extent": "closed",
+      "identity": "ix://catalog/lifecycle/accounts",
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/lifecycle/Account"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/lifecycle/accounts",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/lifecycle/accounts"
+          ]
+        }
+      }
+    }
+  ],
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/lifecycle/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [],
+      "displayName": "Tier",
+      "extensions": [],
+      "identity": "ix://catalog/lifecycle/Tier",
+      "kind": {
+        "module": "test/business",
+        "name": "tier"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/lifecycle/Tier",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/lifecycle/Tier"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject",
+      "variants": [
+        {
+          "identity": "ix://catalog/lifecycle/variant/Tier-Gold",
+          "name": "Gold",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/lifecycle/spec",
+              "startColumn": 3,
+              "startLine": 10
+            }
+          }
+        },
+        {
+          "identity": "ix://catalog/lifecycle/variant/Tier-Standard",
+          "name": "Standard",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/lifecycle/spec",
+              "startColumn": 3,
+              "startLine": 11
+            }
+          }
+        }
+      ]
+    },
+    {
+      "constraints": [],
+      "displayName": "Level",
+      "extensions": [],
+      "identity": "ix://catalog/lifecycle/Level",
+      "kind": {
+        "module": "test/business",
+        "name": "tier"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/lifecycle/Level",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/lifecycle/Level"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject",
+      "variants": [
+        {
+          "identity": "ix://catalog/lifecycle/variant/Level-Gold",
+          "name": "Gold",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/lifecycle/spec",
+              "startColumn": 3,
+              "startLine": 10
+            }
+          }
+        }
+      ]
+    },
+    {
+      "constraints": [],
+      "displayName": "Grade",
+      "extensions": [],
+      "identity": "ix://catalog/lifecycle/Grade",
+      "kind": {
+        "module": "test/business",
+        "name": "tier"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/lifecycle/Grade",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/lifecycle/Grade"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject",
+      "variants": [
+        {
+          "identity": "ix://catalog/lifecycle/variant/Grade-Standard",
+          "name": "Standard",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/lifecycle/spec",
+              "startColumn": 3,
+              "startLine": 10
+            }
+          }
+        },
+        {
+          "identity": "ix://catalog/lifecycle/variant/Grade-Gold",
+          "name": "Gold",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/lifecycle/spec",
+              "startColumn": 3,
+              "startLine": 11
+            }
+          }
+        },
+        {
+          "identity": "ix://catalog/lifecycle/variant/Grade-Bronze",
+          "name": "Bronze",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/lifecycle/spec",
+              "startColumn": 3,
+              "startLine": 12
+            }
+          }
+        }
+      ]
+    },
+    {
+      "constraints": [],
+      "displayName": "Settings",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Settings/tier",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "tier",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Settings/tier",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Settings/tier"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/lifecycle/Tier"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Settings/size",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "size",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Settings/size",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Settings/size"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/lifecycle/Settings",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/lifecycle/Settings",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/lifecycle/Settings"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Account",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Account/account_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "account_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Account/account_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Account/account_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Account/tier",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "tier",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Account/tier",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Account/tier"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/lifecycle/Tier"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Account/backup",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "backup",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Account/backup",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Account/backup"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/lifecycle/Tier"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Account/history",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": false,
+            "upper": 3
+          },
+          "name": "history",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Account/history",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Account/history"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/lifecycle/Tier"
+        }
+      ],
+      "identity": "ix://catalog/lifecycle/Account",
+      "identityFields": [
+        "ix://catalog/lifecycle/Account/account_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/lifecycle/Account/promote",
+          "name": "promote",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Account/promote",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Account/promote"
+              ]
+            }
+          },
+          "params": [
+            {
+              "defaultKind": "none",
+              "identity": "ix://catalog/lifecycle/Account/promote/t",
+              "multiplicity": {
+                "lower": 1,
+                "ordered": false,
+                "unique": true,
+                "upper": 1
+              },
+              "name": "t",
+              "nullable": false,
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://catalog/lifecycle/Account/promote/t",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://catalog/lifecycle/Account/promote/t"
+                  ]
+                }
+              },
+              "presence": "required",
+              "typeRef": "ix://catalog/lifecycle/Tier"
+            }
+          ],
+          "post": [],
+          "pre": [],
+          "returns": {
+            "multiplicity": {
+              "lower": 1,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "nullable": false,
+            "typeRef": "ix://catalog/lifecycle/Tier"
+          }
+        },
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/lifecycle/Account/rank",
+          "name": "rank",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Account/rank",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Account/rank"
+              ]
+            }
+          },
+          "params": [
+            {
+              "defaultKind": "none",
+              "identity": "ix://catalog/lifecycle/Account/rank/l",
+              "multiplicity": {
+                "lower": 1,
+                "ordered": false,
+                "unique": true,
+                "upper": 1
+              },
+              "name": "l",
+              "nullable": false,
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://catalog/lifecycle/Account/rank/l",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://catalog/lifecycle/Account/rank/l"
+                  ]
+                }
+              },
+              "presence": "required",
+              "typeRef": "ix://catalog/lifecycle/Level"
+            }
+          ],
+          "post": [],
+          "pre": [],
+          "returns": {
+            "multiplicity": {
+              "lower": 1,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "nullable": false,
+            "typeRef": "ix://catalog/lifecycle/Level"
+          }
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/lifecycle/Account",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/lifecycle/Account"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "clauses": [],
+      "constraints": [],
+      "displayName": "Lifecycle",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Lifecycle/tier",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "tier",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Lifecycle/tier",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Lifecycle/tier"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/lifecycle/Tier"
+        }
+      ],
+      "identity": "ix://catalog/lifecycle/Lifecycle",
+      "kind": {
+        "module": "test/business",
+        "name": "lifecycle"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/lifecycle/Lifecycle/advance",
+          "name": "advance",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Lifecycle/advance",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Lifecycle/advance"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/lifecycle/Lifecycle",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/lifecycle/Lifecycle"
+          ]
+        }
+      },
+      "roles": [],
+      "states": [
+        {
+          "identity": "ix://catalog/lifecycle/Lifecycle/Open",
+          "name": "Open",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Lifecycle/Open",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Lifecycle/Open"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://catalog/lifecycle/Lifecycle/Closed",
+          "name": "Closed",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Lifecycle/Closed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Lifecycle/Closed"
+              ]
+            }
+          }
+        }
+      ],
+      "transitions": [
+        {
+          "emits": [],
+          "from": "ix://catalog/lifecycle/Lifecycle/Open",
+          "identity": "ix://catalog/lifecycle/Lifecycle/step",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Lifecycle/step",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Lifecycle/step"
+              ]
+            }
+          },
+          "to": "ix://catalog/lifecycle/Lifecycle/Closed",
+          "trigger": "ix://catalog/lifecycle/Lifecycle/advance"
+        }
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Fulfilment",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Fulfilment/correlation_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "correlation_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Fulfilment/correlation_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Fulfilment/correlation_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/lifecycle/Fulfilment/tier",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "tier",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Fulfilment/tier",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Fulfilment/tier"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/lifecycle/Tier"
+        }
+      ],
+      "identity": "ix://catalog/lifecycle/Fulfilment",
+      "identityFields": [
+        "ix://catalog/lifecycle/Fulfilment/correlation_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "saga"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/lifecycle/Fulfilment/start",
+          "name": "start",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Fulfilment/start",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Fulfilment/start"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/lifecycle/Fulfilment",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/lifecycle/Fulfilment"
+          ]
+        }
+      },
+      "roles": [],
+      "steps": [
+        {
+          "consumes": [],
+          "emits": [],
+          "identity": "ix://catalog/lifecycle/Fulfilment/receive",
+          "name": "receive",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/lifecycle/Fulfilment/receive",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/lifecycle/Fulfilment/receive"
+              ]
+            }
+          },
+          "stepKind": "wait"
+        }
+      ],
+      "unknownPolicy": "reject"
+    }
+  ]
+}

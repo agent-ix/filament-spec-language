@@ -8061,12 +8061,9 @@ fn emit_package_nodes(
     }
     append_model_roots(
         ids,
-        graph.model_roots().zip(
-            graph
-                .model_root_locations()
-                .iter()
-                .map(|location| regions(location)),
-        ),
+        graph
+            .model_roots()
+            .zip(graph.model_root_locations().iter().map(&regions)),
         &mut nodes,
         &mut source_map,
     )?;
@@ -11217,6 +11214,7 @@ pub use clock_selection::{
 };
 mod body_locations;
 mod identity_rows;
+mod location_paths;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
 pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};

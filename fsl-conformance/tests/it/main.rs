@@ -32,4 +32,8 @@ mod tso_certificate;
 mod type_decision_cases;
 mod unsupported_entry_contract;
 #[path = "../../../fsl-replay/tests/it/vault_world.rs"]
+#[expect(
+    dead_code,
+    reason = "the shared vault fixture exposes helpers used by fsl-replay tests"
+)]
 mod vault_world;

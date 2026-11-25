@@ -2063,7 +2063,7 @@ impl ReadIdentityRows {
                 source: filament_contract_model::NativeJoinLocusSource::Package,
                 form: "read-source-operation-rows",
             },
-            u128::from(work_bound),
+            work_bound,
         )?;
         let work_limit = u64::try_from(work_bound).unwrap_or(0);
         rows.selected_source_operations(package, work_limit)?;
