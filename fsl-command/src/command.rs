@@ -4509,6 +4509,12 @@ fn prepare_run_bytes_with_sources(
     }
     let mut request: wire::Request = request_with_overrides(bytes, overrides)?;
     apply_accounting_override(&mut request, overrides);
+    if request.package.is_none() && request.refinement_internals.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "refinement_internals".to_owned(),
+            reason: "requires a selected package".to_owned(),
+        });
+    }
     // FR-1031: the first refusal in table order is the selection conflict.
     refuse_transfer_selection_conflict(&request)?;
     // FR-1045: reject malformed correlation selection before any selected

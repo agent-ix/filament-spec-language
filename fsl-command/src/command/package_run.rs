@@ -638,6 +638,12 @@ pub(super) fn validate_request(request: &wire::Request) -> Result<()> {
             "a package already holds its dependency selections",
         ));
     }
+    if request.refinement_internals.is_some() {
+        return Err(invalid(
+            "refinement_internals",
+            "a package is already compiled",
+        ));
+    }
     // FR-640: a package was compiled under its clock selections.
     if !request.clocks.is_empty() {
         return Err(invalid("clocks", "a package already records its clocks"));

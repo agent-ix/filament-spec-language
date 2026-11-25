@@ -611,6 +611,55 @@ fn tc_450_step_5_no_call_refuses_before_dependent_reads() {
     }));
 }
 
+/// FR-1039-AC-13 (TC-3019): a package member conflict takes precedence over
+/// the no-call refusal and is reported before any selected file is opened.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-13")]
+fn package_member_conflicts_precede_no_call_before_file_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    for (member, expected) in [
+        (
+            json!({
+                "libraries":[{"identity":"unused/library","source":{
+                    "file":"missing-library.native","authority":"agent-ix",
+                    "identity":"unused/library","document":"UnusedLibrary",
+                    "formal_revision":1
+                }}]
+            }),
+            "libraries",
+        ),
+        (json!({"refinement_internals": []}), "refinement_internals"),
+    ] {
+        let mut request = json!({
+            "models":[{"format":"native-model-unit/1","source":{
+                "file":"missing-model.json","authority":"agent-ix",
+                "identity":"unused/model","document":"UnusedModel",
+                "formal_revision":1
+            }}],
+            "package":{"file":"missing-package.json"}
+        });
+        for (key, value) in member.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        std::fs::write(
+            directory.path().join("request.json"),
+            serde_json::to_vec(&json!({"format":"native-run/1","request":request}))
+                .unwrap(),
+        )
+        .unwrap();
+        let output = run(directory.path());
+        assert_eq!(output.status.code(), Some(20));
+        assert!(output.stdout.is_empty());
+        let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(failure["code"], "invalid-request", "{failure}");
+        assert_eq!(failure["stage"], "request", "{failure}");
+        assert!(
+            failure["message"].as_str().unwrap().contains(expected),
+            "{failure}"
+        );
+    }
+}
+
 /// FR-100-AC-4 (TC-451 step 1): `lt` binds `b` before `a` by declared name;
 /// `flag`/`id` complete their declared kind.
 #[test]
