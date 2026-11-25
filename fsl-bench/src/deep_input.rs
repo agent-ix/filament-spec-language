@@ -311,8 +311,7 @@ mod tests {
 
     /// The deepest `Option` nest S1 admits at its default limits, found by
     /// bisection.
-    fn deepest_admitted_options() -> usize {
-        let parser = ParserContext::new();
+    fn deepest_admitted_options(parser: &ParserContext) -> usize {
         let limits = SpineLimits::default().source;
         let (mut low, mut high) = (0_usize, 200_000_usize);
         while low + 1 < high {
@@ -341,11 +340,12 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(2 * 1024 * 1024)
             .spawn(|| {
-                let depth = deepest_admitted_options();
+                let parser = ParserContext::new();
+                let depth = deepest_admitted_options(&parser);
                 assert!(depth > 64, "S1 has no nesting ceiling: {depth}");
                 let input = DeepInput::new(Shape::OptionType(depth));
                 // Either outcome is a result; the test is that one arrives.
-                let _outcome = input.compile_under(SpineLimits::default());
+                let _outcome = input.compile_under(SpineLimits::default(), &parser);
             })
             .expect("spawn a 2 MiB thread")
             .join()
