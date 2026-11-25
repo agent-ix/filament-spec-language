@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
@@ -79,8 +79,7 @@ impl Fixture {
             self.corpus.clone().into_os_string(),
         ];
         args.extend(extra.iter().map(OsString::from));
-        xtask::qualification::execute_with_fspec(&self.fspec, &args)
-            .expect("the fixture corpus is valid")
+        qualify(&self.fspec, args).expect("the fixture corpus is valid")
     }
 
     fn run_call(&mut self, arguments: Value, accounting: Value) {
@@ -93,6 +92,25 @@ impl Fixture {
             .unwrap(),
         );
     }
+}
+
+/// Qualification as the command runs it. With `test-support` the generated
+/// parity units are few, because these tests assert nothing about them.
+fn qualify(
+    fspec: &Path,
+    operands: Vec<OsString>,
+) -> xtask::error::Result<xtask::qualification::Execution> {
+    #[cfg(feature = "test-support")]
+    let execution = xtask::qualify::execute(&xtask::qualify::QualifyInputs {
+        fspec: fspec.to_path_buf(),
+        operands,
+        matrix: None,
+        parity: None,
+        parity_count: Some(8),
+    });
+    #[cfg(not(feature = "test-support"))]
+    let execution = xtask::qualification::execute_with_fspec(fspec, &operands);
+    execution
 }
 
 fn report(execution: &xtask::qualification::Execution) -> Value {

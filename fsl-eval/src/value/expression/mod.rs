@@ -73,7 +73,7 @@ use std::sync::Arc;
 pub(crate) use clause_set::evaluate_with_meter_factory as evaluate_clause_set_with_meter_factory;
 pub use clause_set::{ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome};
 pub use closure::{PackageClosure, PackageTask};
-pub use evaluate::refusal_record;
+pub use evaluate::{convert_text_value, refusal_record};
 pub use family::{InvalidQualifiedName, QualifiedName};
 pub use protocol_slot::{
     BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence, ProtocolSlot,
