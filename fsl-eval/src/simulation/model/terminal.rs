@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 
 use super::input::{ModelTerminalDeclaration, TerminalWhen};
 use filament_exact::Meter;
+use filament_semantic_value::location::ExpressionLocation;
 
 use super::contracts::{verdict, Verdict};
 use super::walk::{exhausted, stop, walk_of};
@@ -137,6 +138,13 @@ enum Reading {
 }
 
 impl ModelSystem<'_> {
+    /// Where the `terminal when` predicate of the declaration `model` is, on
+    /// either route (FR-170 "Undefined"); `None` for a declaration with no
+    /// predicate.
+    pub fn terminal_locus(&self, model: &TerminalModel) -> Option<ExpressionLocation> {
+        self.input.terminal_location(model)
+    }
+
     /// FR-124: the class of `state`, whose expansion gave a successor
     /// exactly when `has_successor`. `Any` intends every terminal state;
     /// `When(P)` intends it when `P` is true. The state is intended when any

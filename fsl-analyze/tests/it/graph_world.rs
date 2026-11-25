@@ -645,8 +645,27 @@ pub(crate) fn config_kernel_world_over(
 ) -> World {
     config_world_over_model_mode(
         config_version(),
+        "",
         extra,
         &format!("{QUOTIENT}{claims}"),
+        keys,
+        starts,
+        CheckMode::Kernel,
+    )
+}
+
+/// [`config_kernel_world_over`] with [`REACHES_TWO`], whose unit selects the
+/// integer-division law itself, so that replay recompiles it from its source.
+pub(crate) fn config_replayable_kernel_world(
+    extra: &str,
+    keys: &[&str],
+    starts: &[Vec<i64>],
+) -> World {
+    config_world_over_model_mode(
+        config_version(),
+        "profile d = \"filament.value.integer-division.truncating/v1\";\n",
+        extra,
+        &format!("{QUOTIENT}{REACHES_TWO}"),
         keys,
         starts,
         CheckMode::Kernel,
@@ -714,11 +733,12 @@ fn config_world_over_model(
     keys: &[&str],
     starts: &[Vec<i64>],
 ) -> World {
-    config_world_over_model_mode(model, extra, claims, keys, starts, CheckMode::Linked)
+    config_world_over_model_mode(model, "", extra, claims, keys, starts, CheckMode::Linked)
 }
 
 fn config_world_over_model_mode(
     model: Model,
+    profiles: &str,
     extra: &str,
     claims: &str,
     keys: &[&str],
@@ -746,7 +766,7 @@ fn config_world_over_model_mode(
     let starts: Vec<&[Object<'_>]> = objects.iter().map(Vec::as_slice).collect();
     World::build(
         model,
-        "",
+        profiles,
         &format!("{CONFIG_CONTRACT}{extra}{claims}"),
         &starts,
         mode,

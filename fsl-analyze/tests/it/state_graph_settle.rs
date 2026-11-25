@@ -888,6 +888,7 @@ fn undefined_and_altered_count_certificates_never_settle_proved() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     let mut replays = 0;
     assert_rejected(
@@ -935,6 +936,7 @@ fn undefined_and_altered_count_certificates_never_settle_proved() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     assert_rejected(
         &settle(
@@ -1016,6 +1018,7 @@ fn a_bad_state_certificate_settles_certificate_rejected() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     let mut replays = 0;
     assert_rejected(

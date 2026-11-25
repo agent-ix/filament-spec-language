@@ -33,9 +33,9 @@ use ix_trace_rs::trace;
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
     CAN_STILL_WIN, DIVIDES, Field, Model, Operation, REACHES_THREE, REACHES_TWO, World,
-    config_kernel_world, config_kernel_world_over, config_version, config_world, config_world_over,
-    detour_world, fork_world, game_world, job_world, job_world_with_claims, ladder_world,
-    por_reachestwo_world,
+    config_kernel_world, config_kernel_world_over, config_replayable_kernel_world, config_version,
+    config_world, config_world_over, detour_world, fork_world, game_world, job_world,
+    job_world_with_claims, ladder_world, por_reachestwo_world,
 };
 
 #[path = "state_graph/replay_contracts.rs"]
@@ -2174,13 +2174,97 @@ fn an_undefined_selected_state_constraint_is_not_a_boundary() {
     let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
         panic!("undefined state constraint: {:?}", result.items[0][0].outcome);
     };
-    assert_eq!(versions(&world, stem), vec![(0, 0), (1, 0), (2, 0)]);
+    // The universe is `{a}` alone, so each state holds one version.
+    let versions: Vec<i64> = positions(&world, &["a"], stem)
+        .iter()
+        .map(|state| world.value(state, "a", "versionNumber"))
+        .collect();
+    assert_eq!(versions, vec![0, 1, 2]);
     assert_eq!(undefined.state_key, stem.steps[1].post_state);
     assert_eq!(undefined.predicate, None);
     assert!(undefined.locus.is_some());
     assert_eq!(undefined.transition, None);
     let at = node_of(&result, undefined.state_key.clone());
     assert_eq!(result.graph.open.get(&at), Some(&OpenCause::UndecidedSuccessor));
+}
+
+/// `Low` holds only at `versionNumber = 0`.
+const LOW: &str = "invariant Bounded using v on Config::ConfigVersion at current { \
+     self.versionNumber <= 3 }\n\
+     constraint Low using v on Config::ConfigVersion at current { self.versionNumber <= 0 }\n";
+
+/// FR-158-AC-3 (TC-581): a state where the selected constraint is false, the
+/// initial one included, is stored, open `ConstraintBoundary` and never
+/// expanded; the item and the deadlock-freedom item settle
+/// `ConstraintReached`.
+#[trace("TC-581", "FR-158-AC-3")]
+#[test]
+fn a_boundary_state_of_the_selected_constraint_is_open_and_never_expanded() {
+    for (start, stored) in [(0, 2), (1, 1)] {
+        let world = config_world_over(LOW, REACHES_TWO, &["a"], &[vec![start]]);
+        let mut request = world.request(&["a"], vec![world.item("ReachesTwo")], no_samples());
+        request.reductions.constraint = Some("Low".to_owned());
+        request.deadlock_freedom = true;
+        let settled = fsl_analyze::model_check::check_and_settle_state_graph(
+            request,
+            &Cancel::new(),
+            |instance| panic!("no evidence to replay: {:?}", instance.outcome),
+        )
+        .expect("the subject is checked");
+        let result = &settled.run;
+        assert_eq!(result.graph.nodes.len(), stored);
+        assert_eq!(result.graph.edges.len(), stored - 1);
+        let boundary = node_of(
+            result,
+            state_key_where(&world, &["a"], |state| {
+                world.value(state, "a", "versionNumber") == 1
+            }),
+        );
+        assert_eq!(
+            result.graph.open,
+            BTreeMap::from([(boundary, OpenCause::ConstraintBoundary)])
+        );
+        assert_eq!(
+            result.items[0][0].outcome,
+            StateGraphOutcome::NoDecision {
+                end: RunEnd::Completed,
+                open: BTreeSet::from([OpenCause::ConstraintBoundary])
+            }
+        );
+        assert!(matches!(
+            result.deadlock,
+            Some(ModelCheckOutcome::Reduction {
+                cause: fsl_replay::ReductionCause::ConstraintReached { boundary_states: 1 },
+                ..
+            })
+        ));
+        assert_eq!(
+            settled.records[0][0].value,
+            fsl_replay::TerminalValue::Inconclusive(
+                fsl_replay::InconclusiveCause::ConstraintReached { boundary_states: 1 }
+            )
+        );
+    }
+}
+
+/// FR-158-AC-3 (TC-581): a name that is no `constraint` clause, an invariant
+/// or a postcondition included, is refused before any expansion.
+#[trace("TC-581", "FR-158-AC-3")]
+#[test]
+fn a_state_graph_request_naming_no_constraint_is_refused() {
+    let world = config_world_over(LOW, REACHES_TWO, &["a"], &[vec![0]]);
+    for name in ["Absent", "Bounded", "Advance"] {
+        let mut request = world.request(&["a"], vec![world.item("ReachesTwo")], no_samples());
+        request.reductions.constraint = Some(name.to_owned());
+        let refused = check_state_graph(request, &Cancel::new());
+        assert!(
+            matches!(
+                &refused,
+                Err(ModelCheckRefusal::UnknownConstraint { name: refused }) if refused == name
+            ),
+            "{name}: {refused:?}"
+        );
+    }
 }
 
 /// FR-168-AC-6: `ReachesTwo` with `witness_samples` 64 and with 0 both

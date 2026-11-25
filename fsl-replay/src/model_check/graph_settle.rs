@@ -282,6 +282,12 @@ pub fn settle_state_graph(
                 _ if open.contains(&OpenCause::UndecidedSuccessor) => {
                     Row::inconclusive(InconclusiveCause::UndecidedSuccessor)
                 }
+                // V-6: a cut state may hide a refutation or a target.
+                _ if open.contains(&OpenCause::ConstraintBoundary) => {
+                    Row::inconclusive(InconclusiveCause::ConstraintReached {
+                        boundary_states: instance.boundary_states,
+                    })
+                }
                 // V-5: the horizon alone left nodes open.
                 Some(depth) if horizon_only => {
                     Row::inconclusive(InconclusiveCause::BoundReached { depth })

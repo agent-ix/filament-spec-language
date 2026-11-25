@@ -2,6 +2,7 @@
 //! Returned state-graph evidence admitted and replayed through the public facade.
 
 use super::*;
+use fsl_analyze::model_check::check_and_settle_state_graph;
 use fsl_replay::{
     GraphEvidence, GraphReplaySettlement, ModelTraceRefusal, ReplayLimits, ReplayRefusal,
     WitnessPath,
@@ -261,4 +262,109 @@ fn a_returned_trap_settles_from_its_real_closure_and_a_shortened_stem_names_the_
             .value(state, "g", "phase")
             == 3))
     );
+}
+
+const HALF: &str = "constraint Half using v on Config::ConfigVersion at current { \
+     quotient(2 - self.versionNumber) >= 1 }\n";
+const UNDEFINED_GUARD: &str = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
+     quotient(2 - self.versionNumber) >= 1 }\n";
+/// `Stop` leaves `versionNumber = 2` with no enabled transition, where the
+/// terminal predicate divides by zero.
+const UNDEFINED_TERMINAL: &str =
+    "pre Stop using v on Config::ConfigVersion::attemptUpdate { self.versionNumber < 2 }\n\
+     terminal Done using v on Config when { quotient(2 - self.versionNumber) >= 0 };\n";
+
+/// An undefined guard, `terminal when` predicate and state constraint each
+/// refute through a replay that reads the expression from the evidence's
+/// locus; evidence naming another transition, stem or cause disagrees.
+#[trace("TC-612", "FR-170-AC-7")]
+#[test]
+fn undefined_subject_evidence_replays_from_its_expression_locus() {
+    for (extra, keys, constraint) in [
+        (HALF, &["a"][..], Some("Half")),
+        (UNDEFINED_GUARD, AB, None),
+        (UNDEFINED_TERMINAL, &["a"][..], None),
+    ] {
+        let world = config_replayable_kernel_world(extra, keys, &[vec![0; keys.len()]]);
+        let claim = world.claim("ReachesTwo");
+        let over = ModelInstance {
+            population: world.subject(keys, UNLIMITED).simulation.universes[0]
+                .population
+                .clone(),
+            key: "a".to_owned(),
+        };
+        let replay = |stem: &ModelPath, undefined: &fsl_replay::GraphUndefined| {
+            world.replay_evidence(
+                claim,
+                GraphEvidence::Undefined {
+                    stem: stem.clone(),
+                    undefined: undefined.clone(),
+                    over: Some(over.clone()),
+                },
+                keys,
+                ReplayLimits::default(),
+            )
+        };
+        let mut request = world.request(
+            keys,
+            vec![StateGraphItem::for_binding(claim, over.clone())],
+            no_samples(),
+        );
+        request.reductions.constraint = constraint.map(str::to_owned);
+        let mut offered = None;
+        let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+            let StateGraphOutcome::Undefined { stem, undefined } = &instance.outcome else {
+                panic!("undefined: {:?}", instance.outcome);
+            };
+            offered = Some((stem.clone(), undefined.clone()));
+            replay(stem, undefined)
+        })
+        .expect("the subject is checked");
+        let (stem, undefined) = offered.expect("an undefined evaluation is replayed");
+        assert_eq!(stem.steps.len(), 2, "{extra}");
+        assert_eq!(undefined.predicate, None);
+        assert_eq!(undefined.transition.is_some(), extra == UNDEFINED_GUARD);
+        let record = &settled.records[0][0];
+        assert_eq!(record.value, fsl_replay::TerminalValue::Refuted, "{extra}");
+        assert_eq!(
+            record.basis,
+            fsl_replay::SettlementBasis::DecisiveCounterexample
+        );
+        assert_eq!(record.undefined.as_ref(), Some(&undefined));
+
+        let disagrees = |stem: &ModelPath, undefined: &fsl_replay::GraphUndefined| {
+            let replayed = replay(stem, undefined).expect("the evidence is admitted");
+            assert!(
+                matches!(
+                    replayed.settlement,
+                    GraphReplaySettlement::Inconclusive(
+                        fsl_replay::DisagreementCause::Verdicts { .. }
+                    )
+                ),
+                "{extra}: {:?}",
+                replayed.settlement
+            );
+        };
+        let mut shortened = stem.clone();
+        shortened.steps.pop();
+        disagrees(&shortened, &undefined);
+        let mut other_cause = undefined.clone();
+        other_cause.cause =
+            fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::NoneValue);
+        disagrees(&stem, &other_cause);
+        if let Some(guarded) = &undefined.transition {
+            let system = system(&world, keys);
+            let other = system
+                .successors(&system.initial()[0])
+                .expect("expands")
+                .successors
+                .into_iter()
+                .map(|(transition, _)| transition)
+                .find(|transition| transition != guarded)
+                .expect("the other object's update");
+            let mut renamed = undefined.clone();
+            renamed.transition = Some(other);
+            disagrees(&stem, &renamed);
+        }
+    }
 }

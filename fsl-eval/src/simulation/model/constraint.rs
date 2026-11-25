@@ -13,8 +13,16 @@ use super::walk::{exhausted, stop, walk_of};
 use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::reduction::ConstraintValue;
+use filament_semantic_value::location::ExpressionLocation;
 
 impl ModelSystem<'_> {
+    /// Where the body of the state clause `name` is, on either route: the
+    /// locus of an undefined guard or state constraint (FR-170
+    /// "Undefined"). `None` for a name with no clause.
+    pub fn state_clause_locus(&self, name: &str) -> Option<ExpressionLocation> {
+        self.evaluator().state_clause_location(name)
+    }
+
     /// The checked state constraint named `name`, identified by its node
     /// key (FR-158). Invariants, preconditions and postconditions are not
     /// valid constraint selections.

@@ -1419,12 +1419,12 @@ pub(super) enum Loci<'a> {
 }
 
 impl Loci<'_> {
-    /// The name of the state clause whose body is at `locus`; only an
-    /// `invariant` when `invariant` is set.
+    /// The name of the state clause whose body is at `locus`; only a state
+    /// constraint, a `constraint` clause (FR-158), when `constraint` is set.
     fn state_clause_at(
         self,
         locus: &filament_semantic_value::location::ExpressionLocation,
-        invariant: bool,
+        constraint: bool,
     ) -> Option<String> {
         match self {
             Self::Source(package) => package
@@ -1433,11 +1433,13 @@ impl Loci<'_> {
                 .iter()
                 .find(|clause| {
                     clause.body().location() == locus
-                        && (!invariant || clause.kind() == fsl_forms::StateClauseKind::Invariant)
+                        && (!constraint || clause.kind() == fsl_forms::StateClauseKind::Constraint)
                 })
                 .map(|clause| clause.name().to_owned()),
             Self::Package(input) => input.state_clauses().iter().find_map(|entry| {
-                if invariant && !entry.invariant {
+                // A constraint is the one clause that is neither an invariant
+                // nor an operation's, as the model system resolves it.
+                if constraint && (entry.invariant || entry.operation.is_some()) {
                     return None;
                 }
                 let body = input
