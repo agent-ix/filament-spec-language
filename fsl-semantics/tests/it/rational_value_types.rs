@@ -856,11 +856,9 @@ fn rational_unit_references_resolve_to_the_literal_owner() {
         vec![0],
         "the mismatch is located at the left-hand conversion, not the whole invariant"
     );
-    let source_time = format!(
-        "dimension Time;\nunit m : Time = rational(1, 1);\n\
-        invariant I using v on Config::ConfigVersion at current {{ true }}\n"
-    );
-    let source_time_body = with_ratio_parameter(&source_time);
+    let source_time = "dimension Time;\nunit m : Time = rational(1, 1);\n\
+        invariant I using v on Config::ConfigVersion at current { true }\n";
+    let source_time_body = with_ratio_parameter(source_time);
     let source_time_graph = assemble(&document, &source_time_body)
         .expect("the package with a source Time m admits and checks without conversion");
     let time_m = source_time_graph
