@@ -462,9 +462,9 @@ fn set_operation_parameter_presence(
     operation.expect("operation exists").parameters[0].presence = presence;
 }
 
-#[trace("FSpec-FR-151-AC-20")]
+#[trace("FSpec-FR-151-AC-21")]
 #[test]
-fn operation_parameter_presence_is_contravariant_under_redefinition() {
+fn operation_parameter_presence_is_kept_under_redefinition() {
     let redefining = operation_redefining(
         "model.B.op",
         "model.B",
@@ -515,7 +515,7 @@ fn operation_parameter_presence_is_contravariant_under_redefinition() {
         panic!("required parameter cannot redefine an optional parameter");
     };
     assert!(failures.iter().any(|failure| {
-        failure.axis == "parameter-presence"
+        failure.axis == "parameter-type"
             && failure.code == Code::IllTyped
             && matches!(
                 &failure.cause,
