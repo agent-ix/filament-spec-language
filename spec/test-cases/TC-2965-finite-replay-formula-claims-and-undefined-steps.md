@@ -21,10 +21,12 @@ FR-941-AC-4 and FR-941-AC-5.
 1. Over the order fixture with `requires temporal R;`, replay the trace
    `Placed`, `Got`, `Ship` with `R` each of `eventually holds(k.r1 = k.r1)`,
    `always holds(k.r1 != k.r1)`, `always holds(k.r1 = k.r1)` and
-   `always holds(1 mod (k.r1 - k.r1) = 0)`; then with `P` pending and `R`
-   violated, required in that order.
+   `always holds(q(k.r1 - k.r1) >= 0)`, `q` being FR-941-AC-4's
+   `Kernel`-checked function; then with `P` pending and `R` violated,
+   required in that order.
 2. Record the trace from the fixture, then replay it against the fixture
-   whose `Got` constraint is `{ 1 mod (k.r1 - k.r1) = 0 }`; again with step
+   with `capture c: Integer = 0;` whose `Got` constraint is `{ q(c) = 0 }`;
+   again with step
    2's post-state key changed; again with the trace beginning with `Got`.
 
 Test: `fsl-analyze/tests/it/protocol_composition.rs`.

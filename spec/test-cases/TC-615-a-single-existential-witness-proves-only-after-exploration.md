@@ -19,9 +19,11 @@ Scope: FR-181-AC-5.
 
 ## Test Procedure
 
-Fixture: ADR-023 §8's secure vault.
+Fixture: ADR-023 §8's secure vault, with
+`function remainder using v(x: Integer): Integer pure { 1 mod x }`, its body
+checked under `Kernel` (FR-495-AC-3).
 
-1. `exists trace b of V { eventually always holds(1 mod (1 - v.l @ b) = 0 and v.l @ b = 0) }`
+1. `exists trace b of V { eventually always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0) }`
    with the default `witness_samples` and with 0; settle each outcome after
    replay.
 2. `exists trace b of V { eventually always holds(v.l @ b = 1) }` with the
