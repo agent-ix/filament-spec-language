@@ -104,6 +104,7 @@ fn protocol_undetermined_locus(locus: &str) -> Option<&str> {
 /// re-executes both sides of every paired edge, checks the recorded loop
 /// closes, and rechecks the checked predicate locus for a finite
 /// undetermined-relation witness.
+#[implements("FR-145-AC-7")]
 pub fn replay_protocol_assumption_witness(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
@@ -575,6 +576,7 @@ struct AssumptionLasso<'a> {
     loop_end: usize,
 }
 
+#[implements("FR-145-AC-7")]
 fn assumption_lasso_matches(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
@@ -1125,6 +1127,13 @@ fn replay_abstract_timed_failure(
 
 /// The settlement of `payload` along its re-executed `positions`: the
 /// checks run at each position, stopping at the first failure.
+#[implements(
+    "FR-145-AC-1",
+    "FR-145-AC-3",
+    "FR-145-AC-5",
+    "FR-145-AC-6",
+    "FR-145-AC-8"
+)]
 fn settle_positions(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
