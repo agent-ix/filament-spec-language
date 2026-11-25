@@ -77,7 +77,10 @@ fn nested_punctual_always_rejects_a_true_hop_before_a_false_same_time_hop() {
         probabilistic HopNested using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ eventually[0 ms, 1 ms] always[0 ms, 0 ms] holds(c.late) ] }\n";
     let package_document = timed_world::document(
         &["x"],
-        &[("first", &["phase", "late", "x"]), ("second", &["phase", "late", "x"])],
+        &[
+            ("first", &["phase", "late", "x"]),
+            ("second", &["phase", "late", "x"]),
+        ],
     );
     let body = format!(
         "{}\
