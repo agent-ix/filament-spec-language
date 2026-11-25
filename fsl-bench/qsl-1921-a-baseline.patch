@@ -10,19 +10,27 @@ index 33e103cfa1..916bfe4eab 100644
   "filament-checked",
   "filament-eval",
 diff --git a/fsl-bench/Cargo.toml b/fsl-bench/Cargo.toml
-index f0c651a0d8..2c798d6c07 100644
 --- a/fsl-bench/Cargo.toml
 +++ b/fsl-bench/Cargo.toml
-@@ -13,5 +13,6 @@ description = "The committed performance benchmarks (parser, checker, CST ident
+@@ -14,6 +14,7 @@
+ # example a change to `intake::admit`'s return type). Every model-intake call goes
  # through `src/model.rs` so such a change is one edit there.
  [dependencies]
 +allocation-counter = { version = "0.8.1", optional = true }
  fsl-cst = { path = "../fsl-cst" }
  fsl-foundation = { path = "../fsl-foundation" }
  fsl-forms = { path = "../fsl-forms" }
-@@ -50,0 +51 @@
+@@ -48,6 +49,7 @@
+ [features]
+ counters = []
+ property-generators = ["dep:proptest", "dep:fsl-proptest-policy"]
 +allocation-probe = ["dep:allocation-counter", "fsl-semantics/child-traversal-profile"]
-@@ -114,0 +117,4 @@
+ 
+ [dev-dependencies]
+ # Grammar derivations are consumed only by the property-generator acceptance
+ path = "tests/it/main.rs"
+ required-features = ["property-generators"]
++
 +[[bin]]
 +name = "fsl-bench-evaluator-report"
 +path = "src/bin/fsl-bench-evaluator-report.rs"

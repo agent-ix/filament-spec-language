@@ -22,7 +22,7 @@ git show <B_HEAD>:fsl-bench/src/bin/fsl-bench-evaluator-report.rs > fsl-bench/sr
 git show <B_HEAD>:fsl-bench/tests/it/evaluator_cost_report.rs > fsl-bench/tests/it/evaluator_cost_report.rs
 ```
 
-Create a local A-only branch at this point if needed. The patch preserves the baseline `CheckedNode::children() -> Vec<CheckedNode>` API and semantics. It wraps the existing vector construction to count dynamically how many child iterators the evaluator actually constructs, including recursive KernelCase revisits and skipped branches. The candidate branch instead instruments its no-allocation iterator. The temporary A setup is local-only; do not push it. Return to the candidate branch for B and after collecting A.
+Create a local A-only branch at this point if needed. The patch anchors `allocation-probe` inside `[features]` and adds the report binary after the property-generator test target; keep the `git apply --check` step as a prerequisite before building. The patch preserves the baseline `CheckedNode::children() -> Vec<CheckedNode>` API and semantics. It wraps the existing vector construction to count dynamically how many child iterators the evaluator actually constructs, including recursive KernelCase revisits and skipped branches. The candidate branch instead instruments its no-allocation iterator. The temporary A setup is local-only; do not push it. Return to the candidate branch for B and after collecting A.
 
 ## Record five rounds
 
