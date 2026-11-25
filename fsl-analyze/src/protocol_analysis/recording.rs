@@ -15,6 +15,7 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_forms::ChannelDelivery;
 use fsl_semantics::check::ProtocolNodeId;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 const FORMAT: &str = "filament.protocol-recording/1";
@@ -3793,6 +3794,7 @@ fn observation_enabled(
 /// not ordered before the step is `Some(false)` at once, as is one the step
 /// itself causally precedes: order between two observations present is fixed
 /// when both are, so nothing can repair either.
+#[implements("FR-895-AC-42")]
 fn earlier_steps_precede(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -3838,6 +3840,21 @@ fn earlier_steps_precede(
                 .map_or(occurrence, |(nth, _)| nth + 1);
         }
         if parent.kind.label() == "sequence" {
+            // A repeat body's earlier sequence steps are predecessors only
+            // for the iteration the recording identifies. Without a counter
+            // on the main sequence, a prior choice cannot be assigned to this
+            // step's outer iteration; requiring every observed case would
+            // retroactively invalidate steps when another case is recorded.
+            let body_repeat = level.checked_sub(1).and_then(|repeat_level| {
+                let repeat = ancestry[repeat_level];
+                (repeat.kind.label() == "repeat" && repeat.children.first() == Some(&parent.node))
+                    .then_some(repeat_level)
+            });
+            if body_repeat.is_some_and(|repeat_level| {
+                repeat_iteration(protocol, document, position, ancestry, repeat_level).is_none()
+            }) {
+                continue;
+            }
             for sibling in parent
                 .children
                 .iter()
