@@ -16,9 +16,9 @@ use crate::graph_world::{config_version, World, CONFIG_CONTRACT, REACHES_TWO};
 use filament_exact::{Cancel, NodeKey, Origin, Role};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
-    analyze, analyze_items, AnalyzeItem, AnalyzeLimits, AnalyzeRecord, AnalyzeRefusal,
-    AnalyzeRequest, BackendTool, ClaimItem, Diagnostic, DispositionKind, Engine, Engines, ItemForm,
-    ItemOptions, NegotiatedItem, Payload, Settlement, SubjectBinding, TemporalItem,
+    analyze, analyze_items, AnalyzeItem, AnalyzeLimits, AnalyzeRecord, AnalyzeRequest, BackendTool,
+    ClaimItem, Diagnostic, DispositionKind, Engine, Engines, ItemForm, ItemOptions, NegotiatedItem,
+    Payload, Settlement, SubjectBinding, TemporalItem,
 };
 use fsl_analyze::claim_family::claim_family;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -779,13 +779,14 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
         initial: subject.simulation.initial,
         universes: subject.simulation.universes,
     };
+    let request = AnalyzeRequest {
+        binding,
+        provision: world.source_provision(),
+        items,
+    };
     let outcome = analyze(
         package,
-        &AnalyzeRequest {
-            binding,
-            provision: world.source_provision(),
-            items,
-        },
+        &request,
         &engines,
         &AnalyzeLimits::unbounded(),
         &Cancel::new(),
@@ -827,11 +828,24 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
                 code: DeclineCode::Fsl(fsl_foundation::diagnostic::Code::InvalidRequest),
             }
         );
-        assert_eq!(record.diagnostic().map(|code| code.cause()), Some(cause));
+        assert_eq!(
+            record.diagnostic(),
+            Some(filament_semantic_value::catalog::CatalogCode::new(
+                "invalid_capability",
+                cause,
+            ))
+        );
         if let Some(backend) = backend {
             assert_eq!(
-                record.backend().map(|backend| backend.as_str()),
+                record
+                    .producer(request.items[offset + 3].item.backend.as_ref())
+                    .map(|backend| backend.as_str()),
                 Some(backend)
+            );
+        } else {
+            assert_eq!(
+                record.producer(request.items[offset + 3].item.backend.as_ref()),
+                None
             );
         }
     }
