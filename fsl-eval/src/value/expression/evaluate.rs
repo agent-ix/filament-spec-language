@@ -3716,14 +3716,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     {
                         (l == r) == (*operator == EqualityOperator::Equal)
                     }
-                    // FR-1040-AC-10: a clock reference from a foreign
-                    // universe compares false and never refuses, though
-                    // the kernel's equality refuses it as a
+                    // FR-1040-AC-10 / FR-829: across universes two clock
+                    // references are equal exactly when their place id
+                    // texts match; the kernel refuses that pair as
                     // `ForeignReference`.
                     (Value::ClockReference(l), Value::ClockReference(r))
                         if l.universe() != r.universe() =>
                     {
-                        *operator == EqualityOperator::NotEqual
+                        (l.text() == r.text()) == (*operator == EqualityOperator::Equal)
                     }
                     _ => outcome_into_stop(checked.evaluate(
                         self.world.types(),
