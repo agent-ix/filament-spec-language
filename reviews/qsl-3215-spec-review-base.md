@@ -20,3 +20,9 @@ Reviewed the FR-104 quantifier acceptance addition and its reconciliation with F
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | medium | FR-104-AC-18's new quantifier behavior has no matching test in TC-3083 and the example uses a standalone function parameter, not an operation parameter in a pre/post clause | spec/functional/FR-104-check-state-clauses.md:475; spec/test-cases/TC-3083-a-reserved-word-operation-parameter-is-read-by-its-qualified-name.md:17-38 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified at `61356b9c`: FR-104-AC-18 now requires the same-named quantifier binder to shadow an operation parameter in both pre and post; TC-3083 steps 11–12 and case-specific trace tags cover the operation and function cases separately. |
