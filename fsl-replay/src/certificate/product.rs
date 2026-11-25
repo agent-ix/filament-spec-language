@@ -27,7 +27,7 @@ pub use relation::{
 };
 
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
-use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
+use super::scc::{check_partition, CertificateState, Component, ComponentWitness, ProductGraph};
 use super::{CertificateLocus, CertificateRule};
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};
 
@@ -104,13 +104,6 @@ pub(super) fn product_key_wire(key: &StateKey) -> Result<serde_json::Value, Prod
 impl CertificateState for ProductStateKey {
     fn locus(self) -> CertificateLocus {
         CertificateLocus::HyperProductState(self.0)
-    }
-
-    fn edge_locus(source: Self, target: Self) -> CertificateLocus {
-        CertificateLocus::HyperProductEdge {
-            source: source.0,
-            target: target.0,
-        }
     }
 }
 
