@@ -980,7 +980,7 @@ fn a_position_reached_only_from_a_later_position_is_malformed() {
 
 /// FR-149-AC-8 (TC-556): the locus of AC-3's rejection and AC-2's, and one
 /// verdict of each other kind, serialize as the wire-form table lists.
-#[trace("TC-556", "FR-149-AC-8", "FR-282-AC-7")]
+#[trace("TC-556", "FR-149-AC-8")]
 #[test]
 fn a_rejection_serializes_its_locus_and_verdict() {
     let world = World::with(Variant::LOST_UPDATE, &lost_update_refinement());
@@ -1099,4 +1099,65 @@ fn a_rejection_serializes_its_locus_and_verdict() {
             expected
         );
     }
+}
+
+/// FR-282-AC-7: the checker reports the concrete transition whose step has
+/// no abstract match, including that transition in the serialized verdict.
+#[trace("FR-282-AC-7")]
+#[test]
+fn an_unmatched_concrete_step_names_its_transition_in_the_checker_diagnostic() {
+    let refinement = lost_update_refinement()
+        .replace(
+            "step Impl::Counter::commitA -> Spec::Counter::inc(self);",
+            "step Impl::Counter::commitA -> any;",
+        )
+        .replace(
+            "step Impl::Counter::commitB -> Spec::Counter::inc(self);",
+            "step Impl::Counter::commitB -> any;",
+        );
+    let world = World::with(Variant::LOST_UPDATE, &refinement);
+    let certificate = listed(&world);
+    let (rule, at) = rejected(check(&world, &certificate));
+    assert_eq!(rule, CertificateRule::StepFails);
+    let CertificateLocus::SimulationStep {
+        position,
+        edge,
+        verdict: Some(verdict),
+    } = &at
+    else {
+        panic!("the unmatched step has a simulation verdict: {at:?}");
+    };
+    let certificate_edge = &certificate.successors[usize::try_from(*position).expect("a position")]
+        [usize::try_from(edge.expect("an edge")).expect("an edge index")];
+    let expected_transition = certificate_edge
+        .transition
+        .as_ref()
+        .expect("the rejected certificate edge names its concrete transition");
+    let expected_post = certificate_edge.post;
+    let FailedStep::NoAbstractMatch {
+        position,
+        transition,
+    } = verdict.as_ref()
+    else {
+        panic!("the checker identifies the missing abstract match: {verdict:?}");
+    };
+    assert_eq!(*position, expected_post);
+    assert_eq!(transition, expected_transition);
+
+    let expected_transition_wire: serde_json::Value = serde_json::from_slice(
+        &expected_transition
+            .canonical_bytes(quire_canonical::Limits::new(u64::MAX))
+            .expect("the concrete transition identity encodes"),
+    )
+    .expect("the concrete transition is canonical JSON");
+    let wire = serde_json::to_value(&at).expect("the checker locus serializes");
+    assert_eq!(
+        wire["verdict"],
+        serde_json::json!({
+            "kind": "NoAbstractMatch",
+            "position": expected_post.to_string(),
+            "transition": expected_transition_wire,
+        }),
+        "the serialized checker diagnostic retains the exact concrete transition"
+    );
 }

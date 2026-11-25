@@ -899,6 +899,31 @@ fn read_document(
     read_document_profile(bytes, limits, cancel, meter, false, None, &mut 0)
 }
 
+/// Cancellation-aware working-byte budget for the canonical reader.
+struct CancellableReadReservation<'a> {
+    cancel: &'a Cancel,
+    bound: u64,
+    charged: u64,
+    refused: Option<u64>,
+}
+
+impl quire_canonical::Reservation for CancellableReadReservation<'_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
+        if self.cancel.poll() {
+            return Err(quire_canonical::ReservationDenied);
+        }
+        let required = self
+            .charged
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+        if required > self.bound {
+            self.refused = Some(required);
+            return Err(quire_canonical::ReservationDenied);
+        }
+        self.charged = required;
+        Ok(())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[ix_trace_rs::string_edge]
 fn read_document_profile(
@@ -919,19 +944,29 @@ fn read_document_profile(
             u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         ));
     }
-    let parsed = quire_canonical::read_bounded(bytes, limits.bytes, limits.storage_bytes).map_err(
-        |error| match error {
-            quire_canonical::ReadError::Limit(limit) => exceeded(
+    let mut reservation = CancellableReadReservation {
+        cancel,
+        bound: limits.storage_bytes,
+        charged: 0,
+        refused: None,
+    };
+    let parsed = match quire_canonical::read_with_reservation(bytes, limits.bytes, &mut reservation)
+    {
+        Ok(parsed) => parsed,
+        Err(quire_canonical::ReadError::ReservationDenied { .. }) => {
+            if let Some(cause) = cancel.cause() {
+                return Err(ProbabilityDocumentError::Cancelled(cause));
+            }
+            return Err(exceeded(
                 ProbabilityDocumentLimit::StorageBytes,
-                limit.bound,
-                limit.required,
-            ),
-            _ => ProbabilityDocumentError::Malformed,
-        },
-    )?;
-    // The canonical reader is a bounded synchronous parse without a Cancel
-    // hook. Observe cancellation immediately after it returns, before any
-    // decoded document member can be accepted or exposed.
+                limits.storage_bytes,
+                reservation.refused.unwrap_or(u64::MAX),
+            ));
+        }
+        Err(_) => return Err(ProbabilityDocumentError::Malformed),
+    };
+    // Catch cancellation requested after the reader's final growth charge
+    // and before any decoded document member can be accepted or exposed.
     poll(cancel)?;
     let root = parsed.root();
     let objective = root.get("objective");
@@ -2736,7 +2771,7 @@ mod tests {
 
     #[trace("TC-636", "FR-282-AC-21")]
     #[test]
-    fn cancellation_during_certificate_document_parse_is_retained() {
+    fn cancellation_at_a_certificate_reader_charge_stops_parsing() {
         use std::sync::{
             atomic::{AtomicUsize, Ordering},
             Arc, OnceLock,
@@ -2747,7 +2782,7 @@ mod tests {
         let polls = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&polls);
         let cancel = Cancel::observing(move || {
-            if observed.fetch_add(1, Ordering::Relaxed) + 1 == 2 {
+            if observed.fetch_add(1, Ordering::Relaxed) + 1 == 3 {
                 weak.upgrade()
                     .expect("the slot remains owned during the read")
                     .get()
@@ -2762,7 +2797,7 @@ mod tests {
             read_probability_certificate(&bytes(), limits(), &cancel),
             Err(ProbabilityDocumentError::Cancelled(CancelCause::Requested))
         );
-        assert_eq!(polls.load(Ordering::Relaxed), 2);
+        assert_eq!(polls.load(Ordering::Relaxed), 3);
     }
 
     #[trace("TC-636", "FR-201-AC-25", "FR-282-AC-19")]
