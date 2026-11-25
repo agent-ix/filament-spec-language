@@ -28,3 +28,9 @@ The behaviour is owned and consistent: FSpec gives no row, the pinned reader adm
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | The FR-640 sentence says the emitter checks "the selection's kind and unit against the declaration". The emitter checks the kind against the profile (`check_selected_definition`). It checks the unit and clock name only as well-formed values (`temporal_clock_invalid_field`). Nothing in a timed `compensate` or `await` declaration carries a unit to compare against. Fix: "SHALL check the selection's kind against the profile and its values as for any other selection, refuse a mismatch, and write no row." | spec/functional/FR-640-select-clock-configurations-in-compile-and-run-requests.md:95-100; fsl-package/src/emit.rs:10606-10615 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | c476951263: "The emitter SHALL check the selection's kind against the profile and its values as for any other selection, refuse a mismatch, and write no row." FR-640-AC-15 and TC-1660 step 5 add the empty-`unit` and other-`definition` refusals, and the test asserts them. |

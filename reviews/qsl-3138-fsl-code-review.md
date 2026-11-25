@@ -67,3 +67,9 @@ Not mergeable. The producer key rule is right for local clauses. Two high defect
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-006 | still-open | New this pass. |
+
+## Dispositions (pass 5)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-006 | fixed | c476951263 makes each declaration's `timed` selection invalid in turn, with an empty `unit` and then another `definition`, while the others stay valid. It asserts the exact `InvalidTemporalClockValue { source_ref, span, field }`, with `field` `"unit"` or `"definition"`, at that declaration's span. ced1720dfc adds `#[implements]` on `declaration_key` (FR-383-AC-26, AC-27), `admitted_group_keys` (FR-383-AC-24) and `temporal_binding_rows` (FR-640-AC-15), each a criterion its function implements, with a bare `use ix_trace_rs::implements;`. |
