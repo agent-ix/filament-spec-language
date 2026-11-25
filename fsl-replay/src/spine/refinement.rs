@@ -320,7 +320,8 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
             | RefinementCause::ClockRead
             | RefinementCause::PopulationBound { .. }
             | RefinementCause::NodeArgumentCount { .. }
-            | RefinementCause::NodeArgumentType { .. } => None,
+            | RefinementCause::NodeArgumentType { .. }
+            | RefinementCause::CompositeTypeMismatch { .. } => None,
         },
         CheckCause::DispatchLink(link) => link
             .denial

@@ -797,10 +797,7 @@ fn refinement_bindings_use_canonical_package_identity_not_source_aliases() {
         .replace("Impl", "ConcreteModel");
     let graph = check_with(
         "",
-        &[
-            ("AbstractModel", SPEC, &spec),
-            ("ConcreteModel", CAS, &cas),
-        ],
+        &[("AbstractModel", SPEC, &spec), ("ConcreteModel", CAS, &cas)],
         &body,
     )
     .unwrap_or_else(|refusals| {
@@ -1067,6 +1064,22 @@ fn shaped(mut value: Value, (lower, upper, ordered): (u32, u32, bool), presence:
 /// chain, link }` over `Slot { value }`, whose `chain` is a
 /// `Sequence<Reference<Ring>>[0, 2]` and `link` an `Option<Reference<Ring>>`.
 fn nested_models() -> (Vec<u8>, Vec<u8>) {
+    fn tuple_construct(package: &str) -> Value {
+        json!({
+            "kind": {"module": package, "name": "tuple_type"},
+            "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "tuple", "members": {"positions": "required"}, "meaning": meaning::TUPLE_VALUE_TYPE}
+        })
+    }
+
+    fn variant_construct(package: &str) -> Value {
+        json!({
+            "kind": {"module": package, "name": "variant_type"},
+            "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "enumeration", "members": {"variants": "required"}, "meaning": meaning::VARIANT_TYPE}
+        })
+    }
+
     /// The record value type `Box { target }`, holding a `Reference<object>`.
     fn boxed(package: &str, object: &str) -> Value {
         declaration(
@@ -1087,18 +1100,66 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         })
     }
 
+    fn pair(package: &str, object: &str) -> Value {
+        declaration(
+            package,
+            "Pair",
+            "tuple_type",
+            json!({"positions": [
+                {"identity": node(package, "Pair/p0"), "typeRef": node(package, object), "origin": origin(package, "Pair/p0")},
+                {"identity": node(package, "Pair/p1"), "typeRef": BOOLEAN, "origin": origin(package, "Pair/p1")},
+            ]}),
+        )
+    }
+
+    fn holder(package: &str, object: &str) -> Value {
+        let source = |line| {
+            json!({"source": {
+                "sourceIdentity": node(package, "spec"), "path": "spec.fspec",
+                "startLine": line, "startColumn": 1,
+            }})
+        };
+        declaration(
+            package,
+            "Holder",
+            "variant_type",
+            json!({"variants": [
+                {"identity": node(package, "variant/Holder-Empty"), "name": "Empty", "origin": source(1)},
+                {"identity": node(package, "variant/Holder-Has"), "name": "Has", "payloadType": node(package, object), "origin": source(2)},
+            ]}),
+        )
+    }
+
+    /// The record value type `Parcel { owners: Sequence<Option<Reference<object>>> }`.
+    fn parcel(package: &str) -> Value {
+        let owners = shaped(
+            field(package, "Parcel", "owners", &node(package, "Maybe")),
+            (0, 2, true),
+            "required",
+        );
+        declaration(
+            package,
+            "Parcel",
+            "record_value_type",
+            json!({"fields": [owners]}),
+        )
+    }
+
     let (queue, cell) = (node(NESTED_SPEC, "Queue"), node(NESTED_SPEC, "Cell"));
     let single = (1, 1, false);
     let spec = document_with(
         NESTED_SPEC,
-        vec![construct(
-            NESTED_SPEC,
-            "record_value_type",
-            meaning::RECORD_VALUE_TYPE,
-        )],
+        vec![
+            construct(NESTED_SPEC, "record_value_type", meaning::RECORD_VALUE_TYPE),
+            tuple_construct(NESTED_SPEC),
+            variant_construct(NESTED_SPEC),
+        ],
         vec![
             boxed(NESTED_SPEC, "Queue"),
             maybe(NESTED_SPEC, "Queue"),
+            pair(NESTED_SPEC, "Queue"),
+            holder(NESTED_SPEC, "Queue"),
+            parcel(NESTED_SPEC),
             object_type(
                 NESTED_SPEC,
                 "Queue",
@@ -1110,6 +1171,9 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("maybes", &node(NESTED_SPEC, "Maybe")),
                     ("cells", &cell),
                     ("box", &node(NESTED_SPEC, "Box")),
+                    ("pair", &node(NESTED_SPEC, "Pair")),
+                    ("holder", &node(NESTED_SPEC, "Holder")),
+                    ("parcel", &node(NESTED_SPEC, "Parcel")),
                 ],
                 Vec::new(),
             ),
@@ -1137,14 +1201,17 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
     let ring = node(NESTED_IMPL, "Ring");
     let concrete = document_with(
         NESTED_IMPL,
-        vec![construct(
-            NESTED_IMPL,
-            "record_value_type",
-            meaning::RECORD_VALUE_TYPE,
-        )],
+        vec![
+            construct(NESTED_IMPL, "record_value_type", meaning::RECORD_VALUE_TYPE),
+            tuple_construct(NESTED_IMPL),
+            variant_construct(NESTED_IMPL),
+        ],
         vec![
             boxed(NESTED_IMPL, "Ring"),
             maybe(NESTED_IMPL, "Ring"),
+            pair(NESTED_IMPL, "Ring"),
+            holder(NESTED_IMPL, "Ring"),
+            parcel(NESTED_IMPL),
             object_type(
                 NESTED_IMPL,
                 "Ring",
@@ -1155,6 +1222,9 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("maybes", &node(NESTED_IMPL, "Maybe")),
                     ("cargo", &node(NESTED_IMPL, "Slot")),
                     ("box", &node(NESTED_IMPL, "Box")),
+                    ("pair", &node(NESTED_IMPL, "Pair")),
+                    ("holder", &node(NESTED_IMPL, "Holder")),
+                    ("parcel", &node(NESTED_IMPL, "Parcel")),
                 ],
                 Vec::new(),
             ),
@@ -1239,42 +1309,164 @@ fn a_row_nesting_a_reference_is_lifted_element_by_element() {
     assert_eq!(wrong.at, "self.cargo");
 }
 
-/// FR-135-AC-6 (TC-540 step 6), composite carriers: a reference nested in a
-/// record, tuple or union row is lifted too. Pending the pairing rule that
-/// says which abstract composite the lifted value takes; today such a row
-/// refuses `ill_typed`/`type-mismatch`.
-#[trace("TC-540", "FR-135-AC-6")]
+/// FR-135-AC-6 and AC-13..16: record fields, tuple positions, active union
+/// payloads, and a nested sequence of optional references lift recursively.
+#[trace(
+    "TC-540",
+    "FR-135-AC-6",
+    "FR-135-AC-13",
+    "FR-135-AC-14",
+    "FR-135-AC-15",
+    "FR-135-AC-16"
+)]
 #[test]
-#[ignore = "QSL-2959: composite nested-reference lifting"]
 fn a_row_nesting_a_reference_in_a_composite_is_lifted() {
     let (spec, concrete) = nested_models();
     let models = [
         ("Q", NESTED_SPEC, &spec[..]),
         ("R", NESTED_IMPL, &concrete[..]),
     ];
-    for (declarations, row) in [
-        ("", "box = self.box;"),
-        (
-            "tuple Pair(Reference<R::Ring>, Boolean);",
-            "box = Pair(self, true);",
-        ),
-        (
-            "union Holder { Empty, Has(Reference<R::Ring>) }",
-            "box = Holder::Has(self);",
-        ),
+    for row in [
+        "box = self.box;",
+        "pair = self.pair;",
+        "holder = self.holder;",
+        "parcel = self.parcel;",
     ] {
-        let graph = check_with(
-            "",
-            &models,
-            &format!("{declarations}\n{}", nested_refinement(row)),
-        )
-        .unwrap_or_else(|refusals| {
+        let graph = check_with("", &models, &nested_refinement(row)).unwrap_or_else(|refusals| {
             panic!(
                 "{row}: {:?}",
                 refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
             )
         });
         assert_eq!(only_refinement(&graph).objects().len(), 2, "{row}");
+    }
+}
+
+/// FR-135-AC-17 (TC-540): a record with no same-name component refuses at
+/// S3, so it cannot produce a checked refinement.
+#[trace("TC-540", "FR-135-AC-17")]
+#[test]
+fn a_record_with_a_missing_paired_field_is_refused() {
+    let (spec, concrete) = nested_models();
+    let mut concrete: Value = serde_json::from_slice(&concrete).expect("a concrete model");
+    let declarations = concrete["types"].as_array_mut().expect("types");
+    let boxed = declarations
+        .iter_mut()
+        .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Box"))
+        .expect("Box");
+    boxed["fields"] = json!([field(
+        NESTED_IMPL,
+        "Box",
+        "link",
+        &node(NESTED_IMPL, "Ring")
+    )]);
+    let concrete = concrete.to_string().into_bytes();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+    let found = refused(&models, &nested_refinement("box = self.box;"));
+    let wrong = only(&found);
+    assert_eq!(
+        wrong.code_and_cause(),
+        (Code::IllTyped, Some("type-mismatch"))
+    );
+    assert_eq!(wrong.at, "self.box");
+}
+
+/// FR-135-AC-17..19 (TC-540): every structural mismatch refuses the S3
+/// refinement, so none can be represented by a `CheckedRefinement`.
+#[trace("TC-540", "FR-135-AC-17", "FR-135-AC-18", "FR-135-AC-19")]
+#[test]
+fn mismatched_composite_reference_shapes_are_refused() {
+    for mismatch in ["record field", "tuple arity", "union tag"] {
+        let (spec, concrete) = nested_models();
+        let mut concrete: Value = serde_json::from_slice(&concrete).expect("a concrete model");
+        let declarations = concrete["types"].as_array_mut().expect("types");
+        match mismatch {
+            "record field" => {
+                let boxed = declarations
+                    .iter_mut()
+                    .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Box"))
+                    .expect("Box");
+                boxed["fields"] = json!([field(
+                    NESTED_IMPL,
+                    "Box",
+                    "link",
+                    &node(NESTED_IMPL, "Ring")
+                )]);
+            }
+            "tuple arity" => {
+                let pair = declarations
+                    .iter_mut()
+                    .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Pair"))
+                    .expect("Pair");
+                pair["positions"]
+                    .as_array_mut()
+                    .expect("positions")
+                    .push(json!({
+                        "identity": node(NESTED_IMPL, "Pair/p2"),
+                        "typeRef": BOOLEAN,
+                        "origin": origin(NESTED_IMPL, "Pair/p2"),
+                    }));
+            }
+            "union tag" => {
+                let holder = declarations
+                    .iter_mut()
+                    .find(|declaration| declaration["identity"] == node(NESTED_IMPL, "Holder"))
+                    .expect("Holder");
+                holder["variants"][1]["name"] = json!("Points");
+                holder["variants"][1]["identity"] =
+                    json!(node(NESTED_IMPL, "variant/Holder-Points"));
+            }
+            _ => unreachable!("the fixture lists only owned mismatches"),
+        }
+        let concrete = concrete.to_string().into_bytes();
+        let models = [
+            ("Q", NESTED_SPEC, &spec[..]),
+            ("R", NESTED_IMPL, &concrete[..]),
+        ];
+        let row = match mismatch {
+            "record field" => "box = self.box;",
+            "tuple arity" => "pair = self.pair;",
+            "union tag" => "holder = self.holder;",
+            _ => unreachable!(),
+        };
+        let found = refused(&models, &nested_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{mismatch}"
+        );
+        assert_eq!(
+            refusal.at,
+            match mismatch {
+                "record field" => "self.box",
+                "tuple arity" => "self.pair",
+                "union tag" => "self.holder",
+                _ => unreachable!(),
+            }
+        );
+        let CheckCause::Refinement(refinement) = refusal.refusal.cause.as_ref() else {
+            panic!("the structural mismatch has a refinement refusal");
+        };
+        let RefinementCause::Check(CheckCause::Refinement(structural)) = &refinement.cause else {
+            panic!("the nested structural refusal retains its typed mismatch path");
+        };
+        assert_eq!(
+            structural.cause,
+            RefinementCause::CompositeTypeMismatch {
+                path: match mismatch {
+                    "record field" => "box.target",
+                    "tuple arity" => "[2]",
+                    "union tag" => "holder.variant",
+                    _ => unreachable!(),
+                }
+                .to_owned(),
+            },
+            "{mismatch}"
+        );
     }
 }
 
@@ -1300,11 +1492,7 @@ fn an_abstract_field_with_no_row_is_hidden() {
 fn changing_a_field_mapping_changes_the_refinement_node_identity() {
     let base = cas_refines_counter();
     let direct = checked_counter(&base);
-    let changed = checked_counter(&mutated(
-        &base,
-        "value = self.value;",
-        "value = self.tmpA;",
-    ));
+    let changed = checked_counter(&mutated(&base, "value = self.value;", "value = self.tmpA;"));
     let direct_node = only_refinement(&direct)
         .requirement_occurrence()
         .expect("the checked refinement has a V2 occurrence")
