@@ -17,7 +17,7 @@ use std::process::ExitCode;
 use xtask::{
     backend_agreement, canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
-    examples_check, facade_tests, merge_gate_recipe, pin_check, qualification, refinement,
+    examples_check, facade_tests, merge_gate_recipe, parity, pin_check, qualification, refinement,
     route_lint, seam_probe, string_edge, test_suites, Outcome,
 };
 
@@ -29,6 +29,7 @@ const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-ed
                      cargo xtask pin-check [--manifest <Cargo.toml-or-directory>]\n       cargo xtask refinement layering <corpus>\n       \
                      cargo xtask refinement layering <corpus>\n       \
                      cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \
+                     cargo xtask parity [--corpus <dir>]\n       \
                      cargo xtask canonical-types [<workspace>]\n       \
                      cargo xtask facade-tests [--tests <dir>] [--inventory <file>]\n       \
                      cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]\n       \
@@ -55,6 +56,9 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
     }
     if command == "qualify" {
         return qualification::run(operands);
+    }
+    if command == "parity" {
+        return parity::run(operands);
     }
     if command == "backend-agreement" {
         return backend_agreement::run(operands);

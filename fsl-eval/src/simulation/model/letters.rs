@@ -647,9 +647,9 @@ impl ClauseLetters<'_, '_> {
                 let observation = self
                     .system
                     .model
-                    .observation(&state.state, state_document())
+                    .observation(state.state(), state_document())
                     .map_err(|_| AtomStop::Unobservable(stop(BROKEN)))?;
-                let rows = rows_of(self.system, &state.state).map_err(AtomStop::Unobservable)?;
+                let rows = rows_of(self.system, state.state()).map_err(AtomStop::Unobservable)?;
                 let observed = Rc::new(Observed { observation, rows });
                 self.observations
                     .set(self.observations.get().saturating_add(1));

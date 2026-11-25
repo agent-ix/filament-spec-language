@@ -2808,6 +2808,18 @@ fn read_clause_run_request_bytes(
     let observation_override = overrides.observation.copied();
     let mut request: wire::Request = request_with_overrides(bytes, overrides)?;
     apply_accounting_override(&mut request, overrides);
+    // FR-1047: of the checks below, only a package's member refusals and the
+    // extraction clause count come before the no-run-member refusal.
+    if selects_no_run_member(&request) {
+        if request.package.is_some() {
+            package_run::validate_request(&request)?;
+        }
+        #[cfg(feature = "quire-extraction")]
+        if let Some(program) = &request.program {
+            check_extraction_clause_count(program)?;
+        }
+        return Err(request_shape::no_run_member());
+    }
     let program = required_program(&request)?;
     #[cfg(feature = "quire-extraction")]
     if program.extraction.is_some() && request.package.is_some() {
@@ -2818,11 +2830,7 @@ fn read_clause_run_request_bytes(
         return Err(RunCause::ExtractionRequiresRun);
     }
     #[cfg(feature = "quire-extraction")]
-    if program.extraction.is_some() && program.clauses.len() != 1 {
-        return Err(RunCause::ExtractionClauseCount {
-            actual: program.clauses.len(),
-        });
-    }
+    check_extraction_clause_count(program)?;
     let clause = request
         .clause
         .as_ref()
@@ -4521,23 +4529,13 @@ fn prepare_run_bytes_with_sources(
     // FR-1045: reject malformed correlation selection before any selected
     // program, package, model or snapshot file is opened.
     relationships::validate_request(request.call.as_ref())?;
-    // FR-100-AC-25: a bare package selection with neither a call nor another
-    // run selector refuses before opening the selected package or its models.
-    if request.package.is_some()
-        && request.call.is_none()
-        && request.clause.is_none()
-        && request.items.is_none()
-        && request.tl_lowering.is_none()
-        && request.synthesis.is_none()
-        && request.verification_plan.is_none()
-        && request.model_based_test.is_none()
-        && request.refinement_transfer.is_none()
-        && request.export_evidence.is_none()
-    {
+    // FR-100-AC-25: a package selected with no run member refuses before the
+    // package or its models are opened.
+    if request.package.is_some() && selects_no_run_member(&request) {
         // Package-owned selections still take precedence when restated by the
         // request (FR-1039), including libraries and integer_division.
         package_run::validate_request(&request)?;
-        return Err(RunCause::CompleteRunSelection(CompleteRunSelection::NoCall));
+        return Err(request_shape::no_run_member());
     }
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
@@ -4666,6 +4664,12 @@ fn prepare_run_bytes_with_sources(
         },
         dependent_bytes,
     )?;
+    // FR-100-AC-25: a program selected with no run member refuses before any
+    // file is read. The `program.source` identity check comes first (FR-1047).
+    if selects_no_run_member(&request) {
+        program.source.identity.bind("program.source")?;
+        return Err(request_shape::no_run_member());
+    }
     let prepared = (|| {
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
         // The program source is read exactly once; its declared edition decides
@@ -5408,6 +5412,32 @@ fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::s
     spine_call.canonical_values = true;
     spine_call.live_occurrences = call.evaluation.live_occurrences();
     Ok(spine_call)
+}
+
+/// FR-1047 "A selected source with no run member": the request selects
+/// exactly one of `program` and `package`, and carries no member that selects
+/// a run. `export_evidence` is not one at a run-reader entry.
+fn selects_no_run_member(request: &wire::Request) -> bool {
+    request.program.is_some() != request.package.is_some()
+        && request.call.is_none()
+        && request.clause.is_none()
+        && request.items.is_none()
+        && request.tl_lowering.is_none()
+        && request.synthesis.is_none()
+        && request.verification_plan.is_none()
+        && request.model_based_test.is_none()
+        && request.refinement_transfer.is_none()
+}
+
+/// FR-031-AC-6: an extracted program carries exactly one clause binding.
+#[cfg(feature = "quire-extraction")]
+fn check_extraction_clause_count(program: &wire::Program) -> Result<()> {
+    if program.extraction.is_some() && program.clauses.len() != 1 {
+        return Err(RunCause::ExtractionClauseCount {
+            actual: program.clauses.len(),
+        });
+    }
+    Ok(())
 }
 
 /// FR-100: the request's `program`; a request selecting neither `program`

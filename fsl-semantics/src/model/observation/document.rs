@@ -3,7 +3,7 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{admission_record, AdmissionRecordExt};
+use super::{AdmissionRecordExt, admission_record};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
@@ -13,12 +13,12 @@ use filament_exact::{
 use fsl_foundation::diagnostic::Code;
 
 use super::helpers::object_reference;
-use super::tree::{read_raw_value, Json, Object};
+use super::tree::{Json, Object, read_raw_value};
 use super::{
-    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue,
+    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
+    population_universe, refuse,
 };
 use crate::model::object_environment::{
     ObjectEnvironment, ReferenceOriginBuilder, ReferenceOriginLocus, ReferenceOriginPrefix,
@@ -1669,18 +1669,24 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
-        // FR-106-AC-83: an unseeded refinement row has no route-neutral
-        // identity with which to admit raw Clock-place data. Preserve the
-        // supplied place identity and the snapshot's literal identity.
+        // FR-106-AC-83: a raw Clock-place value is admitted only when the
+        // selected route supplies the authenticated declaration table that
+        // resolves its population, owner and template.
         (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
-            let record = admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                .with("reason", "missing-route-neutral-place-identity");
-            Err(match &references.document {
-                Some(document) => record
-                    .with("document", document.clone())
-                    .with("target", reference.key.clone()),
-                None => record,
-            })
+            let admitted = references.resolve_clock(reference).map_err(|record| {
+                match &references.document {
+                    Some(document) => record
+                        .with("document", document.clone())
+                        .with("target", reference.key.clone()),
+                    None => record,
+                }
+            })?;
+            let place = filament_exact::ClockPlaceReference::new(
+                admitted.universe().clone(),
+                admitted.object().as_str(),
+            )
+            .map_err(|_| admission_record(Code::InvalidRuntimeInput, "invalid-value"))?;
+            Ok(Value::ClockReference(place))
         }
         (RawForm::Variant(variant), filament_exact::ValueType::Enum(slot)) => {
             admit_variant(references, variant, slot)
@@ -2587,11 +2593,26 @@ fn admit_value<'a: 'w, 'w>(
                         let mut value =
                             admit_leaf(references, form, value_type, witness.as_deref_mut())
                                 .map_err(|record| {
-                                    // A refusal inside a payload object (a
-                                    // Quantity's magnitude) names its own
-                                    // steps below the value.
+                                    // For a malformed native member inside a
+                                    // collection element, the typed path ends
+                                    // at the element; `fields.member` names
+                                    // the payload key. Keep any parent path
+                                    // below the element (for example
+                                    // Quantity's `magnitude`) and let
+                                    // `refusal_steps` add the member to the
+                                    // document pointer.
+                                    let mut nested = record.path.clone();
+                                    let collection_element =
+                                        path.iter().any(|step| matches!(step, PathStep::Index(_)));
+                                    let names_member =
+                                        record.fields.get("member").is_some_and(|member| {
+                                            nested.last() == Some(&PathStep::Field(member.clone()))
+                                        });
+                                    if collection_element && names_member {
+                                        nested.pop();
+                                    }
                                     let mut full = path.clone();
-                                    full.extend(record.path.iter().cloned());
+                                    full.extend(nested);
                                     record.at(full)
                                 })?;
                         if let Some(reference) = raw_reference {
@@ -3568,6 +3589,8 @@ pub(super) fn admit_population_values<'t>(
     let mut listed = super::relationships::Listed::new();
     let mut completeness = BTreeMap::new();
     let mut keys_by_population: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut owner_populations: BTreeMap<(filament_exact::EffectiveId, String), String> =
+        BTreeMap::new();
     let mut references = References::over(views, types, populations)?;
     references.document = Some(document.identity.clone());
     let mut out_of_range: Vec<OutOfRange> = Vec::new();
@@ -3685,6 +3708,35 @@ pub(super) fn admit_population_values<'t>(
                             snapshot_member_path(population_index, object_index, "key"),
                         ),
                 ));
+            }
+            // The shared object closure is keyed by declared type and local
+            // key, so two explicit population occurrences cannot be retained
+            // as distinct owners. Refuse the overlap at the second row before
+            // admitting any of its field values.
+            if ObjectId::new(&object.key).is_ok() {
+                let owner_identity = (effective_type.clone(), object.key.clone());
+                if let Some(other_population) = owner_populations.get(&owner_identity) {
+                    if other_population != &entry.population {
+                        return Err(refuse(
+                            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                                .with("reason", "population-qualified-object-identity")
+                                .with("population", entry.population.clone())
+                                .with("other_population", other_population.clone())
+                                .with("object", object.key.clone())
+                                .with("path", format!("/populations/{population_index}"))
+                                .at(vec![
+                                    filament_semantic_value::admission::PathStep::Field(
+                                        "populations".to_owned(),
+                                    ),
+                                    filament_semantic_value::admission::PathStep::Index(
+                                        population_index,
+                                    ),
+                                ]),
+                        ));
+                    }
+                } else {
+                    owner_populations.insert(owner_identity, entry.population.clone());
+                }
             }
             // 6.4: a declared field missing (`missing-member`), then an
             // undeclared field present (`unknown-member`), in the order

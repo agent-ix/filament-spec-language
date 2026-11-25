@@ -4380,7 +4380,9 @@ mod tests {
     }
 
     /// FR-286-AC-2: the `check` outcome of the `inv` source refuses with one
-    /// diagnostic equal to the refusal's code, cause, locus and message.
+    /// diagnostic equal to the refusal's code, cause, locus and message. The
+    /// integer `/` in a body that expects no rational refuses `type-mismatch`
+    /// (FR-495-AC-9), and that pair has a catalog hint (FR-286 "Fix hints").
     #[trace("TC-770", "FR-286-AC-2")]
     #[test]
     fn check_refusal_document_carries_the_refusals_diagnostic() {
@@ -4399,9 +4401,10 @@ mod tests {
                 "category": "refusal",
                 "items": [],
                 "diagnostics": [{
-                    "cause": "ambiguous-literal",
+                    "cause": "type-mismatch",
                     "code": "ill_typed",
                     "details": null,
+                    "hint": hint::hint_for(Code::IllTyped, Some("type-mismatch"), None),
                     "locus": {
                         "kind": "region",
                         "source": serde_json::to_value(region.source()).expect("a source ref"),

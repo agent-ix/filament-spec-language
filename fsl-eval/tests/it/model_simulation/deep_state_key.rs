@@ -136,7 +136,7 @@ fn a_100_000_long_list_keys_as_its_rfc_8785_text() {
 ///    `IdentityInputBytes` instead of returning the key.
 ///
 /// Remove the `ignore` when `state_key` is iterative and takes a bound.
-#[ignore = "ModelSystem::state_key recurses per record level (stack overflow at 512 KiB) and caps keys at 16 MiB"]
+#[ignore = "QSL-3355: ModelSystem::state_key recurses per record level (stack overflow at 512 KiB) and caps keys at 16 MiB"]
 #[test]
 fn a_100_000_long_list_keys_as_its_rfc_8785_text_through_the_unbudgeted_state_key() {
     keys_as_its_rfc_8785_text(true);
