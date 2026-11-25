@@ -124,7 +124,8 @@ step asserts.
   `evaluate`, `refusal`, exit 20, position 1, `outcome` `refused` with
   `integer_out_of_domain`/`outside-domain`, `expected` `Int[0, 1]` and the
   locus of `x` in `InUnit(x)`; no `truth`, no `internal_fault`. The source
-  run: stage `compile`, `undefined_expression`/`unproved-range`, exit 20.
+  run: stage `compile`, `undefined_expression`/`unproved-range` at the
+  argument `c.value` of `InUnit(c.value)`, exit 20.
 - Step 6: each edited document refuses with a located diagnostic naming
   the member.
 - Step 7: each report reads back to its row with the label `pending` or

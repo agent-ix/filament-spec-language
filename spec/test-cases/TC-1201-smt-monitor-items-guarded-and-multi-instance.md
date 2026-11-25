@@ -21,7 +21,8 @@ instance, with one monitor per instance, the false-extension end letter,
 the past-the-end distinctness form and the reading of satisfiable models
 by rules 4, 4b and 4c.
 
-Scope: FR-315-AC-33 to FR-315-AC-39, FR-314-AC-8 and FR-127-AC-15.
+Scope: FR-315-AC-33 to FR-315-AC-39, FR-315-AC-58, FR-314-AC-8 and
+FR-127-AC-15.
 
 S4 emits an `on each` clause, guarded or not (FR-337-AC-6). The test
 still builds the checked package of each `on each` and guarded item itself,
@@ -74,6 +75,13 @@ printed script.
    TP-1 item, with and without a certificate, and FR-314-AC-1's accepted
    bounded certificate; settle FR-127-AC-15's results, with and without a
    certificate.
+9. Compile FR-315-AC-58's unit from source and, after S3, replace the
+   clause's guard `a and b` by `b`. Encode `Unrolling{depth: 2}` over
+   `{c, d}`, check each disjunct of the negated property alone with a
+   solver, and check that no model of the satisfiable one leaves the
+   criterion's values. Then run EN-1 over the same package with the
+   production letters and replay its counterexample against the source
+   unit's request, once as found and once with `over_binding` `c`.
 
 Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
 
@@ -122,3 +130,9 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
   FR-127-AC-15's results settle `CertificateRejected{ShapeMismatch, ..}`
   with no check run and unchanged meters, except the horizon-3 result,
   which settles `Proved{BoundedComplete{depth: 3}, Uncertified}`.
+- Step 9: of the negated property's disjuncts only `d`'s condition failure
+  at position 2 is satisfiable, every model of it holding `c.value` 0, 0, 0
+  and `d.value` 0, 1, 2; EN-1 reports `UndefinedEvaluation` at position 2,
+  `none-value`, its site naming the activation, `over_binding` `d`, over
+  those values; replay reproduces it, and with `over_binding` `c` settles
+  `inconclusive`, `ReplayParity`.

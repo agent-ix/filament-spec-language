@@ -42,15 +42,20 @@ undefined atom or a refused condition (FR-327-AC-7, FR-330-AC-8).
 Fixture: the `Counter` unit, the closed trace and the prefix with `c.value`
 0, 1, 2, and the observed lasso with an empty prefix and loop 0, 1, 2.
 Each clause's undefined letter is `3 mod (2 - c.value)` at `c.value` 2, the
-Euclidean remainder by zero; FR-327-AC-7's clauses run over the non-model
-subject `c: Counter`, a record with the attribute `level`, with the
-window-aggregate samples the observation owner supplies; the step 4 unit compiles from source with no
-refusal.
+Euclidean remainder by zero. A clause run from a unit reads it as the call
+`temporal_mod_undefined(c.value)` of
+`function temporal_mod_undefined using v(n: Integer): Boolean pure
+{ 3 mod (2 - n) >= 0 }`, whose body alone is checked under `Kernel`
+(FR-952): S3 refuses that `mod` written in a declared clause (FR-337-AC-7).
+FR-327-AC-7's clauses run over the non-model subject `c: Counter`, a record
+with the attribute `level`, with the window-aggregate samples the
+observation owner supplies; the step 4 unit compiles with no refusal.
 
 1. Evaluate the two clauses of FR-327-AC-5 over the closed trace.
 2. Evaluate FR-328-AC-5's clause over the prefix.
 3. Evaluate FR-329-AC-6's clause over the lasso.
-4. Run FR-330-AC-5's request from source.
+4. Run FR-330-AC-5's `Undefined` clause from source, the function's body
+   checked under `Kernel`.
 5. Construct, encode and decode both FR-331-AC-4 requests, assert the decoded
    state-clause target and envelope node/occurrence identify the same clause,
    then replay the two undefined-evaluation packets through
