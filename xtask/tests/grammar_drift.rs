@@ -656,11 +656,6 @@ const PARSER_ONLY: &[(&str, &str, &str)] = &[
         "FR-318-AC-1",
     ),
     (
-        "StepArgument",
-        "the standard has no ebnf production for this form (named in prose by FSpec FR-375); QSL-2960; FSpec FR-375-AC-4",
-        "FSpec FR-375-AC-4",
-    ),
-    (
         "StepDeclaration",
         "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define; FR-710-AC-3",
         "FR-710-AC-3",
@@ -780,7 +775,15 @@ fn disagreements(
 
 /// FR-600-AC-1: every standard production and every parser production is
 /// matched or allow-listed with a reason.
-#[trace("TC-1500", "FR-600-AC-1", "FSpec-TC-1010", "FSpec-FR-503-AC-1")]
+/// FR-600-AC-4: step-argument is read from the pinned standard and is not
+/// parser-only when the standard defines it.
+#[trace(
+    "TC-1500",
+    "FR-600-AC-1",
+    "FR-600-AC-4",
+    "FSpec-TC-1010",
+    "FSpec-FR-503-AC-1"
+)]
 #[test]
 fn every_standard_and_parser_production_is_matched_or_allow_listed() {
     for (name, reason, clause) in STANDARD_ONLY.iter().chain(PARSER_ONLY) {
