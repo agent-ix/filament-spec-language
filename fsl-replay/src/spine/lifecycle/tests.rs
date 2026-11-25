@@ -3094,6 +3094,30 @@ fn wide(bytes: usize) -> SpineLimits {
     limits
 }
 
+/// FR-282-AC-21's source-parsing cancellation path: no parsed unit escapes
+/// when the caller cancels while the source parser is still charging work.
+#[trace("FR-282-AC-21")]
+#[test]
+fn source_parse_cancelled_while_in_progress_returns_no_unit() {
+    let source = declarations(1_000);
+    let limits = wide(source.len());
+    let request = request(source.as_bytes());
+    let total = charges_of(|cancel| parse(&request, limits.source, cancel));
+    assert!(total > 2, "the source parse polled only {total} times");
+
+    let charge = total / 2;
+    let gate = gated(Some(charge));
+    let outcome = gate.run(CancelCause::Requested, |cancel| {
+        parse(&request, limits.source, cancel)
+    });
+    match outcome {
+        Err(StageFailure::Cancelled(CancelCause::Requested)) => {}
+        Err(other) => panic!("expected Cancelled(Requested), got {other:?}"),
+        Ok(_) => panic!("a source parse cancelled in progress returned a parsed unit"),
+    }
+    gate.assert_stopped_at(charge);
+}
+
 /// Declarations in the cancelled-check test, as the AC names them.
 const DECLARATIONS: usize = 200_000;
 

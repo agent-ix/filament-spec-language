@@ -393,8 +393,8 @@ Snapshot, format `filament.state.snapshot/v1`:
   `{"integer": "<decimal>"}`, `{"absent": {}}`, `{"present": <value>}`,
   `{"reference": {"population": ..., "key": ...}}`,
   `{"sequence": [<value>, ...]}`, `{"set": [<value>, ...]}`,
-  `{"bag": [<value>, ...]}`, `{"ordered-set": [<value>, ...]}`, the record
-  form below, the variant form of
+  `{"bag": [<value>, ...]}`, `{"ordered-set": [<value>, ...]}`, the record,
+  tuple and payload-bearing union forms below, the variant form of
   FR-360 and the eleven payload object forms below, `{"kind": "string",
   "text": "<any Unicode scalar sequence>"}`, `{"kind": "uuid", "text":
   "<canonical UUID>"}`, `{"kind": "timestamp", "nanoseconds":
@@ -654,46 +654,90 @@ collection values" admission:
 
 A record value is `{"record": {"type": "<declaration identity>",
 "fields": {"<field name>": <value>, ...}}}`. The outer object has exactly
-the `record` tag; its payload has exactly `type` and `fields`. `type` is the
+the `record` tag; its payload has exactly `type` and `fields`. A missing
+payload member refuses `invalid_runtime_input`/`missing-member` and an extra
+one `unknown-member`. `type` is the
 IR node identity of the value's most-specific admitted record value type,
 not a display name or an object reference. `fields` has exactly one entry
-for every exposed effective field of that type, own and inherited, keyed by
-the exact field name; an optional field is present with `{"absent": {}}`
-or `{"present": <value>}`. Its field values use this same closed value
-grammar, so nested records, optionals and sequence elements may contain
-records. A record's actual type SHALL conform to the field, parameter or
-result's declared record type by FSpec FR-208's record specialization rule.
+for every exposed effective field of that type that carries data, own and
+inherited, keyed by the exact field name; an optional field is present with
+`{"absent": {}}` or `{"present": <value>}`. A field that is a clock entry (the
+clock rule below) has no entry, an optional one included, and an entry
+supplied for it refuses `unknown-member`. Its field values use this same
+closed value grammar, so nested records, optionals and sequence elements may
+contain records. A record's actual type SHALL conform to the field, parameter
+or result's declared record type by FSpec FR-208's record specialization rule.
 The record carries no object key, population or identity, and an object
 `reference` tag cannot stand in for it. Two admitted records compare under
 FR-208 by most-specific type and every effective field; JSON member order
 does not affect the typed value.
 
-A tuple value is `{"tuple":{"type":"<declaration identity>","values":[<value>, ...]}}`.
+A tuple value is `{"tuple":{"type":"<declaration identity>","components":[<value>, ...]}}`.
 The outer object has exactly the `tuple` tag, and its payload has exactly
-`type` and `values`. `type` is the exact checked declaration identity of the
-nominal tuple type selected from the admitted model; `values` is an array in
-the tuple declaration's positional order, with exactly one value for each
-declared element. Admission checks each value against the declared type at
-that position using this same closed value grammar, including nested
-references. It retains the tuple declaration identity and element order. A
-tuple value is not a record and cannot be supplied with named fields.
+`type` and `components`. `type` is the exact checked declaration identity of
+the nominal tuple type selected from the admitted model; `components` is an
+array in the tuple declaration's positional order, with exactly one value for
+each declared component. A missing payload member refuses
+`invalid_runtime_input`/`missing-member`, an extra one `unknown-member`, a
+`type` naming another declaration `wrong-value-kind`, and a component count
+other than the declared arity `invalid-value`. Admission checks each value
+against the declared type at that position using this same closed value
+grammar, including nested references. It retains the tuple declaration
+identity and component order. A tuple value is not a record and cannot be
+supplied with named fields.
+
+A clock place carries no data (FR-230 "Clock-typed positions"; FSpec
+FR-415's data part). A record field, tuple position or union payload position
+that is a clock entry (FR-531: a `Clock` or an alias of it, an
+`Option<Clock>`, or a clock collection whose element holds no data) therefore
+has no entry in `fields` or `components`. In the tuple and union forms, a
+component is a position that carries data, and the declared arity counts only
+those. A tuple with no such position has `"components": []`.
 
 A payload-bearing union value is
-`{"variant":{"type":"<declaration identity>","case":"<member>","values":[<value>, ...]}}`.
+`{"variant":{"type":"<declaration identity>","case":"<member>","components":[<value>, ...]}}`.
 The outer object has exactly the `variant` tag. Its payload has exactly
-`type`, `case` and `values`; `type` is the exact checked declaration identity
-of the nominal union type, and `case` is one declared member name. `values`
-contains exactly the active member's declared payload values in declaration
-order. The existing nullary form
+`type`, `case` and `components`; `type` is the exact checked declaration
+identity of the nominal union type, and `case` is one declared member name.
+`components` contains exactly one value for each of the active member's
+declared components, in declaration order. The nullary form
 `{"variant":{"type":"<declaration identity>","case":"<member>"}}`
-remains the spelling for a nullary member and has exactly `type` and `case`.
-Admission rejects unknown members, extra or missing object members, and a
-payload count different from the active member's declared arity; it checks
-each payload against the corresponding declared type using this same closed
-value grammar, including nested references. The admitted value retains the
-nominal union identity, active member and ordered payload values. A union
-value is not a record or tuple and cannot be supplied using either carrier's
-tag.
+is the spelling for a member with no components, which includes a member
+whose payload positions are all clock entries (FR-230-AC-63's `Armed`), and
+has exactly `type` and `case`. A missing `type` or `case`, or a missing
+`components` on a member that declares components, refuses
+`invalid_runtime_input`/`missing-member`. `components` on a member that
+declares none, or any other extra payload member, refuses `unknown-member`. A
+`type` naming another declaration refuses `wrong-value-kind`. A `case` that
+names no declared member (FR-360 item 9) and a component count other than the
+active member's declared arity refuse `invalid-value`. Admission checks each
+component against the corresponding declared type using this same closed value
+grammar, including nested references. The admitted value retains the nominal
+union identity, active member and ordered components. A union value is not a
+record or tuple and cannot be supplied using either carrier's tag.
+
+A record, tuple or payload-bearing union value with several defects refuses
+the first in this order, which extends FR-360 item 9's order to these forms.
+Each refusal is `invalid_runtime_input`:
+
+1. a value tag other than the slot's tag, a payload that is not an object, a
+   `type` or `case` that is not a string, or a record's `fields` that is not an
+   object: `wrong-value-kind`;
+2. a missing `type`, then a missing `fields` (record), `components` (tuple) or
+   `case` (union): `missing-member`;
+3. an extra payload member: `unknown-member`. A union payload's `components`
+   is judged at step 6;
+4. a `type` naming a declaration the slot does not admit: `wrong-value-kind`;
+5. for a union, a `case` that names no declared member: `invalid-value`;
+6. for a union, `components` missing on a member that declares components:
+   `missing-member`; `components` present on a member that declares none:
+   `unknown-member`;
+7. for a tuple or union, a `components` that is not an array:
+   `wrong-value-kind`;
+8. for a tuple or union, a component count other than the declared arity:
+   `invalid-value`;
+9. the contained values: each component in declaration order, or the record's
+   fields under check 6.5.
 
 A **native payload value** is a String, a UUID, a Timestamp, a Bytes or a
 JsonObject, the closed wire objects of FR-056's K2 canonical native payloads
@@ -1167,7 +1211,7 @@ completeness.
       object reference.
       For a record value, admission SHALL resolve its `type` to an admitted
       record declaration, check conformance to the expected record type,
-      require exactly its effective fields, and validate each field value
+      require exactly its effective data fields, and validate each field value
       under that field's declared type. A missing field refuses
       `missing-member`, an extra field `unknown-member`, an incompatible
       record type or value tag `wrong-value-kind`, and a malformed scalar
@@ -1516,7 +1560,7 @@ completeness.
 | FR-106-AC-12 | Inputs are refused, outputs are evidence. Over a package whose operation declares a parameter `Int[0, 1000]`, an invocation or `PreCall` argument of `-1` refuses `invalid_runtime_input`/`invalid-value` naming the parameter, both under the default limits and under `PostStateRange::Witness`; `1000` admits. Over the ConfigVersion model's `versionNumber` (`Int[0, 1000]`), a postcondition invocation's post snapshot holding `-1` under `PostStateRange::Witness` admits, and the post observation reports one `OutOfRange` naming the object `child`, the field `versionNumber`, the range `[0, 1000]`, the exact observed -1 and no index; a pre snapshot holding `-1` or `1001` under `Witness` still refuses `invalid-value`. A sequence field of `Int[0, 1000]` elements holding `5`, `1001` in a post snapshot under `Witness` admits exactly and reports the element at index 1; under `Refuse` it refuses. An in-range value reports nothing. | Test |
 | FR-106-AC-13 | The default is `Refuse`. The wrapping debit (`child.versionNumber` 0 to -1) refuses `invalid_runtime_input`/`invalid-value` naming `child` and `versionNumber` under `admit_observations` with default limits, through `run_clause`'s `Clause` selection of `VersionAdvances`, and through `run_clause`'s `Frame` selection of `attemptUpdate`. | Test |
 | FR-106-AC-14 | A current snapshot of `Account` whose required `address: Address` field is `{"record":{"type":"ix://example/model/PostalAddress","fields":{"street":{"present":{"record":{"type":"ix://example/model/Street","fields":{"name":{"integer":"7"}}}}},"zip":{"integer":"42"}}}}` admits when `PostalAddress` specializes `Address`, its effective `street` field is optional `Street`, its `zip` field is `Integer`, and `Street.name` is `Integer`. Reordering JSON object members yields the same typed observation. The two nested records retain their most-specific types and are reached by distinct FR-207 field and option-value paths. | Test |
-| FR-106-AC-15 | A record payload with a missing effective field refuses `invalid_runtime_input`/`missing-member`; one with an extra field refuses `unknown-member`; a `type` naming an object type, an unrelated record subtype, or no selected record refuses `wrong-value-kind`; and an object reference in place of a record refuses `wrong-value-kind`. Each refusal names the first nested path reached in field order, including an index for a sequence element. The same cases in a parameter or result use the invocation binding as the path root. | Test |
+| FR-106-AC-15 | A record payload with a missing effective data field refuses `invalid_runtime_input`/`missing-member`; one with an extra field refuses `unknown-member`; a `type` naming an object type, an unrelated record subtype, or no selected record refuses `wrong-value-kind`; and an object reference in place of a record refuses `wrong-value-kind`. Each refusal names the first nested path reached in field order, including an index for a sequence element. The same cases in a parameter or result use the invocation binding as the path root. | Test |
 | FR-106-AC-16 | A finite `Node { next?: Node }` value nested through 10,000 present `next` fields admits when byte and value limits allow it, with no reader or validator stack-depth refusal. At the exact values-per-document bound the document admits; one more nested value returns `stage_limit_exceeded`/`node-count-exceeded` naming `observation.values`, the bound and the count reached, before that value is admitted. A false invariant on one nested `Node` is reported as a logical violation at its FR-207 runtime value path after admission, not as an input refusal. | Test |
 | FR-106-AC-17 | An invocation changing `Account.address` from one admitted record value to another admits its frame when the selected `modifies` grant covers that declared object field. Without that grant it refuses `frame_violation`/`unauthorized-change` naming `Account.address`, whether the change is to a record member or its most-specific type. The existing FSpec FR-013 and FR-340 receiver and grant semantics apply. | Test |
 | FR-106-AC-18 | Over the TC-1029 fixture, a current snapshot whose `child` holds `token` `{"kind":"uuid","text":"00112233-4455-6677-8899-aabbccddeeff"}` and `stamp` `{"kind":"timestamp","nanoseconds":"0"}` admits both as a UUID and a Timestamp value of the retained canonical payloads; reordering the members of either object, and the whitespace of the document, gives the same typed observation. Nil (`00000000-0000-0000-0000-000000000000`), Max (`ffffffff-ffff-ffff-ffff-ffffffffffff`), a UUID whose version nibble is `0`, outside RFC 9562's version table (`00112233-4455-0677-8899-aabbccddeeff`), and Timestamps `1`, `-1`, `170141183460469231731687303715884105727` and `-170141183460469231731687303715884105728` admit unchanged. A present optional `prior`, each element of a `Sequence<Timestamp>` field `seen`, and the `id` and `at` parameters and a UUID `result` of an invocation admit by the same rule, and each object counts as one value toward `observation.values`. | Test (TC-1029) |
@@ -1585,7 +1629,7 @@ completeness.
 | FR-106-AC-81 | In the planned `fsl-eval/tests/it/clock_reference_v2.rs::clock_reference_seed_ref_outside_timed_selector_range_remains_admitted` vector, extend the TC-464 `Call` fixture with `q: Sequence<Clock>` having no declared maximum, use a complete `calls` population containing `c1` with `q` empty, and set `r` to `{"reference":{"population":<calls declaration> ,"key":<canonical place/v2 id>}}`. Construct that id from `P` = `Call`'s `calls` population declaration, `K` = `c1`, `S` = the selected `Call` model scope, `T` = the declared `Call.q` collection-of-Clock path, and `J` = `[["slot","1","7"]]`. With `model_check.max_clocks` 4 and the fixture's four live scalar places, slot 7 is outside the derived selector range but valid for the unbounded declared template. Source and Bare admission retain `r` as the exact reference data value; `q[7]` is not a live clock, and a stored-field read, equality comparison and state-key encoding preserve the identity. The timed engine admits the input without refusing or truncating that reference. | Test (TC-464) |
 | FR-106-AC-82 | Over TC-465's `ConfigVersion` snapshot with `versionNumber` removed from the first object, admission refuses `invalid_runtime_input`/`missing-member` with `object` `root`, `field` and `member` `versionNumber`, and `path` `/populations/0/objects/0/fields/versionNumber`, the pointer of the absent member; the unknown, invalid-value and wrong-kind field refusals name `/populations/0/objects/0/fields/NAME` and a duplicate key `/populations/0/objects/2/key`; the native result retains the same `path`. | Test (TC-465) |
 | FR-106-AC-83 | When an unseeded refinement-row receiver admits an initial snapshot whose raw `Clock` reference targets a declared or removed place identity, admission refuses before refinement evaluation with `unknown_required_feature`/`unsupported-feature`, `reason` `missing-route-neutral-place-identity`, `document` equal to the `DocumentRef.identity` member of the snapshot (for identity `test/clock-snapshot`, the field value is `clock-snapshot`, not the authority or combined identity), `target` equal to the exact supplied place identity, and `path` `/populations/0/objects/0/fields/r`. It produces no admitted observation or truth value. For the TC-464 `Call` fixture with snapshot identity `test/clock-snapshot`, each of `c1.x` and `c1.removed` exercises the refusal at the same `r` field path and retains its own exact target identity. | Test (TC-464) |
-| FR-106-AC-84 | Over TC-464 step 11's `Box`, `Pair` and `Holder` fields, admit a record using the existing `record`/`fields` carrier, a nominal tuple using `{"tuple":{"type":"<Pair declaration identity>","values":[<Reference<Ring> value>,{"boolean":true}]}}`, and the `Holder::Has` union case using `{"variant":{"type":"<Holder declaration identity>","case":"Has","values":[<Reference<Ring> value>]}}`; retain the selected declaration identities and tuple/payload order, and recursively admit each nested reference as the same checked reference value. The `Holder::Empty` nullary case remains `{"variant":{"type":"<Holder declaration identity>","case":"Empty"}}`. An extra tuple or variant payload member, a tuple value count other than two, a `Has` payload count other than one, or an unknown case is refused before an observation is produced. | Test (TC-464) |
+| FR-106-AC-84 | Over TC-464 step 11's `Box`, `Pair` and `Holder` fields, admit a record using the existing `record`/`fields` carrier, a nominal tuple using `{"tuple":{"type":"<Pair declaration identity>","components":[<Reference<Ring> value>,{"boolean":true}]}}`, and the `Holder::Has` union case using `{"variant":{"type":"<Holder declaration identity>","case":"Has","components":[<Reference<Ring> value>]}}`; retain the selected declaration identities and component order, and recursively admit each nested reference as the same checked reference value. The `Holder::Empty` nullary case is `{"variant":{"type":"<Holder declaration identity>","case":"Empty"}}`. An extra record, tuple or variant payload member refuses `invalid_runtime_input`/`unknown-member`; a tuple component count other than two, a `Has` component count other than one, and an unknown case each refuse `invalid_runtime_input`/`invalid-value`; each refusal occurs before an observation is produced. | Test (TC-464) |
 
 ## Dependencies
 

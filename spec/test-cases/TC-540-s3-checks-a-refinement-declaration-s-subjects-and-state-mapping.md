@@ -13,7 +13,8 @@ relationships:
 Verify that S3 checks a refinement declaration's header, population rows and
 object rows into a `CheckedRefinement`, refuses each missing, duplicated,
 misplaced or ill-typed row at its span, lifts references, records hidden
-fields and puts the declaration in the package identity.
+fields and puts the declaration in the checked package as a node whose body
+holds its rows and whose node key does not.
 
 Scope: FR-135-AC-1 to FR-135-AC-19.
 
@@ -29,8 +30,9 @@ Fixtures: ADR-020 §8's `CasRefinesCounter` unit, with `Spec` local and with
    `Reference<Q::Queue>` field mapped by `self.ring` and by an expression of
    type `Reference<R::Slot>`.
 4. Check `CasRefinesCounter` with the `value` row removed; check it with
-   `value = self.tmpA` and compare node identities and `package_id`s with
-   step 1.
+   `value = self.tmpA`, in a package of step 1's identity and version, and
+   compare with step 1's local check the refinement's node key, the `value`
+   field row's expression, the hidden fields and the package identity.
 5. Check `CasTwice` and `CasRefinesCounter`, each in the build as it stands
    (FR-135-AC-5); check a refinement given a non-empty resolved internal list
    (FR-135-AC-9); check `RegisterHistory`, whose `history` feature the build
@@ -87,8 +89,10 @@ Tag all tests `#[trace("TC-540", "FR-135-AC-n")]` for their owning criteria.
   span, and no `CheckedRefinement`.
 - Step 3: `ill_typed`/`type-mismatch` at the expression; the `self.ring` row
   checks; the `Reference<R::Slot>` row refuses `ill_typed`/`type-mismatch`.
-- Step 4: `hidden = [value]`; different node identity and different
-  `package_id`.
+- Step 4: with the row removed, `hidden = [value]`. With `value = self.tmpA`,
+  a node key equal to step 1's (equal `package` and `path`, ordinal 0 in
+  both); the `value` field row reads `self.tmpA` where step 1's reads
+  `self.value`; neither check has a hidden field.
 - Step 5: `CasTwice` refuses `unsupported_construct`/`not-yet-implemented` at `Twice` naming `protocol-abstract-side`, `CasTwice` and the profile, with no `subject` member; the internal-list refinement refuses the same pair naming `refinement-internal-list`; each classifies `unsupported`; no `CheckedRefinement` for either; `CasRefinesCounter` and `RegisterHistory` check.
 - Step 6: the sequence, option, plain-reference and depth-two rows check, each
   nested reference lifted through the `Queue` from `Ring` row; the `Slot` row

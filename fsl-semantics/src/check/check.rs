@@ -3623,6 +3623,8 @@ impl<'a> Typer<'a> {
                 },
             ));
         }
+        // FR-016: a `let` or expression binder may shadow a parameter; a name
+        // that an active binder holds, or a second parameter, refuses.
         if let Some(existing) = self.local(name) {
             if !(kind == LocalKind::Bound && existing.kind == LocalKind::Parameter) {
                 return Err(refuse(
