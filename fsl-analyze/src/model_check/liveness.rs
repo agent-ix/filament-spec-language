@@ -1420,12 +1420,22 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     fn prefetch_expansions(&self, states: &[LState<S::State>], workers: usize) {
         let worker_batch = workers.max(1);
-        self.prefetched.borrow_mut().clear();
+        let window: Vec<_> = states
+            .iter()
+            .take(worker_batch)
+            .map(|state| (Self::raw_expansion_key(state), state.model.clone()))
+            .collect();
+        let window_keys: BTreeSet<_> = window.iter().map(|(key, _)| key.clone()).collect();
+        self.prefetched
+            .borrow_mut()
+            .retain(|key, _| window_keys.contains(key));
+
         let mut jobs = Vec::new();
-        for state in states.iter().take(worker_batch) {
-            let key = Self::raw_expansion_key(state);
-            if !jobs.iter().any(|(known, _)| *known == key) {
-                jobs.push((key, state.model.clone()));
+        let mut scheduled = BTreeSet::new();
+        for (key, model) in window {
+            let already_prefetched = self.prefetched.borrow().contains_key(&key);
+            if !already_prefetched && scheduled.insert(key.clone()) {
+                jobs.push((key, model));
             }
         }
         if jobs.is_empty() {
@@ -1436,7 +1446,9 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             self.system
                 .expand_live_batch(states, self.enforce, self.stutter_closure, worker_batch);
         let results: BTreeMap<RawExpansionKey, _> = keys.into_iter().zip(results).collect();
-        self.prefetched.borrow_mut().extend(results);
+        let mut prefetched = self.prefetched.borrow_mut();
+        prefetched.extend(results);
+        debug_assert!(prefetched.len() <= worker_batch);
     }
 
     fn raw_expansion_key(state: &LState<S::State>) -> RawExpansionKey {
