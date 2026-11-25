@@ -55,7 +55,7 @@ impl StateEnvironment {
 
 /// Whether a replay request's stage-limits wire can carry this setting
 /// (FR-255 lifecycle caller-limit coverage).
-#[implements("FR-255-AC-24")]
+#[implements("FR-255-AC-24", "FR-263-AC-3", "FR-399-AC-5")]
 pub(crate) const fn is_replay_wire_stage_setting(setting: Setting) -> bool {
     !matches!(
         setting,

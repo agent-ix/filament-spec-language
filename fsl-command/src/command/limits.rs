@@ -21,6 +21,7 @@ use fsl_foundation::diagnostic::LimitExceeded;
 use fsl_foundation::{AccountingSetting, Setting, SettingLimits, SettingName};
 use fsl_replay::spine::SpineLimits;
 use fsl_replay::{AccountingLimits, CallerLimits};
+use ix_trace_rs::implements;
 
 /// The command entry point a [`CommandLimits`] configures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -335,6 +336,7 @@ impl CommandLimits {
 
     /// Whether the operation exposes the stage `setting`.
     #[must_use]
+    #[implements("FR-255-AC-24")]
     pub fn exposes(&self, setting: Setting) -> bool {
         COMMON.contains(&setting)
             || match self.operation {
