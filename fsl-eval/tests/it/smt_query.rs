@@ -555,7 +555,7 @@ fn monitor_encoding_limits_accept_exact_and_reject_zero_or_one_short() {
 #[test]
 fn monitor_alphabet_width_overflow_is_a_typed_size_refusal() {
     let atoms = (0..63)
-        .map(|value| format!("holds(c.value = {value})"))
+        .map(|value| format!("holds(c.value <= {value})"))
         .collect::<Vec<_>>();
     let body = format!("always ({})", atoms.join(" and "));
     let formulas = [body.as_str()];
@@ -758,7 +758,7 @@ fn guarded_infinite_and_bounded_items_preserve_monitor_and_guard_failures() {
         &document,
         contract,
         BOUNDED,
-        "on each (q: M::Counter) when (c.value + 2 = c.value)",
+        "on each (q: M::Counter) when (c.value < 2 and c.value + 2 = c.value)",
         &["eventually[0,3] holds(c.value = 3)"],
         &[("c", json!({"value": {"integer": "0"}}))],
     );
@@ -788,7 +788,7 @@ fn guarded_infinite_and_bounded_items_preserve_monitor_and_guard_failures() {
         assert_eq!(
             negated[position * 3 + 1],
             format!(
-                "(and (not h{position}) (not (and (<= 0 (+ s{position}.c.value 2)) (<= (+ s{position}.c.value 2) 3))))"
+                "(and (not h{position}) (not (=> (< s{position}.c.value 2) (and (<= 0 (+ s{position}.c.value 2)) (<= (+ s{position}.c.value 2) 3)))))"
             )
         );
         let postcondition_failure = &negated[position * 3 + 2];
