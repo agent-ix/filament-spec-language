@@ -827,8 +827,14 @@ fn the_counter_behaviour_is_positions_anchored_by_initialization_then_each_inc_a
     assert_eq!(stutter, ProductTransition::TerminalStutter);
     assert_eq!(value(&again.model, "c"), 3, "position 3 repeats");
     assert_eq!(
-        model.state_key(&again.model).expect("encodes").1,
-        model.state_key(&state.model).expect("encodes").1,
+        model
+            .state_key(&again.model, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .1,
+        model
+            .state_key(&state.model, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .1,
         "the stutter returns to the same state"
     );
     let written = |step: &ProductTransition<_>| {

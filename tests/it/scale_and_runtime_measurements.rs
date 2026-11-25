@@ -191,9 +191,7 @@ fn selector(base: u8, shape: usize) -> u8 {
 /// shapes. Each input compiles to a unit or stops at a stated limit. No input
 /// is deeper than 10,000 levels: emission memory grows with the square of a
 /// sum's depth and passes 12 GB well before the generator's 100,000-level
-/// ceiling. No mixed input nests both a sum and an `else if`:
-/// emission refuses a sum inside an `else` branch, which
-/// `a_sum_in_an_else_branch_compiles_or_stops_at_a_limit` reproduces.
+/// ceiling.
 #[test]
 #[ignore = "runs in make test-deep-measurements (part of make ci)"]
 fn deep_input_generator_returns_outcomes_for_ten_thousand_inputs() {
@@ -212,14 +210,12 @@ fn deep_input_generator_returns_outcomes_for_ten_thousand_inputs() {
             let raw = u32::try_from(depth - 1).expect("depth fits the generator's bytes");
             let mut bytes = vec![selector(base, index % 6)];
             bytes.extend_from_slice(&raw.to_le_bytes());
-            // The mixed shape alternates between cycling sum, bracket and `let`
-            // and cycling `else if`, bracket and `let`. A sum is followed by a
-            // bracket, since the grammar takes no bare `if` or `let` as a sum's
-            // right operand.
-            let kinds: [u8; 3] = if (index / 6) % 2 == 0 {
-                [1, 0, 3]
+            // The mixed shape cycles all four level kinds, alternating which of
+            // the sum and the `else if` comes first.
+            let kinds: [u8; 4] = if (index / 6) % 2 == 0 {
+                [2, 1, 0, 3]
             } else {
-                [2, 0, 3]
+                [1, 2, 0, 3]
             };
             bytes.extend_from_slice(&kinds);
             let input = fsl_bench::deep_input::DeepInput::from_bytes(&bytes);
@@ -257,7 +253,6 @@ fn deep_input_generator_returns_outcomes_for_ten_thousand_inputs() {
 /// A conditional whose `else` branch adds two integers is a bounded, well-typed
 /// unit, so S1 to S4 compile it or stop at a stated limit.
 #[test]
-#[ignore = "QSL-3283: emission refuses a sum inside an else branch with SourceMapInvariant"]
 fn a_sum_in_an_else_branch_compiles_or_stops_at_a_limit() {
     use fsl_bench::deep_input::{DeepInput, Level, Shape};
     // `if true then x else x + x`

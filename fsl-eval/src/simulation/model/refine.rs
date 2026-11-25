@@ -337,9 +337,15 @@ impl ModelSystem<'_> {
                     Some(group) => self
                         .canonicalise(&generated, group)
                         .ok()
-                        .and_then(|(canonical, _)| self.state_key(&canonical).ok())
+                        .and_then(|(canonical, _)| {
+                            self.state_key(&canonical, fsl_foundation::IdentityLimits::default())
+                                .ok()
+                        })
                         .map(|(bytes, _)| bytes),
-                    _ => self.state_key(&generated).ok().map(|(bytes, _)| bytes),
+                    _ => self
+                        .state_key(&generated, fsl_foundation::IdentityLimits::default())
+                        .ok()
+                        .map(|(bytes, _)| bytes),
                 };
                 debug_assert_eq!(
                     comparison.as_ref(),

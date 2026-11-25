@@ -1060,7 +1060,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
     fn state_key(&self, state: &ModelSimState) -> Result<Vec<u8>, Stop> {
         let (key, _) = self
             .system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| Stop::Error(PlanSearchError::StateKey))?;
         let bound = self.request.limits.get(PlanLimit::MaxStateKeyBytes);
         if u64::try_from(key.len()).map_or(true, |length| length > bound) {

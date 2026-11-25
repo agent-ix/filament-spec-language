@@ -407,7 +407,9 @@ fn clock_reference_values_restore_from_state_key_with_equality() {
     })
     .expect("the Source ModelSystem admits ordinary owners");
     let original = &system.initial_states()[0];
-    let (initial_bytes, _) = system.state_key(original).expect("state key encodes");
+    let (initial_bytes, _) = system
+        .state_key(original, fsl_foundation::IdentityLimits::default())
+        .expect("state key encodes");
     let mut encoded: Json = serde_json::from_slice(&initial_bytes).expect("canonical state key");
     let clock_set = json!({
         "type": "set",
@@ -430,7 +432,9 @@ fn clock_reference_values_restore_from_state_key_with_equality() {
             &filament_exact::Cancel::new(),
         )
         .expect("clock-reference state key restores");
-    let (restored_bytes, _) = system.state_key(&restored).expect("restored key encodes");
+    let (restored_bytes, _) = system
+        .state_key(&restored, fsl_foundation::IdentityLimits::default())
+        .expect("restored key encodes");
     assert_eq!(restored_bytes, bytes);
 
     let field = system

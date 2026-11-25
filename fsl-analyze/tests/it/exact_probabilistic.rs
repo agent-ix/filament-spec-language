@@ -3081,7 +3081,10 @@ fn fair_minimum_replays_drift_into_a_zero_value_fair_component() {
         .expect("claim binding")
         .expect("the W receiver is bound");
     let key_for = |state: &fsl_eval::simulation::model::ModelSimState| {
-        let bytes = system.state_key(state).expect("canonical W state").0;
+        let bytes = system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("canonical W state")
+            .0;
         fsl_replay::ProbabilityProductKey::for_model_state(Some(&binding.reference), &bytes)
             .expect("complete fair-minimum key")
     };

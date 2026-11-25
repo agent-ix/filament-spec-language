@@ -1915,7 +1915,7 @@ impl<'a> Run<'_, 'a> {
             .zip(&state.components)
             .map(|(slot, component)| {
                 self.systems[*slot]
-                    .state_key(component)
+                    .state_key(component, fsl_foundation::IdentityLimits::default())
                     .map(|(bytes, _)| fsl_eval::simulation::StateKey::from_canonical_bytes(bytes))
                     .map_err(ModelCheckRefusal::Encoding)
             })
@@ -1974,7 +1974,10 @@ impl<'a> Run<'_, 'a> {
             let (initial, steps, marks) = if component < universals {
                 let system = &self.systems[self.slots[component]];
                 let start = system
-                    .state_key(&root_state.components[component])
+                    .state_key(
+                        &root_state.components[component],
+                        fsl_foundation::IdentityLimits::default(),
+                    )
                     .map_err(ModelCheckRefusal::Encoding)?
                     .0;
                 let initial = system
@@ -1982,7 +1985,7 @@ impl<'a> Run<'_, 'a> {
                     .iter()
                     .position(|state| {
                         system
-                            .state_key(state)
+                            .state_key(state, fsl_foundation::IdentityLimits::default())
                             .is_ok_and(|(bytes, _)| bytes == start)
                     })
                     .and_then(|index| u32::try_from(index).ok())
