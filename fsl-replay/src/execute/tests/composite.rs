@@ -774,13 +774,13 @@ fn list(declaration: NodeKey, depth: usize) -> WitnessValue {
 /// `s3.*` and `emit.output_bytes` settings, and whose `replay.input_bytes` is raised to fit,
 /// replays to the proving run's verdict,  Under the default limits it refuses by the first
 /// limit it reaches.
-#[trace("TC-736", "FR-263-AC-1")]
+#[trace("TC-736", "FR-263-AC-1", "FR-277-AC-2")]
 #[test]
 fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
     on_small_stack(|| {
         const TERMS: usize = 100_000;
         // Retain the replay inputs, not the compiler graph, during replay.
-        let (source_bytes, package_bytes, target, parameter, record) = {
+        let (source_bytes, package_bytes, target, parameter, record, s3_nodes) = {
             let sum = vec!["l.head"; TERMS].join(" + ");
             let fixture = fixture_with_raised_limits(&format!(
                 "record List {{ head: Int[0, 9]; tail: List?; }}\n\
@@ -792,12 +792,24 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
             );
             let parameter = fixture.parameter("small");
             let record = fixture.record_id("List");
+            let s3_nodes = u64::try_from(
+                fixture
+                    .compiled
+                    .package
+                    .graph()
+                    .semantic_graph()
+                    .nodes()
+                    .count(),
+            )
+            .expect("the checked graph node count fits u64");
+            assert!(s3_nodes > 0, "the checked body has semantic graph nodes");
             (
                 fixture.source.into_bytes(),
                 fixture.compiled.emitted.bytes().to_vec(),
                 target,
                 parameter,
                 record,
+                s3_nodes,
             )
         };
         let request = |source| ReplayRequestWire {
@@ -869,6 +881,24 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
         // The raised settings replay, from the witness and from the input.
         let wire = witness(&limits);
         assert_reproduced(replay(wire, raised));
+
+        // The same 100,000-term source refuses when `s3.nodes` is one below
+        // the node count of its independently checked semantic graph.
+        let mut one_below = witness(&limits);
+        one_below
+            .stage_limits
+            .insert("s3.nodes".to_owned(), s3_nodes - 1);
+        let refused = replay(one_below, raised).expect_err("one below S3 nodes refuses");
+        let ReplayRefusal::Recompile { refusal, .. } = refused else {
+            panic!("expected an S3 limit refusal, got {refused:?}");
+        };
+        assert_eq!(refusal.stage(), SpineStage::Check);
+        assert_eq!(refusal.code(), Code::StageLimitExceeded);
+        let limit = refusal.limit().expect("the refusal carries its S3 limit");
+        assert_eq!(limit.setting().name(), "s3.nodes");
+        assert_eq!(limit.configured_bound(), s3_nodes - 1);
+        assert_eq!(limit.actual(), s3_nodes);
+
         let mut input = request(typed_input(parameter.clone(), list(record.clone(), TERMS)));
         input.stage_limits = limits;
         assert_reproduced(replay(input, raised));
