@@ -3571,7 +3571,7 @@ fn snapshot_field_path(population: usize, object: usize, field: &str) -> String 
     )
 }
 
-#[ix_trace_rs::implements("FR-106")]
+#[ix_trace_rs::implements("FR-125-AC-13")]
 fn object_field_values_match(
     types: &TypeEnvironment,
     record_keys: &BTreeMap<String, filament_exact::NodeKey>,
