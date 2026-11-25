@@ -53,7 +53,9 @@ fn model() -> String {
 
 /// FR-1041-AC-5's cyclic Link model: `send_b` is the live wait self-loop;
 /// fair strong `send_a` is sampled once and reaches either delivered or the
-/// stopped terminal with probability one half.
+/// stopped terminal with probability one half. `send_c` is never enabled, as
+/// in [`model`]: left without clauses it can leave the initial state for good
+/// without delivering, and the fair minimum is 0.
 fn fair_link_model() -> String {
     format!(
         "{}\n\
@@ -61,8 +63,11 @@ fn fair_link_model() -> String {
         post Sent_send_a using v on M::Msg::send_a {{ self.attempts = 1 and self.delivered = lost }}\n\
         pre Ready_send_b using v on M::Msg::send_b {{ not self.delivered and self.attempts = 0 }}\n\
         post Sent_send_b using v on M::Msg::send_b {{ self.attempts = 0 and not self.delivered }}\n\
+        pre Never_send_c using v on M::Msg::send_c {{ false }}\n\
+        post Sent_send_c using v on M::Msg::send_c {{ self.attempts = 0 and not self.delivered }}\n\
         random Msg::send_a(lost) ~ {{ true: 1, false: 1 }};\n\
         random Msg::send_b(lost) ~ {{ true: 1, false: 1 }};\n\
+        random Msg::send_c(lost) ~ {{ true: 1, false: 1 }};\n\
         terminal Stop using v on M when {{ self.delivered or self.attempts = 1 }};\n",
         include_str!("../fixtures/link.native")
             .lines()
