@@ -19,6 +19,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-507
     type: depends_on
   - target: "ix://agent-ix/filament-specification/FR-300"
@@ -352,8 +354,13 @@ pub struct AnalyzeLimits {
     pub accounting: ScalarLimits,
     pub observation: ObservationLimits,
     pub normalization: ModelNormalizationLimits,
+    pub expansion: fsl_eval::simulation::model::ExpansionLimits,
     pub simulation: SimulationLimits,
+    pub position_limit: u64,
     pub deadline: DeadlineSupply,
+    pub emit: fsl_package::EmitLimits,
+    pub replay: fsl_replay::ReplayLimits,
+    pub engines: EngineBounds,
 }
 
 pub struct SimulationLimits {
@@ -361,6 +368,8 @@ pub struct SimulationLimits {
     pub max_transitions: u64,  // `explore.transitions`, default 100000000
     pub max_steps: u64,        // `simulation.max_steps`, default 16777216
 }
+
+pub struct EngineBounds { /* bounds explicitly named by the caller */ }
 
 pub enum DeadlineSupply {
     Unbounded,
@@ -422,10 +431,16 @@ pub enum DeadlineSupply {
   FR-272 code, cause and payload of an `unsupported` or `invalid-request`
   disposition (FSpec FR-331), present exactly for those two.
 - `Engines`: the engines "Negotiated items" describes.
-- `AnalyzeLimits`: the accounting limits, the observation and
-  model-normalization limits the binding is admitted under, each with its
-  published default (FR-277), the simulation limits `simulation`, and the
-  request's deadline `deadline`.
+- `AnalyzeLimits`: the accounting limits, observation and model-normalization
+  limits under which the binding is admitted (FR-277), expansion limits
+  `expansion`, simulation limits `simulation`, request deadline `deadline`,
+  package emission limits `emit`, replay reader limits `replay`, and
+  explicitly named engine bounds `engines`. `position_limit` is the separate
+  bound on model-domain positions used by model-based testing, default 10000;
+  it is not the trace-step limit `simulation.max_steps` and has no
+  FR-255 caller-limit setting. `expansion.max_candidates`
+  defaults to 1,000,000 even in `AnalyzeLimits::unbounded`; a caller may
+  replace it through FR-255's `expansion.max_candidates` setting.
   `DeadlineSupply` has no `Default`, so `AnalyzeLimits` has none and the
   caller supplies `deadline` explicitly, as FR-277 has callers supply
   `ScalarLimits` and `supplied`: `Unbounded`, or `Milliseconds(n)`, the
@@ -437,12 +452,16 @@ pub enum DeadlineSupply {
   it is part of the request so that the request states its deadline and the
   timer is armed from that one value.
 - `SimulationLimits`: the exploration limits `explore.states` and
-  `explore.transitions` (FR-255) and the trace position limit
+  `explore.transitions` (FR-255) and the trace-step limit
   `simulation.max_steps`, each with the published default shown, so a
   caller that sets none gets the defaults a `simulation` item uses. They
-  bound the state exploration and trace generation of a `model_based_test`
-  plan step (FR-752 "Entry"); an `analyze` item that carries its own
+  bound state exploration and generated trace length for a `model_based_test`
+  plan step (FR-752 "Entry"); they do not set the separate `position_limit`
+  used to bound model-domain positions. An `analyze` item that carries its own
   `simulation` member (FR-634) keeps its own settings.
+- A plan `model_based_test` step receives `AnalyzeLimits.expansion` for each
+  expansion, `AnalyzeLimits.simulation` for exploration and the trace-step
+  ceiling, and `AnalyzeLimits.position_limit` for model-domain positions.
 - `&Cancel`.
 
 ## Outputs
@@ -617,6 +636,7 @@ registry reaches EN-7 (FR-620, FR-633).
 | FR-281-AC-24 | When an external provider reports a refuted verdict with each FR-290 unusable-counterexample reason in turn, the item settles `inconclusive` with cause `replay-parity`, carries one item diagnostic with code `invalid_result`, cause `invalid-value` and that typed reason, and carries neither `counterexample` nor `replay`; a refuted verdict with mapped assignments still follows the existing replay rule. | Test (TC-774) |
 
 | FR-281-AC-25 | If an engine returns `undefined` while evaluating a claim at a state or step, the item settles `refuted` with `UndefinedEvaluation{where, cause}` identifying that state or step. It is not settled with an `undefined` label. | Test (TC-763) |
+| FR-281-AC-26 | `AnalyzeLimits::unbounded()` sets `expansion.max_candidates` to `1000000`, `simulation.max_states` to `10000000`, `simulation.max_transitions` to `100000000`, `simulation.max_steps` to `16777216` and `position_limit` to `10000`; replacing only `expansion.max_candidates` with caller value `B` changes only that field. The `AnalyzeLimits` fields are `accounting`, `observation`, `normalization`, `expansion`, `simulation`, `position_limit`, `deadline`, `emit`, `replay` and `engines`. | Test |
 ## Dependencies
 
 - ADR-029 OP-2, CB-3: the operation and layer A.

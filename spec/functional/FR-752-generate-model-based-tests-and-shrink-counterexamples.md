@@ -52,8 +52,10 @@ pub fn run_model_based_test(
 
 - `ModelBasedTestRequest` holds the clause identity, the generator profile,
   `seed`, `max_cases`, `max_trace_length` (`Option<u64>`), `max_value_bits`
-  (`Option<u64>`), the model subject (`Option<ModelSubject>`) and the run's
-  limits.
+  (`Option<u64>`), the model subject (`Option<ModelSubject>`),
+  `expansion: ExpansionLimits` (FR-120's per-expansion candidate allowance),
+  and the run's accounting, observation, normalization, exploration and
+  position limits. Direct library callers supply these limits explicitly.
 - `ModelSubject` is the subject a clause over a state model is tested
   against: FR-120's `ModelSimulationRequest` members other than the package
   and the limits, that is `packages` (FR-056), `snapshots` (the FR-106
@@ -61,10 +63,15 @@ pub fn run_model_based_test(
   clause has none.
 - The limits are the scalar accounting limits of every evaluation the run
   makes (FSpec FR-461 `accounting.*`), the observation and normalization
-  limits the subject is admitted under (FR-106), the reachability
-  exploration limits (`explore.states` and `explore.transitions`) and the
-  position limit of one generated trace (`simulation.max_steps`), each a
-  FR-255 setting.
+  limits the subject is admitted under (FR-106), an `ExpansionLimits`
+  `max_candidates` allowance for each model expansion, the reachability
+  exploration limits (`explore.states` and `explore.transitions`), the
+  generated trace-step limit (`simulation.max_steps`), and the separate model
+  domain position limit (`position_limit`). A plan step receives expansion,
+  simulation and `position_limit` from FR-281's
+  `AnalyzeLimits`: exploration defaults are 10000000 states and 100000000
+  transitions, the trace-step limit defaults to 16777216, and the distinct
+  model-domain `position_limit` defaults to 10000.
 - The entry SHALL build the run's model system itself. For a clause over a
   state model it builds FR-120's `ModelSystem` from the package and the
   subject, giving it the size-bounded domain of each root with no finite
@@ -125,9 +132,10 @@ pub fn run_model_based_test(
   `max_trace_length` and `max_value_bits`, for a clause over a state model the model subject
   whose `initial` is the step's admitted `initial` snapshot and whose
   `universes` are from the admitted `universe_snapshot` when present (FR-1038),
-  otherwise from its initial snapshots, the accounting, observation and normalization limits from
-  `AnalyzeLimits` and the exploration and position limits from
-  `AnalyzeLimits.simulation` (FR-281),
+  otherwise from its initial snapshots, accounting, observation and
+  normalization limits from `AnalyzeLimits`, expansion limit from
+  `AnalyzeLimits.expansion`, and exploration and position limits from
+  `AnalyzeLimits.simulation` and `AnalyzeLimits.position_limit` (FR-281),
   passes `NativeAdmission`, and maps the record's `result` and `cause` to
   the step's disposition (FSpec FR-824); a `ModelBasedTestRefusal` settles
   the step as the request refusal it is.
@@ -161,6 +169,14 @@ pub fn run_model_based_test(
   universe, the model-based-test entry SHALL return FR-120's
   `NotSimulated::RequiresBound` refusal before any case runs; the entry SHALL
   NOT convert that refusal to a settlement or a value-bounded population.
+- Every expansion made by a model-based-test run, including reachability
+  exploration, SHALL use the request's `ExpansionLimits.max_candidates` as a
+  local per-expansion ceiling. When a candidate's charge would exceed that
+  ceiling, FR-120 SHALL stop before allocating its successor and return no
+  partial successor set as completed. When an expansion reaches that ceiling,
+  FR-752 SHALL settle the run `incomplete` with cause
+  `limit-reached{limit: max_candidates, value, setting: expansion.max_candidates}`,
+  with `value` equal to the configured bound.
 - Partition cases SHALL be built as FSpec FR-190 "Partitions" states: in the
   domain through the shortest enabled prefix the coverage exploration finds,
   or as refusal cases through the native admission that guards the root.
@@ -254,6 +270,7 @@ pub fn run_model_based_test(
 | FR-752-AC-11 | `run_model_based_test` returns `Err(ModelBasedTestRefusal)` naming the member, and runs no case, for `max_cases` 0, `max_trace_length` `Some(0)`, an unknown clause identity, and `invalid_model_binding`/`malformed-declaration` for a clause over an empty domain. For AC-7's clause `Inc` it returns `invalid_runtime_input`/`missing-member` naming `max_trace_length` when that is `None`, and naming `subject` when the subject is `None`; for the value clause `Square` with a subject it returns `invalid_runtime_input`/`unknown-member` naming `subject`, and with `max_trace_length` `None` it runs. With `NativeAdmission`, AC-7's clause `Inc` (package, subject with `initial` value 0, seed 7, `max_cases` 100, `max_trace_length` `Some(8)`) returns `Ok` settled `tested`, and its `by` 0 and `by` 7 refusal cases are refused by `admit_arguments` over the argument vector `[by]`. The same request with `explore.states` 1 returns `Ok` settled `tested`; its `by` 6 partition is `uncovered` with reason `undetermined` naming `{"limit": "max_states", "setting": "explore.states", "value": 1}` (FR-255-AC-13), no case is generated for it, and `jam`'s `operations` entry is `undetermined` naming the same limit. As a `model_based_test` plan step running `Inc` with `AnalyzeLimits.simulation` `max_states` 1, the step's record equals that direct run's. | Test (TC-3068) |
 
 | FR-752-AC-12 | Over package `test/no-initial`, whose successful `NoInitial` model declares only `cells: Population<Cell>` of record value type `ix://test/no-initial/Cell` with `value: Int[0,1]`, the Cell declaration's model node key is `{package:"test/no-initial",path:["model","record_value_type","ix://test/no-initial/Cell"],ordinal:0}` by FR-322. With `universe_snapshot` row `cells` `complete: true` and object keys `[c1,c2]`, a state-clause model-based-test request with no initial snapshots, seed 7, `max_cases` 100 and `max_trace_length` 8 settles `tested`; every case's initial state belongs to the four-state product domain `{((c1,0),(c2,0)),((c1,0),(c2,1)),((c1,1),(c2,0)),((c1,1),(c2,1))}`, and reachability uses that same domain. The first seeded initial state is the uniform draw at FR-190 `step` 0, `choice` 0; repeated equal requests produce byte-equal records. No other object key or population is present. In a separate refusal fixture, the model declares `cells` followed by class-P root `unbounded_cells`, both of `Cell`, and the snapshot has `cells` complete with `[c1,c2]` and `unbounded_cells` `complete: false` with no objects. That request returns `Err(ModelBasedTestRefusal { member: "subject", code: "requires_bound", cause: "requires-bound", details: {domains: [{key: DomainKey::Population {member_type: {package:"test/no-initial",path:["model","record_value_type","ix://test/no-initial/Cell"],ordinal:0}, ordinal: 1}, kind: Population(None)}]} })` before any case runs. | Test (TC-3018) |
+| FR-752-AC-13 | In `request_surface_s1_16::the_verification_plan_member_selects_one_plan_or_refuses`, the `ConfigVersion` state model has `versionNumber: Int[0,1000]`, the admitted initialization snapshot has objects `root` and `child`, and `attemptUpdate` modifies `versionNumber` with no pre- or postcondition clause; its expansion has 2,004,002 successor candidates (2 receivers × 1001 values × 1001 values). With `ExpansionLimits.max_candidates` 1000000, the model-based-test run stops before allocating a candidate whose charge would exceed 1000000, returns no partial successor set, and settles `incomplete` with cause `limit-reached{limit: max_candidates, value: 1000000, setting: expansion.max_candidates}`. | Test |
 
 ## Dependencies
 
