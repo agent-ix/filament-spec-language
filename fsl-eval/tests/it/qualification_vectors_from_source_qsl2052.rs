@@ -2501,7 +2501,6 @@ const V2: &str = "QSL-3058";
 const V3: &str = "QSL-3059";
 const V4: &str = "QSL-3060";
 const V5: &str = "QSL-3061";
-const V7: &str = "QSL-3083";
 const V8: &str = "QSL-3084";
 /// State-only operator refusal located at the function declaration (DIV-17, DIV-18).
 const V10: &str = "QSL-3089";
