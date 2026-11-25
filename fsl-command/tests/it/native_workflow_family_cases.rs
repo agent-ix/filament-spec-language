@@ -196,6 +196,71 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
     }
 }
 
+/// TC-742: command output uses the strict `/2` reader's shape and keeps
+/// codegen artifact identities out of the FSL result document.
+#[test]
+#[trace("TC-742")]
+fn command_clause_result_v2_omits_codegen_artifact_members() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    spine::write(directory.path(), Case::Healthy).expect("observations write");
+    std::fs::write(directory.path().join("spec.md"), markdown(&body(), "\n"))
+        .expect("the extracted Markdown source writes");
+    let result = run(&write(directory.path(), &request()));
+    let document = result.value.as_value();
+    assert_eq!(result.exit_code, 0, "{document}");
+    assert_eq!(document["format"], "native-run-result/2");
+    for member in [
+        "generated_source",
+        "generated_source_identity",
+        "source_map",
+        "source_map_identity",
+        "coverage_producer",
+        "coverage_tool_version",
+    ] {
+        assert!(document.get(member).is_none(), "{member}: {document}");
+    }
+
+    let bytes = serde_json::to_vec(document).expect("the command document serializes");
+    let read = fsl_replay::spine::read_native_run_result(&bytes)
+        .expect("the command's `/2` document reads");
+    assert!(matches!(
+        read,
+        fsl_replay::spine::NativeRunResult::Clause(_)
+    ));
+
+    let mut injected = document.clone();
+    injected["source_map"] = json!({"identity": "ix://tests/generated/map"});
+    assert!(
+        fsl_replay::spine::read_native_run_result(
+            &serde_json::to_vec(&injected).expect("the injected document serializes")
+        )
+        .is_err(),
+        "the strict reader rejects a member outside the `/2` shape"
+    );
+
+    for format in ["native-run-result/1", "native-run-result/3"] {
+        let mut wrong_version = document.clone();
+        wrong_version["format"] = json!(format);
+        assert!(
+            fsl_replay::spine::read_native_run_result(
+                &serde_json::to_vec(&wrong_version).expect("the versioned document serializes")
+            )
+            .is_err(),
+            "the strict reader rejects {format}"
+        );
+    }
+
+    let mut invalid = document.clone();
+    invalid["basis"] = json!("unrecognized-basis");
+    assert!(
+        fsl_replay::spine::read_native_run_result(
+            &serde_json::to_vec(&invalid).expect("the invalid `/2` document serializes")
+        )
+        .is_err(),
+        "the strict reader rejects an invalid `/2` document"
+    );
+}
+
 #[test]
 #[trace("TC-109")]
 fn extracted_bodies_refuse_missing_models_and_absent_declarations() {
