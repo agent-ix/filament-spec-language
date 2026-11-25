@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Path-based, name-filtered merge-gate recipes for FSL changes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::error::{Error, Result};
 
@@ -1666,14 +1667,38 @@ fn normalize_components(path: &Path) -> PathBuf {
     normal
 }
 
-/// Every module file of the integration binary rooted at `root`.
-fn integration_module_files(workspace_root: &Path, root: &str) -> Result<Vec<ModuleFile>> {
+/// One root's cache slot: empty until a walk of that root succeeds.
+type WalkSlot = Arc<Mutex<Option<Arc<[ModuleFile]>>>>;
+
+/// The walks this process has made, keyed by the root file's full path, so that
+/// workspaces never share one. A recipe run does not write sources, so a walk
+/// stays current for the life of the process.
+static MODULE_WALKS: Mutex<BTreeMap<PathBuf, WalkSlot>> = Mutex::new(BTreeMap::new());
+
+/// Every module file of the integration binary rooted at `root`, parsed on the
+/// first request for it. A failed walk is not kept.
+fn integration_module_files(workspace_root: &Path, root: &str) -> Result<Arc<[ModuleFile]>> {
     let path = workspace_root.join(root);
+    let slot = Arc::clone(
+        MODULE_WALKS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(path.clone())
+            .or_default(),
+    );
+    // Only this root's slot is held while parsing: other roots walk in
+    // parallel, and concurrent requests for this one wait for one walk.
+    let mut cached = slot.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(files) = cached.as_ref() {
+        return Ok(Arc::clone(files));
+    }
     let syntax = parse_integration_file(&path)?;
     let directory = path.parent().unwrap_or(workspace_root);
     let mut walk = ModuleWalk::default();
     walk.items(&syntax.items, directory, directory)?;
-    Ok(walk.files)
+    let files: Arc<[ModuleFile]> = walk.files.into();
+    *cached = Some(Arc::clone(&files));
+    Ok(files)
 }
 
 /// A walk of one binary's module tree, in declaration order.
@@ -1761,9 +1786,9 @@ fn modules_in_root(
     root: &str,
 ) -> Result<Vec<(String, Vec<String>)>> {
     let modules = integration_module_files(workspace_root, root)?
-        .into_iter()
+        .iter()
         .filter(|module| !module.name.contains("::") && !module.tests.is_empty())
-        .map(|module| (module.name, module.tests))
+        .map(|module| (module.name.clone(), module.tests.clone()))
         .collect::<Vec<_>>();
     if modules.is_empty() {
         return Err(Error::MergeGateRecipe(format!(
@@ -1803,7 +1828,7 @@ fn add_changed_module(
         if !workspace_root.join(&root).is_file() {
             continue;
         }
-        for module in integration_module_files(workspace_root, &root)? {
+        for module in integration_module_files(workspace_root, &root)?.iter() {
             if module.path != changed {
                 continue;
             }
@@ -1811,7 +1836,7 @@ fn add_changed_module(
             if module.tests.is_empty() {
                 add_target_modules(workspace_root, recipe, package, &target, &root)?;
             } else {
-                add_integration_target(recipe, package, &target, module.name);
+                add_integration_target(recipe, package, &target, &module.name);
             }
         }
     }
@@ -2980,6 +3005,39 @@ mod tests {
             orphan.is_err(),
             "a file no binary declares must fail closed"
         );
+    }
+
+    #[test]
+    fn a_module_walk_is_read_once_per_root_and_never_shared_between_workspaces() {
+        let names = |workspace: &Path| {
+            integration_module_files(workspace, "tests/it/main.rs").map(|files| {
+                files
+                    .iter()
+                    .map(|module| module.name.clone())
+                    .collect::<Vec<_>>()
+            })
+        };
+        let first = tempfile::tempdir().expect("a temporary workspace");
+        write_files(first.path(), &[("tests/it/main.rs", "mod words;\n")]);
+        // A walk that fails is made again.
+        assert!(names(first.path()).is_err());
+        write_files(first.path(), &[("tests/it/words.rs", "")]);
+        assert_eq!(names(first.path()).expect("a walk"), ["words"]);
+
+        let second = tempfile::tempdir().expect("a temporary workspace");
+        write_files(
+            second.path(),
+            &[
+                ("tests/it/main.rs", "mod numbers;\n"),
+                ("tests/it/numbers.rs", ""),
+            ],
+        );
+        assert_eq!(names(second.path()).expect("a walk"), ["numbers"]);
+
+        let walk = || integration_module_files(first.path(), "tests/it/main.rs").expect("a walk");
+        let cached = walk();
+        fs::remove_file(first.path().join("tests/it/words.rs")).expect("remove a module");
+        assert!(Arc::ptr_eq(&cached, &walk()), "the root was parsed again");
     }
 
     #[test]
