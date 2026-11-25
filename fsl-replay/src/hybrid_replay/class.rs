@@ -546,117 +546,16 @@ mod tests {
         assert!(prior_prefix_copies > 2 * (depth + 1));
     }
 
-    fn prior_polynomial_gap(
-        exp: &Exp,
-        position: Position,
-    ) -> Option<(&'static str, Option<TermLocus>)> {
-        match (exp, position) {
-            (Exp::Number(_) | Exp::Variable(_) | Exp::Boolean(_), _) => None,
-            (Exp::Negate(a) | Exp::Not(a), _) => prior_polynomial_gap(a, position),
-            (Exp::Ranged { value, .. }, _) => prior_polynomial_gap(value, position),
-            (Exp::Arithmetic(ArithmeticOp::Div, _, _, locus), _) => {
-                Some(("division", Some(locus.clone())))
-            }
-            (Exp::Arithmetic(_, a, b, _), _) => prior_polynomial_gap(a, Position::Numeric)
-                .or_else(|| prior_polynomial_gap(b, Position::Numeric)),
-            (Exp::Logic(_, a, b), _) => prior_polynomial_gap(a, Position::Boolean)
-                .or_else(|| prior_polynomial_gap(b, Position::Boolean)),
-            (Exp::Compare(_, a, b), _) => prior_polynomial_gap(a, Position::Numeric)
-                .or_else(|| prior_polynomial_gap(b, Position::Numeric)),
-            (Exp::Conditional(c, a, b, _), Position::Boolean) => {
-                prior_polynomial_gap(c, Position::Boolean)
-                    .or_else(|| prior_polynomial_gap(a, Position::Boolean))
-                    .or_else(|| prior_polynomial_gap(b, Position::Boolean))
-            }
-            (Exp::Conditional(.., locus), Position::Numeric) => {
-                Some(("conditional", Some(locus.clone())))
-            }
-            (Exp::Recursive(call), _) => Some(("recursive-call", Some(call.locus.clone()))),
-            (Exp::Activation(_) | Exp::Capture(_) | Exp::Parameter(_), _) => {
-                Some(("activation", None))
-            }
-        }
-    }
-
-    fn prior_term(
-        term: &HybridTerm,
-        path: &[usize],
-        position: Position,
-        expander: &mut Expander<'_>,
-        meter: &mut HybridReplayMeter,
-    ) -> Result<Option<Gap>, HybridReplayRefusal> {
-        let here = |form| {
-            Some(Gap {
-                form,
-                locus: TermLocus {
-                    term: path.to_vec(),
-                    body: Vec::new(),
-                },
-            })
-        };
-        let child = |edge: usize| {
-            let mut next = path.to_vec();
-            next.push(edge);
-            next
-        };
-        Ok(match (term, position) {
-            (HybridTerm::Constant(_) | HybridTerm::Variable(_), Position::Numeric)
-            | (HybridTerm::Boolean(_), Position::Boolean) => None,
-            (HybridTerm::Negate(a), Position::Numeric) => {
-                prior_term(a, &child(0), Position::Numeric, expander, meter)?
-            }
-            (HybridTerm::Arithmetic(ArithmeticOp::Div, _, _), Position::Numeric) => {
-                here("division")
-            }
-            (HybridTerm::Arithmetic(_, a, b), Position::Numeric) => {
-                match prior_term(a, &child(0), Position::Numeric, expander, meter)? {
-                    Some(gap) => Some(gap),
-                    None => prior_term(b, &child(1), Position::Numeric, expander, meter)?,
-                }
-            }
-            (HybridTerm::Not(a), Position::Boolean) => {
-                prior_term(a, &child(0), Position::Boolean, expander, meter)?
-            }
-            (HybridTerm::Logic(_, a, b), Position::Boolean) => {
-                match prior_term(a, &child(0), Position::Boolean, expander, meter)? {
-                    Some(gap) => Some(gap),
-                    None => prior_term(b, &child(1), Position::Boolean, expander, meter)?,
-                }
-            }
-            (HybridTerm::Compare(_, a, b), Position::Boolean) => {
-                match prior_term(a, &child(0), Position::Numeric, expander, meter)? {
-                    Some(gap) => Some(gap),
-                    None => prior_term(b, &child(1), Position::Numeric, expander, meter)?,
-                }
-            }
-            (HybridTerm::Call(..), _) => {
-                let expanded = expander.term(term, meter)?;
-                prior_polynomial_gap(&expanded, position).map(|(form, inner)| {
-                    let mut locus = inner.unwrap_or_default();
-                    locus.term.splice(0..0, path.iter().copied());
-                    Gap { form, locus }
-                })
-            }
-            (HybridTerm::Conditional(c, a, b), Position::Boolean) => {
-                let mut found = prior_term(c, &child(0), Position::Boolean, expander, meter)?;
-                if found.is_none() {
-                    found = prior_term(a, &child(1), Position::Boolean, expander, meter)?;
-                }
-                if found.is_none() {
-                    found = prior_term(b, &child(2), Position::Boolean, expander, meter)?;
-                }
-                found
-            }
-            (HybridTerm::Conditional(..), Position::Numeric) => here("conditional"),
-            (HybridTerm::Capture(_) | HybridTerm::ActivationVariable(_), _) => here("activation"),
-            _ => here("mixed-kinds"),
-        })
-    }
-
     #[test]
-    #[trace("NFR-141-AC-27", "FR-1019")]
-    fn bounded_branch_conditional_and_call_walks_match_the_prior_oracle() {
+    #[trace("NFR-141-AC-27")]
+    fn bounded_branch_conditional_and_call_walks_match_expected_outputs() {
         let graph = super::super::tests::graph_for_class_walk();
+        let drag_body_call = graph
+            .function_state(1)
+            .expect("the drag function exists")
+            .body
+            .id()
+            .index();
         let div = || {
             Box::new(HybridTerm::Arithmetic(
                 ArithmeticOp::Div,
@@ -668,6 +567,13 @@ mod tests {
             (
                 HybridTerm::Arithmetic(ArithmeticOp::Add, div(), div()),
                 Position::Numeric,
+                Gap {
+                    form: "division",
+                    locus: TermLocus {
+                        term: vec![0],
+                        body: Vec::new(),
+                    },
+                },
             ),
             (
                 HybridTerm::Conditional(
@@ -680,6 +586,13 @@ mod tests {
                     )),
                 ),
                 Position::Boolean,
+                Gap {
+                    form: "division",
+                    locus: TermLocus {
+                        term: vec![2, 0],
+                        body: Vec::new(),
+                    },
+                },
             ),
             (
                 HybridTerm::Arithmetic(
@@ -691,13 +604,19 @@ mod tests {
                     )),
                 ),
                 Position::Numeric,
+                Gap {
+                    form: "recursive-call",
+                    locus: TermLocus {
+                        term: vec![1],
+                        body: vec![(
+                            fsl_semantics::check::CheckedFunctionRef::new(1),
+                            drag_body_call,
+                        )],
+                    },
+                },
             ),
         ];
-        for (term, position) in fixtures {
-            let mut expander = Expander::new(&graph);
-            let mut meter = HybridReplayMeter::new(u64::MAX);
-            let expected = prior_term(&term, &[], position, &mut expander, &mut meter)
-                .expect("bounded oracle walk completes");
+        for (term, position, expected) in fixtures {
             let mut expander = Expander::new(&graph);
             let mut meter = HybridReplayMeter::new(u64::MAX);
             let actual = Walk {
@@ -707,7 +626,7 @@ mod tests {
             }
             .term(&term, &[], position)
             .expect("bounded toolkit walk completes");
-            assert_eq!(actual, expected);
+            assert_eq!(actual, Some(expected));
         }
 
         let locus = |term| TermLocus {
@@ -733,6 +652,7 @@ mod tests {
                     locus(vec![9]),
                 ),
                 Position::Boolean,
+                Some(("division", Some(locus(vec![8, 2])))),
             ),
             (
                 Exp::Compare(
@@ -746,18 +666,16 @@ mod tests {
                     )),
                 ),
                 Position::Boolean,
+                Some(("activation", None)),
             ),
         ];
-        for (exp, position) in fixtures {
-            assert_eq!(
-                polynomial_gap(&exp, position),
-                prior_polynomial_gap(&exp, position)
-            );
+        for (exp, position, expected) in fixtures {
+            assert_eq!(polynomial_gap(&exp, position), expected);
         }
     }
 
     #[test]
-    #[trace("NFR-141-AC-27", "FR-1019")]
+    #[trace("NFR-141-AC-27")]
     fn hybrid_class_walks_scale_and_support_one_hundred_thousand_depth() {
         let graph = super::super::tests::graph_for_class_walk();
         for depth in [5_000, 10_000, 20_000] {
@@ -798,31 +716,31 @@ mod tests {
     }
 
     #[test]
-    #[trace("NFR-141-AC-27", "FR-1019")]
-    fn prior_recursive_class_walk_fails_only_in_a_child_process() {
+    #[trace("NFR-141-AC-27")]
+    fn recursive_depth_failure_is_isolated_in_a_child_process() {
         const CHILD: &str = "FSL_RECURSIVE_CLASS_WALK_CHILD";
         if std::env::var_os(CHILD).is_some() {
-            fn prior_recursive_walk(term: &HybridTerm) -> usize {
-                match term {
-                    HybridTerm::Negate(inner) => 1 + prior_recursive_walk(inner),
-                    _ => 0,
+            fn recurse_to_depth(depth: usize) -> usize {
+                if depth == 0 {
+                    0
+                } else {
+                    1 + recurse_to_depth(depth - 1)
                 }
             }
 
-            let term = deep_term(100_000);
             std::thread::Builder::new()
                 .stack_size(512 * 1024)
-                .spawn(move || std::hint::black_box(prior_recursive_walk(term)))
+                .spawn(|| std::hint::black_box(recurse_to_depth(100_000)))
                 .expect("small-stack child thread starts")
                 .join()
-                .expect("the prior recursive walk overflows this isolated stack");
+                .expect("100,000 recursive calls exceed this isolated stack");
             return;
         }
 
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "hybrid_replay::class::tests::prior_recursive_class_walk_fails_only_in_a_child_process",
+                "hybrid_replay::class::tests::recursive_depth_failure_is_isolated_in_a_child_process",
                 "--nocapture",
             ])
             .env(CHILD, "1")

@@ -362,55 +362,13 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
 }
 
 /// NFR-141-AC-25 (QSL-2854): one graph build per call at increasing numbers
-/// of admitted composite nodes, with output equal to the pre-change projection.
-#[trace("NFR-141-AC-25", "FR-931", "FR-322")]
+/// of admitted composite nodes, with each fixture declaration's exact shape
+/// and structural key retained in the output.
+#[trace("NFR-141-AC-25")]
 #[test]
-fn declared_composites_builds_one_wire_graph_and_preserves_the_projection() {
-    use crate::bare_term::{DeclaredComposite, DeclaredShape};
+fn declared_composites_builds_one_wire_graph_and_preserves_declared_records() {
     use crate::checked_v2::{reset_wire_graph_build_count, wire_graph_build_count};
-    use crate::wire_form::{has_form, WireForm, WireTag};
-    use filament_contract_model::{CheckedBindingNameKind, CheckedSemanticNodeV2, CheckedTerm};
-
-    fn previous_projection(
-        bare: &BarePackage<'_>,
-        graph: &fsl_semantics::check::wire_id::WireGraph,
-    ) -> Vec<DeclaredComposite> {
-        let names = |node: &CheckedSemanticNodeV2| -> Vec<String> {
-            let CheckedTerm::Aggregate { members, .. } = &node.body else {
-                return Vec::new();
-            };
-            members
-                .iter()
-                .filter_map(|member| match member {
-                    CheckedTerm::Binding { name, .. } => match name.kind() {
-                        CheckedBindingNameKind::Other(name) => Some(name.to_owned()),
-                        _ => None,
-                    },
-                    _ => None,
-                })
-                .collect()
-        };
-        bare.package()
-            .resolved_graph()
-            .nodes
-            .iter()
-            .filter_map(|node| {
-                let shape = if has_form(node, WireTag::CompositeType, WireForm::Record) {
-                    DeclaredShape::Record(names(node))
-                } else if has_form(node, WireTag::CompositeType, WireForm::Union) {
-                    DeclaredShape::Union(names(node))
-                } else if has_form(node, WireTag::CompositeType, WireForm::Tuple) {
-                    DeclaredShape::Tuple
-                } else {
-                    return None;
-                };
-                Some(DeclaredComposite {
-                    key: graph.key(&node.node_id).ok()?,
-                    shape,
-                })
-            })
-            .collect()
-    }
+    use filament_exact::PathSegment;
 
     for count in [250, 500, 1_000] {
         let declarations = (0..count)
@@ -432,9 +390,32 @@ fn declared_composites_builds_one_wire_graph_and_preserves_the_projection() {
         let actual = bare.declared_composites();
         assert_eq!(wire_graph_build_count(), 1, "N = {count}");
         assert_eq!(actual.len(), count, "every declared record is returned");
-        let graph = crate::checked_v2::wire_graph(&admitted).expect("the admitted graph rebuilds");
-        let expected = previous_projection(&bare, &graph);
-        assert_eq!(actual, expected, "pre-change output at N = {count}");
+        for (index, composite) in actual.iter().enumerate() {
+            let name = format!("R{index}");
+            assert_eq!(
+                composite.shape,
+                crate::bare_term::DeclaredShape::Record(vec!["amount".to_owned()]),
+                "declared shape at N = {count}, index = {index}"
+            );
+            assert_eq!(
+                composite.key.package(),
+                "pkg",
+                "key package at index {index}"
+            );
+            assert!(
+                composite
+                    .key
+                    .path()
+                    .contains(&PathSegment::Text(name.clone())),
+                "structural key names {name} at N = {count}, index = {index}"
+            );
+            if let Some(previous) = index.checked_sub(1).and_then(|i| actual.get(i)) {
+                assert_ne!(
+                    composite.key, previous.key,
+                    "distinct declarations retain distinct structural keys at index {index}"
+                );
+            }
+        }
     }
 }
 

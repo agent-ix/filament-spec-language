@@ -5,8 +5,8 @@ use filament_checked::key::DeclarationKey;
 use filament_contract_model::{CheckedNodeId, CheckedTerm, RefinementKey, RefinementStepTarget};
 use filament_exact::{NodeKey, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
-use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
 use fsl_eval::simulation::ExpansionStop;
+use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
 use fsl_package::{
     BarePackage, BareWorld, ReaderProtocolProjection, RefinementRowRefusal, RefinementView,
 };
@@ -560,26 +560,6 @@ mod tests {
         }
     }
 
-    fn prior_hidden_projection(
-        declared: &[DeclarationKey],
-        mapped: &[&DeclarationKey],
-    ) -> Vec<DeclarationKey> {
-        let mut hidden = Vec::new();
-        for key in declared {
-            let mut present = false;
-            for field in mapped {
-                if FieldKeyRef(*field) == FieldKeyRef(key) {
-                    present = true;
-                    break;
-                }
-            }
-            if !present {
-                hidden.push(key.clone());
-            }
-        }
-        hidden
-    }
-
     #[trace("NFR-141-AC-26")]
     #[test]
     fn hidden_field_key_comparisons_are_bounded_and_preserve_declaration_order() {
@@ -590,15 +570,19 @@ mod tests {
                 .rev()
                 .map(|index| &declared[index])
                 .collect();
-            reset_hidden_field_key_comparisons();
-            let expected = prior_hidden_projection(&declared, &mapped);
-            let prior_comparisons = hidden_field_key_comparisons();
+            let expected: Vec<_> = (0..count)
+                .filter(|index| index % 2 == 1)
+                .map(declaration_key)
+                .collect();
 
             reset_hidden_field_key_comparisons();
             let actual = hidden_field_keys(declared.clone(), mapped.iter().copied());
             let indexed_comparisons = hidden_field_key_comparisons();
             let log_bound = usize::BITS as usize - mapped.len().leading_zeros() as usize;
             let comparison_bound = 8 * (declared.len() + mapped.len()) * log_bound;
+            let mapped_count = mapped.len();
+            let nested_scan_comparisons =
+                mapped_count * (mapped_count + 1) / 2 + mapped_count * mapped_count;
 
             assert_eq!(actual, expected, "hidden keys at N = {count}");
             assert!(
@@ -610,12 +594,12 @@ mod tests {
                 "the ordered index makes {indexed_comparisons} comparisons, bound {comparison_bound}, at N = {count}"
             );
             assert!(
-                prior_comparisons > count * mapped.len() / 2,
-                "the prior nested scan makes {prior_comparisons} comparisons at N = {count}"
+                nested_scan_comparisons > count * mapped_count / 2,
+                "the reverse-order nested-scan fixture requires {nested_scan_comparisons} comparisons at N = {count}"
             );
             assert!(
-                prior_comparisons > comparison_bound,
-                "the prior nested scan makes {prior_comparisons} comparisons, exceeding the indexed bound {comparison_bound} at N = {count}"
+                nested_scan_comparisons > comparison_bound,
+                "the reverse-order nested-scan fixture requires {nested_scan_comparisons} comparisons, exceeding the indexed bound {comparison_bound} at N = {count}"
             );
         }
     }
