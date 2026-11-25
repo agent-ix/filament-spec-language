@@ -1658,7 +1658,7 @@ fn float_exceptional_cases(vector: &QualificationVector) -> Option<Vec<SourceCas
                                     &ty,
                                     &format!("a: {ty}"),
                                     body,
-                                    vec![Value::Float(value.clone())],
+                                    vec![Value::Float(value)],
                                     UNLIMITED,
                                     Expected::Float {
                                         bits,

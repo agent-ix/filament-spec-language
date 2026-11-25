@@ -1755,7 +1755,7 @@ fn run(
                 if state_predicate {
                     // The scalar budget that stopped the solve does not bound
                     // this question about the model graph's shape.
-                    let mut shape_limits = limits.clone();
+                    let mut shape_limits = limits;
                     shape_limits.max_rational_bits = u64::MAX;
                     match acyclic_subject(
                         simulation.clone(),
