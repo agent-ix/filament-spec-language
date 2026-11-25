@@ -125,6 +125,17 @@ pub fn start_recorded_invocation(
     axis: &str,
     result_file: &Path,
 ) -> Result<u128, Box<dyn Error>> {
+    start_recorded_invocation_with_load(target, side, round, axis, result_file, system_load_average)
+}
+
+fn start_recorded_invocation_with_load(
+    target: &Path,
+    side: &str,
+    round: usize,
+    axis: &str,
+    result_file: &Path,
+    load_average: impl FnOnce() -> Result<serde_json::Value, Box<dyn Error>>,
+) -> Result<u128, Box<dyn Error>> {
     if !matches!(side, "A" | "B") || !(1..=5).contains(&round) {
         return Err(
             io::Error::other("recorded round requires side A or B and round 1 through 5").into(),
@@ -136,8 +147,8 @@ pub fn start_recorded_invocation(
     let result_file = result_file
         .to_str()
         .ok_or_else(|| io::Error::other("A/B result path is not valid UTF-8"))?;
+    let load_before = load_average()?;
     register_ab_result_path(target, side, axis, result_file)?;
-    let load_before = system_load_average()?;
     let run_id = start_invocation(target)?;
     let marker = serde_json::json!({
         "format": "fsl-evaluator-ab-round-v1",
@@ -442,22 +453,28 @@ fn write_json_atomically(path: &Path, value: &serde_json::Value) -> Result<(), B
 
 #[cfg(target_os = "macos")]
 fn system_load_average() -> Result<serde_json::Value, Box<dyn Error>> {
-    let output = std::process::Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .output()?;
+    let output = std::process::Command::new("uptime").output()?;
     if !output.status.success() {
-        return Err(io::Error::other("sysctl could not read vm.loadavg").into());
+        return Err(io::Error::other("uptime could not read load averages").into());
     }
     let text = String::from_utf8(output.stdout)?;
-    let values = text
-        .trim_matches(|character: char| {
-            character == '{' || character == '}' || character.is_whitespace()
-        })
+    Ok(parse_load_average_output(&text)?)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_load_average_output(text: &str) -> Result<serde_json::Value, io::Error> {
+    let averages = text
+        .rsplit_once("load averages:")
+        .or_else(|| text.rsplit_once("load average:"))
+        .map(|(_, averages)| averages)
+        .ok_or_else(|| io::Error::other("uptime output has no load-average field"))?;
+    let values = averages
         .split_whitespace()
         .take(3)
         .map(str::parse::<f64>)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(load_average_value(values)?)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(io::Error::other)?;
+    load_average_value(values)
 }
 
 #[cfg(target_os = "linux")]
@@ -984,4 +1001,71 @@ fn estimate(path: &Path, marker_time: SystemTime) -> Result<Estimate, Box<dyn Er
         point_estimate_ns,
         ci_half_width_ns: (point_estimate_ns - lower_bound).max(upper_bound - point_estimate_ns),
     })
+}
+
+#[cfg(test)]
+mod load_average_tests {
+    use super::{parse_load_average_output, start_recorded_invocation_with_load};
+    use ix_trace_rs::trace;
+    use std::fs;
+    use std::io;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    struct TempTarget(PathBuf);
+
+    impl TempTarget {
+        fn new() -> Self {
+            let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+            Self(std::env::temp_dir().join(format!(
+                "fsl-evaluator-load-average-{}-{sequence}",
+                std::process::id()
+            )))
+        }
+    }
+
+    impl Drop for TempTarget {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    #[trace("NFR-141-AC-7")]
+    fn uptime_output_parses_three_load_averages_and_rejects_invalid_output() {
+        let load = parse_load_average_output("2:14 4 users, load averages: 6.96 4.19 3.68\n")
+            .expect("uptime load averages parse");
+        assert_eq!(load["1m"], 6.96);
+        assert_eq!(load["5m"], 4.19);
+        assert_eq!(load["15m"], 3.68);
+
+        for output in [
+            "uptime output without load data",
+            "load averages: 1.0 invalid 3.0",
+            "load averages: 1.0 -2.0 3.0",
+            "load averages: 1.0 2.0 NaN",
+        ] {
+            assert!(parse_load_average_output(output).is_err(), "{output}");
+        }
+    }
+
+    #[test]
+    #[trace("NFR-141-AC-7")]
+    fn failed_load_capture_leaves_no_manifest_or_run_markers() {
+        let target = TempTarget::new();
+        let result_file = target.0.join("A-kernel.json");
+        let error = start_recorded_invocation_with_load(
+            &target.0,
+            "A",
+            1,
+            "evaluator/kernel",
+            &result_file,
+            || Err(io::Error::other("load capture failed").into()),
+        );
+
+        assert!(error.is_err());
+        assert!(!target.0.exists());
+    }
 }

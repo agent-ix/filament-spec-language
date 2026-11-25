@@ -554,6 +554,49 @@ fn start_profile_report_populates_five_round_files_with_load_metadata() {
 
 #[test]
 #[trace("NFR-141-AC-7")]
+fn recorded_round_setup_writes_load_manifest_and_run_markers() {
+    let target = TempTarget::new();
+    let result_file = target.0.join("A-kernel.json");
+    let run_id = evaluator_cost::start_recorded_invocation(
+        &target.0,
+        "A",
+        1,
+        EVALUATOR_KERNEL_AXIS,
+        &result_file,
+    )
+    .expect("load capture and marker setup complete");
+
+    assert_eq!(
+        evaluator_cost::current_invocation(&target.0).unwrap(),
+        run_id
+    );
+    let round_marker: serde_json::Value = serde_json::from_slice(
+        &fs::read(target.0.join("evaluator-cost-recorded-round.json"))
+            .expect("recorded round marker exists"),
+    )
+    .expect("recorded round marker is JSON");
+    assert_eq!(round_marker["format"], "fsl-evaluator-ab-round-v1");
+    assert_eq!(round_marker["side"], "A");
+    assert_eq!(round_marker["round"], 1);
+    assert_eq!(round_marker["axis"], EVALUATOR_KERNEL_AXIS);
+    assert_eq!(round_marker["result_file"], result_file.to_str().unwrap());
+    for interval in ["1m", "5m", "15m"] {
+        assert!(round_marker["load_before"][interval].as_f64().unwrap() >= 0.0);
+    }
+
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(target.0.join("evaluator-cost-ab-session.json"))
+            .expect("session manifest exists"),
+    )
+    .expect("session manifest is JSON");
+    assert_eq!(
+        manifest["paths"]["A:evaluator/kernel"],
+        result_file.to_str().unwrap()
+    );
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
 fn failed_recorded_round_is_immutable_and_invalidates_comparison() {
     let target = TempTarget::new();
     let a_path = target.0.join("kernel-A.json");
