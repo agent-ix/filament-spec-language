@@ -151,11 +151,12 @@ fn wire(artifact: &DependencyArtifact) -> Value {
     serde_json::from_slice(&artifact.bytes).expect("the library wire")
 }
 
-/// Two contents of one package name that differ only in an equivalence's
-/// `root_scale`, and so share its node id, refuse in handoff admission: no
-/// admitted closure reaches a `BarePackage` to build a unit table from.
+/// Handoff admission refuses a second artifact under one library identity by
+/// its name, before reading it: byte-identical artifacts and two contents
+/// differing only in an equivalence's `root_scale` refuse alike. No content is
+/// compared here; the link diamond rule does that.
 #[test]
-fn two_artifacts_of_one_name_differing_only_in_root_scale_refuse() {
+fn a_second_supplied_artifact_of_one_name_refuses_whatever_its_content() {
     let one = wire(&library(1));
     let mut two = wire(&library(2));
     let position = one["semantic_graph"]["nodes"]
@@ -169,6 +170,11 @@ fn two_artifacts_of_one_name_differing_only_in_root_scale_refuse() {
     assert_eq!(two.pointer(&scale), Some(&Value::from("2")));
     *two.pointer_mut(&scale).expect("the ratio") = Value::from("1");
     assert_eq!(one, two, "the ratio is the only difference");
+    assert_eq!(
+        library(1).bytes,
+        library(1).bytes,
+        "the control pair is byte-identical"
+    );
 
     let (root, identities, equality) = root_selecting_dep();
     let admit = |dependencies: &[DependencyArtifact]| {
@@ -191,14 +197,14 @@ fn two_artifacts_of_one_name_differing_only_in_root_scale_refuse() {
             "each content admits alone"
         );
     }
-    for ratios in [[1, 2], [2, 1]] {
-        let refusal = admit(&ratios.map(library)).expect_err("two contents of one name refuse");
+    for ratios in [[1, 1], [1, 2], [2, 1]] {
+        let refusal = admit(&ratios.map(library)).expect_err("a repeated name refuses");
         assert!(
             matches!(
                 refusal,
                 ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)
             ),
-            "{refusal:?}"
+            "{ratios:?}: {refusal:?}"
         );
     }
 }

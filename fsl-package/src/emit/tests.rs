@@ -61,6 +61,7 @@ mod control_node;
 mod converted_equality;
 mod decimal_constructors;
 mod deep_bodies;
+mod diamond_root_scale;
 mod dimension_base;
 mod envelope_adoption;
 mod equality_budget;
