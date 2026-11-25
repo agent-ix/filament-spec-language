@@ -501,6 +501,7 @@ For bounded forms its closed alternatives are:
 | --- | --- |
 | bounded event-position formula | `["formula",automaton_key]`, where `automaton_key` is the parsed complete FR-338 canonical key array, not its local u32 index or transport base64url string. Its context selects this checked formula, profile, the claim's activation and the actual binding and instance. |
 | timed deadline event | `["deadline",kind,phase]`, where kind is `"eventually"` or `"until"` and phase is `"pending"`, `"accept"` or `"reject"`; D and the exact elapsed clock are retained in the model member above, never inferred from a position horizon. |
+| timed bounded-window formula (FR-204 "Form shapes", region route) | `["window",residual]`, the residual defined under "Timed window monitor key" below. |
 | accumulate / steps comparison or quantile | `["measure",remaining,phase]`, with remaining future model positions in `0..h` and phase one of `"inactive"`, `"active"`, `"complete"`, `"censored"`, `"unactivated"`. The last three phases are decided and absorbing. |
 | fraction comparison or mean of fraction | `["fraction",remaining,phase]`, with phase `"collecting"` or `"complete"`; remaining is the number of included positions whose contribution is still unread, initially `h+1`, including position zero. Completion has remaining `"0"`. |
 
@@ -515,6 +516,59 @@ transforms; the checked claim selects the comparison. A model state's
 current predicate truth is re-evaluated, never copied from a provider
 index. The control phase is not inferred from a reward magnitude alone:
 a completed zero measure differs from an active zero measure.
+
+#### Timed window monitor key
+
+The `["window",residual]` member is a wire contract: EN-5 and FR-921's
+checker compute it separately and SHALL produce the same bytes for the same
+prefix. It states what is still owed after the positions read so far, as
+pending obligations with their elapsed clocks; it does not fix how a monitor
+computes it.
+
+- **Formula.** The claim's checked formula is put in negation normal form:
+  `not` is pushed to the atoms by `not eventually_I p = always_I not p`,
+  `not (p until_I q) = (not p) release_I (not q)`, their duals and
+  De Morgan's laws, and `p implies q` is `(not p) or q`. An atom (a state
+  predicate, possibly negated, with its clock atoms) is read at a position.
+  `o` is the zero-based pre-order index of an interval operator node among
+  the interval operator nodes of the checked formula; negation normal form
+  keeps that index and changes only the operator's kind.
+- **Obligation.** `[kind,o,integer,fraction]`, kind the JSON string
+  `"eventually"`, `"always"`, `"until"` or `"release"`, and `o`, `integer`
+  and `fraction` canonical nonnegative decimal integer strings as clock
+  `value` and `cap` are above (no leading zero or sign; `"0"` for zero): occurrence `o`, read with that kind,
+  started at an earlier position, whose elapsed time since that position is
+  given as a region clock entry (`integer` its integer part in scaled units,
+  `fraction` as FR-920 defines it; obligation clocks take part in the
+  state's order of fractional parts together with the model clocks).
+- **Residual.** `["accept"]`, `["reject"]`, an obligation, or
+  `["and",r1,…,rn]` / `["or",r1,…,rn]` with `n >= 2`. Every operand is
+  neither a constant nor of its parent's connective (nested `and` in `and`
+  and `or` in `or` are flattened), operands are distinct, and they are in
+  ascending RFC 8785 JCS byte order. A connective left with one operand is
+  replaced by it, and constants are folded (`and` with `["reject"]` is
+  `["reject"]`, `["accept"]` operands are dropped from an `and`, and dually
+  for `or`).
+- **Start at a position.** `S(atom)` is `["accept"]` or `["reject"]` by its
+  value at the position; `S(p and q)` and `S(p or q)` combine `S(p)` and
+  `S(q)`; `S` of an interval operator `o` of kind `k` is `R` of the
+  obligation `[k,o,0,"0"]` at the same position.
+- **Read a position** (`R`, applied once to each obligation present before
+  the read, the obligations `S` creates being already read;
+  `in` holds when the obligation's elapsed time lies in `o`'s interval,
+  decided on the region):
+  `eventually`: `(in ? S(p) : reject) or self`;
+  `always`: `(in ? S(p) : accept) and self`;
+  `p until q`: `(in ? S(q) : reject) or (S(p) and self)`;
+  `p release q`: `(in ? S(q) : accept) and (S(p) or self)`.
+- **Delay.** A delay move advances every obligation clock as a model clock;
+  an obligation whose elapsed time passes its interval's upper end becomes
+  `["reject"]` (`eventually`, `until`) or `["accept"]` (`always`,
+  `release`). Two obligations with equal kind, occurrence, integer and
+  fraction are equal and appear once.
+- **Initial.** At position zero of an `on origin` claim the residual is
+  `S(φ)` of the whole formula; it is normalized after every read and delay
+  as above.
 
 A timed deadline SHALL be initialized by reading the initial discrete
 position at t=0. Eventually accepts iff P holds; otherwise it is pending.
