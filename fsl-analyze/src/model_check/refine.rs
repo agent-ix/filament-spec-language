@@ -65,6 +65,7 @@ use fsl_replay::{
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
     Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
 };
+use ix_trace_rs::implements;
 
 use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
 use super::fair_summary::{
@@ -1948,6 +1949,7 @@ impl Run<'_, '_> {
     }
 
     /// The breadth-first safety phase.
+    #[implements("FR-148-AC-8")]
     fn explore(
         &mut self,
         states: impl Iterator<Item = Result<ModelSimState, InitialStateRefusal>>,
