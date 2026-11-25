@@ -1,0 +1,19 @@
+{
+  "format": "native-run/1",
+  "request": {
+    "models": [],
+    "program": {
+      "source": {
+        "file": "../../../rules/values/collections/coll-cart.fsl",
+        "authority": "example",
+        "identity": "example:shop/values/collections/coll-cart",
+        "document": "coll-cart",
+        "formal_revision": 1
+      }
+    },
+    "call": {
+      "function": "lineCount",
+      "arguments": []
+    }
+  }
+}

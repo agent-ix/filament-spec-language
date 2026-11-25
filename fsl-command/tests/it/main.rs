@@ -25,6 +25,7 @@ mod protocol_recommendation;
 mod protocol_refusal_names;
 mod protocol_refusal_text;
 mod qsl_2093_refinement_forms;
+mod qsl_3206_class_c;
 mod quantity_scaling;
 mod reaches_optional_reference;
 mod request_diagnostics;
