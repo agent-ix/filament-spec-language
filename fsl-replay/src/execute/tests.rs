@@ -331,6 +331,40 @@ fn small(x: i64) -> ReplayRequestWire {
     )
 }
 
+fn assert_public_replay_uses_noop_counter(
+    replay: impl FnOnce() -> Result<ReplayResult, ReplayRefusal>,
+) {
+    reset_noop_parse_calls();
+    let result = replay();
+    assert!(result.is_ok(), "public replay succeeds: {result:?}");
+    assert!(
+        noop_parse_call_count() > 0,
+        "public replay records parser-boundary calls through NoopParseCallCounter"
+    );
+}
+
+#[trace("NFR-141-AC-22")]
+#[test]
+fn public_non_counter_replay_entries_use_the_zero_sized_noop_counter() {
+    let wire = small(1);
+    let limits = ReplayLimits::default();
+    assert_public_replay_uses_noop_counter(|| replay(wire.clone(), limits));
+    assert_public_replay_uses_noop_counter(|| {
+        replay_with_temporal_selections(wire.clone(), &[], limits)
+    });
+    assert_public_replay_uses_noop_counter(|| {
+        replay_with_cancel(wire.clone(), limits, &filament_exact::Cancel::new())
+    });
+    assert_public_replay_uses_noop_counter(|| {
+        replay_with_cancel_and_temporal_selections(
+            wire,
+            &[],
+            limits,
+            &filament_exact::Cancel::new(),
+        )
+    });
+}
+
 /// FR-640-AC-11 / FR-862-AC-2: a nullary entry replay with no input
 /// assignments is a claim-free plain call. Its result supplies the verdict,
 /// so `true` settles `reproduced-without-witness` as `success`.

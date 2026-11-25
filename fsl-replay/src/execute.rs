@@ -79,6 +79,7 @@ use fsl_semantics::model::observation::{
 };
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::mem::size_of;
 
 mod argument;
 mod object_environment;
@@ -1393,9 +1394,29 @@ trait ParseCallCounter {
 
 struct NoopParseCallCounter;
 
+const _: () = assert!(size_of::<NoopParseCallCounter>() == 0);
+
+#[cfg(test)]
+thread_local! {
+    static NOOP_PARSE_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_noop_parse_calls() {
+    NOOP_PARSE_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+fn noop_parse_call_count() -> u64 {
+    NOOP_PARSE_CALLS.with(std::cell::Cell::get)
+}
+
 impl ParseCallCounter for NoopParseCallCounter {
     #[inline(always)]
-    fn record_source_parse(&mut self) {}
+    fn record_source_parse(&mut self) {
+        #[cfg(test)]
+        NOOP_PARSE_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
+    }
 }
 
 #[cfg(feature = "bench-counters")]
