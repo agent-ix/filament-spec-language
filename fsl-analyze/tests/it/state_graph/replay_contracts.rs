@@ -2,10 +2,11 @@
 //! Returned state-graph evidence admitted and replayed through the public facade.
 
 use super::*;
-use fsl_replay::{
-    GraphEvidence, GraphReplaySettlement, ModelTraceRefusal, ReplayLimits, ReplayRefusal,
-    WitnessPath,
-};
+use crate::terminal_two_models::handoff_package;
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_eval::simulation::model::{PackageModelInput, TerminalClass};
+use fsl_replay::{GraphReplaySettlement, ModelTraceRefusal, ReplayRefusal, WitnessPath};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
 
 fn returned(starts: &[Vec<i64>], sampled: bool) -> (World, ModelInstance, Vec<GraphWitness>) {
     let world = config_world_over("", REACHES_TWO, &["a"], starts);
@@ -261,4 +262,181 @@ fn a_returned_trap_settles_from_its_real_closure_and_a_shortened_stem_names_the_
             .value(state, "g", "phase")
             == 3))
     );
+}
+
+const HALF: &str = "constraint Half using v on Config::ConfigVersion at current { \
+     quotient(2 - self.versionNumber) >= 1 }\n";
+const UNDEFINED_GUARD: &str = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
+     quotient(2 - self.versionNumber) >= 1 }\n";
+/// `Stop` leaves `versionNumber = 2` with no enabled transition, where the
+/// terminal predicate divides by zero.
+const UNDEFINED_TERMINAL: &str =
+    "pre Stop using v on Config::ConfigVersion::attemptUpdate { self.versionNumber < 2 }\n\
+     terminal Done using v on Config when { quotient(2 - self.versionNumber) >= 0 };\n";
+
+/// An undefined guard, `terminal when` predicate and state constraint each
+/// refute through a replay that reads the expression from the evidence's
+/// locus; evidence naming another transition, stem or cause disagrees.
+#[trace("TC-612", "FR-170-AC-7")]
+#[test]
+fn undefined_subject_evidence_replays_from_its_expression_locus() {
+    for (extra, keys, constraint) in [
+        (HALF, &["a"][..], Some("Half")),
+        (UNDEFINED_GUARD, AB, None),
+        (UNDEFINED_TERMINAL, &["a"][..], None),
+    ] {
+        let world =
+            config_replayable_kernel_world(extra, REACHES_TWO, keys, &[vec![0; keys.len()]]);
+        let claim = world.claim("ReachesTwo");
+        let over = ModelInstance {
+            population: world.subject(keys, UNLIMITED).simulation.universes[0]
+                .population
+                .clone(),
+            key: "a".to_owned(),
+        };
+        let replay = |stem: &ModelPath, undefined: &fsl_replay::GraphUndefined| {
+            world.replay_evidence(
+                claim,
+                GraphEvidence::Undefined {
+                    stem: stem.clone(),
+                    undefined: undefined.clone(),
+                    over: Some(over.clone()),
+                },
+                keys,
+                ReplayLimits::default(),
+            )
+        };
+        let mut request = world.request(
+            keys,
+            vec![StateGraphItem::for_binding(claim, over.clone())],
+            no_samples(),
+        );
+        request.reductions.constraint = constraint.map(str::to_owned);
+        let mut offered = None;
+        let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+            let StateGraphOutcome::Undefined { stem, undefined } = &instance.outcome else {
+                panic!("undefined: {:?}", instance.outcome);
+            };
+            offered = Some((stem.clone(), undefined.clone()));
+            replay(stem, undefined)
+        })
+        .expect("the subject is checked");
+        let (stem, undefined) = offered.expect("an undefined evaluation is replayed");
+        assert_eq!(stem.steps.len(), 2, "{extra}");
+        assert_eq!(undefined.predicate, None);
+        assert_eq!(undefined.transition.is_some(), extra == UNDEFINED_GUARD);
+        let record = &settled.records[0][0];
+        assert_eq!(record.value, fsl_replay::TerminalValue::Refuted, "{extra}");
+        assert_eq!(
+            record.basis,
+            fsl_replay::SettlementBasis::DecisiveCounterexample
+        );
+        assert_eq!(record.undefined.as_ref(), Some(&undefined));
+
+        let disagrees = |stem: &ModelPath, undefined: &fsl_replay::GraphUndefined| {
+            let replayed = replay(stem, undefined).expect("the evidence is admitted");
+            assert!(
+                matches!(
+                    replayed.settlement,
+                    GraphReplaySettlement::Inconclusive(
+                        fsl_replay::DisagreementCause::Verdicts { .. }
+                    )
+                ),
+                "{extra}: {:?}",
+                replayed.settlement
+            );
+        };
+        let mut shortened = stem.clone();
+        shortened.steps.pop();
+        disagrees(&shortened, &undefined);
+        let mut other_cause = undefined.clone();
+        other_cause.cause =
+            fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::NoneValue);
+        disagrees(&stem, &other_cause);
+        if let Some(guarded) = &undefined.transition {
+            let system = system(&world, keys);
+            let other = system
+                .successors(&system.initial()[0])
+                .expect("expands")
+                .successors
+                .into_iter()
+                .map(|(transition, _)| transition)
+                .find(|transition| transition != guarded)
+                .expect("the other object's update");
+            let mut renamed = undefined.clone();
+            renamed.transition = Some(other);
+            disagrees(&stem, &renamed);
+        }
+    }
+}
+
+/// Over a checked package read from its handoff bytes, an undefined guard,
+/// `terminal when` predicate and state constraint are each reported at the
+/// locus the package holds for that expression.
+#[trace("TC-612", "FR-170-AC-7")]
+#[test]
+fn a_package_subject_reports_each_undefined_expression_at_its_locus() {
+    let mut loci = Vec::new();
+    for (extra, keys, constraint) in [
+        (HALF, &["a"][..], Some("Half")),
+        (UNDEFINED_GUARD, AB, None),
+        (UNDEFINED_TERMINAL, &["a"][..], None),
+    ] {
+        let world =
+            config_replayable_kernel_world(extra, REACHES_TWO, keys, &[vec![0; keys.len()]]);
+        let handoff = handoff_package(&world.package, world.packages());
+        let bare = handoff.bare();
+        let input =
+            PackageModelInput::of(&bare, world.packages(), ModelNormalizationLimits::default())
+                .expect("the package route reads the unit");
+        let occurrence = world
+            .claim("ReachesTwo")
+            .occurrence()
+            .expect("a checked claim has an occurrence");
+        let claim = input
+            .state_graph_claim(occurrence, CheckingLimits::default().nodes())
+            .expect("the package rebuilds the claim");
+        let subject = || {
+            let mut subject = world.subject(keys, UNLIMITED);
+            subject.simulation.input = input.input();
+            subject
+        };
+        let mut request = world.request(keys, Vec::new(), no_samples());
+        request.subject = subject();
+        request.temporal_clock_selections = Vec::new();
+        request.items = vec![StateGraphItem::for_binding(
+            &claim,
+            bound_to(&world, keys, "a"),
+        )];
+        request.reductions.constraint = constraint.map(str::to_owned);
+        let result = run(request);
+        let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+            panic!("undefined: {:?}", result.items[0][0].outcome);
+        };
+        assert_eq!(stem.steps.len(), 2, "{extra}");
+        let system = ModelSystem::new(subject().simulation).expect("the package admits");
+        let expected = if let Some(name) = constraint {
+            system.state_clause_locus(name)
+        } else if extra == UNDEFINED_GUARD {
+            system.state_clause_locus("Guard")
+        } else {
+            let dead_end = system
+                .successors(&system.initial()[0])
+                .and_then(|first| system.successors(&first.successors[0].1))
+                .expect("expands")
+                .successors
+                .remove(0)
+                .1;
+            let TerminalClass::Undefined { model, .. } =
+                system.terminal_class(&dead_end, false).expect("reads")
+            else {
+                panic!("`Done` is undefined there");
+            };
+            system.terminal_locus(&model)
+        };
+        assert!(expected.is_some(), "{extra}");
+        assert_eq!(undefined.locus, expected, "{extra}");
+        loci.push(expected);
+    }
+    assert!(loci[0] != loci[1] && loci[1] != loci[2] && loci[0] != loci[2]);
 }

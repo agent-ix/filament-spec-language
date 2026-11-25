@@ -18,7 +18,8 @@ over the base profile's product, probability and expected-reward bases
 alike, that settlement checks the pairing, and that the long-run form, which
 has no dyadic method, settles a typed incomplete result.
 
-Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7 to FR-1042-AC-14 and FR-203-AC-9.
+Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7 to FR-1042-AC-14, FR-1042-AC-25,
+FR-1042-AC-26 and FR-203-AC-9.
 
 ## Test Procedure
 
@@ -48,6 +49,12 @@ Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7 to FR-1042-AC-14 and FR-203-AC
     `1/2`, lower `1/2`, upper `1/8` and lower `7/8`.
 12. Offer FR-1042-AC-14's satisfying, nonsatisfying and nonexistent hints,
     then omit them; include a case with several satisfying actions.
+13. Over FR-1042-AC-25's acyclic chain under its workload offer its `lower` and
+    `upper` documents and the false ones; stop exploration past a target.
+14. Over the graphs of FR-1042-AC-26 offer a subset `lower` with and without a
+    `ranking` row for the state it leaves out, and offer EN-5 a certificate
+    that leaves one out; over the bounded base change a named rank of the
+    subset.
 
 Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
 
@@ -85,3 +92,8 @@ Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
   and all rank/progress conditions is selected in canonical product-action
   order. If no action satisfies the inequality reject `InequalityFails`;
   if inequality candidates all fail progress/rank reject `RankBroken`.
+- Step 13: FR-1042-AC-25's acceptances and rejections; the partial `lower` is
+  accepted.
+- Step 14: `Malformed` at `ranking` with the extra row, accepted without it,
+  and EN-5's own subset `lower` accepted; the changed bounded rank is
+  rejected `RankBroken` at that state.

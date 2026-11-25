@@ -95,9 +95,10 @@ refusals report stage `intake`. It visits each `import` of the unit, in
 source order, and of each library it compiles, depth first, and applies
 these steps to each import in this order:
 
-1. **Cycle.** When the import's identity names a library whose compile is
-   in progress, the compile refuses `invalid_package`/`definition-cycle`,
-   naming the identity path. This check runs before any other step.
+1. **Cycle.** When the import's identity names the unit's own package, or a
+   library whose compile is in progress, the compile refuses
+   `invalid_package`/`definition-cycle`, naming the identity path. This check
+   runs before any other step.
 2. **Reuse.** An import of an identity an earlier import in the closure
    named reuses that import's library once its compile has completed, and
    skips steps 3 to 5. One library is supplied per identity, so every

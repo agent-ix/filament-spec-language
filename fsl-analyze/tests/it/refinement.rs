@@ -2,6 +2,7 @@
 //! refinement integration tests.
 
 mod analyze_cli_support;
+mod certificate_rejection_support;
 #[allow(
     dead_code,
     reason = "shared fixture support spans split integration test binaries"
@@ -21,6 +22,7 @@ mod partial_order;
 mod por_world;
 mod prob_world;
 mod protocol_footprint_support;
+mod provider_schema_support;
 mod refinement_protocol_support;
 mod relation_claims_support;
 mod source_value_support;

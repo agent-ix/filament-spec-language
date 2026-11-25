@@ -27,6 +27,7 @@ use fsl_foundation::Code;
 use fsl_foundation::{AccountingSetting, Setting, SettingName};
 use fsl_package::ObligationIdentity;
 use fsl_semantics::library::LibraryName;
+use ix_trace_rs::implements;
 
 mod package;
 use filament_contract_model::CheckedRefinementInternal;
@@ -54,6 +55,7 @@ impl StateEnvironment {
 
 /// Whether a replay request's stage-limits wire can carry this setting
 /// (FR-255 lifecycle caller-limit coverage).
+#[implements("FR-255-AC-24")]
 pub(crate) const fn is_replay_wire_stage_setting(setting: Setting) -> bool {
     !matches!(
         setting,
@@ -95,6 +97,7 @@ pub(crate) const fn is_replay_wire_stage_setting(setting: Setting) -> bool {
             | Setting::MonitorMaxWindowValues
             | Setting::MonitorRetainedPositions
             | Setting::MonitorRetainedIdentities
+            | Setting::MonitorMaxActivations
             | Setting::MonitorPreparationWorkUnits
             | Setting::MonitorPreparationStorage
     ) && !setting.is_item_engine_setting()
@@ -142,6 +145,7 @@ pub(crate) const REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES: &[&str] = &[
     "monitor.max_window_values",
     "monitor.retained_positions",
     "monitor.retained_identities",
+    "monitor.max_activations",
     "monitor.preparation_work_units",
     "monitor.preparation_storage",
     "exact_prob.max_states",
@@ -249,7 +253,7 @@ impl StageLimits {
 
     /// Reads the wire entries, refusing the first whose name is no setting
     /// of FR-255's tables or is `replay.input_bytes`, `format.output_bytes` or
-    /// one of the five `monitor.*` settings.
+    /// one of the `monitor.*` settings.
     fn decode(entries: BTreeMap<String, u64>) -> Result<Self, ReplayRequestRefusal> {
         entries
             .into_iter()

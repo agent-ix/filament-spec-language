@@ -1714,6 +1714,17 @@ fn subject_graph_with_identity(
     ))
 }
 
+/// Whether `claim` asks for unbounded `eventually` reachability.
+fn is_eventual_reach(claim: &CheckedProbabilisticClaim) -> bool {
+    matches!(
+        claim.form,
+        ProbForm::Reach {
+            target: ReachTarget::Eventually(_),
+            ..
+        }
+    )
+}
+
 fn target_keys(graph: &CheckerGraph) -> Vec<ProbabilityProductKey> {
     graph
         .states
@@ -2255,7 +2266,12 @@ impl Offer<'_> {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-203-AC-30")]
+#[implements(
+    "FR-203-AC-30",
+    "FR-1042-AC-19",
+    "FR-1042-AC-25",
+    "FR-1042-AC-26"
+)]
 fn check_document_bytes(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2443,12 +2459,18 @@ fn check_document_bytes(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     // FR-1042: a bounded base's acyclic product bounds a value by the
-    // one-step inequalities alone; an unbounded eventual chain adds the
-    // `lower` document's progress ranking.
+    // one-step inequalities alone; an unbounded eventual chain, cyclic or
+    // not, adds the `lower` document's progress ranking. The acyclic
+    // `reachability/v1` base is checked under a workload alone: an
+    // every-scheduler bound needs one action that meets the inequality and
+    // progress together, which these checks do not select.
+    let acyclic_eventual = !document.cyclic_dtmc
+        && objective == ProbabilityObjective::Workload
+        && is_eventual_reach(claim);
     let bound_base = if document.cyclic_dtmc {
         event.is_none()
     } else {
-        bounded_ranks.is_some()
+        bounded_ranks.is_some() || acyclic_eventual
     };
     if bound_side.is_some() && (!bound_base || !fairness_records.is_empty()) {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -2477,8 +2499,9 @@ fn check_document_bytes(
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
-    // Over the explored part, a ranking has rows for named states only.
-    if explored && ranks.keys().any(|key| !named.contains(key)) {
+    // FR-1042 "Document": over the explored part, or a subset of the whole
+    // graph, a ranking has rows for named states only.
+    if (explored || partial) && ranks.keys().any(|key| !named.contains(key)) {
         return Ok(malformed_ranking());
     }
     let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
@@ -2505,16 +2528,20 @@ fn check_document_bytes(
     if ranked && !partial && ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
-    // The derived ranks are a whole graph's. A cyclic reward ranks progress
-    // instead, and so does a partial `lower` over a chain; a partial expected
-    // reward `lower` needs no ranking to be sound (FR-1042 "Conditions"). No
-    // height is derivable past a state the document does not name.
+    // The derived ranks are a whole graph's, and a subset `lower` carries
+    // those of its named states. A cyclic reward ranks progress instead, and
+    // so does a partial `lower` over a chain; a partial expected reward
+    // `lower` needs no ranking to be sound (FR-1042 "Conditions"). No height
+    // is derivable past a state the document does not name.
     let progress_ranked = reward.is_some() && document.cyclic_dtmc;
     let partial_unbounded = partial && (reward.is_some() || document.cyclic_dtmc);
     if let Some(expected) =
         bounded_ranks.filter(|_| ranked && !progress_ranked && !partial_unbounded)
     {
-        for (key, actual) in &expected {
+        for (key, actual) in expected
+            .iter()
+            .filter(|(key, _)| !partial || named.contains(*key))
+        {
             poll(cancel)?;
             if ranks.get(key) != Some(actual) {
                 return Ok(rejected(
@@ -2529,7 +2556,7 @@ fn check_document_bytes(
     // remaining horizon instead, and an `upper` document has no ranking.
     let progress_checked = match bound_side {
         None => true,
-        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
+        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc || acyclic_eventual,
         Some(SubsystemBoundKind::Upper) => reward_upper,
     };
     for (key, state) in graph
@@ -2550,8 +2577,12 @@ fn check_document_bytes(
                 let mut progress = false;
                 for edge in state.choices.iter().flatten() {
                     super::reward::visit(cancel, &mut meter)?;
+                    // A successor a partial `lower` omits has no rank row,
+                    // and progress goes through it: an expected reward
+                    // `lower` is sound without ranks (FR-1042 "Conditions").
+                    let omitted = partial && !named.contains(&edge.target);
                     if edge.probability > rational(0)
-                        && ranks.get(&edge.target).is_some_and(|next| next < rank)
+                        && (omitted || ranks.get(&edge.target).is_some_and(|next| next < rank))
                     {
                         progress = true;
                         break;
