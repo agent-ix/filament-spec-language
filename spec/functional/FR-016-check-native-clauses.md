@@ -85,7 +85,11 @@ key; a compound optional initializer receives its own lexical key. pre(alias)
 does not retag the captured value. pre is post-only; result is post-only and is
 resolved through the selected operation. The new model's operation parameters
 are immutable invocation inputs captured at pre; result is captured at post.
-Nested shadowing and duplicate active local names refuse.
+Nested shadowing of an active local binder and duplicate active local names
+refuse. A parameter is not an active local binder for this rule: a same-named
+`let` or quantifier binder shadows a parameter for bare reads. In a state
+clause, the qualified `<op>::p` name continues to read the operation parameter
+as FR-104 specifies.
 
 The proof is a conservative symbolic abstraction over validated native inputs.
 IR owns numeric ranges and guard discharge. Native object/enum/record identity
@@ -110,6 +114,7 @@ and contains no healthy/violating assessment of an unsupplied population.
 | FR-016-AC-8 | **RETIRED in QSL-499; historical only.** Caller/hard budgets bound native checking, proof graph construction and actual IR expansion before work; exact and one-over controls return success or resource_exhausted respectively, with no partial package. | Test (TC-051) |
 | FR-016-AC-9 | **RETIRED in QSL-499; historical only.** Accepted reference, reachability and operation clauses expose their required population/observation/context validation without fabricating runtime values or an executable backend projection. | Test (TC-052) |
 | FR-016-AC-10 | **RETIRED in QSL-1808; historical only.** A domain-package field declared `required` with multiplicity `[0, 1]` types as a sequence of at most one element, and `present(x.f)` refuses `ill_typed`; the field declared `optional` with multiplicity `[1, 1]` types as an option of its leaf, and `x.f` unwrapped under a `present` guard checks; the field declared `optional` with multiplicity `[0, 1]` types as an option of a sequence of at most one element. Disposition (ADR-011, ADR-033, FR-499): the field-to-native-type mapping of the root crate's domain checker is deleted with the native model checker; field typing is owned by FR-056 (FR-056-AC-10: `[1, 1]` gives the declared type, otherwise the ordered or unique collection, and the field's own presence decides `Option`; FR-056-AC-21: Option and Sequence field types), and the `present(x.f)` refusal on a required `[0, 1]` field by `present_over_a_zero_one_collection_refuses_ill_typed` (FR-056-AC-10). | Test (TC-895) |
+| FR-016-AC-11 | In `function f using v(x: Integer, s: Sequence<Integer>[0,3]): Boolean pure { forall(x in s: x = 0) }`, the checker accepts the function and resolves bare `x` in the quantifier predicate to the quantifier binder, shadowing the same-named function parameter. This parameter shadowing is allowed; nested shadowing of an active local binder and duplicate active local names remain refused. | Test |
 
 ## Dependencies
 

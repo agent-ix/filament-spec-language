@@ -49,6 +49,9 @@ Reviewed the 19-file Rust diff against `origin/main`, including the state-key me
 | FND-001 | fixed | Product-key cache keys now include the exact caller byte limit, so a cache hit can only reuse bytes already admitted by the canonical encoder under that same limit; the manual layout/chunk accounting helper was removed. |
 | FND-002 | fixed | The canonical key field now matches rustfmt's one-line form. |
 | FND-003 | fixed | The observation imports now match rustfmt order. |
+| FND-001 | fixed | Verified again at a43079bd: cache key includes caller input_bytes and cache misses use ProductKey::canonical_bytes_with_model_value with that same limit. |
+| FND-002 | fixed | Verified again at a43079bd: ModelSimState.canonical_key remains on rustfmt’s one-line form. |
+| FND-003 | fixed | Verified again at a43079bd: observation_facts imports remain in rustfmt order. |
 
 ### Round 1 evidence
 
@@ -61,3 +64,13 @@ Reviewed the 19-file Rust diff against `origin/main`, including the state-key me
 The former FR-120-AC-32 tag on `a_solved_size_integer_assignment_uses_its_domain_index` is removed; that test now covers the out-of-domain assignment case without claiming the temporal-query acceptance criterion. The two scenario tests for defined and undefined pre-state queries remain tagged to FR-120-AC-32. The memo regression now compares the mutated clone's key with a fresh changed state and checks that memo population leaves `Debug` output stable.
 
 No new code defect was found in the capped FIFO caches, caller-limit keyed product cache, or expansion-payload cache removal. The current PR head has no recorded FR-851-AC-4 test-profile timing result in the issue/CI evidence I inspected; existing evidence is from earlier heads. Merge readiness therefore remains pending a current-head AC-4 measurement, separate from the resolved code review findings.
+
+### Round 2 evidence
+
+At `a43079bd8662cda4adf9ac281ee1cff0a25186a8`, the earlier code-review findings remain fixed. The new prefetch-window test counts expansions across overlapping windows and asserts only the five unique states were expanded; it also checks the retained map remains bounded by the worker count. The test passed 1/1. The locked workspace check passed at this head. The separate unchanged FR-851-AC-4 regression completed once on this host in 86.09 seconds and failed its 60-second assertion; draco's reference five-pass median remains 26.42 seconds.
+
+| FND | Outcome | After excerpt |
+| --- | --- | --- |
+| FND-001 | fixed | `let key = (state.model_key.clone(), property, identity.input_bytes);` |
+| FND-002 | fixed | `canonical_key: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,` |
+| FND-003 | fixed | `admit_initial_state, model_views, observation_facts, observe_state, state_fields,` |

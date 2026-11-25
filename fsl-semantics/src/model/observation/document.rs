@@ -1892,14 +1892,38 @@ fn admit_native(
     value_type: &filament_exact::ValueType,
     types: &TypeEnvironment,
 ) -> Result<Value, AdmissionRecord> {
-    let kind = native_payload(native)?;
+    let float_diagnostic = matches!(
+        native.kind(),
+        RawNativeKind::Known(NativeKind::Float32 | NativeKind::Float64)
+    ) || matches!(value_type, filament_exact::ValueType::Float(_));
+    let kind = native_payload(native).map_err(|record| {
+        if float_diagnostic {
+            match record.fields.get("member").cloned() {
+                Some(member) => record.at(vec![PathStep::Field(member)]),
+                None => record,
+            }
+        } else {
+            record
+        }
+    })?;
     let invalid = |refusal: filament_exact::ConstructionRefusal, member: &'static str| {
-        admission_record(Code::InvalidRuntimeInput, "invalid-value")
+        let record = admission_record(Code::InvalidRuntimeInput, "invalid-value")
             .with("member", member)
-            .kernel_class(refusal.cause)
+            .kernel_class(refusal.cause);
+        if float_diagnostic {
+            record.at(vec![PathStep::Field(member.to_owned())])
+        } else {
+            record
+        }
     };
     let wrong = |member: &'static str| {
-        admission_record(Code::InvalidRuntimeInput, "wrong-value-kind").with("member", member)
+        let record =
+            admission_record(Code::InvalidRuntimeInput, "wrong-value-kind").with("member", member);
+        if float_diagnostic {
+            record.at(vec![PathStep::Field(member.to_owned())])
+        } else {
+            record
+        }
     };
     match (kind, value_type) {
         (NativeKind::String, filament_exact::ValueType::String) => {
@@ -2105,7 +2129,9 @@ pub(super) fn float_payload(native: RawNative<'_>) -> Option<filament_exact::Iee
 }
 
 fn invalid_float_bits() -> AdmissionRecord {
-    admission_record(Code::InvalidRuntimeInput, "invalid-value").with("member", "bits")
+    admission_record(Code::InvalidRuntimeInput, "invalid-value")
+        .with("member", "bits")
+        .at(vec![PathStep::Field("bits".to_owned())])
 }
 
 /// A Text payload admitted into `declared` (FR-106 check 7): the kernel
@@ -3455,6 +3481,16 @@ fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep>
 fn refusal_steps(form: RawForm<'_>, record: &AdmissionRecord) -> Vec<PathStep> {
     let mut steps = document_spelling(form, &record.path);
     let missing = record.catalog.cause() == "missing-member";
+    if missing
+        && record
+            .fields
+            .get("member")
+            .is_some_and(|member| steps.last() == Some(&PathStep::Field(member.clone())))
+    {
+        // The typed path can name an absent member; the document pointer
+        // must stop at the object containing it.
+        steps.pop();
+    }
     match record.fields.get("member") {
         Some(member) => {
             let named = PathStep::Field(member.clone());

@@ -1176,6 +1176,43 @@ fn cache_successor_keys(
 }
 
 #[cfg(test)]
+mod prefetch_window_tests {
+    use super::prefetch_window;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn overlapping_worker_windows_reuse_expansions_within_worker_bound() {
+        let mut prefetched = BTreeMap::new();
+        let mut expanded = Vec::new();
+
+        prefetch_window(&mut prefetched, [(1, 10), (2, 20), (3, 30)], 3, |states| {
+            expanded.extend(states.iter().copied());
+            states.into_iter().map(|state| state + 1).collect()
+        });
+        assert_eq!(prefetched.len(), 3);
+        assert!(prefetched.len() <= 3);
+
+        prefetch_window(&mut prefetched, [(2, 20), (3, 30), (4, 40)], 3, |states| {
+            expanded.extend(states.iter().copied());
+            states.into_iter().map(|state| state + 1).collect()
+        });
+        assert_eq!(prefetched.len(), 3);
+        assert!(prefetched.len() <= 3);
+
+        prefetch_window(&mut prefetched, [(3, 30), (4, 40), (5, 50)], 3, |states| {
+            expanded.extend(states.iter().copied());
+            states.into_iter().map(|state| state + 1).collect()
+        });
+        assert_eq!(prefetched.len(), 3);
+        assert!(prefetched.len() <= 3);
+        assert_eq!(expanded, [10, 20, 30, 40, 50]);
+        assert_eq!(prefetched.get(&3), Some(&31));
+        assert_eq!(prefetched.get(&4), Some(&41));
+        assert_eq!(prefetched.get(&5), Some(&51));
+    }
+}
+
+#[cfg(test)]
 mod cache_budget_tests {
     use super::{ByteCache, PropertyKey, StateKey, cache_product_key, cache_successor_keys};
 
@@ -1306,6 +1343,38 @@ struct LassoSystem<'r, S: LiveSubject> {
 
 type RawExpansionKey = (StateKey, usize);
 
+/// Expand missing entries from the current worker window, retaining cached
+/// entries only while their keys remain in that window.
+fn prefetch_window<K, State, Value>(
+    prefetched: &mut BTreeMap<K, Value>,
+    candidates: impl IntoIterator<Item = (K, State)>,
+    workers: usize,
+    expand: impl FnOnce(Vec<State>) -> Vec<Value>,
+) where
+    K: Clone + Ord,
+{
+    let worker_batch = workers.max(1);
+    let window: Vec<_> = candidates.into_iter().take(worker_batch).collect();
+    let window_keys: BTreeSet<_> = window.iter().map(|(key, _)| key.clone()).collect();
+    prefetched.retain(|key, _| window_keys.contains(key));
+
+    let mut jobs = Vec::new();
+    let mut scheduled = BTreeSet::new();
+    for (key, state) in window {
+        if !prefetched.contains_key(&key) && scheduled.insert(key.clone()) {
+            jobs.push((key, state));
+        }
+    }
+    if jobs.is_empty() {
+        return;
+    }
+    let (keys, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+    let values = expand(states);
+    debug_assert_eq!(keys.len(), values.len());
+    prefetched.extend(keys.into_iter().zip(values));
+    debug_assert!(prefetched.len() <= worker_batch);
+}
+
 impl<S: LiveSubject> LassoSystem<'_, S> {
     fn encoded_key(
         &self,
@@ -1420,35 +1489,21 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     fn prefetch_expansions(&self, states: &[LState<S::State>], workers: usize) {
         let worker_batch = workers.max(1);
-        let window: Vec<_> = states
-            .iter()
-            .take(worker_batch)
-            .map(|state| (Self::raw_expansion_key(state), state.model.clone()))
-            .collect();
-        let window_keys: BTreeSet<_> = window.iter().map(|(key, _)| key.clone()).collect();
-        self.prefetched
-            .borrow_mut()
-            .retain(|key, _| window_keys.contains(key));
-
-        let mut jobs = Vec::new();
-        let mut scheduled = BTreeSet::new();
-        for (key, model) in window {
-            let already_prefetched = self.prefetched.borrow().contains_key(&key);
-            if !already_prefetched && scheduled.insert(key.clone()) {
-                jobs.push((key, model));
-            }
-        }
-        if jobs.is_empty() {
-            return;
-        }
-        let (keys, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
-        let results =
-            self.system
-                .expand_live_batch(states, self.enforce, self.stutter_closure, worker_batch);
-        let results: BTreeMap<RawExpansionKey, _> = keys.into_iter().zip(results).collect();
-        let mut prefetched = self.prefetched.borrow_mut();
-        prefetched.extend(results);
-        debug_assert!(prefetched.len() <= worker_batch);
+        prefetch_window(
+            &mut self.prefetched.borrow_mut(),
+            states
+                .iter()
+                .map(|state| (Self::raw_expansion_key(state), state.model.clone())),
+            worker_batch,
+            |states| {
+                self.system.expand_live_batch(
+                    states,
+                    self.enforce,
+                    self.stutter_closure,
+                    worker_batch,
+                )
+            },
+        );
     }
 
     fn raw_expansion_key(state: &LState<S::State>) -> RawExpansionKey {
