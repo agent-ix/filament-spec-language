@@ -986,6 +986,9 @@ const REFUND_ROWS: &str = "step M::Node::step -> A::Acc::add(self);\n\
     step M::Refunds::Committed -> stutter;\n\
     step M::Refunds::Closed -> stutter;\n\
     step cend M::Refunds::Refund -> stutter;\n\
+    step cfail M::Refunds::Refund -> stutter;\n\
+    step ctimeout M::Refunds::Refund -> stutter;\n\
+    step cexpire M::Refunds::Refund -> stutter;\n\
     step activate M::Refunds -> stutter;";
 
 /// `rows` without the row `row`.
@@ -994,9 +997,9 @@ fn without(rows: &str, row: &str) -> String {
     rows.replace(row, "")
 }
 
-/// The `Refund` template's `cend`, the `effect` and `commit` nodes, the
-/// `finish` node and the trigger each need a row, and the template's
-/// `cattempt` is covered by the operation's row.
+/// The `Refund` template's `cend`, `cfail`, `ctimeout` and `cexpire`, the
+/// `effect` and `commit` nodes, the `finish` node and the trigger each need a
+/// row, and the template's `cattempt` is covered by the operation's row.
 #[trace("TC-659", "FR-214-AC-3")]
 #[test]
 fn a_template_a_trigger_and_event_nodes_need_their_own_rows() {
@@ -1098,6 +1101,9 @@ fn a_row_naming_no_class_of_the_clause_refuses_at_its_name() {
         ("step fork M::Refunds::Tried -> stutter;", "Tried"),
         ("step M::Refunds::Nowhere -> stutter;", "Nowhere"),
         ("step cend M::Refunds::Tried -> stutter;", "Tried"),
+        ("step cfail M::Refunds::Tried -> stutter;", "Tried"),
+        ("step ctimeout M::Refunds::Tried -> stutter;", "Tried"),
+        ("step cexpire M::Refunds::Tried -> stutter;", "Tried"),
         ("step spawn M::Refunds::Service -> stutter;", "Service"),
         ("step duplicate M::Refunds::Wire -> stutter;", "Wire"),
     ] {
@@ -1118,22 +1124,112 @@ fn a_row_naming_no_class_of_the_clause_refuses_at_its_name() {
     assert_eq!(only(&found).at, "Fill");
 }
 
-/// A row whose step source is `cfail`, `ctimeout` or `cexpire` of a template the
-/// clause declares parses, and S3 builds no class for it yet, so it refuses
-/// `missing-name` at the template segment of the name.
-#[trace("TC-541", "FR-136-AC-2")]
+/// FSpec TC-380's `Pay` over fixture R with the clause activation
+/// `activation`: the attempt `C` of `step`, the effect `Paid`, the event
+/// `Fail`, the `finish` node `Done` and the `Refund` template, which
+/// compensates with `undo`.
+fn pay(activation: &str) -> String {
+    format!(
+        "protocol Pay using pp over (k: M::Node) {activation} {{\n\
+         role w on M::Node;\n\
+         compensate Refund for Main::Paid as (fwd: M::Receipt)\n\
+         by w on M::Node::undo using e clock \"c\" {{\n\
+         activate first (f: M::Flag) when {{ f.ready }} {{ }}\n\
+         within [0,10]; attempts 1 of M::Attempt;\n\
+         retry (earlier: M::Attempt, later: M::Attempt) {{ false }};\n\
+         commit never;\n\
+         recover (r: M::Receipt) {{ true }};\n\
+         }}\n\
+         run sequence Main {{\n\
+         attempt C by w on M::Node::step contracts [] as (c: M::Flag) {{ true }};\n\
+         effect Paid of Main::C as (pd: M::Receipt) {{ true }};\n\
+         event Fail by w as (failed: M::Flag) {{ true }};\n\
+         }}\n\
+         finish Done as (d: M::Receipt) {{ true }};\n\
+         }}\n"
+    )
+}
+
+/// The unit refining the abstract protocol `Spec::Req`, one attempt `Ask` and
+/// a `finish`, by the concrete protocol `pay` with the step rows `rows`.
+fn request_unit(pay: &str, rows: &str) -> String {
+    header(true).replace("model A =", "model Spec =")
+        + pay
+        + "protocol Req using pp over (k: Spec::Acc) on origin {\n\
+           role r on Spec::Acc;\n\
+           run sequence S {\n\
+           attempt Ask by r on Spec::Acc::add contracts [] as (asked: Boolean) { true };\n\
+           }\n\
+           finish F as (f: Boolean) { true };\n\
+           }\n"
+        + &format!(
+            "refinement R using t abstract Spec::Req concrete M {{\n\
+             population Spec::accs from M::nodes;\n\
+             object Spec::Acc from M::Node {{ total = self.total; }}\n\
+             {rows}\n\
+             }}\n"
+        )
+}
+
+/// FSpec FR-432-AC-25's step rows other than the trigger's.
+const PAY_ROWS: &str = "step M::Pay::C -> stutter;\n\
+    step M::Pay::Paid -> stutter;\n\
+    step M::Pay::Fail -> stutter;\n\
+    step M::Pay::Done -> stutter;\n\
+    step M::Pay::Refund -> stutter;\n\
+    step cend M::Pay::Refund -> stutter;\n\
+    step cfail M::Pay::Refund -> stutter;\n\
+    step ctimeout M::Pay::Refund -> stutter;\n\
+    step cexpire M::Pay::Refund -> stutter;";
+
+/// FSpec FR-432-AC-25 (FSpec TC-386 SR-16): the complete rows over `Pay`
+/// admit, and removing only the `cfail`, only the `ctimeout` or only the
+/// `cexpire` row refuses once, naming that class. TC-380's `Pay` is
+/// `on origin` and so has no `activate` class; the `on each` form of it takes
+/// the criterion's `activate` row as well.
+#[trace("FSpec-TC-386", "FSpec-FR-432-AC-25")]
 #[test]
-fn a_compensation_outcome_row_refuses_missing_name_at_its_template() {
-    for keyword in ["cfail", "ctimeout", "cexpire"] {
-        let rows = format!("{REFUND_ROWS}\nstep {keyword} M::Refunds::Refund -> stutter;");
-        let found = refused(&unit(REFUNDS, &rows));
-        let unresolved = only(&found);
-        assert_eq!(
-            unresolved.pair(),
-            (Code::MissingDeclaration, Some("missing-name")),
-            "{keyword}"
-        );
-        assert_eq!(unresolved.at, "Refund", "{keyword}");
+fn each_compensation_outcome_class_needs_its_own_row() {
+    for (activation, trigger_row) in [
+        ("on origin", ""),
+        (
+            "on each (opened: M::Tick) when (opened.ready)",
+            "step activate M::Pay -> stutter;",
+        ),
+    ] {
+        let pay = pay(activation);
+        let complete = format!("{PAY_ROWS}\n{trigger_row}");
+        let graph = checks(&request_unit(&pay, &complete));
+        let classes: Vec<&StepClass> = only_refinement(&graph)
+            .steps()
+            .iter()
+            .map(|row| &row.class)
+            .collect();
+        let refund = || "Refund".to_owned();
+        for (keyword, class) in [
+            ("cfail", StepClass::CompensationFail(refund())),
+            ("ctimeout", StepClass::CompensationTimeout(refund())),
+            ("cexpire", StepClass::CompensationExpire(refund())),
+        ] {
+            assert_eq!(
+                classes.iter().filter(|found| ***found == class).count(),
+                1,
+                "{activation}: {keyword}"
+            );
+            let omitted = format!("step {keyword} M::Pay::Refund -> stutter;");
+            let found = refused(&request_unit(&pay, &without(&complete, &omitted)));
+            let refusal = only(&found);
+            assert_eq!(
+                refusal.pair(),
+                (Code::MissingDeclaration, Some("missing-name")),
+                "{activation}: {keyword}"
+            );
+            assert_eq!(
+                refusal.refinement(),
+                &missing(RowClass::Template, &format!("{keyword} M::Pay::Refund")),
+                "{activation}: {keyword}"
+            );
+        }
     }
 }
 
