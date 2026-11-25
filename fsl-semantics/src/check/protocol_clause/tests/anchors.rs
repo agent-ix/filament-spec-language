@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-113 anchor resolution: nested scopes, missing and ambiguous names,
 //! wrong-kind and channel-mismatch refusals, and refusal ordering.
 

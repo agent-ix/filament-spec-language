@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-218 "Relationships" (TC-1056) over fixture R of the protocol
 //! obligation tests, extended with TC-1056 fixture P's object type `Peer`,
 //! its record `Plain` and its relationships `pipe` and `owns` from `Peer` to

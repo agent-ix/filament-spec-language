@@ -951,6 +951,22 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ),
         Ok(ModelCheckOutcome::Holds { stats, .. }) if stats.product_states == 1
     ));
+    // `Other` is in no hierarchy with `Animal`, so its `c` is another object
+    // universe's object and no conflict.
+    let unrelated = self::world(
+        &[("animals", &["Animal"]), ("others", &["Other"])],
+        &[
+            ("animals", &[("c", "Animal")]),
+            ("others", &[("c", "Other")]),
+        ],
+    );
+    assert_eq!(
+        unrelated.instances(
+            "Animal",
+            universes(&[("animals", &["c"]), ("others", &["c"])])
+        ),
+        Ok(vec![instance("animals", "c")])
+    );
     let no_key = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
     let no_key_result = no_key.run("Animal", universes(&[("animals", &["c"])]), true);
     assert!(

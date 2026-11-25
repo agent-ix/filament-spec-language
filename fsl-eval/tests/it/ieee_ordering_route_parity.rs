@@ -24,7 +24,7 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
     AdmissionUsage, AdmittedObservations, DocumentRef, Observation, SelfKind,
 };
-use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
+use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
 use ix_trace_rs::trace;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -144,6 +144,62 @@ fn checked_unit(functions: &str) -> (CheckedPackage, fsl_package::Emission) {
     let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
         .expect("the checked package emits");
     (package, emission)
+}
+
+/// FR-255 AC-17/19: the evaluator's package route accepts maximum I2 identity
+/// join limits and retains the first typed work refusal at a zero allowance.
+#[trace("TC-721", "FR-255-AC-17", "FR-255-AC-19")]
+#[test]
+fn evaluator_identity_rows_accept_maximum_and_report_zero_work_refusal() {
+    let (package, emission) =
+        checked_unit("function f using v(x: Integer): Boolean pure { x >= 0 }\n");
+    let no_models = package_input(std::iter::empty::<&[u8]>()).expect("no model imports");
+    let read = fsl_package::read_evaluation_emission(
+        &package,
+        &emission,
+        LibraryName::new("fixture").expect("library name"),
+        &no_models,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the checked bytes are admitted");
+    let admitted = read.admitted();
+
+    let mut maximum = fsl_package::NativeJoinBudget::new(u64::MAX, u64::MAX);
+    emission
+        .identity_rows(admitted, &mut maximum)
+        .expect("u64::MAX work and storage admit the evaluator identity join");
+    let needed = maximum.consumed();
+    assert!(
+        needed.work > 0,
+        "the I2 identity join charges positive work"
+    );
+    assert!(
+        needed.storage > 0,
+        "the I2 identity join charges positive storage"
+    );
+
+    let mut exact = fsl_package::NativeJoinBudget::new(needed.work, needed.storage);
+    emission
+        .identity_rows(admitted, &mut exact)
+        .expect("the evaluator's measured W/S join allowance admits");
+    assert_eq!(exact.consumed(), needed);
+
+    let mut zero_work = fsl_package::NativeJoinBudget::new(0, u64::MAX);
+    let error = match emission.identity_rows(admitted, &mut zero_work) {
+        Err(fsl_package::IdentityFileRefusal::Rows(error)) => error,
+        Err(other) => panic!("zero work returned the wrong refusal: {other:?}"),
+        Ok(_) => panic!("zero work admitted a positive I2 identity join charge"),
+    };
+    assert_eq!(error.code(), fsl_package::NativeRowErrorCode::WorkLimit);
+    let denied = error
+        .denied()
+        .expect("the evaluator refusal preserves the first denied charge");
+    assert!(denied.amount > 0);
+    assert_eq!(zero_work.first_unpaid(), Some(denied));
+    assert_eq!(zero_work.first_unpaid_locus(), error.locus());
+    assert_eq!(error.configured_bound(), Some(0));
 }
 
 fn signature_after<'a>(source: &'a str, marker: &str) -> &'a str {
@@ -512,11 +568,7 @@ fn float_of(float: &str, value: f64) -> Value {
 }
 
 fn smallest_subnormal(float: &str) -> Value {
-    if float == F32 {
-        f32v(1)
-    } else {
-        f64v(1)
-    }
+    if float == F32 { f32v(1) } else { f64v(1) }
 }
 
 fn largest_finite(float: &str) -> Value {

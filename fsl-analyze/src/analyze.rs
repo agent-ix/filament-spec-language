@@ -3138,6 +3138,10 @@ fn run(
             }),
         );
     }
+    // A supported item with no work is one whose item adapter built no
+    // evaluator for its target. On the package route that includes the
+    // operation-contract items `document::package_run`'s documentation lists
+    // as settling `unsupported` (QSL-2934).
     let Some(work) = work else {
         return disposed(DispositionKind::Unsupported, Some(unsupported_kind(kind)));
     };

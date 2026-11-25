@@ -209,7 +209,7 @@ fn the_settings_operation_supplies_the_actual_formatter_limits() {
     }
 }
 
-#[trace("TC-016", "FR-003-AC-5", "FR-003-AC-6")]
+#[trace("TC-016", "FR-003-AC-5", "FR-003-AC-6", "NFR-001-M-1")]
 #[test]
 fn typed_format_limits_publish_a_replaceable_default() {
     assert_eq!(FormatLimits::default().output_bytes, 1_048_576);
