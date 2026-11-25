@@ -896,10 +896,14 @@ fn tc_774_function_contract_and_application_items_replay() {
 
     let (_, q_x) = declaration(&fixture, "q");
     let missing_parameter = settle(&context, &p, &bounds, input(q_x, 0));
-    assert!(matches!(
-        missing_parameter.value(),
-        TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
-    ));
+    assert!(
+        matches!(
+            missing_parameter.value(),
+            TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
+        ),
+        "unexpected missing-parameter settlement: {:?}",
+        missing_parameter.value()
+    );
 
     // The item's identity is the process-provider preimage of its bounds.
     let entries = BoundEntries::new(bounds.to_vec()).unwrap();
