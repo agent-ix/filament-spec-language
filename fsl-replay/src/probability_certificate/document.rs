@@ -55,6 +55,7 @@ pub(super) use timed::{is_timed_witness_claim, replay_timed_witness};
 mod unit;
 mod value_bounds;
 mod writer;
+pub(crate) use key::is_model_state_key;
 pub(super) use key::{
     activated_product_key, formula_product_key_with_budget, model_product_key,
     model_product_key_with_budget,
