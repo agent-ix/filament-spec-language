@@ -118,8 +118,6 @@ pub(crate) struct StateClauseInput<'a> {
     pub(crate) context: EffectiveId,
     /// The operation a `pre` or `post` clause names.
     pub(crate) anchor: Option<AnchorInput<'a>>,
-    /// The operation member exactly as written in `on M::T::op`.
-    pub(crate) authored_operation_name: Option<&'a str>,
     /// `self`, then `result` when bound, then the operation's parameters,
     /// in slot order.
     pub(crate) parameters: &'a [(String, ValueType)],
@@ -290,21 +288,8 @@ impl Lowering<'_> {
     ) -> Result<LoweredClause, CheckRefusal> {
         let location = clause.location;
         if let Some(point) = &clause.execution_point {
-            let authored = clause.authored_operation_name;
             let resolved = clause.anchor.as_ref().map(|anchor| anchor.operation.name());
-            check_execution_point(clause.kind, authored, point)
-                .and_then(|()| {
-                    let is_operation_point = matches!(
-                        point.point(),
-                        filament_contract_model::ExecutionPoint::Pre { .. }
-                            | filament_contract_model::ExecutionPoint::Post { .. }
-                    );
-                    if is_operation_point && authored != resolved {
-                        Err(ExecutionPointRefusal::OperationMismatch)
-                    } else {
-                        Ok(())
-                    }
-                })
+            check_execution_point(clause.kind, resolved, point)
                 .map_err(|refusal| CheckRefusal {
                     location: clause.name_location.clone(),
                     cause: Box::new(CheckCause::ExecutionPointBinding(refusal)),
