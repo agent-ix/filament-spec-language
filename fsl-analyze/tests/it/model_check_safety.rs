@@ -1418,7 +1418,10 @@ fn a_hand_built_guards_undefined_activation_replays_for_its_instance() {
             .expect("`inc` on `d` is enabled");
         prefix.push(ModelStep {
             transition,
-            post_state: system.state_key(&next).expect("the state encodes").1,
+            post_state: system
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
+                .expect("the state encodes")
+                .1,
             delay: None,
         });
         state = next;

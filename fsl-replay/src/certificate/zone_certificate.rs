@@ -2213,7 +2213,7 @@ impl<O> Checker<'_, '_, O> {
     fn state_key(&self, state: &ModelSimState) -> Step<fsl_eval::simulation::StateKey, O> {
         self.timed
             .system()
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map(|(_, state_key)| state_key)
             .or_else(undecided)
     }

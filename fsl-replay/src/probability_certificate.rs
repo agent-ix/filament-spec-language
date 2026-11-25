@@ -18,6 +18,7 @@ use fsl_semantics::check::{
 use serde_json::{json, Value};
 
 use fsl_package::ObligationIdentity;
+use ix_trace_rs::implements;
 
 mod bounded;
 mod key_admission;
@@ -333,6 +334,7 @@ pub struct DigitalProductKeyInput {
 /// `accumulator` and `pending` must already have been derived from the checked
 /// subject and claim. This routine owns only their canonical representation;
 /// contextual admission and derivation remain the caller's responsibility.
+#[implements("FR-196-AC-6")]
 pub fn digital_probability_product_key(
     input: DigitalProductKeyInput,
 ) -> Result<ProbabilityProductKey, ExactProbabilityGraphError> {
@@ -944,7 +946,7 @@ fn enumerate_model_graph<P: StatePredicate>(
 ) -> Result<CheckerGraph, ExactProbabilityGraphError> {
     let key_of = |state: &ModelSimState| {
         let (model_bytes, _) = system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
         product_key(binding, &model_bytes)
     };
@@ -1854,6 +1856,7 @@ enum GraphCycles {
 /// Under [`GraphCycles::CollapseNonprogressive`] closed nonprogressive action
 /// components are reconstructed here and checked against their best exit
 /// values before ordinary Bellman equations are checked.
+#[implements("FR-201-AC-1")]
 fn check_exact_reachability(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,

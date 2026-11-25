@@ -236,7 +236,13 @@ fn successors(world: &World, keys: &[&str]) -> BTreeMap<StateKey, Vec<StateKey>>
                 .expect("expands")
                 .successors
                 .into_iter()
-                .map(|(_, next)| system.state_key(&next).expect("encodes").0.into())
+                .map(|(_, next)| {
+                    system
+                        .state_key(&next, fsl_foundation::IdentityLimits::default())
+                        .expect("encodes")
+                        .0
+                        .into()
+                })
                 .collect();
             (state_key, next)
         })

@@ -1652,7 +1652,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let (mut key, _) = self
             .timed
             .system()
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ZoneCheckRefusal::Fault("state-key"))?;
         key.extend_from_slice(&widen(q).to_be_bytes());
         if let Some(stored) = self.passed.get(&key) {
@@ -1823,7 +1823,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn key(&self, state: &ModelSimState) -> Result<Vec<u8>, Halt> {
         self.timed
             .system()
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map(|(key, _)| key)
             .map_err(|_| ZoneCheckRefusal::Fault("state-key").into())
     }
@@ -2571,7 +2571,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let (discrete_key, _) = self
             .timed
             .system()
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ZoneCheckRefusal::Fault("state-key"))?;
         let present: Vec<Rational> = self
             .timed
