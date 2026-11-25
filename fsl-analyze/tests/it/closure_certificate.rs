@@ -2256,9 +2256,18 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         CertificateLocus::HyperProductState(missing_target.0.clone()),
         "FR-282-AC-8 names the exact absent target product key"
     );
-    assert_eq!(
-        serde_json::to_value(&rejection.at).expect("the missing target locus serializes"),
-        serde_json::to_value(&missing_target).expect("the missing target key serializes")
+    let wire = serde_json::to_value(&rejection.at).expect("the missing target locus serializes");
+    // FR-331's locus spells each component's state key as a State `{key}`.
+    let mut expected =
+        serde_json::to_value(&missing_target).expect("the missing target key serializes");
+    for state in expected["states"].as_array_mut().expect("component keys") {
+        *state = serde_json::json!({"key": state.take()});
+    }
+    assert_eq!(wire, expected);
+    crate::probability_from_source::assert_valid(
+        &crate::probability_from_source::provider_definition("HyperProductStateLocus"),
+        &wire,
+        "the missing target locus",
     );
 }
 

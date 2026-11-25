@@ -164,14 +164,19 @@ pub struct PackageItemInputs<'a> {
 }
 
 impl<'a> PackageInvariantSubject<'a> {
-    /// The invariant subject of the state clause at `claim`, with the item's
-    /// settings `form`; `None` when no state clause row names `claim`.
+    /// The invariant subject of the `invariant` state clause at `claim`, with
+    /// the item's settings `form`; `None` when no `invariant` row names
+    /// `claim`, as on the source route, so a `pre` or `post` clause that names
+    /// EN-1 is never checked as an invariant.
     pub fn new(
         inputs: PackageItemInputs<'a>,
         claim: &OccurrenceKey,
         form: &TemporalItem,
     ) -> Option<Self> {
-        let clause = inputs.input.state_clause(claim.node(), claim.origin())?;
+        let clause = inputs
+            .input
+            .state_clause(claim.node(), claim.origin())
+            .filter(|clause| clause.invariant)?;
         Some(Self {
             input: inputs.input.input(),
             clause,

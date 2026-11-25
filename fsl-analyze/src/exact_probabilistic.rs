@@ -112,7 +112,8 @@ pub use build::build_product;
 #[cfg(feature = "test-support")]
 pub use build::{BudgetedProductError, build_product_with_key_budget};
 pub(crate) use build::{
-    automaton_refusal, build_retaining_monitor, build_retaining_monitor_with_budget,
+    admit_in_scope, automaton_refusal, build_retaining_monitor, build_retaining_monitor_in_scope,
+    build_retaining_monitor_with_budget, build_retaining_monitor_with_budget_in_scope,
 };
 pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use digital::model_constraints;
@@ -259,9 +260,6 @@ pub struct ProbKey {
     pub model: Vec<u8>,
     /// The monitor or measure control; `None` for an unbounded form.
     pub monitor: Option<MonitorState>,
-    /// Exact timed event observations retained until the complete bounded
-    /// formula horizon has elapsed.
-    pub timed_history: Option<Vec<TimedObservation>>,
     /// The accumulated amounts; `None` for an event and for an unbounded
     /// form.
     pub accumulator: Option<Accumulator>,
@@ -270,15 +268,6 @@ pub struct ProbKey {
     /// The independently checkable canonical timed key, when this is a timed
     /// digital or region product state.
     pub certificate_state: Option<ProbabilityProductKey>,
-}
-
-/// A checked event formula's valuation at one model position and timestamp.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct TimedObservation {
-    /// Exact digital timestamp in the product's common clock scale.
-    pub time: u64,
-    /// Truth of each checked `holds` occurrence in formula arena order.
-    pub values: Vec<bool>,
 }
 
 impl ProbKey {
@@ -300,19 +289,6 @@ impl ProbKey {
         }
         cycle_identity_field(&mut identity, &self.model);
         encode_cycle_monitor(&mut identity, self.monitor);
-        if let Some(history) = &self.timed_history {
-            identity.push_str("timed-history=some;");
-            cycle_identity_number(&mut identity, history.len() as u64);
-            for observation in history {
-                cycle_identity_number(&mut identity, observation.time);
-                cycle_identity_number(&mut identity, observation.values.len() as u64);
-                for value in &observation.values {
-                    identity.push_str(if *value { "1;" } else { "0;" });
-                }
-            }
-        } else {
-            identity.push_str("timed-history=none;");
-        }
         encode_cycle_accumulator(&mut identity, self.accumulator.as_ref());
         match &self.pending {
             Some(pending) => {
@@ -482,7 +458,6 @@ impl Ord for ProbKey {
             .cmp(&other.binding)
             .then_with(|| self.model.cmp(&other.model))
             .then_with(|| self.monitor.cmp(&other.monitor))
-            .then_with(|| self.timed_history.cmp(&other.timed_history))
             .then_with(|| self.accumulator.cmp(&other.accumulator))
             .then_with(|| self.pending.cmp(&other.pending))
     }

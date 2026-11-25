@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-113 anchor resolution: scope keys, the nested-scope lookup of one
 //! scoped anchor, and the wrong-kind and channel-mismatch checks over its
 //! resolved target.
