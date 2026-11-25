@@ -988,7 +988,8 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
     );
     let right_binder = same_spelled_other_owner
         .rfind("rx: Plain")
-        .expect("the receive in the right branch declares rx");
+        .expect("the receive in the right branch declares rx")
+        + HEADER.len();
     assert!(
         same_name_refusals.iter().any(|(cause, _)| {
             matches!(cause,
