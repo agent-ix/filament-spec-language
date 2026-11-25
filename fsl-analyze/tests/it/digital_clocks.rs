@@ -745,11 +745,11 @@ fn exact_timed_claims_route_to_en5_and_statistical_ones_to_en4() {
     ]
     .into_iter()
     .collect();
-    let registry = crate::probabilistic_request_items::registry();
+    let registry = crate::probabilistic_request_support::registry();
     let items = items_with_evidence(&records, &registry, None, EvidenceSelection::Record);
     let routed: Vec<_> = items
         .iter()
-        .map(crate::probabilistic_request_items::candidate_ids)
+        .map(crate::probabilistic_request_support::candidate_ids)
         .collect();
     assert_eq!(routed, [vec!["en-5".to_owned()], vec!["en-4".to_owned()]]);
 }
@@ -1433,7 +1433,10 @@ fn time_locked_state_is_terminal() {
             })
         ) && built.outgoing(*state).is_empty()
     });
-    assert!(time_locked.is_some(), "a pending deadline state has no move");
+    assert!(
+        time_locked.is_some(),
+        "a pending deadline state has no move"
+    );
 }
 
 /// FR-203-AC-3 / FR-204-AC-3 (TC-639): an exponential delay requested as
@@ -1915,7 +1918,7 @@ fn assert_forged_initial_values_rejected(
             fsl_replay::ProbabilityDocumentLimits {
                 states: 4096,
                 edges: 65_536,
-                ..super::long_run_certificate::limits()
+                ..crate::long_run_support::limits()
             },
             &Cancel::new(),
         );

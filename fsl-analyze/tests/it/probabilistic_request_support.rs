@@ -32,7 +32,9 @@ fn exact_backend() -> fsl_route::BackendDescriptor {
 pub(crate) fn registry() -> Registry {
     let mut registry = Registry::new();
     registry
-        .register(manifest::descriptor(ProviderOrigin::Linked).expect("EN-4 is admitted"))
+        .register(
+            manifest::descriptor(ProviderOrigin::Linked).expect("EN-4's manifest is admitted"),
+        )
         .expect("EN-4 registers");
     registry.register(exact_backend()).expect("EN-5 registers");
     registry

@@ -27,6 +27,10 @@ const ANALYZE_IT_ROOTS: &[(&str, &str)] = &[
         "fsl-analyze/tests/it/model_check_binary.rs",
     ),
     ("it_refinement", "fsl-analyze/tests/it/refinement.rs"),
+    (
+        "it_refinement_cx1",
+        "fsl-analyze/tests/it_refinement_cx1.rs",
+    ),
 ];
 const USAGE: &str = "usage: cargo xtask merge-gate-recipe [--preflight] <changed-path>...";
 
@@ -2510,6 +2514,25 @@ mod tests {
         assert!(recipe
             .selectors
             .contains(&selector("filament-spec-language", "bare_package")));
+    }
+
+    #[test]
+    fn the_isolated_cx1_module_and_root_select_the_cx1_binary() {
+        for path in [
+            "fsl-analyze/tests/it/refinement_liveness_cx1.rs",
+            "fsl-analyze/tests/it_refinement_cx1.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            assert!(
+                recipe.selectors.iter().any(|selector| {
+                    selector.package == "fsl-analyze"
+                        && selector.target
+                            == TestTarget::Integration("it_refinement_cx1".to_owned())
+                        && selector.filter.as_deref() == Some("refinement_liveness_cx1")
+                }),
+                "{path} must run fsl-analyze --test it_refinement_cx1"
+            );
+        }
     }
 
     #[test]

@@ -4,14 +4,19 @@
 use crate::counter::{document, package_from_text, unit_text, Documents, CONTRACT};
 use crate::liveness_support::Fixture;
 
+/// A `Counter` fixture whose one clause `formula` is under the event-position
+/// false-extension profile, `on origin`.
 pub(crate) fn bounded_fixture(formula: &str) -> Fixture {
     bounded_fixture_on("on origin", formula)
 }
 
+/// [`bounded_fixture`] activated as `activation`.
 pub(crate) fn bounded_fixture_on(activation: &str, formula: &str) -> Fixture {
     bounded_fixture_over(document(false), CONTRACT, activation, formula)
 }
 
+/// [`bounded_fixture_on`] over the domain package `doc` and the operation
+/// clauses `contract`.
 pub(crate) fn bounded_fixture_over(
     doc: Vec<u8>,
     contract: &str,

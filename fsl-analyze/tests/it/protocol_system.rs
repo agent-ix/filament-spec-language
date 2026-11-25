@@ -9,50 +9,48 @@ use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{ModelCheckRefusal, ProtocolCheckRequest, check_protocol};
+use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::model_subject::{CapacityBinding, ProtocolSubject};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    Access, BlockedThread, CapacityRefusal, Chosen, Disposition, FootprintStep, GatedStep,
-    MemoryBranch, MemoryModel, MemoryStep, ProtocolFairness, ProtocolRefusal, ProtocolState,
-    ProtocolSystem, ProtocolTransition, ReadChoice, ReachRefusal, RestKind, RestPoint, Sc,
-    ScComponent,
-    SendOutcome, SharedCell, StepKind, ThreadPath, UnboundCapacity, WaitCause, Written,
-    capacity_value, explore_protocol,
+    capacity_value, explore_protocol, Access, BlockedThread, CapacityRefusal, Chosen, Disposition,
+    FootprintStep, GatedStep, MemoryBranch, MemoryModel, MemoryStep, ProtocolFairness,
+    ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, ReachRefusal, ReadChoice,
+    RestKind, RestPoint, Sc, ScComponent, SendOutcome, SharedCell, StepKind, ThreadPath,
+    UnboundCapacity, WaitCause, Written,
 };
 use fsl_eval::simulation::{
     Footprint, Limit, Limits, Location, NotSimulated, Outcome, SubjectSystem, TransitionSystem,
 };
-use fsl_foundation::MemoryModelName;
 use fsl_foundation::bound::DomainKey;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::MemoryModelName;
 use fsl_package::{CheckedPackage, TemporalClockSelection};
 use fsl_replay::{
-    CounterexampleKind, InconclusiveCause, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome,
-    ModelCheckRecord, ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
-    ModelTraceSubject, ProofBasis, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits,
-    ReplayRefusal, ResultLabel, TemporalCounterexample, TerminalValue, UndefinedLocus,
-    replay_protocol_trace_with_temporal_selections, settle_protocol_check,
+    replay_protocol_trace_with_temporal_selections, settle_protocol_check, CounterexampleKind,
+    InconclusiveCause, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
+    ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
+    ProofBasis, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    ResultLabel, TemporalCounterexample, TerminalValue, UndefinedLocus,
 };
 use fsl_route::deadlock::ProtocolTemporalItem;
 use fsl_route::request::ItemKind;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 use quire_canonical::{Encode, Error, Sink, Writer};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::counter::Letters;
-use crate::derived_request::{derived_subjects, protocol_request};
+use crate::derived_request_support::{derived_subjects, protocol_request};
 use crate::fill::{
-    Documents, PACKAGE, PROTOCOL_PROFILE, Reached, attempt, compiled, contracts, document,
-    fill_unit, instance, json_of, package, package_with,
+    attempt, compiled, contracts, document, fill_unit, instance, json_of, package, package_with,
     package_without_protocol_profile_selection, projections, protocol, reachable, sc_system,
-    subject, unit_text_with, universe, v,
+    subject, unit_text_with, universe, v, Documents, Reached, PACKAGE, PROTOCOL_PROFILE,
 };
-use crate::model_settle::{envelope_at, protocol_anchor, request};
+use crate::model_settle_support::{envelope_at, protocol_anchor, request};
 
 mod replay_boundary_cases;
 
@@ -435,11 +433,9 @@ fn an_attempt_identity_serializes_its_step_thread_node_operation_and_arguments()
         json!({"instance": "0", "type": "thread-path",
             "steps": [{"node": "Main/Both", "branch": "left", "ordinal": "0"}]})
     );
-    assert!(
-        first["operation"]
-            .as_str()
-            .is_some_and(|operation| operation.contains("ix://test/fill/Cell/inc"))
-    );
+    assert!(first["operation"]
+        .as_str()
+        .is_some_and(|operation| operation.contains("ix://test/fill/Cell/inc")));
     assert_eq!(first["arguments"], json!([]));
     assert_eq!(json_of(&identities[1])["node"], "Main/Both/right/B");
     assert_eq!(explored(&system), (7, 6));
@@ -656,11 +652,9 @@ fn a_binder_is_held_by_each_environment_that_reaches_its_reader() {
             .collect()
     };
     environments_follow(&system, &reached, 0, &mut Vec::new(), &expected);
-    assert!(
-        reached
-            .iter()
-            .any(|state| !system.binders(&state.state).expect("binders").is_empty())
-    );
+    assert!(reached
+        .iter()
+        .any(|state| !system.binders(&state.state).expect("binders").is_empty()));
 }
 
 /// Part of FR-205-AC-1 (TC-650): the `Fill` subject builds; naming an
@@ -873,13 +867,11 @@ fn an_attempt_is_the_model_application_over_its_selected_clauses() {
     let subject = case.subject("P");
     let system = sc_system(&subject);
     let start = &system.try_initial().expect("initial states settle")[0];
-    assert!(
-        system
-            .successors(start)
-            .expect("expands")
-            .successors
-            .is_empty()
-    );
+    assert!(system
+        .successors(start)
+        .expect("expands")
+        .successors
+        .is_empty());
     assert_eq!(
         system.blocked(start, &[]).expect("blocked threads"),
         vec![BlockedThread {
@@ -1428,9 +1420,9 @@ fn a_protocol_deadlock_names_its_blocked_threads_and_settles_refuted() {
 #[trace("TC-387", "FR-433-AC-1")]
 #[test]
 fn a_protocol_deadlock_is_spelled_with_its_blocked_list_through_analyze() {
-    use crate::derived_request::items_of_kind;
+    use crate::derived_request_support::items_of_kind;
     use fsl_analyze::analyze::ProtocolItem;
-    use fsl_analyze::analyze::{Engines, analyze_items, derived_protocol_item, split_records};
+    use fsl_analyze::analyze::{analyze_items, derived_protocol_item, split_records, Engines};
     use fsl_replay::ProtocolCertificateRequest;
 
     let case = Case::new(&fill_unit("self.v = 0", ""), &[0]);
@@ -1523,9 +1515,9 @@ fn a_protocol_deadlock_is_spelled_with_its_blocked_list_through_analyze() {
 #[test]
 #[trace("FR-259", "FR-1046-AC-7")]
 fn a_protocol_replay_allocation_keeps_the_actual_item_resource_evidence() {
-    use crate::derived_request::items_of_kind;
+    use crate::derived_request_support::items_of_kind;
     use fsl_analyze::analyze::{
-        Engines, ProtocolItem, analyze_items, derived_protocol_item, split_records,
+        analyze_items, derived_protocol_item, split_records, Engines, ProtocolItem,
     };
     use fsl_replay::ProtocolCertificateRequest;
     let case = Case::new(&fill_unit("self.v = 0", ""), &[0]);
@@ -1575,7 +1567,7 @@ fn a_protocol_replay_allocation_keeps_the_actual_item_resource_evidence() {
         replay: Box::new(|payload| {
             assert!(!payload.prefix.is_empty(), "actual native counterexample");
             calls.set(calls.get() + 1);
-            Err(crate::model_settle::allocation_refusal(7332))
+            Err(crate::model_settle_support::allocation_refusal(7332))
         }),
     };
     let records = analyze_items(
@@ -1586,7 +1578,7 @@ fn a_protocol_replay_allocation_keeps_the_actual_item_resource_evidence() {
     let (records, found) = split_records(records, &case.checked);
     assert!(found.is_empty());
     assert_eq!(calls.get(), 1);
-    crate::model_settle::assert_allocation_outcome(&records, 7332);
+    crate::model_settle_support::assert_allocation_outcome(&records, 7332);
 }
 
 /// Part of FR-211-AC-5 (TC-656, ADR-027 PD-4): each channel wait cause is reported
@@ -2149,11 +2141,9 @@ fn an_unbound_symbolic_capacity_requires_a_bound() {
             channels: vec!["P::ch".to_owned()],
         }]
     );
-    assert!(
-        NotSimulated::UnboundCapacity(names)
-            .catalog_code()
-            .is_none()
-    );
+    assert!(NotSimulated::UnboundCapacity(names)
+        .catalog_code()
+        .is_none());
 }
 
 /// FSpec FR-785-AC-3 (TC-1911 step 3): a binding defect refuses
@@ -2237,9 +2227,9 @@ fn analyzed(
     Vec<fsl_replay::TerminalRecord>,
     Vec<fsl_analyze::analyze::ItemCounterexample>,
 ) {
-    use crate::derived_request::items_of_kind;
+    use crate::derived_request_support::items_of_kind;
     use fsl_analyze::analyze::ProtocolItem;
-    use fsl_analyze::analyze::{Engines, analyze_items, derived_protocol_item, split_records};
+    use fsl_analyze::analyze::{analyze_items, derived_protocol_item, split_records, Engines};
 
     let protocol = case.checked.graph().protocol("P").expect("P");
     let occurrence = protocol_anchor(&case.checked, "P").1;
@@ -2346,11 +2336,9 @@ fn a_result_holds_at_the_bound_value_and_its_counterexample_replays_there() {
     let [literal_found] = literal_found.as_slice() else {
         panic!("one counterexample: {literal_found:?}");
     };
-    assert!(
-        literal_found.wire.as_ref().expect("spelled")["subject"]
-            .get("capacities")
-            .is_none()
-    );
+    assert!(literal_found.wire.as_ref().expect("spelled")["subject"]
+        .get("capacities")
+        .is_none());
 
     let payload = violated(&refuted).clone();
     assert!(matches!(

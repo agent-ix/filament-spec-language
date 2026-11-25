@@ -10,29 +10,33 @@ mod analyze_reach_rulings;
 mod analyze_timed_cli;
 mod counter;
 mod dense_route;
+mod dense_route_support;
 mod derived_request;
 mod derived_request_support;
 mod example_units;
 mod hyper_world;
 mod lasso_replay;
+mod lasso_support;
 mod litmus;
 mod liveness;
-#[path = "long_run_support.rs"]
-mod long_run_certificate;
+mod liveness_support;
+mod long_run_support;
 mod model_settle;
 mod model_settle_support;
 mod native_correlation;
 mod package_forms;
 mod prob_world;
-#[path = "probabilistic_request_support.rs"]
-mod probabilistic_request_items;
+mod probabilistic_request_support;
 mod protocol_analysis_differential;
 mod protocol_bounded_lasso;
+mod protocol_bounded_support;
 mod protocol_compensation;
 mod protocol_conformance;
 mod protocol_constructs;
 mod protocol_counted_steps;
+mod protocol_counted_support;
 mod protocol_docs_examples;
+mod protocol_footprint_support;
 mod protocol_footprints;
 mod protocol_outcomes;
 mod protocol_projection;
@@ -52,17 +56,15 @@ mod reduction_world;
 mod refinement_fixture;
 #[path = "../../../tests/support/refinement_smt_proofs.rs"]
 mod refinement_proofs;
-#[path = "refinement_protocol_support.rs"]
-mod refinement_protocol;
+mod refinement_protocol_support;
 mod related_by;
+mod related_by_support;
 mod scheduler_fairness;
 mod timed_refinement;
 mod timed_world;
 mod units;
-#[path = "value_validity_support.rs"]
-mod value_validity;
-#[path = "weak_memory_support.rs"]
-mod weak_memory;
+mod value_validity_support;
+mod weak_memory_support;
 mod weak_memory_support;
 mod zone_dense;
 mod zone_liveness;
@@ -82,7 +84,6 @@ mod deadlock_item;
 mod digital_clocks;
 mod fill;
 mod fixture_ids;
-mod flag_world;
 mod free_delays;
 mod graph_core;
 mod graph_world;

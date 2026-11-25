@@ -55,16 +55,16 @@ pub(crate) fn select(parallel: &str, model: MemoryModelName) -> MemorySelection 
 
 /// One unit, its documents and its checked package.
 pub(crate) struct Case {
-    body: String,
-    documents: Documents,
-    checked: CheckedPackage,
+    pub(crate) body: String,
+    pub(crate) documents: Documents,
+    pub(crate) checked: CheckedPackage,
     temporal_clock_selections: Vec<fsl_package::TemporalClockSelection>,
     /// The letters of the unit's one claim.
-    letters: &'static dyn ModelLetters,
+    pub(crate) letters: &'static dyn ModelLetters,
     /// The cell `SB`'s `over` input is bound to, when not the core.
     over: Option<ModelInstance>,
     /// The further profile lines of the unit's header.
-    profiles: &'static str,
+    pub(crate) profiles: &'static str,
 }
 
 impl Case {
@@ -124,7 +124,7 @@ impl Case {
 
     /// The unit with `body`, `SB` over the object `object` of `population`;
     /// `spare` adds the `Spare` object `z` to the universe.
-    fn over_object(body: &str, population: &str, object: &str, spare: bool) -> Self {
+    pub(crate) fn over_object(body: &str, population: &str, object: &str, spare: bool) -> Self {
         Self {
             documents: if spare {
                 Documents::with_spare_cell()
@@ -141,7 +141,7 @@ impl Case {
 
     /// The unit with `body`, `SB` over one of `x`, `y` or `z` in the cells
     /// population.
-    fn over_cells(body: &str, object: &str) -> Self {
+    pub(crate) fn over_cells(body: &str, object: &str) -> Self {
         let mut case = Self::over_object(body, "cells", object, false);
         case.documents = Documents::with_cells(&["x", "y", "z"]);
         case
@@ -239,7 +239,7 @@ impl Case {
     }
 
     /// [`Self::system`] over [`Self::subject_within`].
-    fn system_within<M: MemoryModel>(
+    pub(crate) fn system_within<M: MemoryModel>(
         &self,
         selection: &[MemorySelection],
         memory: M,
@@ -254,7 +254,7 @@ impl Case {
 
     /// The deadlock-freedom item over [`Self::subject_within`], and its
     /// FR-127 record.
-    fn deadlock_within(
+    pub(crate) fn deadlock_within(
         &self,
         selection: &[MemorySelection],
         max_candidates: u64,
@@ -322,7 +322,7 @@ impl Case {
     }
 
     /// [`Self::check`] under the optional message and instance bounds too.
-    fn check_bounded(
+    pub(crate) fn check_bounded(
         &self,
         selection: &[MemorySelection],
         item: ModelCheckItem<'_>,
@@ -403,7 +403,7 @@ impl Case {
         )
     }
 
-    fn settle_with_messages(
+    pub(crate) fn settle_with_messages(
         &self,
         selection: &[MemorySelection],
         outcome: &ModelCheckOutcome<ProtocolTransition>,
@@ -588,13 +588,13 @@ pub(crate) fn counts<M: MemoryModel>(
 }
 
 /// The `(object key, field name)` of a location `accesses` has a cell for.
-fn named(accesses: &WeakAccesses, location: &Location) -> (String, String) {
+pub(crate) fn named(accesses: &WeakAccesses, location: &Location) -> (String, String) {
     let cell = accesses.cell(location).expect("a touched field has a cell");
     (cell.key.clone(), cell.name.clone())
 }
 
 /// The class of each instance of `node` and its shared location's name.
-fn classes(accesses: &WeakAccesses, node: &str) -> Vec<(AccessClass, (String, String))> {
+pub(crate) fn classes(accesses: &WeakAccesses, node: &str) -> Vec<(AccessClass, (String, String))> {
     accesses
         .attempt(node)
         .expect("a weak attempt")
@@ -612,7 +612,7 @@ fn classes(accesses: &WeakAccesses, node: &str) -> Vec<(AccessClass, (String, St
 
 /// The names of the locations `node`'s instances touch that are not
 /// shared, field locations only.
-fn local(accesses: &WeakAccesses, node: &str) -> BTreeSet<(String, String)> {
+pub(crate) fn local(accesses: &WeakAccesses, node: &str) -> BTreeSet<(String, String)> {
     accesses
         .attempt(node)
         .expect("a weak attempt")
@@ -624,12 +624,12 @@ fn local(accesses: &WeakAccesses, node: &str) -> BTreeSet<(String, String)> {
         .collect()
 }
 
-fn name(key: &str, field: &str) -> (String, String) {
+pub(crate) fn name(key: &str, field: &str) -> (String, String) {
     (key.to_owned(), field.to_owned())
 }
 
 /// A `parallel` nested in `SB::Both`'s left branch.
-fn nested_unit(inner: &str) -> String {
+pub(crate) fn nested_unit(inner: &str) -> String {
     let run = format!(
         "parallel Both {{ \
          branch left sequence L {{ {} parallel Inner {inner} {{ branch a sequence A {{ }} \
@@ -643,6 +643,7 @@ fn nested_unit(inner: &str) -> String {
     sb_unit(&run)
 }
 
+/// A branch body of the attempts `attempts`, in a sequence `name`.
 pub(crate) fn steps(name: &str, attempts: &[String]) -> String {
     format!("sequence {name} {{ {} }}", attempts.concat())
 }

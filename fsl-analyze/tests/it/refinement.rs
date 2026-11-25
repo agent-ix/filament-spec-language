@@ -15,8 +15,10 @@ mod model_settle_support;
 mod partial_order;
 mod por_world;
 mod protocol_footprint_support;
+mod refinement_protocol_support;
 mod relation_claims_support;
 mod units;
+mod weak_memory_support;
 
 mod load_buffering;
 mod operation_contract;
@@ -40,8 +42,6 @@ mod refinement_certificate;
 #[path = "../../../tests/support/refinement_cas.rs"]
 mod refinement_fixture;
 mod refinement_liveness;
-#[path = "../../../tests/support/refinement_smt_proofs.rs"]
-mod refinement_proofs;
 mod refinement_protocol;
 mod refinement_reads;
 mod refinement_replay;

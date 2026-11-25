@@ -1,8 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(
-    dead_code,
-    reason = "shared sampled-witness helper spans split integration test binaries"
-)]
 //! Shared sampled-witness replay helper for integration targets.
 
 use filament_exact::Cancel;
@@ -16,11 +12,12 @@ use fsl_semantics::check::ProbScheduler;
 
 use crate::prob_world::World;
 
-fn sampler() -> fsl_foundation::selection::DefinitionRef {
+pub(crate) fn sampler() -> fsl_foundation::selection::DefinitionRef {
     fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
         .expect("a valid DefinitionRef")
 }
 
+/// `witness` replayed over `world` under `provenance`, reading `claim`.
 pub(crate) fn replay(
     world: &World,
     claim: &str,

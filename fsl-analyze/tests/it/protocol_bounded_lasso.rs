@@ -12,6 +12,7 @@
 //! `counts` flags, from the replayed counterexample) with a position-keyed
 //! atom.
 
+use crate::protocol_bounded_support::{echo_body, ECHO_RUN};
 use std::cell::Cell;
 use std::collections::BTreeSet;
 
@@ -38,7 +39,8 @@ use ix_trace_rs::trace;
 use crate::counter::UNLIMITED;
 use crate::fill::{attempt, contracts, document, instance, protocol, universe};
 use crate::model_settle_support::{envelope_at, request};
-use crate::protocol_counted_steps::{claim, closure_check_over, tp3, Case, CellV};
+use crate::protocol_counted_steps::{claim, closure_check_over, Case, CellV};
+use crate::protocol_counted_support::tp3;
 
 /// A `repeat` around a `parallel` of two empty branches: the loop is `fork`
 /// then `join`.
@@ -548,17 +550,6 @@ fn echo(scheduling: &str, formula: &str) -> Case {
 fn echo_infinite(scheduling: &str, formula: &str) -> Case {
     let clause = claim(formula).replace("using tb over", "using t0 over");
     Case::new(&(echo_body(scheduling) + &clause))
-}
-
-const ECHO_RUN: &str = "sequence Main { send Snd via ch as (s: Boolean) { s }; \
-                       receive Rcv via ch of Snd as (r: Boolean) { r }; }";
-
-pub(crate) fn echo_body(scheduling: &str) -> String {
-    let members = format!(
-        "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
-                   {{ true }} delivery unknown capacity 2 overflow block; {scheduling}"
-    );
-    contracts("self.v <= 1") + &protocol("Echo", &members, ECHO_RUN, "d")
 }
 
 /// Build the witness from enabled concrete transitions, without model search.

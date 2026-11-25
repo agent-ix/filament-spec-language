@@ -14,7 +14,7 @@ use filament_exact::{Cancel, Meter, Value};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::ExpressionOwner;
 use fsl_analyze::model_check::{
-    ProtocolCheckRequest, SubjectContext, SubjectIdentity, check_protocol,
+    check_protocol, ProtocolCheckRequest, SubjectContext, SubjectIdentity,
 };
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ProtocolSubject, RoleBinding,
@@ -23,23 +23,23 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    AnchorName, BlockedThread, ClaimReads, ProtocolLocation, ProtocolRefusal, ProtocolSystem,
-    ProtocolTransition, RestKind, RestPoint, Sc, StepKind, ThreadPath, Tso, Unsupported, WaitCause,
-    visible,
+    visible, AnchorName, BlockedThread, ClaimReads, ProtocolLocation, ProtocolRefusal,
+    ProtocolSystem, ProtocolTransition, RestKind, RestPoint, Sc, StepKind, ThreadPath, Tso,
+    Unsupported, WaitCause,
 };
 use fsl_eval::simulation::{Location, SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::MemoryModelName;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::MemoryModelName;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CounterexampleKind, Execution, IncompleteCause, InconclusiveCause, InstanceBound,
-    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
-    ModelTraceReplayResult,
+    node_occurrence, replay_protocol_trace, settle_protocol_check, CounterexampleKind, Execution,
+    IncompleteCause, InconclusiveCause, InstanceBound, ModelCheckItem, ModelCheckLimit,
+    ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelTraceReplayResult,
     ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits,
     ReplayRefusal, ResultLabel, StatedInstanceBound, TemporalCounterexample, TerminalValue, Truth,
-    UndecidedCause, UndefinedLocus, node_occurrence, replay_protocol_trace, settle_protocol_check,
+    UndecidedCause, UndefinedLocus,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
@@ -49,11 +49,11 @@ use ix_trace_rs::trace;
 use serde_json::Value as Json;
 
 use crate::fill::{
-    Documents, PACKAGE, Reached, attempt, check_refusals, class_of, contracts, document, instance,
-    json_of, model_subject, package_with, reachable, sc_system, source_memory, universe, v,
+    attempt, check_refusals, class_of, contracts, document, instance, json_of, model_subject,
+    package_with, reachable, sc_system, source_memory, universe, v, Documents, Reached, PACKAGE,
 };
-use crate::model_settle::{envelope_at, protocol_anchor, request};
-use crate::protocol_compensation::{REFUND, pay_run, refund};
+use crate::model_settle_support::{envelope_at, protocol_anchor, request};
+use crate::protocol_compensation::{pay_run, refund, REFUND};
 use crate::protocol_system::touch;
 
 /// `activation on origin`.
@@ -688,11 +688,9 @@ fn a_node_owned_by_a_role_with_no_instance_waits_with_no_role_instance() {
 
     // At the initial state `spawn` is enabled: no `NoRoleInstance`.
     let initial = SubjectSystem::blocked(&system, &reached[0].state, &[]).expect("blocked");
-    assert!(
-        initial
-            .iter()
-            .all(|thread| !matches!(thread.cause, WaitCause::NoRoleInstance { .. }))
-    );
+    assert!(initial
+        .iter()
+        .all(|thread| !matches!(thread.cause, WaitCause::NoRoleInstance { .. })));
     assert_eq!(
         class_of(&system, &reached[0].state),
         TerminalClass::NotTerminal
@@ -906,11 +904,9 @@ fn a_scope_role_stays_live_for_the_compensation_attempt_it_owns() {
         .filter(|state| state.steps.is_empty() && state.state.has_live_instance())
     {
         let blocked = SubjectSystem::blocked(&system, &state.state, &[]).expect("blocked");
-        assert!(
-            blocked
-                .iter()
-                .all(|thread| thread.cause != no_role_instance())
-        );
+        assert!(blocked
+            .iter()
+            .all(|thread| thread.cause != no_role_instance()));
     }
 }
 
@@ -940,19 +936,15 @@ fn an_on_each_protocol_starts_with_no_instance() {
         assert!(!state.has_live_instance());
         let (bytes, _) = SubjectSystem::state_key(&system, state).expect("a key");
         let key = json_of(&bytes);
-        assert!(
-            key["control"]["entries"]
-                .as_array()
-                .expect("a map")
-                .is_empty()
-        );
+        assert!(key["control"]["entries"]
+            .as_array()
+            .expect("a map")
+            .is_empty());
     }
     let reached = reachable(&system);
-    assert!(
-        kinds(&reached, 0)
-            .iter()
-            .all(|kind| *kind == StepKind::Activate)
-    );
+    assert!(kinds(&reached, 0)
+        .iter()
+        .all(|kind| *kind == StepKind::Activate));
     let started = reached[0].steps[0].1;
     assert!(reached[started].state.has_live_instance());
     assert_eq!(
@@ -984,11 +976,9 @@ fn an_on_each_state_that_can_only_activate_is_a_deadlock() {
 
     assert_eq!(class(0), TerminalClass::NotTerminal);
     let one = reached[0].steps[0].1;
-    assert!(
-        kinds(&reached, one)
-            .iter()
-            .all(|kind| *kind == StepKind::Activate)
-    );
+    assert!(kinds(&reached, one)
+        .iter()
+        .all(|kind| *kind == StepKind::Activate));
     assert_eq!(class(one), TerminalClass::Deadlocked);
     assert_eq!(
         SubjectSystem::blocked(&system, &reached[one].state, &[]).expect("blocked"),
@@ -1006,16 +996,12 @@ fn an_on_each_state_that_can_only_activate_is_a_deadlock() {
 
     let two = reached[one].steps[0].1;
     assert!(reached[two].steps.is_empty());
-    assert!(
-        system
-            .instance_limited(&reached[two].state)
-            .expect("limited")
-    );
-    assert!(
-        !system
-            .instance_limited(&reached[one].state)
-            .expect("limited")
-    );
+    assert!(system
+        .instance_limited(&reached[two].state)
+        .expect("limited"));
+    assert!(!system
+        .instance_limited(&reached[one].state)
+        .expect("limited"));
     assert_eq!(class(two), TerminalClass::NotTerminal);
 }
 
@@ -1063,11 +1049,9 @@ fn an_instance_takes_the_smallest_free_ordinal_and_the_bound_is_no_deadlock() {
     let second = activate(first);
     assert_eq!(live(second), [0, 1]);
     assert!(!kinds(&reached, second).contains(&StepKind::Activate));
-    assert!(
-        system
-            .instance_limited(&reached[second].state)
-            .expect("limited")
-    );
+    assert!(system
+        .instance_limited(&reached[second].state)
+        .expect("limited"));
 
     // Instance 0 touches and finishes; the next activation takes ordinal 0.
     let mut at = second;
@@ -1155,11 +1139,9 @@ fn role_and_activation_steps_have_role_and_instance_footprints() {
         .expect("a footprint");
     let live = Location::Protocol(ProtocolLocation::LiveInstances);
     assert!(activating.reads.contains(&live) && activating.writes.contains(&live));
-    assert!(
-        activating
-            .writes
-            .contains(&Location::Protocol(ProtocolLocation::Control(root())))
-    );
+    assert!(activating
+        .writes
+        .contains(&Location::Protocol(ProtocolLocation::Control(root()))));
 }
 
 /// The claim `always holds(condition)` over `k: M::Cell`.
@@ -1901,8 +1883,8 @@ fn a_send_from_a_role_over_an_empty_universe_waits_with_no_role_instance() {
 #[trace("FSpec-TC-431", "FSpec-FR-368-AC-20")]
 #[test]
 fn a_protocol_derived_items_max_live_instances_reaches_the_run_and_the_check() {
-    use crate::derived_request::{items_of_kind, protocol_request_under, settled};
-    use fsl_analyze::analyze::{Engines, ProtocolItem, analyze_items, derived_protocol_item};
+    use crate::derived_request_support::{items_of_kind, protocol_request_under, settled};
+    use fsl_analyze::analyze::{analyze_items, derived_protocol_item, Engines, ProtocolItem};
     use fsl_route::deadlock::ProtocolTemporalItem;
     use fsl_route::request::{DerivedLimits, ItemKind};
 
@@ -2529,19 +2511,17 @@ fn a_non_object_over_ranges_over_each_finite_value() {
         .collect::<Vec<_>>();
     booleans.sort_unstable();
     assert_eq!(booleans, [false, true]);
-    assert!(
-        system
-            .try_initial()
-            .expect("initial states settle")
-            .iter()
-            .all(|state| {
-                !system
-                    .successors(state)
-                    .expect("expands")
-                    .successors
-                    .is_empty()
-            })
-    );
+    assert!(system
+        .try_initial()
+        .expect("initial states settle")
+        .iter()
+        .all(|state| {
+            !system
+                .successors(state)
+                .expect("expands")
+                .successors
+                .is_empty()
+        }));
 }
 
 /// FR-882-AC-4 (TC-2506): a checked Boolean attempt binder is present while
@@ -2632,8 +2612,11 @@ fn no_required_construct_settles_unsupported() {
                 let text = crate::litmus::contracts()
                     + &crate::litmus::protocol("SB", run)
                     + crate::litmus::NO_BOTH_ZERO;
-                let case = crate::weak_memory::Case::new(&text);
-                let selection = [crate::weak_memory::select("SB::Both", MemoryModelName::Tso)];
+                let case = crate::weak_memory_support::Case::new(&text);
+                let selection = [crate::weak_memory_support::select(
+                    "SB::Both",
+                    MemoryModelName::Tso,
+                )];
                 let refused = case.system(&selection, Sc).err();
                 assert!(matches!(
                     refused,

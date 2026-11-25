@@ -35,7 +35,7 @@ use fsl_semantics::model::observation::declared_type_universe_for;
 use ix_trace_rs::trace;
 
 use crate::counter::{document, UNLIMITED, ZERO};
-use crate::liveness::{counter, is_zero};
+use crate::liveness_support::{counter, is_zero};
 use crate::units::{clause, config_object, health, shipped_unit_text, unit, Atoms, Domain, World};
 
 pub(crate) const FORMULA: &str = "always eventually holds(c.versionNumber = 2)";

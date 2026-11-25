@@ -40,7 +40,7 @@ use ix_trace_rs::trace;
 
 use crate::closure_certificate::world;
 use crate::counter::{clause_text, CONTRACT, UNLIMITED};
-use crate::derived_request::{counter_body, derived_deadlock};
+use crate::derived_request_support::{counter_body, derived_deadlock};
 use crate::model_settle_support::{case, kernel_case, replay};
 use crate::provider_test_support::CountingUnknownProvider;
 
@@ -857,7 +857,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
     assert_eq!(verdict.witnesses.len(), 3);
     for witness in &verdict.witnesses {
         assert_eq!(
-            crate::statistical_witness_replay::replay(&world, "Two", &verdict.provenance, witness,)
+            crate::statistical_witness_support::replay(&world, "Two", &verdict.provenance, witness,)
                 .expect("provider witness replays"),
             fsl_replay::statistical::SampledWitnessReplay::Reproduced
         );

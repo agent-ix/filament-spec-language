@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Actual raw/full identity admission and producer expansion use one caller scope.
 
-use crate::long_run_certificate::{availability, limits, produce};
+use crate::long_run_certificate::{availability, produce};
+use crate::long_run_support::limits;
 use crate::prob_world::{Model, Operation, World};
 use filament_exact::{
     Cancel, CancelCause, Integer, IntegerDecimalBudget, LimitKind, Meter, Reservation,

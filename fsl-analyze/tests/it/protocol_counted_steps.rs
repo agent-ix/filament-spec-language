@@ -8,6 +8,7 @@
 //! atom through the state and each step's `counts` flag, and EN-1 checks the
 //! same claim forms on the product with the claim's counted monitor.
 
+use crate::protocol_counted_support::tp3;
 use filament_exact::{Cancel, Meter};
 use fsl_analyze::analyze::ProtocolItem;
 use fsl_analyze::model_check::{
@@ -1179,15 +1180,6 @@ fn a_tp3_proof_over_a_protocol_subject_settles_certified() {
             ..
         })
     ));
-}
-
-/// A `Claim` over `k: M::Cell` under the infinite-trace profile, with
-/// `activation` (`on origin`, `on each (q: M::Cell)`).
-pub(crate) fn tp3(activation: &str, formula: &str) -> String {
-    format!(
-        "temporal Claim using t0 over (k: M::Cell) clock \"model-steps\" {activation} \
-         {{ {formula} }}\n"
-    )
 }
 
 fn at_least_one(value: i64) -> bool {

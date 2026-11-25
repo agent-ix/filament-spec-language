@@ -11,6 +11,16 @@ pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
 }
 
 pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8>) {
+    // Value-validity cases exercise undefinedness in the complete-V1
+    // evaluator. Kernel leaves the Nonzero obligation for that runtime path;
+    // Linked refusal is covered by the checker acceptance tests.
+    package_with_source_mode(declarations, CheckMode::Kernel)
+}
+
+pub(crate) fn package_with_source_mode(
+    declarations: &str,
+    mode: CheckMode,
+) -> (CheckedPackage, Vec<u8>) {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{declarations}\n"
@@ -31,7 +41,7 @@ pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8
         Vec::new(),
         Vec::new(),
     )
-    .expect("the assembler builds package declarations");
+    .expect("the assembler builds the package declarations");
     declarations.integer_division = Some(
         admit_integer_division(
             &[DefinitionRole::IntegerDivisionEuclidean.reference()],
@@ -42,11 +52,11 @@ pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8
     let package = CheckedPackage::link(
         declarations
             .check(
-                CheckMode::Kernel,
+                mode,
                 CheckingLimits::default(),
                 &fsl_eval::value::S6aRewardEvaluator,
             )
-            .unwrap_or_else(|error| panic!("the package checks: {error:?}\n{text}")),
+            .unwrap_or_else(|e| panic!("the package checks: {e:?}\n{text}")),
     );
     (package, text.into_bytes())
 }

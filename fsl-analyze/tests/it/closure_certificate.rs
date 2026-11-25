@@ -2157,10 +2157,14 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         check_product_closure, product_state_key, ProductClosureCertificate, ProductClosureRequest,
     };
 
-    let declaration = crate::hyper_projected::aligned(&[])
+    let declaration = crate::hyper_projected_support::aligned(&[])
         .replace("v.l", "v.h")
         .replace("v.h @ a = v.h @ b", "v.h @ a != v.h @ b");
-    let world = World::busy(Vault::Busy, &crate::hyper_projected::IDLE, &declaration);
+    let world = World::busy(
+        Vault::Busy,
+        &crate::hyper_projected_support::IDLE,
+        &declaration,
+    );
     let subject = world.subject();
     let system = ModelSystem::new(subject.simulation.clone()).expect("subject");
     let systems = vec![&system; world.clause.quantifiers().len()];

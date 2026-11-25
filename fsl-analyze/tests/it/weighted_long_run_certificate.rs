@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Weighted long-run proofs checked from actual named draw rewards.
 
-use super::long_run_certificate::{availability_with_claims, limits, produce};
+use super::long_run_certificate::{availability_with_claims, produce};
+use crate::long_run_support::limits;
 use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use fsl_analyze::analyze::{

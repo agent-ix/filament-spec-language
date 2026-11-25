@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(
-    dead_code,
-    reason = "shared relation fixture helpers span split integration test binaries"
-)]
 //! Shared relationship fixture helper for integration targets.
 
 use serde_json::{json, Value as Json};
 
-fn id(suffix: &str) -> String {
+pub(crate) fn id(suffix: &str) -> String {
     format!("ix://{}/{}", crate::fill::PACKAGE, suffix)
 }
 

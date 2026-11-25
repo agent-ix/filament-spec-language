@@ -112,24 +112,24 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
 
     take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("t1 reaches its completion boundary at 1");
     take_action(&mut state, TaskTransitionAction::Complete, "t1");
     take_action(&mut state, TaskTransitionAction::Dispatch, "t2");
     state = product
-        .delay(&state, &crate::zone_search::exact(2, 1))
+        .delay(&state, &crate::zone_support::exact(2, 1))
         .expect("source admits time")
         .expect("t2 reaches its completion boundary at 3");
     take_action(&mut state, TaskTransitionAction::Complete, "t2");
     take_action(&mut state, TaskTransitionAction::Dispatch, "t3");
-    assert_eq!(state.now(), &crate::zone_search::exact(3, 1));
+    assert_eq!(state.now(), &crate::zone_support::exact(3, 1));
 
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("stop at t1's next periodic release at 4");
-    assert_eq!(state.now(), &crate::zone_search::exact(4, 1));
+    assert_eq!(state.now(), &crate::zone_support::exact(4, 1));
     state = product
         .source_steps(&state)
         .expect("source transitions")
@@ -144,13 +144,13 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
     take_action(&mut state, TaskTransitionAction::Preempt, "t3");
     take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("t1's second job completes at 5");
     take_action(&mut state, TaskTransitionAction::Complete, "t1");
     take_action(&mut state, TaskTransitionAction::Resume, "t3");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("reach t2's next release at 6");
     state = product
@@ -167,7 +167,7 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
     take_action(&mut state, TaskTransitionAction::Preempt, "t3");
     take_action(&mut state, TaskTransitionAction::Dispatch, "t2");
     state = product
-        .delay(&state, &crate::zone_search::exact(2, 1))
+        .delay(&state, &crate::zone_support::exact(2, 1))
         .expect("source admits time")
         .expect("t2's second job completes at 8");
     take_action(&mut state, TaskTransitionAction::Complete, "t2");
@@ -184,13 +184,13 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
         .state;
     take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("t1's third job completes at 9");
     take_action(&mut state, TaskTransitionAction::Complete, "t1");
     take_action(&mut state, TaskTransitionAction::Resume, "t3");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("reach t3's first deadline at 10");
     state = product
@@ -212,7 +212,7 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
     assert_eq!((miss.identity.task.as_str(), miss.identity.job), ("t3", 0));
     assert_eq!(
         miss.state.jobs()[0].service,
-        crate::zone_search::exact(3, 1)
+        crate::zone_support::exact(3, 1)
     );
 }
 
@@ -330,7 +330,7 @@ fn a_two_task_set_lowers_with_its_declared_periods_and_deadlines() {
             )
         })
         .collect();
-    let exact = crate::zone_search::exact;
+    let exact = crate::zone_support::exact;
     assert_eq!(
         lowered,
         vec![

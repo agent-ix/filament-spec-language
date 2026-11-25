@@ -203,7 +203,7 @@ impl Fixture {
         (certificate, stats)
     }
 
-    fn system(&self) -> ModelSystem<'_> {
+    pub(crate) fn system(&self) -> ModelSystem<'_> {
         ModelSystem::new(
             subject(
                 &self.package,
@@ -250,21 +250,21 @@ impl Fixture {
 }
 
 /// The instance of the clause that binds the counter `object`.
-fn instance(object: &str) -> ModelInstance {
+pub(crate) fn instance(object: &str) -> ModelInstance {
     ModelInstance {
         population: key("counters"),
         key: object.to_owned(),
     }
 }
 
-fn violated(outcome: &ModelCheckOutcome) -> &TemporalCounterexample {
+pub(crate) fn violated(outcome: &ModelCheckOutcome) -> &TemporalCounterexample {
     match outcome {
         ModelCheckOutcome::Violated { counterexample, .. } => counterexample,
         other => panic!("expected a violation, got {other:?}"),
     }
 }
 
-fn lasso_of(counterexample: &TemporalCounterexample) -> Lasso {
+pub(crate) fn lasso_of(counterexample: &TemporalCounterexample) -> Lasso {
     counterexample
         .lasso
         .as_ref()
@@ -274,7 +274,7 @@ fn lasso_of(counterexample: &TemporalCounterexample) -> Lasso {
 
 /// Whether the transition is an application of the `Counter` operation
 /// `operation`.
-fn applies(transition: &fsl_replay::ModelStep, operation: &str) -> bool {
+pub(crate) fn applies(transition: &fsl_replay::ModelStep, operation: &str) -> bool {
     transition
         .transition
         .operation()
@@ -286,7 +286,7 @@ fn applies(transition: &fsl_replay::ModelStep, operation: &str) -> bool {
 /// the loop's entry, and a weak constraint on the `Counter` operation
 /// `operation` (all of its transitions together, or each transition alone
 /// when `each`) is taken in the loop or disabled at some state of it.
-fn assert_weakly_fair(
+pub(crate) fn assert_weakly_fair(
     fixture: &Fixture,
     counterexample: &TemporalCounterexample,
     operation: &str,

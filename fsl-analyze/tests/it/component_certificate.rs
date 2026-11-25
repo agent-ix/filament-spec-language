@@ -36,7 +36,7 @@ use serde_json::json;
 
 use crate::counter::{UNLIMITED, ZERO};
 use crate::example_units::{config, decide, reaches_two, EACH};
-use crate::liveness::{counter, is_three};
+use crate::liveness_support::{counter, is_three};
 use crate::por_world::{
     field, integer, level, number, object_type, operation, type_ref, writes, Atom, Fixture, Obj,
     Temporal,

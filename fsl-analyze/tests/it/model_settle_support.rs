@@ -70,18 +70,24 @@ fn envelope_witness_source() -> EnvelopeSource {
     )
 }
 
-const NO_ATOMS: Letters = Letters { atom: |_| None };
+/// The letters of a replay that reads no atom: the deadlock-freedom item has
+/// none.
+pub(crate) const NO_ATOMS: Letters = Letters { atom: |_| None };
 
-/// A compiled Counter case and its deadlock-freedom outcome.
+/// A compiled Counter unit with its documents, initial snapshots and the
+/// engine's deadlock-freedom outcome over universe `{c}`.
 pub(crate) struct Case {
-    unit: Vec<u8>,
-    documents: Documents,
-    initial: Vec<fsl_semantics::model::observation::DocumentRef>,
-    checked: CheckedPackage,
-    outcome: ModelCheckOutcome,
+    pub(crate) unit: Vec<u8>,
+    pub(crate) documents: Documents,
+    pub(crate) initial: Vec<fsl_semantics::model::observation::DocumentRef>,
+    pub(crate) checked: CheckedPackage,
+    pub(crate) outcome: ModelCheckOutcome,
 }
 
 impl Case {
+    /// The deadlock-freedom item `analyze` runs (FR-281): the run, its
+    /// closure checker's request, and the
+    /// counterexample replay of [`replay`] over this case's source.
     pub(crate) fn model_item(&self) -> fsl_analyze::analyze::ModelItem<'_> {
         fsl_analyze::analyze::ModelItem {
             request: ModelCheckRequest {
@@ -107,10 +113,13 @@ impl Case {
         }
     }
 
+    /// The case's checked package.
     pub(crate) fn checked(&self) -> &CheckedPackage {
         &self.checked
     }
 
+    /// The deadlock-freedom item's certificate request over the case's
+    /// subject.
     pub(crate) fn request(&self) -> CertificateRequest<'_> {
         CertificateRequest {
             temporal_clock_selections: &[],
@@ -131,6 +140,9 @@ pub(crate) fn case(body: &str, values: &[i64]) -> Case {
     case_in_mode(body, values, CheckMode::Linked)
 }
 
+/// [`case`] over a body whose `functions` (unit-level declarations) are checked
+/// in `CheckMode::Kernel`, so a function whose divisor may be zero is checked
+/// by the Kernel (FR-495-AC-3).
 pub(crate) fn kernel_case(body: &str, functions: &str, values: &[i64]) -> Case {
     case_in_mode(&format!("{body}{functions}"), values, CheckMode::Kernel)
 }
@@ -169,7 +181,7 @@ fn case_in_mode(body: &str, values: &[i64], mode: CheckMode) -> Case {
     }
 }
 
-fn trace_subject(case: &Case) -> ModelTraceSubject {
+pub(crate) fn trace_subject(case: &Case) -> ModelTraceSubject {
     ModelTraceSubject {
         timed: None,
         initial: case.initial.clone(),
@@ -194,11 +206,7 @@ pub(crate) fn replay(
             &case.unit,
         ),
         &trace_subject(case),
-        &envelope_at(
-            payload,
-            model_anchor(crate::counter::PACKAGE).0,
-            model_anchor(crate::counter::PACKAGE).1,
-        ),
+        &envelope(payload),
         &NO_ATOMS,
         ReplayLimits::default(),
     )
@@ -215,7 +223,8 @@ fn selected() -> QualifiedName {
     QualifiedName::new(vec![Identifier::new("Noop").expect("an identifier")]).expect("a name")
 }
 
-/// FR-098's request retaining the original checked package's emission and byte provisions.
+/// FR-098's request retaining the original checked package's emission,
+/// with its source, domain package and snapshots in the byte provision.
 pub(crate) fn request<'a>(
     checked: &CheckedPackage,
     temporal_clock_selections: &[fsl_package::TemporalClockSelection],
@@ -274,7 +283,9 @@ pub(crate) fn request<'a>(
     }
 }
 
-/// The identity of a package-level freedom item over the model selection.
+/// The identity of a package-level freedom item over a model subject: the
+/// selected model's `model_root` node of the domain package `identity`, with
+/// the `generated` occurrence 0.
 pub(crate) fn model_anchor(identity: &str) -> (NodeKey, OccurrenceKey) {
     let node = NodeKey::new(
         identity,
@@ -289,11 +300,15 @@ pub(crate) fn model_anchor(identity: &str) -> (NodeKey, OccurrenceKey) {
     (node, occurrence)
 }
 
-/// The identity of a package-level freedom item over a protocol clause.
+/// The identity of a package-level freedom item over the protocol `protocol`
+/// of `package`: its `protocol_clause` node with the `declaration`
+/// occurrence 0.
 pub(crate) fn protocol_anchor(
     package: &CheckedPackage,
     protocol: &str,
 ) -> (NodeKey, OccurrenceKey) {
+    // A package that selects no protocol profile has no clause node: the
+    // fixture node is then unknown to the replay, which refuses it.
     let node = package
         .graph()
         .protocol_node_keys(protocol)
@@ -303,12 +318,14 @@ pub(crate) fn protocol_anchor(
     (node, occurrence)
 }
 
-/// The identity of the derived deadlock-freedom item over the counter model.
+/// The identity of the derived deadlock-freedom item over the counter unit's
+/// model.
 pub(crate) fn deadlock_freedom_clause() -> (NodeKey, OccurrenceKey) {
     model_anchor(crate::counter::PACKAGE)
 }
 
-/// The envelope carrying `payload` under the given item identity.
+/// The envelope carrying `payload`, naming the
+/// item by `node` and `occurrence`.
 pub(crate) fn envelope_at<T: SubjectTransition>(
     payload: TemporalCounterexample<T>,
     node: NodeKey,
@@ -331,4 +348,11 @@ pub(crate) fn envelope_at<T: SubjectTransition>(
         ReplayLimits::default(),
     )
     .expect("a complete packet reconstructs")
+}
+
+/// The envelope carrying `payload` under the derived deadlock-freedom item's
+/// identity.
+fn envelope(payload: TemporalCounterexample) -> WitnessEnvelope<TemporalCounterexample> {
+    let (node, occurrence) = deadlock_freedom_clause();
+    envelope_at(payload, node, occurrence)
 }

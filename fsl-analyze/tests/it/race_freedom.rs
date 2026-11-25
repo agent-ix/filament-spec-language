@@ -49,7 +49,8 @@ use crate::derived_request_support::{
 };
 use crate::fill::tcb_01_event_position_selection;
 use crate::litmus::{attempt, contracts, protocol, protocol_with, NO_BOTH_ZERO};
-use crate::weak_memory::{litmus_run, load_ordered, select, steps, Case, MP};
+use crate::weak_memory::{litmus_run, MP};
+use crate::weak_memory_support::{load_ordered, select, steps, Case};
 
 /// `SB::Main::Both` resolved to `tso`.
 fn tso() -> [MemorySelection; 1] {

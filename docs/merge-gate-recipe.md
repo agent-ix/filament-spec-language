@@ -16,8 +16,9 @@ commands in that order. The recipe itself only lists tests; it does not execute
 them. For spec-only changes it prints `NO CARGO: spec-only change.`
 
 `fsl-analyze` integration tests are split across the `it` (analysis and package
-API), `it_monitor_protocol`, `it_probabilistic`, `it_model_check`, and
-`it_refinement` Cargo targets. A normal
+API), `it_monitor_protocol`, `it_probabilistic`, `it_model_check`,
+`it_refinement`, and `it_refinement_cx1` (the one heavy CX-1 refinement
+liveness test, isolated) Cargo targets. A normal
 `cargo test -p fsl-analyze` runs every target. The recipe reads every target
 root: root and shared-fixture changes select all its modules, while a changed
 module or consumer filter selects every target containing a matching test.

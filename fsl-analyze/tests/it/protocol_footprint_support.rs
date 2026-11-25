@@ -7,6 +7,9 @@ use fsl_eval::simulation::independent;
 use fsl_eval::simulation::protocol::{MemoryModel, ProtocolSystem, ProtocolTransition, StepKind};
 
 use crate::fill::Reached;
+/// The states both orders of the steps `first` then `second` reach from
+/// `reached[at]`: every successor of `first`, then every successor of
+/// `second` from there.
 fn after_both<M: MemoryModel>(
     reached: &[Reached<M>],
     at: usize,
@@ -31,6 +34,7 @@ fn after_both<M: MemoryModel>(
 /// every pair of enabled steps reported independent commutes: each stays
 /// enabled after the other, and both orders reach the same states. The
 /// number of independent pairs checked.
+#[allow(dead_code, reason = "only the refinement binary calls this wrapper")]
 pub(crate) fn assert_independent_steps_commute<M: MemoryModel>(
     system: &ProtocolSystem<'_, M>,
     reached: &[Reached<M>],

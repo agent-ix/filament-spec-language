@@ -30,9 +30,9 @@ use crate::litmus::{
     attempt, contracts, field, protocol, protocol_with, sb_run, sb_unit, NO_BOTH_ZERO,
 };
 use crate::weak_memory::{
-    branch, counts, fenced_sb, load_ordered, memory_member, register, select, steps, Case, Forbid,
-    CORR, IRIW, LB, MP, TWO_PLUS_TWO_W,
+    fenced_sb, memory_member, register, Forbid, CORR, IRIW, LB, MP, TWO_PLUS_TWO_W,
 };
+use crate::weak_memory_support::{branch, counts, load_ordered, select, steps, Case};
 
 type RaState = ProtocolState<Ra>;
 

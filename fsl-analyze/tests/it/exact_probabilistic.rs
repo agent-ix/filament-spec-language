@@ -1082,7 +1082,7 @@ fn fair_availability_uses_long_run_limit_and_randomized_refutation() {
         .expect("the exact induced long-run chain is certified");
     let certificate = fsl_replay::read_long_run_probability_certificate(
         subsystem.as_bytes(),
-        crate::long_run_certificate::limits(),
+        crate::long_run_support::limits(),
         &Cancel::new(),
     )
     .expect("the independent checker accepted the induced-chain document");

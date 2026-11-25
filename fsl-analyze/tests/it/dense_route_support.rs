@@ -9,6 +9,7 @@ use fsl_analyze::model_check::manifest as en1;
 use fsl_analyze::zone_check::manifest as en6;
 use fsl_route::{CandidateOutcome, ProviderOrigin, Registry};
 
+/// EN-1 and EN-6, each registered from its own manifest.
 pub(crate) fn registry() -> Registry {
     let mut registry = Registry::new();
     registry
@@ -20,6 +21,7 @@ pub(crate) fn registry() -> Registry {
     registry
 }
 
+/// The backend identities of a computed candidate set.
 pub(crate) fn ids(outcome: &CandidateOutcome) -> Vec<String> {
     let CandidateOutcome::Candidates(set) = outcome else {
         panic!("a computed candidate set: {outcome:?}");

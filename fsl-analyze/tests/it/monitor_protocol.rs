@@ -3,16 +3,9 @@
 
 mod analyze_cli_support;
 mod counter;
-mod derived_request_support;
-mod fill;
 mod fixture_ids;
 mod litmus;
-mod model_settle_support;
-mod model_world;
-mod prob_world;
 mod units;
-mod weak_memory_support;
-mod zone_support;
 
 mod hidden_choice_source;
 mod monitor;

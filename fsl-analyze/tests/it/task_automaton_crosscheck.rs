@@ -113,7 +113,7 @@ fn overloaded_pair() -> World {
 }
 
 fn rational(n: i64, d: i64) -> Rational {
-    crate::zone_search::exact(n, d)
+    crate::zone_support::exact(n, d)
 }
 
 /// What a walk exercised, so a walk that never reaches a case fails.

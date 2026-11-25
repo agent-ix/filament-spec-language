@@ -81,6 +81,7 @@ pub(crate) fn positions(
     }
     seen
 }
+
 /// A `match` that refuses: the reading of every joint step is `Refused`.
 pub(crate) struct Refusing;
 

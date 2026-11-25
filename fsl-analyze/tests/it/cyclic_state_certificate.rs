@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed cyclic until and always proof profiles: emission by EN-5,
 //! the independent checker's own component classification, and limits.
-use super::long_run_certificate::limits;
+use crate::long_run_support::limits;
 use crate::prob_world::{Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::checking::CheckMode;

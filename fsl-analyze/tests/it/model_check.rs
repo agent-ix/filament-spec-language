@@ -70,8 +70,8 @@ fn world_with(document: Vec<u8>, body: &str, starts: &[&[(&str, i64)]]) -> World
     world_in_mode(document, body, starts, CheckMode::Linked)
 }
 
-fn temporal_worker_fixture(formula: &str) -> crate::liveness::Fixture {
-    crate::liveness::fixture(
+fn temporal_worker_fixture(formula: &str) -> crate::liveness_support::Fixture {
+    crate::liveness_support::fixture(
         document(false),
         CONTRACT,
         "",
@@ -215,7 +215,7 @@ fn run_with_workers_and_reductions(
 }
 
 fn run_temporal_fixture_with_workers(
-    fixture: &crate::liveness::Fixture,
+    fixture: &crate::liveness_support::Fixture,
     atom: fn(i64) -> Option<bool>,
     limits: ModelCheckLimits,
     workers: usize,

@@ -3,7 +3,7 @@
 
 use crate::fill::{contracts, protocol};
 
-const ECHO_RUN: &str = "sequence Main { send Snd via ch as (s: Boolean) { s }; \
+pub(crate) const ECHO_RUN: &str = "sequence Main { send Snd via ch as (s: Boolean) { s }; \
                        receive Rcv via ch of Snd as (r: Boolean) { r }; }";
 
 pub(crate) fn echo_body(scheduling: &str) -> String {

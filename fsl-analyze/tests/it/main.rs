@@ -23,19 +23,18 @@ mod analyze_wire;
 mod clause_item;
 mod closure_certificate;
 mod counter;
-#[path = "dense_route_support.rs"]
-mod dense_route;
-#[path = "derived_request_support.rs"]
-mod derived_request;
+mod dense_route_support;
+mod derived_request_support;
 mod fill;
 mod fixture_ids;
 mod fr114_process_attempt;
-mod graph_world;
 mod hybrid_provider;
 mod hybrid_reference;
 mod hybrid_requests;
 mod hyper;
 mod hyper_projected;
+mod hyper_projected_support;
+mod hyper_support;
 mod hyper_world;
 mod litmus;
 mod manifest_registry;
@@ -62,12 +61,11 @@ mod provision_contract;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
 mod reference_literal_binding;
-#[path = "../../../tests/support/refinement_cas.rs"]
-mod refinement_fixture;
 mod related_by_support;
 mod relation_claims;
+mod relation_claims_support;
 mod statistical_witness_replay;
 mod statistical_witness_support;
-mod timed_world;
 mod units;
 mod value_validity;
+mod value_validity_support;
