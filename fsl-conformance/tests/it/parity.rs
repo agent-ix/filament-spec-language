@@ -267,7 +267,7 @@ impl PreparedEntries for AlternatingPrepared<'_> {
             &result.outcome,
             filament_eval::FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(_)))
         ) {
-            let value = if self.calls.fetch_add(1, Ordering::Relaxed) % 2 == 0 {
+            let value = if self.calls.fetch_add(1, Ordering::Relaxed).is_multiple_of(2) {
                 5_i64
             } else {
                 6_i64
@@ -1622,7 +1622,7 @@ fn expecting_refusal(mut vector: serde_json::Value) -> serde_json::Value {
 
 /// The vector ids of one backend's findings, all of them `unbuildable-case`
 /// findings carrying the cause the report lists for that vector.
-fn unbuildable_findings<'a>(report: &'a ParityReport, backend: usize) -> Vec<&'a str> {
+fn unbuildable_findings(report: &ParityReport, backend: usize) -> Vec<&str> {
     report.backends[backend]
         .findings
         .iter()

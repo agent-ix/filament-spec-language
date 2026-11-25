@@ -561,13 +561,16 @@ pub(crate) fn execute_with_parts(
     execute_with_parts_and_parity(fspec, operands, matrix, None)
 }
 
+/// Runs the `parity` part over the corpus directory it is given.
+pub(crate) type ParityRunner<'a> = &'a dyn Fn(&Path) -> Result<crate::qualify::PartReport>;
+
 /// Execute with an optional test-only parity runner. Production callers pass
 /// `None`; test-support substitution does not enter the command-line parser.
 pub(crate) fn execute_with_parts_and_parity(
     fspec: &Path,
     operands: &[OsString],
     matrix: Option<&[fsl_conformance::MatrixCell]>,
-    parity_runner: Option<&dyn Fn(&Path) -> Result<crate::qualify::PartReport>>,
+    parity_runner: Option<ParityRunner<'_>>,
 ) -> Result<Execution> {
     let PreparedCorpus {
         args,

@@ -112,7 +112,7 @@ fn orders_package_with_population_clause_source(
             key: key("pumps"),
             member_types: population_members
                 .iter()
-                .map(|member| key(*member))
+                .map(|member| key(member))
                 .collect(),
             extent: Extent::Closed,
             symmetric: false,
