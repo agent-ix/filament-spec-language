@@ -1377,6 +1377,7 @@ impl<'a> Typer<'a> {
     }
 
     /// Start `let name [: type] = value in body`.
+    #[implements("FR-980-AC-3")]
     fn binding<'e, 'r>(
         &mut self,
         branches: Branches<'r>,
@@ -4855,6 +4856,9 @@ impl<'a> Typer<'a> {
         Ok(Step::Descend(first))
     }
 
+    #[implements("FR-139-AC-1")]
+    #[implements("FR-139-AC-2")]
+    #[implements("FR-391-AC-7")]
     fn accept_population<'e, 'r>(
         &mut self,
         mut frame: Box<PopulationFrame<'e>>,
@@ -4901,6 +4905,9 @@ impl<'a> Typer<'a> {
     /// (FR-139). `count` and `sum` types leave the universe size symbolic:
     /// they are `Integer` here, and the bound `Int[0, n]` is checked against
     /// the type of the form's use when a subject admits its universes.
+    #[implements("FR-139-AC-1")]
+    #[implements("FR-139-AC-2")]
+    #[implements("FR-391-AC-7")]
     fn finish_population(
         &mut self,
         form: PopulationForm,
