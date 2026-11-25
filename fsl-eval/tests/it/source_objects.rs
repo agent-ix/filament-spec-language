@@ -12,7 +12,7 @@ use filament_eval::FamilyOutcome;
 use filament_exact::{Meter, Outcome, ScalarLimits, Value};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
-use fsl_package::CheckedPackage;
+use fsl_package::{CheckedPackage, SlotSelectionFailure, SourceOperationClause};
 use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput};
@@ -1143,4 +1143,33 @@ fn an_ix_name_spelling_a_source_declaration_is_refused() {
             "a population named by the ix:// spelling of a source declaration"
         );
     }
+}
+
+/// FR-531-AC-40: a source operation clause is selected only through a
+/// source-declared operation's anchor. A model-owned operation's anchor is
+/// refused as malformed, as the bytes route refuses it, though the operation
+/// has a precondition of that label.
+#[trace("FR-531-AC-40", "TC-3133")]
+#[test]
+fn a_model_owned_anchor_selects_no_source_operation_clause() {
+    let unit = Unit::new(Twin::Model, "");
+    let operation = unit
+        .graph()
+        .state_clause("Qs")
+        .expect("the model operation's precondition")
+        .operation()
+        .expect("a precondition names its operation");
+    let anchor = unit
+        .graph()
+        .operation_anchor_of(operation.declaring.clone(), operation.declaration.name())
+        .expect("the operation has an anchor");
+    let clause = SourceOperationClause::Precondition {
+        name: "Qs".to_owned(),
+    };
+    assert_eq!(
+        unit.package
+            .select_source_operation_clause(&anchor, &clause)
+            .err(),
+        Some(SlotSelectionFailure::MalformedNode(anchor))
+    );
 }

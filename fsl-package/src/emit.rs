@@ -58,8 +58,7 @@ use fsl_semantics::value::{
     native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
     ModelRole, NodeOwner, TemporalRole,
 };
-use ix_trace_rs::implements;
-use ix_trace_rs::string_edge;
+use ix_trace_rs::{implements, string_edge};
 
 use super::{CheckedPackage, EmittedPackage};
 use crate::checked::EmitLimits;
@@ -67,6 +66,9 @@ use crate::checked_v2::{
     CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
     CheckedConstraintTarget, CheckedGuardPart, CheckedResetTarget, CheckedTimeInvariant,
     CheckedTimedModel, CheckedUrgency, ClockComparison, TimedNodeMetadata,
+};
+use crate::source_operation::{
+    declared_source_operations, source_identity_segment, source_node_for_declaration,
 };
 use crate::wire_form::{OperationSuffix, WireForm};
 
@@ -9216,77 +9218,32 @@ fn source_object_rows(
     Ok((selected, member_facts, operations))
 }
 
-fn source_node_for_declaration<'a>(
-    graph: &'a CheckedGraph,
-    declaration: &filament_checked::key::DeclarationKey,
-) -> Option<&'a SemanticNode> {
-    graph.semantic_graph().nodes().find(|node| {
-        graph.resolve_declaration(node.key()) == Some(declaration)
-            && matches!(node.owner(), Some(Owner::Source(_)))
-            && node.node_tag() == NodeTag::Model
-            && node.semantic_form() == "object_type"
-    })
-}
-
 /// FR-390 source-operation identity rows, for checked anchors whose declared
 /// operation belongs to a source object type.
+#[implements("FR-390-AC-70")]
 fn source_operation_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
 ) -> Result<Vec<filament_contract_model::SelectedSourceOperationRow>, EmitRefusal> {
-    use fsl_semantics::model::domain_package::DomainPackageRecord;
-
     let mut rows = Vec::new();
-    for package in graph.source_packages() {
-        for record in &package.records {
-            let DomainPackageRecord::OperationMember(operation) = record else {
-                continue;
-            };
-            let Some(object_name) =
-                source_identity_segment(&operation.owner.package, &operation.owner.node)
-            else {
-                continue;
-            };
-            let Some(operation_name) = operation
-                .key
-                .node
-                .strip_prefix(&format!("{}/", operation.owner.node))
-                .filter(|name| !name.is_empty() && !name.contains('/'))
-            else {
-                continue;
-            };
-            let Some(anchor) = graph.source_operation_anchor(&operation.owner, operation_name)
-            else {
-                continue;
-            };
-            let structural_node = emitted
-                .get(&anchor)
-                .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
-            let owner = source_node_for_declaration(graph, &operation.owner)
-                .and_then(|node| match node.owner() {
-                    Some(Owner::Source(owner)) => Some(owner),
-                    _ => None,
-                })
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
-            rows.push(filament_contract_model::SelectedSourceOperationRow {
-                source_authority: owner.authority().into(),
-                source_identity: format!("{object_name}::{operation_name}").into(),
-                anchor_id: structural_node.clone(),
-                structural_node,
-            });
-        }
+    for operation in declared_source_operations(graph) {
+        let structural_node = emitted
+            .get(&operation.anchor)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let owner = operation
+            .owner(graph)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        rows.push(filament_contract_model::SelectedSourceOperationRow {
+            source_authority: owner.authority().into(),
+            source_identity: format!("{}::{}", operation.type_name, operation.operation_name)
+                .into(),
+            anchor_id: structural_node.clone(),
+            structural_node,
+        });
     }
     rows.sort_by(|left, right| left.anchor_id.cmp(&right.anchor_id));
     Ok(rows)
-}
-
-/// The final authored segment in a declaration key's exact `ix://` identity.
-/// This parses the admitted key shape; it does not use a formatter or display.
-fn source_identity_segment<'a>(package: &str, identity: &'a str) -> Option<&'a str> {
-    identity
-        .strip_prefix(&format!("ix://{package}/"))
-        .filter(|segment| !segment.is_empty() && !segment.contains('/'))
 }
 
 /// FR-092 "Source tuple identity rows": one row per emitted source-owned
