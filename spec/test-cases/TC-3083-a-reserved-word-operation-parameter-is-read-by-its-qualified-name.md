@@ -1,27 +1,28 @@
 ---
 id: TC-3083
-title: "A reserved-word operation parameter is read by its qualified name"
+title: "Operation parameters and quantifier binders resolve by lexical scope"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-104-AC-18
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-016-AC-11
+    type: verifies
 ---
-# TC-3083: A reserved-word operation parameter is read by its qualified name
+# TC-3083: Operation parameters and quantifier binders resolve by lexical scope
 
 ## Description
 
-Verify that a `pre` or `post` body reads an operation parameter through the
-qualified name `<clause operation>::p`, that this is the same parameter
-reference as the bare name, and that the qualified form refuses for an unknown
-parameter, another operation's parameter, and an invariant. Scope:
-FR-104-AC-18.
+Verify qualified operation-parameter reads, bare-name resolution to the
+innermost quantifier binder, and the distinct identities of a same-named
+quantifier binder and qualified operation parameter. Also verify the accepted
+function-parameter shadowing case. Scope: FR-104-AC-18 and FR-016-AC-11.
 
 ## Test Procedure
 
-1. Over FR-104-AC-18's model (`Meter` with `adjust(by: P, step: P)` and
-   `reset(by: P)`), check `pre A using v on M::Meter::adjust
+1. Over FR-104-AC-18's model (`Meter` with `adjust(by: P, step: P,
+   steps: Sequence<P>[0,3])` and `reset(by: P)`), check `pre A using v on M::Meter::adjust
    { M::Meter::adjust::by >= 0.00 }` and the same body as a `post`.
 2. Check `pre S1 using v on M::Meter::adjust { M::Meter::adjust::step >= 0.00 }`
    and `pre S2 using v on M::Meter::adjust { step >= 0.00 }` and compare their
@@ -48,8 +49,17 @@ FR-104-AC-18.
     implements this resolution; until then it is staged as
     `tests/corpus/operations/parameters/pending/decimal-keyword-parameter.native`
     on branch `codex/qsl-2041-parameters`.
+11. In both a `pre` and a `post` on `M::Meter::adjust`, check
+    `forall(step in steps: step >= M::Meter::adjust::step)` with
+    `steps: Sequence<P>[0,3]` in `adjust`'s parameters; compare the node
+    identities for the bare quantifier-binder read and qualified parameter
+    read in the predicate.
+12. Check the function
+    `function f using v(x: Integer, s: Sequence<Integer>[0,3]): Boolean pure { forall(x in s: x = 0) }`.
 
-Tag the tests `#[trace("TC-3083", "FR-104-AC-18")]`.
+Tag the operation-parameter and `pre`/`post` tests
+`#[trace("TC-3083", "FR-104-AC-18")]`; tag only the function-parameter
+shadow test `#[trace("TC-3083", "FR-016-AC-11")]`.
 
 ## Expected Results
 
@@ -67,3 +77,8 @@ Tag the tests `#[trace("TC-3083", "FR-104-AC-18")]`.
 - Step 9: checks, the name read as `turn`'s parameter `by`.
 - Step 10: the qualified case compiles, exit 0, last stage S4; the bare case
   exits 20 at S1 with `invalid_syntax`/`unexpected-token`.
+- Step 11: both clauses check; bare `step` resolves to the quantifier binder,
+  `M::Meter::adjust::step` resolves to the operation parameter, and the two
+  reads have distinct identities.
+- Step 12: the function checks; bare `x` in the quantifier predicate resolves
+  to the quantifier binder, shadowing the same-named function parameter.
