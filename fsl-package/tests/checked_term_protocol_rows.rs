@@ -179,6 +179,26 @@ fn refusal_path(refusal: &filament_contract_model::CheckedPackageRefusal) -> Opt
         .map(|path| path.as_str())
 }
 
+/// Replaces every value equal to `old` with `new`, returning how many it
+/// replaced.
+fn replace_value(value: &mut Value, old: &Value, new: &Value) -> usize {
+    if value == old {
+        *value = new.clone();
+        return 1;
+    }
+    match value {
+        Value::Array(items) => items
+            .iter_mut()
+            .map(|item| replace_value(item, old, new))
+            .sum(),
+        Value::Object(members) => members
+            .values_mut()
+            .map(|member| replace_value(member, old, new))
+            .sum(),
+        _ => 0,
+    }
+}
+
 /// Asserts the clause's path is `Flow` followed by one operand segment
 /// `{"operand": k}` whose operand-row entry is the graph index of `target`.
 fn assert_owner_operand_names(wire: &Value, target: &str) {
@@ -395,7 +415,41 @@ fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
     );
     assert_owner_operand_names(&emitted, "Node");
 
-    // The edge, dependency and final path operand all name the new target.
+    // The stale package with its row entry moved to the new target too, so
+    // that the edge, dependency and operand agree, is admitted. The ids the
+    // document itself holds name the operand by index and move with it.
+    let position_of = |name: &str| {
+        let target = owner_model_node(&emitted, name);
+        emitted["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .position(|node| node == target)
+            .expect("the owner position")
+    };
+    let (node_position, other_position) = (position_of("Node"), position_of("Other"));
+    let clause_id = &emitted["semantic_graph"]["nodes"][clause_position]["node_id"];
+    let slot = clause_id["path"][1]["operand"]
+        .as_u64()
+        .expect("the owner operand slot") as usize;
+    let mut held = clause_id.clone();
+    held["path"][1] = json!({"node": node_position});
+    let mut moved_held = held.clone();
+    moved_held["path"][1] = json!({"node": other_position});
+    let mut moved = emitted.clone();
+    assert!(replace_value(&mut moved, &held, &moved_held) > 0);
+    moved["semantic_graph"]["operand_rows"][clause_position][slot] = json!(other_position);
+    assert_owner_operand_names(&moved, "Other");
+    let read = protocol_owner_read(&moved, &domain);
+    assert!(
+        matches!(
+            read,
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_)
+        ),
+        "{read:?}"
+    );
+
+    // The producer writes the same agreement for the new target.
     let retargeted = protocol_owner_wire("M::Other", &domain);
     let other = &owner_model_node(&retargeted, "Other")["node_id"];
     assert_eq!(&owner_model_clause(&retargeted)["owner_model"], other);

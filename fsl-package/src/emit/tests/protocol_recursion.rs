@@ -275,8 +275,9 @@ fn a_cyclic_predicate_join_protocol_is_grouped_and_reads_back() {
 #[test]
 fn a_clause_that_is_its_groups_only_declaration_reads_back() {
     let text = package_text(
-        "protocol Flow using p over (input: M::Gadget) \
-         on each (seen: Boolean) when (protocol Flow) {\n\
+        "record Tick { ready: Boolean; }\n\
+         protocol Flow using p over (input: M::Gadget) \
+         on each (t: Tick) when (protocol Flow) {\n\
          role R on M::Gadget;\n\
          run sequence Main { }\n\
          finish End as (outcome: Boolean) { true };\n\

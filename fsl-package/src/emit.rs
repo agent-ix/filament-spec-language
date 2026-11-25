@@ -5373,6 +5373,82 @@ fn refinement_node(
     ))
 }
 
+/// FR-322 "Operand index segments": the `node` of a refinement's external
+/// `{package, node}` key is a document-held id of that dependency's graph, so
+/// each operand it holds is written as the index segment of the operand's node
+/// there. A key whose path holds no operand is already in that form.
+fn write_external_keys(
+    ids: &StructuralIds,
+    package: &CheckedPackage,
+    limits: EmitLimits,
+    body: &mut CheckedTerm,
+) -> Result<(), EmitRefusal> {
+    use filament_contract_model::{
+        CheckedNodePathSegment as Segment, RefinementAbstractClass, RefinementKey,
+    };
+    let CheckedTerm::Refinement {
+        abstract_key,
+        protocol,
+        class_catalog,
+        ..
+    } = body
+    else {
+        return Ok(());
+    };
+    let mut written = vec![abstract_key.as_mut()];
+    written.extend(protocol.as_deref_mut());
+    for class in class_catalog
+        .iter_mut()
+        .flat_map(|catalog| &mut catalog.r#abstract)
+    {
+        if let RefinementAbstractClass::Declared {
+            node, binder_types, ..
+        } = class
+        {
+            written.push(node);
+            written.extend(binder_types);
+        }
+    }
+    let mut keys = ids.key_reader();
+    let mut graphs = BTreeMap::new();
+    for key in written {
+        let RefinementKey::External(external) = key else {
+            continue;
+        };
+        if !holds_segment(&external.node, |segment| {
+            matches!(segment, Segment::Node(_))
+        }) {
+            continue;
+        }
+        let library = fsl_semantics::library::LibraryName::new(&*external.package)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        let graph = match graphs.entry(library) {
+            std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                let dependency = package
+                    .dependencies()
+                    .get(vacant.key())
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                // The dependency's own bytes, held to `limits.output_bytes`
+                // by `emit_checked`, give its graph order.
+                let emission = emit_checked(dependency, limits)?;
+                let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+                    emission.package().bytes(),
+                )
+                .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+                vacant.insert(graph)
+            }
+        };
+        let structural = keys
+            .key(&external.node)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        external.node = graph
+            .wire_id(&structural)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    }
+    Ok(())
+}
+
 /// `origin`'s role as FR-322 spells it.
 fn occurrence_role(node: &NodeKey, origin: &Origin) -> Result<CheckedOccurrenceRole, EmitRefusal> {
     crate::checked_v2::occurrence_role(origin.role().as_str()).ok_or_else(|| {
@@ -7741,7 +7817,8 @@ fn emit_package_nodes(
             .refinement_declaration_region(refinement)
             .filter(|region| region.start() < region.end())
             .ok_or(EmitRefusal::UnlocatedRefinementDeclaration)?;
-        let (node, entries, rows) = refinement_node(ids, graph, refinement, &region)?;
+        let (mut node, entries, rows) = refinement_node(ids, graph, refinement, &region)?;
+        write_external_keys(ids, package, limits, &mut node.body)?;
         step_rows.extend(rows);
         let insertion = nodes.partition_point(|existing| existing.node_id < node.node_id);
         nodes.insert(insertion, node.clone());
@@ -11022,7 +11099,6 @@ fn write_index_segments(
     // Retain the encoder's original operand keys. Rebuilding an independent
     // key table makes every later source-key equality walk its full depth.
     let mut keys = ids.key_reader();
-    let invariant = |_| EmitRefusal::SourceMapInvariant;
     let graph_keys = nodes
         .iter()
         .map(|node| keys.key(&node.node_id).map_err(invariant))
