@@ -1884,7 +1884,7 @@ impl<'a> ModelSystem<'a> {
         &self,
         state: &ModelSimState,
     ) -> Result<crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
-        self.canonical_state_key_ref(state).map(Clone::clone)
+        self.canonical_state_key_ref(state).cloned()
     }
 
     pub(crate) fn canonical_state_key_ref<'s>(

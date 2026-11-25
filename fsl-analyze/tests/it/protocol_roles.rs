@@ -1552,7 +1552,7 @@ fn liveness_refuses_before_settling_the_crossing_protocol_root() {
                 finish Done as (d: Boolean) { true };\n\
                 }\n\
                 temporal Live using t0 over (k: M::Cell) clock \"model-steps\" on origin { always eventually holds(k.v < 1) }\n";
-    let world = World::new(&body, &["c"], &[0, 1, 2, 3]);
+    let world = World::new(body, &["c"], &[0, 1, 2, 3]);
     let letters = CellV { holds: |v| v == 0 };
     let item = world.claim(&letters);
     let subject = world.subject();

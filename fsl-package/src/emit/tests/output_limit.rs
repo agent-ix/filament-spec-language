@@ -439,3 +439,49 @@ fn emitted_byte_count_of(package: &CheckedPackage) -> usize {
         .bytes()
         .len()
 }
+
+/// A pure Integer function whose body is `terms` additions of its parameter,
+/// nested on the right.
+fn nested_sum_package(terms: usize) -> CheckedPackage {
+    checked_unit(&format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function f using v(x: Integer): Integer pure {{ {}x }}\n",
+        "x + ".repeat(terms)
+    ))
+}
+
+/// A refused emission's peak live bytes grow with a sum's length, not with its
+/// square. Every term of a sum is one level deeper than the one before, so
+/// holding a child-index path for each position holds a quadratic number of
+/// indices (over 16,000,000 at 4,000 terms). Four times the terms stays under
+/// five times the peak; allocations are counted, not time or process memory.
+#[test]
+fn a_refused_deep_sum_peaks_in_proportion_to_its_length() {
+    let peak = |terms: usize| {
+        let package = nested_sum_package(terms);
+        let mut outcome = None;
+        let info = allocation_counter::measure(|| {
+            outcome = Some(crate::emit::emit_checked_uncached(
+                &package,
+                &Cancel::new(),
+                EmitLimits::new(1),
+            ));
+        });
+        let limit = limit_of(
+            outcome
+                .expect("emission ran")
+                .expect_err("one byte does not fit"),
+        );
+        assert_eq!(limit.configured_bound(), 1);
+        assert_eq!(limit.actual(), 2);
+        info.bytes_max
+    };
+    let _ = allocation_counter::measure(|| {});
+
+    let (short, long) = (peak(1_000), peak(4_000));
+    assert!(
+        long < short.saturating_mul(5),
+        "peak live bytes grew faster than the sum: {short} at 1,000 terms, {long} at 4,000"
+    );
+}

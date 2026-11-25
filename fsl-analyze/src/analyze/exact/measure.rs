@@ -542,15 +542,17 @@ pub(super) fn run(
             &system,
             claim,
             &product,
-            &policy,
-            initial,
-            reference,
-            &limits,
-            cancel,
-            subject,
-            tamper_witness,
-            meter,
-            storage,
+            RefutationContext {
+                policy: &policy,
+                initial,
+                binding: reference,
+                limits: &limits,
+                cancel,
+                subject,
+                tamper: tamper_witness,
+                meter,
+                storage,
+            },
         );
     }
     let extremum = match optimization {
@@ -624,7 +626,7 @@ fn finish_measure_interval(
             interval_limits,
             cancel,
         )?;
-        let result = fsl_replay::check_probability_certificate_document_as(
+        fsl_replay::check_probability_certificate_document_as(
             system,
             claims,
             item,
@@ -632,8 +634,7 @@ fn finish_measure_interval(
             role,
             interval_limits,
             cancel,
-        );
-        result
+        )
     };
     let checked = (
         check(
@@ -707,20 +708,35 @@ fn finish_measure_interval(
     }))
 }
 
+struct RefutationContext<'a> {
+    policy: &'a [Option<usize>],
+    initial: crate::exact_probabilistic::ProbStateId,
+    binding: Option<&'a ObjectReference>,
+    limits: &'a crate::exact_probabilistic::ExactProbLimits,
+    cancel: &'a Cancel,
+    subject: SubjectLimits<'a>,
+    tamper: Option<&'a dyn Fn(&mut ProbabilisticCounterexample)>,
+    meter: filament_exact::Meter,
+    storage: u64,
+}
+
 fn refute(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
     product: &ProbProduct,
-    policy: &[Option<usize>],
-    initial: crate::exact_probabilistic::ProbStateId,
-    binding: Option<&ObjectReference>,
-    limits: &crate::exact_probabilistic::ExactProbLimits,
-    cancel: &Cancel,
-    subject: SubjectLimits<'_>,
-    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
-    mut meter: filament_exact::Meter,
-    mut storage: u64,
+    context: RefutationContext<'_>,
 ) -> EngineReport {
+    let RefutationContext {
+        policy,
+        initial,
+        binding,
+        limits,
+        cancel,
+        subject,
+        tamper,
+        mut meter,
+        mut storage,
+    } = context;
     use crate::exact_probabilistic::{
         produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
     };
@@ -1054,9 +1070,11 @@ fn refute_mean(
                 token.evidence(),
                 bound,
                 claim_type,
-                scope.types(),
-                scope.variant_types(),
-                scope.enums(),
+                &fsl_replay::ProbabilisticValueSchema::new(
+                    scope.types(),
+                    scope.variant_types(),
+                    scope.enums(),
+                ),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
                 &spelled,
             );

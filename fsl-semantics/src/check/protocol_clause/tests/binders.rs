@@ -218,24 +218,11 @@ fn a_missing_anchor_and_a_later_shadowing_binder_report_in_source_order() {
     );
 }
 
-/// SR-765 FND-001: FR-113's binder no-shadowing rule is protocol-wide
-/// (FSpec `shared-grammar.md`: binders are "unique in their enclosing
-/// declaration"), not merely within scopes that lexically nest one
-/// inside the other. Three cases the old lexical-prefix check missed,
-/// each a fresh `RecoveryFlow`-shaped protocol so one refusal per case
-/// stays unambiguous:
-///
-/// - `finish`'s own record binder reusing `run`'s own `attempt`
-///   binder's name (neither scope is a prefix of the other: `finish` is
-///   top-level, `attempt` is scoped `["Main"]`).
-/// - A `sequence Inner` inside `Main`, whose own `effect`'s record
-///   binder reuses a name already bound by `Main`'s own outer `effect`.
-/// - Two sibling `case`s of one `choice`, each binding an event record
-///   binder of the same name (neither `case`'s scope is a prefix of the
-///   other's).
-#[trace("TC-512", "FR-113")]
+/// FR-113-AC-12 (TC-512): finish reads the root output, so its binder cannot
+/// reuse a run binder that remains active there.
+#[trace("TC-512", "FR-113-AC-12")]
 #[test]
-fn a_finish_binder_reusing_a_run_binders_name_refuses() {
+fn a_finish_binder_conflicting_with_root_output_refuses() {
     let source = recovery_flow("Main::Committed", "").replacen(
         "as (outcome: Boolean)",
         "as (tried: Boolean)",
@@ -251,7 +238,25 @@ fn a_finish_binder_reusing_a_run_binders_name_refuses() {
     );
 }
 
-#[trace("TC-512", "FR-113")]
+/// FR-113-AC-8 (TC-512): a compensation trigger and a later event binder in
+/// a disjoint run scope may reuse the same name.
+#[trace("TC-512", "FR-113-AC-8")]
+#[test]
+fn a_later_event_binder_reuses_a_compensation_trigger_name() {
+    let source = recovery_flow("Main::Committed", "")
+        .replacen("(trigger: Boolean)", "(f: Boolean)", 1)
+        .replacen(
+            "event Recovered by R for Undo as (notice: Boolean)",
+            "event Fail by R for Undo as (f: Boolean)",
+            1,
+        );
+    let graph = checks(&source);
+    assert_eq!(graph.protocols().len(), 1);
+}
+
+/// FR-113-AC-9 (TC-512): an enclosing binder remains active in a nested
+/// control, so the child's same-named binder refuses.
+#[trace("TC-512", "FR-113-AC-10")]
 #[test]
 fn a_nested_sequences_binder_reusing_an_outer_siblings_name_refuses() {
     let inner = "sequence Inner {\n\
@@ -268,9 +273,30 @@ fn a_nested_sequences_binder_reusing_an_outer_siblings_name_refuses() {
     );
 }
 
-#[trace("TC-512", "FR-113")]
+/// FR-113-AC-9 (TC-512): a capture in the trigger's activation scope cannot
+/// reuse the active trigger binder's name.
+#[trace("TC-512", "FR-113-AC-9")]
 #[test]
-fn sibling_case_binders_of_one_name_refuse() {
+fn a_capture_cannot_reuse_its_active_trigger_binders_name() {
+    let source = recovery_flow("Main::Committed", "").replacen(
+        "activate first (trigger: Boolean) when { true } { }",
+        "activate first (f: Boolean) when { true } { capture f: Boolean = f; }",
+        1,
+    );
+    let (_, found) = refusals(&source);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].cause.code().as_str(), "ambiguous_declaration");
+    assert_eq!(found[0].cause.cause(), Some("ambiguous-name"));
+    let (name, shadowed) = shadow_cause(&found);
+    assert_eq!(name, "f");
+    assert!(matches!(shadowed, ShadowedDeclaration::Binder(_)));
+}
+
+/// FR-113-AC-13 (TC-512): sibling case scopes are disjoint, so their local
+/// record binders may reuse a name.
+#[trace("TC-512", "FR-113-AC-13")]
+#[test]
+fn sibling_case_binders_of_one_name_are_out_of_scope_for_each_other() {
     let choice = "choice Which by R visible () {\n\
          case left when { true } sequence Left {\n\
          event LeftSeen by R for Undo as (dup: Boolean) { true };\n\
@@ -280,10 +306,24 @@ fn sibling_case_binders_of_one_name_refuse() {
          }\n\
          }\n";
     let source = recovery_flow("Main::Committed", choice);
+    let graph = checks(&source);
+    assert_eq!(graph.protocols().len(), 1);
+}
+
+/// FR-113-AC-11 (TC-512): a sequence threads a nested child's output into
+/// the next sibling, so the later binder cannot reuse that active name.
+#[trace("TC-512", "FR-113-AC-11")]
+#[test]
+fn a_later_sequence_step_cannot_reuse_a_nested_steps_active_binder() {
+    let main_extra = "sequence Inner {\n\
+         event Nested by R for Undo as (shared: Boolean) { true };\n\
+         }\n\
+         event After by R for Undo as (shared: Boolean) { true };\n";
+    let source = recovery_flow("Main::Committed", main_extra);
     let (_, found) = refusals(&source);
     assert_eq!(found.len(), 1, "{found:?}");
     let (name, shadowed) = shadow_cause(&found);
-    assert_eq!(name, "dup");
+    assert_eq!(name, "shared");
     assert!(
         matches!(shadowed, ShadowedDeclaration::Binder(_)),
         "{shadowed:?}"
@@ -360,9 +400,8 @@ fn a_record_binder_shadowing_a_native_dimension_declaration_refuses() {
 /// protocol reused the alias `v` itself, so the carve-out was never
 /// actually exercised on an ordinary, non-alias binder name). Two
 /// protocols in one unit, each with a record binder named `shared` (not
-/// an alias or any native declaration): neither refuses, since a
-/// binder's own protocol-wide uniqueness check (SR-765 FND-001) stays
-/// scoped to its own protocol.
+/// an alias or any native declaration): neither refuses, since local
+/// binder scopes are checked within their owning protocol declaration.
 #[trace("TC-512", "FR-113-AC-5")]
 #[test]
 fn two_protocols_sharing_an_ordinary_binder_name_both_check() {

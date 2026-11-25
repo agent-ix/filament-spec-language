@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function f using v(a: Float64[nearest-even],b: Float64[nearest-even],c: Float64[nearest-even]): Float64[nearest-even] pure { filament::value::ieee::fma(a,b,c) }
+function g using v(a: Float32[nearest-even],b: Float32[nearest-even],c: Float32[nearest-even]): Float32[nearest-even] pure { filament::value::ieee::fma(a,b,c) }

@@ -1895,7 +1895,7 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
             assert!(denied.amount > 0, "the first storage charge is positive");
             assert_eq!(denial.limit.setting().name(), "i2.native_join_storage");
             assert_eq!(denial.limit.configured_bound(), 0);
-            assert_eq!(denial.limit.actual(), u128::from(denied.amount));
+            assert_eq!(denial.limit.actual(), denied.amount);
             assert_eq!(denial.limit.catalog_code().code(), "stage_limit_exceeded");
         }
         Err(other) => panic!("zero storage returned the wrong refusal: {other:?}"),

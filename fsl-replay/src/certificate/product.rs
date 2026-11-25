@@ -105,13 +105,6 @@ impl CertificateState for ProductStateKey {
     fn locus(self) -> CertificateLocus {
         CertificateLocus::HyperProductState(self.0)
     }
-
-    fn edge_locus(source: Self, target: Self) -> CertificateLocus {
-        CertificateLocus::HyperProductEdge {
-            source: source.0,
-            target: target.0,
-        }
-    }
 }
 
 /// One binding's closed product and its component witnesses.

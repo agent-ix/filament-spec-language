@@ -528,7 +528,15 @@ fn actual_s3_over_parameter_and_single_admitted_instance_drive_replay() {
             ),
             Ok(ProbabilityWitnessReplay::Reproduced(_))
         ));
-        let unrestricted = ModelSystem::new(world.subject().simulation).unwrap();
+        // FR-125: only a universe key an initial record admits is an instance,
+        // so the unrestricted subject holds both objects initially.
+        let model = model(event, "every scheduler", ">=", "0.5");
+        let both = World::with_object_initials(
+            &model,
+            &["m", "other"],
+            std::slice::from_ref(&model.initial),
+        );
+        let unrestricted = ModelSystem::new(both.subject().simulation).unwrap();
         assert!(matches!(
             replay_probabilistic_witness(
                 unrestricted

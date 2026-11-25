@@ -1,0 +1,7 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+dimension Time;
+dimension Period;
+unit s : Time = rational(1, 1);
+unit sec : Period = rational(1, 1);
+dimension Period ~ Time by 1 sec = 1 s;
