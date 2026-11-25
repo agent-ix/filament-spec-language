@@ -394,10 +394,9 @@ fn both_branches_of_a_literal_if_hold_their_own_frame() {
     );
 }
 
-/// FSpec FR-825-AC-12: a node read inside a branch that holds no record still
+/// FSpec FR-825: a node read inside a branch that holds no record still
 /// takes its occurrence ordinal, a branch behind a literal guard included, so
 /// a later guard read and a later record name the next one.
-#[trace("FR-825-AC-12")]
 #[test]
 fn reads_behind_a_literal_guard_advance_later_ordinals() {
     let under_p = || vec![("parameter".to_owned(), 1, true)];
