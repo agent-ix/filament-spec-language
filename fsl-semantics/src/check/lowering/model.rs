@@ -46,6 +46,7 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::quantity::QuantityUnit;
 use filament_semantic_value::unit::{NominalDeclaration, NominalUnitForm};
 use fsl_forms::{DeclaredClauseKind, NameForm};
+use ix_trace_rs::implements;
 
 /// One step of a clock place's path below its object (FR-230 "Places"): a
 /// field of a record by name, or a slot of a clock collection.
@@ -2959,6 +2960,7 @@ impl<'a> Lowering<'a> {
     /// (FR-496-AC-5). A model admitted without a `model` alias (a dispatch
     /// bridge's view) projects rows too; it has no declaration site, so its
     /// nodes take the `generated` fallback location.
+    #[implements("FR-496-AC-5")]
     pub(crate) fn operation_effect_nodes(&mut self) -> Result<(), CheckRefusal> {
         let mut declarations = BTreeMap::new();
         for model in self.models {
