@@ -1134,6 +1134,7 @@ dependencies = [
  "filament-observation",
  "filament-semantic-value",
  "filament-specification-qualification",
+ "filament-walk",
  "fsl-bench",
  "fsl-cst",
  "fsl-eval",
