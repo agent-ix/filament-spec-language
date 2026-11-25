@@ -28,8 +28,16 @@ pub(super) fn check(
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let mut storage = 0;
-    let document =
-        read_document_profile(bytes, limits, cancel, &mut meter, false, None, &mut storage)?;
+    let mut fairness_records = Vec::new();
+    let document = read_document_profile(
+        bytes,
+        limits,
+        cancel,
+        &mut meter,
+        false,
+        Some(&mut fairness_records),
+        &mut storage,
+    )?;
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
@@ -56,6 +64,23 @@ pub(super) fn check(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if objective.form == TimedProbabilityForm::ExpectedElapsed {
+        if fairness_records.is_empty() != claim.fairness.is_empty() {
+            return Err(ProbabilityDocumentError::ObjectiveMismatch);
+        }
+        if !fairness_records.is_empty() {
+            let expected =
+                super::fairness::checked(system, claim, limits, cancel, &mut meter, &mut storage)?;
+            if !super::fairness::same(
+                &expected,
+                &fairness_records,
+                limits,
+                cancel,
+                &mut meter,
+                &mut storage,
+            )? {
+                return Err(ProbabilityDocumentError::ObjectiveMismatch);
+            }
+        }
         return check_expected_elapsed(
             system,
             claim,
@@ -69,6 +94,9 @@ pub(super) fn check(
             &mut meter,
             &mut storage,
         );
+    }
+    if !fairness_records.is_empty() || !claim.fairness.is_empty() {
+        return Err(ProbabilityDocumentError::Unsupported);
     }
     if objective.form == TimedProbabilityForm::ElapsedQuantile {
         return elapsed::check(
@@ -224,7 +252,6 @@ fn check_expected_elapsed(
         return Err(ProbabilityDocumentError::Unsupported);
     };
     if !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every)
-        || !claim.fairness.is_empty()
         || document.cyclic_dtmc
         || document.event.is_some()
         || !document.failures.is_empty()
@@ -1705,6 +1732,10 @@ impl Watch<'_> {
         cancel: &Cancel,
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         let watch = match self {
+            Self::Deadline(predicate) => {
+                let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
+                return Ok((phase, elapsed));
+            }
             Self::TimedTrace {
                 formula,
                 predicates,
@@ -1795,10 +1826,6 @@ impl Watch<'_> {
                     elapsed,
                 ));
             }
-            Self::Deadline(predicate) => {
-                let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
-                return Ok((phase, elapsed));
-            }
             Self::Bounded {
                 root, predicates, ..
             } => {
@@ -1836,10 +1863,10 @@ impl Watch<'_> {
                 if root.elapsed == u64::MAX {
                     root.elapsed = 0;
                 }
-                fsl_eval::probabilistic::advance_nested_deadline(
+                fsl_eval::probabilistic::advance_nested_timed_deadline(
                     &mut root,
                     &mut nested,
-                    &truths,
+                    truths.first().copied().unwrap_or(false),
                     elapsed,
                 );
                 return Ok((Phase::NestedBounded(root, nested), elapsed));
@@ -2213,12 +2240,10 @@ fn enumerate_digital_deadline(
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         admit_workload(system, claim, &actions)?;
         let enabled = digital_enabled_actions(system, timed, &current.timed, claim, cancel)?;
-        if matches!(watch, Watch::Deadline(_))
-            && matches!(
-                claim.scheduler,
-                fsl_semantics::check::ProbScheduler::Workload(_)
-            )
-        {
+        if matches!(
+            claim.scheduler,
+            fsl_semantics::check::ProbScheduler::Workload(_)
+        ) {
             let run = WorkloadRun {
                 system,
                 timed,
@@ -2795,6 +2820,34 @@ fn region_scale_parts(
     Ok((base, subdivisions))
 }
 
+fn phase_at(
+    system: &ModelSystem<'_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    state: &ModelSimState,
+    elapsed: u64,
+    deadline: u64,
+    cancel: &Cancel,
+) -> Result<Phase, ProbabilityDocumentError> {
+    if elapsed > deadline {
+        return Ok(Phase::Rejected);
+    }
+    let readings = system
+        .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    let [reading] = readings.as_slice() else {
+        return Err(ProbabilityDocumentError::Unsupported);
+    };
+    match reading {
+        fsl_eval::simulation::model::PredicateReading::True => Ok(Phase::Accepted),
+        fsl_eval::simulation::model::PredicateReading::False => Ok(Phase::Pending),
+        fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_) => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
+    }
+}
+
 fn time_bound(
     claim: &CheckedProbabilisticClaim,
     scale: u64,
@@ -2853,34 +2906,6 @@ fn quantized_clocks(
             rational_units(value, scale)
         })
         .collect()
-}
-
-fn phase_at(
-    system: &ModelSystem<'_>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
-    binding: Option<&filament_exact::ObjectReference>,
-    state: &ModelSimState,
-    elapsed: u64,
-    deadline: u64,
-    cancel: &Cancel,
-) -> Result<Phase, ProbabilityDocumentError> {
-    if elapsed > deadline {
-        return Ok(Phase::Rejected);
-    }
-    let readings = system
-        .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
-        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-    let [reading] = readings.as_slice() else {
-        return Err(ProbabilityDocumentError::Unsupported);
-    };
-    match reading {
-        fsl_eval::simulation::model::PredicateReading::True => Ok(Phase::Accepted),
-        fsl_eval::simulation::model::PredicateReading::False => Ok(Phase::Pending),
-        fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-        | fsl_eval::simulation::model::PredicateReading::Refused(_) => {
-            Err(ProbabilityDocumentError::Unsupported)
-        }
-    }
 }
 
 #[allow(
@@ -4840,9 +4865,6 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     if let Some(query) = elapsed::query(claim) {
         return elapsed::replay(system, claim, &query, witness, limits, cancel);
     }
-    let Some((bound, predicate)) = deadline_event(claim) else {
-        return Err(unsupported());
-    };
     if !claim.fairness.is_empty() {
         return Err(unsupported());
     }
@@ -4853,6 +4875,12 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         TimedProbabilityRoute::Digital
     };
     let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
+    let timed_watch = deadline_event(claim)
+        .map(|(bound, predicate)| (bound, Watch::Deadline(predicate)))
+        .or_else(|| bounded_event(claim, scale));
+    let Some((bound, watch)) = timed_watch else {
+        return Err(unsupported());
+    };
     let binding = claim_binding(system, claim)
         .map_err(|_| unsupported())?
         .map(|binding| binding.reference);
@@ -4866,7 +4894,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             &timed,
             claim,
             binding.as_ref(),
-            &Watch::Deadline(predicate),
+            &watch,
             time_bound(claim, scale).map_err(from_document)?,
             scale,
             document_limits,
@@ -4880,7 +4908,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             &timed,
             claim,
             binding.as_ref(),
-            &Watch::Deadline(predicate),
+            &watch,
             time_bound(claim, scale).map_err(from_document)?,
             scale,
             scale,
@@ -5352,15 +5380,29 @@ fn price_paths(
     Ok(Some((kept, mass)))
 }
 
-/// Whether `claim` is a timed form this module replays a witness of: FR-204's
-/// deadline form, or FR-877's elapsed quantile over a timed subject.
+/// Whether `claim` is a timed form this module replays a witness of: an
+/// independently recognized FR-204 bounded monitor or FR-877 elapsed quantile.
 pub(in crate::probability_certificate) fn is_timed_witness_claim(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
 ) -> bool {
-    deadline_event(claim).is_some()
-        || (elapsed::query(claim).is_some()
-            && TimedSystem::new(system, &claim.subject.alias).is_ok())
+    if elapsed::query(claim).is_some() {
+        return TimedSystem::new(system, &claim.subject.alias).is_ok();
+    }
+    TimedSystem::new(system, &claim.subject.alias)
+        .ok()
+        .is_some_and(|timed| {
+            let route = if region_route(&timed, claim) {
+                TimedProbabilityRoute::Region
+            } else {
+                TimedProbabilityRoute::Digital
+            };
+            certificate_scale(system, &timed, claim, route)
+                .ok()
+                .is_some_and(|scale| {
+                    deadline_event(claim).is_some() || bounded_event(claim, scale).is_some()
+                })
+        })
 }
 
 /// The clock valuation a digital timed product key names, in
@@ -5600,11 +5642,7 @@ mod witness_pricing_tests {
     #[test]
     fn a_cyclic_selected_child_refuses_deadline_path_pricing() {
         let graph = graph(vec![
-            (
-                "I",
-                None,
-                vec![vec![edge("X", 1, 2), edge("F", 1, 2)]],
-            ),
+            ("I", None, vec![vec![edge("X", 1, 2), edge("F", 1, 2)]]),
             ("X", None, vec![vec![edge("I", 1, 1)]]),
             ("F", Some(true), vec![]),
         ]);

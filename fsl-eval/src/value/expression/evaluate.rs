@@ -69,7 +69,7 @@ use filament_semantic_value::declaration::{
     operand_value, CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{compare_enum, EnumMemberIndex};
-use filament_semantic_value::location::{ExpressionLocation as Location, ExpressionOwner};
+use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
 use filament_semantic_value::quantity::{
     compare_quantity, convert_quantity, evaluate_quantity_unit, ConvertedValue, QuantityOperation,
@@ -206,47 +206,6 @@ fn unresolved_unit() -> Halt {
         "S6a",
         "quantity-unit-unresolved-past-admission",
     ))
-}
-
-/// The expression-tree path of a node as a stable, human-readable locus.
-fn expression_locus(location: &Location) -> String {
-    let path = location.path();
-    if path.is_empty() {
-        "root".to_owned()
-    } else {
-        let suffix = path
-            .iter()
-            .map(usize::to_string)
-            .collect::<Vec<_>>()
-            .join("/");
-        format!("root/{suffix}")
-    }
-}
-
-/// The named expression owner enclosing a population row, without relying on
-/// the owner's debug representation as a diagnostic wire value.
-fn expression_owner_name(owner: &ExpressionOwner) -> String {
-    match owner {
-        ExpressionOwner::Body { function, .. } => format!("function {function}"),
-        ExpressionOwner::Measure { function, .. } => format!("measure {function}"),
-        ExpressionOwner::Expression => "expression".to_owned(),
-        ExpressionOwner::TypeDeclaration { name } => name.clone(),
-        ExpressionOwner::StateClause { clause, .. } => clause.clone(),
-        ExpressionOwner::ProtocolAttempt { protocol, attempt } => {
-            format!("protocol attempt {protocol}/{attempt}")
-        }
-        ExpressionOwner::ModelOperationClause {
-            operation,
-            kind,
-            position,
-        } => {
-            let kind = match kind {
-                filament_semantic_value::location::OperationClauseKind::Requires => "requires",
-                filament_semantic_value::location::OperationClauseKind::Ensures => "ensures",
-            };
-            format!("{operation} {kind} clause {position}")
-        }
-    }
 }
 
 impl From<Stop> for Halt {
@@ -514,20 +473,24 @@ fn charge_call(meter: &mut Meter) -> Result<(), Stop> {
     Ok(meter.charge(Charge::new(ChargePoint::FunctionCall))?)
 }
 
-/// The declaration identity of the concrete population a refinement row's
-/// `only` ranges over, for the undefined cause's payload: the population
-/// under any `where` filter of `source`.
-fn population_of<'a, N: NodeSource<'a>>(source: N) -> Result<String, Halt> {
-    let mut node = source;
+/// The source named by an undefined `only`, through any `where` filter.
+fn only_source_name<'a, N: NodeSource<'a>>(mut node: N) -> Result<&'a str, Halt> {
     loop {
         match node.kind() {
-            NodeKind::PopulationObjects { population } => return Ok(population.node.clone()),
+            NodeKind::PopulationObjects { population } => return Ok(&population.node),
+            NodeKind::AllInstances { population }
+                if let NodeKind::NamedPopulation { population, .. } =
+                    node.at(*population).kind() =>
+            {
+                return Ok(&population.node);
+            }
             NodeKind::Query {
                 visit: Visit::Filter,
                 source,
                 ..
             } => node = node.at(*source),
-            _ => return Err(invariant("only-source-is-a-population")),
+            _ if matches!(node.value_type(), ValueType::Collection(_)) => return Ok("collection"),
+            _ => return Err(invariant("only-source-is-a-collection")),
         }
     }
 }
@@ -5481,35 +5444,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 };
                 return Err(Halt::Family(FamilyResult::Undefined(Box::new(
                     OnlyNotOneCause {
-                        population: population_of(node.at(*operand))?,
-                        locus: self.enclosing_row.as_ref().map_or_else(
-                            || {
-                                node.location().map_or_else(
-                                    || "unknown".to_owned(),
-                                    |location| {
-                                        format!(
-                                            "{}#{}",
-                                            expression_owner_name(&location.origin),
-                                            expression_locus(location)
-                                        )
-                                    },
-                                )
-                            },
-                            |row| {
-                                let path = node
-                                    .location()
-                                    .map_or_else(|| "unknown".to_owned(), expression_locus);
-                                format!("{row}#{path}")
-                            },
-                        ),
-                        row: self
-                            .enclosing_row
-                            .clone()
-                            .or_else(|| {
-                                node.location()
-                                    .map(|location| expression_owner_name(&location.origin))
-                            })
-                            .unwrap_or_else(|| "unknown".to_owned()),
+                        population: only_source_name(node.at(*operand))?.to_owned(),
+                        location: node.location().cloned(),
+                        enclosing_row: self.enclosing_row.clone(),
                     },
                 ))));
             }

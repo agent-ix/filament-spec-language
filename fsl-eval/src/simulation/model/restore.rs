@@ -984,6 +984,7 @@ impl ModelSystem<'_> {
         let state = ModelSimState {
             state,
             provenance: ModelStateProvenance::RestoredFromKey { effect: None },
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
         };
         let actual = self.state_key_bytes_with_budget(&state, identity, restore.budget, cancel)?;
         restore.tick(bytes.len())?;

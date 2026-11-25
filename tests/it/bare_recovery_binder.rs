@@ -603,8 +603,8 @@ fn map_binder_is_no_source() {
 #[test]
 fn a_case_arm_binder_in_a_recover_condition_is_admitted_and_evaluates() {
     assert_eq!(
-        assert_case_arm_union("", None),
-        assert_case_arm_union("union Unrelated { Other, Payload(Boolean) }", None),
+        assert_case_arm_union(""),
+        assert_case_arm_union("union Unrelated { Other, Payload(Boolean) }"),
         "an unselected union does not change the slot's ordered charges"
     );
 }
@@ -613,10 +613,9 @@ fn a_case_arm_binder_in_a_recover_condition_is_admitted_and_evaluates() {
 #[test]
 fn an_unrepresented_union_payload_does_not_poison_an_unrelated_slot() {
     assert_eq!(
-        assert_case_arm_union("", None),
+        assert_case_arm_union(""),
         assert_case_arm_union(
             "tuple Pair(Boolean, Boolean);\nunion Unrelated { Other, Payload(Pair) }",
-            Some("Unrelated"),
         ),
         "an unselected union with an unrepresented payload leaves values and ordered charges unchanged"
     );
@@ -629,7 +628,27 @@ fn a_selected_union_with_an_unrepresented_payload_refuses_before_charging() {
         Some("case Unrelated::Other { Other: true; Payload(p): true; }"),
         "tuple Pair(Boolean, Boolean);\nunion Unrelated { Other, Payload(Pair) }",
     );
-    let bare = recipe.bare();
+    assert_eq!(
+        recipe.identities.source_tuples().len(),
+        1,
+        "Pair is the sole tuple witness"
+    );
+    let identities_without_pair = fsl_package::ReadIdentityRows::of_rows(
+        &recipe.package,
+        recipe.identities.declarations().to_vec(),
+        recipe.identities.fields().to_vec(),
+        recipe.identities.source_records().to_vec(),
+        recipe.identities.source_unions().to_vec(),
+    );
+    let bare = BarePackage::new(&recipe.package)
+        .with_supply(
+            BareSupply {
+                identities: &identities_without_pair,
+                equality: Some(&recipe.equality),
+            },
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("omitting the tuple projection retains valid admitted wire and its union row");
     let slot = ProtocolSlot {
         node: recipe.compensation("Full"),
         member: "recovery.predicate".to_owned(),
@@ -649,7 +668,7 @@ fn a_selected_union_with_an_unrepresented_payload_refuses_before_charging() {
             "the selected union requires its payload's representation even for a nullary variant",
         );
     let filament_eval::CallFailure::Admission(failure) = failure else {
-        panic!("the missing projection refuses during admission")
+        panic!("the missing projection refuses during admission: {failure:?}")
     };
     let filament_eval::CallAdmissionFailure::Refused(record) = *failure else {
         panic!("the missing projection produces a typed refusal")
@@ -663,7 +682,6 @@ fn a_selected_union_with_an_unrepresented_payload_refuses_before_charging() {
 
 fn assert_case_arm_union(
     unrelated: &str,
-    omitted_union: Option<&str>,
 ) -> Vec<Vec<filament_exact::AdmittedCharge>> {
     use fsl_foundation::SourceIdentity;
     use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits, SuppliedLibrary};
@@ -786,17 +804,10 @@ fn assert_case_arm_union(
             declaration.shape(),
             filament_semantic_value::declaration::CompositeShape::Union(_)
         ) {
-            if Some(declaration.name()) == omitted_union {
-                assert!(
-                    world.types().composite(declaration.key()).is_none(),
-                    "the unsupported union is absent from the closed environment"
-                );
-                continue;
-            }
             assert_eq!(
                 world.types().composite(declaration.key().clone()),
                 Some(declaration),
-                "the original union handle, sealed member identities and payload order survive the bytes route"
+                "the original union handle, sealed member identities and payload order survive the bytes route, including an unselected union with an unrepresented payload"
             );
         }
     }

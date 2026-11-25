@@ -1047,10 +1047,11 @@ fn run_timed_mean(
     let ProbForm::MeanTime { bound, .. } = &claim.form else {
         return not_yet();
     };
+    let fair = !claim.fairness.is_empty();
     if !matches!(
         claim.scheduler,
         ProbScheduler::Every | ProbScheduler::Workload(_)
-    ) || !claim.fairness.is_empty()
+    ) || (fair && !matches!(claim.scheduler, ProbScheduler::Every))
     {
         return not_yet();
     }
@@ -1248,7 +1249,18 @@ fn run_timed_mean(
         policy: None,
     };
     let checked = (|| {
-        let bytes = write_probability_certificate(&document, document_limits, cancel)?;
+        let bytes = if fair {
+            fsl_replay::write_timed_fair_probability_certificate(
+                &system,
+                source_package.graph().probabilistic_model().claims(),
+                &identity,
+                &document,
+                document_limits,
+                cancel,
+            )?
+        } else {
+            write_probability_certificate(&document, document_limits, cancel)?
+        };
         check_probability_certificate_document(
             &system,
             source_package.graph().probabilistic_model().claims(),
@@ -4083,22 +4095,19 @@ fn replay_timed_refutation(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    use crate::exact_probabilistic::{produce_witness, WitnessScope};
-    use fsl_eval::probabilistic::{DeadlinePhase, MonitorState};
+    use crate::exact_probabilistic::{produce_witness, MonitorVerdict, WitnessScope};
     let forbidden = match bound {
-        Bound::AtMost(_) => DeadlinePhase::Accept,
-        Bound::AtLeast(_) => DeadlinePhase::Reject,
+        Bound::AtMost(_) => MonitorVerdict::Accept,
+        Bound::AtLeast(_) => MonitorVerdict::Reject,
     };
-    let accepting = product
-        .states
-        .iter()
-        .map(|state| {
-            matches!(
-                state.monitor,
-                Some(MonitorState::Deadline { phase, .. }) if phase == forbidden
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut accepting = vec![false; product.states.len()];
+    for (state, verdict) in &product.decided {
+        if *verdict == forbidden {
+            if let Some(target) = accepting.get_mut(state.index()) {
+                *target = true;
+            }
+        }
+    }
     let past = match bound {
         Bound::AtMost(threshold) => threshold.clone(),
         Bound::AtLeast(threshold) => Rational::from_integer(1_i64.into()).sub(threshold),

@@ -166,8 +166,8 @@ pub struct ModelCheckRecord<T: SubjectTransition = ModelTransition> {
     pub execution: Execution,
     /// The truth.
     pub truth: Truth,
-    /// The settlement method: [`EXPLICIT_STATE`].
-    pub method: &'static str,
+    /// The settlement method, optionally naming the selected state constraint.
+    pub method: String,
     /// The search horizon a V-5 record states.
     pub depth: Option<u64>,
     /// Each limit of the run with the value it used.
@@ -215,6 +215,8 @@ pub enum CertificateChecker {
     Zone,
     /// The EN-5 probability-certificate checker (FR-201).
     ProbabilityCertificate,
+    /// The FR-314 Alethe checker of an SMT temporal proof.
+    SmtProof,
 }
 
 impl CertificateChecker {
@@ -226,6 +228,7 @@ impl CertificateChecker {
             Self::Component => "scc-ranking",
             Self::Zone => "zone-certificate",
             Self::ProbabilityCertificate => "probability-certificate",
+            Self::SmtProof => "smt-proof",
         }
     }
 }
@@ -302,21 +305,101 @@ pub fn settle_smt_proof(
     limits: &crate::CertificateCheckLimits,
     cancel: &Cancel,
 ) -> TerminalValue {
+    settle_smt_proof_with_evidence(request, outcome, limits, cancel).value
+}
+
+/// The terminal result and FR-621 checker evidence of an SMT proof settlement.
+///
+/// `checker` is present only when FR-314 verified the supplied certificate.
+#[must_use = "the settlement carries the FR-621 checker evidence"]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SmtProofSettlement {
+    /// The FR-331 terminal result.
+    value: TerminalValue,
+    /// The qualified-core checker that accepted the certificate, if any.
+    checker: Option<CertificateChecker>,
+    /// The domain-separated digests of the canonical queries FR-314 checked.
+    query_digests: Option<Vec<[u8; 32]>>,
+}
+
+impl SmtProofSettlement {
+    /// The FR-331 terminal result.
+    #[must_use]
+    pub fn value(&self) -> &TerminalValue {
+        &self.value
+    }
+
+    /// The qualified-core checker that accepted the certificate, if any.
+    #[must_use]
+    pub const fn checker(&self) -> Option<CertificateChecker> {
+        self.checker
+    }
+
+    /// The query digests accepted by FR-314, in certificate order.
+    #[must_use]
+    pub fn query_digests(&self) -> Option<&[[u8; 32]]> {
+        self.query_digests.as_deref()
+    }
+}
+
+/// SHA-256 digest for a canonical FR-315 query, domain-separated from other
+/// uses of the digest type.
+#[must_use]
+pub fn smt_query_digest(query: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"FSL-FR315-SMT-QUERY\0");
+    digest.update(query);
+    digest.finalize().into()
+}
+
+/// Settle an SMT proof and retain the FR-621 checker evidence for its writer.
+///
+/// This is the production entry point for callers that write an FR-621 item:
+/// it runs FR-314 once, returning the settled terminal and the checker identity
+/// only when that check accepted the certificate.
+pub fn settle_smt_proof_with_evidence(
+    request: &CertificateRequest<'_>,
+    outcome: &SmtProofOutcome,
+    limits: &crate::CertificateCheckLimits,
+    cancel: &Cancel,
+) -> SmtProofSettlement {
     let basis = outcome.basis.proof_basis();
     if let Err(rejection) = validate_smt_proof_basis(request, &outcome.basis) {
-        return Row::of_smt_check(Err(rejection), basis).value;
+        return SmtProofSettlement {
+            value: Row::of_smt_check(Err(rejection), basis).value,
+            checker: None,
+            query_digests: None,
+        };
     }
     let Some(certificate) = &outcome.certificate else {
-        return TerminalValue::Proved {
-            basis,
-            certification: Certification::Uncertified,
+        return SmtProofSettlement {
+            value: TerminalValue::Proved {
+                basis,
+                certification: Certification::Uncertified,
+            },
+            checker: None,
+            query_digests: None,
         };
     };
-    Row::of_smt_check(
-        check_smt_proof(request, &outcome.basis, certificate, limits, cancel),
-        basis,
-    )
-    .value
+    let check = check_smt_proof(request, &outcome.basis, certificate, limits, cancel);
+    let checker =
+        matches!(&check, Ok(SmtProofCheck::Verified)).then_some(CertificateChecker::SmtProof);
+    let query_digests = checker.map(|_| match certificate {
+        crate::SmtProofCertificate::BoundedComplete { unrolling, .. } => {
+            vec![crate::smt_query_digest(&unrolling.query)]
+        }
+        crate::SmtProofCertificate::Inductive { base, step, .. } => vec![
+            crate::smt_query_digest(&base.query),
+            crate::smt_query_digest(&step.query),
+        ],
+    });
+    SmtProofSettlement {
+        value: Row::of_smt_check(check, basis).value,
+        checker,
+        query_digests,
+    }
 }
 
 /// [`settle_model_check`] for an outcome of EN-1's run over the item's
@@ -709,7 +792,7 @@ fn settle<T: SubjectTransition>(
         basis: row.basis,
         execution: row.execution,
         truth: row.truth,
-        method: EXPLICIT_STATE,
+        method: EXPLICIT_STATE.to_owned(),
         depth,
         limits: limits.used(),
         limit_reached: row.limit_reached,

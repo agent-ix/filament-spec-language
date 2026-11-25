@@ -24,7 +24,7 @@ use filament_exact::{
 };
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::probabilistic::{advance_nested_deadline, TimedOperatorState};
+use fsl_eval::probabilistic::TimedOperatorState;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
     Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
@@ -1684,7 +1684,12 @@ impl<'c> Builder<'_, '_, 'c> {
                     phase: DeadlinePhase::Pending,
                 };
                 let elapsed = state.deadline.unwrap_or(0);
-                advance_nested_deadline(&mut root, &mut child, truths, elapsed);
+                fsl_eval::probabilistic::advance_nested_timed_deadline(
+                    &mut root,
+                    &mut child,
+                    truths.first().copied().unwrap_or(false),
+                    elapsed,
+                );
                 Ok(Some(MonitorState::TimedFormula {
                     root,
                     nested: Some(child),
@@ -1836,7 +1841,12 @@ impl<'c> Builder<'_, '_, 'c> {
             };
             let elapsed = reached.deadline.unwrap_or(root.elapsed);
             for truths in letters {
-                advance_nested_deadline(&mut root, &mut child, truths, elapsed);
+                fsl_eval::probabilistic::advance_nested_timed_deadline(
+                    &mut root,
+                    &mut child,
+                    truths.first().copied().unwrap_or(false),
+                    elapsed,
+                );
             }
             nested = Some(child);
             return Ok(Some(MonitorState::TimedFormula { root, nested }));

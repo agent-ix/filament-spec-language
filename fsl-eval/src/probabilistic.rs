@@ -122,28 +122,51 @@ pub struct TimedOperatorState {
     pub phase: DeadlinePhase,
 }
 
-/// Advance a root Eventually and its nested bounded Always occurrence at one
-/// observed timestamp. The nested occurrence is evaluated only while the
-/// root activation is pending; both controls retain their own elapsed window.
-pub fn advance_nested_deadline(
+/// Advance the shared Eventually/Always monitor used for a punctual nested
+/// timed formula.
+///
+/// The nested Always result remains provisional through all ordered
+/// observations at its target timestamp. A later false observation can
+/// therefore invalidate an earlier true one before the timestamp closes.
+pub fn advance_nested_timed_deadline(
     root: &mut TimedOperatorState,
     nested: &mut TimedOperatorState,
-    truths: &[bool],
+    holds: bool,
     elapsed: u64,
 ) {
+    if elapsed > root.elapsed {
+        if root.phase == DeadlinePhase::Pending && nested.phase == DeadlinePhase::Accept {
+            root.phase = DeadlinePhase::Accept;
+        }
+        if root.phase == DeadlinePhase::Pending {
+            nested.phase = DeadlinePhase::Pending;
+        }
+    }
     let lower = root.lower.saturating_add(nested.lower);
     let upper = root.upper.saturating_add(nested.upper);
     if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
         nested.elapsed = elapsed.saturating_sub(root.lower);
-        nested.phase = if truths.first().copied().unwrap_or(false) {
-            root.phase = DeadlinePhase::Accept;
+        nested.phase = if nested.lower == 0 {
+            // At zero delay a later position at this timestamp can itself be
+            // the Eventually witness, so only the suffix after the last
+            // observation determines whether one remains possible.
+            if holds {
+                DeadlinePhase::Accept
+            } else {
+                DeadlinePhase::Reject
+            }
+        } else if !holds {
+            // At positive delay all positions at the target timestamp belong
+            // to the same Always window; one false observation invalidates it.
+            DeadlinePhase::Reject
+        } else if nested.phase == DeadlinePhase::Pending {
             DeadlinePhase::Accept
         } else {
-            DeadlinePhase::Reject
+            nested.phase
         };
     } else {
         nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
-        if root.phase == DeadlinePhase::Pending {
+        if root.phase == DeadlinePhase::Pending && elapsed > upper {
             nested.phase = DeadlinePhase::Pending;
         }
     }
@@ -772,43 +795,6 @@ mod tests {
             threshold: Rational::from_integer(Integer::from(2_u64)),
             within,
         }
-    }
-
-    #[trace("TC-639", "FR-204-AC-21")]
-    #[test]
-    fn shared_nested_deadline_uses_both_windows_and_latches_acceptance() {
-        let mut root = TimedOperatorState {
-            occurrence: 0,
-            kind: DeadlineKind::Eventually,
-            lower: 0,
-            upper: 4,
-            elapsed: 0,
-            phase: DeadlinePhase::Pending,
-        };
-        let mut nested = TimedOperatorState {
-            occurrence: 1,
-            kind: DeadlineKind::Always,
-            lower: 1,
-            upper: 1,
-            elapsed: 0,
-            phase: DeadlinePhase::Pending,
-        };
-
-        advance_nested_deadline(&mut root, &mut nested, &[false], 0);
-        assert_eq!(root.elapsed, 0);
-        assert_eq!(root.phase, DeadlinePhase::Pending);
-        assert_eq!(nested.elapsed, 0);
-        assert_eq!(nested.phase, DeadlinePhase::Pending);
-
-        advance_nested_deadline(&mut root, &mut nested, &[true], 1);
-        assert_eq!(root.elapsed, 1);
-        assert_eq!(root.phase, DeadlinePhase::Accept);
-        assert_eq!(nested.elapsed, 1);
-        assert_eq!(nested.phase, DeadlinePhase::Accept);
-
-        advance_nested_deadline(&mut root, &mut nested, &[false], 2);
-        assert_eq!(root.phase, DeadlinePhase::Accept);
-        assert_eq!(nested.phase, DeadlinePhase::Accept);
     }
 
     #[trace("TC-631", "FR-196-AC-7", "FR-196-AC-11")]

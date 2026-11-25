@@ -382,11 +382,14 @@ pub use model_check::replay::{
 };
 pub use model_check::settle::{
     settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
-    settle_smt_proof, CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel,
-    Truth, EXPLICIT_STATE, K_INDUCTION,
+    settle_smt_proof, settle_smt_proof_with_evidence, smt_query_digest, CertificateChecker,
+    Execution,
+    ModelCheckRecord, RecordWarning, ResultLabel, SmtProofSettlement, Truth, EXPLICIT_STATE,
+    K_INDUCTION,
 };
 pub use model_check::smt_query::{
-    encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
+    encode_smt_query, encode_temporal_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal,
+    SmtQueryKind,
 };
 pub use fsl_eval::smt::SmtRunLimits;
 pub use model_check::state_graph::{
@@ -503,7 +506,8 @@ pub use probability_certificate::{
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
     write_measure_probability_certificate, write_value_bounds_measure_certificate,
     write_probability_certificate,
-    write_probability_proof_document, write_value_bounds_certificate,
+    write_probability_proof_document, write_timed_fair_probability_certificate,
+    write_value_bounds_certificate,
     write_value_bounds_proof_document, write_weighted_long_run_probability_certificate,
     ActivationPhase, ClaimBinding, DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput,
     CertificateRole, DigitalTail, ExactProbabilityAcceptance, ExactProbabilityCertificate,
