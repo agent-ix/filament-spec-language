@@ -2269,32 +2269,43 @@ fn duplicate_member_identity_refusal(
     })
 }
 
-/// Translate only the reader's typed unresolved-reference codes, using its
-/// actual pointer and the selected document. Diagnostic prose never selects
-/// a cause or supplies a declaration identity.
-const FCD_UNRESOLVED_DIMENSION_REF: &str = "agent-ix.semantic-ir.UNRESOLVED_DIMENSION_REF";
-const FCD_UNRESOLVED_UNIT_REF: &str = "agent-ix.semantic-ir.UNRESOLVED_UNIT_REF";
-
-fn unresolved_dimension_or_unit_reference(pointer: &str, code: &str) -> Option<&'static str> {
+/// Identify the package graph namespace addressed by an unresolved edge.
+/// FCD's diagnostic constants for these edges are private, so classify them
+/// from the exact member path and whether the selected package has the target.
+fn missing_graph_reference_kind(document: &PackageDocument, pointer: &str) -> Option<&'static str> {
     let mut segments = pointer.strip_prefix('/')?.split('/');
     let collection = segments.next()?;
     segments.next()?.parse::<usize>().ok()?;
-    match (code, collection) {
-        (FCD_UNRESOLVED_DIMENSION_REF, "dimensions") => {
+    let kind = match collection {
+        "dimensions" => {
             if segments.next()? != "terms" {
                 return None;
             }
             segments.next()?.parse::<usize>().ok()?;
             (segments.next()? == "dimension" && segments.next().is_none()).then_some("dimension")
         }
-        (FCD_UNRESOLVED_DIMENSION_REF, "units") => {
-            (segments.next()? == "dimension" && segments.next().is_none()).then_some("dimension")
-        }
-        (FCD_UNRESOLVED_UNIT_REF, "units") => {
-            (segments.next()? == "target" && segments.next().is_none()).then_some("unit")
-        }
+        "units" => match segments.next()? {
+            "dimension" if segments.next().is_none() => Some("dimension"),
+            "target" if segments.next().is_none() => Some("unit"),
+            _ => None,
+        },
         _ => None,
-    }
+    }?;
+    let reference = document.tree.pointer(pointer)?.as_str()?;
+    let package = document.tree.get("package")?.get("identity")?.as_str()?;
+    package_graph_identity_segment(package, kind, reference)?;
+    let target_collection = if kind == "dimension" {
+        "dimensions"
+    } else {
+        "units"
+    };
+    let target_is_declared = document
+        .tree
+        .get(target_collection)?
+        .as_array()?
+        .iter()
+        .any(|node| node.get("identity").and_then(Value::as_str) == Some(reference));
+    (!target_is_declared).then_some(kind)
 }
 
 /// The one identity segment after a selected package's dimension or unit
@@ -2361,7 +2372,7 @@ fn missing_reader_reference(
             "occurrenceField" | "persists" | "members"
         )
         && located.code == agent_ix_semantic_ir::constructs::UNRESOLVED_CONSTRUCT_REF;
-    let graph_reference_kind = unresolved_dimension_or_unit_reference(pointer, located.code);
+    let graph_reference_kind = missing_graph_reference_kind(document, pointer);
     if !transition_reference
         && !process_step_reference
         && !occurrence_reference
