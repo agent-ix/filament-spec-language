@@ -18,7 +18,7 @@ use super::{claim_literal, node_id, push_scalar_type, source_artifact, EmitRefus
 /// effective view, in `model_roots` order. Aliases that select one package
 /// share its root, so they share its node. The view of the unit's own `object`
 /// declarations (FR-569 "The source model") is no model selection: it has no
-/// root and no node.
+/// root and no node. Any other view without a root is refused.
 /// The body is a flat, ordered sequence of typed scalar terms. Its closed
 /// grammar is documented by `append_preimage`; the strict reader rebuilds
 /// the original model preimage types without encoding identities as strings.
@@ -29,11 +29,24 @@ pub(super) fn append(
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
 ) -> Result<(), EmitRefusal> {
+    // The source model is selected under the empty alias.
+    let views: Vec<_> = graph
+        .selected_model_views()
+        .iter()
+        .filter(|(alias, _)| !alias.is_empty())
+        .map(|(_, view)| view)
+        .collect();
+    if views.iter().any(|view| {
+        !graph
+            .model_roots()
+            .any(|(selection, _)| selection == view.model_selection())
+    }) {
+        return Err(EmitRefusal::SourceMapInvariant);
+    }
     let mut selected = Vec::new();
     for ((selection, _), location) in graph.model_roots().zip(graph.model_root_locations().iter()) {
-        let Some(view) = graph
-            .selected_model_views()
-            .values()
+        let Some(view) = views
+            .iter()
             .find(|view| view.model_selection() == selection)
         else {
             continue;
