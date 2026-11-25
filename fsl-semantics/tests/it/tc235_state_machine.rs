@@ -383,10 +383,10 @@ fn tc235_m06_run7_postcondition_is_bound_to_place() {
     record_charges(&package, 21);
 }
 
-/// FR-103-AC-7: `pre` entries are kept as `requires`, in declared order, and
+/// FR-103-AC-13: `pre` entries are kept as `requires`, in declared order, and
 /// an operation that declares neither list keeps both empty. A language the
 /// semantic-IR reader does not admit ends intake.
-#[trace("FR-103-AC-7", "TC-993")]
+#[trace("FR-103-AC-13", "TC-993")]
 #[test]
 fn operation_pre_is_kept_as_requires_in_order() {
     let with_second_language = |language: &str| {

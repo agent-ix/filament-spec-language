@@ -884,6 +884,23 @@ impl Lowering<'_> {
         let finish_node = protocol.checked.finish.as_ref().ok_or_else(unchecked)?.0;
         let mut nodes = run.nodes;
         nodes.insert(finish_node, finish.clone());
+        // FR-375: a refinement's classes of a compensation template name the
+        // template's node by its declaration.
+        for (index, key) in &compensation_keys {
+            let declaration = protocol
+                .checked
+                .obligations
+                .compensations
+                .get(*index)
+                .and_then(|template| {
+                    protocol.form.declarations.iter().position(|declaration| {
+                        declaration.kind == ProtocolNodeKind::CompensateTemplate
+                            && declaration.name.name == template.name
+                    })
+                })
+                .ok_or_else(unchecked)?;
+            nodes.insert(ProtocolNodeId(declaration), NodeRef::Admitted(key.clone()));
+        }
         let run = run.root;
 
         let activation = match &trigger {

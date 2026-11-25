@@ -523,13 +523,28 @@ fn entries(clause: &ProtocolClause<'_>, concrete: &AdmittedModel) -> Vec<Entry> 
             row: RowClass::Template,
             need: Need::OrOperation(operation),
         });
-        entries.push(Entry {
-            class: StepClass::CompensationEnd(template.name.clone()),
-            keyword: Some(StepClassKeyword::Cend),
-            name: template.name.clone(),
-            row: RowClass::Template,
-            need: Need::Row,
-        });
+        // These apply no operation, so each needs a row of its own.
+        let name = || template.name.clone();
+        for (class, keyword) in [
+            (StepClass::CompensationEnd(name()), StepClassKeyword::Cend),
+            (StepClass::CompensationFail(name()), StepClassKeyword::Cfail),
+            (
+                StepClass::CompensationTimeout(name()),
+                StepClassKeyword::Ctimeout,
+            ),
+            (
+                StepClass::CompensationExpire(name()),
+                StepClassKeyword::Cexpire,
+            ),
+        ] {
+            entries.push(Entry {
+                class,
+                keyword: Some(keyword),
+                name: template.name.clone(),
+                row: RowClass::Template,
+                need: Need::Row,
+            });
+        }
     }
     for channel in &clause.checked.channels {
         let admits = |kind| match (kind, channel.delivery) {
