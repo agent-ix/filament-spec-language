@@ -58,8 +58,8 @@ struct Table {
     touched: Vec<bool>,
     /// The rows the current owner's walk touched first, in visit order.
     first_touched: Vec<usize>,
-    /// The node, syntax owner and syntax context of every visit, in visit order.
-    visited: Vec<(usize, usize, bool)>,
+    /// The node, syntax owner, scope and per-node syntax ordinal of each visit.
+    visited: Vec<(usize, usize, bool, usize)>,
 }
 
 impl Table {
@@ -99,11 +99,18 @@ impl Table {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SyntaxContext {
+    owner: usize,
+    measure: bool,
+    scope: usize,
+}
+
 enum Task<'a> {
     /// Leave the node at the position: its body is fully walked.
     Leave(usize),
-    Node(&'a CheckedNodeId, Option<usize>, usize, bool),
-    Term(&'a CheckedTerm, Option<usize>, usize, bool),
+    Node(&'a CheckedNodeId, Option<usize>, SyntaxContext),
+    Term(&'a CheckedTerm, Option<usize>, SyntaxContext),
 }
 
 fn reference(term: &CheckedTerm) -> Option<&CheckedNodeId> {
@@ -209,7 +216,17 @@ impl<'a> Walk<'a> {
         table: &mut Table,
     ) -> HashMap<(usize, u64), Option<usize>> {
         let mut derived = HashMap::new();
-        let mut pending = vec![Task::Node(root, None, root_owner, syntax_measure)];
+        let mut pending = vec![Task::Node(
+            root,
+            None,
+            SyntaxContext {
+                owner: root_owner,
+                measure: syntax_measure,
+                scope: 0,
+            },
+        )];
+        let mut next_scope = 1_usize;
+        let mut syntax_visits = HashMap::<(usize, usize), usize>::new();
         // The nodes whose bodies the walk is inside. A reference back to one is
         // a recursive call: the walk does not enter it again, so a recursive
         // owner is walked once, not without end.
@@ -219,40 +236,40 @@ impl<'a> Walk<'a> {
                 Task::Leave(position) => {
                     active.remove(&position);
                 }
-                Task::Node(id, terminal, syntax_owner, syntax_measure) => {
+                Task::Node(id, terminal, mut syntax) => {
                     let Some(&position) = self.index.get(id) else {
                         continue;
                     };
                     if !active.insert(position) {
                         continue;
                     }
-                    let (syntax_owner, syntax_measure) =
-                        if self.nodes[position].node_tag.as_ref() == "function" {
-                            (position, false)
-                        } else {
-                            (syntax_owner, syntax_measure)
-                        };
+                    if self.nodes[position].node_tag.as_ref() == "function" {
+                        syntax.owner = position;
+                        syntax.measure = false;
+                        syntax.scope = next_scope;
+                        next_scope = next_scope.saturating_add(1);
+                    }
+                    let syntax_counter = syntax_visits.entry((syntax.scope, position)).or_default();
+                    let syntax_ordinal = *syntax_counter;
+                    *syntax_counter += 1;
                     let visit = visits.entry(position).or_default();
-                    table.visited.push((position, syntax_owner, syntax_measure));
+                    table
+                        .visited
+                        .push((position, syntax.owner, syntax.measure, syntax_ordinal));
                     let occurrence = self.expression_ordinal(position, *visit);
                     *visit += 1;
                     let node = &self.nodes[position];
-                    if let (true, Some(ordinal), CheckedTerm::Application { .. }) =
+                    if let (true, Some(expression_ordinal), CheckedTerm::Application { .. }) =
                         (derive, occurrence, &node.body)
                     {
-                        derived.insert((position, ordinal), terminal);
+                        derived.insert((position, expression_ordinal), terminal);
                     }
                     pending.push(Task::Leave(position));
-                    pending.push(Task::Term(
-                        &node.body,
-                        terminal,
-                        syntax_owner,
-                        syntax_measure,
-                    ));
+                    pending.push(Task::Term(&node.body, terminal, syntax));
                 }
-                Task::Term(term, terminal, syntax_owner, syntax_measure) => match term {
+                Task::Term(term, terminal, syntax) => match term {
                     CheckedTerm::Reference { target } => {
-                        pending.push(Task::Node(target, terminal, syntax_owner, syntax_measure));
+                        pending.push(Task::Node(target, terminal, syntax));
                     }
                     CheckedTerm::Application {
                         operation,
@@ -267,57 +284,27 @@ impl<'a> Walk<'a> {
                             let Some((guard, occurrence)) = self.guard(&arguments[0], visits)
                             else {
                                 for argument in arguments.iter().rev() {
-                                    pending.push(Task::Term(
-                                        argument,
-                                        terminal,
-                                        syntax_owner,
-                                        syntax_measure,
-                                    ));
+                                    pending.push(Task::Term(argument, terminal, syntax));
                                 }
                                 continue;
                             };
                             match self.literal(&arguments[0]) {
                                 Some(true) => {
                                     let then = table.intern(terminal, guard, occurrence, true);
-                                    pending.push(Task::Term(
-                                        &arguments[1],
-                                        Some(then),
-                                        syntax_owner,
-                                        syntax_measure,
-                                    ));
+                                    pending.push(Task::Term(&arguments[1], Some(then), syntax));
                                 }
                                 Some(false) => {
                                     let other = table.intern(terminal, guard, occurrence, false);
-                                    pending.push(Task::Term(
-                                        &arguments[2],
-                                        Some(other),
-                                        syntax_owner,
-                                        syntax_measure,
-                                    ));
+                                    pending.push(Task::Term(&arguments[2], Some(other), syntax));
                                 }
                                 None => {
                                     let then = table.intern(terminal, guard, occurrence, true);
                                     let other = table.intern(terminal, guard, occurrence, false);
-                                    pending.push(Task::Term(
-                                        &arguments[2],
-                                        Some(other),
-                                        syntax_owner,
-                                        syntax_measure,
-                                    ));
-                                    pending.push(Task::Term(
-                                        &arguments[1],
-                                        Some(then),
-                                        syntax_owner,
-                                        syntax_measure,
-                                    ));
+                                    pending.push(Task::Term(&arguments[2], Some(other), syntax));
+                                    pending.push(Task::Term(&arguments[1], Some(then), syntax));
                                 }
                             }
-                            pending.push(Task::Term(
-                                &arguments[0],
-                                terminal,
-                                syntax_owner,
-                                syntax_measure,
-                            ));
+                            pending.push(Task::Term(&arguments[0], terminal, syntax));
                         } else if derive
                             && matches!(
                                 identity,
@@ -348,47 +335,31 @@ impl<'a> Walk<'a> {
                                 terminal
                             };
                             if !short_circuited {
-                                pending.push(Task::Term(
-                                    &arguments[1],
-                                    right,
-                                    syntax_owner,
-                                    syntax_measure,
-                                ));
+                                pending.push(Task::Term(&arguments[1], right, syntax));
                             }
-                            pending.push(Task::Term(
-                                &arguments[0],
-                                terminal,
-                                syntax_owner,
-                                syntax_measure,
-                            ));
+                            pending.push(Task::Term(&arguments[0], terminal, syntax));
                         } else {
                             for argument in arguments.iter().rev() {
-                                pending.push(Task::Term(
-                                    argument,
-                                    terminal,
-                                    syntax_owner,
-                                    syntax_measure,
-                                ));
+                                pending.push(Task::Term(argument, terminal, syntax));
                             }
                         }
                     }
                     CheckedTerm::Aggregate { members, .. } => {
                         for member in members.iter().rev() {
-                            pending.push(Task::Term(
-                                member,
-                                terminal,
-                                syntax_owner,
-                                syntax_measure,
-                            ));
+                            pending.push(Task::Term(member, terminal, syntax));
                         }
                     }
                     CheckedTerm::Binding { name, value, .. } => {
-                        let syntax_measure = match name.kind() {
+                        let measure = match name.kind() {
                             CheckedBindingNameKind::Body => false,
                             CheckedBindingNameKind::Other("decreases" | "measure") => true,
-                            _ => syntax_measure,
+                            _ => syntax.measure,
                         };
-                        pending.push(Task::Term(value, terminal, syntax_owner, syntax_measure));
+                        pending.push(Task::Term(
+                            value,
+                            terminal,
+                            SyntaxContext { measure, ..syntax },
+                        ));
                     }
                     _ => {}
                 },
@@ -445,6 +416,8 @@ pub(super) struct Visit {
     pub(super) syntax_owner: usize,
     /// Whether the visited syntax belongs to that owner's measure.
     pub(super) syntax_measure: bool,
+    /// The ordinal of this node among visits in the current syntax scope.
+    pub(super) syntax_ordinal: usize,
     pub(super) measure: bool,
     pub(super) node: usize,
 }
@@ -478,14 +451,17 @@ pub(super) fn visits(
             table
                 .visited
                 .drain(..)
-                .filter(|&(node, _, _)| keep[node])
-                .map(|(node, syntax_owner, syntax_measure)| Visit {
-                    owner,
-                    syntax_owner,
-                    syntax_measure,
-                    measure: false,
-                    node,
-                }),
+                .filter(|&(node, _, _, _)| keep[node])
+                .map(
+                    |(node, syntax_owner, syntax_measure, syntax_ordinal)| Visit {
+                        owner,
+                        syntax_owner,
+                        syntax_measure,
+                        syntax_ordinal,
+                        measure: false,
+                        node,
+                    },
+                ),
         );
         if let Some(measure) = function_measure_root(&nodes[owner].body) {
             walk.owner(owner, measure, false, true, &mut counters, &mut table);
@@ -493,14 +469,17 @@ pub(super) fn visits(
                 table
                     .visited
                     .drain(..)
-                    .filter(|&(node, _, _)| keep[node])
-                    .map(|(node, syntax_owner, syntax_measure)| Visit {
-                        owner,
-                        syntax_owner,
-                        syntax_measure,
-                        measure: true,
-                        node,
-                    }),
+                    .filter(|&(node, _, _, _)| keep[node])
+                    .map(
+                        |(node, syntax_owner, syntax_measure, syntax_ordinal)| Visit {
+                            owner,
+                            syntax_owner,
+                            syntax_measure,
+                            syntax_ordinal,
+                            measure: true,
+                            node,
+                        },
+                    ),
             );
         }
     }
@@ -562,7 +541,7 @@ fn charge_walk(
     table: &Table,
     derived: usize,
 ) -> Result<(), EmitRefusal> {
-    let bytes = table.visited.len() * std::mem::size_of::<(usize, usize, bool)>()
+    let bytes = table.visited.len() * std::mem::size_of::<(usize, usize, bool, usize)>()
         + derived * std::mem::size_of::<((usize, u64), Option<usize>)>();
     meter.charge_bytes(bytes as u64)
 }
@@ -674,7 +653,8 @@ pub(super) fn derive(
     for &(_, source, terminal) in &terminals {
         let mut at = Some(terminal);
         for guard in source.path_condition().iter().rev() {
-            let frame = &table.rows[at.ok_or(EmitRefusal::SourceMapInvariant)?];
+            let frame_at = at.ok_or(EmitRefusal::SourceMapInvariant)?;
+            let frame = &table.rows[frame_at];
             let same = nodes[frame.guard].node_id == node_id(ids, guard.occurrence().node())
                 && frame.holds == guard.holds();
             if !same {

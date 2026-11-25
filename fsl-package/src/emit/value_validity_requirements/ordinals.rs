@@ -22,10 +22,10 @@ use filament_contract_model::{
 };
 use filament_exact::NodeKey;
 use filament_semantic_value::location::ExpressionOwner;
-use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::CheckedGraph;
+use fsl_semantics::check::wire_id::StructuralIds;
 
-use super::{frames, EmitRefusal, Omitted};
+use super::{EmitRefusal, Omitted, frames};
 
 /// What the checker located a use in: the declaration index of the function
 /// whose body or measure holds it, or somewhere no walk reaches.
@@ -155,12 +155,10 @@ pub(in crate::emit) fn renumber(
     omitted: &Omitted,
     meter: &mut super::super::OutputMeter,
 ) -> Result<Renumbering, EmitRefusal> {
-    // Only a node used from more than one place can need another numbering, so
-    // a package with none is not walked.
-    let needed = multiply_used(graph);
-    if needed.is_empty() {
-        return Ok(Renumbering::default());
-    }
+    // Static multi-use is not the only source of extra reads: a package-root
+    // walk may enter a nested function body transitively. Walk every expression
+    // node so those uses can be identified as well.
+    let mut needed = multiply_used(graph);
     let invariant = |_| EmitRefusal::SourceMapInvariant;
     let mut function_index = HashMap::<NodeKey, usize>::new();
     let mut omitted_functions = HashSet::<usize>::new();
@@ -177,7 +175,11 @@ pub(in crate::emit) fn renumber(
     let mut keep = Vec::with_capacity(nodes.len());
     for node in nodes.iter() {
         let key = keys.key(&node.node_id).map_err(invariant)?;
-        keep.push(needed.contains(&key));
+        keep.push(
+            node.occurrences
+                .iter()
+                .any(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression),
+        );
         node_keys.push(key);
     }
     // The visits each needed node receives, with both the package-root owner
@@ -186,7 +188,7 @@ pub(in crate::emit) fn renumber(
     meter.charge_bytes(
         (walked.len() as u64).saturating_mul(std::mem::size_of::<frames::Visit>() as u64),
     )?;
-    let mut visited = HashMap::<usize, Vec<(Use, bool)>>::new();
+    let mut visited = HashMap::<usize, Vec<(Use, bool, usize)>>::new();
     for visit in &walked {
         let function = function_index.get(&node_keys[visit.syntax_owner]).copied();
         let used = match function {
@@ -197,7 +199,13 @@ pub(in crate::emit) fn renumber(
         visited.entry(visit.node).or_default().push((
             used,
             visit.owner == visit.syntax_owner && visit.measure == visit.syntax_measure,
+            visit.syntax_ordinal,
         ));
+    }
+    for (&position, uses) in &visited {
+        if uses.iter().any(|(_, root_owner, _)| !root_owner) {
+            needed.insert(node_keys[position].clone());
+        }
     }
     drop(walked);
     // The uses the checker located, each node's by owner in the order of the
@@ -251,7 +259,7 @@ pub(in crate::emit) fn renumber(
         }
         let uses_in = visited.get(&position).map_or(&[][..], Vec::as_slice);
         let mut visit_positions = HashMap::<Use, Vec<usize>>::new();
-        for (at, (used, root_owner)) in uses_in.iter().enumerate() {
+        for (at, (used, root_owner, _)) in uses_in.iter().enumerate() {
             if *root_owner {
                 visit_positions.entry(*used).or_default().push(at);
             }
@@ -271,7 +279,7 @@ pub(in crate::emit) fn renumber(
         }
         let mut next = HashMap::<Use, usize>::new();
         let mut slots = Vec::<Slot>::new();
-        for (visit_at, (used, _root_owner)) in uses_in.iter().enumerate() {
+        for (visit_at, (used, _root_owner, syntax_ordinal)) in uses_in.iter().enumerate() {
             if let Some(future_use) = future_uses.remove(&visit_at) {
                 let at = next.entry(future_use).or_default();
                 let old = kept[&future_use][*at];
@@ -284,13 +292,21 @@ pub(in crate::emit) fn renumber(
                         future_uses.insert(*next_visit, future_use);
                     }
                 }
-            } else if let Some((_, future_use)) = future_uses.first_key_value() {
-                let source_use = if kept.get(used).is_some_and(|uses| !uses.is_empty()) {
-                    used
+            } else if !future_uses.is_empty() {
+                let from = if let Some(syntax_uses) = kept.get(used) {
+                    syntax_uses
+                        .get(*syntax_ordinal)
+                        .or_else(|| (syntax_uses.len() == 1).then(|| &syntax_uses[0]))
+                        .copied()
+                } else if let Some((_, future_use)) = future_uses.first_key_value() {
+                    let next_source = next.get(future_use).copied().unwrap_or_default();
+                    kept.get(future_use)
+                        .and_then(|uses| uses.get(next_source))
+                        .copied()
                 } else {
-                    future_use
-                };
-                let from = kept[source_use][0];
+                    None
+                }
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
                 let ordinal = slots.len() as u64;
                 slots.push(Slot::Synthetic { from, ordinal });
             }
