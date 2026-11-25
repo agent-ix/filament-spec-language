@@ -1,21 +1,24 @@
 ---
 id: FR-1049
-title: "Classify alpha probability tutorial analysis outcomes"
+title: "Classify alpha tutorial outcomes"
 type: FR
 relationships:
   - target: ix://agent-ix/filament-spec-language/US-029
     type: implements
   - target: ix://agent-ix/filament-spec-language/FR-286
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-106
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-620
+    type: references
 ---
-# FR-1049: Classify alpha probability tutorial analysis outcomes
+# FR-1049: Classify alpha tutorial outcomes
 
 ## Description
 
-When `fsl analyze` or `fsl compile` runs an input identified by the alpha
-probability tutorial, the command SHALL emit the outcome category, exit status,
-diagnostics, evidence and terminal stage specified by the applicable
-acceptance criterion.
+When an FSL command runs an input identified by an alpha tutorial, FSL SHALL
+emit the outcome category, exit status, diagnostics, evidence and
+terminal stage specified by the applicable acceptance criterion.
 
 ## Inputs
 
@@ -63,12 +66,35 @@ acceptance criterion.
 | FR-1049-AC-19 | Given the same source and request paths as AC-18, **variation:** replace `fair weak Arch::Service::call` with `fair strong Arch::Service::call`; `fsl analyze` exits 22 with category `incomplete`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `incomplete` and `record.cause` `{kind: limit-reached, limit: work_units, setting: accounting.work_units, value: 1000000}`; the cause is in `record.cause`, no code/cause is in `diagnostics[]`, and no evidence is emitted. | Test (TC-635) |
 | FR-1049-AC-20 | Given the same source and request paths as AC-18, **variation:** replace the fairness clause with `fair weak each Arch::Service::call`; `fsl analyze` exits 22 with category `incomplete`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `incomplete` and `record.cause` `{kind: limit-reached, limit: work_units, setting: accounting.work_units, value: 1000000}`; the cause is in `record.cause`, no code/cause is in `diagnostics[]`, and no evidence is emitted. | Test (TC-635) |
 | FR-1049-AC-21 | Given the same source and request paths as AC-18, **variation:** replace the fairness clause with `fair strong each Arch::Service::call`; `fsl analyze` exits 22 with category `incomplete`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `incomplete` and `record.cause` `{kind: limit-reached, limit: work_units, setting: accounting.work_units, value: 1000000}`; the cause is in `record.cause`, no code/cause is in `diagnostics[]`, and no evidence is emitted. | Test (TC-635) |
+| FR-1049-AC-22 | Given `examples/shop/rules/paid-in-full.fsl`, **variation:** run `fsl check` without `--model`. It exits 20 with category `refusal`, `last_stage: I1`, one `diagnostics[]` entry with `code: missing_import` and `cause: missing-selection`, and `items: []`. The refusal is in the document diagnostic, not an item cause. | Test |
+| FR-1049-AC-23 | Given `examples/shop/rules/paid-in-full.fsl`, **variation:** run `fsl check --model example/shop=model/shop.semantic-ir.json`. It exits 0 with category `success`, `last_stage: S4`, `diagnostics: []`, and `items: []`. | Test |
+| FR-1049-AC-24 | Given `examples/shop/rules/paid-in-full.fsl`, **variation:** pass `--model example/other=model/shop.semantic-ir.json`. It exits 20 with category `refusal`, `last_stage: null`, one `diagnostics[]` entry with `code: invalid-request` and no cause, and `items: []`. | Test |
+| FR-1049-AC-25 | Given `examples/shop/rules/paid-in-full.fsl`, **variation:** pass `--model example/shop=model/missing.json`. It exits 20 with category `refusal`, `last_stage: null`, one `diagnostics[]` entry with `code: io-error` and no cause, and `items: []`. | Test |
+| FR-1049-AC-26 | Given `examples/shop/rules/paid-in-full.fsl`, **variation:** pass that rule path as `rules/v-S5-missing-rule.fsl` when the file does not exist, with `--model example/shop=model/shop.semantic-ir.json`. It exits 20 with category `refusal`, `last_stage: null`, one `diagnostics[]` entry with `code: io-error` and no cause, and `items: []`. | Test |
+| FR-1049-AC-27 | Given `examples/shop/rules/paid-in-full.fsl`, **variation:** remove its final closing brace and run `fsl check` with `--model example/shop=model/shop.semantic-ir.json`. It exits 20 with category `refusal`, `last_stage: S1`, one `diagnostics[]` entry with `code: invalid_syntax` and `cause: unexpected-end`, and `items: []`. | Test |
+| FR-1049-AC-28 | Given `examples/shop/rules/paid-in-full.fsl`, **variation:** change `self.charged` to `self.chargd` and run `fsl check` with `--model example/shop=model/shop.semantic-ir.json`. It exits 20 with category `refusal`, `last_stage: S3`, one `diagnostics[]` entry with `code: ill_typed` and `cause: type-mismatch`, and `items: []`. | Test |
+| FR-1049-AC-29 | Given `examples/shop/rules/paid-in-full.fsl`, **variation:** change `Shop::OrderStatus::Paid` to `Shop::OrderStatus::Payd` and run `fsl check` with `--model example/shop=model/shop.semantic-ir.json`. It exits 20 with category `refusal`, `last_stage: S3`, one `diagnostics[]` entry with `code: ill_typed` and `cause: type-mismatch`, and `items: []`. | Test |
+| FR-1049-AC-30 | Given `examples/shop/requests/paid-in-full.json`, **variation:** change `request.clause.observations.current` to reference a nonexistent observation file. `fsl run` exits 20 with category `refusal`, `last_stage: null`, one `diagnostics[]` entry with `code: io-error` and no cause, and `items: []`. | Test |
+| FR-1049-AC-31 | Given `examples/shop/requests/paid-in-full.json`, **variation:** replace the referenced observation JSON contents with `{`. `fsl run` exits 20 with category `refusal`, `last_stage: null`, one `diagnostics[]` entry with `code: invalid-request` and no cause, and `items: []`. | Test |
+| FR-1049-AC-32 | Given `examples/shop/requests/paid-in-full.json`, **variation:** change the selected clause name to an unknown name. `fsl run` exits 20 with category `refusal`, `last_stage: S6a`, `diagnostics: []`, and one item with `category: refusal`, `result: declined`, `cause: {code: missing_declaration, kind: missing-name}`, and an item `diagnostic`; the item has keys `axes`, `category`, `cause`, `clause`, `diagnostic`, `request_index`, and `result`. | Test |
+| FR-1049-AC-33 | Given `examples/shop/requests/paid-in-full.json`, **variation:** change the request format to `native-run/2`. `fsl run` exits 20 with category `refusal`, `last_stage: null`, one `diagnostics[]` entry with `code: invalid-request` and no cause, and `items: []`. | Test |
+| FR-1049-AC-34 | Given `examples/shop/requests/paid-in-full.json`, **variation:** change the selected self key to `o999`, which is absent from the observation data. `fsl run` exits 20 with category `refusal`, `last_stage: S6a`, `diagnostics: []`, and one item with `category: refusal`, `result: declined`, and cause `{code: invalid_runtime_input, kind: wrong-role-mapping, locus: {document: {authority: example, identity: ix://example/shop/data/paid-in-full}, kind: document, member: null, object: null, path: ../data/paid-in-full.json, pointer: ""}}`; the refusal cause is on the item and there is no document diagnostic. | Test |
+| FR-1049-AC-35 | Given `examples/shop/requests/paid-in-full.json`, **variation:** set `request.clause.accounting.work_units` to `1`. `fsl run` exits 22 with category `incomplete`, `last_stage: S6a`, `diagnostics: []`, and one item with `category: incomplete`, `result: incomplete`, and cause `{code: resource_exhausted, kind: resource_exhausted, limit: work_units, setting: accounting.work_units, value: 1, bound: "1", counter: "2", field: work_units}`. | Test |
+| FR-1049-AC-36 | Given `examples/plant/requests/analyze/close-guarded.json`, **variation:** change the selected claim to `NoSuchClaim`. `fsl analyze` exits 20 with category `refusal`, `last_stage: S4`, `diagnostics: []`, and one item whose `record` is `{diagnostic: {code: invalid_capability, cause: unknown-claim, detail: {name: NoSuchClaim}}, settled_by: disposition}`; the item has keys `category`, `claim_name`, `record`, `request`, and `request_index`. | Test |
+| FR-1049-AC-37 | Given `examples/plant/requests/analyze/close-guarded.json`, **variation:** change its document file entry to a nonexistent file. `fsl analyze` exits 20 with category `refusal`, `last_stage: null`, one `diagnostics[]` entry with `code: io-error` and no cause, and `items: []`. | Test |
+| FR-1049-AC-38 | Given `examples/plant/requests/analyze/close-guarded.json`, **variation:** remove its `documents` member, leaving the initial state absent. `fsl analyze` exits 21 with category `unsupported`, `last_stage: S6b`, `diagnostics: []`, and one item whose `record` is `{result: unsupported, settled_by: disposition, diagnostic: {code: unsupported_projection, cause: unbounded-extent, detail: {candidate: en-1, kind: temporal-satisfaction, modes: [bounded, unbounded]}}}`. | Test |
+| FR-1049-AC-39 | Given `examples/plant/requests/analyze/close-guarded.json`, `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, `diagnostics: []`, and a proved `NeverDeadheads` item with certificate and record evidence; the item has keys `axes`, `category`, `certificate`, `claim_name`, `exploration`, `record`, `request`, and `request_index`. | Test |
+| FR-1049-AC-40 | Given `examples/plant/requests/analyze/close-unguarded.json`, `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, `diagnostics: []`, and a refuted `NeverDeadheads` item with counterexample, replay and record evidence; the item has keys `axes`, `category`, `claim_name`, `counterexample`, `exploration`, `record`, `replay`, `request`, and `request_index`. | Test |
+| FR-1049-AC-41 | Given `examples/rover/requests/analyze/timed-zone-deadline-refuted.json`, **variation:** change the selected claim to `NoSuchClaim`. `fsl analyze` exits 20 with category `refusal`, `last_stage: S4`, `diagnostics: []`, and one item whose `record` is `{diagnostic: {code: invalid_capability, cause: unknown-claim, detail: {name: NoSuchClaim}}, settled_by: disposition}`. | Test |
+| FR-1049-AC-42 | Given `examples/rover/requests/analyze/timed-zone-deadline-refuted.json`, `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, `diagnostics: []`, and a refuted `StopsWithin150ms` item with counterexample, replay and record evidence; the item has keys `axes`, `category`, `claim_name`, `counterexample`, `record`, `replay`, `request`, and `request_index`. | Test |
 
 ## References
 
 - [FR-286](./FR-286-serialize-every-outcome-as-one-json-outcome-document.md) defines the `filament-outcome/1` document structure.
+- [FR-106](./FR-106-admit-snapshots-and-invocations.md) AC-67 already owns the unknown-population incomplete outcome, which is not duplicated in this requirement.
+- [FR-620](./FR-620-read-a-native-analyze-1-request-and-analyze-its-items.md) owns default/derived analyze-item selection when the request omits `items`, including the ten derived items in the no-items variation.
 
 ## Dependencies
 
-- The alpha probability tutorial and the named architecture, engine and rover example sources, requests, and initial data define the inputs and intended outputs in AC-1 through AC-21.
+- The alpha probability tutorial and the named architecture, engine, rover, plant and shop example sources, requests, and initial data define the inputs and intended outputs in AC-1 through AC-42.
 - [FR-286](./FR-286-serialize-every-outcome-as-one-json-outcome-document.md) defines the outcome document fields used by these criteria.
