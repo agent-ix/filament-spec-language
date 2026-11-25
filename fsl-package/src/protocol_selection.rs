@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The single FR-390 protocol-slot selector owned by the admitted package view,
-//! and the FR-531 selection of a source operation's clause function.
+//! The single FR-390 protocol-slot selector owned by the admitted package view.
 use crate::wire_form::{is_expression_role, WireForm};
 use crate::CheckedPackage;
 use alloc::{borrow::ToOwned, string::String, vec, vec::Vec};
@@ -8,8 +7,7 @@ use filament_exact::{NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::{
     protocol_site, CaptureOwner, CheckedActivation, CheckedBody, CheckedLifetime, CheckedOrdering,
-    CheckedProtocol, CheckedRetry, CheckedSlots, FunctionState, ProtocolNodeId, ProtocolSite,
-    RelatedSide,
+    CheckedProtocol, CheckedRetry, CheckedSlots, ProtocolNodeId, ProtocolSite, RelatedSide,
 };
 
 /// Plain-data request for one protocol expression member.
@@ -59,114 +57,6 @@ pub enum SlotSelectionFailure {
     },
     /// A checked-package invariant failed during selection.
     Fault(InternalFault),
-}
-
-/// An authored source operation contract clause selected by its checked
-/// operation anchor, never by a synthesized function name.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceOperationClause {
-    /// The operation's precondition clause function.
-    Precondition {
-        /// Authored clause identity in this operation's checked declaration.
-        name: String,
-    },
-    /// The operation's postcondition clause function.
-    Postcondition {
-        /// Authored clause identity in this operation's checked declaration.
-        name: String,
-    },
-}
-
-impl SourceOperationClause {
-    const fn declaration_kind(&self) -> &'static str {
-        match self {
-            Self::Precondition { .. } => "precondition",
-            Self::Postcondition { .. } => "postcondition",
-        }
-    }
-
-    fn authored_name(&self) -> &str {
-        match self {
-            Self::Precondition { name } | Self::Postcondition { name } => name,
-        }
-    }
-
-    /// Whether `declaration`, a clause function's FR-569 declaration name
-    /// `[<type>, <operation>, <kind>, <label>]`, declares this clause of the
-    /// operation `operation_name` of the source type `type_name`. The source
-    /// and bytes routes both select a clause function by this rule.
-    #[ix_trace_rs::string_edge]
-    pub(crate) fn is_declared_by<'a>(
-        &self,
-        type_name: &str,
-        operation_name: &str,
-        declaration: impl IntoIterator<Item = &'a str>,
-    ) -> bool {
-        declaration.into_iter().eq([
-            type_name,
-            operation_name,
-            self.declaration_kind(),
-            self.authored_name(),
-        ])
-    }
-}
-
-impl CheckedPackage {
-    /// The clause function of `clause` of the source operation whose checked
-    /// `state`/`operation_anchor` node is `anchor`: the source route's form of
-    /// `BarePackage::project_source_operation_clause` (FR-531).
-    ///
-    /// # Errors
-    ///
-    /// [`SlotSelectionFailure::MalformedNode`] of `anchor` when it anchors no
-    /// operation of this package or more than one function declares the
-    /// clause, [`SlotSelectionFailure::MissingNode`] of `anchor` when none
-    /// does.
-    pub fn select_source_operation_clause(
-        &self,
-        anchor: &NodeKey,
-        clause: &SourceOperationClause,
-    ) -> Result<FunctionState<'_>, SlotSelectionFailure> {
-        let graph = self.graph();
-        let malformed = || SlotSelectionFailure::MalformedNode(anchor.clone());
-        let operation = graph
-            .operation_frame_by_anchor(anchor.clone())
-            .ok_or_else(malformed)?
-            .operation();
-        let type_name = graph
-            .scope()
-            .types()
-            .object_type(operation.declaring.clone())
-            .ok_or_else(malformed)?
-            .name();
-        let mut matches = (0..)
-            .map_while(|index| Some((index, graph.function_identity_at(index)?)))
-            .filter(|(_, identity)| {
-                graph
-                    .semantic_graph()
-                    .node(identity.clone())
-                    .and_then(|node| node.declaration())
-                    .is_some_and(|declaration| {
-                        clause.is_declared_by(
-                            type_name,
-                            operation.declaration.name(),
-                            declaration.iter().map(|segment| segment.as_str()),
-                        )
-                    })
-            });
-        let Some((index, _)) = matches.next() else {
-            return Err(SlotSelectionFailure::MissingNode(anchor.clone()));
-        };
-        if matches.next().is_some() {
-            return Err(malformed());
-        }
-        graph.function_state(index).ok_or_else(|| {
-            SlotSelectionFailure::Fault(InternalFault::new(
-                "FR-531",
-                "source-operation-clause-function-is-checked",
-            ))
-        })
-    }
 }
 
 #[derive(Clone, Debug)]

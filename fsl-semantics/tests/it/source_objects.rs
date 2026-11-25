@@ -1123,6 +1123,29 @@ fn a_source_type_is_visible_only_in_the_unit_that_declares_it() {
     }
 }
 
+/// A source type name is unique in the package: two units that each declare
+/// the type refuse `ambiguous-name` at both declarations, so a clause
+/// function's declaration `[<type>, <operation>, <kind>, <label>]` names the
+/// operation of one unit.
+#[trace("FR-569-AC-3", "TC-1408")]
+#[test]
+fn two_units_cannot_declare_one_source_type_name() {
+    let unit = "profile P = \"filament.model.complete/v1\";\n\
+        object ConfigVersion { operation size(): Integer; }\n";
+    let refusal = crate::model_operations::try_assemble_units(&[("a", unit), ("b", unit)], &[])
+        .expect_err("both units declare `ConfigVersion`");
+    assert_eq!(refusal.errors.len(), 2, "{refusal:?}");
+    for error in &refusal.errors {
+        assert!(
+            matches!(
+                &error.cause,
+                AssemblyCause::AmbiguousTypeName { name, .. } if name == "ConfigVersion"
+            ),
+            "{error:?}"
+        );
+    }
+}
+
 /// The profile selections both units of the two-unit tests write.
 const UNIT_PROFILES: &str = "profile P = \"filament.model.complete/v1\";\n\
     profile Pp = \"filament.protocol.finite-global/v1\";\n";

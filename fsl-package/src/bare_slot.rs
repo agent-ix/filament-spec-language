@@ -24,9 +24,7 @@ use fsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
 use crate::bare::{BarePackage, IdentityWitnessRefusal};
 use crate::checked_v2::wire_graph;
 use crate::equality_file::EqualityWitnessRefusal;
-use crate::protocol_selection::{
-    ProtocolSlotDescriptor, SlotSelectionFailure, SourceOperationClause,
-};
+use crate::protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 use crate::protocol_view::{
     argument, control_operation, control_site_path, group_member, integer, reference, text,
     ControlOperation, ViewRefusal,
@@ -35,6 +33,7 @@ use crate::reader_protocol_projection::{
     node_value_type, BareWalker, FunctionSelector, ReaderProtocolProjection, TypeError, TypeReader,
     UnsupportedView, WalkFailure,
 };
+use crate::source_operation::SourceOperationClause;
 use crate::wire_form::{has_tag, WireTag};
 
 type Node = CheckedSemanticNodeV2;
