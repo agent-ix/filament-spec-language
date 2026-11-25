@@ -41,6 +41,7 @@
 //! only refutes a `from` node and so is never trusted for acceptance. That
 //! lets a cycle of `H` that no `from` node reaches be certified.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
@@ -350,6 +351,7 @@ impl Check<'_, '_> {
     /// Every closure state reachable from `initial`, expanded, checking
     /// `SuccessorMissing` then `BadState` at the first failing state in
     /// certificate order.
+    #[implements("FR-169-AC-11", "FR-169-AC-18")]
     fn explore(
         &self,
         initial: &BTreeMap<StateKey, ModelSimState>,

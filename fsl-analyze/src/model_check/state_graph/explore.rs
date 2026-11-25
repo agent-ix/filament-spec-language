@@ -29,6 +29,7 @@
 //! contract conjunction undefined, or that is deadlocked, is its violation,
 //! with the canonical breadth-first path to it.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::Cancel;
@@ -325,6 +326,13 @@ impl Exploration<'_, '_, '_> {
     }
 
     /// Label and expand node `at`.
+    #[implements(
+        "FR-167-AC-7",
+        "FR-168-AC-11",
+        "FR-168-AC-12",
+        "FR-168-AC-13",
+        "FR-168-AC-16"
+    )]
     fn visit(
         &self,
         walk: &mut Walk,
@@ -644,6 +652,7 @@ impl Exploration<'_, '_, '_> {
 /// The deadlock-freedom item's event at node `at`, if `at` decides it: an
 /// undefined contract conjunction, then a refused one, then the node's
 /// FR-124 class when it is terminal (ADR-018 DL-7, UE-6, V-6).
+#[implements("FR-168-AC-16")]
 fn deadlock_event(
     walk: &Walk,
     at: usize,

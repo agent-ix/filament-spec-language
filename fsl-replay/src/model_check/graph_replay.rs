@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-170's state-graph evidence checks over the admitted `ModelSystem`.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::ObjectReference;
@@ -767,6 +768,7 @@ fn replay_claim_evidence(
     Ok(result(settlement, evaluated, closure_nodes, first_target))
 }
 
+#[implements("FR-170-AC-7", "FR-168-AC-16")]
 fn replay_claim_undefined(
     system: &ModelSystem<'_>,
     loci: Loci<'_>,
@@ -1421,6 +1423,7 @@ pub(super) enum Loci<'a> {
 impl Loci<'_> {
     /// The name of the state clause whose body is at `locus`; only a state
     /// constraint, a `constraint` clause (FR-158), when `constraint` is set.
+    #[implements("FR-170-AC-7")]
     fn state_clause_at(
         self,
         locus: &filament_semantic_value::location::ExpressionLocation,

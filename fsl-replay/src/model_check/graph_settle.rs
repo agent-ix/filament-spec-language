@@ -18,6 +18,7 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::StateKey;
 use fsl_package::TemporalClockSelection;
 use fsl_semantics::check::CheckedStateGraphClaim;
+use ix_trace_rs::implements;
 
 use crate::certificate::state_graph::{
     check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,
@@ -119,6 +120,7 @@ pub struct StateGraphRecord {
 /// the outcome's row; a disagreement is
 /// `ReplayParity`; a stopped trap replay is `Incomplete(LimitReached)`; a
 /// refusal is `ReplayRefused`, except an internal fault, which is `Failed`.
+#[implements("FR-169-AC-19")]
 pub fn settle_state_graph(
     instance: &StateGraphInstanceOutcome,
     method: &StateGraphMethod,

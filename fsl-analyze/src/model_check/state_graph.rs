@@ -26,6 +26,7 @@ mod decide;
 mod explore;
 mod sample;
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
@@ -518,6 +519,7 @@ pub(super) fn cancelled(cancel: &Cancel) -> Option<Halt> {
 ///
 /// [`ModelCheckRefusal`] when the subject does not admit, a root is
 /// unbounded, or an identity cannot be encoded; nothing is decided then.
+#[implements("FR-167-AC-7")]
 pub fn check_state_graph(
     request: StateGraphRequest<'_>,
     cancel: &Cancel,
