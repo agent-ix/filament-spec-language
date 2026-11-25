@@ -16,54 +16,15 @@ use filament_semantic_value::location::{
 };
 use fsl_semantics::check::CheckedGraph;
 
+use super::location_paths::Paths;
 use super::protocol_locations::{applications_at, ordered, term_rows, PendingRow, MAX_SAFE};
 use super::EmitRefusal;
 use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
 
-/// Interned checker paths make finding a common prefix proportional to the
-/// encoded change, even when equivalent paths have independently built links.
-#[derive(Default)]
-struct Paths {
-    addresses: HashMap<usize, usize>,
-    // Keep memoized link addresses alive, including independently built paths.
-    retained: Vec<Location>,
-    children: HashMap<(usize, usize), usize>,
-    // Entry zero is the empty path.
-    links: Vec<(usize, usize, usize)>,
-}
-
 impl Paths {
-    fn intern(&mut self, location: &Location) -> usize {
-        if self.links.is_empty() {
-            self.links.push((0, 0, 0));
-        }
-        if let Some(address) = location.chain_address() {
-            if let Some(known) = self.addresses.get(&address) {
-                return *known;
-            }
-            self.retained.push(location.clone());
-        }
-        let mut pending = Vec::new();
-        let mut parent = 0;
-        for (address, index) in location.ancestry() {
-            if let Some(known) = self.addresses.get(&address) {
-                parent = *known;
-                break;
-            }
-            pending.push((address, index));
-        }
-        for (address, index) in pending.into_iter().rev() {
-            let child = *self.children.entry((parent, index)).or_insert_with(|| {
-                let child = self.links.len();
-                self.links.push((parent, index, self.links[parent].2 + 1));
-                child
-            });
-            self.addresses.insert(address, child);
-            parent = child;
-        }
-        parent
-    }
-
+    /// The relative form that leads from the path `previous` to `current`: the
+    /// steps up to their common prefix, then the child indices down. Costs the
+    /// encoded change.
     fn delta(
         &self,
         mut previous: usize,
@@ -72,19 +33,19 @@ impl Paths {
         let mut up = 0_u64;
         let mut down = Vec::new();
         while previous != current {
-            let left = self.links.get(previous)?;
-            let right = self.links.get(current)?;
-            if left.2 >= right.2 {
-                previous = left.0;
+            let left = self.step(previous)?;
+            let right = self.step(current)?;
+            if left.depth >= right.depth {
+                previous = left.parent;
                 up = up.checked_add(1)?;
             } else {
-                let index = u64::try_from(right.1).ok()?;
+                let index = u64::try_from(right.index).ok()?;
                 down.push(if index <= MAX_SAFE {
                     CheckedKeyOrdinal::Safe(index)
                 } else {
                     CheckedKeyOrdinal::BeyondSafe(index.to_string().into())
                 });
-                current = right.0;
+                current = right.parent;
             }
         }
         down.reverse();

@@ -100,7 +100,7 @@ pub use tick_monitor::{
     TickStepError, definitely_before, within_bound,
 };
 pub use tick_shape::{NodeShape, TickShape, operator_parts, temporal_leaves};
-pub use timed::{TimedTrace, evaluate_timed_at, evaluate_timed_formula_at};
+pub use timed::{TimedTrace, evaluate_timed_at};
 pub use tuple::{
     ComponentPosition, ComponentTrace, TupleLetters, evaluate_closed_tuple,
     evaluate_projected_prefix, evaluate_tuple,

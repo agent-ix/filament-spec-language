@@ -673,8 +673,11 @@ AST or additional body field is added.
   cycle. A `Bounds` result for these forms SHALL NOT be serialized as an
   exact document; this profile does not establish FR-1042 `base` admission
   for these objectives, and EN-5 SHALL move to its exact method before it
-  emits a proof. When the exact violated quantity exceeds
-  `max_rational_bits`, EN-5 SHALL settle the item as
+  emits a proof. When the exact solve for one of these claims passes
+  `max_rational_bits`
+  ([FR-198](FR-198-decide-unbounded-reachability-and-expected-rewards.md),
+  "Rational budget"), as it does when the exact violated quantity is past it,
+  EN-5 SHALL settle the item as
   [FR-1042](FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md)
   (Bases) settles a long-run value that exceeds that setting, with no
   certificate and no truth value.
