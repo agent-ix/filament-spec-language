@@ -148,7 +148,7 @@ pub(super) fn checked_body_locations(
     }
     let origins = functions.iter().map(|function| &function.4).collect();
     let applications = applications_at(graph, &origins);
-    let keys_by_id: HashMap<&CheckedNodeId, &NodeKey> =
+    let keys_by_id: BTreeMap<&CheckedNodeId, &NodeKey> =
         emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
     let mut pending = Vec::new();
 
