@@ -988,7 +988,11 @@ fn an_unfair_witness_settles_inconclusive_replay_parity() {
 
 /// A probabilistic counterexample whose draw and scheduled argument are source
 /// `enum` values writes both in FR-181's typed enum form, as a path set and as
-/// an undefined path.
+/// an undefined path. This proves the spelling of `probabilistic_wire` and
+/// `probabilistic_undefined_wire` only: the values are substituted into the
+/// witness of a claim over a domain package's object, and no production path is
+/// known to carry a source `enum` through that claim. The analyzer itself writes
+/// a source `enum` for a source object's operation, in the tests below.
 #[test]
 fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples() {
     let world = World::new(&prob_world::link(&format!(
@@ -1080,4 +1084,69 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
         json!([color("blue")])
     );
     assert_eq!(undefined_path(&[]), unspelled);
+}
+
+/// The counterexample the analyzer writes for the claim `Seen` over a coin no
+/// step changes, beside an object of the unit's own type `Lamp` whose one
+/// operation is scheduled with the source `enum` member `Color::red` and draws
+/// `Color::blue`. `profile` is the claim's temporal profile and `measure` its
+/// bounded measure.
+fn source_object_wire(profile: &str, measure: &str) -> serde_json::Value {
+    let mut world = World::new(&prob_world::coin(&format!(
+        "enum Color {{ red, blue }}\n\
+         object Lamp {{ lit: Boolean; population lamps; \
+         operation paint(c: Color, tint: Color) modifies self.lit; }}\n\
+         pre Dark using v on Lamp::paint {{ not self.lit and tint = Color::red }}\n\
+         post Lit using v on Lamp::paint {{ self.lit }}\n\
+         pre Never using v on M::Coin::drop {{ false }}\n\
+         random Lamp::paint(c) ~ {{ Color::blue: 1 }};\n\
+         probabilistic Seen using {profile} on M over (c: M::Coin) \
+         under every scheduler on origin\n{{ {measure} }}\n"
+    )));
+    world.add_source_object("lamps", "Lamp", "l", &json!({"lit": {"boolean": false}}));
+    let record = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("Seen", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap_or_else(|| panic!("a counterexample: {:?}", record.settlement))
+        .wire
+        .clone()
+        .expect("the source enum values are spelled")
+}
+
+/// The one-member value list holding the source `enum` member `member`.
+fn color_list(member: &str) -> serde_json::Value {
+    json!([{"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
+        "member": member}])
+}
+
+/// A refuted reachability claim writes a source object operation's source
+/// `enum` draw in FR-181's typed enum form.
+#[test]
+fn a_source_enum_draw_is_spelled_in_a_reachability_counterexample() {
+    let wire = source_object_wire("inf", "probability >= 0.5 [ eventually holds(c.v = 1) ]");
+    assert_eq!(
+        wire["evidence"]["paths"][0][0]["random"],
+        color_list("blue")
+    );
+}
+
+/// A refuted mean claim writes a source object operation's source `enum`
+/// scheduled argument in FR-181's typed enum form. Its evidence is a subsystem
+/// certificate with no path, so it writes no draw.
+#[test]
+fn a_source_enum_argument_is_spelled_in_a_mean_counterexample() {
+    let wire = source_object_wire("ev", "mean of (fraction holds(c.v = 1) over [0, 1]) >= 0.5");
+    assert_eq!(
+        wire["scheduler"]["entries"][0]["choice"]["arguments"],
+        color_list("red")
+    );
 }

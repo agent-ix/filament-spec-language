@@ -1195,20 +1195,17 @@ pub fn typed_value_json(
     ))
 }
 
-/// A typed value with source enums, model variants and an authenticated enum index.
+/// A typed value with both model variants and an authenticated enum index.
 /// `None` when the value has no canonical form in those declarations.
 pub fn typed_value_json_with_enum_members(
     value: &Value,
     types: &TypeEnvironment,
     variants: &[VariantTypeDeclaration],
-    enums: &[EnumBinding],
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
 ) -> Option<serde_json::Value> {
     canonical_json(&value_enc(
         value,
-        Typing::with_variants(types, variants)
-            .with_enums(enums)
-            .with_enum_members(Some(enum_members)),
+        Typing::with_variants(types, variants).with_enum_members(Some(enum_members)),
     ))
 }
 
@@ -1218,7 +1215,7 @@ pub fn package_value_json(
     types: &TypeEnvironment,
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
 ) -> Option<serde_json::Value> {
-    typed_value_json_with_enum_members(value, types, &[], &[], enum_members)
+    typed_value_json_with_enum_members(value, types, &[], enum_members)
 }
 
 /// The immutable type and identity inputs that determine a run value's bytes.

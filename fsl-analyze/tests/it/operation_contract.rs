@@ -944,7 +944,10 @@ fn a_bound_step_relation_is_unsupported_with_no_implementation_engine() {
 }
 
 /// A contract counterexample whose execution holds source `enum` values as an
-/// argument and as the result writes them in FR-181's typed enum form.
+/// argument and as the result writes them in FR-181's typed enum form. This
+/// proves the spelling of the contract wire only: the values are substituted
+/// into a witness over a domain package's operation, and no production path is
+/// known to carry a source `enum` there.
 #[test]
 fn a_source_enum_argument_and_result_are_spelled_in_a_contract_counterexample() {
     let world = world(

@@ -1935,7 +1935,7 @@ pub fn protocol_temporal_wire(
 
 /// FR-286's `Assignments` spelling `{type: "assignments", values}`: one typed
 /// value per parameter node, in the parameters' order, each in FR-181's typed
-/// canonical form read from `types`, `variants` and `enums`.
+/// canonical form read from `types` and `variants`.
 ///
 /// # Errors
 ///
@@ -1946,10 +1946,9 @@ pub fn assignments_wire(
     values: &[Value],
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
-    enums: &[fsl_semantics::check::EnumBinding],
 ) -> Result<Json, CounterexampleWireError> {
     assignments_wire_using(parameters, values, |value| {
-        fsl_eval::simulation::model::typed_value_json(value, types, variants, enums)
+        fsl_eval::simulation::model::typed_value_json(value, types, variants, &[])
     })
 }
 
@@ -1963,7 +1962,6 @@ pub fn assignments_wire_with_enum_members(
     values: &[Value],
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
-    enums: &[fsl_semantics::check::EnumBinding],
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
 ) -> Result<Json, CounterexampleWireError> {
     assignments_wire_using(parameters, values, |value| {
@@ -1971,7 +1969,6 @@ pub fn assignments_wire_with_enum_members(
             value,
             types,
             variants,
-            enums,
             enum_members,
         )
     })
@@ -2046,7 +2043,6 @@ pub fn probabilistic_wire_with_enum_members(
     claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
-    enums: &[fsl_semantics::check::EnumBinding],
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
@@ -2061,7 +2057,6 @@ pub fn probabilistic_wire_with_enum_members(
             value,
             types,
             variants,
-            enums,
             enum_members,
         )
     })
@@ -2241,6 +2236,10 @@ fn randomized_scheduler_wire_entry(
 
 /// Spell a checked-subject undefined path with its complete pre-read product key.
 /// This writes untrusted evidence; only semantic replay can reproduce it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the witness, its claim, the declarations that type its values and the state spelling"
+)]
 pub fn probabilistic_undefined_wire(
     witness: &crate::ProbabilityUndefinedWitness,
     claim: &OccurrenceKey,
@@ -3462,7 +3461,7 @@ mod tests {
         .expect("a node");
         let types = filament_semantic_value::declaration::TypeEnvironment::default();
         let one = [Value::Integer(Integer::from(1_i64))];
-        let wire = assignments_wire(std::slice::from_ref(&parameter), &one, &types, &[], &[])
+        let wire = assignments_wire(std::slice::from_ref(&parameter), &one, &types, &[])
             .expect("one value per parameter");
         assert_eq!(
             wire["values"][0]["value"],
@@ -3473,7 +3472,7 @@ mod tests {
             (&[][..], &one[..]),
         ] {
             assert_eq!(
-                assignments_wire(parameters, values, &types, &[], &[]),
+                assignments_wire(parameters, values, &types, &[]),
                 Err(CounterexampleWireError::Unspelled("assignment arity"))
             );
         }

@@ -2360,8 +2360,11 @@ pub(crate) fn source_color(package: &CheckedPackage, case: &str) -> Value {
     Value::Enum(filament_exact::EnumMember::new(variant.clone(), rank))
 }
 
-/// A value-check counterexample over a source `enum` parameter writes it in
-/// FR-181's typed enum form, named by the declaration identity text.
+/// Regression pin on the source route's spelling: a value-check
+/// counterexample over a source `enum` parameter writes it in FR-181's typed
+/// enum form, named by the declaration identity text. The route reads the
+/// member through the scope's enum member index, which holds every source enum
+/// member.
 #[test]
 fn a_source_enum_parameter_counterexample_is_spelled() {
     let package = package_of(
@@ -2388,22 +2391,4 @@ fn a_source_enum_parameter_counterexample_is_spelled() {
     let item = serde_json::to_value(item_of(&record, &package))
         .expect("the item has a wire representation");
     assert_eq!(item["counterexample"], expected);
-
-    let scope = package.graph().scope();
-    let spell = |enums: &[fsl_semantics::check::EnumBinding]| {
-        fsl_replay::assignments_wire(
-            &found.parameters,
-            found.reproduced.assignment(),
-            scope.types(),
-            scope.variant_types(),
-            enums,
-        )
-    };
-    assert_eq!(spell(scope.enums()), Ok(expected));
-    assert_eq!(
-        spell(&[]),
-        Err(fsl_replay::CounterexampleWireError::Unspelled(
-            "assignment value"
-        ))
-    );
 }

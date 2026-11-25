@@ -268,6 +268,7 @@ pub(crate) struct World {
     snapshots: fsl_semantics::model::observation::DocumentProvision,
     initial: Vec<DocumentRef>,
     universe: PopulationUniverse,
+    source_universe: Option<PopulationUniverse>,
 }
 
 /// Require the independent workload, rather than the stochastic subject,
@@ -623,7 +624,65 @@ impl World {
                 population,
                 keys: keys.iter().map(|key| (*key).to_owned()).collect(),
             },
+            source_universe: None,
         })
+    }
+
+    /// Adds the object `key` of the unit's own object type `object`, holding
+    /// `fields`, to every initial snapshot in the unit's own population
+    /// `population`, with that population's universe.
+    pub(crate) fn add_source_object(
+        &mut self,
+        population: &str,
+        object: &str,
+        key: &str,
+        fields: &Json,
+    ) {
+        let declared = self
+            .package
+            .graph()
+            .source_packages()
+            .iter()
+            .flat_map(|source| &source.records)
+            .find_map(|record| match record {
+                fsl_semantics::model::domain_package::DomainPackageRecord::Population(found)
+                    if found.key.node.rsplit('/').next() == Some(population) =>
+                {
+                    Some(found.key.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the unit declares the population {population}"));
+        let row = json!({"population": population, "complete": true,
+            "objects": [{"key": key, "type": object, "fields": fields}]});
+        self.snapshots = std::mem::take(&mut self.snapshots)
+            .into_values()
+            .map(|bytes| {
+                let mut snapshot: Json =
+                    serde_json::from_slice(&bytes).expect("a snapshot is JSON");
+                snapshot["populations"]
+                    .as_array_mut()
+                    .expect("a snapshot lists populations")
+                    .push(row.clone());
+                let bytes = snapshot.to_string().into_bytes();
+                (
+                    fsl_semantics::model::observation::document_reference(&bytes)
+                        .expect("a document names itself"),
+                    bytes,
+                )
+            })
+            .collect();
+        self.source_universe = Some(PopulationUniverse {
+            population: declared,
+            keys: vec![key.to_owned()],
+        });
+    }
+
+    fn universes(&self) -> Vec<PopulationUniverse> {
+        std::iter::once(&self.universe)
+            .chain(&self.source_universe)
+            .cloned()
+            .collect()
     }
 
     fn simulation(&self) -> ModelSimulationRequest<'_> {
@@ -634,7 +693,7 @@ impl World {
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,
             initial: self.initial.clone(),
-            universes: vec![self.universe.clone()],
+            universes: self.universes(),
             observation: ObservationLimits::default(),
             expansion: ExpansionLimits {
                 max_candidates: 1_000_000,
@@ -666,7 +725,7 @@ impl World {
             packages: &self.packages,
             snapshots: &self.snapshots,
             initial: self.initial.clone(),
-            universes: vec![self.universe.clone()],
+            universes: self.universes(),
         }
     }
 
