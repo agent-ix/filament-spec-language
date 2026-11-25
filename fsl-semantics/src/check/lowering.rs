@@ -33,6 +33,7 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
 use std::fmt;
 use std::ops::ControlFlow;
@@ -1258,6 +1259,7 @@ pub(crate) fn require_admitted(
 /// identity"): the declaration's segments and, for a node with an
 /// `owner_model` (a `protocol_clause` alone), one final operand naming that
 /// node (FSpec FR-322 "Protocol clause owner identity").
+#[implements("FR-383-AC-26", "FR-383-AC-27")]
 fn declaration_key(
     package_name: &str,
     names: &[Identifier],
@@ -2847,6 +2849,7 @@ impl<'a> Lowering<'a> {
     /// anchor's (least declared member's) declaration segments with no
     /// operand; the producer's ordinal tells the members apart. A group
     /// with no declared member has no anchor, which is an internal fault.
+    #[implements("FR-383-AC-24")]
     fn admitted_group_keys(
         &mut self,
         members: &[&Draft],

@@ -58,6 +58,7 @@ use fsl_semantics::value::{
     native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
     ModelRole, NodeOwner, TemporalRole,
 };
+use ix_trace_rs::implements;
 use ix_trace_rs::string_edge;
 
 use super::{CheckedPackage, EmittedPackage};
@@ -10312,6 +10313,7 @@ struct WrittenTemporalRows {
     refs: Vec<TemporalClauseRef>,
 }
 
+#[implements("FR-640-AC-15")]
 fn temporal_binding_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
