@@ -673,7 +673,7 @@ impl<'a> Kernel<'a> {
         }
     }
 
-    pub(super) fn exists(
+    pub(super) fn has_witness(
         &mut self,
         levels: &[Vec<Polynomial>],
         predicate: &mut impl FnMut(&mut Self) -> Result<bool>,
@@ -685,7 +685,7 @@ impl<'a> Kernel<'a> {
         for sample in self.samples(&levels[coordinate - 1], coordinate)? {
             self.meter.charge()?;
             self.prefix.push(sample);
-            let found = self.exists(levels, predicate)?;
+            let found = self.has_witness(levels, predicate)?;
             self.prefix.pop();
             if found {
                 return Ok(true);
