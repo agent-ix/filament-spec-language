@@ -34,3 +34,10 @@ Examined and clean: FR-135 "Package and identity" and AC-4; FR-137 bullet and AC
 ## Verdict
 
 Not mergeable. FND-001 (high) blocks: the PR edits FR-147-AC-15 and leaves that AC requiring an obligation identity that the identity tuple cannot produce. FND-002 should be fixed in the same round. The ruling itself, the refinement amendments, the extension to the abstraction relation and the O-04 rewording are correct against FSpec and the code.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Head 9a70bf8295f43d3cec02a0d0837a492da3d9b7c5: FR-147-AC-15, TC-552 step 15 and the FR-147 Requirement record bullet no longer compare obligation identities. They name STD-726 as the remaining work, and AC-15 now requires an equal node key with a differing `AbstractSide::Protocol.dependency` (`Option<LibraryName>`, None for the local form, fsl-semantics/src/check/refinement.rs:1979-1985) and a differing body `protocol`. Both are observable. |
+| FND-002 | fixed | Head 9a70bf8295: FR-306 and ADR-017 AR-4 drop the `package_id` sentence and tell revisions apart by checked-package value comparison (FSpec FR-322, FR-451). Equal relation `node_id`s under a `RustField` rebinding hold in code (derived path over the target operands, check/abstraction.rs:1269-1281). |

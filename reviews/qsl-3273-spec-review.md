@@ -31,3 +31,9 @@ The existing tagged tests will need the code PR the ruling names. Two tests asse
 ## Verdict
 
 The amended criteria are testable with literal oracles. The one low finding is a tautological clause. Mergeability is decided by SR-21023 FND-001 (high).
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Head 9a70bf8295f43d3cec02a0d0837a492da3d9b7c5: the same-package-identity clause is removed from FR-135-AC-4, TC-540 step 4, FR-306-AC-2 and TC-804 step 2. |
