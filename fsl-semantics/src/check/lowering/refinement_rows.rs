@@ -179,20 +179,20 @@ impl Lowering<'_> {
         Ok(key)
     }
 
-    /// The `literal` node of a history field's initial value, typed at the
-    /// field's declared type (FSpec FR-322 "Refinement row expressions": a
-    /// local history-literal reference), and located at the refinement.
+    /// The term of a history field's initial value, typed at the field's declared
+    /// type and located at the refinement: an inline literal for an enum member or
+    /// an absent option, otherwise a reference to a `literal` node (FSpec FR-322
+    /// "Refinement row expressions": a local history-literal reference).
     fn history_initial(
         &mut self,
         value: &Value,
         declared: &ValueType,
         location: &Location,
     ) -> Result<LeafTerm, CheckRefusal> {
-        // An enum member and an absent option are written inline: the refinement's
-        // history initial is a literal or a reference to a literal node, and a
-        // member's own node is an enum value and an `Option` field's initial
-        // cannot reference a `literal` node, which the reader refuses at an
-        // option-typed history (FSpec FR-375 `histories`).
+        // An enum member and an absent option are written inline. An enum member's
+        // node is an `enum_value`, and at an option-typed history the reader admits
+        // only a reference to an `option_value` node, never to a `literal` (FSpec
+        // FR-375 `histories`).
         let inline = match value {
             Value::Enum(member) => Some(LiteralValue::Enum(member.variant().case().to_owned())),
             Value::Option(option) if option.payload().is_none() => Some(LiteralValue::None),
