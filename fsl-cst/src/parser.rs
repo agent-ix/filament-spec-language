@@ -3115,13 +3115,14 @@ mod tests {
         let source = source(text);
         let grammar = grammar::complete_v1();
         let compounds = grammar::complete_compound_spellings(&grammar);
+        let reserved_words = grammar::complete_reserved_words(&grammar);
         let cancel = Cancel::new();
         let (_, significant, diagnostics, _) =
             scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let mut engine = Engine::new(
             &grammar,
-            grammar::complete_reserved_words(&grammar),
+            &reserved_words,
             &significant,
             Limits::default(),
             &cancel,
@@ -3157,17 +3158,13 @@ mod tests {
             .expect("test source");
             let grammar = grammar::complete_v1();
             let compounds = grammar::complete_compound_spellings(&grammar);
+            let reserved_words = grammar::complete_reserved_words(&grammar);
             let cancel = Cancel::new();
             let (_, significant, diagnostics, _) =
                 scan(&source, unlimited, &compounds, &cancel).expect("scan");
             assert!(diagnostics.is_empty(), "{diagnostics:?}");
-            let mut engine = Engine::new(
-                &grammar,
-                grammar::complete_reserved_words(&grammar),
-                &significant,
-                unlimited,
-                &cancel,
-            );
+            let mut engine =
+                Engine::new(&grammar, &reserved_words, &significant, unlimited, &cancel);
             let outcome = engine.production(Production::CompleteUnit, 0);
             assert!(matches!(outcome, Outcome::Match(_)), "{outcome:?}");
             let tokens = significant.len();
@@ -3240,6 +3237,7 @@ mod tests {
     fn nested_trailing_comma_work_is_linear_in_depth() {
         let grammar = grammar::complete_v1();
         let compounds = grammar::complete_compound_spellings(&grammar);
+        let reserved_words = grammar::complete_reserved_words(&grammar);
         let steps = |depth: usize| {
             let source = source(&nested_trailing_comma(depth));
             let cancel = Cancel::new();
@@ -3247,7 +3245,7 @@ mod tests {
                 scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
             let mut engine = Engine::new(
                 &grammar,
-                grammar::complete_reserved_words(&grammar),
+                &reserved_words,
                 &significant,
                 Limits::default(),
                 &cancel,
@@ -3306,6 +3304,7 @@ mod tests {
                     limits,
                     &Cancel::new(),
                     &ExtensionForms::default(),
+                    &ParserContext::new(),
                 ) {
                     Ok(parsed) => assert!(parsed.is_admissible()),
                     Err(refusal) => {
@@ -3334,6 +3333,7 @@ mod tests {
                 limits,
                 &Cancel::new(),
                 &ExtensionForms::default(),
+                &ParserContext::new(),
             )
             .expect("2000 nested Option<...> fit the node ceiling");
             assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
