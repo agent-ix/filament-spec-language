@@ -1,0 +1,7 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function i using v(a: String): Integer pure { convert<Integer>(a) }
+function d using v(a: String): Decimal[-100,100;0,2;exact] pure { convert<Decimal[-100,100;0,2;exact]>(a) }
+function r using v(a: String): Rational[0,9;1,9] pure { convert<Rational[0,9;1,9]>(a) }
+function h using v(a: String): Float64[nearest-even] pure { convert<Float64[nearest-even]>(a) }
+function s using v(a: String): Float32[nearest-even] pure { convert<Float32[nearest-even]>(a) }

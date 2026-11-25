@@ -130,6 +130,14 @@ use crate::refinement::{
     StepVerdict, SubjectRefusal, Taken,
 };
 
+type CandidateRow = (
+    usize,
+    Option<GuardedStep>,
+    Option<Vec<u8>>,
+    Option<CandidateStep>,
+);
+type GuardCovers = Option<Vec<Vec<PlaceConstraint>>>;
+
 /// FR-244's certificate of a zone search's proof of the item `obligation`
 /// names (ADR-013 O-09).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2003,7 +2011,7 @@ impl<O> Checker<'_, '_, O> {
                     });
                     let extra = node.zone.dim().saturating_sub(base);
                     self.auxiliary_timed.is_none_or(|timed| {
-                        timed.places().is_empty() || extra % timed.places().len() == 0
+                        timed.places().is_empty() || extra.is_multiple_of(timed.places().len())
                     })
                 }
                 _ => node.zone.dim() == self.dim(),
@@ -2658,12 +2666,7 @@ impl<O> Checker<'_, '_, O> {
         let yielded_taken = (*taken).clone();
         // The rows: a guarded step or a stutter, and the key of the post
         // candidate each leads to (`None` when the verdict names none).
-        let mut rows: Vec<(
-            usize,
-            Option<GuardedStep>,
-            Option<Vec<u8>>,
-            Option<CandidateStep>,
-        )> = Vec::new();
+        let mut rows: Vec<CandidateRow> = Vec::new();
         match *taken {
             Taken::Abstract(transitions) => {
                 for (block, candidate) in pre.abstract_states.iter().enumerate() {
@@ -2728,7 +2731,7 @@ impl<O> Checker<'_, '_, O> {
         }
         // Rows over one physical clock block with the same guard share its
         // truth value. Keep every row ordinal while splitting once.
-        let mut groups: Vec<(Vec<usize>, Option<Vec<Vec<PlaceConstraint>>>)> = Vec::new();
+        let mut groups: Vec<(Vec<usize>, GuardCovers)> = Vec::new();
         for (ordinal, (block, step, _, _)) in rows.iter().enumerate() {
             let covers = match step {
                 None => None,
@@ -2801,12 +2804,7 @@ impl<O> Checker<'_, '_, O> {
         }
         let mut pieces = Vec::new();
         for (piece, mask) in patterns {
-            let holding: Vec<&(
-                usize,
-                Option<GuardedStep>,
-                Option<Vec<u8>>,
-                Option<CandidateStep>,
-            )> = rows
+            let holding: Vec<&CandidateRow> = rows
                 .iter()
                 .zip(&mask)
                 .filter_map(|(row, held)| (*held).then_some(row))

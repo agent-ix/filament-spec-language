@@ -84,9 +84,11 @@ pub(super) fn run(
                 occurrence,
                 bound,
                 claim_type,
-                scope.types(),
-                scope.variant_types(),
-                scope.enums(),
+                &fsl_replay::ProbabilisticValueSchema::new(
+                    scope.types(),
+                    scope.variant_types(),
+                    scope.enums(),
+                ),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
                 &scheduler,
             );

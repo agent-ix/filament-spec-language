@@ -15,18 +15,28 @@ use serde_json::{Value, json};
 use super::*;
 
 /// The base profiles a wrapper may carry: bounded reachability, which FR-197's
-/// backward induction rounds into an interval, and unbounded eventual
-/// reachability over a cyclic chain or MDP.
+/// backward induction rounds into an interval, unbounded eventual
+/// reachability over a cyclic chain or MDP, and the expected rewards.
 fn is_wrappable_base(profile: &str) -> bool {
     matches!(
         profile,
         PROFILE
             | CYCLIC_PROFILE
             | CYCLIC_MDP_PROFILE
+            | REWARD_PROFILE
             | CYCLIC_REWARD_PROFILE
             | CYCLIC_MDP_REWARD_PROFILE
             | measure::PROFILE
             | "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
+    )
+}
+
+/// An expected-reward base, whose `upper` carries its properness ranking
+/// (FR-1042 "Conditions").
+fn is_reward_base(profile: &str) -> bool {
+    matches!(
+        profile,
+        REWARD_PROFILE | CYCLIC_REWARD_PROFILE | CYCLIC_MDP_REWARD_PROFILE
     )
 }
 
@@ -168,14 +178,10 @@ pub(super) fn unwrap(
         .pointer("/objective/profile")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let cyclic_mdp_reward = document
+    let reward = document
         .pointer("/objective/base/profile")
         .and_then(Value::as_str)
-        == Some(CYCLIC_MDP_REWARD_PROFILE);
-    let cyclic_reward = document
-        .pointer("/objective/base/profile")
-        .and_then(Value::as_str)
-        == Some(CYCLIC_REWARD_PROFILE);
+        .is_some_and(is_reward_base);
     let root = document
         .as_object_mut()
         .ok_or(ProbabilityDocumentError::Malformed)?;
@@ -209,13 +215,11 @@ pub(super) fn unwrap(
             if root.remove("policy").is_some() {
                 policy = Some(policy_hints(bytes)?);
             }
-            if fair {
-                if !existential.expect("fair objective has a role") {
-                    if root.contains_key("ranking") || policy.is_some() {
-                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
-                    }
-                    root.insert("ranking".into(), json!([]));
+            if fair && !existential.expect("fair objective has a role") {
+                if root.contains_key("ranking") || policy.is_some() {
+                    return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                 }
+                root.insert("ranking".into(), json!([]));
             }
             match side {
                 SubsystemBoundKind::Upper => {
@@ -223,16 +227,13 @@ pub(super) fn unwrap(
                         // The fair-MDP checker validates the rank against its
                         // independently reconstructed zero component for
                         // either interval endpoint.
-                    } else if root.contains_key("ranking")
-                        && !cyclic_mdp_reward
-                        && !cyclic_reward
-                    {
+                    } else if root.contains_key("ranking") && !reward {
                         return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                     } else if !root.contains_key("ranking") {
                         root.insert("ranking".into(), json!([]));
                     }
                 }
-                SubsystemBoundKind::Lower if cyclic_mdp_reward || cyclic_reward => {
+                SubsystemBoundKind::Lower if reward => {
                     root.entry("ranking").or_insert_with(|| json!([]));
                 }
                 SubsystemBoundKind::Lower => {}
@@ -282,16 +283,11 @@ pub(super) fn wrap(
         .and_then(|objective| objective.get("profile"))
         .and_then(Value::as_str)
         == Some(TIMED_PROFILE);
-    let cyclic_mdp_reward = root
+    let reward = root
         .get("objective")
         .and_then(|objective| objective.get("profile"))
         .and_then(Value::as_str)
-        == Some(CYCLIC_MDP_REWARD_PROFILE);
-    let cyclic_reward = root
-        .get("objective")
-        .and_then(|objective| objective.get("profile"))
-        .and_then(Value::as_str)
-        == Some(CYCLIC_REWARD_PROFILE);
+        .is_some_and(is_reward_base);
     if !timed {
         let base = root
             .remove("objective")
@@ -312,10 +308,7 @@ pub(super) fn wrap(
                 root.remove("ranking");
                 root.remove("policy");
             }
-        } else if side == SubsystemBoundKind::Upper
-            && !cyclic_mdp_reward
-            && !cyclic_reward
-        {
+        } else if side == SubsystemBoundKind::Upper && !reward {
             root.remove("ranking");
         }
     }

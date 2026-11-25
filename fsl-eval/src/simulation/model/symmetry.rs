@@ -617,8 +617,8 @@ mod tests {
         let universes = system.universes_of(&class.population);
         let renaming = permutation
             .maps()
-            .iter()
-            .map(|(_, mapping)| (universes.clone(), mapping.clone()))
+            .values()
+            .map(|mapping| (universes.clone(), mapping.clone()))
             .collect();
         let projected = super::super::encode::initial_model_key(
             &system.model,
