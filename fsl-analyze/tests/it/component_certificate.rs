@@ -27,8 +27,8 @@ use fsl_replay::{
     check_closure, check_components, settle_hyper_check, settle_model_check, CertificateLocus,
     CertificateRejection, CertificateRequest, CertificateRule, Certification, ClosureCertificate,
     ClosureRefusal, Component, ComponentCertificate, ComponentWitness, Execution, HyperOutcome,
-    IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
-    Operation, OutcomeDocument, OutcomeItem, OutcomeStage, ProductClosureClause,
+    IncompleteCause, InconclusiveCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, Operation, OutcomeDocument, OutcomeItem, OutcomeStage, ProductClosureClause,
     ProductClosureRequest, ProductStateRef, ProofBasis, ProofCertificate, RequestIndex,
     ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits, TemporalCertificateCheck,
     TerminalRecord, TerminalValue,
@@ -1273,4 +1273,52 @@ fn components_offered_for_a_safety_clause_are_refused() {
         ),
         Err(ClosureRefusal::NotLiveness)
     ));
+}
+
+/// FR-339-AC-8: components offered for the deadlock-freedom item,
+/// which is no TP-4 clause, over a subject with no initial state are refused
+/// `NoInitialState` before `NotLiveness`, and as the certificate of a `Holds`
+/// settle `inconclusive`, `NoInitialState`.
+#[trace("TC-526", "FR-339-AC-8")]
+#[test]
+fn components_over_no_initial_state_are_refused_before_not_liveness() {
+    let mut fixture = counter(
+        crate::counter::document(false),
+        "",
+        "always holds(c.value <= 3)",
+    );
+    fixture.initial.clear();
+    let letters = fixture.letters(is_three);
+    let request = CertificateRequest {
+        item: ModelCheckItem::DeadlockFreedom,
+        ..fixture.certificate_request(&letters, UNLIMITED)
+    };
+    let empty = ComponentCertificate {
+        closure: ClosureCertificate { states: Vec::new() },
+        components: Vec::new(),
+    };
+    let checked = check_components(
+        &request,
+        &empty,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(checked, Err(ClosureRefusal::NoInitialState)),
+        "{checked:?}"
+    );
+    let record = settle_model_check(
+        &ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Component(empty),
+            stats: RunStats::default(),
+        },
+        &ModelCheckLimits::default(),
+        &request,
+        &Cancel::new(),
+        |_| panic!("a proof replays nothing"),
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)
+    );
 }
