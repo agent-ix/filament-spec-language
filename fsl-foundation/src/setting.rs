@@ -239,6 +239,7 @@ impl Setting {
                 | Self::ExactProbMaxPrecisionBits
                 | Self::ExactProbMaxRationalBits
                 | Self::ExactProbMaxPolicyIterations
+                | Self::ExactProbMaxWitnessPaths
                 | Self::StatisticalMaxSamples
                 | Self::StatisticalMaxDraws
                 | Self::StatisticalMaxCycleSteps

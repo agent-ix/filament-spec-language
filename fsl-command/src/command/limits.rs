@@ -251,11 +251,12 @@ const MONITOR_ONLY: &[Setting] = &[
     Setting::MonitorPreparationStorage,
 ];
 
-/// What `replay` executes beyond [`COMMON`]: population admission, library
-/// resolution, the reader bound and the three model-check bounds graph
+/// What `replay` executes beyond [`COMMON`]: the reader bound, the package
+/// emission bound of its recompile and the three model-check bounds graph
 /// replay consumes.
 const REPLAY_ONLY: &[Setting] = &[
     Setting::ReplayInputBytes,
+    Setting::EmitOutputBytes,
     Setting::ModelCheckMaxStates,
     Setting::ModelCheckMaxTransitions,
     Setting::ModelCheckMaxAutomatonStates,
@@ -670,11 +671,31 @@ mod tests {
             names(&CommandLimits::replay()),
             expected(&[
                 "replay.input_bytes",
+                "emit.output_bytes",
                 "model_check.max_states",
                 "model_check.max_transitions",
                 "model_check.max_automaton_states",
             ])
         );
+    }
+
+    /// FR-255-AC-24: the `replay` command takes exactly the stage settings a
+    /// replay request's `stage_limits` takes, and `replay.input_bytes`, which
+    /// reaches the reader and is no request member.
+    #[trace("TC-721", "FR-255-AC-24")]
+    #[test]
+    fn the_replay_command_and_request_take_the_same_stage_settings() {
+        let replay = CommandLimits::replay();
+        for &setting in Setting::ALL {
+            let on_request = fsl_replay::StageLimits::default()
+                .with_named(setting.name(), 1)
+                .is_ok();
+            assert_eq!(
+                replay.exposes(setting),
+                on_request || setting == Setting::ReplayInputBytes,
+                "{setting}"
+            );
+        }
     }
 
     /// TC-721 step 11, for the settings exposed today: each accepted setting changes only its own bound.

@@ -133,14 +133,19 @@ fn a_source_of_declarations_needs_s1_tokens_and_s1_nodes_raised_as_well() {
     let nodes = fired(admit(&text, input_tokens, replay));
     assert!(nodes.contains("s1.nodes"), "{nodes}");
 
-    let all = named(&[
+    // This fixture's package is longer than the `emit.output_bytes` default,
+    // so the S1 limits alone stop at E4.
+    let s1 = [
         ("s1.input_bytes", BOUND),
         ("s1.tokens", BOUND),
         ("s1.nodes", BOUND),
-        // This real-declaration fixture also emits more than E4's 16-MiB
-        // default. Its positive caller supplies a finite 1-GiB ceiling.
-        ("emit.output_bytes", 1 << 30),
-    ]);
+    ];
+    let emit = fired(admit(&text, named(&s1), replay));
+    assert!(emit.contains("emit.output_bytes"), "{emit}");
+
+    let all = named(&s1)
+        .with_named("emit.output_bytes", 1 << 30)
+        .expect("a request carries the emit limit");
     let admitted = admit(&text, all, replay).expect("all required limits raised admit the source");
     assert!(admitted.into_parts().1.enums().count() > 10_000);
 }
@@ -153,6 +158,10 @@ fn an_unknown_or_unavailable_name_refuses_without_a_value() {
         "",
         "replay.input_bytes",
         "format.output_bytes",
+        "render.output_bytes",
+        "monitor.max_activations",
+        "exact_prob.max_witness_paths",
+        "smt_encoding.max_constants",
     ] {
         assert_eq!(
             StageLimits::default().with_named(name, 1),

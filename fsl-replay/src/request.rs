@@ -62,7 +62,6 @@ pub(crate) const fn is_replay_wire_stage_setting(setting: Setting) -> bool {
         Setting::ReplayInputBytes
             | Setting::FormatOutputBytes
             | Setting::RenderOutputBytes
-            | Setting::EmitOutputBytes
             | Setting::ExportOutputBytes
             | Setting::ExportNodes
             | Setting::ExportWorkUnits
@@ -110,7 +109,6 @@ pub(crate) const REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES: &[&str] = &[
     "replay.input_bytes",
     "format.output_bytes",
     "render.output_bytes",
-    "emit.output_bytes",
     "export.output_bytes",
     "export.nodes",
     "export.work_units",
@@ -122,6 +120,7 @@ pub(crate) const REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES: &[&str] = &[
     "progress.covered_positions",
     "simulation.max_steps",
     "expansion.max_candidates",
+    "exact_prob.max_witness_paths",
     "model_check.witness_samples",
     "model_check.max_walk_steps",
     "model_check.max_witness_set",
@@ -223,9 +222,11 @@ impl StageLimits {
     /// These limits with the stage or accounting limit named `name` (FR-255's
     /// dotted name, such as `s1.input_bytes`) set to `bound`, replacing an
     /// earlier entry of that name (FR-399). Refuses, returning no limits, a
-    /// name that is no setting of FR-255's tables, and `replay.input_bytes`,
-    /// `format.output_bytes` and the `monitor.*` settings, which a request does
-    /// not carry.
+    /// name that is no setting of FR-255's tables, and a setting a request
+    /// does not carry: `replay.input_bytes`, which the reader takes as
+    /// [`ReplayLimits`], and every setting replay does not consume (FR-255
+    /// "Lifecycle caller-limit coverage"), such as `format.output_bytes`,
+    /// the `monitor.*` settings and the analysis engines' settings.
     ///
     /// To compile a large source through `compile_admitted`, raise more than
     /// `s1.input_bytes`. An `s1.input_bytes` above `ReplayLimits.input_bytes`
@@ -233,7 +234,8 @@ impl StageLimits {
     /// `ReplayLimits::with_input_bytes` with it. A source of real
     /// declarations reaches the `s1.tokens` (100000) and `s1.nodes` (50000)
     /// defaults at a few hundred kilobytes, far below 1 MiB, so raise those
-    /// two by name as well.
+    /// two by name as well. A source whose package is longer than the
+    /// `emit.output_bytes` default (16 MiB) raises that limit by name too.
     pub fn with_named(mut self, name: &str, bound: u64) -> Result<Self, StageLimitNameRefusal> {
         match SettingName::from_name(name) {
             Some(SettingName::Stage(setting)) if is_replay_wire_stage_setting(setting) => {
@@ -251,9 +253,8 @@ impl StageLimits {
         Ok(self)
     }
 
-    /// Reads the wire entries, refusing the first whose name is no setting
-    /// of FR-255's tables or is `replay.input_bytes`, `format.output_bytes` or
-    /// one of the `monitor.*` settings.
+    /// Reads the wire entries, refusing the first whose name
+    /// [`Self::with_named`] refuses.
     fn decode(entries: BTreeMap<String, u64>) -> Result<Self, ReplayRequestRefusal> {
         entries
             .into_iter()
