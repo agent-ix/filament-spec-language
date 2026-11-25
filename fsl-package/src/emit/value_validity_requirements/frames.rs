@@ -225,7 +225,7 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    #[implements("FSpec-FR-322-AC-490", "FSpec-FR-825-AC-11")]
+    #[implements("FSpec-FR-825-AC-11")]
     fn position(&mut self, id: &CheckedNodeId) -> Option<usize> {
         let pointer = std::ptr::from_ref(id);
         if let Some(&position) = self.resolved.get(&pointer) {
