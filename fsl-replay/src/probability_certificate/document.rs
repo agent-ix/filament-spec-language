@@ -72,7 +72,7 @@ const CYCLIC_MDP_STATE_PROFILE: &str =
 const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
-const FAIR_MDP_PROFILE: &str = "filament.probability-objective/fair-mdp-eventual/v1";
+const FAIR_MDP_PROFILE: &str = "filament.probability-objective/cyclic-mdp-fair-eventual/v1";
 const TIMED_PROFILE: &str = "filament.probability-objective/timed-product/v1";
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 

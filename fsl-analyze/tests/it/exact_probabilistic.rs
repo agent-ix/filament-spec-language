@@ -2322,6 +2322,17 @@ fn fair_eventual_value_bounds_are_independently_checked() {
             Ok(ExactProbabilityCertificateCheck::Accepted(_))
         ));
     }
+    for bytes in [
+        terminal.exact_certificate_document(),
+        terminal.exact_counterpart_document(),
+    ] {
+        let document: serde_json::Value =
+            serde_json::from_slice(bytes.expect("value-bound document")).expect("canonical JSON");
+        assert_eq!(
+            document["objective"]["base"]["profile"],
+            "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
+        );
+    }
     let mut forged: serde_json::Value = serde_json::from_slice(
         terminal
             .exact_certificate_document()
@@ -2449,7 +2460,7 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
         serde_json::from_slice(upper_bytes).expect("upper value-bound JSON is canonical");
     assert_eq!(
         upper["objective"]["base"]["profile"],
-        "filament.probability-objective/fair-mdp-eventual/v1"
+        "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
     );
     assert_eq!(upper["objective"]["base"]["optimization"], "minimum");
     let targets = upper["objective"]["base"]["targets"]

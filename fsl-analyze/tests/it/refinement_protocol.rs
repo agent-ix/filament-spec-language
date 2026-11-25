@@ -1034,7 +1034,7 @@ fn a_satisfied_ensure_does_not_change_the_assumption_relation() {
 
 /// FR-148-AC-10 (TC-553): a TSO flush fairness member participates in
 /// the assumption relation and its paired lasso replays.
-#[trace("TC-553", "FR-148-AC-10")]
+#[trace("TC-553", "FR-148-AC-10", "FR-145-AC-7")]
 #[test]
 fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
     let variant = Variant {
@@ -1231,6 +1231,44 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
     let replay = replay_protocol_assumption_witness(refinement, &preopened, witness)
         .expect("the TSO fairness witness replays");
     assert_eq!(replay, ProtocolAssumptionReplaySettlement::Reproduced);
+
+    // FR-145-AC-7: a changed identity settles inconclusive. Dropping the
+    // selected member of the writer flush, which has members on the loop,
+    // must not replay.
+    let mut forged = witness.clone();
+    let writer_flush = forged
+        .identities
+        .iter_mut()
+        .find(|identity| {
+            identity.side == fsl_replay::AssumptionSide::Specification
+                && identity.origin == fsl_replay::AssumptionOrigin::Memory
+                && matches!(identity.target, fsl_replay::AssumptionTarget::Protocol(ref fairness)
+                    if matches!(fairness.target(), fsl_eval::simulation::protocol::ProtocolTarget::MemoryStep {
+                        step: "flush", branch, ..
+                    } if branch == "writer"))
+                && identity.selected.is_some()
+        })
+        .expect("the writer flush identity selects a thread");
+    writer_flush.selected = None;
+    assert!(matches!(
+        replay_protocol_assumption_witness(refinement, &preopened, &forged)
+            .expect("the forged witness replays"),
+        ProtocolAssumptionReplaySettlement::Inconclusive(_)
+    ));
+    let mut forged = witness.clone();
+    forged
+        .identities
+        .iter_mut()
+        .filter(|identity| identity.side == fsl_replay::AssumptionSide::Implementation)
+        .for_each(|identity| {
+            identity.granularity = filament_semantic_value::fairness::FairnessGranularity::Each;
+            identity.selected = None;
+        });
+    assert!(matches!(
+        replay_protocol_assumption_witness(refinement, &preopened, &forged)
+            .expect("the forged witness replays"),
+        ProtocolAssumptionReplaySettlement::Inconclusive(_)
+    ));
 }
 
 /// FR-148-AC-12 (TC-553): an undecided precondition on an identified
