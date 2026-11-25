@@ -625,7 +625,7 @@ fn not_markov_evidence_uses_the_actual_filtered_digital_posts() {
         })
         .map(|(_, post)| {
             system
-                .state_key(post)
+                .state_key(post, fsl_foundation::IdentityLimits::default())
                 .expect("an actual model post-state")
                 .1
         })

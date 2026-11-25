@@ -1559,7 +1559,10 @@ impl Run<'_, '_> {
         };
         let (_, concrete_initial) = self
             .concrete
-            .state_key(&self.nodes[root_node.product].state)
+            .state_key(
+                &self.nodes[root_node.product].state,
+                fsl_foundation::IdentityLimits::default(),
+            )
             .map_err(|_| fault("assumption-witness-concrete-initial-has-a-key"))?;
         let (protocol_initial, _) = protocol
             .state_key(&root_node.candidate)
@@ -1571,7 +1574,10 @@ impl Run<'_, '_> {
             };
             let (_, concrete_post) = self
                 .concrete
-                .state_key(&self.nodes[post.product].state)
+                .state_key(
+                    &self.nodes[post.product].state,
+                    fsl_foundation::IdentityLimits::default(),
+                )
                 .map_err(|_| fault("assumption-witness-concrete-post-has-a-key"))?;
             let (protocol_post, _) = protocol
                 .state_key(&post.candidate)
@@ -1866,8 +1872,10 @@ impl Run<'_, '_> {
                     "protocol-cycle-target",
                 ))
             })?;
-            let (post_state, _) =
-                Self::encoding(self.concrete.state_key(&self.nodes[target].state))?;
+            let (post_state, _) = Self::encoding(self.concrete.state_key(
+                &self.nodes[target].state,
+                fsl_foundation::IdentityLimits::default(),
+            ))?;
             prefix.push(ModelStep {
                 transition,
                 post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(post_state),
@@ -1949,7 +1957,10 @@ impl Run<'_, '_> {
         // Equal keys coalesce into the first initial state that has the key;
         // the budget refuses before the remaining states are keyed.
         let initial = admit_initial(states, self.limits.limits.max_states, |_, state| {
-            let (key, _) = Self::encoding(self.concrete.state_key(&state))?;
+            let (key, _) = Self::encoding(
+                self.concrete
+                    .state_key(&state, fsl_foundation::IdentityLimits::default()),
+            )?;
             keys.push(key.clone());
             Ok::<_, End>((key, state))
         })
@@ -2167,7 +2178,10 @@ impl Run<'_, '_> {
         let mut edges = Vec::with_capacity(expansion.successors.len());
         for (transition, state) in expansion.successors {
             let order = Self::encoding(self.concrete.transition_key(&transition))?;
-            let (key, state_key) = Self::encoding(self.concrete.state_key(&state))?;
+            let (key, state_key) = Self::encoding(
+                self.concrete
+                    .state_key(&state, fsl_foundation::IdentityLimits::default()),
+            )?;
             edges.push((order, key, state_key, Some(transition), state));
         }
         edges.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
@@ -2175,7 +2189,10 @@ impl Run<'_, '_> {
             // ADR-018 SM-4: a terminal state repeats forever, one stutter
             // step that is no model step.
             let state = self.nodes[at].state.clone();
-            let (key, state_key) = Self::encoding(self.concrete.state_key(&state))?;
+            let (key, state_key) = Self::encoding(
+                self.concrete
+                    .state_key(&state, fsl_foundation::IdentityLimits::default()),
+            )?;
             edges.push((Vec::new(), key, state_key, None, state));
         }
         let mut listed = Vec::with_capacity(edges.len());
@@ -3266,8 +3283,10 @@ impl Run<'_, '_> {
                 Some(transition) => {
                     let target = usize::try_from(edge.post)
                         .map_err(|_| fault("hidden-counterexample-target-is-retained"))?;
-                    let (post, _) =
-                        Self::encoding(self.concrete.state_key(&self.nodes[target].state))?;
+                    let (post, _) = Self::encoding(self.concrete.state_key(
+                        &self.nodes[target].state,
+                        fsl_foundation::IdentityLimits::default(),
+                    ))?;
                     prefix.push(ModelStep {
                         transition: transition.clone(),
                         post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(post),
@@ -3419,8 +3438,10 @@ impl Run<'_, '_> {
             };
             match transition {
                 Some(transition) => {
-                    let (post_state, _) =
-                        Self::encoding(self.concrete.state_key(&self.nodes[target].state))?;
+                    let (post_state, _) = Self::encoding(self.concrete.state_key(
+                        &self.nodes[target].state,
+                        fsl_foundation::IdentityLimits::default(),
+                    ))?;
                     prefix.push(ModelStep {
                         transition,
                         post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(

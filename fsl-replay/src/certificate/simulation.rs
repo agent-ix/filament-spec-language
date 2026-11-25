@@ -738,7 +738,10 @@ impl Run<'_, '_> {
         let mut computed = Vec::with_capacity(expansion.successors.len());
         for (transition, state) in expansion.successors {
             let order = Self::encoding(self.concrete.transition_key(&transition))?;
-            let (key, _) = Self::encoding(self.concrete.state_key(&state))?;
+            let (key, _) = Self::encoding(
+                self.concrete
+                    .state_key(&state, fsl_foundation::IdentityLimits::default()),
+            )?;
             computed.push((order, key, Some(transition), state));
         }
         computed.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));

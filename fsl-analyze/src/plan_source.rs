@@ -875,7 +875,11 @@ impl<'a> SourcePlan<'a> {
         }
         let keys = prefix
             .iter()
-            .map(|read| self.system.state_key(read).map(|(key, _)| key))
+            .map(|read| {
+                self.system
+                    .state_key(read, fsl_foundation::IdentityLimits::default())
+                    .map(|(key, _)| key)
+            })
             .collect::<Result<Vec<_>, _>>();
         let Ok(keys) = keys else {
             self.fault
