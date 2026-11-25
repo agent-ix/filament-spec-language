@@ -9,10 +9,9 @@
 //! kind, so the only thing that can refuse a probe item is its family.
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use crate::graph_world::{config_version, World, CONFIG_CONTRACT, REACHES_TWO};
+use crate::provider_test_support::CountingUnknownProvider;
 use filament_exact::{Cancel, NodeKey, Origin, Role};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
@@ -605,20 +604,6 @@ fn a_state_declaration_admits_operation_contract_and_refuses_other_kinds_as_stat
     );
 }
 
-#[derive(Debug)]
-struct NeverCalledHandoffProvider(Arc<AtomicUsize>);
-
-impl fsl_analyze::provider::ExternalProvider for NeverCalledHandoffProvider {
-    fn settle(
-        &self,
-        request: &fsl_analyze::provider::ProviderRequest<'_>,
-        _cancel: &Cancel,
-    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        vec![fsl_analyze::provider::ProviderVerdict::Unknown; request.items().len()]
-    }
-}
-
 /// FR-281-AC-13: a state claim refuses every inapplicable handoff before
 /// backend lookup; applicable temporal claims preserve their routing results.
 #[trace("TC-762", "TC-1302", "FR-281-AC-13")]
@@ -648,7 +633,7 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
         OccurrenceKey::new(temporal_clause.identity(), temporal_clause.claim().clone());
     let test_a = Candidate::new(fsl_foundation::BackendId::new("fsl.test-a"));
     let test_c = Candidate::new(fsl_foundation::BackendId::new("fsl.test-c"));
-    let calls = Arc::new(AtomicUsize::new(0));
+    let provider = CountingUnknownProvider::new();
     let value_domain = [fsl_foundation::bound::DomainKind::Integer.to_wire()];
     let descriptor = fsl_route::descriptor_from_manifest(
         test_a.clone(),
@@ -672,7 +657,7 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
             Engine::external(
                 descriptor,
                 BackendTool::new("handoff-test", "1").expect("a tool identity"),
-                Box::new(NeverCalledHandoffProvider(calls.clone())),
+                Box::new(provider.clone()),
             )
             .expect("the external test engine is admitted"),
         )
@@ -853,7 +838,7 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
             _ => panic!("unexpected temporal expectation at index {offset}"),
         }
     }
-    assert_eq!(calls.load(Ordering::Relaxed), 0, "no rejected handoff runs");
+    assert_eq!(provider.calls(), 0, "no rejected handoff runs");
 }
 
 /// FR-507-AC-9 evidence for the reader's remaining rows: an `item_kind` of

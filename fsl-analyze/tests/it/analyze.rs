@@ -14,9 +14,6 @@
 //! result by hand); its settlement from a replay result that reproduces the
 //! undefined value is.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-
 use filament_exact::{Cancel, CancelCause, Undefined};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::{
@@ -45,23 +42,10 @@ use crate::closure_certificate::world;
 use crate::counter::{clause_text, CONTRACT, UNLIMITED};
 use crate::derived_request::{counter_body, derived_deadlock};
 use crate::model_settle::{case, kernel_case, replay};
+use crate::provider_test_support::CountingUnknownProvider;
 
 fn index(at: usize) -> RequestIndex {
     RequestIndex::new(at)
-}
-
-#[derive(Debug)]
-struct CountingProvider(Arc<AtomicUsize>);
-
-impl fsl_analyze::provider::ExternalProvider for CountingProvider {
-    fn settle(
-        &self,
-        request: &fsl_analyze::provider::ProviderRequest<'_>,
-        _cancel: &Cancel,
-    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        vec![fsl_analyze::provider::ProviderVerdict::Unknown; request.items().len()]
-    }
 }
 
 fn en1() -> Engines {
@@ -236,7 +220,7 @@ fn analyze_refuses_an_undeclared_population_before_running_items() {
         },
     )
     .expect("the counting provider has a valid descriptor");
-    let calls = Arc::new(AtomicUsize::new(0));
+    let provider = CountingUnknownProvider::new();
     let mut engines = Engines::default();
     engines
         .with(
@@ -244,7 +228,7 @@ fn analyze_refuses_an_undeclared_population_before_running_items() {
                 descriptor,
                 fsl_analyze::analyze::BackendTool::new("binding-test", "1")
                     .expect("a tool identity"),
-                Box::new(CountingProvider(calls.clone())),
+                Box::new(provider.clone()),
             )
             .expect("the counting provider registers"),
         )
@@ -298,7 +282,7 @@ fn analyze_refuses_an_undeclared_population_before_running_items() {
     };
     assert_eq!(record.catalog.code(), "invalid_runtime_input");
     assert_eq!(record.catalog.cause(), "wrong-role-mapping");
-    assert_eq!(calls.load(Ordering::Relaxed), 0, "no engine starts");
+    assert_eq!(provider.calls(), 0, "no engine starts");
 }
 
 /// FR-281-AC-4 (TC-763 steps 1 and 2), over EN-1: the invariant item proves
