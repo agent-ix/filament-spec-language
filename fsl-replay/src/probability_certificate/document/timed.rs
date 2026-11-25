@@ -16,6 +16,7 @@ use ix_trace_rs::implements;
 mod elapsed;
 
 #[implements("FR-203-AC-30")]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

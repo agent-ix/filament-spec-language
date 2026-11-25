@@ -1333,6 +1333,7 @@ pub(super) fn check(
 /// "Long-run certificate wire shape and witnesses"); under a workload it must
 /// be empty.
 #[implements("FR-203-AC-32")]
+#[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn check_refutation(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

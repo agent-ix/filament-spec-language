@@ -1062,6 +1062,7 @@ pub fn replay_on_each_witness(
 
 /// [`replay_on_each_witness`] using the item's shared work allowance.
 #[implements("FR-203-AC-32")]
+#[allow(clippy::too_many_arguments)]
 pub fn replay_on_each_witness_with_work_scope(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

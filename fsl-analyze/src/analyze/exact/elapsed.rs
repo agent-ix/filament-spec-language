@@ -311,7 +311,7 @@ fn refute(request: Refutation<'_>) -> EngineReport {
         cancel,
         subject,
         tamper_witness,
-        &work,
+        work,
     )
 }
 

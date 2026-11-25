@@ -2101,6 +2101,7 @@ pub fn check_probability_certificate_document_as(
 
 /// Check a document while debiting the item's shared work allowance.
 #[implements("FR-203-AC-30")]
+#[allow(clippy::too_many_arguments)]
 pub fn check_probability_certificate_document_as_with_work_scope(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
