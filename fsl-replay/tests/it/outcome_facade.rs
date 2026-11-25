@@ -5,7 +5,8 @@
 use filament_semantic_value::catalog::Category;
 use fsl_foundation::BackendId;
 use fsl_replay::{
-    ItemLabel, Operation, OutcomeDocument, OutcomeItem, OutcomeStage, RequestIndex, TerminalRecord,
+    read_plugin_basis, ItemLabel, Operation, OutcomeDocument, OutcomeItem, OutcomeStage,
+    RequestIndex, TerminalRecord,
 };
 use ix_trace_rs::trace;
 
@@ -42,6 +43,28 @@ fn a_driver_writes_a_prove_document_through_the_facade() {
     assert_ne!(ItemLabel::Proved, ItemLabel::Failed);
 }
 
+/// TC-774 partial: the typed plugin record's JSON keeps its trusted label.
+/// The separate FR-298 rendering clauses are owned by fsl-inspect.
+#[trace("TC-774")]
+#[test]
+fn plugin_proof_json_keeps_the_trusted_certification() {
+    let backend = BackendId::new("acme-prover");
+    let basis = read_plugin_basis(&serde_json::json!({"type": "exhaustive"}))
+        .expect("exhaustive is an admitted plugin basis");
+    let record = TerminalRecord::from_plugin_proof(RequestIndex::new(0), backend, basis)
+        .expect("plugin proof settles as trusted");
+    let document = OutcomeDocument::settled(
+        Operation::Prove,
+        Some(OutcomeStage::S8),
+        vec![OutcomeItem::from_terminal(&record)],
+    );
+    let written: serde_json::Value =
+        serde_json::from_slice(&document.to_bytes().expect("encodes")).expect("is JSON");
+
+    assert_eq!(written["items"][0]["result"], "proved");
+    assert_eq!(written["items"][0]["certification"], "trusted");
+}
+
 // ---- QSL-2063: determinism of the outcome document and order-free folds -----
 
 /// QSL-2063. A call request is a function with no parameters whose body folds a
@@ -59,10 +82,10 @@ mod determinism {
     use filament_exact::Cancel;
     use fsl_bench::prop;
     use fsl_foundation::SourceIdentity;
-    use fsl_replay::OutcomeDocument;
     use fsl_replay::spine::{
-        self, Call, CallOutcome, CallValue, DependencyInput, SpineLimits, default_accounting,
+        self, default_accounting, Call, CallOutcome, CallValue, DependencyInput, SpineLimits,
     };
+    use fsl_replay::OutcomeDocument;
     use proptest::prelude::*;
 
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";

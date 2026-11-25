@@ -25,7 +25,7 @@ use fsl_eval::simulation::model::{
     operation_identity_text, AbstractApplication, Judgement, ModelFinding, ModelSimState,
     ModelSystem, Rejection, ResolvedStep, RowReading,
 };
-use fsl_eval::simulation::protocol::ProtocolRefusal;
+use fsl_eval::simulation::protocol::{ProtocolRefusal, StepKind};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_semantics::check::StepClass;
 use fsl_semantics::model::state::ModelState;
@@ -570,7 +570,8 @@ pub fn check_protocol_step(
         };
         count = count.saturating_add(u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX));
         for (transition, candidate) in expansion.successors {
-            let Some(application) = transition.application() else {
+            // FR-148: an operation's label is a step that applies it.
+            let Some(application) = transition.applied_application() else {
                 continue;
             };
             if !accepted.contains(application) {
@@ -1253,7 +1254,6 @@ pub(crate) fn protocol_class(
     system: &AbstractProtocolSystem<'_>,
     transition: &fsl_eval::simulation::protocol::ProtocolTransition,
 ) -> Option<String> {
-    use fsl_eval::simulation::protocol::StepKind;
     let protocol = &system.protocol().name;
     let member = transition
         .node()
@@ -1272,11 +1272,12 @@ pub(crate) fn protocol_class(
         }
         StepKind::Fork => format!("fork {protocol}::{}", member?),
         StepKind::Join => format!("join {protocol}::{}", member?),
-        StepKind::CAttempt => format!("{protocol}::{}", transition.template()?),
-        StepKind::CEnd => format!("cend {protocol}::{}", transition.template()?),
-        StepKind::CFail => format!("cfail {protocol}::{}", transition.template()?),
-        StepKind::CTimeout => format!("ctimeout {protocol}::{}", transition.template()?),
-        StepKind::CExpire => format!("cexpire {protocol}::{}", transition.template()?),
+        // A transition's template name already carries its protocol.
+        StepKind::CAttempt => transition.template()?.to_owned(),
+        StepKind::CEnd => format!("cend {}", transition.template()?),
+        StepKind::CFail => format!("cfail {}", transition.template()?),
+        StepKind::CTimeout => format!("ctimeout {}", transition.template()?),
+        StepKind::CExpire => format!("cexpire {}", transition.template()?),
         StepKind::Duplicate => format!("duplicate {protocol}::{}", transition.channel_queue()?.0),
         StepKind::Lose => format!("lose {protocol}::{}", transition.channel_queue()?.0),
         StepKind::Spawn => format!("spawn {protocol}::{}", transition.role_instance()?.0),

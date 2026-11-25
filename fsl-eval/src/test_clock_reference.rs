@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A canonical clock-place reference value for the unit tests of the
 //! `ClockReference` arms (FR-230-AC-71).
 

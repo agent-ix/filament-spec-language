@@ -33,7 +33,7 @@ mod protocol;
 mod rows;
 mod step_label;
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::wire_id::structural_id;
@@ -47,7 +47,7 @@ use filament_exact::{
     IntegerInterval, NodeKey, Presence, ValueType,
 };
 use filament_semantic_value::catalog::InternalFault;
-use filament_semantic_value::declaration::TypeEnvironment;
+use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::fairness::{
     FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation,
 };
@@ -71,18 +71,18 @@ pub(crate) use rows::{
     KeyedFairnessRow, KeyedHistoryRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows,
     KeyedStepRow, KeyedStepTarget,
 };
-pub use step_label::{LabelStep, RowObservation, StepLabel, observation};
+pub use step_label::{observation, LabelStep, RowObservation, StepLabel};
 
 use super::check::{
-    PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer, bind_parameters,
+    bind_parameters, PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer,
 };
-use super::ir::{CheckedBody, CheckedNode, static_integer_range};
+use super::ir::{static_integer_range, CheckedBody, CheckedNode};
 use super::lowering::AdmittedModel;
 use super::observation::Observations;
 use super::profile::TemporalProfile;
 use super::protocol_clause::ProtocolNodeId;
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{ClauseDeclarations, ClauseOperation, PopulationDomain, observation_of};
+use super::state_clause::{observation_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
 use crate::model::domain_package::{DomainPackageRef, PopulationRecord};
@@ -114,7 +114,8 @@ pub enum RowClass {
     /// `timeout` or `finish` node, an attempt node no operation row covers,
     /// or a `parallel`'s `fork` or `join` (FR-136).
     Node,
-    /// A `step` row for a compensation template's `cattempt` or `cend`.
+    /// A `step` row for a compensation template's `cattempt`, `cend`,
+    /// `cfail`, `ctimeout` or `cexpire`.
     Template,
     /// A `step` row for a channel's `duplicate` or `lose`.
     Channel,
@@ -310,6 +311,14 @@ pub enum RefinementCause {
         /// The argument's type.
         actual: Box<ValueType>,
     },
+    /// A field row's nested record, tuple or union structure does not pair
+    /// with the abstract field's structure. The path is relative to the row
+    /// field, with tuple positions written as `[n]` (FR-135-AC-17..19).
+    CompositeTypeMismatch {
+        /// The first mismatched semantic component, such as `box.target`,
+        /// `[2]` or `holder.variant`.
+        path: String,
+    },
     /// A row's expression or type refused.
     Check(CheckCause),
 }
@@ -348,7 +357,8 @@ impl RefinementCause {
             | Self::ClockRead => Code::UnsupportedConstruct,
             Self::PopulationBound { .. }
             | Self::NodeArgumentCount { .. }
-            | Self::NodeArgumentType { .. } => Code::IllTyped,
+            | Self::NodeArgumentType { .. }
+            | Self::CompositeTypeMismatch { .. } => Code::IllTyped,
             Self::Check(cause) => cause.code(),
         }
     }
@@ -371,7 +381,9 @@ impl RefinementCause {
             Self::Unsupported { .. } => Some("not-yet-implemented"),
             Self::UnsupportedRowForm { .. } | Self::ClockRead => Some("expression-form"),
             Self::AbstractRelationships { .. } => Some("declaration-form"),
-            Self::PopulationBound { .. } | Self::NodeArgumentType { .. } => Some("type-mismatch"),
+            Self::PopulationBound { .. }
+            | Self::NodeArgumentType { .. }
+            | Self::CompositeTypeMismatch { .. } => Some("type-mismatch"),
             Self::NodeArgumentCount { .. } => Some("operator-ineligible"),
             Self::Check(cause) => cause.cause(),
         }
@@ -1134,7 +1146,7 @@ fn leaf_checked_term(
     use crate::check::node_key::{LeafTerm, LiteralValue, NodeRef};
     use filament_contract_model::CheckedTerm;
     use serde::de::Error as _;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
     let admitted = |node: &NodeRef| {
         node.admitted().map(structural_id).ok_or_else(|| {
             RefinementV2EncodingError::Body(serde_json::Error::custom(
@@ -1287,6 +1299,13 @@ pub enum StepClass {
     CompensationAttempt(String),
     /// A compensation template's `cend`.
     CompensationEnd(String),
+    /// A compensation template's `cfail`: a failed attempt.
+    CompensationFail(String),
+    /// A compensation template's `ctimeout`: a timed-out attempt.
+    CompensationTimeout(String),
+    /// A compensation template's `cexpire`: its thread ends with no recovery
+    /// evaluated.
+    CompensationExpire(String),
     /// A protocol node's step.
     ProtocolNode {
         /// Which step of the node.
@@ -2217,6 +2236,205 @@ fn conforms(types: &TypeEnvironment, actual: &ValueType, required: &ValueType) -
             types.composite_conforms(sub.clone(), sup.clone())
         }
         _ => actual == required,
+    }
+}
+
+/// Whether `actual` supplies `required`, a type as the abstract side declares
+/// it, after the object rows lift its references.
+fn conforms_lifted(
+    types: &TypeEnvironment,
+    lifting: &BTreeMap<EffectiveId, EffectiveId>,
+    actual: &ValueType,
+    required: &ValueType,
+) -> bool {
+    lifted_mismatch(types, lifting, actual, required).is_none()
+}
+
+/// The first semantic component, in required-side declaration order, at which
+/// `actual` stops supplying `required`. The path is empty when the value
+/// itself does not supply it, and `None` means it does.
+fn lifted_mismatch(
+    types: &TypeEnvironment,
+    lifting: &BTreeMap<EffectiveId, EffectiveId>,
+    actual: &ValueType,
+    required: &ValueType,
+) -> Option<String> {
+    LiftedPairing {
+        types,
+        lifting,
+        paired: BTreeSet::new(),
+    }
+    .mismatch(actual, required)
+}
+
+/// One walk pairing a concrete type with an abstract one.
+struct LiftedPairing<'a> {
+    types: &'a TypeEnvironment,
+    lifting: &'a BTreeMap<EffectiveId, EffectiveId>,
+    /// Composite pairs already entered. A recursive declaration reaches its
+    /// own pair again, which holds unless another component of it fails.
+    paired: BTreeSet<(NodeKey, NodeKey)>,
+}
+
+impl LiftedPairing<'_> {
+    /// [`lifted_mismatch`] at one position. A reference supplies an abstract
+    /// one only through the object row that maps it, even when both sides
+    /// share the object type.
+    fn mismatch(&mut self, actual: &ValueType, required: &ValueType) -> Option<String> {
+        match (actual, required) {
+            (ValueType::Reference(actual), ValueType::Reference(required)) => (!self
+                .lifting
+                .get(required)
+                .is_some_and(|mapped| self.types.conforms(actual.clone(), mapped.clone())))
+            .then(String::new),
+            (ValueType::Option(actual), ValueType::Option(required)) => {
+                self.mismatch(actual, required)
+            }
+            (ValueType::Collection(actual), ValueType::Collection(required)) => {
+                if actual.kind() != required.kind() || actual.bound() != required.bound() {
+                    return Some("[0]".to_owned());
+                }
+                self.mismatch(actual.element(), required.element())
+                    .map(|rest| component_path("[0]", &rest))
+            }
+            (ValueType::Map(actual), ValueType::Map(required)) => {
+                if actual.bound() != required.bound() {
+                    return Some("[key]".to_owned());
+                }
+                if let Some(rest) = self.mismatch(actual.key(), required.key()) {
+                    return Some(component_path("[key]", &rest));
+                }
+                self.mismatch(actual.values(), required.values())
+                    .map(|rest| component_path("[value]", &rest))
+            }
+            (ValueType::Composite(actual), ValueType::Composite(required)) => {
+                self.composite_mismatch(actual, required)
+            }
+            _ => (!conforms(self.types, actual, required)).then(String::new),
+        }
+    }
+
+    /// Composite declarations pair by their declared structure, because the
+    /// abstract and concrete sides have separate keys. A declaration both
+    /// sides share is walked too: its references still need object rows.
+    fn composite_mismatch(&mut self, actual: &NodeKey, required: &NodeKey) -> Option<String> {
+        if !self.paired.insert((actual.clone(), required.clone())) {
+            return None;
+        }
+        let types = self.types;
+        let (Some(actual), Some(required)) = (
+            types.composite(actual.clone()),
+            types.composite(required.clone()),
+        ) else {
+            return Some(String::new());
+        };
+        match (actual.shape(), required.shape()) {
+            (CompositeShape::Record(actual), CompositeShape::Record(required)) => {
+                for field in required {
+                    let Some(paired) = actual.iter().find(|paired| paired.name() == field.name())
+                    else {
+                        return Some(field.name().to_owned());
+                    };
+                    if paired.presence() != field.presence() {
+                        return Some(field.name().to_owned());
+                    }
+                    if let Some(rest) = self.mismatch(paired.value_type(), field.value_type()) {
+                        return Some(component_path(field.name(), &rest));
+                    }
+                }
+                actual
+                    .iter()
+                    .find(|field| {
+                        !required
+                            .iter()
+                            .any(|required| required.name() == field.name())
+                    })
+                    .map(|field| field.name().to_owned())
+            }
+            (CompositeShape::Tuple(actual), CompositeShape::Tuple(required)) => {
+                for (index, (paired, position)) in actual.iter().zip(required).enumerate() {
+                    if let Some(rest) = self.mismatch(paired, position) {
+                        return Some(component_path(&format!("[{index}]"), &rest));
+                    }
+                }
+                (actual.len() != required.len())
+                    .then(|| format!("[{}]", actual.len().min(required.len())))
+            }
+            (CompositeShape::Union(actual), CompositeShape::Union(required)) => {
+                for member in required {
+                    let Some(paired) = actual
+                        .iter()
+                        .find(|paired| paired.identifier() == member.identifier())
+                    else {
+                        return Some("variant".to_owned());
+                    };
+                    if paired.positions().len() != member.positions().len() {
+                        return Some("variant".to_owned());
+                    }
+                    let positions = paired.positions().iter().zip(member.positions());
+                    for (index, (paired, position)) in positions.enumerate() {
+                        if let Some(rest) = self.mismatch(paired, position) {
+                            return Some(component_path(&format!("variant[{index}]"), &rest));
+                        }
+                    }
+                }
+                (actual.len() != required.len()).then(|| "variant".to_owned())
+            }
+            _ => Some(String::new()),
+        }
+    }
+}
+
+/// `rest` under the component `head`; an index follows its component directly.
+fn component_path(head: &str, rest: &str) -> String {
+    match rest {
+        "" => head.to_owned(),
+        index if index.starts_with('[') => format!("{head}{index}"),
+        member => format!("{head}.{member}"),
+    }
+}
+
+fn requires_composite_pairing(value_type: &ValueType) -> bool {
+    match value_type {
+        ValueType::Composite(_) => true,
+        ValueType::Option(payload) => requires_composite_pairing(payload),
+        ValueType::Collection(collection) => requires_composite_pairing(collection.element()),
+        ValueType::Map(map) => {
+            requires_composite_pairing(map.key()) || requires_composite_pairing(map.values())
+        }
+        _ => false,
+    }
+}
+
+/// Whether an object row maps every reference `value_type` holds outside a
+/// composite; [`lifted_mismatch`] checks those inside one.
+fn references_mapped(lifting: &BTreeMap<EffectiveId, EffectiveId>, value_type: &ValueType) -> bool {
+    match value_type {
+        ValueType::Reference(object) => lifting.contains_key(object),
+        ValueType::Option(payload) => references_mapped(lifting, payload),
+        ValueType::Collection(collection) => references_mapped(lifting, collection.element()),
+        ValueType::Map(map) => {
+            references_mapped(lifting, map.key()) && references_mapped(lifting, map.values())
+        }
+        ValueType::Boolean
+        | ValueType::Integer
+        | ValueType::Int(_)
+        | ValueType::Rational(_)
+        | ValueType::Decimal(_)
+        | ValueType::Float(_)
+        | ValueType::Quantity(_)
+        | ValueType::BoundedQuantity(_)
+        | ValueType::CarriedQuantity(_)
+        | ValueType::Text(_)
+        | ValueType::String
+        | ValueType::Uuid
+        | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
+        | ValueType::Enum(_)
+        | ValueType::Composite(_)
+        | ValueType::ClockReference
+        | ValueType::Population(_) => true,
     }
 }
 
@@ -3315,14 +3533,11 @@ impl<'c, 'a> Checker<'c, 'a> {
             }
             defined.insert(written, field.span);
             let declared = attribute.field();
-            let required = lift(
-                &self.lifting,
-                &if declared.presence() == Presence::Optional {
-                    ValueType::option(declared.value_type().clone())
-                } else {
-                    declared.value_type().clone()
-                },
-            );
+            let required = if declared.presence() == Presence::Optional {
+                ValueType::option(declared.value_type().clone())
+            } else {
+                declared.value_type().clone()
+            };
             let expression = self.check_row(
                 &field.value,
                 &required,
@@ -3386,8 +3601,9 @@ impl<'c, 'a> Checker<'c, 'a> {
         self.findings.fault(invariant);
     }
 
-    /// Types `expression` where `required` is expected, over `context`, and
-    /// records its refusal at the expression's span.
+    /// Types `expression` over `context` for a row that defines `required`, a
+    /// type as declared before reference lifting, and records its refusal at
+    /// the expression's span.
     fn check_row(
         &mut self,
         expression: &ExpressionForm,
@@ -3473,20 +3689,57 @@ impl<'c, 'a> Checker<'c, 'a> {
             // One rule for every row: the expression's own type conforms to
             // the type it defines (ADR-016 SC-2), never a range-checked
             // coercion into it.
-            let body = typer.infer(&expression.expression, required, &location)?;
             let types = declarations.scope.types();
-            let uses = match required {
+            // The ordinary typer compares composite declaration identity and
+            // cannot see the cross-model component pairing. Infer rows that
+            // carry a lifted reference without that expected type, then apply
+            // the refinement's recursive lifted conformance rule below.
+            let lifted = required.map(|required| lift(&self.lifting, required));
+            let type_context = lifted
+                .as_ref()
+                .filter(|lifted| !requires_composite_pairing(lifted));
+            let body = typer.infer(&expression.expression, type_context, &location)?;
+            let uses = match required.zip(lifted.as_ref()) {
                 None => Vec::new(),
-                Some(required)
+                Some((required, _)) if requires_composite_pairing(required) => {
+                    if let Some(component) =
+                        lifted_mismatch(types, &self.lifting, body.root().value_type(), required)
+                    {
+                        let field = label.rsplit('.').next().unwrap_or(&label);
+                        let path = if component.starts_with('[') {
+                            component
+                        } else {
+                            component_path(field, &component)
+                        };
+                        return Err(CheckRefusal {
+                            location: location.clone(),
+                            cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
+                                refinement: self.findings.refinement.clone(),
+                                span: root_span,
+                                cause: RefinementCause::CompositeTypeMismatch { path },
+                            }))),
+                        });
+                    }
+                    Vec::new()
+                }
+                // Lifting leaves an unmapped reference as declared, so an
+                // expression over a shared object type would conform to it.
+                Some((required, _)) if !references_mapped(&self.lifting, required) => {
+                    return Err(CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::TypeMismatch,
+                    ));
+                }
+                Some((_, lifted))
                     if range_agnostic
-                        && relaxed_conforms(types, body.root().value_type(), required) =>
+                        && relaxed_conforms(types, body.root().value_type(), lifted) =>
                 {
                     Vec::new()
                 }
-                Some(required) => population_uses(
+                Some((_, lifted)) => population_uses(
                     types,
                     &body,
-                    required,
+                    lifted,
                     (&label, &populations),
                     expression
                         .spans
@@ -3923,7 +4176,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                     let field = record.as_ref().and_then(|record| record.get(position));
                     if let Some(field) = field {
                         let actual = row.body().value_type();
-                        if !conforms(self.types(), actual, &lift(&self.lifting, field)) {
+                        if !conforms_lifted(self.types(), &self.lifting, actual, field) {
                             let cause = RefinementCause::NodeArgumentType {
                                 node: node.name.clone(),
                                 position,
@@ -3996,7 +4249,7 @@ impl<'c, 'a> Checker<'c, 'a> {
             range_agnostic: false,
         };
         let mut complete = true;
-        let receiver_type = lift(&self.lifting, &ValueType::Reference(target_type.id.clone()));
+        let receiver_type = ValueType::Reference(target_type.id.clone());
         let receiver = match &arguments[0] {
             ArgumentForm::Expression(expression) => {
                 self.check_row(expression, &receiver_type, context(&context_parameters), cx)
@@ -4013,8 +4266,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                     open.push(lift(&self.lifting, declared));
                 }
                 ArgumentForm::Expression(expression) => {
-                    let required = lift(&self.lifting, declared);
-                    match self.check_row(expression, &required, context(&context_parameters), cx) {
+                    match self.check_row(expression, declared, context(&context_parameters), cx) {
                         Some(row) => checked.push(Some(row)),
                         None => complete = false,
                     }
@@ -4023,7 +4275,7 @@ impl<'c, 'a> Checker<'c, 'a> {
         }
         let binds_result = match (concrete.result(), abstract_operation.result()) {
             (Some(actual), Some(required))
-                if conforms(types, actual, &lift(&self.lifting, required)) =>
+                if conforms_lifted(types, &self.lifting, actual, required) =>
             {
                 true
             }
@@ -4156,12 +4408,12 @@ fn refuse_with(location: &Location, cause: CheckCause) -> CheckRefusal {
     }
 }
 
-/// The population-size-dependent bounds of a row `body` used as `required`
-/// (FR-139): empty when the row's type already conforms. S3 checks every
-/// typing rule that does not depend on the universe size `n` and records the
-/// bound that does. `Err(None)` is a mismatch that holds whatever `n` is;
-/// `Err(Some(_))` is a row whose bound depends on `n` through a form S3 does
-/// not read yet.
+/// The population-size-dependent bounds of a row `body` used as `required`,
+/// a lifted type (FR-139): empty when the row's type already conforms. S3
+/// checks every typing rule that does not depend on the universe size `n` and
+/// records the bound that does. `Err(None)` is a mismatch that holds whatever
+/// `n` is; `Err(Some(_))` is a row whose bound depends on `n` through a form S3
+/// does not read yet.
 fn population_uses(
     types: &TypeEnvironment,
     body: &CheckedBody,
@@ -4368,10 +4620,11 @@ pub(crate) fn not_emitted(name: String, span: Span) -> CheckRefusal {
 #[cfg(test)]
 mod tests {
     use filament_exact::{
-        CollectionKind, CollectionType, NodeKey, OriginalDeclarationKey, PathSegment, Presence,
+        CollectionKind, CollectionType, Identifier, NodeKey, OriginalDeclarationKey, PathSegment,
+        Presence,
     };
     use filament_semantic_value::declaration::{
-        CompositeDeclaration, CompositeShape, FieldDeclaration,
+        CompositeDeclaration, CompositeShape, FieldDeclaration, ObjectTypeDeclaration,
     };
     use ix_trace_rs::trace;
 
@@ -4482,5 +4735,203 @@ mod tests {
             lift(&lifting, &keyed(reference(1), reference(1))),
             keyed(reference(2), reference(2))
         );
+    }
+
+    /// FR-135-AC-13..19: structural pairs lift nested references by field
+    /// name, tuple position, or active union tag, and reject each mismatch.
+    #[trace(
+        "TC-540",
+        "FR-135-AC-13",
+        "FR-135-AC-14",
+        "FR-135-AC-15",
+        "FR-135-AC-16",
+        "FR-135-AC-17",
+        "FR-135-AC-18",
+        "FR-135-AC-19"
+    )]
+    #[test]
+    fn lifted_composites_pair_components_by_their_declared_structure() {
+        let [record_actual, record_required, record_mismatch, tuple_actual, tuple_required, tuple_mismatch, union_actual, union_required, union_mismatch, parcel_actual, parcel_required] =
+            (1..=11)
+                .map(node)
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("eleven keys");
+        let abstract_type = effective(1);
+        let concrete_type = effective(2);
+        let lifting = BTreeMap::from([(abstract_type, concrete_type)]);
+        let reference = |target| ValueType::Reference(target);
+        let record = |key, field: &str, target| {
+            CompositeDeclaration::new(
+                key,
+                "Box",
+                CompositeShape::Record(vec![FieldDeclaration::new(
+                    field,
+                    reference(target),
+                    Presence::Required,
+                )]),
+            )
+        };
+        let tuple = |key, positions| {
+            CompositeDeclaration::new(key, "Pair", CompositeShape::Tuple(positions))
+        };
+        let union = |key, tag: &str, target| {
+            CompositeDeclaration::new(
+                key,
+                "Holder",
+                CompositeShape::Union(vec![
+                    filament_semantic_value::declaration::UnionMemberDeclaration::resolved(
+                        Identifier::new(tag).expect("a union tag"),
+                        vec![reference(target)],
+                    ),
+                ]),
+            )
+        };
+        let parcel = |key, target| {
+            let owners = ValueType::collection(CollectionType::new(
+                CollectionKind::Sequence,
+                ValueType::option(reference(target)),
+                None,
+            ));
+            CompositeDeclaration::new(
+                key,
+                "Parcel",
+                CompositeShape::Record(vec![FieldDeclaration::new(
+                    "owners",
+                    owners,
+                    Presence::Required,
+                )]),
+            )
+        };
+        let types = TypeEnvironment::new(
+            [
+                record(record_actual.clone(), "target", effective(2)),
+                record(record_required.clone(), "target", effective(1)),
+                record(record_mismatch.clone(), "link", effective(2)),
+                tuple(
+                    tuple_actual.clone(),
+                    vec![reference(effective(2)), ValueType::Boolean],
+                ),
+                tuple(
+                    tuple_required.clone(),
+                    vec![reference(effective(1)), ValueType::Boolean],
+                ),
+                tuple(
+                    tuple_mismatch.clone(),
+                    vec![
+                        reference(effective(2)),
+                        ValueType::Boolean,
+                        ValueType::Boolean,
+                    ],
+                ),
+                union(union_actual.clone(), "Has", effective(2)),
+                union(union_required.clone(), "Has", effective(1)),
+                union(union_mismatch.clone(), "Points", effective(2)),
+                parcel(parcel_actual.clone(), effective(2)),
+                parcel(parcel_required.clone(), effective(1)),
+            ],
+            [
+                ObjectTypeDeclaration::new(effective(1), "Queue", vec![]),
+                ObjectTypeDeclaration::new(effective(2), "Ring", vec![]),
+            ],
+        )
+        .expect("the composite declarations admit");
+        let composite = |key| ValueType::Composite(key);
+
+        assert!(conforms_lifted(
+            &types,
+            &lifting,
+            &composite(record_actual),
+            &composite(record_required.clone()),
+        ));
+        assert!(!conforms_lifted(
+            &types,
+            &lifting,
+            &composite(record_mismatch),
+            &composite(record_required.clone()),
+        ));
+        assert!(conforms_lifted(
+            &types,
+            &lifting,
+            &composite(tuple_actual),
+            &composite(tuple_required.clone()),
+        ));
+        assert!(!conforms_lifted(
+            &types,
+            &lifting,
+            &composite(tuple_mismatch),
+            &composite(tuple_required.clone()),
+        ));
+        assert!(conforms_lifted(
+            &types,
+            &lifting,
+            &composite(union_actual),
+            &composite(union_required.clone()),
+        ));
+        assert!(!conforms_lifted(
+            &types,
+            &lifting,
+            &composite(union_mismatch),
+            &composite(union_required.clone()),
+        ));
+        assert!(conforms_lifted(
+            &types,
+            &lifting,
+            &composite(parcel_actual),
+            &composite(parcel_required),
+        ));
+    }
+
+    /// A recursive record pairs through its own recursion and still fails at a
+    /// component declared after the recursive one.
+    #[test]
+    fn a_recursive_composite_pairs_through_its_own_cycle() {
+        let [actual, required, shared, extra] = [1, 2, 3, 4].map(node);
+        let chain = |key: &NodeKey, owner: u8, last: ValueType| {
+            CompositeDeclaration::new(
+                key.clone(),
+                "Chain",
+                CompositeShape::Record(vec![
+                    FieldDeclaration::new(
+                        "next",
+                        ValueType::Composite(key.clone()),
+                        Presence::Optional,
+                    ),
+                    FieldDeclaration::new(
+                        "owner",
+                        ValueType::Reference(effective(owner)),
+                        Presence::Required,
+                    ),
+                    FieldDeclaration::new("last", last, Presence::Required),
+                ]),
+            )
+        };
+        let types = TypeEnvironment::new(
+            [
+                chain(&actual, 2, ValueType::Boolean),
+                chain(&required, 1, ValueType::Boolean),
+                chain(&shared, 3, ValueType::Boolean),
+                chain(&extra, 2, ValueType::Integer),
+            ],
+            [
+                ObjectTypeDeclaration::new(effective(1), "Queue", vec![]),
+                ObjectTypeDeclaration::new(effective(2), "Ring", vec![]),
+                ObjectTypeDeclaration::new(effective(3), "Ghost", vec![]),
+            ],
+        )
+        .expect("the recursive records admit");
+        let lifting = BTreeMap::from([(effective(1), effective(2))]);
+        let mismatch = |actual: &NodeKey, required: &NodeKey| {
+            lifted_mismatch(
+                &types,
+                &lifting,
+                &ValueType::Composite(actual.clone()),
+                &ValueType::Composite(required.clone()),
+            )
+        };
+
+        assert_eq!(mismatch(&actual, &required), None);
+        assert_eq!(mismatch(&extra, &required), Some("last".to_owned()));
+        assert_eq!(mismatch(&shared, &shared), Some("owner".to_owned()));
     }
 }
