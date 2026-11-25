@@ -27,3 +27,9 @@ Coverage is close. One test-intent gap remains on the admitting half of AC-27.
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | The admitting half of FR-383-AC-27 ("A package whose edge, dependency and final path operand all resolve to the new target admits") is tested with a fresh emission over `M::Other`. It is not tested by retargeting the edge, the dependency and the row entry at slot `k` together on the `M::Node` package, which is the change FSpec FR-322-AC-538 describes. The fresh package also changes the `over` parameter's type and the clause body, so it does not isolate agreement of the owner key. A reader that admitted any package whose three resolve together, and refused only the mutated one, would pass either way. The minimal mutation would also catch a reader that compares more than the operand. Fix: on the stale package, also set `operand_rows[clause][k]` to Other's index and assert `AdmittedV2`. | fsl-package/tests/checked_term_protocol_rows.rs:398-411 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 94c36876: the stale package gets its row entry at slot `k`, and every index-form clause id the document holds, moved to Other's index. `assert_owner_operand_names(&moved, "Other")` then asserts `AdmittedV2`. That is the minimal three-way agreement FR-322-AC-538 describes; the fresh `M::Other` emission stays as a second check. |

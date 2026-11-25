@@ -11099,6 +11099,7 @@ fn write_index_segments(
     // Retain the encoder's original operand keys. Rebuilding an independent
     // key table makes every later source-key equality walk its full depth.
     let mut keys = ids.key_reader();
+    let invariant = |_| EmitRefusal::SourceMapInvariant;
     let graph_keys = nodes
         .iter()
         .map(|node| keys.key(&node.node_id).map_err(invariant))
