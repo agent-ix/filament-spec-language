@@ -36,7 +36,9 @@ fn native_with_identity(
     cancel: &Cancel,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<bool, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    // A probability item's system hands out meters under the item's one work
+    // allowance, so this reading spends what the item has left (FR-203).
+    let mut meter = system.fresh_meter().with_cancel(cancel.clone());
     let mut storage = 0;
     let graph_limits = ProbabilityDocumentLimits {
         bytes: 0,
