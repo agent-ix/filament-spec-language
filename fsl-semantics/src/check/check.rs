@@ -3112,6 +3112,7 @@ fn is_text_constructor(callee: &str) -> bool {
 }
 
 /// Whether an expression takes its type from its context.
+#[implements("FSpec-FR-143-AC-21")]
 fn contextual(mut expression: ExprRef<'_>) -> bool {
     // `Some(e)` takes its payload's type from context exactly when `e` does
     // (FSpec FR-143-AC-21: `Some(3) = y` against an `Option<Int[0, 9]>`).
@@ -5690,6 +5691,7 @@ impl<'a> Typer<'a> {
     /// fields and selectors, and the steps with `field` and its slot name a
     /// clock place of the unit. The node is typed as the collection of clock
     /// references, as [`Self::clock_collection_field`] types an object's own.
+    #[implements("FR-230-AC-67")]
     fn record_clock_collection(
         &mut self,
         operand: &Node,
