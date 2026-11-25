@@ -130,6 +130,7 @@ mod checked_handoff_realizability;
 mod checked_views;
 mod compound_quantity_types;
 mod fairness_item_path;
+mod hybrid_class_recursion;
 mod hybrid_request_items;
 mod layer_crate_reexports;
 mod lifecycle_boundaries;
