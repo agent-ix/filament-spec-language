@@ -10,6 +10,7 @@ use ix_trace_rs::trace;
 
 /// The shared grammar's published path inside the standard's pinned package.
 const SHARED_GRAMMAR: &str = "proposals/filament-v1/shared-grammar.md";
+const FR_503: &str = "spec/functional/source-package/FR-503-publish-the-grammar-as-a-comparable-production-inventory.md";
 
 /// The bytes of a standard file, read only through the pinned
 /// `filament_specification` crate (FR-760, FSpec FR-660): no environment
@@ -52,6 +53,31 @@ fn shared_grammar_productions() -> BTreeSet<String> {
         }
     }
     names
+}
+
+/// The lexical terminals allowed by FSpec FR-503-AC-2.
+fn shared_grammar_lexical_terminals() -> BTreeSet<String> {
+    let text = published_file(FR_503)
+        .unwrap_or_else(|| panic!("{FR_503}: not published by the pinned standard"));
+    let criterion = text
+        .lines()
+        .find(|line| line.starts_with("| FR-503-AC-2 |"))
+        .unwrap_or_else(|| panic!("{FR_503}: FR-503-AC-2 is missing"));
+    let names = criterion
+        .split_once("or is one of")
+        .and_then(|(_, rest)| rest.split_once("that the lexical contract defines"))
+        .map(|(names, _)| names)
+        .unwrap_or_else(|| panic!("{FR_503}: FR-503-AC-2 lexical terminal list is missing"));
+    let terminals: BTreeSet<String> = names
+        .split('`')
+        .enumerate()
+        .filter_map(|(index, name)| (index % 2 == 1).then(|| name.to_owned()))
+        .collect();
+    assert!(
+        !terminals.is_empty(),
+        "{FR_503}: FR-503-AC-2 lexical terminal list is empty"
+    );
+    terminals
 }
 
 /// The parser's production names.
@@ -852,16 +878,9 @@ fn the_language_forms_recorded_in_the_standard_are_mapped() {
 #[trace("FSpec-TC-1010", "FSpec-FR-503-AC-1", "FSpec-FR-503-AC-2")]
 #[test]
 fn every_name_the_shared_grammar_uses_is_defined() {
-    const TERMINALS: [&str; 6] = [
-        "ident",
-        "member-name",
-        "string",
-        "uint",
-        "decimal-literal",
-        "EOF",
-    ];
     let text = published_file(SHARED_GRAMMAR).expect("published");
     let defined = shared_grammar_productions();
+    let terminals = shared_grammar_lexical_terminals();
     assert!(!defined.is_empty());
     let mut in_ebnf = false;
     let mut undefined = Vec::new();
@@ -893,7 +912,7 @@ fn every_name_the_shared_grammar_uses_is_defined() {
                         .next()
                         .is_some_and(|f| f.is_ascii_lowercase() || f == 'E')
                     && !defined.contains(&word)
-                    && !TERMINALS.contains(&word.as_str())
+                    && !terminals.contains(&word)
                 {
                     undefined.push(format!("line {}: `{word}`", number + 1));
                 }
