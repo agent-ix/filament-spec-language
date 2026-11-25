@@ -31,6 +31,7 @@ mod quantity_scaling;
 mod reaches_optional_reference;
 mod request_diagnostics;
 mod request_overrides;
+mod review_process_extraction;
 mod revision_validation;
 mod run_requirement_items;
 mod run_text_witness;
