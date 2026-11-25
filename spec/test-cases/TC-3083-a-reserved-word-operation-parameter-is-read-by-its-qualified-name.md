@@ -57,7 +57,9 @@ function-parameter shadowing case. Scope: FR-104-AC-18 and FR-016-AC-11.
 12. Check the function
     `function f using v(x: Integer, s: Sequence<Integer>[0,3]): Boolean pure { forall(x in s: x = 0) }`.
 
-Tag the tests `#[trace("TC-3083", "FR-104-AC-18", "FR-016-AC-11")]`.
+Tag the operation-parameter and `pre`/`post` tests
+`#[trace("TC-3083", "FR-104-AC-18")]`; tag only the function-parameter
+shadow test `#[trace("TC-3083", "FR-016-AC-11")]`.
 
 ## Expected Results
 
