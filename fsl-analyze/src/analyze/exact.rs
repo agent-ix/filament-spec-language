@@ -4095,7 +4095,7 @@ fn replay_timed_refutation(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    use crate::exact_probabilistic::{MonitorVerdict, produce_witness, WitnessScope};
+    use crate::exact_probabilistic::{produce_witness, MonitorVerdict, WitnessScope};
     let forbidden = match bound {
         Bound::AtMost(_) => MonitorVerdict::Accept,
         Bound::AtLeast(_) => MonitorVerdict::Reject,

@@ -321,6 +321,41 @@ fn nested_always_does_not_use_a_transient_true_atom_as_its_witness() {
 
 #[trace("FR-204-AC-21")]
 #[test]
+fn nested_positive_offset_always_checks_all_same_time_target_observations() {
+    let claims = "\
+        probabilistic NestedPositiveOffset using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(
+        &["x"],
+        &[
+            ("rise", &["phase", "late", "x"]),
+            ("fall", &["phase", "late", "x"]),
+        ],
+    );
+    let body = format!(
+        "{}\
+         pre Rise using v on M::Call::rise {{ self.phase = 0 }}\n\
+         post Risen using v on M::Call::rise {{ self.phase = 1 and self.late = true and self.x = 0 ms }}\n\
+         pre Fall using v on M::Call::fall {{ self.phase = 1 }}\n\
+         post Fallen using v on M::Call::fall {{ self.phase = 2 and self.late = false and self.x = 0 ms }}\n\
+         delay M::Call::rise ~ discrete {{ 1 ms: 1 }};\n\
+         delay M::Call::fall ~ discrete {{ 0 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world_holding(
+        &package_document,
+        super::PROFILES,
+        &body,
+        &json!({ "late": { "boolean": true } }),
+    );
+    let record = settle(&world, "NestedPositiveOffset");
+    assert_eq!(proved_value(&record), ratio(0, 1), "{record:#?}");
+    assert!(accepted(&world, "NestedPositiveOffset", &document(&record)));
+}
+
+#[trace("FR-204-AC-21")]
+#[test]
 fn until_preserves_a_false_left_observation_before_same_time_right_target() {
     let claims = "\
         probabilistic OrderedUntil using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ holds(c.late) until[1 ms, 4 ms] holds(c.inflight) ] }\n";
