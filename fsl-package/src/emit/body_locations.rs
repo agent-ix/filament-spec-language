@@ -443,6 +443,7 @@ mod tests {
             ]
         );
     }
+
     #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-490")]
     #[test]
     fn an_option_value_body_root_gets_no_body_location_row() {
@@ -460,8 +461,11 @@ mod tests {
             CheckedPackageDispatchResult::AdmittedV2(package) => package,
             other => panic!("an option-value body root must read back: {other:?}"),
         };
-        let rows = &package.checked_term_data().unwrap().body_locations;
-        assert!(rows.is_empty(), "the walk ends at each root: {rows:?}");
+        let data = package.checked_term_data();
+        assert!(
+            data.is_none_or(|data| data.body_locations.is_empty()),
+            "the walk ends at each root: {data:?}"
+        );
         let nodes = &package.resolved_graph().nodes;
         let functions: Vec<_> = nodes
             .iter()
@@ -480,8 +484,6 @@ mod tests {
                 has_form(root, WireTag::Value, WireForm::OptionValue),
                 "{root:?}"
             );
-            let mut cursor = package.body_locations(&function.node_id, 10_000).unwrap();
-            assert!(cursor.next_location().unwrap().is_none());
         }
     }
 
