@@ -41,3 +41,17 @@ precision there.
 - FR-1043 "Forms and documents" and the every-scheduler quantile row: context.
 - TC-3151 steps 16-17 and expected results: examined.
 - FSpec FR-406-AC-3: context.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | high | The new FR-1042-AC-28 (`ThresholdMissed` at the initial key) contradicts FR-201 for the same document. FR-201's rejection table row, "General checking conditions" and FR-201-AC-5/AC-6 say a quantile `Upper` certificate with y(s0) = 0 and tight activation is rejected `InequalityFails` at the first activated state reached breadth-first. The FSL elapsed route and FSpec FR-753-AC-5 do the same | spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md:292 |
+| FND-004 | low | FR-1042-AC-29 says any numeric `lower` or `upper` "as the claim side" is rejected `InequalityFails` where activation is unreachable, but a claim-side document of the wrong kind is rejected `Malformed` at `kind` first (AC-27; misplaced check precedes enumeration). The AC does not state that order | spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md:293 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-28 and check_value_bounds now treat a bound's tight-zero failure as a missed threshold, matching FR-1042 "Pairing"; see FND-003 for the conflict this creates with FR-201 |
+| FND-002 | fixed | Step 17's expected result now states `unsupported` over two initial states on both routes and no `proved` |

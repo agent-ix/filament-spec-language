@@ -220,7 +220,11 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
   the initial key: `lower` for `AtLeast` (and for the `<= c` quantile's
   shifted payoff, at least 0), `upper` for `AtMost` (and for the `>= c`
   quantile's shifted payoff, below 0, or 0 with FR-201's tight-action
-  search finding no activated state). FR-201's checker checks one document
+  search finding no activated state). At exactly 0, a search that reaches an
+  activated state is not a missed threshold: the claim-side document is a
+  rejected certificate, `InequalityFails` at FR-201's locus, the first
+  activated state breadth-first, and EN-5 does not raise the precision for
+  it. FR-201's checker checks one document
   at a time, told whether it is the claim side: the claim-side document
   meets its conditions and the threshold, and a claim-side document of the
   wrong kind is rejected `Malformed` at `kind`; the counterpart meets its
@@ -289,8 +293,8 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
 | FR-1042-AC-25 | Over the acyclic chain under a workload in which the undelivered `s` moves `1/2` each to delivered `g` and to the stopped terminal `f` (value `1/2`), `probability >= rational(2,5) [eventually holds(m.delivered)]` takes the unbounded `reachability/v1` base: `lower` `s` `7/16`, rank 1, and counterpart `upper` `s` `9/16` are accepted; `lower` `5/8` is rejected `InequalityFails` at `s`; the `lower` with `s` at rank 0 is rejected `RankBroken` at `s`; a `lower` without `ranking` is rejected `Malformed` at `ranking`. Where `max_states` stops exploration past a target but admits the graph that stops there, EN-5's `lower` keeps that base, names that graph's states alone and settles `exploration: Partial` with no counterpart. | Test (TC-3151) |
 | FR-1042-AC-26 | Over a graph that fits `max_states`, for AC-1's chain, AC-25's chain and AC-1's chain under `probability >= rational(1,4) [eventually[0,1] holds(m.delivered)]` (value `1/3`), a `lower` that leaves a state of value 0 out of `values` and keeps its `ranking` row is rejected `Malformed` at `ranking`, and the same document without that row is accepted; over the bounded base each remaining rank is the named state's remaining horizon. Where `max_states` stops exploration and the offered certificate leaves a state of that graph out, EN-5's `lower` ranks its named states alone and is accepted. | Test (TC-3151) |
 | FR-1042-AC-27 | Over a `finite-horizon-measure/v1` base, a claim-side document of the wrong kind is rejected `Malformed` at `kind`, whether it covers the whole stopped graph or part of it: a `lower` for `probability <= θ [C]` or for a `>= c` quantile, and an `upper` for `probability >= θ [C]` or for a `<= c` quantile. | Test (TC-3151) |
-| FR-1042-AC-28 | Over a `finite-horizon-measure/v1` base, a claim-side `upper` document for a `>= c` quantile whose initial value is exactly 0 misses its threshold where its tight actions reach an activated state: it is rejected `ThresholdMissed` at the initial key, so EN-5 raises the precision. It is accepted where only a path that never activates attains 0. | Test (TC-3151) |
-| FR-1042-AC-29 | Where activation is unreachable in the complete product, a numeric `lower` or `upper` quantile document, under a workload or every scheduler, as the claim side or the counterpart, is rejected `InequalityFails` at the initial complete product key (FR-1043 "Forms and documents"). | Test (TC-3151) |
+| FR-1042-AC-28 | Over a `finite-horizon-measure/v1` base, a claim-side `upper` document for a `>= c` quantile whose initial value is exactly 0 is rejected `InequalityFails` where its tight actions reach an activated state, naming the first activated state reached breadth-first (FR-201), a certificate rejection that does not raise the precision. It is accepted where only a path that never activates attains 0. | Test (TC-3151) |
+| FR-1042-AC-29 | Where activation is unreachable in the complete product, a numeric `lower` or `upper` quantile document, under a workload or every scheduler, as the claim side or the counterpart, is rejected `InequalityFails` at the initial complete product key (FR-1043 "Forms and documents"). A claim-side document of the wrong kind is rejected `Malformed` at `kind` first (AC-27). | Test (TC-3151) |
 | FR-1042-AC-30 | Over a `finite-horizon-measure/v1` base with more than one initial state, no `lower` or `upper` document is accepted on the strength of one of them: EN-5 settles a `<= c` quantile there `unsupported`, from a dyadic interval as from exact values, and no quantile that is false at one initial state settles `proved`. | Test (TC-3151) |
 
 ## Dependencies

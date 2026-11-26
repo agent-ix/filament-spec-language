@@ -58,3 +58,16 @@ tickets.
 - finish_measure_interval (fsl-analyze measure.rs:585-726): examined, for
   the claim side the producer offers.
 - Four new tests in value_bounds.rs, run green on the reviewed head.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | The elapsed-quantile route (producer and checker) has no unreachable-activation rule. A quantile whose activation is unreachable is accepted with a numeric document and settled with a value, not FR-203's value-free `vacuous` `Exhaustive` basis. Truth value correct (vacuously proved). Found by reading, not run. Separate route: needs its own ticket, Must-fix: no | fsl-replay/src/probability_certificate/document/timed/elapsed.rs:96-138 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-3436 (Backlog) owns the interval producer's claim side; the PR names it under paired code and "Not changed" |
+| FND-002 | deferred | QSL-3450 (Backlog) owns the FR-1042/FR-1043 range and decided-state text for measure bound documents |

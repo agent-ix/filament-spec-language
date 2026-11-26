@@ -1560,23 +1560,22 @@ fn tight_zero(proof: Value) -> Value {
 
 /// FR-1042 "Pairing" over FR-1043-AC-3's `>= c` quantile with the maximum
 /// shifted value exactly 0: the claim-side `upper` whose tight actions reach an
-/// activated state misses its threshold at the initial key.
+/// activated state is rejected `InequalityFails` at the first one breadth-first,
+/// here the activated initial state.
 #[trace("TC-3151", "FR-1042-AC-28")]
 #[test]
 fn a_strict_quantile_upper_of_zero_with_tight_activation_is_rejected() {
     let exact = proof(&quantile("0.9", ">= 2"));
     let initial = ranked(&document(&exact), 4).remove(0).0;
     let request = tight_zero(bound(&exact, "upper", &[], None, true));
-    let (code, output) = run(&request);
-    assert_eq!(code, 1, "{output}");
-    assert_eq!(output["rule"], "threshold-missed", "{output}");
-    assert_eq!(output["at"], at_key(&initial), "{output}");
+    rejected(&request, "inequality-fails", at_key(&initial));
 }
 
 /// The checker side of the exact route over the same tight zero: the `exact`
 /// document is rejected `InequalityFails` at FR-201's locus, the first
 /// activated state breadth-first, here the activated initial state.
-#[trace("TC-3152", "FR-1043-AC-3")]
+#[trace("TC-636", "FR-201-AC-5")]
+#[trace("TC-1197", "FR-201-AC-6")]
 #[test]
 fn a_strict_quantile_exact_zero_with_tight_activation_is_rejected_at_the_initial_key() {
     let request = tight_zero(proof(&quantile("0.9", ">= 2")));

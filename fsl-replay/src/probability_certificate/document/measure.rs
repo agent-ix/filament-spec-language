@@ -2360,7 +2360,7 @@ fn tight_activation(
 /// For a `>= c` quantile whose initial shifted maximum is exactly 0, the first
 /// activated state its tight actions reach: some scheduler may then meet the
 /// level while activating (FR-1042 "Pairing"). Tight actions are those that
-/// attain the document's own values. Each route names its own rejection.
+/// attain the document's own values. Every route rejects `InequalityFails` there.
 #[implements("FR-1042-AC-28")]
 fn tight_zero_activation(
     plan: &Plan<'_>,
@@ -2947,13 +2947,8 @@ fn check_value_bounds(
                 },
             ));
         }
-        // A bound is not exact: an activation on its tight actions misses the
-        // threshold, which more precision may meet.
-        if tight_zero_activation(plan, graph, &values, initial, meter, cancel)?.is_some() {
-            return Ok(rejected(
-                ProbabilityCertificateRule::ThresholdMissed,
-                graph.initial.clone(),
-            ));
+        if let Some(key) = tight_zero_activation(plan, graph, &values, initial, meter, cancel)? {
+            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
         }
     }
     let accepted_side = match certified {

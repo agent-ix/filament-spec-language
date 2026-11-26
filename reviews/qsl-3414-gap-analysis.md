@@ -42,3 +42,17 @@ No stub or inflated evidence was found.
   to FR-1042-AC-28 (correct); a_numeric_quantile_bound_without_activation_is_rejected
   to FR-1043-AC-10 (FND-001: it asserts the FR-1043 "Forms and documents" body rule, which
   the AC text does not state).
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | `a_strict_quantile_exact_zero_with_tight_activation_is_rejected_at_the_initial_key` is tagged FR-1043-AC-3, a settlement criterion over AC-2's model. The rule it asserts, checker `InequalityFails` at the breadth-first first activated state, is FR-201-AC-5/AC-6's | tools/fsl-probability-check/tests/it/value_bounds.rs:1579 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Test retagged FR-1042-AC-29, a new criterion that names bound documents in both roles; TC-3151 Scope now runs to FR-1042-AC-30 |
+| FND-002 | fixed | New FR-1042-AC-30 states the several-initial-states refusal; test tagged `("TC-3151", "FR-1042-AC-30")` |
+| FND-003 | fixed | Rejection test now asserts `output["at"]` equals the initial key |

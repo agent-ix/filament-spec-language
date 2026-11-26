@@ -106,7 +106,8 @@ Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
   and EN-5's own subset `lower` accepted; the changed bounded rank is
   rejected `RankBroken` at that state.
 - Step 15: every one rejected `Malformed` at `kind`.
-- Step 16: `ThresholdMissed` at the initial key; accepted.
+- Step 16: `InequalityFails` at the initial key, the first activated state the
+  tight actions reach; accepted.
 - Step 17: `InequalityFails` at the initial key. Over two initial states each
   `<= c` quantile settles `unsupported` from the dyadic interval and from exact
   values, and no claim settles `proved`.
