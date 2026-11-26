@@ -1352,6 +1352,7 @@ struct ExtractionPositionRead {
     column: u64,
 }
 
+#[implements("FR-267-AC-17")]
 fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadError> {
     let encoded = serde_json::to_vec(value).map_err(NativeRunReadError::Malformed)?;
     let extraction: ExtractionRead = read_typed(&encoded).map_err(|error| match error {
