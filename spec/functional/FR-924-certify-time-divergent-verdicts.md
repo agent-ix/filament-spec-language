@@ -71,6 +71,12 @@ value per pair equal to its best exit, and rejects the Zeno certificate.
   that holds a delay is progressive and only zero-time components collapse.
   The progress condition was chosen over a unit tick clock in the region key
   because it needs no extra key member and leaves digital keys unchanged.
+- In a bounded-window product (FR-204 "Form shapes"), every residual is
+  decided once time passes the formula's horizon, so a behaviour that stays
+  in undecided states forever is Zeno. There the checker SHALL check every
+  maximal end component whose states are all undecided as a zero-time
+  component above, whatever its delays, in place of the progress condition
+  (FR-196 "Idle tail of a timed window monitor", item 7).
 - A component with no exit, and a state with no admissible delay and no
   enabled discrete move, SHALL be a time-lock: a terminal state, value 0 for
   an event not yet met and no further elapsed reward, a pending deadline

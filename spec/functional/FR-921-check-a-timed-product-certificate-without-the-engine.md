@@ -76,7 +76,16 @@ share:
    by code EN-5 does not call, sharing no monitor, progression or
    deadline-advance function with EN-5 (such as fsl-eval's
    `advance_nested_timed_deadline`), so a defect in the producer's monitor
-   is not certified;
+   is not certified; and, by FR-196 "Idle tail of a timed window monitor",
+   each tail-entry state, its tail folding, its layered tail search and its
+   tail value, by its own search code, together with that rule's end
+   components of undecided states (its item 7, FR-924). A tail-entry row
+   whose value differs from the checker's tail value rejects
+   `InequalityFails` at that key. When the checker's count under that
+   rule's item 6 exceeds the limit it checks under, the check stops with
+   FR-203's typed `Incomplete(LimitReached{…})` before any truth value, as
+   any limit reached before checking completes does; it neither accepts nor
+   rejects the document;
 8. FR-201's targets, decided states, `Prob0`, `Prob1` and tight actions.
 
 ### Not trusted
