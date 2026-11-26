@@ -129,11 +129,11 @@ server is available. Each estimate comes with its confidence and the grid
   each value a decimal string, and its digest is the SHA-256 of that encoding
   read as a 256-bit big-endian integer. A grid value `u` at exponent `q` uses
   draw 0 alone: `u = (digest mod 2^q) / 2^q` for `1 <= q <= 256`, and `u = 0`
-  at `q = 0`. For `q > 256` FSpec's sampler definition reads the big-endian
-  concatenation of draws 0, 1, … modulo `2^q`; EN-4 does not implement that and
-  SHALL settle the item `unsupported`, `NotStochastic{state, identity}` at the
-  first delay draw with `q > 256` (the cause the code gives today), so a
-  `q > 256` request has no draw to replay. A weighted choice of two or more
+  at `q = 0`. FSpec's sampler definition reads the big-endian concatenation of
+  draws 0, 1, … modulo `2^q` for `q > 256`, which EN-4 does not implement; if a
+  delay draw has `q > 256`, then EN-4 SHALL settle the item `unsupported`,
+  `NotStochastic{state, identity}` at the first such draw, so a `q > 256`
+  request has no draw to replay. A weighted choice of two or more
   items scales its positive weights to integers by the least common multiple of
   their denominators (FR-188), with total `N`, and takes
   draws 0, 1, … in turn until a digest `v` is below `N · ⌊2^256 / N⌋`, then
