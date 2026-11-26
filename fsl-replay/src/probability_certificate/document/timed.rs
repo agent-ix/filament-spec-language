@@ -4427,6 +4427,7 @@ fn digital_state_after_delay(
 /// is unchanged, and the walk to the time successor then never carries a clock
 /// off an integer and another onto one in the same unit. A nested formula's
 /// monitor reads concrete times, so its representative stays.
+#[implements("FR-922-AC-4")]
 fn lower_fractions(
     watch: &Watch<'_>,
     current: &RegionState,
@@ -4486,7 +4487,7 @@ fn lower_fractions(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
-#[implements("FR-204-AC-21")]
+#[implements("FR-204-AC-21", "FR-922-AC-4")]
 fn next_region_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,

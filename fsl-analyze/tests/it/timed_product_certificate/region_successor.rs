@@ -4,6 +4,7 @@
 
 use fsl_analyze::analyze::AnalyzeRecord;
 use fsl_replay::{ProofBasis, TerminalValue};
+use ix_trace_rs::trace;
 
 use super::{PROFILES, settle};
 use crate::timed_world::{self, World};
@@ -70,6 +71,7 @@ fn two_clocks(invariant: &str) -> World {
 /// holding such a `third` lies between the instant `x` leaves zero and the
 /// instant `y` passes 1 ms.
 #[test]
+#[trace("TC-2491", "FR-922-AC-4")]
 fn a_delay_reaches_the_region_between_two_clocks_integer_crossings() {
     let world = two_clocks("time invariant Bounded when { self.phase < 2 } { self.y <= 3 ms }\n");
     assert_eq!(observed(&world), all_refuted());
@@ -105,6 +107,7 @@ fn forced_third(third: &str, phase_one: &str) -> World {
 /// the invariant excludes, so the delay itself is lost and the state reads as
 /// time-locked.
 #[test]
+#[trace("TC-2491", "FR-922-AC-4")]
 fn a_strict_invariant_does_not_turn_the_skip_into_a_time_lock() {
     let world = forced_third("self.x < 1 ms", "self.x < 1 ms");
     assert_eq!(outcome(&settle(&world, "Reached")), "proved 1/1");
@@ -113,6 +116,7 @@ fn a_strict_invariant_does_not_turn_the_skip_into_a_time_lock() {
 /// A closed invariant admits the point the walk lands on, so `third` at
 /// `x <= 1 ms` is still reached.
 #[test]
+#[trace("TC-2491", "FR-922-AC-4")]
 fn a_closed_invariant_keeps_its_last_instant() {
     let world = forced_third("self.x <= 1 ms", "self.x <= 1 ms");
     assert_eq!(outcome(&settle(&world, "Reached")), "proved 1/1");
