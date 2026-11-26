@@ -1248,10 +1248,10 @@ fn counter_with_drop() -> Vec<u8> {
     model.to_string().into_bytes()
 }
 
-/// FR-181-AC-5: once `drop` has deleted the instance's object, its read has
+/// FR-181-AC-14: once `drop` has deleted the instance's object, its read has
 /// no value, so the source item is refuted with the `absent-key` evaluation
 /// at the position after that step.
-#[trace("TC-3219", "FR-181-AC-5")]
+#[trace("TC-3219", "FR-181-AC-14")]
 #[test]
 fn an_hp5_item_with_an_undefined_read_is_refuted_with_its_evaluation() {
     let declaration = "hyper H using t0 over behaviours (v: M::Counter) \
@@ -1282,6 +1282,10 @@ fn an_hp5_item_with_an_undefined_read_is_refuted_with_its_evaluation() {
     let item = run.item(0);
     assert_eq!(label(&item), "refuted", "{}", run.document());
     assert_eq!(run.exit, 10, "{}", run.document());
+    assert_eq!(
+        item["axes"]["settlement"], "decisive-counterexample",
+        "{item}"
+    );
     let counterexample = &item["counterexample"];
     assert_eq!(counterexample["arm"], "undefined", "{item}");
     assert_eq!(counterexample["undefined"]["cause"], "absent-key", "{item}");

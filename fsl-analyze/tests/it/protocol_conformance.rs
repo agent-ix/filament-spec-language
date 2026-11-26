@@ -140,13 +140,7 @@ fn matching_implementations_conform_globally() {
 /// FR-125-AC-13 and FR-990: global conformance over a bounded subject with no
 /// admitted key is inconclusive with `no-instance`; an admitted-key source
 /// control still runs the engine to completion.
-#[trace(
-    "TC-2800",
-    "FR-125-AC-13",
-    "FR-896-AC-1",
-    "FR-896-AC-7",
-    "FR-990-AC-11"
-)]
+#[trace("TC-2800", "FR-125-AC-13", "FR-896-AC-1", "FR-990-AC-11")]
 #[test]
 fn global_conformance_classifies_empty_over_as_no_instance() {
     let ws = Workspace::new("gc-no-instance");
@@ -487,6 +481,143 @@ fn conformance_replay_is_published_with_coded_refusals() {
         "pub fn position(&self)",
     ] {
         assert!(source.contains(item), "missing `{item}`");
+    }
+}
+
+fn keyed_core_snapshots(q_r1: &str) -> Vec<Vec<u8>> {
+    crate::litmus::Documents::new()
+        .snapshots
+        .into_values()
+        .map(|bytes| {
+            let mut snapshot: Value = serde_json::from_slice(&bytes).expect("snapshot JSON");
+            for population in snapshot["populations"]
+                .as_array_mut()
+                .expect("snapshot populations")
+            {
+                if population["population"].to_string().contains("cores") {
+                    let core = |key: &str, r1: &str| {
+                        json!({"key": key, "type": "ix://test/litmus/Core", "fields": {
+                            "r1": {"integer": r1}, "r2": {"integer": "0"},
+                            "r3": {"integer": "0"}, "r4": {"integer": "0"}}})
+                    };
+                    population["objects"] = json!([core("p", "0"), core("q", q_r1)]);
+                }
+            }
+            serde_json::to_vec(&snapshot).expect("snapshot JSON")
+        })
+        .collect()
+}
+
+fn bound_protocol_subject(key: &str) -> Value {
+    let model = json!({"type": "model-binding", "selection": "test/litmus"});
+    json!({"protocol": {"protocol": "Flow",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": key}},
+        "roles": {"Buyer": model, "Seller": model}}})
+}
+
+/// FR-896-AC-7/8: no binding checks every admitted key; a subject binding
+/// checks exactly its selected object, with the expected result computed
+/// from p.r1 = 0 and q.r1 = 1 in the supplied initial state.
+#[trace("TC-2800", "FR-896-AC-7", "FR-896-AC-8")]
+#[test]
+fn global_conformance_checks_every_key_and_honors_bound_over() {
+    let protocol = order_protocol(true).replace(
+        "run sequence Main {",
+        "run sequence Main {\ncheck Ready using pp { k.r1 = 0 };",
+    );
+    let snapshots = keyed_core_snapshots("1");
+    let items = json!([{"claim": "Flow", "kind": "global-conformance"}]);
+    let ws = Workspace::new("gc-every-key-ac8");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&protocol),
+        &crate::litmus::resulting_document(),
+        &snapshots,
+        json!({"items": items.clone()}),
+    );
+    let every_key = analyze(&request).item(0);
+    assert_eq!(
+        label(&every_key),
+        "refuted",
+        "q does not satisfy Ready: {every_key}"
+    );
+    assert_eq!(every_key["counterexample"]["kind"], "deadlock");
+
+    for (key, expected) in [("p", "proved"), ("q", "refuted")] {
+        let ws = Workspace::new(&format!("gc-bound-{key}"));
+        let request = request_over(
+            &ws,
+            &crate::litmus::unit_text(&protocol),
+            &crate::litmus::resulting_document(),
+            &snapshots,
+            json!({"subject": bound_protocol_subject(key), "items": items.clone()}),
+        );
+        let item = analyze(&request).item(0);
+        assert_eq!(label(&item), expected, "subject binds {key}: {item}");
+    }
+}
+
+/// FR-896-AC-9: an item's subject.protocol cannot bind a different protocol.
+#[trace("TC-2800", "FR-896-AC-9")]
+#[test]
+fn global_conformance_declines_a_binding_to_another_protocol() {
+    let flow = order_protocol(true);
+    let (_, other) = flow.split_once("protocol Flow").expect("Flow declaration");
+    let unit = format!("{flow}\nprotocol Other{other}");
+    let subject = bound_protocol_subject("p");
+    let mut subject = subject;
+    subject["protocol"]["protocol"] = json!("Other");
+    let ws = Workspace::new("gc-other-protocol");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&unit),
+        &crate::litmus::resulting_document(),
+        &keyed_core_snapshots("1"),
+        json!({"subject": subject, "items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+    );
+    let item = analyze(&request).item(0);
+    assert_eq!(item["record"]["result"], "declined", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+}
+
+/// FR-896-AC-10: protocol deadlock analysis requires an explicit protocol subject.
+#[trace("TC-2532", "FR-896-AC-10")]
+#[test]
+fn protocol_deadlock_item_declines_without_subject_protocol() {
+    let ws = Workspace::new("gc-deadlock-requires-protocol-subject");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&order_protocol(true)),
+        &crate::litmus::resulting_document(),
+        &[],
+        json!({"items": [{"claim": "Flow",
+            "temporal": {"item_kind": "deadlock-freedom"}}]}),
+    );
+    let item = analyze(&request).item(0);
+    assert_eq!(item["record"]["result"], "declined", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["member"], "temporal.subject.protocol",
+        "{item}"
+    );
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "counterexample",
+    ] {
+        assert!(
+            item[member].is_null(),
+            "declined item omits {member}: {item}"
+        );
     }
 }
 

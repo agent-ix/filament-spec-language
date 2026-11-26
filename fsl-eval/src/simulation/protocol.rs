@@ -1700,7 +1700,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     ///
     /// # Errors
     /// Refuses an unsupported proof form or a target without an admitted proof.
-    #[implements("FR-125-AC-9")]
+    #[implements("FR-125-AC-9", "FR-896-AC-7")]
     pub fn new_package_with_loop_proof(
         model: ModelSystem<'a>,
         subject: &'a ProtocolSubject<'a>,
@@ -1773,11 +1773,14 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         .map_err(|_| ProtocolRefusal::fault("a-package-over-reference-resolves"))?,
                 ))
             }
-            _ => {
-                return Err(ProtocolRefusal::fault(
-                    "package-protocol-over-is-a-reference-value",
+            _ if !model.enumerates(&package.over_type) => {
+                return Err(ProtocolRefusal::Unsupported(
+                    Unsupported::UnenumerableRecord,
                 ));
             }
+            _ => model
+                .bounded_domain(&package.over_type, &[])
+                .map_err(ProtocolRefusal::InitialStop)?,
         };
         let governing = package
             .governing_models()

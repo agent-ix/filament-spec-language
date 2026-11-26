@@ -19,6 +19,7 @@ use fsl_analyze::plan_search::{
     PlanStopCause,
 };
 use fsl_foundation::AccountingSetting;
+use ix_trace_rs::implements;
 use serde_json::{json, Map, Value};
 
 /// The pointer of the `synthesis` member in a `native-run/1` document.
@@ -73,7 +74,7 @@ impl PlanRequestCause {
     }
 }
 
-/// A located plan request refusal (FSpec FR-806, exit 20).
+/// A located plan request refusal (FSpec FR-806); its category determines its exit.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("invalid_runtime_input/{}: {pointer}", cause.name())]
 pub struct PlanRequestRefusal {
@@ -378,23 +379,26 @@ pub struct RenderedPlan {
 }
 
 /// FSpec FR-805 "Categories and exits": the exit of `status`.
+#[implements("FR-1010-AC-4")]
 pub const fn exit_code(status: PlanStatus) -> u8 {
     match status {
         PlanStatus::Optimal | PlanStatus::Feasible => 0,
         PlanStatus::Infeasible => 10,
-        PlanStatus::Incomplete => 22,
+        PlanStatus::Incomplete | PlanStatus::Inconclusive => 22,
     }
 }
 
 /// The exit of an `unsupported` plan outcome (FSpec FR-819).
 pub const UNSUPPORTED_EXIT: u8 = 21;
 
+#[implements("FR-1010-AC-4")]
 const fn status_name(status: PlanStatus) -> &'static str {
     match status {
         PlanStatus::Optimal => "optimal",
         PlanStatus::Feasible => "feasible",
         PlanStatus::Infeasible => "infeasible",
         PlanStatus::Incomplete => "incomplete",
+        PlanStatus::Inconclusive => "inconclusive",
     }
 }
 
@@ -545,6 +549,7 @@ fn limits_member(limits: &PlanSearchLimits) -> Value {
     )
 }
 
+#[implements("FR-1010-AC-4")]
 fn cause_member(cause: &PlanStopCause) -> Value {
     match cause {
         PlanStopCause::LimitReached {
@@ -562,6 +567,7 @@ fn cause_member(cause: &PlanStopCause) -> Value {
         PlanStopCause::InvariantUndetermined { invariant, .. } => {
             json!({"type": "invariant-undetermined", "invariant": invariant})
         }
+        PlanStopCause::Inconclusive(cause) => json!({"type": cause.as_str()}),
     }
 }
 

@@ -3722,6 +3722,13 @@ impl<'a> WorkInputs<'_, 'a> {
                         self.binding.clone(),
                         self.limits,
                         protocol,
+                        item.form
+                            .as_ref()
+                            .and_then(|form| match form {
+                                ItemForm::Temporal(form) => Some(form.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default(),
                     ),
                 }
             }

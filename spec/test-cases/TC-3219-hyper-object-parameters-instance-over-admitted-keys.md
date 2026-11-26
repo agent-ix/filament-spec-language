@@ -32,7 +32,7 @@ accepts a key that no initial state admits.
 
 Scope: FR-125-AC-19 to FR-125-AC-22, FR-128-AC-17, FR-151-AC-5,
 FR-172-AC-10, FR-172-AC-11, FR-176-AC-6 to FR-176-AC-8, FR-181-AC-8 to
-FR-181-AC-13, FR-183-AC-13, FR-315-AC-59, FR-621-AC-23 to FR-621-AC-26.
+FR-181-AC-14, FR-183-AC-13, FR-315-AC-59, FR-621-AC-23 to FR-621-AC-26.
 
 ## Test Procedure
 
@@ -47,7 +47,7 @@ implementation.
    `check_hyper`, and FR-176-AC-8's two requests.
 4. Check and run FR-172-AC-10, FR-172-AC-11, FR-125-AC-19, FR-125-AC-20 and
    FR-125-AC-22.
-5. Run each FR-125-AC-21 variant and FR-181-AC-11 to FR-181-AC-13.
+5. Run each FR-125-AC-21 variant and FR-181-AC-11 to FR-181-AC-14.
 6. Replay FR-183-AC-13's witness and counterexample, and build FR-315-AC-59's
    identities.
 7. Run FR-176-AC-7 over source and package, FR-128-AC-17's two envelopes,
@@ -70,7 +70,7 @@ asserts.
 - Step 4: the instances, excluded keys, outcomes and verdicts each criterion
   states.
 - Step 5: the outcomes of FR-125-AC-21 in its order, none a fault, and the
-  records and refusals FR-181-AC-11 to FR-181-AC-13 state.
+  records and refusals FR-181-AC-11 to FR-181-AC-14 state.
 - Step 6: the unadmitted key is refused and the admitted one is not.
 - Step 7: the records, refusal, instance and binding each criterion states.
 - Step 8: `refuted` from the confirmed instance, and `replay-parity` only when

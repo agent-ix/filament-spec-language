@@ -104,6 +104,24 @@ use fsl_semantics::model::observation::{
 use fsl_semantics::model::operation::OperationDeclaration;
 use fsl_semantics::model::state::{StateField, StateModel};
 use ix_trace_rs::implements;
+use quire_canonical::Limits as CanonicalLimits;
+
+use crate::model_subject::ModelInstance;
+use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
+use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
+use crate::simulation::footprint::{Footprint, Location};
+use crate::simulation::not_simulated::NotSimulated;
+use crate::simulation::order::{Expanded, expand, sorted_initial};
+use crate::simulation::protocol::WeakAccessShape;
+use crate::simulation::reduction::{
+    ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
+};
+use crate::simulation::sample::{
+    ObservedSample, ObserverDecision, SampleObservation, SampleRequest, sample_request,
+    sample_request_observed_using, sample_request_until,
+};
+use crate::simulation::trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
+use crate::value::QualifiedName;
 
 struct UnmeteredModelKeyBudget;
 
@@ -124,9 +142,52 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
         Ok(())
     }
 }
-use quire_canonical::Limits as CanonicalLimits;
 
-use crate::model_subject::ModelInstance;
+/// The keys [`ModelSystem::selects_instance`] has selected, and what its
+/// caller charges for the work.
+trait SelectedKeys<'k> {
+    type Stop;
+    /// Called before each initial state is inspected.
+    fn inspect_state(&mut self) -> Result<(), Self::Stop>;
+    /// Record `key`; `false` when it was already recorded.
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop>;
+}
+
+impl<'k> SelectedKeys<'k> for BTreeSet<&'k str> {
+    type Stop = std::convert::Infallible;
+    fn inspect_state(&mut self) -> Result<(), Self::Stop> {
+        Ok(())
+    }
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop> {
+        Ok(self.insert(key))
+    }
+}
+
+/// The selected keys of a metered listing: each inspection and byte
+/// comparison is charged, and capacity is reserved before it grows.
+struct MeteredKeys<'k, 'b, 'm> {
+    budget: &'b crate::policy_budget::Budget<'m>,
+    keys: Vec<&'k str>,
+}
+
+impl<'k> SelectedKeys<'k> for MeteredKeys<'k, '_, '_> {
+    type Stop = crate::automaton::PolicyStateError;
+    fn inspect_state(&mut self) -> Result<(), Self::Stop> {
+        self.budget.work(1)
+    }
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop> {
+        for seen in &self.keys {
+            if self.budget.compare_bytes(seen.as_bytes(), key.as_bytes())?
+                == std::cmp::Ordering::Equal
+            {
+                return Ok(false);
+            }
+        }
+        self.budget.growth(&mut self.keys, 1)?;
+        self.keys.push(key);
+        Ok(true)
+    }
+}
 
 /// A non-empty, canonically ordered set of admitted claim instances.
 ///
@@ -161,21 +222,6 @@ pub enum NoClaimInstances {
     #[error("the claim has no admitted instance")]
     NoInstance,
 }
-use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
-use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
-use crate::simulation::footprint::{Footprint, Location};
-use crate::simulation::not_simulated::NotSimulated;
-use crate::simulation::order::{Expanded, expand, sorted_initial};
-use crate::simulation::protocol::WeakAccessShape;
-use crate::simulation::reduction::{
-    ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
-};
-use crate::simulation::sample::{
-    ObservedSample, ObserverDecision, SampleObservation, SampleRequest, sample_request,
-    sample_request_observed_using, sample_request_until,
-};
-use crate::simulation::trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
-use crate::value::QualifiedName;
 
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
 pub use cells::Cell;
@@ -1313,6 +1359,24 @@ impl<'a> ModelSystem<'a> {
     /// replay reconstructs an object-parameter binding.
     pub fn populations(&self) -> &[fsl_semantics::model::state::StatePopulation] {
         &self.populations
+    }
+
+    /// The first population overlapping `over` that the initial snapshot did
+    /// not list. This is a request refusal check, performed after policy
+    /// declaration resolution and before policy instancing.
+    #[implements("FR-1012-AC-11", "FR-1013-AC-3")]
+    pub fn unlisted_population_overlapping(
+        &self,
+        over: &ValueType,
+    ) -> Option<&fsl_semantics::model::state::StatePopulation> {
+        let ValueType::Reference(parameter) = over else {
+            return None;
+        };
+        let initial = self.initial_base.first()?;
+        self.populations.iter().find(|population| {
+            self.overlaps(population, parameter.clone())
+                && !initial.state().populations.contains_key(&population.key)
+        })
     }
 
     /// The system of trace variable alias `alias` of a hyper clause (FR-173
@@ -2553,19 +2617,11 @@ impl<'a> ModelSystem<'a> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
-        let mut seen_instance_keys = BTreeSet::new();
+        let mut seen = BTreeSet::new();
         let mut instances = Vec::new();
         for (population, key) in self.universe_members(parameter)? {
-            // Generated stages change field values only. The base states
-            // supply every initial object's type identity and population.
-            let admitted = self.initial_base.iter().any(|state| {
-                state
-                    .state()
-                    .populations
-                    .get(population)
-                    .is_some_and(|objects| objects.contains_key(key))
-            });
-            if admitted && seen_instance_keys.insert(key) {
+            let Ok(selected) = self.selects_instance(population, key, &mut seen);
+            if selected {
                 instances.push(ModelInstance {
                     population: population.clone(),
                     key: key.to_owned(),
@@ -2573,6 +2629,34 @@ impl<'a> ModelSystem<'a> {
             }
         }
         Ok(instances)
+    }
+
+    /// FR-125 "Instancing", the one admission and de-duplication rule of
+    /// [`Self::instances`] and [`Self::instances_with_meter`]. The caller
+    /// offers each universe key in canonical population and key order; the
+    /// key is an instance when some initial state holds it in `population`
+    /// and it was not already selected from an earlier one.
+    #[implements("FR-125-AC-10")]
+    fn selects_instance<'k, S: SelectedKeys<'k>>(
+        &self,
+        population: &DeclarationKey,
+        key: &'k str,
+        selected: &mut S,
+    ) -> Result<bool, S::Stop> {
+        // Generated stages change field values only. The base states
+        // supply every initial object's type identity and population.
+        for state in &self.initial_base {
+            selected.inspect_state()?;
+            if state
+                .state()
+                .populations
+                .get(population)
+                .is_some_and(|objects| objects.contains_key(key))
+            {
+                return selected.select(key);
+            }
+        }
+        Ok(false)
     }
 
     /// Return the non-empty admitted instances for a claim's `over` type.
@@ -2594,6 +2678,22 @@ impl<'a> ModelSystem<'a> {
         }
         Ok(ClaimInstances(instances))
     }
+
+    /// FR-125 Instancing: the instances of a hyper clause parameter of object
+    /// type `object`, under the one rule of [`Self::instances`]. `self` is the
+    /// system of the parameter's alias.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::instances`].
+    #[implements("FR-125-AC-19", "FR-125-AC-20")]
+    pub fn hyper_instances(
+        &self,
+        object: &EffectiveId,
+    ) -> Result<Vec<ModelInstance>, NotSimulated> {
+        self.instances(&ValueType::Reference(object.clone()))
+    }
+
     /// Every key a hyper parameter of object type `object` may name in an
     /// identity or an encoding (FR-315 `instance-binding`): each of its
     /// [`Self::instances`]; for a subject whose initial list is empty,
@@ -2727,6 +2827,7 @@ impl<'a> ModelSystem<'a> {
     /// # Errors
     /// The original instance admission, scalar accounting, cancellation or
     /// allocation/encoding refusal; no partial instance list is returned.
+    #[implements("FR-125-AC-8", "FR-125-AC-10")]
     pub fn instances_with_meter(
         &self,
         over: &ValueType,
@@ -2810,6 +2911,10 @@ impl<'a> ModelSystem<'a> {
             }
         }
         let mut instances = Vec::new();
+        let mut selected = MeteredKeys {
+            budget: &budget,
+            keys: Vec::new(),
+        };
         for (_, population) in admitting {
             budget.work(1)?;
             for key in self
@@ -2818,6 +2923,9 @@ impl<'a> ModelSystem<'a> {
                 .flatten()
             {
                 budget.work(1)?;
+                if !self.selects_instance(population, key, &mut selected)? {
+                    continue;
+                }
                 let population = DeclarationKey {
                     package: budget.text(&population.package)?,
                     node: budget.text(&population.node)?,
@@ -2967,6 +3075,7 @@ impl<'a> ModelSystem<'a> {
             .clone()
     }
 
+    #[implements("FR-155-AC-2")]
     fn compute_universe_declaring(&self, field: &DeclarationKey) -> Option<Vec<ObjectReference>> {
         let mut objects = Vec::new();
         for (type_key, fields) in &self.fields {
@@ -2974,11 +3083,12 @@ impl<'a> ModelSystem<'a> {
                 continue;
             }
             let identity = self.model.type_identity(type_key)?;
-            for instance in self
-                .instances(&ValueType::Reference(identity.clone()))
-                .ok()?
-            {
+            let over = ValueType::Reference(identity.clone());
+            for instance in self.instances(&over).ok()? {
                 objects.push(self.bound_reference(identity.clone(), &instance).ok()?);
+            }
+            for key in self.excluded_keys(&over).ok()? {
+                objects.push(self.model.object_reference(type_key, &key).ok()?);
             }
         }
         objects.sort();
