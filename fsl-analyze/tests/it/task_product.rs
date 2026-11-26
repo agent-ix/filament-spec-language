@@ -1586,7 +1586,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet_on_both_route
         closure_stutters: Vec::new(),
     };
     let envelope = crate::model_settle_support::envelope_at(payload, node, occurrence);
-    let (identities, equality) = crate::replay_route_rules::handoff(&world);
+    let (identities, equality) = crate::state_graph::replay_route_rules::handoff(&world);
     let request = world.request();
     let letters = crate::counter::Letters { atom: |_| None };
     for timed in [false, true] {
