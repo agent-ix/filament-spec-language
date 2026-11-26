@@ -1950,7 +1950,13 @@ fn construct_document(
     } else {
         original?
     };
-    let stopped = event.is_some() || reward.is_some() || cyclic_dtmc;
+    // An `eventually`, until, always or reward graph stops at its decided
+    // states, so rows the solver holds only past them are dropped. A bounded
+    // formula's product already stops there.
+    let stopped = matches!(
+        bind_claim(claims, item, cancel)?.form,
+        ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. }
+    );
     let bounded = bounded_ranks.is_some();
     let mut ranks = bounded_ranks.unwrap_or_default();
     if bounded {

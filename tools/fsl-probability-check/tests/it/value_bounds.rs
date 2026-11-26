@@ -1530,3 +1530,126 @@ fn a_fraction_or_fair_lower_over_a_stopped_graph_stays_stopped() {
         stopped_at_max_states(&within(&alone, 1), 1);
     }
 }
+
+/// A key of the continuing model's state past `g`, taken from a claim whose
+/// graph runs on to it.
+fn past_target_key(exact: &Value) -> Value {
+    let further = proof(
+        &acyclic("rational(2,5)", true).replace(
+            "holds(m.delivered)",
+            "holds(m.delivered and m.attempts = 2)",
+        ),
+    );
+    let known: Vec<Value> = document(exact)["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["state"].clone())
+        .collect();
+    let further = document(&further);
+    let mut past = further["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| &row["state"])
+        .filter(|state| !known.contains(state));
+    let key = past.next().expect("a state past the target").clone();
+    assert!(past.next().is_none());
+    key
+}
+
+
+/// FR-201 "Closed reachability document profile": the values and ranking of an
+/// acyclic `eventually` cover the graph that stops at its targets, so a model
+/// that runs on past a target keeps its exact proof and its bounds, under a
+/// workload and under every scheduler, for either side of the threshold.
+#[trace("TC-636", "FR-201-AC-11")]
+#[trace("TC-3151", "FR-1042-AC-25")]
+#[test]
+fn an_exact_proof_past_a_target_is_accepted() {
+    let workload = acyclic("rational(2,5)", true);
+    let every = workload.replace("under Even on origin", "under every scheduler on origin");
+    for (source, optimization) in [(workload, "workload"), (every, "minimum")] {
+        for (source, optimization) in [
+            (source.clone(), optimization),
+            (
+                source.replace(
+                    "probability >= rational(2,5)",
+                    "probability <= rational(3,5)",
+                ),
+                if optimization == "minimum" {
+                    "maximum"
+                } else {
+                    optimization
+                },
+            ),
+        ] {
+            let exact = proof(&source);
+            let doc = document(&exact);
+            assert_eq!(
+                doc["objective"]["profile"],
+                "filament.probability-objective/reachability/v1"
+            );
+            assert_eq!(doc["objective"]["optimization"], optimization);
+            // `s`, `g` and `f`; the state past `g` has no row.
+            assert_eq!(doc["values"].as_array().map(Vec::len), Some(3));
+            assert_eq!(doc["ranking"].as_array().map(Vec::len), Some(3));
+            accepted(&exact, rational(1, 2));
+        }
+    }
+
+    let exact = proof(&acyclic("rational(2,5)", true));
+    let s = ranked_key(&exact);
+    accepted(
+        &bound(&exact, "lower", &[(&s, rational(7, 16))], None, true),
+        rational(7, 16),
+    );
+    accepted(
+        &bound(&exact, "upper", &[(&s, rational(9, 16))], None, false),
+        rational(9, 16),
+    );
+}
+
+/// Over the model that runs on past a target (value `1/2`), a false claim is
+/// refuted and its checker rejects the threshold, a wrong value, and a row for
+/// the state past the target.
+#[trace("TC-636", "FR-201-AC-10", "FR-201-AC-11")]
+#[test]
+fn a_false_claim_past_a_target_is_still_rejected() {
+    let exact = proof(&acyclic("rational(2,5)", true));
+    let s = ranked_key(&exact);
+    for (claim, stricter) in [
+        (">= rational(2,5)", ">= rational(3,5)"),
+        ("<= rational(3,5)", "<= rational(2,5)"),
+    ] {
+        let holding = acyclic("rational(2,5)", true).replace(">= rational(2,5)", claim);
+        let failing = holding.replace(claim, stricter);
+        let (_, settlement) = request_with(
+            &failing,
+            SNAPSHOT,
+            ExactProbLimits::default(),
+            domain().as_bytes(),
+        );
+        assert!(
+            matches!(&settlement, Settlement::Terminal(record)
+                if matches!(record.value(), fsl_replay::TerminalValue::Refuted)),
+            "{settlement:?}"
+        );
+        let mut offered = proof(&holding);
+        replace_source_and_rebind(&mut offered, &failing);
+        rejected(&offered, "threshold-missed", at_key(&s));
+    }
+    let wrong = edit(&exact, |doc| {
+        set(doc, "values", &s, "value", rational(3, 5))
+    });
+    rejected(&wrong, "inequality-fails", at_key(&s));
+    let past = past_target_key(&exact);
+    let extra = edit(&exact, |doc| {
+        insert_row(
+            doc,
+            "values",
+            json!({"state": past, "value": rational(1, 1)}),
+        );
+    });
+    rejected(&extra, "malformed", at_member("values"));
+}
