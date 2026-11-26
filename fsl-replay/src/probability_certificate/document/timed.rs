@@ -15,7 +15,7 @@ use serde_json::{json, Value as JsonValue};
 
 mod elapsed;
 
-#[implements("FR-203-AC-30")]
+#[implements("FR-203-AC-30", "FR-204-AC-21")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -4843,7 +4843,7 @@ fn certificate_scale(
 /// [`ProbabilityWitnessError`] when the claim is not a timed deadline claim,
 /// the product cannot be enumerated within the limits, or the witness names a
 /// state, step or choice the checker's product does not have.
-#[implements("FR-203-AC-32")]
+#[implements("FR-203-AC-32", "FR-204-AC-1", "FR-204-AC-5")]
 pub(in crate::probability_certificate) fn replay_timed_witness(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
