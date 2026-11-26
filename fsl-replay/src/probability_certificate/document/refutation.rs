@@ -548,7 +548,7 @@ pub(in crate::probability_certificate) fn check(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if subject.workload && !scheduler.is_empty() {
-        return Ok(SubsystemRefutationCheck::SchedulerRefused);
+        return { eprintln!("DBG sched refused {}", line!()); Ok(SubsystemRefutationCheck::SchedulerRefused) };
     }
     let choices = if subject.workload {
         BTreeMap::new()
@@ -563,11 +563,11 @@ pub(in crate::probability_certificate) fn check(
             None,
         )? {
             Some(choices) => choices,
-            None => return Ok(SubsystemRefutationCheck::SchedulerRefused),
+            None => return { eprintln!("DBG sched refused {}", line!()); Ok(SubsystemRefutationCheck::SchedulerRefused) },
         }
     };
     let Some(induced) = induce(&subject, &choices, &mut meter, cancel)? else {
-        return Ok(SubsystemRefutationCheck::SchedulerRefused);
+        return { eprintln!("DBG sched refused {}", line!()); Ok(SubsystemRefutationCheck::SchedulerRefused) };
     };
     if !subject.fairness.is_empty() {
         match super::long_run::scheduler_is_fair(
@@ -580,8 +580,8 @@ pub(in crate::probability_certificate) fn check(
             cancel,
         )? {
             Some(true) => {}
-            Some(false) => return Ok(SubsystemRefutationCheck::SchedulerRefused),
-            None => return Ok(SubsystemRefutationCheck::SchedulerRefused),
+            Some(false) => return { eprintln!("DBG sched refused {}", line!()); Ok(SubsystemRefutationCheck::SchedulerRefused) },
+            None => return { eprintln!("DBG sched refused {}", line!()); Ok(SubsystemRefutationCheck::SchedulerRefused) },
         }
     }
     let reject = |rule, at: &ProbabilityProductKey| {

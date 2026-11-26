@@ -175,3 +175,70 @@ mod tests {
         assert!(upper[0].rational() >= rational(1, 2));
     }
 }
+
+#[cfg(test)]
+mod probe {
+    use super::*;
+    use crate::exact_probabilistic::{
+        decide_fair_expected_reward, decide_fair_reachability, ProbEdge, ProbKey, ProbStateId,
+        ProductAction, ProductKind,
+    };
+
+    #[test]
+    fn probe_target_component() {
+        let one = Rational::from_integer(Integer::from(1_i64));
+        let edge = |from, to, reward: i64| ProbEdge {
+            from: ProbStateId(from),
+            choice: ProductAction::TerminalStutter,
+            action: None,
+            draw: None,
+            to: ProbStateId(to),
+            probability: one.clone(),
+            elapsed: Rational::from_integer(Integer::from(0_i64)),
+            rewards: vec![(
+                filament_exact::Identifier::new("cost").unwrap(),
+                filament_exact::Value::Integer(Integer::from(reward)),
+            )],
+        };
+        let product = ProbProduct {
+            states: (0..2)
+                .map(|state| ProbKey {
+                    binding: None,
+                    model: vec![state],
+                    monitor: None,
+                    accumulator: None,
+                    pending: None,
+                    certificate_state: None,
+                })
+                .collect(),
+            kind: ProductKind::Mdp,
+            edges: vec![edge(0, 1, 1), edge(1, 0, 0)],
+            initial: vec![(0, None, ProbStateId(0))],
+            decided: Vec::new(),
+            labels: Vec::new(),
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        };
+        let limits = ExactProbLimits::default();
+        let target = [false, true];
+        println!(
+            "fair reach {:?}",
+            decide_fair_reachability(&product, None, &target, UnboundedObjective::Min, &limits, &Cancel::new())
+                .map(|r| r.values)
+        );
+        println!(
+            "interval {:?}",
+            decide_fair_reachability_threshold(&product, &target, &Rational::new(Integer::from(2_i64), Integer::from(5_i64)).unwrap(), &limits, &Cancel::new())
+        );
+        println!(
+            "reward max {:?}",
+            decide_fair_expected_reward(&product, &target, "cost", UnboundedObjective::Max, &limits, &Cancel::new())
+                .map(|r| r.values)
+        );
+        println!(
+            "reward plain max {:?}",
+            crate::exact_probabilistic::decide_expected_reward(&product, &target, "cost", UnboundedObjective::Max, &limits, &Cancel::new())
+                .map(|r| r.values)
+        );
+    }
+}

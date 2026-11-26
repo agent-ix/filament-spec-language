@@ -4506,3 +4506,128 @@ fn until_avoidance_cannot_cross_an_already_reached_target() {
         ]
     );
 }
+
+/// FR-200 fair minimum over `{s, u}`: strong fairness to `z_go` leaves the
+/// fair non-target end component `{u}`, which `drift` reaches from `s` with
+/// probability 1. By hand the infimum is `1 - 1 = 0`, below `2/5`.
+#[trace("TC-635")]
+#[test]
+fn fair_minimum_over_a_component_with_an_exit_back_into_its_scc_is_refuted() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_replay::TerminalValue;
+
+    const CLAIM: &str = "probabilistic FairGo using inf on M over (w: M::W) \
+         under every scheduler fair strong W::z_go on origin \
+         { probability >= rational(2,5) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_mec_refinement(CLAIM));
+    let record = analyze_items(
+        &Engines::fsl().expect("FSL engines"),
+        vec![exact_probabilistic_item(
+            fsl_foundation::RequestIndex::new(0),
+            world.request("FairGo", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert_eq!(
+        record.terminal().map(|terminal| terminal.value()),
+        Some(&TerminalValue::Refuted),
+        "{record:#?}"
+    );
+}
+
+/// EN-5 extrema over an end component that holds the solve's target, on
+/// `fair_mec_refinement` entered from a new state `i` whose `begin` reaches
+/// `s` or a terminal dead state, `1/2` each. By hand: from `s`, `drift` takes
+/// `u` with probability 1 and retrying `z_go` through `return` takes `g` with
+/// probability 1, while `a_wait` forever takes neither. So at `i` the maxima
+/// of eventual `g` and of `not g until u` are `1/2`, the minimum of `always
+/// not u` is `1 - 1/2`, and the minimum of eventual `g` is 0.
+#[trace("TC-635", "FR-198-AC-5", "FR-201-AC-15", "FR-201-AC-16")]
+#[test]
+fn extrema_over_a_component_holding_the_target_are_decided_and_certified() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{ProofBasis, TerminalValue};
+
+    // (name, fairness, bound, formula, whether the bound holds at `1/2`)
+    let cases: [(&str, &str, &str, &str, bool); 10] = [
+        ("UntilAbove", "", "<= rational(2,5)", "holds(not w.g) until holds(w.u)", false),
+        ("UntilHalf", "", "<= rational(1,2)", "holds(not w.g) until holds(w.u)", true),
+        ("AlwaysBelow", "", ">= rational(3,5)", "always holds(not w.u)", false),
+        ("AlwaysHalf", "", ">= rational(1,2)", "always holds(not w.u)", true),
+        ("MaxAbove", "", "<= rational(2,5)", "eventually holds(w.g)", false),
+        ("MaxHalf", "", "<= rational(1,2)", "eventually holds(w.g)", true),
+        ("MinBelow", "", ">= rational(2,5)", "eventually holds(w.g)", false),
+        ("FairMaxAbove", "fair strong W::z_go", "<= rational(2,5)", "eventually holds(w.g)", false),
+        ("FairMaxHalf", "fair strong W::z_go", "<= rational(1,2)", "eventually holds(w.g)", true),
+        ("FairMinBelow", "fair strong W::z_go", ">= rational(2,5)", "eventually holds(w.g)", false),
+    ];
+    let claims = cases
+        .map(|(name, fairness, bound, formula, _)| {
+            format!(
+                "probabilistic {name} using inf on M over (w: M::W) under every scheduler \
+                 {fairness} on origin {{ probability {bound} [ {formula} ] }}"
+            )
+        })
+        .join("\n");
+    let mut model = prob_world::fair_mec_refinement(&claims);
+    model
+        .fields
+        .push(("i", model.fields.first().expect("a field").1.clone()));
+    model.operations.push(prob_world::Operation {
+        name: "begin",
+        parameters: vec![(
+            "success",
+            model.fields.first().expect("a field").1.clone(),
+        )],
+        modifies: vec!["i", "s"],
+        deletes: false,
+    });
+    model.body = model
+        .body
+        .replace(
+            "when { self.g };",
+            "when { self.g or not (self.i or self.s or self.u) };",
+        )
+        .replace(
+            "weight W::return = 1; }",
+            "weight W::return = 1; weight W::begin = 1; }",
+        );
+    model.body.push_str(
+        "\npre BeginAtI using v on M::W::begin { self.i }\n\
+         post Begun using v on M::W::begin { self.i = false and self.s = success }\n\
+         random W::begin(success) ~ { true: 1, false: 1 };\n",
+    );
+    model.initial = serde_json::json!({
+        "s": {"boolean": false}, "u": {"boolean": false},
+        "g": {"boolean": false}, "i": {"boolean": true}
+    });
+    let world = World::new(&model);
+    let engines = Engines::fsl().expect("FSL engines");
+    let mut wrong = Vec::new();
+    for (index, (name, .., holds)) in cases.into_iter().enumerate() {
+        let record = analyze_items(
+            &engines,
+            vec![exact_probabilistic_item(
+                RequestIndex::new(index),
+                world.request(name, ModelCheckLimits::default()),
+            )],
+            &Cancel::new(),
+        )
+        .remove(0);
+        let settled = record.terminal().map(|terminal| terminal.value());
+        let matches = match settled {
+            Some(TerminalValue::Refuted) => !holds,
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::ExactValue { value, .. },
+                ..
+            }) => holds && value.value() == &ratio(1, 2),
+            _ => false,
+        };
+        if !matches {
+            wrong.push(format!("{name}: {settled:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

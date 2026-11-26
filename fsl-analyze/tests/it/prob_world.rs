@@ -1136,6 +1136,48 @@ pub(crate) fn process_coin2(extra: &str) -> Model {
     }
 }
 
+/// `s` and `u` form one SCC; `z_go` is enabled at `s` only and may leave it
+/// for the target `g`. Strong fairness to `z_go` removes `s`, leaving the fair
+/// non-target end component `{u}`.
+pub(crate) fn fair_mec_refinement(extra: &str) -> Model {
+    Model {
+        package: "test/fair-mec-refinement",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("u", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "a_wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "z_go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "u", "g"], deletes: false },
+            Operation { name: "drift", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
+            Operation { name: "loop", parameters: vec![], modifies: vec!["u"], deletes: false },
+            Operation { name: "return", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
+        ],
+        body: format!(concat!(
+            "pre WaitAtS using v on M::W::a_wait {{ self.s }}\n",
+            "post Waited using v on M::W::a_wait {{ self.s = true }}\n",
+            "pre GoAtS using v on M::W::z_go {{ self.s }}\n",
+            "post Went using v on M::W::z_go {{ self.s = false and self.u = not success and self.g = success }}\n",
+            "pre DriftAtS using v on M::W::drift {{ self.s }}\n",
+            "post Drifted using v on M::W::drift {{ self.s = false and self.u = true }}\n",
+            "pre LoopAtU using v on M::W::loop {{ self.u }}\n",
+            "post Looped using v on M::W::loop {{ self.u = true }}\n",
+            "pre ReturnAtU using v on M::W::return {{ self.u }}\n",
+            "post Returned using v on M::W::return {{ self.u = false and self.s = true }}\n",
+            "random W::z_go(success) ~ {{ true: 1, false: 1 }};\n",
+            "terminal Done using v on M when {{ self.g }};\n",
+            "workload Equal on M {{ weight W::a_wait = 1; weight W::z_go = 1; weight W::drift = 1; weight W::loop = 1; weight W::return = 1; }}\n",
+            "{}"
+        ), extra),
+        initial: json!({"s": {"boolean": true}, "u": {"boolean": false}, "g": {"boolean": false}}),
+    }
+}
+
 /// FR-1041/FR-412 fair-minimum witness model: `drift` reaches `u`, where the
 /// only action loops and `go` is disabled; `wait` instead exposes an unfair
 /// live cycle at `s`.

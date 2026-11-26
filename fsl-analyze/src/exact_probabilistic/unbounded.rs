@@ -2723,6 +2723,9 @@ fn restricted_scc(
     result
 }
 
+/// The policy iteration starts from. For a maximum over an MDP it must be
+/// proper, reaching a fixed state from every other state, or its linear
+/// system is singular; only an end component can hold it away.
 fn initial_policy(
     graph: &Graph<'_>,
     fixed: &[Option<Rational>],
@@ -2737,7 +2740,15 @@ fn initial_policy(
         return Ok(policy);
     }
     for component in maximal_end_components(graph)? {
-        if component.iter().any(|state| fixed[*state].is_some()) {
+        let held = component
+            .iter()
+            .copied()
+            .filter(|state| fixed[*state].is_some())
+            .collect::<Vec<_>>();
+        if !held.is_empty() {
+            // The component's other states head for its fixed ones by its
+            // own actions.
+            route_within_component(graph, &component, &held, &mut policy)?;
             continue;
         }
         let member = component
@@ -2768,13 +2779,26 @@ fn expand_one_mec_policy(
     owner_action: usize,
     policy: &mut [Option<usize>],
 ) -> Result<(), UnboundedError> {
+    policy[owner] = Some(owner_action);
+    route_within_component(graph, component, &[owner], policy)
+}
+
+/// Give every state of `component` outside `ends` an action that stays in the
+/// component and steps nearer to one of `ends`.
+fn route_within_component(
+    graph: &Graph<'_>,
+    component: &[usize],
+    ends: &[usize],
+    policy: &mut [Option<usize>],
+) -> Result<(), UnboundedError> {
     let members = component
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    policy[owner] = Some(owner_action);
     let mut distance = vec![None; graph.product.states.len()];
-    distance[owner] = Some(0_usize);
+    for end in ends {
+        distance[*end] = Some(0_usize);
+    }
     loop {
         let mut changed = false;
         for state in component {
@@ -2802,7 +2826,7 @@ fn expand_one_mec_policy(
         }
     }
     for state in component {
-        if *state == owner {
+        if ends.contains(state) {
             continue;
         }
         let current_distance = distance[*state].ok_or(UnboundedError::InvalidState)?;
