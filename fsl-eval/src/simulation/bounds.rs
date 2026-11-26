@@ -263,7 +263,7 @@ mod tests {
         assert!(width.upper.sub(&width.lower) < epsilon(64));
     }
 
-    #[trace("FSpec-FR-420-AC-2")]
+    #[trace("FSpec-FR-420-AC-2", "FSpec-FR-408-AC-21")]
     #[test]
     fn exp_neg_brackets_its_true_value() {
         // Each computed bracket is far narrower than the 39-digit bracket of
