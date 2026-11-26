@@ -5,11 +5,9 @@
 //! that replays and a zone certificate.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-mod mutation;
-
-use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
+use crate::analyze_cli_support::{Run, Workspace, analyze, label, request_over};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit};
 
 const CLAIMS: &str = "possible ReplyPossible using v over (c: M::Call) { c.phase = 2 }\n\
@@ -449,9 +447,9 @@ fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness(
 /// request reader names no population of a unit's own, so the binding is
 /// given directly. The selected domain package holds no object.
 fn settle_over_base(claim: &str, item: Value) -> Value {
-    use crate::timed_world::{world_over, DENSE};
+    use crate::timed_world::{DENSE, world_over};
     use fsl_analyze::analyze::document::{
-        analyze_document, resolve_items, AnalyzeRun, ItemSelection, SubjectSelection,
+        AnalyzeRun, ItemSelection, SubjectSelection, analyze_document, resolve_items,
     };
     use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision, SubjectBinding};
     use fsl_eval::simulation::model::PopulationUniverse;
@@ -481,10 +479,9 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
             _ => None,
         })
         .expect("the unit declares one population");
-    let mut snapshot: Value = serde_json::from_slice(
-        world.snapshots.values().next().expect("one snapshot"),
-    )
-    .expect("snapshot JSON");
+    let mut snapshot: Value =
+        serde_json::from_slice(world.snapshots.values().next().expect("one snapshot"))
+            .expect("snapshot JSON");
     snapshot["populations"]
         .as_array_mut()
         .expect("snapshot populations")
