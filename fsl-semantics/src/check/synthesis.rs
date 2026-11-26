@@ -354,7 +354,7 @@ fn is_numeric(value_type: &ValueType) -> bool {
     )
 }
 
-#[implements("FR-255-AC-31")]
+#[implements("FR-255-AC-41")]
 fn check_expression(
     scope: &Scope,
     signatures: &Signatures,

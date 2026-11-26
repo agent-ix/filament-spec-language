@@ -587,7 +587,7 @@ fn a_step_sum_whose_term_is_not_numeric_is_ill_typed() {
 /// A synthesis goal is typed under the check's own `s3.*` limits: the goal
 /// `true and true and true` holds five expression nodes (three literals under
 /// two conjunctions), so `s3.nodes` 4 refuses at the fifth and 5 admits it.
-#[trace("FR-255-AC-31")]
+#[trace("FR-255-AC-41")]
 #[test]
 fn a_synthesis_goal_is_typed_under_the_callers_node_limit() {
     let at = |nodes: u64| {

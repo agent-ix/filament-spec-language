@@ -903,7 +903,7 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
 }
 
 #[test]
-#[trace("FR-255-AC-34")]
+#[trace("FR-255-AC-40")]
 fn a_one_byte_retention_allowance_stops_before_the_first_stored_state() {
     use fsl_analyze::analyze::{analyze_items, split_records, Engines};
     let case = case(&crate::derived_request_support::counter_body(""), &[0]);

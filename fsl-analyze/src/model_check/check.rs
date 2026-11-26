@@ -3566,7 +3566,7 @@ where
     /// Charge the bytes of a state about to be stored (FR-255 "Retained
     /// bytes"): the fixed overhead of an EN-1 state, then the buffers the
     /// stored node and its coalescing entry own.
-    #[implements("FR-255-AC-34")]
+    #[implements("FR-255-AC-40")]
     fn retain(
         &self,
         (key, monitor, _, canonical_key): &ProductKey,
