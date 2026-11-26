@@ -161,7 +161,10 @@ edges, automaton states and stored zone bytes.
   with the admitted-behaviour checks below; a violation SHALL end the search
   and be concretized by FR-241. A claim that declares a fairness SHALL be
   decided on FR-240's liveness product, whatever its form, since this search
-  reads no fairness.
+  reads no fairness. A TT-1 or TT-2 claim so decided SHALL keep a selected
+  symmetry (FR-159): the engine SHALL check one instance of each orbit
+  (FR-151) on that instance's product, explored unreduced, and a proof
+  SHALL be reduced and carry no certificate (FR-160).
 - **Admitted behaviour.** A violating symbolic state SHALL end the search
   only when some point of its violating set has a time-divergent
   continuation, which the engine SHALL check on the forward closure of

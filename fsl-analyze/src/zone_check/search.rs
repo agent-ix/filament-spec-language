@@ -182,8 +182,7 @@ pub enum ZoneReduction {
     /// ADR-018 V-8: a selected reduction EN-6 does not apply. Over any
     /// item, partial-order reduction or a state constraint (FSpec FR-430),
     /// named first in the order partial-order, constraint; failing that,
-    /// symmetry over an item decided on the liveness product or by the
-    /// time-lock search, which do not read a symmetry-reduced graph.
+    /// symmetry over the time-lock item or a TT-3 or TT-4 clause.
     Unsupported {
         /// The reduction.
         reduction: ReductionKind,
@@ -720,10 +719,11 @@ pub fn check_timed_model<S: Clone>(
     // FR-239's bound check ran when the timed subject was built.
     let system = request.subject.system();
     let symmetric = !reductions.symmetry.is_empty();
-    // EN-6 applies symmetry to its search only: the time-lock search and
-    // the liveness product read the unreduced graph's edges, so an item
-    // decided by either settles V-8 naming symmetry, as an unapplied
-    // reduction does, before its declarations are admitted.
+    // The time-lock search and the liveness product read the unreduced
+    // graph's edges. A time-lock item, or a TT-3 or TT-4 clause, settles
+    // V-8 naming symmetry, as an unapplied reduction does, before its
+    // declarations are admitted; a TT-1 or TT-2 clause under a fairness is
+    // reduced to one instance per orbit.
     if symmetric && reads_unreduced_graph(&request)? {
         return Ok(reduced(ZoneReduction::Unsupported {
             reduction: ReductionKind::Symmetry,
@@ -886,10 +886,11 @@ pub fn check_timed_model<S: Clone>(
     })
 }
 
-/// Whether `request`'s item is decided on a graph EN-6 does not reduce:
-/// the time-lock-freedom item, or a clause the liveness product decides
-/// (FR-240): one declaring a fairness, or with no TT-1 atom and no flat TT-2
-/// window.
+/// Whether `request`'s item admits no symmetry: the time-lock-freedom item,
+/// or a TT-3 or TT-4 clause the liveness product decides (FR-240). A TT-1
+/// or TT-2 clause under a fairness is decided on the product too, and keeps
+/// symmetry: it is checked once per orbit (FR-151), the instance's product
+/// explored unreduced, and the product reads no canonical state.
 fn reads_unreduced_graph<S>(
     request: &ZoneCheckRequest<'_, '_, '_, S>,
 ) -> Result<bool, ZoneCheckRefusal> {
@@ -898,7 +899,7 @@ fn reads_unreduced_graph<S>(
         ZoneCheckItem::DeadlockFreedom => false,
         ZoneCheckItem::Clause { clause, .. } => {
             if !clause.fairness().is_empty() {
-                true
+                states_non_zeno(clause)
             } else if fsl_eval::automaton::invariant_atom(clause).is_some() {
                 false
             } else {
@@ -1617,9 +1618,11 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 )))
             }
             // FR-160: a symmetry-reduced graph has no certificate.
-            Ok(_) if self.reduced => Ok(Searched::HoldsReduced {
-                stats: self.stats(),
-            }),
+            Ok(_) if self.reduced && !matches!(self.judged, Judged::Liveness(_)) => {
+                Ok(Searched::HoldsReduced {
+                    stats: self.stats(),
+                })
+            }
             Ok((root, witness)) => {
                 // FR-240: a claim decided on the liveness product, once
                 // the subject admits a behaviour; its proof is the
@@ -1629,6 +1632,13 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                         Liveness::Violated(counterexample) => {
                             return Ok(Searched::Violated {
                                 counterexample,
+                                stats: self.stats(),
+                            });
+                        }
+                        // FR-160: a proof under a symmetry, here over one
+                        // instance of each orbit, has no certificate.
+                        Liveness::Proved(..) if self.reduced => {
+                            return Ok(Searched::HoldsReduced {
                                 stats: self.stats(),
                             });
                         }
