@@ -866,9 +866,10 @@ FR-255-AC-30 is implemented in `replay_refinement_trace`, which takes the
 `model_check` limits: the protocol closures of one replay share the
 `max_transitions` allowance, and the analyze refinement item passes its own.
 No replay request route carries `stage_limits` into that call yet.
-The
-`observation.input_bytes` stop of FR-255-AC-31 is tested; its `emit.output_bytes`
-and hyper-clause `s3.nodes` stops are specified here and not yet tested.
+FR-255-AC-31 is tested for `observation.input_bytes` (a snapshot), for
+`emit.output_bytes` (a clause replay over a model, source route; a package
+run emits nothing and has no emission to bound) and for `s3.nodes` (a hyper
+clause).
 
 Backing of the criteria:
 
