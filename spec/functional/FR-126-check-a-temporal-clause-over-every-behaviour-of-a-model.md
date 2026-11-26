@@ -419,7 +419,7 @@ zero, the first distinct initial state causes the limit refusal.
 
 - The engine SHALL explore one product for each binding of the clause's
   `over` parameter, taking the bindings in FR-125's canonical instance
-  order (population, then key).
+  order (population, then universe list order).
 - The engine SHALL decide bindings in that order, completing the clause's
   required phases for one binding before proceeding to the next. For a
   binding, the engine SHALL return its first-phase violation if one is found;
