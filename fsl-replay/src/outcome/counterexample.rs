@@ -2554,8 +2554,8 @@ mod tests {
     }
 
     /// FR-120-AC-39 (TC-471): an operation string spelled like a JSON literal
-    /// or array is a name; an identity text and an object keep their reading;
-    /// any other member is refused.
+    /// or array is a name, an identity text keeps its reading, and any other
+    /// member, an object among them, is refused.
     #[trace("TC-471", "FR-120-AC-39")]
     #[test]
     fn a_counterexample_operation_spelled_like_a_literal_is_a_name() {
@@ -2575,13 +2575,17 @@ mod tests {
         for name in ["tick", "true", "false", "null", "1", "[1]"] {
             assert_eq!(read(json!(name)).expect("a name"), format!("\"{name}\""));
         }
-        for spelled in [json!(r#"{"name":"s1"}"#), json!({"name": "s1"})] {
-            assert_eq!(
-                read(spelled).expect("an identity"),
-                r#"{"name":"s1"}"#.to_owned()
-            );
-        }
-        for other in [json!(true), json!(1), json!([1]), json!(null)] {
+        assert_eq!(
+            read(json!(r#"{"name":"s1"}"#)).expect("an identity"),
+            r#"{"name":"s1"}"#.to_owned()
+        );
+        for other in [
+            json!({"name": "s1"}),
+            json!(true),
+            json!(1),
+            json!([1]),
+            json!(null),
+        ] {
             assert_eq!(
                 read(other),
                 Err(TemporalCounterexampleReadRefusal::MalformedWire {

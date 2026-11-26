@@ -2563,8 +2563,8 @@ mod tests {
                 .unwrap(),
             named
         );
-        // FR-120-AC-39: a literal spelling is a name, an object its canonical
-        // text, and no other member is read.
+        // FR-120-AC-39: a literal spelling is a name, and no other member than
+        // a string is read, an object among them.
         let mut restore_written = |operation: Value| {
             let mut written = encoded.clone();
             written["operation"] = operation;
@@ -2582,13 +2582,13 @@ mod tests {
                 format!("\"{name}\"")
             );
         }
-        assert_eq!(
-            restore_written(json!({"name": "tick"}))
-                .unwrap()
-                .operation(),
-            r#"{"name":"tick"}"#
-        );
-        for other in [json!(true), json!(1), json!([1]), json!(null)] {
+        for other in [
+            json!({"name": "tick"}),
+            json!(true),
+            json!(1),
+            json!([1]),
+            json!(null),
+        ] {
             assert!(matches!(
                 restore_written(other),
                 Err(super::ReferenceCodecError::Refused {
