@@ -90,7 +90,9 @@ fn forced_third(third: &str, phase_one: &str) -> World {
          time invariant Zeroth when {{ self.phase = 0 }} {{ self.y < 1 ms }}\n\
          time invariant Oneth when {{ self.phase = 1 }} {{ {phase_one} }}\n\
          probabilistic Reached using ev on M over (c: M::Call) under every scheduler on origin \
-         {{ probability >= 0.5 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n",
+         {{ probability >= 0.5 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n\
+         probabilistic Until using ev on M over (c: M::Call) under every scheduler on origin \
+         {{ probability >= 0.5 [ holds(not c.late) until[0 ms, 4 ms] holds(c.late) ] }}\n",
         timed_world::DENSE,
     );
     timed_world::world(
@@ -101,6 +103,15 @@ fn forced_third(third: &str, phase_one: &str) -> World {
         PROFILES,
         &body,
     )
+}
+
+/// The until form walks the same delays: it holds with value 1 on the same
+/// subject, where the skip refuted it.
+#[test]
+#[trace("TC-2491", "FR-922-AC-4")]
+fn an_until_over_the_skipped_region_is_proved() {
+    let world = forced_third("self.x < 1 ms", "self.x < 1 ms");
+    assert_eq!(outcome(&settle(&world, "Until")), "proved 1/1");
 }
 
 /// A strict invariant: the walk that skips a region lands on `x = 1 ms`, which
