@@ -36,8 +36,8 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    admitted_refutation, admitted_start, claim_start, GuardedStep, ModelSimState, PlaceConstraint,
-    TerminalClass, TimedStop, TimedSystem, TimedVacuity,
+    admitted_refutation, admitted_start, claim_start, states_non_zeno, GuardedStep, ModelSimState,
+    PlaceConstraint, TerminalClass, TimedStop, TimedSystem, TimedVacuity,
 };
 use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup};
 use fsl_eval::temporal::AtomReading;
@@ -814,7 +814,10 @@ pub fn check_timed_model<S: Clone>(
         run.live = live;
         run.group = plan.group.clone();
         run.reduced = symmetric;
-        let liveness_product = matches!(&run.judged, Judged::Liveness(_));
+        // A TT-1 or TT-2 claim decided on the product, for its fairness,
+        // states no premise.
+        let liveness_product = matches!(&run.judged, Judged::Liveness(claim)
+            if states_non_zeno(claim.clause));
         let searched = match run.search() {
             Ok(searched) => searched,
             Err(Halt::Outcome(searched)) => *searched,

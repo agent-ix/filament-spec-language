@@ -10,9 +10,24 @@
 //! [`claim_start`] places its causes among a timed item's, in FR-125
 //! "Instancing" order.
 
+use fsl_semantics::check::{CheckedTemporalClause, TimedPropertyForm};
 use ix_trace_rs::implements;
 
+use crate::automaton::invariant_atom;
+
 use super::{ClaimInstances, NoClaimInstances, NotSimulated};
+
+/// Whether a result of `clause` states the non-Zeno premise (FSpec FR-416
+/// "Non-Zeno premise"): a TT-1 or TT-2 claim states none, whatever product
+/// decides it.
+#[implements("FSpec-FR-416-AC-10")]
+pub fn states_non_zeno(clause: &CheckedTemporalClause) -> bool {
+    invariant_atom(clause).is_none()
+        && !matches!(
+            clause.timed_form(),
+            Some(TimedPropertyForm::TimedInvariant | TimedPropertyForm::BoundedWindow { .. })
+        )
+}
 
 /// Why a timed item that found no violation is not proved.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

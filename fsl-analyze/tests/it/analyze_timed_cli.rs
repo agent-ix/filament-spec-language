@@ -933,6 +933,34 @@ fn routes_over(
     snapshots: &[Vec<u8>],
     subject: Option<Value>,
 ) -> Vec<(String, String, String)> {
+    items_on_both_routes(name, model, body, claims, snapshots, subject)
+        .into_iter()
+        .map(|item| {
+            (
+                item["record"]["backend"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                label(&item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// The result items [`routes_over`] reads: each claim on EN-6, then each on
+/// EN-1.
+fn items_on_both_routes(
+    name: &str,
+    model: &[u8],
+    body: &str,
+    claims: &[(&str, &str)],
+    snapshots: &[Vec<u8>],
+    subject: Option<Value>,
+) -> Vec<Value> {
     use crate::timed_world::{unit_text, DENSE, PACKAGE};
     let temporal: String = claims
         .iter()
@@ -964,22 +992,62 @@ fn routes_over(
     }
     let ws = Workspace::new(name);
     let run = analyze(&request_over(&ws, &unit, model, snapshots, extra));
-    (0..claims.len() * 2)
-        .map(|n| {
-            let item = run.item(n);
+    (0..claims.len() * 2).map(|n| run.item(n)).collect()
+}
+
+/// From `phase` 0, `idle` loops and `go` enters the quiescent `phase` 1.
+/// Under `fair weak go` a behaviour idles any finite time, then takes `go`.
+const IDLE_OR_GO: &str = "pre Idle using v on M::Call::idle { self.phase = 0 }\n\
+     post Idled using v on M::Call::idle { self.x = 0 ms }\n\
+     pre Go using v on M::Call::go { self.phase = 0 }\n\
+     post Gone using v on M::Call::go { self.phase = 1 and self.x = 0 ms }\n\
+     time invariant Busy when { self.phase = 0 } { self.x <= 1 ms }\n";
+
+/// FR-239 decides a fair TT-1 or TT-2 claim on the liveness product, and FSpec
+/// FR-416 "Non-Zeno premise" gives a TT-1 or TT-2 result no `non_zeno`. By
+/// hand over [`IDLE_OR_GO`]: `go` breaks `phase != 1`, at once or within the
+/// window; no step leaves `phase <= 1`; and a behaviour that idles past 3 ms
+/// has not reached `phase` 1 by then.
+#[trace("FSpec-FR-416-AC-10", "FSpec-FR-161-AC-16")]
+#[test]
+fn a_fair_invariant_or_window_claim_states_no_non_zeno_premise() {
+    let items = items_on_both_routes(
+        "timed-fair-forms",
+        &crate::timed_world::document(&["x"], &[("idle", &["x"]), ("go", &["phase", "x"])]),
+        IDLE_OR_GO,
+        &[
+            ("Held", "fair weak M::Call::go; always holds(c.phase <= 1)"),
             (
-                item["record"]["backend"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-                label(&item).to_owned(),
-                item["record"]["cause"]["kind"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            )
-        })
-        .collect()
+                "Broken",
+                "fair weak M::Call::go; always holds(c.phase != 1)",
+            ),
+            (
+                "Window",
+                "fair weak M::Call::go; always[0 ms, 3 ms] holds(c.phase <= 1)",
+            ),
+            (
+                "Early",
+                "fair weak M::Call::go; always[0 ms, 3 ms] holds(c.phase != 1)",
+            ),
+            (
+                "Late",
+                "fair weak M::Call::go; eventually[0 ms, 3 ms] holds(c.phase = 1)",
+            ),
+        ],
+        &[rpc_snapshot()],
+        None,
+    );
+    for item in &items {
+        assert_eq!(item["record"]["non_zeno"], Value::Null, "{item}");
+    }
+    let found: Vec<&str> = items.iter().map(label).collect();
+    let expected = ["proved", "refuted", "proved", "refuted", "refuted"];
+    assert_eq!(found[..5], expected, "{items:#?}");
+    // EN-1's verdict on `Window`, the eighth item, is not asserted: it fails
+    // replay on any TT-2 `always` window over a quiescent state, fair or not
+    // (QSL-3532).
+    assert_eq!(found[5..7], expected[..2], "{items:#?}");
+    assert_eq!(found[8..], expected[3..], "{items:#?}");
 }
 
 /// From `phase` 0, `block` enters `phase` 2, where the invariant lets no time

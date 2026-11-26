@@ -114,7 +114,8 @@ refuted, with its trap evidence.
   obligation identity binds both (ADR-013 O-09).
 - The record of an item EN-6 decides on its liveness product (FR-240's
   divergence acceptance set), and of one the digital-clock route decides by
-  EN-1's SCC phase (FR-632), SHALL carry `ZoneCheckRecord::non_zeno`,
+  EN-1's SCC phase (FR-632), other than a TT-1 or TT-2 claim (FSpec FR-416
+  "Non-Zeno premise"), SHALL carry `ZoneCheckRecord::non_zeno`,
   written as the FSpec FR-416 result-entry member `non_zeno`:
   `NotRequired` (`not-required`) for a proof whose product has no accepting
   cycle even without the divergence set; `Assumed` (`assumed`) for a proof

@@ -49,12 +49,17 @@ point is still decided by the horizon construction.
 - A `TimedSafety` or `TimedLiveness` formula SHALL translate by the
   MightyL construction for the negation of the formula, giving a timed
   Büchi automaton; its clocks SHALL join the zone of every symbolic state.
-- A `BoundedWindow` formula SHALL translate to a timed automaton with one
-  added horizon clock, reset at position 0; the product search SHALL stop
-  each path when the horizon clock exceeds the formula's horizon. The
-  translation SHALL admit punctual intervals in a `BoundedWindow` formula.
-- A `TimedInvariant` clause SHALL read its predicate at each symbolic
-  state; a data predicate SHALL decide on the discrete state alone.
+- A `BoundedWindow` formula of a claim that declares no fairness SHALL
+  translate to a timed automaton with one added horizon clock, reset at
+  position 0; the product search SHALL stop each path when the horizon
+  clock exceeds the formula's horizon. The translation SHALL admit punctual
+  intervals in such a formula.
+- A `TimedInvariant` clause that declares no fairness SHALL read its
+  predicate at each symbolic state; a data predicate SHALL decide on the
+  discrete state alone.
+- A TT-1 or TT-2 claim that declares a fairness SHALL be decided on FR-240's
+  liveness product (FR-239), over the claim automaton FR-240 reads for it,
+  not by the two forms above.
 - The translation SHALL translate an interval operator with a lower bound and no upper bound (`[q, *]`)
   to FR-1034's lower-bound-only component (one clock, the
   lower guard only, `q` its one constant), never to a horizon clock or block

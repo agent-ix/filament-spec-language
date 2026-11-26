@@ -38,9 +38,9 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{Atom, AutomatonError, ClockedEdge, Letter, PositionAutomaton, StateId};
 use fsl_eval::fairness::{analyze, Analysis, Constraint, EdgeLabel, Graph, Identity, Strength};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint};
+use fsl_eval::simulation::model::{states_non_zeno, GuardedStep, ModelSimState, PlaceConstraint};
 use fsl_eval::temporal::{AtomReading, CaptureReading};
-use fsl_semantics::check::CaptureSite;
+use fsl_semantics::check::{CaptureSite, CheckedTemporalClause};
 use ix_trace_rs::implements;
 
 use super::{
@@ -61,6 +61,8 @@ pub(super) struct LiveClaim<'c> {
     pub(super) fairness: Vec<FairnessConstraint>,
     /// Each fairness constraint's operation text.
     pub(super) operations: Vec<String>,
+    /// Whether the clause's certificate states the non-Zeno premise.
+    states_non_zeno: bool,
     /// Each letter read, by the state's state key, the instance and whether
     /// it is position 0 of an `on origin` clause with captures; `None` when
     /// undefined.
@@ -84,8 +86,7 @@ impl<'c> LiveClaim<'c> {
         start: StateId,
         letters: &'c dyn ModelLetters,
         instances: Vec<ModelInstance>,
-        capture: CaptureSite,
-        fairness: Vec<FairnessConstraint>,
+        clause: &CheckedTemporalClause,
         operations: Vec<String>,
     ) -> Self {
         Self {
@@ -93,9 +94,10 @@ impl<'c> LiveClaim<'c> {
             start,
             letters,
             instances,
-            capture,
-            fairness,
+            capture: clause.capture_site(),
+            fairness: clause.fairness().to_vec(),
             operations,
+            states_non_zeno: states_non_zeno(clause),
             readings: RefCell::new(BTreeMap::new()),
         }
     }
@@ -842,7 +844,9 @@ impl<O> Checker<'_, '_, O> {
                 },
                 _ => fault(CheckerFault::Graph),
             })?;
-        let expected = if Analysis::first_fair_in(&analyses).is_some() {
+        let expected = if !live.states_non_zeno {
+            None
+        } else if Analysis::first_fair_in(&analyses).is_some() {
             Some(crate::certificate::zone_certificate::NonZeno::Assumed)
         } else {
             Some(crate::certificate::zone_certificate::NonZeno::NotRequired)
