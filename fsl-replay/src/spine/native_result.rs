@@ -4533,6 +4533,8 @@ mod qsl_3117_deciding_run {
             });
             if malformed.get("source").is_some() {
                 extraction["source"] = malformed["source"].clone();
+            } else if malformed.get("body").is_some() {
+                extraction["body"]["identity"] = malformed["body"]["identity"].clone();
             } else {
                 for (key, value) in malformed.as_object().unwrap() {
                     extraction[key] = value.clone();
