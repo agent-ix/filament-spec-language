@@ -20,6 +20,7 @@ use super::{
 use filament_exact::{Cancel, CancelCause};
 use fsl_eval::probabilistic::MonitorState;
 use fsl_semantics::check::Bound;
+use ix_trace_rs::implements;
 
 /// The scheduler objective for a bounded claim over every scheduler.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -123,6 +124,7 @@ pub enum FhError {
 ///
 /// # Errors
 /// Returns [`FhError`] when the product is malformed or its graph is cyclic.
+#[implements("FR-197-AC-1", "FR-197-AC-2", "FR-197-AC-3")]
 pub fn decide_bounded_event(
     product: &ProbProduct,
     bound: &Bound,
@@ -171,6 +173,7 @@ pub fn decide_bounded_event(
 /// # Errors
 /// Returns [`FhError`] for malformed or cyclic products, or inconsistent
 /// precision limits.
+#[implements("FR-197-AC-1", "FR-197-AC-2", "FR-197-AC-3", "FR-197-AC-4")]
 pub fn backward_induction(
     product: &ProbProduct,
     terminal: &[Option<Rational>],
@@ -1059,6 +1062,7 @@ impl Arithmetic<'_> {
 
 /// Run the shared exact pass for an untimed acyclic measure product, retaining
 /// the caller's cumulative numeric and working-storage scope through every sum.
+#[implements("FR-197-AC-4")]
 pub(crate) fn decide_measure_exact(
     product: &ProbProduct,
     terminal: &[Option<Rational>],

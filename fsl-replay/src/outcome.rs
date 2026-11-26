@@ -601,7 +601,7 @@ pub(crate) struct TimedStateWire {
 pub(crate) struct TimedTransitionWire {
     #[serde(rename = "type")]
     kind: &'static str,
-    operation: serde_json::Value,
+    operation: String,
     receiver: Option<serde_json::Value>,
     arguments: Vec<serde_json::Value>,
 }
@@ -613,6 +613,14 @@ pub(super) struct TaskSourceTransitionWire {
     operation: String,
     receiver: Option<serde_json::Value>,
     arguments: Vec<serde_json::Value>,
+}
+
+/// Whether a written `operation` string is itself an identity text (FR-120):
+/// the JSON text of an object or of a string. Any other string is a name.
+#[implements("FR-120-AC-39")]
+pub(crate) fn is_identity_text(wire: &str) -> bool {
+    matches!(wire.trim_start().bytes().next(), Some(b'{' | b'"'))
+        && serde_json::from_str::<serde::de::IgnoredAny>(wire).is_ok()
 }
 
 /// Select the existing task-source operation spelling without copying it.
@@ -727,7 +735,9 @@ impl From<&filament_semantic_value::model_transition::ModelTransition> for Timed
         let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
         Self {
             kind: "transition",
-            operation: value(identity.operation()),
+            // FSpec FR-181 writes the operation as one string: the identity
+            // text itself (FR-120), as the canonical identity bytes do.
+            operation: identity.operation().to_owned(),
             receiver: identity.receiver().map(value),
             arguments: identity
                 .arguments()
@@ -4037,10 +4047,7 @@ mod tests {
         assert_eq!(value["kind"], "not-stochastic");
         assert_eq!(value["state"]["key"], "WzAsW11d");
         assert_eq!(value["identity"]["type"], "transition");
-        assert_eq!(
-            value["identity"]["operation"],
-            serde_json::json!({"name":"timeout"})
-        );
+        assert_eq!(value["identity"]["operation"], r#"{"name":"timeout"}"#);
         assert_eq!(value["identity"]["receiver"], serde_json::Value::Null);
         assert_eq!(value["identity"]["arguments"][0]["value"], "1");
     }

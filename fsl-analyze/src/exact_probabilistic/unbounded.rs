@@ -5,6 +5,7 @@ use super::rows::Evaluation;
 use super::{ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind};
 use filament_exact::{Cancel, CancelCause, Integer, Rational, Value};
 use fsl_replay::ExactProbLimits;
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as BigInteger;
 
@@ -216,6 +217,7 @@ pub enum UnboundedError {
 /// The caller supplies a state-label vector and the extremum. Qualitative
 /// target and target-avoiding states are fixed before the linear equations are
 /// solved, so singular recurrent classes do not enter policy evaluation.
+#[implements("FR-198-AC-1", "FR-198-AC-3", "FR-198-AC-5")]
 pub fn decide_reachability(
     product: &ProbProduct,
     target: &[bool],
@@ -227,6 +229,7 @@ pub fn decide_reachability(
 }
 
 /// Decide `A until B`, fixing states where neither predicate holds to zero.
+#[implements("FR-201-AC-15")]
 pub fn decide_until(
     product: &ProbProduct,
     from: &[bool],
@@ -248,6 +251,7 @@ pub fn decide_until(
 
 /// Decide `always P` as the complement of eventual `not P`, exchanging the
 /// minimum and maximum objective.
+#[implements("FR-201-AC-16")]
 pub fn decide_always(
     product: &ProbProduct,
     predicate: &[bool],
@@ -436,6 +440,7 @@ fn reachability(
 
 /// Run outward-rounded Bellman iteration and use exact policy iteration when
 /// the interval cannot decide `threshold` within the configured budgets.
+#[implements("FR-198-AC-7", "FR-198-AC-8")]
 pub fn decide_reachability_threshold(
     product: &ProbProduct,
     target: &[bool],
@@ -450,6 +455,7 @@ pub fn decide_reachability_threshold(
 }
 
 /// Threshold form of [`decide_until`].
+#[implements("FR-201-AC-15")]
 pub fn decide_until_threshold(
     product: &ProbProduct,
     from: &[bool],
@@ -648,6 +654,7 @@ fn reachability_threshold(
 /// States from which the objective permits a positive probability of never
 /// reaching the target receive positive infinity. Remaining states are
 /// evaluated by exact policy iteration.
+#[implements("FR-198-AC-2", "FR-198-AC-10")]
 pub fn decide_expected_reward(
     product: &ProbProduct,
     target: &[bool],
@@ -852,6 +859,7 @@ pub fn avoiding_policy<E: From<UnboundedError>>(
 
 /// Decide a workload's unweighted or reward-weighted long-run fraction
 /// exactly from its bottom strongly connected components (FR-199).
+#[implements("FR-199-AC-1", "FR-199-AC-2", "FR-199-AC-3", "FR-199-AC-4")]
 pub fn decide_long_run_workload(
     product: &ProbProduct,
     predicate: &[bool],
@@ -992,6 +1000,7 @@ pub fn decide_long_run_workload(
 
 /// Decide a long-run fraction over every scheduler by MEC optima and exact
 /// Dinkelbach updates (FR-199).
+#[implements("FR-199-AC-2")]
 pub fn decide_long_run_mdp(
     product: &ProbProduct,
     predicate: &[bool],
