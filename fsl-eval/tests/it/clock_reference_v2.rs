@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use filament_eval::{Evaluation, FamilyOutcome, FamilyResult};
-use filament_exact::{Integer, Meter, ObjectReference, Outcome, ScalarLimits, Value};
+use filament_exact::{Integer, Meter, ObjectReference, Outcome, ScalarLimits, Value, ValueType};
 use filament_semantic_value::admission::{AdmissionRecord, ObservationAdmission, PathStep};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::value::{
@@ -1733,7 +1733,14 @@ fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
 
 /// An ordinary snapshot supplies real owner population authority; generated
 /// Clock references do not require accepting transported Clock DATA.
-#[trace("FR-230-AC-71", "TC-3084", "FR-1040-AC-10", "FR-1040-AC-11")]
+#[trace(
+    "FR-230-AC-71",
+    "TC-3084",
+    "FR-829-AC-8",
+    "FR-829-AC-9",
+    "FR-1040-AC-10",
+    "FR-1040-AC-11"
+)]
 #[test]
 fn source_and_bare_use_place_text_clock_reference_equality() {
     let body = format!("{}
@@ -1746,6 +1753,10 @@ fn source_and_bare_use_place_text_clock_reference_equality() {
         invariant Stored using m on C::Call at current {{ ref(self.x) = ref(self.x) }}
         function same_clock(left: Reference<Clock>, right: Reference<Clock>): Boolean pure {{ left = right }}
         function differ(left: Reference<Clock>, right: Reference<Clock>): Boolean pure {{ left != right }}
+        function same_option(left: Option<Reference<Clock>>, right: Option<Reference<Clock>>): Boolean pure {{ left = right }}
+        function same_sequence(left: Sequence<Reference<Clock>>, right: Sequence<Reference<Clock>>): Boolean pure {{ left = right }}
+        function same_set(left: Set<Reference<Clock>>, right: Set<Reference<Clock>>): Boolean pure {{ left = right }}
+        function same_map(left: Map<Reference<Clock>, Boolean>, right: Map<Reference<Clock>, Boolean>): Boolean pure {{ left = right }}
         ",
         clock_refinement("used = count(c in C::calls where true); busy = false;"));
     let checked = ring_queue::check_models_with_profiles(
@@ -1850,6 +1861,124 @@ fn source_and_bare_use_place_text_clock_reference_equality() {
         compare(clock("c1", "x"), foreign("c1", "y")),
         Value::Boolean(false)
     ));
+
+    // FR-829-AC-8: equality remains text-only when clock references are
+    // nested inside options and sequences, and when used as set/map keys.
+    let option = |value| {
+        Value::Option(std::sync::Arc::new(
+            filament_exact::OptionValue::from_admitted(ValueType::ClockReference, Some(value)),
+        ))
+    };
+    let sequence = |value| {
+        filament_exact::from_admitted(
+            filament_exact::CollectionType::new(
+                filament_exact::CollectionKind::Sequence,
+                ValueType::ClockReference,
+                None,
+            ),
+            vec![value],
+        )
+    };
+    let set = |values| match filament_exact::form_collection(
+        &filament_exact::CollectionType::new(
+            filament_exact::CollectionKind::Set,
+            ValueType::ClockReference,
+            None,
+        ),
+        values,
+        &mut Meter::new(LIMITS),
+    )
+    .expect("clock-reference set admission")
+    {
+        Outcome::Completed(value) => value,
+        other => panic!("clock-reference set completes: {other:?}"),
+    };
+    let map_type =
+        filament_exact::MapType::new(ValueType::ClockReference, ValueType::Boolean, None)
+            .expect("native clock references are admitted map keys");
+    let map = |key, value| {
+        filament_exact::from_admitted_map(map_type.clone(), vec![(key, Value::Boolean(value))])
+            .expect("one admitted clock key")
+    };
+    let compare_named = |name: &str, left, right| {
+        let function = QualifiedName::unqualified(name).expect("function name");
+        completed(
+            package
+                .call(
+                    &function,
+                    vec![left, right],
+                    &observation.environment,
+                    &mut Meter::new(LIMITS),
+                )
+                .expect("composite ClockReference comparison completes"),
+        )
+    };
+    for (name, left, right, expected) in [
+        (
+            "same_option",
+            option(clock("c1", "x")),
+            option(foreign("c1", "x")),
+            true,
+        ),
+        (
+            "same_option",
+            option(clock("c1", "x")),
+            option(foreign("c2", "x")),
+            false,
+        ),
+        (
+            "same_sequence",
+            sequence(clock("c1", "x")),
+            sequence(foreign("c1", "x")),
+            true,
+        ),
+        (
+            "same_sequence",
+            sequence(clock("c1", "x")),
+            sequence(foreign("c1", "y")),
+            false,
+        ),
+        (
+            "same_set",
+            set(vec![clock("c1", "x")]),
+            set(vec![foreign("c1", "x")]),
+            true,
+        ),
+        (
+            "same_set",
+            set(vec![clock("c1", "x")]),
+            set(vec![foreign("c2", "x")]),
+            false,
+        ),
+        (
+            "same_map",
+            map(clock("c1", "x"), true),
+            map(foreign("c1", "x"), true),
+            true,
+        ),
+        (
+            "same_map",
+            map(clock("c1", "x"), true),
+            map(foreign("c1", "y"), true),
+            false,
+        ),
+    ] {
+        assert!(
+            matches!(
+                compare_named(name, left, right),
+                Value::Boolean(result) if result == expected
+            ),
+            "{name} expected {expected}"
+        );
+    }
+    let Value::Collection(coalesced) = set(vec![clock("c1", "x"), foreign("c1", "x")]) else {
+        panic!("the set constructor returns a collection");
+    };
+    assert_eq!(
+        coalesced.elements().len(),
+        1,
+        "same-text foreign keys coalesce"
+    );
     let differ = QualifiedName::unqualified("differ").expect("function name");
     let compare_ne = |left: Value, right: Value| {
         completed(
@@ -1919,6 +2048,68 @@ fn source_and_bare_use_place_text_clock_reference_equality() {
                 &mut Meter::new(LIMITS),
             )
             .expect("Bare ClockReference comparison completes"),
+        );
+        assert!(matches!(value, Value::Boolean(result) if result == expected));
+    }
+    for (name, left, right, expected) in [
+        (
+            "same_option",
+            option(clock("c1", "x")),
+            option(foreign("c1", "x")),
+            true,
+        ),
+        (
+            "same_option",
+            option(clock("c1", "x")),
+            option(foreign("c2", "x")),
+            false,
+        ),
+        (
+            "same_sequence",
+            sequence(clock("c1", "x")),
+            sequence(foreign("c1", "x")),
+            true,
+        ),
+        (
+            "same_sequence",
+            sequence(clock("c1", "x")),
+            sequence(foreign("c1", "y")),
+            false,
+        ),
+        (
+            "same_set",
+            set(vec![clock("c1", "x")]),
+            set(vec![foreign("c1", "x")]),
+            true,
+        ),
+        (
+            "same_set",
+            set(vec![clock("c1", "x")]),
+            set(vec![foreign("c2", "x")]),
+            false,
+        ),
+        (
+            "same_map",
+            map(clock("c1", "x"), true),
+            map(foreign("c1", "x"), true),
+            true,
+        ),
+        (
+            "same_map",
+            map(clock("c1", "x"), true),
+            map(foreign("c1", "y"), true),
+            false,
+        ),
+    ] {
+        let function = QualifiedName::unqualified(name).expect("function name");
+        let value = completed(
+            bare.call(
+                &function,
+                vec![left, right],
+                &ObjectEnvironment::default(),
+                &mut Meter::new(LIMITS),
+            )
+            .expect("Bare composite ClockReference comparison completes"),
         );
         assert!(matches!(value, Value::Boolean(result) if result == expected));
     }
