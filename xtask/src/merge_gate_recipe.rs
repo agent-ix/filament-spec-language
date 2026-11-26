@@ -2863,13 +2863,7 @@ mod tests {
                         && self.merge_fails);
             let text = if is_git
                 && args.first().is_some_and(|arg| arg == "status")
-                && self.dirty_tool
-            {
-                " M xtask/src/main.rs\n"
-            } else if is_git
-                && args.first().is_some_and(|arg| arg == "status")
-                && self.dirty_target
-                && args.contains(&"--".to_owned())
+                && (self.dirty_tool || (self.dirty_target && args.contains(&"--".to_owned())))
             {
                 " M xtask/src/main.rs\n"
             } else if is_git
