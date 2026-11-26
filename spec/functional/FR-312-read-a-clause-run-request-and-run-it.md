@@ -196,17 +196,16 @@ FR-255 names the observation document byte ceiling `observation.input_bytes`
 both are the same setting:
 
 - the request member `clause.observation_limits.document_bytes`;
-- the run command's caller limits: the `observation` member of the
-  `CallerLimits` that FR-255's settings operation returns for the driver's
+- the run command's caller limits: the setting and value of the driver's
   `fsl run --limit observation.input_bytes=<n>` operand, passed to the run
-  entry as `RequestOverrides::observation` beside the request file, as
-  `clocks` and `limits` are (FR-640, FR-869).
+  entry in `RequestOverrides::limits` beside the request file, as `clocks`
+  is (FR-640, FR-869).
 
 The two SHALL give the same run. A run in which either sets the ceiling to
 `B` SHALL produce the same outcome document, byte for byte, as the run in
 which the other sets it to `B`. A request that sets
-`clause.observation_limits.document_bytes` while the caller also supplies
-`RequestOverrides::observation` SHALL refuse `invalid-request` at stage
+`clause.observation_limits.document_bytes` while the caller also names an
+observation setting in `RequestOverrides::limits` SHALL refuse `invalid-request` at stage
 `request` naming `observation_limits`, as `clocks` given twice is refused, so
 no run depends on which of two bounds wins.
 
@@ -236,7 +235,7 @@ settings operation refuses as an unknown setting.
 | FR-312-AC-7 | Through `run`, a request selecting `{"temporal": {"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": ["s0", "s1"]}}, "over": {"reference": {"population": P, "key": "c1"}}}}` over FR-330-AC-2's `Counter` snapshots `s0` (`c.value` 0), `s1` (1) and `s2` (2) returns the `/2` document FR-267-AC-13 states, exit 10; with loop `["s0", "s1", "s2"]` it returns `success`, exit 0, byte-identical to the report of the same `ClauseRunRequest` built in process. A trace key naming an invocation document or a pre snapshot, a `trace` of `{"model": {}}`, a `trace` holding both `finite` and `lasso`, and an unknown member in `temporal` each refuse `invalid-request` at stage `request`, exit 20, no result document, naming `trace` or the member. A `finite` array of zero keys reaches FR-330 and reports stage `evaluate`, `refusal`, `invalid_runtime_input`/`invalid-value`. | Test (TC-1160) |
 | FR-312-AC-8 | Through `run`, a request whose `temporal.trace` is `{"timestamped": {}}` refuses `invalid-request` at stage `request`, exit 20, naming the missing `observations` member of `trace.timestamped`, and no result document is written; a complete `timestamped` trace is read as FR-641 states (FR-641-AC-1). | Test (TC-1160) |
 | FR-312-AC-9 | Through `run`, FR-108's healthy-parent clause-run request whose snapshot file is `n` bytes, with `clause.observation_limits.document_bytes` `n - 1` and a `dependent_bytes` above `n`, exits 22 with one clause item settled `incomplete` whose cause is `stage_limit_exceeded` with `kind` `input bytes`, `bound` `n - 1`, `actual` `n` and `setting` `observation.input_bytes`; the document carries no `resource_exhausted` diagnostic and no refusal envelope; the rendered hint contains `--limit observation.input_bytes=` and not `observation.document_bytes`; at `document_bytes` `n` the clause runs and exits 0. | Test (TC-2982) |
-| FR-312-AC-10 | The AC-9 request without `observation_limits`, run with `RequestOverrides::observation` carrying `document_bytes` `n - 1` (the `observation` member of `CallerLimits::from_operands(["observation.input_bytes=<n - 1>"])`), gives an outcome document byte-equal to AC-9's; the AC-9 request run with that override as well refuses `invalid-request` at stage `request` naming `observation_limits`, exit 20, before any observation file is read. | Test (TC-2982) |
+| FR-312-AC-10 | The AC-9 request without `observation_limits`, run with `RequestOverrides::limits` naming `observation.input_bytes` `n - 1`, gives an outcome document byte-equal to AC-9's; the AC-9 request run with that override as well refuses `invalid-request` at stage `request` naming `observation_limits`, exit 20, before any observation file is read. | Test (TC-2982) |
 | FR-312-AC-11 | Through `run`, a `function` selection of `sameIdentity` over FR-650-AC-4's distinct-identities snapshot accepts each argument `value` as FSpec FR-181's tagged canonical `reference` form: `root` and `child` produce `violation`, `truth: false`, exit 10, and `child` for both arguments produces `success`, `truth: true`, exit 0. A `function nonempty using v(p: Population<Config::ConfigVersion>[4]): Boolean pure { size(allInstances<Config::ConfigVersion>(p)) > 0 }` with `p`'s `value` `{"population": P}` admits the population from that same snapshot and reports `success`, `truth: true`, exit 0; a `P` the snapshot does not hold refuses at stage `admit` with `invalid_runtime_input`/`wrong-role-mapping`, exit 20. The values use FR-100's public command encoding, and each request's result equals the report for the same admitted `ClauseRunRequest` built directly. | Test (TC-1706) |
 
 The existing AC-1 through AC-5 test-case association remains TC-891;

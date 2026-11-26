@@ -248,9 +248,8 @@ remain in-process command products, except the files the command writes to
 disk on request: FR-665's handoff directory and FR-810's package file. `run` and `compile` accept the `request_bytes` and
 `dependent_bytes` options, and `parse`, `check` and `compile` accept `--limit`
 for the settings of the stages they run (FR-869), and `run` accepts `--limit`
-for the observation settings, passing the `observation` member of the
-settings operation's caller limits as `RequestOverrides::observation`
-(FR-312); FR-287-AC-13 states its criteria and TC-2985 tests them. The provider-routing verbs
+for the observation settings, passing each named setting and its value in
+`RequestOverrides::limits` (FR-312); FR-287-AC-13 states its criteria and TC-2985 tests them. The provider-routing verbs
 accept `--provider-limit` for the process-plugin run limits.
 FR-287-AC-12 states its criteria and TC-2626 tests them. For `parse` and `format` it
 owns the command and label operands, their OS encoding (a non-UTF-8 command

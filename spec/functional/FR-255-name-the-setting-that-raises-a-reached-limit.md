@@ -45,6 +45,14 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-297
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-312
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-810
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-1015
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-254
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-315
@@ -731,12 +739,14 @@ these names through the same operand grammar as the stage settings
     certificate checker that reaches a limit SHALL settle `incomplete` and
     SHALL never accept the certificate.
 
-13. **Effective value.** The effective value of a setting SHALL be the value
-    the request states for it; otherwise the caller's value; otherwise the
-    published default for the operation. No layer below SHALL substitute a
-    literal, the value of another setting, or the maximum of the bound's type
-    unless that maximum is the published default. "Two sources of one bound"
-    below states what happens when two sources state one bound.
+13. **Effective value.** The effective value of a setting SHALL be the
+    caller's value when the caller names it; otherwise the value the request
+    states for it; otherwise the published default for the operation. A
+    caller value that equals the published default still replaces the
+    request's. No layer below SHALL substitute a literal, the value of another
+    setting, or the maximum of the bound's type unless that maximum is the
+    published default. "Two sources of one bound" below states the bounds that
+    are refused, and not ranked, when both sources state them.
 
 14. **Retained bytes.** `analysis.retained_bytes` SHALL bound a deterministic
     estimate computed from lengths: for each retained entry, a fixed overhead
@@ -750,17 +760,36 @@ these names through the same operand grammar as the stage settings
     checker and witness replay SHALL charge one shared allowance. A per-engine
     byte setting remains a separate local ceiling.
 
-15. **Two sources of one bound.** A caller's `accounting.<counter>` value
-    SHALL replace the request's value of that counter only, and every other
-    counter SHALL keep the request's value. A setting given twice by one
-    source SHALL be refused. A bound an item states in its own member and the
-    caller states by setting, and `observation_limits`, `export.limits` and
-    clocks stated twice, SHALL be refused as their owners state. The
-    synthesis, `model_based_test`, `refinement_transfer`, monitor and replay
-    run routes SHALL each apply a caller override or refuse the request
-    `invalid-request` naming the override, and SHALL NOT ignore one. A
-    `native-replay/1` run SHALL apply the caller's stage limits and SHALL
-    refuse a clocks override and an output override.
+15. **Two sources of one bound.** A caller's value SHALL replace the
+    request's value for what the caller names and for nothing else: a caller's
+    `accounting.<counter>` value replaces that counter, every other counter
+    keeps the request's value, and a caller's stage or observation setting
+    replaces the request's value of that setting, a `native-replay/1`
+    request's `stage_limits` entry included. A setting given twice by one
+    source SHALL be refused. Four bounds are refused when both sources state
+    them: a bound an item states in its own member and the caller states by
+    setting, `observation_limits` beside a caller observation setting,
+    `export.limits` beside the same caller setting, and `clocks`, each as its
+    owner states. A request's `output` member beside a caller output override
+    is refused likewise.
+
+16. **Every override member is applied or refused.** The override members are
+    each accounting counter, `clocks`, `output`, and each stage and
+    observation setting. Every run, compile and export route, over source or
+    over a checked package, SHALL apply each member the caller gives or SHALL
+    refuse it `invalid-request` at stage `request`, exit 20, naming the member
+    or setting. No route SHALL ignore one. This holds for the `synthesis`,
+    `model_based_test`, `refinement_transfer`, monitor, replay, `call`,
+    `clause`, `tl_lowering`, items, verification-plan, compile, export,
+    export-evidence, `version` and `check` routes. A member the route never
+    reads SHALL be refused. A member the route applies SHALL reach every part
+    of the run that reads it. Only compile and export write the file an
+    `output` override names, so every other route SHALL refuse that override.
+    A `synthesis` or `model_based_test` run reads no clock selection, so it
+    SHALL refuse a `clocks` override and a non-empty `clocks` member of its own
+    request, naming `clocks`. A `native-replay/1` run SHALL apply the caller's
+    stage limits and SHALL refuse a `clocks` override and an `output`
+    override.
 
 ## Acceptance Criteria
 
@@ -799,6 +828,12 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-31 | A replay of a clause over a model with caller setting `emit.output_bytes` 1 returns `stage_limit_exceeded` with bound 1 and setting `emit.output_bytes`. A hyper clause whose body has five expression nodes (`1 + 1 + 1`), checked with `s3.nodes` 4, returns `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. An 11-byte snapshot read with `observation.input_bytes` 10 refuses with bound 10, count 11 and that setting. | Test |
 | FR-255-AC-32 | A synthesis request whose own accounting gives `work_units` 1000000, run with the caller override `accounting.work_units=0`, settles `incomplete` naming `work_units`, bound 0, count 1 and setting `accounting.work_units`. A `refinement_transfer` request and a monitor request whose checked source holds `1 + 1 + 1`, each run with `s3.nodes` 4, return `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. | Test |
 | FR-255-AC-33 | A synthesis run given a clocks override both by its request and by its caller, and any run given one `--limit` setting twice, are refused before work starts. A `native-replay/1` run given a clocks override or an output override is refused `invalid-request` naming it. | Test |
+| FR-255-AC-34 | A synthesis request whose own accounting gives `work_units` 0, run with the caller override `accounting.work_units=1000000`, runs under 1000000 and does not stop on `work_units`; the same request with the caller naming only `accounting.value_occurrences` keeps `work_units` 0 and settles `incomplete` naming it. A `native-replay/1` run whose request's `stage_limits` gives `s1.tokens` 1, run with the caller setting `s1.tokens` at its published default 100000, runs under 100000. | Test |
+| FR-255-AC-35 | A `synthesis` request and a direct `model_based_test` request that each carry a non-empty `clocks` member are refused `invalid-request` naming `clocks`, exit 20; each request without the member, run with a caller `clocks` override, is refused the same way. A `clause` run over a selected package and an export, each given a `clocks` override, are refused naming `clocks`. | Test |
+| FR-255-AC-36 | Given a caller `output` override naming a new path, each of these runs is refused `invalid-request` naming `output`, exit 20, and no file exists at the path afterwards: `synthesis`, `model_based_test`, `refinement_transfer`, monitor, `native-replay/1`, `call` and `clause` (each from source and from a package), `tl_lowering`, an items run with a clause selection, an items run with only a `value_invariants` selection, a verification-plan run, `version` and `check`. | Test |
+| FR-255-AC-37 | A `call` run from source and a `clause` run from source, each given the caller setting `export.output_bytes` 1, are refused `invalid-request` naming `export.output_bytes`, exit 20. A `call` run over a package and a synthesis over a package, each given `s1.tokens` 1, are refused naming `s1.tokens`, since neither reads source text. A `version` run given any override member is refused naming it. | Test |
+| FR-255-AC-38 | An export and an export-evidence run, each given the caller override `accounting.work_units=5`, and a compile given `accounting.work_units=5` or an observation setting, are refused `invalid-request` naming the counter or setting. A `check` run given a `clocks` override or an accounting counter is refused naming it; given `s1.tokens` 1 over a source of more than one token, it either stops at that bound or is refused naming `s1.tokens`, and never reports the source as checked. | Test |
+| FR-255-AC-39 | A `clause` run over a selected package, given the caller setting `observation.input_bytes` one byte below the length of its observation file, stops at that bound naming `observation.input_bytes`, as the same run from source does. A monitor run given `accounting.work_units=0` over a stream that evaluates one record settles `incomplete` naming `work_units`, bound 0 and setting `accounting.work_units`. | Test |
 
 ## Status
 
