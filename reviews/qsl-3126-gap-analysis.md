@@ -27,3 +27,12 @@ CONDITIONAL. The exact, statistical, `on each`, protocol source and package rout
 - FR-125-AC-9: tagged by ten tests, seven of them new. The exact, statistical, `on each`, protocol source and package, zone temporal, and cycle identity routes are covered. The digital probabilistic route (FND-001) and protocol role pairing (FND-002) are not.
 - FR-125-AC-8 and FR-125-AC-10: tagged on main. This PR does not change them.
 - Plan completion: not assessed
+
+## Dispositions
+
+Disposition pass 1, head 65a3caaa4cf815c56041f96d5ca00e48f594dcab.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `a_digital_probability_binding_names_the_admitted_member_type` covers the proved entry and the refuted binding on the digital route, with the hand-written `Derived` reference |
+| FND-002 | fixed | `a_replicated_role_object_is_the_over_binding` (source, `w = view` holds) and `a_replicated_role_object_names_the_admitted_member_type_on_both_routes` (source and package) cover the paired role side |

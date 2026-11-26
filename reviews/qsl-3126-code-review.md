@@ -44,3 +44,19 @@ Not a finding for this PR, judged:
 - `ModelSystem::instances_with_meter` neither de-duplicates by key nor filters to admitted keys, unlike `instances`. That is FR-125-AC-10 and FR-125-AC-8 instancing on the FR-1012 synthesis policy route (`plan_source.rs`). Its contexts already carry the key alone, the shape this ticket fixes does not occur there, and this PR does not touch it. It is outside this ticket's scope. A failing input would be a synthesis `satisfies` clause `over (x: Thing)` whose overlapping populations list `[d, u]` and `[u, a]`, with `u` held by no initial record: `instances` gives `d, a`, while the metered list gives `d, u, u, a`. This was not run. Per intake, it needs a failing test before a ticket is filed (Must-fix: yes if it fails, as a wrong answer).
 
 Tests: fsl-replay lib `execute::` and `fallback::` with `--skip 100000` on this head: 220 passed, 0 failed, 5 ignored (STD-652, already on main), 1563 filtered out. The coder's earlier logs on this head and on code-equivalent heads were not rerun.
+
+## Dispositions
+
+Disposition pass 1, head 65a3caaa4cf815c56041f96d5ca00e48f594dcab (fix commit 8e7b22d44c, then a merge of main).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `role_universes` now calls `written_reference`. `a_replicated_role_object_is_the_over_binding` (source constructor) reaches a `retire` step guarded by `until(w = view and w.tag = 1)`. `a_replicated_role_object_names_the_admitted_member_type_on_both_routes` asserts the hand-written type `Cell` for every spawned object on the source and package constructors. Both tests failed on 859955ed3d and pass on this head. The package route admits only the `workflow` lifetime and refuses `scope` and `until` (`PackageProgramRefusal::RoleLifetime`, package_program.rs:1190-1198), so `w = view` cannot be written there through a lifetime. The package side is covered because both of its operands are pinned to `Cell` by hand-written assertions (the over subject test and this role test) |
+| FND-002 | fixed | `a_digital_probability_binding_names_the_admitted_member_type` runs a digital probabilistic claim `over (c: Base)` through `settle_over_base`. Its proved entry binding (with the certificate accepted) and its refuted binding both equal the hand-written `Derived` reference. It fails with the digital.rs change reverted |
+| FND-003 | fixed | The PR sweep now lists `compute_universe_declaring` as covered, and `a_replicated_role_object_is_the_over_binding` asserts that the retire step's enabling footprint holds a `Location::Field` whose object has the admitted type `Node` |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | The two replicated-role tests carry `FR-125-AC-9`, but neither asserts any clause of that criterion. AC-9 states how the `over` parameter is read, the key-alone identity and the refuted binding. These tests assert the type of a role object and the equality of a role object with the `over` object. The PR itself says a replicated role object is not an `over` instance, which is also why `role_universes` correctly carries no `implements`. They should carry `TC-520` only | fsl-analyze/tests/it/analyze_package_protocol.rs:4024-4026; fsl-eval/tests/it/protocol_over.rs:325-327 |
