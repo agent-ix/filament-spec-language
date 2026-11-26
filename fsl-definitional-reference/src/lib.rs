@@ -205,15 +205,30 @@ pub fn validate_tiny_fragment(graph: &CheckedGraph) -> Result<(), ReferenceRefus
         }
     }
     for model in graph.timed_models() {
-        if model
+        let fractional_guard = model
             .guards()
             .iter()
             .flat_map(|guard| guard.parts())
             .flat_map(|part| part.clocks())
-            .any(|clock| !clock.bound().is_integer())
-        {
+            .any(|clock| !clock.bound().is_integer());
+        let fractional_invariant = model
+            .invariants()
+            .iter()
+            .flat_map(|invariant| invariant.bounds())
+            .any(|clock| !clock.bound().is_integer());
+        if fractional_guard || fractional_invariant {
             return Err(ReferenceRefusal {
                 construct: "clock compared with a non-integer constant",
+            });
+        }
+        if model
+            .resets()
+            .iter()
+            .flat_map(|resets| resets.resets())
+            .any(|reset| !reset.value().is_zero())
+        {
+            return Err(ReferenceRefusal {
+                construct: "clock reset to a nonzero constant",
             });
         }
     }
