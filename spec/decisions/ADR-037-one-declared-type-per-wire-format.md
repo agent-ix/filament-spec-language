@@ -85,25 +85,28 @@ SHALL be computed by one function called by both the writer and reader. The
 reader SHALL validate the derived value against the admitted document before
 returning the typed value. No format member is maintained in a separate
 hand-written table when the owner schema or shared type already defines it.
+Every writer of a transition operation identity SHALL call the same writer
+function: it emits the identity text, except that a name identity is emitted
+as the bare name. FR-120 owns this operation-identity rule.
 
 ### Format owners and implementation homes
 
 | Format or shared value | Normative owner item(s) | Shared Rust definition |
 | --- | --- | --- |
-| State locus `{key}` | FSpec FR-331 | `filament-contract-model` |
-| `TransitionIdentity` and its typed value | FSpec FR-181; its wire schema is in FR-331 | `filament-contract-model` |
-| `ProbabilisticBound` | FSpec FR-413 for probabilistic counterexamples and the statistical verdict | `filament-contract-model` |
-| Certificate identity `CertificateNodeId` and `CertificatePathSegment` | FSpec FR-412-AC-34 | `filament-contract-model` |
+| State locus `{key}` | FSpec FR-331 | FSL wire module |
+| `TransitionIdentity` and its typed value | FSpec FR-181; its wire schema is in FR-331 | FSL wire module; thin wrapper over `filament_semantic_value::ModelTransition` |
+| `ProbabilisticBound` | FSpec FR-413 for probabilistic counterexamples and the statistical verdict | FSL wire module |
+| Certificate identity path segment | FSpec FR-412-AC-34 | Existing `filament_exact::NodeKey` plus the `node_wire` codec; add no type |
 | Certificate rejection locus and rule (`CertificateLocus`, `CertificateRule`) | FSpec FR-331 | `filament-contract-model` |
 | Zone certificate | FSpec FR-418 | `filament-contract-model` |
-| Task-product certificate | FSpec FR-331; transition identities within it use FSpec FR-181 | `filament-contract-model` |
+| Task-product certificate | FSpec FR-418-AC-11..14; certificate envelope and rejection vocabulary in FSpec FR-331; transition identities use FSpec FR-181 | `filament-contract-model` |
 | Hybrid certificate | FSpec FR-331 | `filament-contract-model` |
-| Probability certificate document | FSL FR-201; certificate-member vocabulary is FSpec FR-331 and Contract IR FR-070 | FSL `fsl-replay` probability-certificate document module |
-| `filament.checked-package/v2` node forms and protocol-location ordinals | FSpec FR-322 and FR-375; in particular FR-322-AC-291 and FR-375-AC-36; Contract IR FR-038 and FR-061 | `filament-contract-model::checked_package::v2` |
+| Probability certificate document | FSpec FR-412; certificate-member vocabulary is FSpec FR-331 and Contract IR FR-070; FSL FR-201 implements the checker | FSL `fsl-replay` probability-certificate document module |
+| `filament.checked-package/v2` node forms and protocol-location ordinals | FSpec FR-322 and FR-375; in particular FR-322-AC-291 and FR-375-AC-36 | `filament-contract-model::checked_package::v2` (implementation home) |
 | Certificate-member vocabulary | FSpec FR-331; Contract IR FR-070 | `filament-contract-model` |
-| `native-run-result/2` | FSpec FR-352 `Members`, `Outcome axes`, `Temporal disposition` and `Protocol-analysis result` sections, plus AC-1–3 and AC-6–22; FSpec FR-351 owns witness members; FSL FR-267 implements the FSL boundary | FSL `fsl-replay` wire module |
+| `native-run-result/2` | FSpec FR-352 `Members`, `Outcome axes`, `Temporal disposition` and `Protocol-analysis result` sections, plus AC-1–26; FSpec FR-351 owns witness members; FSL FR-267 implements the FSL boundary | FSL `fsl-replay` wire module |
 | `native-replay/1` request | FSpec FR-336; FSL FR-862 | FSL `fsl-command` replay-request module |
-| `filament-outcome/1` | FSpec FR-300 format identity, FR-520 analyze document, FR-301 CLI contract and FR-331 terminal records; FSL FR-027, FR-100 and FR-109 use the outcome | FSL `fsl-replay::outcome` |
+| `filament-outcome/1` | FSpec FR-300 format identity, FR-520 analyze document, FR-301 CLI contract and FR-331 terminal records; FSL FR-286 publishes the schema | FSL `fsl-replay::outcome` |
 
 For each listed format, every requirement whose implementation writes,
 strictly reads, or checks it SHALL declare a `depends_on` relationship to its
@@ -127,7 +130,7 @@ the source of truth does not remove this duplicate-definition gate.
 For `native-run-result/2`, the one FSL type SHALL cover the extraction record
 and the complete document accepted by FSpec FR-352. FR-352 defines the shape
 in its `Members`, `Outcome axes`, `Temporal disposition` and
-`Protocol-analysis result` sections and AC-1–3 and AC-6–22; it does not
+`Protocol-analysis result` sections and AC-1–26; it does not
 publish a JSON Schema for this format. The type SHALL be
 used by the production writer and the strict reader. Ad hoc command output and
 `*Read` mirror structs do not define alternate forms of that document. FSL
@@ -135,16 +138,19 @@ FR-267 remains the implementation requirement; this ADR does not claim that
 FR-267 refers to an FSpec JSON Schema.
 
 The FSL one-type rule preserves the existing reader's observable behavior.
-Reads SHALL keep charging resource meters as members are consumed and enforce
-the `NativeRunLimits` budgets at the same admission boundary. They SHALL keep
+Bounded admission at the byte stage SHALL remain. Each shared type SHALL have
+one hand `Deserialize` implementation in its own module that returns the
+member pointer and kind; each format maps those to its own refusal codes, and
+`validate()` performs checks in the owner's specified order. Reads SHALL keep
+charging resource meters as members are consumed and enforce the
+`NativeRunLimits` budgets at the same admission boundary. They SHALL keep
 member pointers and the existing typed refusal codes, including
 `TaskProductShapeReason`, the non-empty extraction segments required by
 FR-267-AC-17, and the certificate loci required by FR-245. In the
 Contract-IR checked-package body and details, input-depth nodes SHALL retain
-their hand `Encode` boundary. Where a reader accepts legacy operation forms,
-the read result SHALL collapse them into the single declared type while
-preserving the accepted meaning. These constraints state behavior to retain;
-the migration steps decide their implementation.
+their hand `Encode` boundary. Step 1 removes the legacy object-operation and
+`ix://`-rebuild read forms; until that step lands, those forms remain accepted.
+This ADR does not change their acceptance before step 1.
 
 ### Acceptance net
 
@@ -172,8 +178,8 @@ cross-repository format is made in its owner requirement and shared model
 type; consumers adopt that definition rather than reconstructing it. Bounded
 read behavior, incremental meter charging, `NativeRunLimits`, member pointers
 and typed refusal codes remain at the existing admission boundary. Input-depth
-Contract-IR body/details retain their hand `Encode`, and accepted legacy
-operation forms collapse into the shared typed representation.
+Contract-IR body/details retain their hand `Encode`. Step 1 removes the legacy
+object-operation and `ix://`-rebuild read forms.
 
 This decision does not remove identity or semantic disagreements that are
 outside the member shape, such as a different node preimage. Those require
