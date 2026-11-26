@@ -629,7 +629,7 @@ pub(crate) fn missing_role_item(
 }
 
 fn missing_role_report(
-    index: fsl_foundation::RequestIndex,
+    _index: fsl_foundation::RequestIndex,
     role: &str,
 ) -> crate::analyze::EngineReport {
     let detail = [("role".to_owned(), serde_json::json!(role))]
@@ -957,7 +957,7 @@ fn select_global_report(mut reports: Vec<ConformanceReport>) -> crate::analyze::
 }
 
 fn wrong_protocol_subject(
-    index: fsl_foundation::RequestIndex,
+    _index: fsl_foundation::RequestIndex,
     protocol: &str,
 ) -> crate::analyze::EngineReport {
     let detail = [("protocol".to_owned(), serde_json::json!(protocol))]
@@ -1378,7 +1378,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
         prefix,
     }) = queue.pop_front()
     {
-        if cancel.is_cancelled() {
+        if cancel.cause().is_some() {
             return None;
         }
         if expanded >= u64::try_from(limits.limits.max_states).unwrap_or(u64::MAX) {

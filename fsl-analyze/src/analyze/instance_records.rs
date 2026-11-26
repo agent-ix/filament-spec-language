@@ -15,7 +15,7 @@ use super::{EngineReport, GraphReport};
 /// one, else the first not proved, else the proved one with the weakest
 /// support. `records` is in FR-125 canonical instance order.
 #[implements("FR-621-AC-9", "FR-621-AC-23", "FR-621-AC-24")]
-pub(super) trait InstanceDecision {
+pub(crate) trait InstanceDecision {
     fn terminal_value(&self) -> &TerminalValue;
 }
 
@@ -37,7 +37,7 @@ impl<T: InstanceDecision + ?Sized> InstanceDecision for &T {
     }
 }
 
-pub(super) fn decisive<T: InstanceDecision>(records: &[T]) -> usize {
+pub(crate) fn decisive<T: InstanceDecision>(records: &[T]) -> usize {
     if let Some(refuted) = records
         .iter()
         .position(|record| matches!(record.terminal_value(), TerminalValue::Refuted))
