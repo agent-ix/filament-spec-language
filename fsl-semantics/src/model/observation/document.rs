@@ -5367,7 +5367,6 @@ mod tests {
         assert!(found.is_empty());
     }
 
-    #[trace("FSpec-FR-151-AC-21")]
     #[test]
     fn omitted_optional_parameter_is_the_same_value_as_explicit_absent() {
         let operation = OperationDeclaration::new(

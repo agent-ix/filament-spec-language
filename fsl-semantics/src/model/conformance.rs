@@ -33,11 +33,15 @@
 use crate::model::accounting::{
     Charge, NormalizationChargePoint, NormalizationIncomplete, NormalizationMeter,
 };
-use crate::model::domain_package::Multiplicity;
+use crate::model::domain_package::{
+    unaliased, DomainPackageRecord, Multiplicity, OperationParameterRecord, ValueTypeRef,
+};
 use crate::model::index::ModelIndex;
-use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
+use crate::model::normalize::{EffectiveParameterType, ModelRefusal, ModelRefusalCause};
 use filament_checked::key::DeclarationKey;
+use filament_exact::Presence;
 use fsl_foundation::diagnostic::Code;
+use ix_trace_rs::implements;
 
 /// One failing conformance axis: `{axis, code, cause, detail}`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -136,6 +140,32 @@ fn charge_type_axis(
         Charge::new(NormalizationChargePoint::ConformanceAxis)
             .work(index.type_fact_count(value_type)),
     )
+}
+
+/// The type a parameter's `typeRef` and presence give (FSpec FR-322 step 4),
+/// as whether it is `Option<X>`, and `X`. Presence `optional` and a single
+/// option value type over `X` are one type (FSpec FR-154 "Presence and
+/// option"). Multiplicity is judged on its own axis.
+#[implements("FSpec-FR-151-AC-21")]
+fn parameter_type<'a>(
+    index: &'a ModelIndex,
+    parameter: &'a OperationParameterRecord,
+) -> (bool, &'a ValueTypeRef) {
+    if parameter.presence == Presence::Optional {
+        return (true, &parameter.value_type);
+    }
+    let single = parameter.multiplicity.lower == 1 && parameter.multiplicity.upper == Some(1);
+    let option = unaliased(&parameter.value_type, |key| index.record(key))
+        .filter(|(_, sequences)| single && *sequences == 0)
+        .and_then(|(value_type, _)| value_type.as_package())
+        .and_then(|key| match index.record(key) {
+            Some(DomainPackageRecord::OptionType(option)) => Some(&option.inner),
+            _ => None,
+        });
+    match option {
+        Some(inner) => (true, inner),
+        None => (false, &parameter.value_type),
+    }
 }
 
 pub(crate) fn missing_member(cause: ModelRefusalCause, identity: &str, role: &str) -> ModelRefusal {
@@ -319,6 +349,12 @@ pub fn check_subsetting(
 /// Checks an operation redefinition's arity, parameter, result and effect
 /// axes. The precondition/postcondition axes never refuse (checked by
 /// construction, per the module docs) but are still charged.
+#[implements(
+    "FSpec-FR-151-AC-4",
+    "FSpec-FR-151-AC-21",
+    "FR-082-AC-1",
+    "FR-082-AC-5"
+)]
 pub fn check_operation_redefinition(
     index: &ModelIndex,
     redefining_key: &DeclarationKey,
@@ -371,60 +407,65 @@ pub fn check_operation_redefinition(
         {
             let display_index = i + 1; // parameter 0 is the receiver, never checked here.
 
-            if let Err(incomplete) = charge_axis(meter) {
+            let (declared_optional, declared_inner) = parameter_type(index, dp);
+            let (redefining_optional, redefining_inner) = parameter_type(index, rp);
+            if let Err(incomplete) = charge_type_axis(index, declared_inner, meter) {
                 return ConformanceCheckOutcome::Incomplete(incomplete);
             }
-            if dp.presence == filament_exact::Presence::Optional
-                && rp.presence == filament_exact::Presence::Required
-            {
-                failures.push(AxisFailure {
-                    axis: "parameter-presence",
-                    code: Code::IllTyped,
-                    cause: ModelRefusalCause::VarianceParameter {
-                        index: display_index,
-                        declared: rp.value_type.clone(),
-                        redefined: dp.value_type.clone(),
-                    },
-                    detail: format!(
-                        "parameter {display_index}: a required parameter cannot redefine an optional parameter"
-                    ),
-                });
-            }
-
-            if let Err(incomplete) = charge_type_axis(index, &dp.value_type, meter) {
-                return ConformanceCheckOutcome::Incomplete(incomplete);
-            }
-            match index.value_conformance_walk(
-                &dp.value_type,
-                &rp.value_type,
-                meter.limits().ancestor_steps,
-            ) {
+            // `Option<X>` and `X` never conform, in either direction.
+            let conforms = if declared_optional == redefining_optional {
+                index.value_conformance_walk(
+                    declared_inner,
+                    redefining_inner,
+                    meter.limits().ancestor_steps,
+                )
+            } else {
+                Ok(false)
+            };
+            match conforms {
                 Ok(true) => {}
                 Ok(false) => failures.push(AxisFailure {
                     axis: "parameter-type",
                     code: Code::IllTyped,
                     cause: ModelRefusalCause::VarianceParameter {
                         index: display_index,
-                        declared: dp.value_type.clone(),
-                        redefined: rp.value_type.clone(),
+                        declared: EffectiveParameterType {
+                            optional: declared_optional,
+                            value_type: declared_inner.clone(),
+                        },
+                        redefined: EffectiveParameterType {
+                            optional: redefining_optional,
+                            value_type: redefining_inner.clone(),
+                        },
                     },
-                    detail: format!(
-                        "parameter {display_index}: expected {} to conform to {}",
-                        index.spelling(
-                            &dp.value_type,
+                    detail: {
+                        let effective = |optional: bool, spelling: String| {
+                            if optional {
+                                format!("Option<{spelling}>")
+                            } else {
+                                spelling
+                            }
+                        };
+                        let expected = index.spelling(
+                            declared_inner,
                             &super::spelling::MemberSlot::Parameter {
                                 operation: redefined_key.clone(),
-                                position: i
-                            }
-                        ),
-                        index.spelling(
-                            &rp.value_type,
+                                position: i,
+                            },
+                        );
+                        let actual = index.spelling(
+                            redefining_inner,
                             &super::spelling::MemberSlot::Parameter {
                                 operation: redefining_key.clone(),
-                                position: i
-                            }
+                                position: i,
+                            },
+                        );
+                        format!(
+                            "parameter {display_index}: expected {} to conform to {}",
+                            effective(declared_optional, expected),
+                            effective(redefining_optional, actual)
                         )
-                    ),
+                    },
                 }),
                 Err(incomplete) => return ConformanceCheckOutcome::Incomplete(incomplete),
             }
