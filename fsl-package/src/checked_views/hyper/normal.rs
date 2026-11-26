@@ -216,6 +216,12 @@ enum Work<'a> {
     },
 }
 
+/// Whether the wire operation `identity` is `lookup`.
+#[ix_trace_rs::string_edge]
+fn is_lookup(identity: &str) -> bool {
+    identity == "filament.op.model.lookup"
+}
+
 #[implements("FR-176-AC-7")]
 fn expression(
     inputs: &Inputs<'_, '_>,
@@ -332,7 +338,7 @@ fn expression(
                     }
                     // FR-940's opaque table: `lookup` is opaque, and its mode (the
                     // FR-084 absence result) and type argument are part of its tag.
-                    let lookup = identity == "filament.op.model.lookup";
+                    let lookup = is_lookup(identity);
                     if (read.mode.is_some() && !lookup)
                         || !read.laws.is_empty()
                         || !read.leaves.is_empty()
