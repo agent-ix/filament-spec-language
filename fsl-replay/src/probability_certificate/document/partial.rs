@@ -90,8 +90,8 @@ pub(super) fn explored_subject(
 /// [`probability_proof_document`], ranking the states `certificate` names
 /// alone, or, where `max_states` stops the whole graph, the document of a
 /// `lower` proof over the states `certificate` names and their successors
-/// (FR-1042 "Document").Over that part an `eventually` takes the cyclic chain base,
-/// ranking each named state by its distance to a named target through named
+/// (FR-1042 "Document"). Over that part an `eventually` takes the cyclic chain
+/// base, ranking each named state by its distance to a named target through named
 /// states of positive value; an expected reward takes the acyclic profile,
 /// ranked by height in that part. This does not grant acceptance.
 #[implements("FR-1042-AC-25", "FR-1042-AC-26")]

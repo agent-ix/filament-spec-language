@@ -1534,12 +1534,10 @@ fn a_fraction_or_fair_lower_over_a_stopped_graph_stays_stopped() {
 /// A key of the continuing model's state past `g`, taken from a claim whose
 /// graph runs on to it.
 fn past_target_key(exact: &Value) -> Value {
-    let further = proof(
-        &acyclic("rational(2,5)", true).replace(
-            "holds(m.delivered)",
-            "holds(m.delivered and m.attempts = 2)",
-        ),
-    );
+    let further = proof(&acyclic("rational(2,5)", true).replace(
+        "holds(m.delivered)",
+        "holds(m.delivered and m.attempts = 2)",
+    ));
     let known: Vec<Value> = document(exact)["values"]
         .as_array()
         .unwrap()
@@ -1557,7 +1555,6 @@ fn past_target_key(exact: &Value) -> Value {
     assert!(past.next().is_none());
     key
 }
-
 
 /// FR-201 "Closed reachability document profile": the values and ranking of an
 /// acyclic `eventually` cover the graph that stops at its targets, so a model
