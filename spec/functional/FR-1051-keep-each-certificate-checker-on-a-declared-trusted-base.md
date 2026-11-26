@@ -278,12 +278,15 @@ route; a route it does not yet cover is tracked by QSL-3500.
   mutation harness. The harness is a Rust test-support crate that is only a
   dev-dependency, has no `fsl-replay` dependency, and takes each
   registration's check as a closure from the fixture to a verdict.
-- A route whose certificate has a canonical byte form SHALL register its
+- A route whose certificate has a canonical byte form, except R-27 and R-28,
+  SHALL register its
   canonical document; the harness mutates the canonical tree, and the
   closure either calls the route's byte or source check entry (for EN-5, the
   source or package entry) or decodes the bytes with the route's codec reader
-  and calls its typed entry (the zone and task-product routes, through
-  `ZoneCertificate::from_wire` and `check_zone_certificate`).
+  and calls its typed entry (the task-product routes, through their codec
+  reader and check entry). R-27 and R-28 use typed adapters over
+  `ZoneCertificate` calling `check_zone_certificate`, since the zone wire
+  reader does not read the `state_graph` member.
 - A route whose certificate has only a typed form (state graph, EN-1
   closure, SCC components, closed form, simulation, SMT proof) SHALL register
   a typed adapter that applies each mutation kind to the typed value's
@@ -405,7 +408,7 @@ part of the fragment:
 | FR-1051-AC-10 | The check fails, naming the entry, when a check entry of its data names no route, or a route of the Routes table has no check entry; and, naming the function, when producer code or settling code names a public checker-code function that is in neither its check-entry nor its codec data. | Test |
 | FR-1051-AC-11 | For every registered fixture of every route, every single mutation that is not on the route's allowed-to-survive list is refused or rejected by the route's check entry (or not reproduced by a replay route); a mutation the entry accepts fails the harness, naming the route, the fixture, the member path and the mutation. Verified by the harness's own tests, including one where a deliberately weakened check closure accepts a changed value, run once over a canonical document and once through a typed adapter. | Test |
 | FR-1051-AC-12 | An allowed-to-survive entry without a reason, or one whose mutation the harness no longer makes or the check entry now rejects, fails the harness as stale, naming the entry. | Test |
-| FR-1051-AC-13 | The harness fails, naming each route, when a route of the Routes table has no registered accepted fixture, or when a registered fixture is not accepted by its check entry. The harness crate's manifest has no `fsl-replay` dependency and it is a dev-dependency only. The first registered routes are R-12 (finite-horizon measure), R-13 (value bounds), R-11 (cyclic-MDP fair), R-27 and R-28 (zone `always possible` and `unique path`, decoding with `ZoneCertificate::from_wire`) and R-50 (counterexample replay, byte route); R-32 (explicit state graph) registers through a typed adapter. | Test |
+| FR-1051-AC-13 | The harness fails, naming each route, when a route of the Routes table has no registered accepted fixture, or when a registered fixture is not accepted by its check entry. The harness crate's manifest has no `fsl-replay` dependency and it is a dev-dependency only. The first registered routes are R-12 (finite-horizon measure), R-13 (value bounds), R-11 (cyclic-MDP fair), R-27 and R-28 (zone `always possible` and `unique path`, through typed adapters over `ZoneCertificate` calling `check_zone_certificate`, since the zone wire reader does not read `state_graph`) and R-50 (counterexample replay, byte route); R-32 (explicit state graph) registers through a typed adapter. | Test |
 | FR-1051-AC-14 | A repository test holds, for each route without a harness registration, the names of its hand-written rejection tests as of this requirement. It fails, naming the route and the test, when a named test is no longer defined; it fails as stale, naming the route, when a route that has a harness registration still has a list. | Test |
 | FR-1051-AC-15 | The spec-consistency test fails, naming ADR-028 CE-7, when the check's data holds no entry for row S-1 and the text of CE-7 still says the product construction is shared with EN-1. | Test |
 | FR-1051-AC-16 | A test fails, naming each route, when a route of the Routes table has no corpus entry. For each proof-route entry, the route's check entry rejects the self-consistent certificate with the semantic rule the entry states, and the test fails on a rejection by any other rule or by a decoding, identity or shape refusal; analysis does not settle the claim `proved`. For each replay-route entry, the forged witness or counterexample is not reproduced. A covered route's entry has its truth from the reference or, for a replay route, a hand-derived argument; a not-yet route's entry carries a hand-derived value with its derivation. | Test |

@@ -9,6 +9,8 @@ use fsl_replay::{ProofBasis, TerminalValue};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+mod mutation;
+
 const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const LINK_SOURCE: &str = include_str!("../fixtures/link.native");

@@ -52,6 +52,7 @@ fn crate_roots() -> Vec<PathBuf> {
         "fsl-bench/src",
         "fsl-conformance/src",
         "fsl-proptest-policy/src",
+        "fsl-certificate-mutation/src",
         "fsl-string-edge/src",
         "tests/fixtures/checked-closure-consumer/src",
         "tests/fixtures/hyper-query-consumer/src",
