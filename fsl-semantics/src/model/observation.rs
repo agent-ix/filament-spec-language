@@ -36,6 +36,7 @@ use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, InternalFault}
 use fsl_forms::StateClauseKind;
 use fsl_foundation::diagnostic::{BudgetDenial, Code, LimitExceeded, ALLOCATION_FAILED};
 use fsl_foundation::Setting;
+use ix_trace_rs::implements;
 
 use crate::model::accounting::ModelNormalizationLimits;
 use crate::model::domain_package::{DomainPackage, DomainPackageRef, OperationEffect};
@@ -3736,6 +3737,7 @@ fn admit_invocation_documents(
 /// (or the result), the constraint, its keyword and bound. `receiver` is the
 /// type the operation is invoked on: it and its supertypes declare the
 /// parameters and result whose bounds apply.
+#[implements("FR-106-AC-85", "FR-106-AC-86")]
 fn check_argument_bounds(
     views: &[ModelView],
     types: &TypeEnvironment,
