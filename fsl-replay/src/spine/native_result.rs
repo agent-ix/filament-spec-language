@@ -1246,7 +1246,7 @@ struct ClauseRead {
 macro_rules! extraction_record_type {
     (
         $name:ident {
-            $($field:ident: $field_type:ty),* $(,)?
+            $($(#[$field_attribute:meta])* $field:ident: $field_type:ty),* $(,)?
             ;
             $($(#[$optional_attribute:meta])* $optional_field:ident: $optional_type:ty),* $(,)?
         }
@@ -1259,7 +1259,7 @@ macro_rules! extraction_record_type {
             reason = "the closed wire shape is validated during deserialization"
         )]
         pub struct $name {
-            $(pub $field: $field_type,)*
+            $($(#[$field_attribute])* pub $field: $field_type,)*
             $($(#[$optional_attribute])* pub $optional_field: $optional_type,)*
         }
 
@@ -1343,6 +1343,7 @@ extraction_record_type! {
 
 extraction_record_type! {
     ExtractionOutcome {
+        #[serde(deserialize_with = "kind_availability")]
         availability: KindAvailability,
         clause_text: std::collections::BTreeMap<String, String>,
         diagnostics: Vec<serde_json::Value>;
@@ -1361,15 +1362,6 @@ fn validate_extraction(bytes: &[u8]) -> Result<(), NativeRunReadError> {
     let Some(value) = document.get("extraction").filter(|value| !value.is_null()) else {
         return Ok(());
     };
-    if value
-        .pointer("/outcome/availability/reason")
-        .is_some_and(serde_json::Value::is_null)
-    {
-        return Err(NativeRunReadError::MalformedMember {
-            member: "extraction.outcome.availability.reason".to_owned(),
-            source: serde_json::Error::custom("an explicit null is not an omitted reason"),
-        });
-    }
     let extraction: ExtractionRecord =
         serde_path_to_error::deserialize(value.clone()).map_err(|error| {
             let member =
@@ -1399,7 +1391,19 @@ fn validate_extraction(bytes: &[u8]) -> Result<(), NativeRunReadError> {
 }
 
 fn extraction_error_member(path: &str, reason: &str) -> String {
+    let (relative_path, reason) = reason
+        .strip_prefix("wire path `")
+        .and_then(|reason| reason.split_once("`: "))
+        .map_or((None, reason), |(wire_path, reason)| {
+            (Some(wire_path), reason)
+        });
     let mut path = path.trim_matches('.').to_owned();
+    if let Some(relative_path) = relative_path.filter(|path| !path.is_empty()) {
+        if !path.is_empty() {
+            path.push('.');
+        }
+        path.push_str(relative_path);
+    }
     let field = reason
         .split_once("missing field `")
         .and_then(|(_, tail)| tail.split_once('`').map(|(field, _)| field.to_owned()))
@@ -1424,6 +1428,26 @@ fn extraction_error_member(path: &str, reason: &str) -> String {
     } else {
         format!("extraction.{path}")
     }
+}
+
+#[implements("FR-267-AC-17")]
+fn kind_availability<'de, D>(decoder: D) -> Result<KindAvailability, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(decoder)?;
+    if value
+        .as_object()
+        .and_then(|members| members.get("reason"))
+        .is_some_and(serde_json::Value::is_null)
+    {
+        return Err(D::Error::custom(
+            "wire path `reason`: an explicit null is not an omitted reason",
+        ));
+    }
+
+    serde_path_to_error::deserialize::<_, KindAvailability>(value)
+        .map_err(|error| D::Error::custom(format!("wire path `{}`: {}", error.path(), error.inner())))
 }
 
 fn camel_to_snake(value: &str) -> String {
