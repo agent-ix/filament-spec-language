@@ -918,17 +918,17 @@ fn a_one_byte_retention_allowance_stops_before_the_first_stored_state() {
             &Cancel::new(),
         );
         let (mut records, found) = split_records(records, case.checked());
-        assert!(found.is_empty());
         assert_eq!(records.len(), 1);
-        records.remove(0)
+        (records.remove(0), found.len())
     };
-    let stopped = run(Some(1));
+    let (stopped, counterexamples) = run(Some(1));
+    assert_eq!(counterexamples, 0);
     let printed = format!("{stopped:?}");
     assert!(
         printed.contains("AnalysisRetainedBytes") && printed.contains("value: 1"),
         "{printed}"
     );
-    assert_eq!(printed, format!("{:?}", run(Some(1))));
+    assert_eq!(printed, format!("{:?}", run(Some(1)).0));
     assert_eq!(
         ModelCheckLimit::AnalysisRetainedBytes.setting(),
         "analysis.retained_bytes"

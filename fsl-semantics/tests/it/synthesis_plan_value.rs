@@ -603,9 +603,7 @@ fn a_synthesis_goal_is_typed_under_the_callers_node_limit() {
     at(5).expect("five nodes fit a limit of five");
     let refused = at(4).expect_err("five nodes pass a limit of four");
     assert!(
-        refused.contains("S3Nodes")
-            && refused.contains("bound: 4")
-            && refused.contains("actual: 5"),
+        refused.contains("stage: Typing, kind: Nodes, limit: 4, actual: 5"),
         "{refused}"
     );
 }
