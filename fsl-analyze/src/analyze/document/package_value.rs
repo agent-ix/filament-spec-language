@@ -14,6 +14,7 @@ use fsl_route::request::RequirementItem;
 use fsl_route::Registry;
 use fsl_semantics::check::{Capability, PathGuard};
 use fsl_semantics::family::ClaimExtent;
+use ix_trace_rs::implements;
 
 pub(crate) fn occurrence(
     package: &BarePackage<'_>,
@@ -63,6 +64,7 @@ pub(super) fn extent(package: &BarePackage<'_>, row: &RequirementItemRow) -> Opt
 /// Read the admitted operation-contract record and its already-classified
 /// extent. The route must use these checked facts instead of classifying the
 /// source clause again.
+#[implements("FR-940-AC-33")]
 pub(crate) fn operation_contract_record<'row>(
     package: &BarePackage<'_>,
     row: &'row RequirementItemRow,
@@ -93,6 +95,7 @@ pub(crate) enum PackageRequirementRefusal {
     MissingFact(&'static str),
 }
 
+#[implements("FR-940-AC-13")]
 pub(crate) fn requirement_item(
     package: &BarePackage<'_>,
     row: &RequirementItemRow,
@@ -108,6 +111,7 @@ pub(crate) fn requirement_item(
     ))
 }
 
+#[implements("FR-940-AC-13")]
 fn item(
     package: &BarePackage<'_>,
     row: &RequirementItemRow,
