@@ -1071,6 +1071,7 @@ dependencies = [
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
+ "fsl-definitional-reference",
  "fsl-eval",
  "fsl-forms",
  "fsl-foundation",
@@ -1237,6 +1238,19 @@ dependencies = [
  "ix-trace-rs",
  "proc-macro2",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "fsl-definitional-reference"
+version = "0.3.0"
+dependencies = [
+ "filament-checked",
+ "filament-contract-model",
+ "filament-exact",
+ "filament-semantic-value",
+ "fsl-foundation",
+ "fsl-package",
+ "fsl-semantics",
 ]
 
 [[package]]

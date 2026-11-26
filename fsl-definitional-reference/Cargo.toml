@@ -1,0 +1,21 @@
+[package]
+name = "fsl-definitional-reference"
+version = "0.3.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "Brute-force semantic reference for tiny checked FSL models, used by tests only."
+
+[dependencies]
+fsl-foundation = { path = "../fsl-foundation" }
+fsl-semantics = { path = "../fsl-semantics" }
+fsl-package = { path = "../fsl-package" }
+filament-exact = { workspace = true }
+filament-checked = { workspace = true }
+filament-contract-model = { workspace = true }
+filament-semantic-value = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
