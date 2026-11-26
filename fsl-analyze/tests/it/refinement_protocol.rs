@@ -3335,7 +3335,13 @@ fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
 #[trace("TC-553", "FR-148-AC-15")]
 #[test]
 fn protocol_initial_closures_share_the_product_transition_budget() {
-    let mut world = failing_compensation();
+    let mut world = World::with(
+        Variant {
+            peek: false,
+            ..Variant::CAS
+        },
+        &cas_twice(false, false),
+    );
     let first = world.concrete_initial();
     let second = world.concrete_initial_busy_a();
     let mut concrete = world.concrete_request(UNLIMITED);

@@ -260,6 +260,18 @@ pub struct ProtocolPathNode {
 }
 
 impl ProtocolPathRef {
+    /// The first transition in this path, whether it is in the visible seed
+    /// or the shared internal closure.
+    pub fn first_transition(&self) -> Option<&ProtocolTransition> {
+        self.seed.transitions.first().or_else(|| {
+            let mut first = self.tail.as_deref()?;
+            while let Some(previous) = first.previous.as_deref() {
+                first = previous;
+            }
+            Some(first.transition.as_ref())
+        })
+    }
+
     /// Materialize this path for a consumer that needs a single full witness.
     pub fn to_trace(&self) -> ProtocolTrace {
         let mut chain = Vec::new();
