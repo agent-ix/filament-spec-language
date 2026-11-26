@@ -2215,3 +2215,114 @@ fn temporal_violation_shrinks_and_retains_the_same_clause_failure() {
     };
     assert!(counterexample.trace.steps.is_empty());
 }
+
+/// FR-752-AC-15: whatever `accounting.work_units` bound stops a model-based
+/// run, over an invariant, a precondition, a postcondition and a temporal
+/// clause, the run settles `incomplete` naming that bound and its setting, or
+/// reports what the unbounded run reports. A meter stop is never read as a
+/// clause failure, a discard or a defect.
+#[trace("FR-752-AC-15")]
+#[test]
+fn every_work_bound_settles_incomplete_or_reports_the_unbounded_result() {
+    let invariant = || counter_run_world("Safe", "self.value + 1 + 1 > 0");
+    let temporal = || counter_temporal_world("always[0,5] holds(c.value <= 5)");
+    let worlds: [(&dyn Fn() -> World, &str); 4] = [
+        (&invariant, "Safe"),
+        (&invariant, "CanInc"),
+        (&invariant, "Inc"),
+        (&temporal, "ModelProperty"),
+    ];
+    let mut wrong = Vec::new();
+    for (build, clause) in worlds {
+        let run = |work_units: u64| {
+            let mut world = build();
+            let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+            let limits = ScalarLimits {
+                work_units,
+                ..UNLIMITED
+            };
+            let system = system(&world, vec![initial], &["c1"], limits);
+            let graph = world.package.graph();
+            let identity = graph
+                .temporal_clauses()
+                .iter()
+                .find(|node| node.clause().name() == clause)
+                .map(|node| node.identity())
+                .or_else(|| graph.state_clause(clause).map(|node| node.identity()))
+                .expect("the checked clause");
+            run_model_based_test(
+                &system,
+                &identity,
+                &sampler(),
+                7,
+                4,
+                3,
+                10_000,
+                Limits::default()
+                    .with_max_states(100)
+                    .with_max_transitions(1_000),
+            )
+        };
+        let observed = |result: &fsl_eval::simulation::model::ModelBasedTestResult| {
+            format!(
+                "{:?}",
+                (
+                    &result.evidence,
+                    &result.counts,
+                    &result.checks,
+                    &result.cause,
+                    &result.partitions,
+                    &result.partition_coverage,
+                    &result.counterexample,
+                )
+            )
+        };
+        let control = run(UNLIMITED.work_units).expect("the unbounded run");
+        assert_ne!(
+            control.evidence,
+            ModelBasedTestEvidence::Incomplete,
+            "{clause}"
+        );
+        let control = observed(&control);
+        let mut unchanged = 0;
+        let mut stopped = 0;
+        let mut seen = Vec::new();
+        for work_units in 0..20_000 {
+            let found = match run(work_units) {
+                Ok(result) if observed(&result) == control => {
+                    unchanged += 1;
+                    if unchanged > 64 {
+                        break;
+                    }
+                    continue;
+                }
+                Ok(result) => match &result.cause {
+                    Some(ModelBasedTestCause::LimitReached { value, setting, .. })
+                        if result.evidence == ModelBasedTestEvidence::Incomplete
+                            && *value == work_units
+                            && setting == "accounting.work_units" =>
+                    {
+                        stopped += 1;
+                        unchanged = 0;
+                        continue;
+                    }
+                    _ => format!(
+                        "{:?} {:?} {:?}",
+                        result.evidence, result.cause, result.counts
+                    ),
+                },
+                Err(error) => format!("{error:?}"),
+            };
+            unchanged = 0;
+            if !seen.contains(&found) {
+                wrong.push(format!("{clause} at {work_units}: {found}"));
+                seen.push(found);
+            }
+        }
+        assert!(
+            stopped > 0 && unchanged > 64,
+            "{clause}: {stopped} {unchanged}"
+        );
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

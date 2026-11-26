@@ -40,8 +40,7 @@ pub(in crate::command) struct PackageRun<'a> {
     /// The accounting limits each valuation runs under.
     pub(in crate::command) accounting: filament_exact::ScalarLimits,
     /// The limits the `initial` snapshot is admitted under.
-    pub(in crate::command) observation_limits:
-        fsl_semantics::model::observation::ObservationLimits,
+    pub(in crate::command) observation_limits: fsl_semantics::model::observation::ObservationLimits,
 }
 
 /// The snapshot a `cross_evaluate.initial` request builds its model subject

@@ -66,7 +66,10 @@ fn run_routes() -> Vec<(&'static str, Value)> {
     vec![
         ("synthesis", from_source("synthesis", synthesis.clone())),
         ("package synthesis", from_package("synthesis", synthesis)),
-        ("model_based_test", from_source("model_based_test", json!({}))),
+        (
+            "model_based_test",
+            from_source("model_based_test", json!({})),
+        ),
         (
             "refinement_transfer",
             from_source(
@@ -105,7 +108,10 @@ fn run_routes() -> Vec<(&'static str, Value)> {
         ),
         ("version", json!({"argv": ["version"]})),
         ("check", json!({"argv": ["check", "unit.native"]})),
-        ("export_evidence", from_source("export_evidence", evidence())),
+        (
+            "export_evidence",
+            from_source("export_evidence", evidence()),
+        ),
     ]
 }
 
@@ -152,9 +158,23 @@ fn every_route_that_writes_no_file_refuses_an_output_override() {
     for (route, request) in run_routes() {
         assert_unapplied(&run_error(&request, &overrides), route, "output");
     }
+    // Both envelopes hold every required member, so the override is the only
+    // thing refused: it is decided before any member's content is read.
+    let monitor = json!({"models": [], "program": {"source": source()}, "clauses": [],
+        "trace": {"kind": "finite"}, "records": "records.jsonl"});
+    let replay: serde_json::Map<String, Value> = fsl_command::replay_request::MEMBERS
+        .iter()
+        .map(|member| ((*member).to_owned(), Value::Null))
+        .collect();
     for (route, request) in [
-        ("monitor", json!({"format": "native-monitor/1", "request": {}})),
-        ("replay", json!({"format": "native-replay/1", "request": {}})),
+        (
+            "monitor",
+            json!({"format": "native-monitor/1", "request": monitor}),
+        ),
+        (
+            "replay",
+            json!({"format": "native-replay/1", "request": replay}),
+        ),
     ] {
         assert_unapplied(&run_error(&request, &overrides), route, "output");
     }
@@ -259,11 +279,18 @@ fn a_route_that_charges_no_counter_refuses_one() {
     for (route, request) in [
         ("export", from_source("export", export())),
         ("package export", from_package("export", export())),
-        ("export_evidence", from_source("export_evidence", evidence())),
+        (
+            "export_evidence",
+            from_source("export_evidence", evidence()),
+        ),
         ("check", json!({"argv": ["check", "unit.native"]})),
         ("version", json!({"argv": ["version"]})),
     ] {
-        assert_unapplied(&run_error(&request, &overrides), route, "accounting.work_units");
+        assert_unapplied(
+            &run_error(&request, &overrides),
+            route,
+            "accounting.work_units",
+        );
     }
 }
 

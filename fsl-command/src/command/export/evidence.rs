@@ -70,10 +70,7 @@ pub(super) fn run(
             });
         }
     }
-    super::super::overrides::admit(
-        super::super::overrides::RunRoute::ExportEvidence,
-        overrides,
-    )?;
+    super::super::overrides::admit(super::super::overrides::RunRoute::ExportEvidence, overrides)?;
     let code = Code::UnimplementedCapability;
     let document = OutcomeDocument::new(Operation::Export, None, code.category())
         .with_diagnostics(vec![OutcomeDiagnostic::new(

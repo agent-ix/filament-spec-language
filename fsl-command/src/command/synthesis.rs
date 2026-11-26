@@ -9,9 +9,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::overrides::{
-    admit, effective_limits, refuse_request_clocks, RequestLimits, RunRoute,
-};
+use super::overrides::{admit, effective_limits, refuse_request_clocks, RequestLimits, RunRoute};
 
 const DEFAULT_MAX_CANDIDATES: u64 = 10_000_000;
 const DEFAULT_MAX_WORK: u64 = 100_000_000;

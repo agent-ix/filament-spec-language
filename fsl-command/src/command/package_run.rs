@@ -395,14 +395,7 @@ fn prepare_clause(
     if let Some(ledger) = clause.selection.ledger_path() {
         files.push(ledger);
     }
-    let admitted = admit_files(
-        directory,
-        request,
-        package,
-        dependent_bytes,
-        &files,
-        &stage,
-    )?;
+    let admitted = admit_files(directory, request, package, dependent_bytes, &files, &stage)?;
     let mut observations = std::collections::BTreeMap::new();
     for (key, file) in &clause.observations {
         let index = files
@@ -641,7 +634,14 @@ fn prepare_lowering(
         Some(super::tl::CrossEvaluate::Trace { .. }) | None => None,
     };
     let stage = overrides.spine_limits();
-    let admitted = admit(directory, request, package, dependent_bytes, initial, &stage)?;
+    let admitted = admit(
+        directory,
+        request,
+        package,
+        dependent_bytes,
+        initial,
+        &stage,
+    )?;
     Ok(PreparedPackageRun {
         package: admitted.package,
         package_bytes: admitted.package_bytes,

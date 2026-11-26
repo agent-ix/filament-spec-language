@@ -206,28 +206,23 @@ impl RunRoute {
             Self::ValueSynthesis => evaluates(compiling!()),
             Self::PackageSynthesis => evaluates(Some(&[Family::Imports])),
             Self::ModelBasedTest => evaluates(compiling!(Observation, Expansion)),
-            Self::RefinementTransfer
-            | Self::Call
-            | Self::TlLowering
-            | Self::ValueInvariants => clocked(compiling!(Observation)),
+            Self::RefinementTransfer | Self::Call | Self::TlLowering | Self::ValueInvariants => {
+                clocked(compiling!(Observation))
+            }
             Self::Clause | Self::Items => clocked(compiling!(Observation, Progress)),
             Self::VerificationPlan => clocked(compiling!(Observation, Expansion)),
-            Self::PackageCall => evaluates(Some(&[
-                Family::Model,
-                Family::Imports,
-                Family::Observation,
-            ])),
+            Self::PackageCall => {
+                evaluates(Some(&[Family::Model, Family::Imports, Family::Observation]))
+            }
             Self::PackageClause => evaluates(Some(&[
                 Family::Model,
                 Family::Imports,
                 Family::Observation,
                 Family::Progress,
             ])),
-            Self::PackageTlLowering => evaluates(Some(&[
-                Family::Model,
-                Family::Imports,
-                Family::Observation,
-            ])),
+            Self::PackageTlLowering => {
+                evaluates(Some(&[Family::Model, Family::Imports, Family::Observation]))
+            }
             Self::Monitor => clocked(None),
             Self::Replay => evaluates(None),
             Self::Compile => Reads {
@@ -328,7 +323,12 @@ pub(super) fn admit(route: RunRoute, overrides: &RequestOverrides<'_>) -> Result
         return Err(unapplied(route, "clocks"));
     }
     if !reads.accounting {
-        if let Some(setting) = accounting.into_iter().flatten().map(|(name, _)| name).next() {
+        if let Some(setting) = accounting
+            .into_iter()
+            .flatten()
+            .map(|(name, _)| name)
+            .next()
+        {
             return Err(unapplied(route, setting.name()));
         }
     }
@@ -451,13 +451,16 @@ mod tests {
         .unwrap();
         assert_eq!(effective.accounting.0.work_units, 1_000_000);
         assert_eq!(
-            analyze_limits(published, &overrides).expansion.max_candidates,
+            analyze_limits(published, &overrides)
+                .expansion
+                .max_candidates,
             200_000
         );
     }
 
-    /// FR-255 Behavior 16: every setting a compile's stage limits hold is
-    /// read by a source clause run or refused only because it is the export's.
+    /// FR-255 Behavior 16: every setting the stage limits hold is classified
+    /// into a family, so a route's table decides it, and the export family is
+    /// exactly the `export.*` settings.
     #[test]
     #[trace("FR-255-AC-37")]
     fn every_stage_setting_a_run_holds_has_a_family() {

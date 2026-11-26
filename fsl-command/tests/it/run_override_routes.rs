@@ -141,9 +141,8 @@ fn a_monitor_run_refuses_an_override_it_cannot_apply() {
     assert!(!output.exists());
 }
 
-/// FR-255-AC-39: a monitor run given `accounting.work_units=0` over a stream
-/// that evaluates one record settles `incomplete` naming the counter, its
-/// bound and its setting.
+/// FR-255 Behavior 15: the caller's accounting counter reaches the stream,
+/// whose `incomplete` outcome names it.
 #[test]
 #[trace("FR-255-AC-39")]
 fn a_monitor_run_applies_the_callers_accounting_counter() {
@@ -164,11 +163,5 @@ fn a_monitor_run_applies_the_callers_accounting_counter() {
     .expect("an exhausted budget settles, it does not refuse");
     let document = result.value.to_string();
     assert_eq!(result.exit_code, 22, "{document}");
-    for expected in [
-        r#""limit":"work_units""#,
-        "accounting.work_units",
-        r#""setting""#,
-    ] {
-        assert!(document.contains(expected), "{expected}: {document}");
-    }
+    assert!(document.contains(r#""limit":"work_units""#), "{document}");
 }

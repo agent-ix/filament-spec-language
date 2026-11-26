@@ -4752,17 +4752,21 @@ fn low_over_a_snapshot(directory: &Path) -> Value {
 fn a_package_clause_run_applies_the_callers_limits_as_the_source_run_does() {
     let unit = bump_low();
     let directory = bump_directory(&unit, &["a"], true);
-    let length = std::fs::read(directory.path().join("s.json")).unwrap().len() as u64;
+    let length = std::fs::read(directory.path().join("s.json"))
+        .unwrap()
+        .len() as u64;
     let clause = low_over_a_snapshot(directory.path());
 
     let control = source_and_package(&unit, ("clause", clause.clone()), &Default::default());
     for (code, value) in &control {
         assert_ne!(*code, 20, "{value}");
-        assert!(!value.to_string().contains("observation.input_bytes"), "{value}");
+        assert!(
+            !value.to_string().contains("observation.input_bytes"),
+            "{value}"
+        );
     }
 
-    let short =
-        std::collections::BTreeMap::from([(Setting::ObservationInputBytes, length - 1)]);
+    let short = std::collections::BTreeMap::from([(Setting::ObservationInputBytes, length - 1)]);
     for (code, value) in source_and_package(
         &unit,
         ("clause", clause.clone()),
@@ -4772,7 +4776,10 @@ fn a_package_clause_run_applies_the_callers_limits_as_the_source_run_does() {
         },
     ) {
         assert_ne!(code, 0, "{value}");
-        assert!(value.to_string().contains("observation.input_bytes"), "{value}");
+        assert!(
+            value.to_string().contains("observation.input_bytes"),
+            "{value}"
+        );
     }
 
     let no_work = std::collections::BTreeMap::from([(AccountingSetting::WorkUnits, 0)]);
@@ -4798,7 +4805,11 @@ fn a_package_lowering_charges_the_callers_counter_as_the_source_does() {
     let lowering = json!({"clause": "Low",
         "cross_evaluate": {"initial": "s.json", "max_steps": 1}});
     let no_work = std::collections::BTreeMap::from([(AccountingSetting::WorkUnits, 0)]);
-    let control = source_and_package(&unit, ("tl_lowering", lowering.clone()), &Default::default());
+    let control = source_and_package(
+        &unit,
+        ("tl_lowering", lowering.clone()),
+        &Default::default(),
+    );
     for (code, value) in &control {
         assert_eq!(*code, 0, "{value}");
     }
@@ -4837,7 +4848,10 @@ fn a_call_snapshot_is_admitted_under_the_callers_observation_limit() {
         },
     ) {
         assert_ne!(code, 0, "{value}");
-        assert!(value.to_string().contains("observation.input_bytes"), "{value}");
+        assert!(
+            value.to_string().contains("observation.input_bytes"),
+            "{value}"
+        );
     }
 }
 
@@ -4888,5 +4902,8 @@ fn an_items_call_selection_compiles_under_the_callers_stage_limit() {
         },
     );
     assert_ne!(code, 0, "{value}");
-    assert!(value.to_string().contains("S3 node limit 4 reached"), "{value}");
+    assert!(
+        value.to_string().contains("S3 node limit 4 reached"),
+        "{value}"
+    );
 }
