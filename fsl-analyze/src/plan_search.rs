@@ -1146,6 +1146,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
             accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum).then(zero),
             prefix: (!self.rules.merges_prefixes()).then_some(0),
         };
+        self.charge(PlanLimit::MaxWork)?;
         self.rules
             .push_policy_index(self.index.entry(key.model_key()).or_default(), 0)?;
         self.nodes.push(Node {
