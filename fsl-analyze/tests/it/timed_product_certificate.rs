@@ -367,7 +367,7 @@ fn timed_document_has_no_component_member() {
     // profile; use a deterministic timed package to test that the certificate
     // profile itself is not part of package source.
     let emission_world = timed_world::world(
-        &timed_world::document(&["x"], &[("send", &["late"])]),
+        &timed_world::document(&["x"], &[("send", &["late", "x"])]),
         PROFILES,
         &format!(
             "{}\
