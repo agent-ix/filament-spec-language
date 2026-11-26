@@ -3793,3 +3793,87 @@ fn a_falling_fraction_on_a_dense_idle_tail_is_read_over_every_completion() {
         );
     }
 }
+
+/// `send` moves `phase` 0 to 1 and `reply` moves it to 2, 3 ms each, under an
+/// `on each` claim, its snapshot holding the objects `keys`.
+fn on_each_timed_world(keys: &[&str]) -> crate::timed_world::World {
+    let body = format!(
+        "{}\npre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+         post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+         pre Reply using v on M::Call::reply {{ self.phase = 1 }}\n\
+         post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+         delay M::Call::send ~ discrete {{ 3 ms: 1 }};\n\
+         delay M::Call::reply ~ discrete {{ 3 ms: 1 }};\n\
+         workload Even on M {{ weight Call::send = 1; weight Call::reply = 1; }}\n\
+         probabilistic Probe using ev on M under Even on each (c: M::Call) when (c.phase = 0)\n\
+             with alpha 0.4, beta 0.4, indifference 0.05\n\
+             {{ probability >= 0.5 [eventually[0 ms, 8 ms] holds(c.phase = 2)] }}\n",
+        crate::timed_world::DENSE
+    );
+    crate::timed_world::world_over(
+        &crate::timed_world::document(&["x"], &[("send", &["phase"]), ("reply", &["phase"])]),
+        "profile ev = \"filament.temporal.timed/v1\";\n",
+        &body,
+        keys,
+    )
+}
+
+/// The record the FR-280 provider entry settles `Probe` with.
+fn served(world: &crate::timed_world::World) -> fsl_replay::statistical::StatisticalRecord {
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Probe")
+        .expect("the claim checks");
+    fsl_analyze::statistical::provider::serve_request(
+        StatisticalRequest {
+            workers: 1,
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            method: StatisticalMethod::Okamoto,
+            seed: 7,
+            sampler: sampler(),
+            limits: StatisticalLimits::default(),
+            max_witnesses: 0,
+            symmetry: Vec::new(),
+            timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("a terminal record")
+}
+
+/// FR-875-AC-5: an `on each` statistical item over a nonempty instance set is
+/// unsupported at the profile boundary through the FR-280 provider entry, as
+/// through `fsl analyze`, and is no broken invariant.
+#[trace("TC-3211", "FR-875-AC-5")]
+#[test]
+fn the_provider_entry_refuses_an_on_each_claim_at_the_profile_boundary() {
+    let record = served(&on_each_timed_world(&["c"]));
+    assert_eq!(
+        (record.value, record.diagnostic),
+        (
+            TerminalValue::Unsupported(fsl_replay::UnavailabilityCause::Disposition),
+            Some(filament_semantic_value::catalog::CatalogCode::new(
+                "unsupported_construct",
+                "not-yet-implemented"
+            ))
+        )
+    );
+}
+
+/// FR-875-AC-1: over an empty instance set the same entry settles
+/// `no-instance`.
+#[trace("FR-875-AC-1")]
+#[test]
+fn the_provider_entry_settles_an_on_each_claim_over_no_instance() {
+    let record = served(&on_each_timed_world(&[]));
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInstance)
+    );
+}
