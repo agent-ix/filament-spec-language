@@ -30,7 +30,6 @@ use fsl_replay::{
     evaluate_protocol_trace, settle_protocol_check, undefined_finding,
 };
 use fsl_semantics::check::{CheckedProtocol, TemporalClauseNode};
-use ix_trace_rs::implements;
 use serde_json::Value;
 
 use filament_semantic_value::catalog::CatalogCode;
