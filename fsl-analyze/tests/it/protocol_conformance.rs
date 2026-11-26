@@ -705,18 +705,7 @@ pub(crate) fn assert_other_protocol_declined(item: &Value) {
 #[trace("TC-2532", "FR-896-AC-10")]
 #[test]
 fn protocol_deadlock_item_declines_without_subject_protocol() {
-    for (name, item) in [
-        (
-            "gc-deadlock-requires-protocol-subject",
-            json!({"claim": "Flow", "kind": "temporal-satisfaction",
-                "temporal": {"item_kind": "deadlock-freedom"}}),
-        ),
-        (
-            "gc-deadlock-global-requires-protocol-subject",
-            json!({"claim": "Flow", "kind": "global-conformance",
-                "temporal": {"item_kind": "deadlock-freedom"}}),
-        ),
-    ] {
+    for (name, item) in deadlock_items() {
         let ws = Workspace::new(name);
         let request = request_over(
             &ws,
@@ -725,32 +714,52 @@ fn protocol_deadlock_item_declines_without_subject_protocol() {
             &[],
             json!({"items": [item]}),
         );
-        let item = analyze(&request).item(0);
-        assert_eq!(item["record"]["result"], "declined", "{name}: {item}");
-        assert_eq!(
-            item["record"]["diagnostic"]["code"], "invalid_runtime_input",
-            "{name}: {item}"
-        );
-        assert_eq!(
-            item["record"]["diagnostic"]["cause"], "invalid-value",
-            "{name}: {item}"
-        );
-        assert_eq!(
-            item["record"]["diagnostic"]["detail"]["member"], "temporal.subject.protocol",
-            "{name}: {item}"
-        );
-        for member in [
-            "obligations",
-            "closure",
+        assert_deadlock_declined(name, &analyze(&request).item(0));
+    }
+}
+
+/// The two request forms of FR-896-AC-10's protocol deadlock item.
+pub(crate) fn deadlock_items() -> [(&'static str, Value); 2] {
+    [
+        (
+            "plain",
+            json!({"claim": "Flow", "kind": "temporal-satisfaction",
+                "temporal": {"item_kind": "deadlock-freedom"}}),
+        ),
+        (
             "global",
-            "projections",
-            "counterexample",
-        ] {
-            assert!(
-                item[member].is_null(),
-                "{name}: declined item omits {member}: {item}"
-            );
-        }
+            json!({"claim": "Flow", "kind": "global-conformance",
+                "temporal": {"item_kind": "deadlock-freedom"}}),
+        ),
+    ]
+}
+
+/// FR-896-AC-10: declined `invalid-value` naming `temporal.subject.protocol`.
+pub(crate) fn assert_deadlock_declined(name: &str, item: &Value) {
+    assert_eq!(item["record"]["result"], "declined", "{name}: {item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{name}: {item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{name}: {item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["member"], "temporal.subject.protocol",
+        "{name}: {item}"
+    );
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "counterexample",
+    ] {
+        assert!(
+            item[member].is_null(),
+            "{name}: declined item omits {member}: {item}"
+        );
     }
 }
 

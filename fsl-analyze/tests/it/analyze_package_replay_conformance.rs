@@ -527,6 +527,27 @@ fn a_binding_to_another_protocol_is_declined_on_source_and_package_routes() {
     assert_equal(&source, &package);
 }
 
+/// FR-896-AC-10 on both routes: a protocol deadlock item, as the plain
+/// deadlock-freedom kind and as `global-conformance`, declines without a
+/// `subject.protocol`.
+#[trace("TC-2410", "FR-896-AC-10", "FR-850-AC-2")]
+#[test]
+fn a_deadlock_item_without_subject_protocol_is_declined_on_both_routes() {
+    for (name, item) in crate::protocol_conformance::deadlock_items() {
+        let (source, package) = both_routes_for_unit_with_snapshots(
+            &format!("package-deadlock-{name}"),
+            &order_protocol(true),
+            json!([item]),
+            &[],
+            None,
+        );
+        for run in [&source, &package] {
+            crate::protocol_conformance::assert_deadlock_declined(name, &run.item(0));
+        }
+        assert_equal(&source, &package);
+    }
+}
+
 /// FR-896-AC-7 and FR-101: the max-state budget is shared by all object keys.
 /// One run explores 5 product states: 9 fits one run, not two (FR-101-AC-15).
 #[trace("TC-2410", "FR-896-AC-7", "FR-101-AC-15", "FR-850-AC-2")]

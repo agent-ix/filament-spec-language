@@ -2351,7 +2351,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     }
 
     /// Resolve conformance or supplied replay/recording over a package protocol.
-    #[implements("FR-896-AC-8", "FR-896-AC-9", "FR-990-AC-11")]
+    #[implements("FR-896-AC-8", "FR-896-AC-9", "FR-896-AC-10", "FR-990-AC-11")]
     fn supplied_protocol(
         &self,
         index: RequestIndex,
@@ -2430,6 +2430,20 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     )));
                 }
             };
+        }
+        // FR-896-AC-10: a deadlock-freedom item needs an explicit protocol
+        // subject, as on the source route (FR-850-AC-2).
+        if kind == Capability::GlobalConformance
+            && form.protocol.is_none()
+            && temporal
+                .item_kind
+                .is_some_and(|item_kind| item_kind.kind() == ItemKind::DeadlockFreedom)
+        {
+            return Ok(Resolution::Settled(super::invalid_value(
+                index,
+                name,
+                "temporal.subject.protocol",
+            )));
         }
         let item_form = (kind == Capability::GlobalConformance).then(|| ItemForm::Temporal(form));
         Ok(Resolution::Claim(
