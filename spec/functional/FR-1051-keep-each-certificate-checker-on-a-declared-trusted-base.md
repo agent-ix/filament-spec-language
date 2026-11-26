@@ -98,33 +98,30 @@ Classes are by file, except the two items of checker code inside the producer fi
 
 ### Names and detection
 
-The arch-lint check SHALL find what code names as follows, and SHALL fail
-closed:
+The arch-lint check is a rule over module paths, built on the existing
+`syn`-based api-surface machinery (FR-060). It SHALL find what code names
+from these paths only:
 
-- A path (a `use` tree leaf, a path expression, a path type, a trait bound,
-  a struct literal or pattern) names the item it resolves to, through `use`
-  and `extern crate` aliases and every `pub use` re-export.
-- A method call `x.m(..)` names the function the type-checked program
-  resolves it to by the receiver's type. The check SHALL take this
-  resolution from a semantic model of the type-checked workspace (for
-  example `rust-analyzer`'s library, or the compiler's own output), not from
-  method names, and it needs no list of methods to find a call.
-- A method call or path the check cannot resolve, in checker, settling or
-  producer code, SHALL be a finding (`unresolved`), so no call escapes by
-  being unresolved.
+- `use` trees, including globs, `self`, nested groups and `as` aliases, and
+  `extern crate` aliases;
+- qualified paths in expressions, types, trait bounds, struct literals and
+  patterns, including associated-function paths `T::f`;
+- path token runs written inside macro arguments, as the api-surface rule
+  matches them;
 
-The check cannot see, and this requirement does not claim to cover:
+each resolved through the `pub use` re-exports of the workspace crates to
+the item it names. The check SHALL scan every non-test file with every
+feature's code included; `#[cfg(feature = "test-support")]` code is
+scanned, not skipped.
 
-- the body behind a trait object or generic bound: a call through `dyn T` or
-  `impl T` names the trait method, not the implementation the value has at
-  run time; the producer-object rule below is what covers trait objects a
-  producer passes in;
-- a closure or function value passed into checker code: the check sees the
-  parameter's type, not the code the producer put in it;
-- code a build script generates, and code only a non-default feature
-  enables that the check's configuration does not build;
-- the same misreading written twice in separate code (design mechanism B):
-  only the false-claim corpus catches it.
+The check does not see calls made on values, and this requirement does not
+claim it does: method calls `x.m(..)`, operators, `Deref`, the `From`
+conversion of `?`, formatting traits, calls through trait objects and
+generic bounds, macro bodies and expansions, and code a build script
+generates. Sharing that happens only through such calls is covered by the
+mutation harness, the false-claim corpus and review, not by the check. The
+same misreading written twice in separate code (design mechanism B) is
+caught only by the false-claim corpus.
 
 ### Trusted base
 
@@ -135,7 +132,10 @@ submodules except the parts the listed exception rows name; "type items"
 allows the module's structs, enums, type aliases and traits and only the
 functions the check's data records under that row, each a service or codec
 function that derives no member value. Text in parentheses describes a row
-and does not narrow it.
+and does not narrow it. That a function recorded under B-9, B-11 or B-12
+derives no member value is checked by the review of the change that records
+it, not by the arch-lint check; B-10 admits data items only, which the check
+tests (AC-8).
 
 | ID | Part | Crates and modules | Extent |
 | --- | --- | --- | --- |
@@ -171,15 +171,15 @@ not caught by mutation; the false-claim corpus is the evidence against them.
 - Outside the trusted base, no function or method SHALL be named both by
   checker code and by producer code.
 - Producer code SHALL name checker code only through a check entry, a codec
-  function or a type item of checker code. A type item names no behaviour;
-  any function or method of it that producer code calls is a function the
-  check resolves and judges on its own.
+  function or a type item of checker code.
 - A codec function SHALL belong to one codec class: C-1 a reader or writer
   between a typed value and its canonical bytes; C-2 a builder that
   assembles a document from members its caller already computed; C-3 an
   accessor that returns a member, or a reference to one, without computing
   it; C-4 a constructor of limits, meters or refusal codes. A function that
-  derives a member value is in no codec class.
+  derives a member value is in no codec class. A codec function may be
+  named by both checker code and producer code: the one-type rule keeps it
+  shared, and neither rule above counts it.
 - A check entry is a public function of checker code that returns a
   checker's verdict on a certificate, witness or counterexample, and SHALL
   belong to at least one route.
@@ -307,14 +307,21 @@ route; a route it does not yet cover is tracked by QSL-3500.
 - Each route SHALL have at least one corpus entry. For a proof route, the
   entry is a false claim together with a self-consistent certificate for it
   (committed, or built by the test so that it meets the checker's structural
-  rules), which the route's check entry SHALL reject; analysis through that
-  route SHALL NOT settle the claim `proved`. For a witness or counterexample
-  route, the entry is a true claim together with a forged witness or
-  counterexample for it, which the replay SHALL NOT reproduce.
+  rules), and the semantic rejection rule it expects (a `CertificateRule` or
+  route rule naming an obligation, not a decoding, identity or shape
+  refusal); the route's check entry SHALL reject it with that rule, and
+  analysis through that route SHALL NOT settle the claim `proved`. For a
+  witness or counterexample route, the entry is a true claim together with a
+  forged witness or counterexample for it, which the replay SHALL NOT
+  reproduce.
 - For a route the Routes table marks covered, the truth of each entry's
   claim SHALL be computed by the definitional reference. For a route marked
   not yet, the entry SHALL carry its truth value derived by hand, with the
   derivation written in the test, until QSL-3500 extends the reference to it.
+  A replay-route entry's true claim may instead be established by a
+  hand-derived argument written in the test (for example a reachable-graph
+  and cycle enumeration by hand on the tiny model); the reference need not
+  decide an unbounded universal claim true.
 - The definitional reference is test code in its own crate, a dev-dependency
   only, that depends directly on `fsl-package`, `fsl-semantics`,
   `fsl-foundation` and the data crates `filament-exact`, `filament-checked`,
@@ -382,22 +389,22 @@ part of the fragment:
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1051-AC-1 | Over fixture crates, the arch-lint check fails when checker code names an item outside the trusted base and in no exception row, naming the file, line and the named item (for example a checker module that names `fsl_analyze::...` or `fsl_eval::probabilistic::MeasurePlan`), and passes when every named item is in the trusted base. | Test |
-| FR-1051-AC-2 | Over fixture crates, the check fails when a function or method outside the trusted base is named both by checker code and by producer code, naming the item and one site on each side; the method case is a method call on a receiver of the checker type in a producer file that never names the type, with no list naming the method. With the function named on one side only, it reports nothing for it. | Test |
+| FR-1051-AC-2 | Over fixture crates, the check fails when a function outside the trusted base is named both by checker code and by producer code, naming the item and one site on each side, including when the producer names it by an associated-function path `T::f`; with the function named on one side only, or when it is a codec function, it reports nothing for it. | Test |
 | FR-1051-AC-3 | Over fixture crates, the check fails when producer code names a function or method of checker code that is neither a check entry nor a codec function, naming the item and the site; naming `check_probability_certificate_document`, `write_probability_certificate` or a checker type item passes. | Test |
 | FR-1051-AC-4 | Over fixture crates, the check fails when a check entry takes a producer-built value of "No producer objects" as a parameter, as `self` or through a field of a checker type it takes, including a closure parameter, naming the entry, the parameter or field and the type. | Test |
-| FR-1051-AC-5 | Over fixture crates, the check fails with `unresolved`, naming the site, on a method call or path in checker or producer code that it cannot resolve. | Test |
+| FR-1051-AC-5 | Over fixture crates, the check reports a sharing whose only path is in code under `#[cfg(feature = "test-support")]`, one written inside a macro argument, one reached through a glob import and one through an `as` alias or a `pub use` re-export. | Test |
 | FR-1051-AC-6 | Over fixture crates, the check fails, naming the crate or file, when a workspace member crate or a non-test file of `fsl-replay` is in no class of "Classes of code" or in two. | Test |
 | FR-1051-AC-7 | On the repository, every finding of the check matches an entry of the check's data that names an exception row and the rule it breaks; a finding that matches no entry fails, naming the item and site. An exception entry that matches no finding fails as stale, naming the entry and its row. | Test |
-| FR-1051-AC-8 | The check fails, naming the entry, when an entry of its data names an item that does not exist (an entry recorded as planned, such as B-10 before QSL-3494, is exempt until its item exists), or names a row, route or codec class that is not in this requirement's tables; and, naming the row, when an exception row of this requirement has no entry and is not recorded as planned. | Test |
-| FR-1051-AC-9 | A spec-consistency test reads this requirement's "Classes of code", Trusted base, exception and Routes tables and fails, naming the difference, when the check's class paths, base rows with their extents, exception row IDs or route IDs differ from them. | Test |
-| FR-1051-AC-10 | The check fails, naming the entry, when a check entry of its data names no route, or a route of the Routes table has no check entry; and, naming the function, when producer code calls a public checker-code function that is in neither its check-entry nor its codec data. | Test |
+| FR-1051-AC-8 | The check fails, naming the entry, when an entry of its data names an item that does not exist (an entry recorded as planned, such as B-10 before QSL-3494, is exempt until its item exists), names a row, route or codec class that is not in this requirement's tables, has a site outside the modules its row concerns, or breaks a rule other than its row's; naming the row, when an exception row of this requirement has no entry and is not recorded as planned; and, naming the item, when an item recorded under B-10 is a function or method. | Test |
+| FR-1051-AC-9 | A spec-consistency test reads this requirement's "Classes of code", Trusted base, exception, Routes and "No producer objects" text and fails, naming the difference, when the check's class paths, base rows with their extents, exception row IDs with their modules and rules, route IDs or producer-built type list differ from them. | Test |
+| FR-1051-AC-10 | The check fails, naming the entry, when a check entry of its data names no route, or a route of the Routes table has no check entry; and, naming the function, when producer code or settling code names a public checker-code function that is in neither its check-entry nor its codec data. | Test |
 | FR-1051-AC-11 | For every registered fixture of every route, every single mutation that is not on the route's allowed-to-survive list is refused or rejected by the route's check entry (or not reproduced by a replay route); a mutation the entry accepts fails the harness, naming the route, the fixture, the member path and the mutation. Verified by the harness's own tests, including one where a deliberately weakened check closure accepts a changed value, run once over a canonical document and once through a typed adapter. | Test |
 | FR-1051-AC-12 | An allowed-to-survive entry without a reason, or one whose mutation the harness no longer makes or the check entry now rejects, fails the harness as stale, naming the entry. | Test |
 | FR-1051-AC-13 | The harness fails, naming each route, when a route of the Routes table has no registered accepted fixture, or when a registered fixture is not accepted by its check entry. The harness crate's manifest has no `fsl-replay` dependency and it is a dev-dependency only. The first registered routes are R-12 (finite-horizon measure), R-13 (value bounds), R-11 (cyclic-MDP fair), R-27 and R-28 (zone `always possible` and `unique path`, decoding with `ZoneCertificate::from_wire`) and R-50 (counterexample replay, byte route); R-32 (explicit state graph) registers through a typed adapter. | Test |
 | FR-1051-AC-14 | A repository test holds, for each route without a harness registration, the names of its hand-written rejection tests as of this requirement. It fails, naming the route and the test, when a named test is no longer defined; it fails as stale, naming the route, when a route that has a harness registration still has a list. | Test |
 | FR-1051-AC-15 | The spec-consistency test fails, naming ADR-028 CE-7, when the check's data holds no entry for row S-1 and the text of CE-7 still says the product construction is shared with EN-1. | Test |
-| FR-1051-AC-16 | A test fails, naming each route, when a route of the Routes table has no corpus entry. For each proof-route entry, the self-consistent certificate is rejected by the route's check entry and analysis does not settle the claim `proved`; for each replay-route entry, the forged witness or counterexample is not reproduced. A covered route's entry has its truth from the reference; a not-yet route's entry carries a hand-derived value with its derivation. | Test |
-| FR-1051-AC-17 | The corpus holds the six seeds of the seed table, each on its route with the model and witness given there; for each, the reference computes false, the self-consistent certificate is rejected and analysis does not settle `proved`. | Test |
+| FR-1051-AC-16 | A test fails, naming each route, when a route of the Routes table has no corpus entry. For each proof-route entry, the route's check entry rejects the self-consistent certificate with the semantic rule the entry states, and the test fails on a rejection by any other rule or by a decoding, identity or shape refusal; analysis does not settle the claim `proved`. For each replay-route entry, the forged witness or counterexample is not reproduced. A covered route's entry has its truth from the reference or, for a replay route, a hand-derived argument; a not-yet route's entry carries a hand-derived value with its derivation. | Test |
+| FR-1051-AC-17 | The corpus holds the six seeds of the seed table, each on its route with the model and witness given there; for each, the reference computes false, the check entry rejects the self-consistent certificate with the semantic rule its corpus entry states, and analysis does not settle `proved`. | Test |
 | FR-1051-AC-18 | The reference crate's manifest has no direct dependency on a workspace crate other than `fsl-package`, `fsl-semantics` and `fsl-foundation`, and is a dev-dependency only; the arch-lint check fails on a reference fixture that names `fsl_eval::simulation::model::ModelSystem` or passes an `fsl-eval` `RewardEvaluator` to package checking. | Test |
 | FR-1051-AC-19 | The reference refuses, naming the construct, a corpus model with an unbounded integer field, a guard that is a disjunction, a non-literal probability weight, a clock compared with a non-integer constant, or a hybrid mode with a non-constant rate, and a quantile claim over some scheduler; it returns no truth value for it. On a two-step MDP where the optimal choice at the first state depends on the steps left, its value for a horizon-bounded some-scheduler reachability claim equals the hand-derived optimum. | Test |
 

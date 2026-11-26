@@ -31,3 +31,9 @@ Changes requested: relationship types. All seven targets exist.
 ## Scope and evidence
 
 - FR-1051: examined
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Checked at 2483104d1e |

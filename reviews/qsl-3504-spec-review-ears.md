@@ -31,3 +31,9 @@ No blocking EARS defect. quire validate returned rc 0 on FR-1051.
 ## Scope and evidence
 
 - FR-1051: examined
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Checked at 2483104d1e |

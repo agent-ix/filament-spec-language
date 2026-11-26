@@ -68,3 +68,31 @@ Changes requested. Producer and checker share code that is in neither table (FND
 - FR-1051: examined
 - fsl-replay checker modules: examined
 - producer call sites: examined
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | high | Constructors and builders of checker code that both sides call break the shared-semantics rule and no exception row covers them, so AC-7 cannot pass on main | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:171 |
+| FND-010 | medium | The stated blind spots omit implicit calls and macro arguments, and permit skipping feature-gated code the class rules call non-test | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:116 |
+
+### FND-009 detail
+
+Zone::zero is called by fsl-analyze zone_check/task_certificate.rs:253 and by the checker certificate/zone_certificate/product.rs:309; Zone::from_matrix by zone_check/certificate.rs:305 and by zone_certificate/wire.rs:159 and divergence.rs:342; ProbabilityDocumentLimits::for_exact by analyze/exact.rs:663 and probability_certificate/document/timed.rs:4823. Codec classes only excuse producer-to-checker calls, not the both-sides rule. No S, P or O row concerns certificate/zone, so no entry may excuse the zone calls. Where a P row does concern the file, the both-sides finding breaks "Shared semantics" while the row's rule is "Producer call into checker", and AC-7 requires the entry to match row and rule. The one-type rule keeps these calls permanently, so a temporary row is the wrong answer: let C-1 to C-4 functions that derive nothing be named by both sides, or put the zone value type in the base. This was already true at 47b83d02c1; the first pass missed it.
+
+### FND-010 detail
+
+Only paths and x.m(..) are said to name an item. Operator, Deref, From via ?, and formatting calls into checker or non-base trait impls (hybrid_replay and certificate define such impls) are neither named nor listed as unseen. Nothing says calls written inside macro arguments (assert!, matches!, format!, local macro_rules as in hybrid_replay/eval.rs) are found; a source walk that does not expand macros never sees them and so never reports them unresolved. The list also allows missing code behind a non-default feature, while "Classes of code" makes test-support code non-test (over 100 cfg sites). Require analysis with all features and expanded macro calls, and list implicit calls as covered or unseen.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Checked at 2483104d1e |
+| FND-002 | fixed | Checked at 2483104d1e |
+| FND-003 | fixed | Checked at 2483104d1e |
+| FND-004 | fixed | Checked at 2483104d1e |
+| FND-005 | fixed | Checked at 2483104d1e |
+| FND-006 | fixed | Checked at 2483104d1e |
+| FND-007 | fixed | Checked at 2483104d1e |
+| FND-008 | fixed | Checked at 2483104d1e |

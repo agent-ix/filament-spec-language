@@ -79,3 +79,51 @@ Changes requested. AC-5 and AC-11 cannot be met as written. AC-2, AC-4, AC-6, AC
 - FR-1051-AC-12: examined
 - FR-1051-AC-13: examined
 - FR-1051-AC-14: examined
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | high | Any new sharing can be excused by adding a data entry under an existing row; AC-7 to AC-9 never compare an entry with its row's code | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:390 |
+| FND-010 | high | Base rows B-9 to B-12 let the data bless any function, and no criterion tests "derives no member value" or "data items only" | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:136 |
+| FND-011 | medium | AC-2 and AC-5 force a semantic model, and an unresolved finding can never be excused, so AC-7 depends on a resolution rate nobody has measured | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:108 |
+| FND-012 | medium | Nothing checks that the certificate of a proof-route entry is self-consistent, so a broken certificate satisfies AC-16 and AC-17 | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:399 |
+| FND-013 | medium | Replay-route entries need a true claim, but the reference has no stated way to decide an unbounded universal claim true | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:352 |
+| FND-014 | low | A check entry missing from the data goes unnoticed when only settling code calls it, and the producer-object type list is pinned by no criterion | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:393 |
+
+### FND-009 detail
+
+AC-8 checks only that the item exists and that the row, route or codec class exists. AC-9 compares class paths, base rows, row IDs and route IDs. Nothing requires the entry's item to be in the row's "Code it concerns", and nothing stops a row gaining entries. A new producer call labelled P-1, or a new shared function labelled S-1, passes every criterion, so "No other exception is allowed" cannot fail. Require AC-8 to fail an entry whose item or site is outside its row's code and whose rule differs from the row's, and give each row a committed entry count in this table that AC-9 compares and that only falls.
+
+### FND-010 detail
+
+B-11 and B-12 cover 27 modules, including producer files such as model_check::counterexample; a function recorded under either row becomes trusted base, outside every sharing rule, permanently and without a ticket. B-10 says no condition-testing function and B-9 is whatever the data records. No AC fails when the data adds a deriving function to any of them. The earlier text failed a function under X-41 (old AC-6); that check is gone. Restore it for B-10, and for B-9, B-11 and B-12 put the function names, or a per-row count that only falls, in this table where AC-9 compares them.
+
+### FND-011 detail
+
+tools/arch-lint is syn only. Typed resolution needs rust-analyzer or compiler internals; in-process ra_ap crates or rustc_driver are heavy and the toolchain is pinned stable 1.98. The lightest route is an external rust-analyzer SCIP index read by the lint, with syn listing call sites and a missing occurrence treated as unresolved. An unresolved finding matches no exception row, so one call rust-analyzer cannot infer blocks AC-7. State that an unresolved call is treated as naming every workspace function of that name outside the base (still fails closed, and can be excused by a normal entry), allow the SCIP route, and measure the unresolved count before building.
+
+### FND-012 detail
+
+The Behavior asks that the certificate meet the checker's structural rules, but the criteria only ask that it be rejected. An empty or malformed certificate is rejected by any checker, including one with the defect the entry exists to catch. Require the criterion to name the rejection each entry expects (a semantic rule, not decoding, identity or shape) and fail on any other.
+
+### FND-013 detail
+
+The decision bullets cover bounded horizons, unbounded probability and reward over a chain, a FALSE every-scheduler claim by a given scheduler, some-scheduler claims and timed continuations. An unbounded always, until, eventually, hyper, deadlock-freedom or every-scheduler claim that is true on a finite model has none, and covered replay routes (R-19, R-20, R-46 to R-55) must take their truth from the reference. Say how (exhaustive reachable-graph and cycle search), or require those entries to use horizon-bounded claims.
+
+### FND-014 detail
+
+AC-10 detects an omitted check entry only through a producer call or an empty route; a second entry on a route called by settling code alone drops out of the data, and of the mutation obligation, silently. AC-4 is fixtures only and AC-9 does not compare the "No producer objects" list, so the data may omit a type from it. Extend AC-10 to settling-code calls and AC-9 to that list.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Checked at 2483104d1e |
+| FND-002 | fixed | Checked at 2483104d1e |
+| FND-003 | fixed | Checked at 2483104d1e |
+| FND-004 | fixed | Checked at 2483104d1e |
+| FND-005 | fixed | Checked at 2483104d1e |
+| FND-006 | fixed | Checked at 2483104d1e |
+| FND-007 | fixed | Checked at 2483104d1e |
+| FND-008 | fixed | Checked at 2483104d1e |
