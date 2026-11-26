@@ -1034,8 +1034,8 @@ fn check_smt_temporal(cases: &[(Case, Option<&str>)]) {
     assert_clean(wrong);
 }
 
-/// The SMT hyper encoder takes one instance: each admitted key encodes and
-/// each excluded key is refused. The product-closure checker accepts no
+/// The SMT hyper encoder takes one instance of the admitted keys and refuses
+/// each excluded key. The product-closure checker accepts no
 /// certificate over an empty set.
 fn check_hyper_library(cases: &[Case]) {
     let mut wrong = Vec::new();
@@ -1057,7 +1057,7 @@ fn check_hyper_library(cases: &[Case]) {
             .collect();
         keys.sort_unstable();
         keys.dedup();
-        for key in keys {
+        for &key in &keys {
             let mut meter = Meter::new(UNLIMITED);
             let encoded = encode_hyper_query(
                 HyperQueryRequest {
@@ -1069,12 +1069,23 @@ fn check_hyper_library(cases: &[Case]) {
                 },
                 SmtQueryKind::InductionBase { depth: 1 },
             );
-            if encoded.is_ok() != case.instances().contains(&key) {
-                wrong.push(format!(
-                    "{} smt key {key}: {:?}",
-                    case.name,
-                    encoded.map(|query| query.script.len())
-                ));
+            // FR-315: `instance-binding` precedes the ordered table, whose
+            // `object-lifecycle` row refuses a universe holding an object
+            // that no initial state holds.
+            let seen = format!("{:?}", encoded.map(|query| query.script.len()));
+            let right = if case.instances().contains(&key) {
+                if keys.iter().all(|key| case.instances().contains(key)) {
+                    seen.starts_with("Ok(")
+                } else {
+                    seen.contains("ObjectLifecycle")
+                }
+            } else if case.initial {
+                seen.contains("InstanceBinding")
+            } else {
+                seen.starts_with("Err(")
+            };
+            if !right {
+                wrong.push(format!("{} smt key {key}: {seen}", case.name));
             }
         }
         if case.instances().is_empty() {
@@ -1297,7 +1308,7 @@ fn hyper_refuses_conflicting_identity() {
     check_route(Route::ForallExists, &[CONFLICT]);
 }
 
-#[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20")]
+#[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20", "FR-315-AC-59")]
 #[test]
 fn hyper_smt_takes_only_instances_of_one_population() {
     check_hyper_library(&[UNADMITTED_KEY, SUBTYPE_ONLY, CREATED]);
