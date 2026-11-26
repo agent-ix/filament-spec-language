@@ -794,8 +794,8 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
     use fsl_analyze::analyze::document::{
         resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
     };
-    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::AnalyzeLimits;
+    use fsl_analyze::analyze::DeadlineSupply;
     let engines = Engines::fsl().unwrap();
     let mut registry = fsl_route::Registry::new();
     for descriptor in engines.registrations() {

@@ -1075,8 +1075,8 @@ fn a_package_route_undefined_terminal_replays_as_the_source_undefined_terminal()
 /// The deadlock-freedom item over `world`, settled and replayed on both
 /// routes, which must agree; the source replay's settlement.
 fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
-    use fsl_analyze::analyze::DeadlineSupply;
     use filament_exact::Cancel;
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{
         analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
         PackageDeadlockSubject, RunInput, TemporalItem,
