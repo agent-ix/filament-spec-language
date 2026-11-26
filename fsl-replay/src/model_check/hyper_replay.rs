@@ -1097,7 +1097,8 @@ fn drops_a_member(finding: &HyperFinding) -> bool {
         HyperFinding::MatchUndefined { .. }
         | HyperFinding::MatchRefused
         | HyperFinding::ExistentialMatchUndefined { .. }
-        | HyperFinding::MemberContract => true,
+        | HyperFinding::MemberContract
+        | HyperFinding::MemberUndefined { .. } => true,
     }
 }
 
