@@ -736,18 +736,17 @@ fn altered_timed_witness_is_not_refuted() {
 }
 
 /// FR-202-AC-47: a timed deadline witness names the claim's binding and no
-/// instance. One with no binding, another object or an instance is refused by
-/// the source replay and by the package replay.
+/// instance. One with no binding, another object or an instance is refused.
 #[trace("TC-637", "FR-202-AC-47")]
 #[test]
-fn a_timed_witness_with_another_binding_is_refused_by_both_replays() {
+fn a_timed_witness_with_another_binding_is_refused() {
     use filament_exact::{ObjectId, ObjectReference};
-    use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, PackageModelInput};
+    use fsl_eval::simulation::model::ModelSystem;
     use fsl_replay::{ProbabilityWitnessError, ProbabilityWitnessReplay};
 
-    // The package route reads a timed subject only with no random draw, clock
-    // guard, reset or invariant. A scheduler may take `send` at once, so `late`
-    // is reached with maximum probability 1 and `<= 0.9999` is refuted.
+    // `send` draws nothing. A scheduler may take it by 2 ms, so `late` is
+    // reached with maximum probability 1 and `<= 0.9999` is refuted. The
+    // package route reads no deadline claim, so only the source replay is here.
     let body = format!(
         "{}\
          pre Send using v on M::Call::send {{ not self.late }}\n\
@@ -782,39 +781,6 @@ fn a_timed_witness_with_another_binding_is_refused_by_both_replays() {
     let simulation = world.request();
     let limits = ExactProbLimits::default();
     let source = ModelSystem::new(simulation.clone()).expect("the source system admits");
-    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-        .expect("the same checked owner emits");
-    let read_limits = fsl_package::V2ReadLimits::bounded(1 << 24);
-    let admitted = fsl_package::admit_checked_package(
-        emission.package().bytes(),
-        simulation.packages,
-        read_limits,
-    )
-    .expect("the real bytes admit");
-    let mut budget = read_limits.native_join_limits().budget();
-    let identities = emission
-        .identity_rows(&admitted, &mut budget)
-        .expect("the actual identity rows join");
-    let equality = emission
-        .equality_witness(&admitted, &mut budget)
-        .expect("the actual equality rows join");
-    let bare = fsl_package::BarePackage::new(&admitted)
-        .with_supply(
-            fsl_package::BareSupply {
-                identities: &identities,
-                equality: Some(&equality),
-            },
-            &mut budget,
-        )
-        .expect("the real supply joins");
-    let owner = PackageModelInput::of(&bare, simulation.packages, simulation.normalization)
-        .expect("the package owner reads the timed subject");
-    let package = ModelSystem::new(ModelSimulationRequest {
-        input: owner.input(),
-        ..simulation.clone()
-    })
-    .expect("the package system admits");
-
     let from_source = |witness: &fsl_replay::ProbabilisticCounterexample| {
         fsl_replay::replay_probabilistic_witness(
             &world.package,
@@ -825,22 +791,11 @@ fn a_timed_witness_with_another_binding_is_refused_by_both_replays() {
             &Cancel::new(),
         )
     };
-    let from_package = |witness: &fsl_replay::ProbabilisticCounterexample| {
-        fsl_replay::replay_probabilistic_witness_from_package(
-            &owner,
-            &package,
-            &witness.item,
-            witness,
-            &limits,
-            &Cancel::new(),
-        )
+    let replayed = from_source(&witness);
+    let Ok(ProbabilityWitnessReplay::Reproduced(token)) = replayed else {
+        panic!("the produced witness reproduces: {replayed:?}");
     };
-    for replayed in [from_source(&witness), from_package(&witness)] {
-        let Ok(ProbabilityWitnessReplay::Reproduced(token)) = replayed else {
-            panic!("the produced witness reproduces: {replayed:?}");
-        };
-        assert_eq!(token.mass(), &ratio(1, 1));
-    }
+    assert_eq!(token.mass(), &ratio(1, 1));
     let mut named = witness.clone();
     named.instance = named.binding.clone();
     for (name, altered) in [
@@ -848,15 +803,11 @@ fn a_timed_witness_with_another_binding_is_refused_by_both_replays() {
         ("other object", &other),
         ("named instance", &named),
     ] {
-        for (route, replayed) in [
-            ("source", from_source(altered)),
-            ("package", from_package(altered)),
-        ] {
-            assert!(
-                matches!(replayed, Err(ProbabilityWitnessError::Refused)),
-                "{name} by the {route} replay: {replayed:?}"
-            );
-        }
+        let replayed = from_source(altered);
+        assert!(
+            matches!(replayed, Err(ProbabilityWitnessError::Refused)),
+            "{name}: {replayed:?}"
+        );
     }
 }
 

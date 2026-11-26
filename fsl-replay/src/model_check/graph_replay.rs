@@ -197,6 +197,13 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         emit: caller.spine.package.emit(),
     };
     let system = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
+    if claim.is_some() {
+        admit_graph_reading(
+            !simulation.input.time_sources.is_empty(),
+            subject.timed.as_ref(),
+            envelope.zone_certificate().is_some(),
+        )?;
+    }
     let timed = subject
         .timed
         .as_ref()
@@ -205,13 +212,6 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
                 .map_err(|refusal| refused(ModelTraceRefusal::TimedSubject(refusal)))
         })
         .transpose()?;
-    if claim.is_some() {
-        admit_graph_reading(
-            !simulation.input.time_sources.is_empty(),
-            subject.timed.as_ref(),
-            envelope.zone_certificate().is_some(),
-        )?;
-    }
     let model_limits = caller.engines.model_check;
     let state_graph_truth =
         if let (Some(claim), Some(certificate)) = (claim, envelope.zone_certificate()) {
@@ -424,6 +424,11 @@ pub fn replay_model_graph_from_package(
         emit: caller.spine.package.emit(),
     };
     let system = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
+    admit_graph_reading(
+        !input.input().time_sources.is_empty(),
+        subject.timed.as_ref(),
+        envelope.zone_certificate().is_some(),
+    )?;
     let timed = subject
         .timed
         .as_ref()
@@ -438,11 +443,6 @@ pub fn replay_model_graph_from_package(
             })
         })
         .transpose()?;
-    admit_graph_reading(
-        !input.input().time_sources.is_empty(),
-        subject.timed.as_ref(),
-        envelope.zone_certificate().is_some(),
-    )?;
     let state_graph_truth = if let Some(timing) = subject.timed.as_ref() {
         let over = graph_over(&system, &claim, envelope.family_payload())?;
         let certificate = envelope

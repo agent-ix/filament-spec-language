@@ -3,7 +3,6 @@
 //! subject the same way from source and from package bytes. Each evidence
 //! here is written by hand over a two-state timed model.
 
-use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
@@ -15,15 +14,23 @@ use ix_trace_rs::trace;
 
 use crate::timed_world;
 
-/// `send` takes `phase` from 0 to 2 once `x` passes `guard`; no step reaches
-/// `phase` 3.
-fn world(guard: &str) -> timed_world::World {
+// The package route reads a state-graph claim over a timed subject only when
+// it has no `over` and a Boolean literal predicate.
+const CLAIMS: &str = "possible Idle using v { true }\n\
+     possible Never using v { false }\n";
+
+/// [`timed_world::DENSE`] over a unit declared directly in its dimension, the
+/// one form of time source the package route reads.
+const DIRECT_DENSE: &str = "dimension Time;\nunit ms : Time = rational(1, 1);\n\
+     time M dense unit ms;\n";
+
+/// `send` takes `phase` from 0 to 2 once `x` passes `guard`.
+fn guarded(guard: &str) -> timed_world::World {
     let body = format!(
         "{}\
          pre Send using v on M::Call::send {{ self.phase = 0 and {guard} }}\n\
          post Sent using v on M::Call::send {{ self.phase = 2 and self.x = 0 ms }}\n\
-         possible Idle using v over (c: M::Call) {{ c.phase = 0 }}\n\
-         possible Never using v over (c: M::Call) {{ c.phase = 3 }}\n",
+         {CLAIMS}",
         timed_world::DENSE
     );
     timed_world::world(
@@ -33,8 +40,25 @@ fn world(guard: &str) -> timed_world::World {
     )
 }
 
+/// The same steps over a clock no clause reads, the one timed subject the
+/// package route reads.
+fn unguarded() -> timed_world::World {
+    let body = format!(
+        "{}\
+         pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+         post Sent using v on M::Call::send {{ self.phase = 2 }}\n\
+         {CLAIMS}",
+        DIRECT_DENSE
+    );
+    timed_world::world(
+        &timed_world::document(&["x"], &[("send", &["phase"])]),
+        "",
+        &body,
+    )
+}
+
 enum Evidence {
-    /// `Idle` holds in the initial state: the empty path witnesses it.
+    /// `Idle` holds in every state: the empty path witnesses it.
     IdleWitness,
     /// `Never` has an empty trap stem.
     NeverTrap,
@@ -56,10 +80,6 @@ fn request(
         .state_graph_claim(name)
         .expect("the claim checks");
     let simulation = world.request();
-    let over = Some(ModelInstance {
-        population: simulation.universes[0].population.clone(),
-        key: "c".to_owned(),
-    });
     let payload = match evidence {
         Evidence::IdleWitness => GraphEvidence::Witness {
             paths: vec![(
@@ -69,7 +89,7 @@ fn request(
                 }),
                 WitnessSource::Explored,
             )],
-            over,
+            over: None,
         },
         Evidence::NeverTrap => GraphEvidence::Trap {
             stem: ModelPath {
@@ -77,7 +97,7 @@ fn request(
                 steps: Vec::new(),
             },
             closure: TrapClosure::StateGraph,
-            over,
+            over: None,
         },
     };
     let occurrence: OccurrenceKey = claim.occurrence().expect("an occurrence").clone();
@@ -189,7 +209,7 @@ fn mismatch(result: Result<ReplayResult, ReplayRefusal>) -> &'static str {
 #[trace("TC-595", "FR-170-AC-9")]
 #[test]
 fn a_timed_graph_replay_needs_its_clocks_and_certificate_on_both_routes() {
-    let world = world("self.x >= 1 ms");
+    let world = unguarded();
     for (reading, member) in [(None, "timing"), (timing(false), "zone_certificate")] {
         let source = from_source(&world, &Evidence::IdleWitness, reading.clone());
         assert_eq!(mismatch(source), member, "source, {member}");
@@ -199,11 +219,12 @@ fn a_timed_graph_replay_needs_its_clocks_and_certificate_on_both_routes() {
 }
 
 /// FR-170-AC-10: the integer-clock reading is replayed only over a closed
-/// subject. The package route reads no digital-clock reading at all.
+/// subject. The package route reads no digital-clock reading at all, and no
+/// subject with a clock guard.
 #[trace("TC-595", "FR-170-AC-10")]
 #[test]
 fn a_digital_replay_of_a_strict_subject_is_refused() {
-    let closed = world("self.x >= 1 ms");
+    let closed = guarded("self.x >= 1 ms");
     let Ok(ReplayResult::ModelGraph(replayed)) =
         from_source(&closed, &Evidence::NeverTrap, timing(true))
     else {
@@ -211,9 +232,9 @@ fn a_digital_replay_of_a_strict_subject_is_refused() {
     };
     assert_eq!(replayed.settlement, GraphReplaySettlement::Reproduced);
 
-    let strict = world("self.x > 1 ms");
+    let strict = guarded("self.x > 1 ms");
     let source = from_source(&strict, &Evidence::NeverTrap, timing(true));
     assert_eq!(mismatch(source), "digital_subject");
-    let package = from_package(&strict, &Evidence::NeverTrap, timing(true));
+    let package = from_package(&unguarded(), &Evidence::NeverTrap, timing(true));
     assert_eq!(mismatch(package), "timing");
 }

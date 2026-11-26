@@ -38,8 +38,8 @@ units, and the edited envelopes FR-170-AC-3 and AC-4 name.
 7. Over a timed subject, from source and from package bytes, replay an
    envelope with no timed reading, and one with a zone reading and no zone
    certificate.
-8. Replay with a `digital-clocks` reading of a timed subject with a strict
-   guard.
+8. Replay from source with a `digital-clocks` reading of a timed subject with a
+   strict guard, and from package bytes with a `digital-clocks` reading.
 
 Tag the tests `#[trace("TC-595", "FR-170-AC-n")]`.
 

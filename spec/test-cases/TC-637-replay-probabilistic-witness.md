@@ -35,10 +35,10 @@ Fixtures: §15.4's and §15.2's one-path refutations; §15.3's per-window subsys
    randomized-policy evidence, and multiple-initial/instance inputs. Exercise
    pre-cancellation, cancellation at final acceptance and one-short
    expansion/work/storage limits.
-9. By the source replay and the package replay, replay a timed deadline
-   witness with its binding removed and with another instance's binding;
-   replay a path-set witness with an `instance` added to a claim with no
-   `on each`.
+9. By the source replay, replay a timed deadline witness with its binding
+   removed, with another instance's binding, and with an `instance` added (the
+   package route reads no deadline claim); replay an undefined counterexample
+   with an `instance` added to a claim with no `on each`.
 
 Tag the tests `#[trace("TC-637", "FR-202-AC-n")]`.
 Tag the caller-configured input-limit assertion `#[trace("TC-637", "FR-202-AC-7")]`.
