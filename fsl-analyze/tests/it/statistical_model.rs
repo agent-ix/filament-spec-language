@@ -3004,3 +3004,123 @@ fn a_run_of_zero_delay_cycles_takes_the_unweighted_fraction() {
     assert_eq!(verdict.decision, Decision::Accepted);
     assert_eq!(verdict.estimate, Some(ratio(1, 2)));
 }
+
+/// FSpec FR-407 "Time windows": a delay adds no position. The sampled and the
+/// exact route read the same hand-computed value on each one-behaviour model.
+/// `send` is the only step. At 5 ms and 6 ms it lands after the window; at
+/// 4 ms it is the position at 4 ms; under a time invariant the state after
+/// `send` at 2 ms is not quiescent, so it has no stutter position either.
+#[test]
+fn a_timed_formula_reads_no_position_inside_a_delay_on_either_route() {
+    const HELD: &str = "time invariant Held when { self.phase = 1 } { self.x <= 10 ms }\n";
+    let mut sampled = Vec::new();
+    let mut exact = Vec::new();
+    let mut expected = Vec::new();
+    for (name, send_ms, invariant, formula, holds) in [
+        (
+            "Eventually",
+            5,
+            "",
+            "eventually[4 ms, 4 ms] holds(c.phase = 0)",
+            false,
+        ),
+        (
+            "Always",
+            5,
+            "",
+            "always[4 ms, 4 ms] holds(c.phase = 1)",
+            true,
+        ),
+        (
+            "Until",
+            5,
+            "",
+            "holds(c.phase = 0) until[4 ms, 4 ms] holds(c.phase = 0)",
+            false,
+        ),
+        (
+            "Window",
+            6,
+            "",
+            "eventually[3 ms, 5 ms] holds(c.phase = 0)",
+            false,
+        ),
+        (
+            "AtHorizon",
+            4,
+            "",
+            "eventually[4 ms, 4 ms] holds(c.phase = 1)",
+            true,
+        ),
+        (
+            "Invariant",
+            2,
+            HELD,
+            "eventually[4 ms, 4 ms] holds(c.phase = 1)",
+            false,
+        ),
+    ] {
+        let declarations = format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             delay M::Call::send ~ discrete {{ {send_ms} ms: 1 }};\n\
+             {invariant}\
+             workload Even on M {{ weight Call::send = 1; }}\n\
+             probabilistic {name} using ev on M over (c: M::Call) under Even on origin\n\
+                 with alpha 0.4, beta 0.4, indifference 0.05\n\
+                 {{ probability >= 0.5 [ {formula} ] }}\n"
+        );
+        let world = timed_world_with(&[("send", &["phase"])], &declarations);
+        let verdict = completed(run_timed_method(
+            &world,
+            name,
+            StatisticalMethod::Okamoto,
+            7,
+            fsl_replay::statistical::TimedSampling::default(),
+            1,
+        ));
+        sampled.push((
+            name,
+            verdict.estimate,
+            verdict.decision == Decision::Accepted,
+        ));
+        exact.push((name, exact_outcome(&world, name)));
+        expected.push((name, Some(ratio(i64::from(holds), 1)), holds));
+    }
+    assert_eq!(sampled, expected, "sampled route");
+    let exact_expected: Vec<_> = expected
+        .iter()
+        .map(|(name, _, holds)| (*name, if *holds { "proved" } else { "refuted" }.to_owned()))
+        .collect();
+    assert_eq!(exact, exact_expected, "exact route");
+}
+
+/// The exact route's outcome word for the claim `name`.
+fn exact_outcome(world: &crate::timed_world::World, name: &str) -> String {
+    let item = fsl_analyze::analyze::exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim: world
+                .package
+                .graph()
+                .probabilistic_model()
+                .claim(name)
+                .expect("the claim checks"),
+            limits: fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        },
+    );
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the linked engines are admitted");
+    let record =
+        fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let terminal = record.terminal().expect("a terminal record");
+    let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal))
+        .expect("the outcome serializes");
+    outcome["result"]
+        .as_str()
+        .expect("a result word")
+        .to_owned()
+}

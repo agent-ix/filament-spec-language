@@ -12,7 +12,7 @@ relationships:
 
 Verify the protocol subject's construction and refusals, the thread paths and ordinals, binder removal and the canonical state key.
 
-Scope: FR-205-AC-1 to FR-205-AC-17.
+Scope: FR-205-AC-1 to FR-205-AC-18.
 
 ## Test Procedure
 
@@ -98,6 +98,9 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
     for the effect item holding `filament::protocol::effect(Charge::Paid)`,
     and offer step 17's lasso for it; then run FR-205-AC-17's `Charge3` variant, whose clause reads
     `effect(Charge3::Other)`.
+19. Build `Fill` over the universe `[c, d]`, only `c` held by the initial
+    state, with `k` bound to `c` and to `d`; then with an empty initial list
+    and `k` bound to `d`.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -186,3 +189,4 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   `inconclusive` `BoundReached{depth: 8}`, never `proved`; the lasso refuses
   `invalid_runtime_input`/`invalid-value` as a loop that does not close. The
   `Charge3` variant settles `Holds` (`proved`).
+- Step 19: builds; refuses `invalid_runtime_input`/`invalid-value` naming `k` and `d`; not refused, and the item settles `inconclusive` `NoInitialState`.
