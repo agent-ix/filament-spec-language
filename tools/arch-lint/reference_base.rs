@@ -66,6 +66,51 @@ impl<'ast> Visit<'ast> for Paths {
         }
         syn::visit::visit_item_impl(self, item);
     }
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        fn leaves(tree: &syn::UseTree, prefix: &mut Vec<String>, rows: &mut Vec<Vec<String>>) {
+            match tree {
+                syn::UseTree::Path(path) => {
+                    prefix.push(path.ident.to_string());
+                    leaves(&path.tree, prefix, rows);
+                    prefix.pop();
+                }
+                syn::UseTree::Name(name) => {
+                    let mut names = prefix.clone();
+                    names.push(name.ident.to_string());
+                    rows.push(names);
+                }
+                syn::UseTree::Rename(rename) => {
+                    let mut names = prefix.clone();
+                    names.push(rename.ident.to_string());
+                    rows.push(names);
+                }
+                syn::UseTree::Group(group) => {
+                    for tree in &group.items {
+                        leaves(tree, prefix, rows);
+                    }
+                }
+                syn::UseTree::Glob(_) => {}
+            }
+        }
+        let mut rows = Vec::new();
+        leaves(&item.tree, &mut Vec::new(), &mut rows);
+        for names in rows {
+            if names.windows(4).any(|window| {
+                window[0] == "fsl_eval"
+                    && window[1] == "simulation"
+                    && window[2] == "model"
+                    && window[3] == "ModelSystem"
+            }) {
+                self.0.push(Finding {
+                    file: PathBuf::new(),
+                    line: item.use_token.span.start().line,
+                    construct: "fsl_eval::simulation::model::ModelSystem",
+                });
+            }
+        }
+        syn::visit::visit_item_use(self, item);
+    }
 }
 
 fn visit_rs_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
