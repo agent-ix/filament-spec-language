@@ -1575,7 +1575,6 @@ fn a_strict_quantile_upper_of_zero_with_tight_activation_is_rejected() {
 /// The checker side of the exact route over the same tight zero: the `exact`
 /// document is rejected `InequalityFails` at FR-201's locus, the first
 /// activated state breadth-first, here the activated initial state.
-#[trace("TC-636", "FR-201-AC-5")]
 #[trace("TC-1197", "FR-201-AC-6")]
 #[test]
 fn a_strict_quantile_exact_zero_with_tight_activation_is_rejected_at_the_initial_key() {

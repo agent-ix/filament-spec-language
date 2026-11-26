@@ -71,3 +71,4 @@ tickets.
 | --- | --- | --- |
 | FND-001 | deferred | QSL-3436 (Backlog) owns the interval producer's claim side; the PR names it under paired code and "Not changed" |
 | FND-002 | deferred | QSL-3450 (Backlog) owns the FR-1042/FR-1043 range and decided-state text for measure bound documents |
+| FND-003 | deferred | QSL-3475 (Backlog) owns the elapsed-quantile vacuity settlement; separate route, Must-fix: no |

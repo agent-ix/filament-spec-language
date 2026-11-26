@@ -56,3 +56,10 @@ No stub or inflated evidence was found.
 | FND-001 | fixed | Test retagged FR-1042-AC-29, a new criterion that names bound documents in both roles; TC-3151 Scope now runs to FR-1042-AC-30 |
 | FND-002 | fixed | New FR-1042-AC-30 states the several-initial-states refusal; test tagged `("TC-3151", "FR-1042-AC-30")` |
 | FND-003 | fixed | Rejection test now asserts `output["at"]` equals the initial key |
+| FND-004 | fixed | Test retagged `("TC-636", "FR-201-AC-5")` and `("TC-1197", "FR-201-AC-6")`; `tight_activation` carries `#[implements("FR-201-AC-5")]` |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | FR-201-AC-5 was untagged and is now tagged by a test over the `link` quantile, not AC-5's `Opt` model (TC-636 step 5). AC-5's accepted half ("only `skip` tight") and its fixture remain untested while the matrix reports the criterion tagged | tools/fsl-probability-check/tests/it/value_bounds.rs:1579-1581 |

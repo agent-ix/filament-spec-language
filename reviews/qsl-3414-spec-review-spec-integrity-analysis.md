@@ -55,3 +55,5 @@ precision there.
 | --- | --- | --- |
 | FND-001 | fixed | AC-28 and check_value_bounds now treat a bound's tight-zero failure as a missed threshold, matching FR-1042 "Pairing"; see FND-003 for the conflict this creates with FR-201 |
 | FND-002 | fixed | Step 17's expected result now states `unsupported` over two initial states on both routes and no `proved` |
+| FND-003 | fixed | Bound route reverted to `InequalityFails` at `tight_activation`'s breadth-first key; AC-28 and "Pairing" now state that rule and that EN-5 does not raise the precision, agreeing with FR-201 row 103, its checking conditions and AC-5/AC-6 |
+| FND-004 | fixed | AC-29 now says a wrong-kind claim-side document is rejected `Malformed` at `kind` first (AC-27) |
