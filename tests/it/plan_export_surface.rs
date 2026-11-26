@@ -3473,11 +3473,15 @@ synthesis Reach"#,
         .split_once("hybrid Braking")
         .expect("the hybrid declaration follows its profile")
         .1;
-    let wrong_over_unit = unit.replace(
-        "type Lengths",
-        &format!(
-            "profile p = \"filament.temporal.infinite-trace/v1\";\nhybrid Braking{braking}\ntype Lengths"
-        ),
+    let wrong_over_unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.temporal.infinite-trace/v1\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         model Config = \"example/config-version\";\n\
+         type Lengths = Int[0,1];\n\
+         hybrid Braking{braking}\n\
+         temporal NeverFour using v over (c: Config::ConfigVersion) clock \"model-steps\" on origin {{ always holds(c.versionNumber != 4) }}\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {{ true }};\n"
     );
     let (exit, value) = plan_in(
         directory.path(),
@@ -3674,7 +3678,7 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
     spine::write(directory.path(), Case::Healthy).unwrap();
     const MODEL: &str = r#"language "ix:native" edition "1-draft";
 domain "example/config-version";
-type VersionNumber = Int[0,4];
+type VersionNumber = Int[0,5];
 object ConfigVersion {
   versionNumber: VersionNumber;
   operation attemptUpdate(): Boolean modifies self.versionNumber;
