@@ -13,18 +13,18 @@ use filament_exact::{Meter, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    CheckedGraph, ProbForm, ProbScheduler, Reward, RewardEvaluationFailure, RewardEvaluator,
-    StateClauseKind,
+    CheckedGraph, ProbScheduler, Reward, RewardEvaluationFailure, RewardEvaluator, StateClauseKind,
 };
-use fsl_semantics::model::domain_package::{DomainPackageRecord, NativeValueType, ValueTypeRef};
 use ix_trace_rs::implements;
 
+mod fragment;
 mod interpreter;
+pub use fragment::validate_tiny_fragment;
 pub use interpreter::{
     checked_random_operation_mdp, checked_support_expected_reward, checked_support_probability,
-    evaluate_boolean, evaluate_finite_value, measure_mass_at_most, probability_weight,
-    ReferenceClockState, ReferenceFiniteState, ReferenceLasso, ReferenceMeasureOutcome,
-    ReferenceProbabilityWeight, ReferenceTimedTrace, ReferenceTransitionGraph,
+    evaluate_boolean, evaluate_finite_value, measure_mass_at_most, ReferenceClockState,
+    ReferenceFiniteState, ReferenceLasso, ReferenceMeasureOutcome, ReferenceTimedTrace,
+    ReferenceTransitionGraph,
 };
 
 /// Maximum horizon enumerated by the reference's finite-horizon solver.
@@ -49,9 +49,8 @@ pub fn scheduler_quantifier(scheduler: &ProbScheduler) -> ReferenceSchedulerQuan
     }
 }
 
-/// Refuses a quantile when its scheduler semantics are outside the implemented
-/// quantile solver. `Some` is the AC-19 refusal; `Every` remains distinct from
-/// a fixed declared workload.
+/// Refuses a quantile over some scheduler. A declared workload is one fixed
+/// scheduler and is admitted, as is every scheduler.
 #[implements("FR-1051-AC-19")]
 pub fn validate_quantile_scheduler(
     scheduler: &ReferenceSchedulerQuantifier,
@@ -60,10 +59,7 @@ pub fn validate_quantile_scheduler(
         ReferenceSchedulerQuantifier::Some => Err(ReferenceRefusal {
             construct: "quantile claim over some scheduler".to_owned(),
         }),
-        ReferenceSchedulerQuantifier::Every => Ok(()),
-        ReferenceSchedulerQuantifier::Workload(_) => Err(ReferenceRefusal {
-            construct: "quantile over an unsupported declared workload".to_owned(),
-        }),
+        ReferenceSchedulerQuantifier::Every | ReferenceSchedulerQuantifier::Workload(_) => Ok(()),
     }
 }
 
@@ -79,7 +75,6 @@ impl TinyMdp {
     /// Builds a model from state, action and transition rows. Every state must
     /// have at least one action; distributions must be nonempty, in range,
     /// nonnegative and sum exactly to one.
-    #[implements("FR-1051-AC-19")]
     pub fn new(
         actions: Vec<Vec<Vec<(usize, filament_exact::Rational)>>>,
     ) -> Result<Self, ReferenceRefusal> {
@@ -180,7 +175,6 @@ impl TinyMdp {
 
     /// Maximum exact accumulated state-action reward over a finite horizon.
     /// `rewards[state][action]` must have one entry per available action.
-    #[implements("FR-1051-AC-19")]
     pub fn some_scheduler_expected_reward_within(
         &self,
         initial: usize,
@@ -281,80 +275,6 @@ pub fn validate_conjunctive_guards(graph: &CheckedGraph) -> Result<(), Reference
     Ok(())
 }
 
-/// Refuses checked constructs outside the currently executable tiny fragment.
-/// Every refusal occurs before any semantic truth value can be returned.
-#[implements("FR-1051-AC-19")]
-pub fn validate_tiny_fragment(graph: &CheckedGraph) -> Result<(), ReferenceRefusal> {
-    validate_conjunctive_guards(graph)?;
-    for package in graph
-        .selected_model_views()
-        .values()
-        .map(|view| view.domain_package())
-        .chain(graph.source_packages())
-    {
-        if package.records.iter().any(|record| {
-            matches!(
-                record,
-                DomainPackageRecord::FieldMember(field)
-                    if matches!(
-                        &field.value_type,
-                        ValueTypeRef::Native(NativeValueType::Integer)
-                    )
-            )
-        }) {
-            return Err(ReferenceRefusal {
-                construct: "unbounded integer field".to_owned(),
-            });
-        }
-    }
-    for model in graph.timed_models() {
-        let fractional_guard = model
-            .guards()
-            .iter()
-            .flat_map(|guard| guard.parts())
-            .flat_map(|part| part.clocks())
-            .any(|clock| !clock.bound().is_integer());
-        let fractional_invariant = model
-            .invariants()
-            .iter()
-            .flat_map(|invariant| invariant.bounds())
-            .any(|clock| !clock.bound().is_integer());
-        if fractional_guard || fractional_invariant {
-            return Err(ReferenceRefusal {
-                construct: "clock compared with a non-integer constant".to_owned(),
-            });
-        }
-        if model
-            .resets()
-            .iter()
-            .flat_map(|resets| resets.resets())
-            .any(|reset| !reset.value().is_zero())
-        {
-            return Err(ReferenceRefusal {
-                construct: "clock reset to a nonzero constant".to_owned(),
-            });
-        }
-    }
-    for model in graph.hybrid_models() {
-        if model
-            .modes
-            .iter()
-            .flat_map(|mode| &mode.rates)
-            .any(|rate| !matches!(rate, fsl_semantics::check::HybridTerm::Constant(_)))
-        {
-            return Err(ReferenceRefusal {
-                construct: "hybrid mode with a non-constant rate".to_owned(),
-            });
-        }
-    }
-    for claim in graph.probabilistic_model().claims() {
-        if matches!(&claim.form, ProbForm::Quantile { .. }) {
-            validate_quantile_scheduler(&scheduler_quantifier(&claim.scheduler))?;
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::TinyMdp;
@@ -401,7 +321,6 @@ mod tests {
         );
     }
 
-    #[trace("FR-1051-AC-19")]
     #[test]
     fn finite_horizon_reward_uses_exact_transition_weights() {
         let model = TinyMdp::new(vec![
@@ -421,7 +340,6 @@ mod tests {
         );
     }
 
-    #[trace("FR-1051-AC-19")]
     #[test]
     fn horizon_solver_refuses_steps_past_its_declared_bound() {
         let model = TinyMdp::new(vec![vec![vec![(0, ratio(1, 1))]]])
@@ -437,7 +355,7 @@ mod tests {
 
     #[trace("FR-1051-AC-19")]
     #[test]
-    fn quantile_refuses_some_but_preserves_every_scheduler_quantifiers() {
+    fn quantile_refuses_some_but_preserves_every_and_workload_schedulers() {
         use super::{validate_quantile_scheduler, ReferenceSchedulerQuantifier};
 
         assert_eq!(
@@ -449,7 +367,7 @@ mod tests {
         assert!(validate_quantile_scheduler(&ReferenceSchedulerQuantifier::Every).is_ok());
         assert!(
             validate_quantile_scheduler(&ReferenceSchedulerQuantifier::Workload("Even".into()))
-                .is_err()
+                .is_ok()
         );
     }
 }

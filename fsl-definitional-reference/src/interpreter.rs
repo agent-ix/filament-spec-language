@@ -9,22 +9,12 @@ use filament_exact::{Rational, Value};
 use fsl_semantics::check::{
     CheckedGraph, CheckedNode, StateClauseKind, StatePredicate, TimedModel,
 };
-use ix_trace_rs::implements;
 
 use crate::{ReferenceRefusal, TinyMdp};
 
 const MAX_EXPRESSION_NODES: usize = 100_000;
 const MAX_EXPRESSION_DEPTH: usize = 256;
 const MAX_FINITE_STATES: usize = 1 << 16;
-
-/// A probabilistic support weight before the reference admits a transition.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ReferenceProbabilityWeight {
-    /// A literal exact rational from the checked package.
-    Literal(Rational),
-    /// Any authored expression, retained only so refusal can name it.
-    Expression(String),
-}
 
 /// One exact measure value and its literal rational path mass.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,7 +26,6 @@ pub struct ReferenceMeasureOutcome {
 }
 
 /// Computes the exact cumulative mass whose measure is at most `bound`.
-#[implements("FR-1051-AC-17")]
 pub fn measure_mass_at_most(
     outcomes: &[ReferenceMeasureOutcome],
     bound: &Rational,
@@ -63,29 +52,8 @@ pub fn measure_mass_at_most(
     Ok(cumulative)
 }
 
-/// Admits only exact literal rational weights for an interpreted transition.
-#[implements("FR-1051-AC-19")]
-pub fn probability_weight(
-    weight: &ReferenceProbabilityWeight,
-) -> Result<Rational, ReferenceRefusal> {
-    match weight {
-        ReferenceProbabilityWeight::Literal(value)
-            if value >= &Rational::from_integer(filament_exact::Integer::zero()) =>
-        {
-            Ok(value.clone())
-        }
-        ReferenceProbabilityWeight::Literal(_) => {
-            Err(unsupported("negative literal probability weight"))
-        }
-        ReferenceProbabilityWeight::Expression(_) => {
-            Err(unsupported("non-literal probability weight"))
-        }
-    }
-}
-
 /// Computes the exact probability of a Boolean predicate over one checked
 /// random-parameter support, binding each support value into `parameter_slot`.
-#[implements("FR-1051-AC-17")]
 pub fn checked_support_probability(
     graph: &CheckedGraph,
     random: &fsl_semantics::check::RandomParameter,
@@ -111,7 +79,6 @@ pub fn checked_support_probability(
 
 /// Computes the exact expected integer or rational reward over one checked
 /// random-parameter support.
-#[implements("FR-1051-AC-17")]
 pub fn checked_support_expected_reward(
     graph: &CheckedGraph,
     random: &fsl_semantics::check::RandomParameter,
@@ -141,7 +108,6 @@ pub fn checked_support_expected_reward(
 /// Builds an exact one-action MDP from one checked operation and one checked
 /// random parameter. Each support value must lead to exactly one enumerated
 /// post-state under the checked postconditions.
-#[implements("FR-1051-AC-17")]
 pub fn checked_random_operation_mdp(
     graph: &CheckedGraph,
     operation: &str,
@@ -255,7 +221,6 @@ impl ReferenceTransitionGraph {
     /// Derives an operation relation by evaluating its checked clauses over
     /// every pre/post state pair. When no postcondition exists, the operation
     /// is interpreted as a stutter; unsupported clause nodes refuse by name.
-    #[implements("FR-1051-AC-17")]
     pub fn from_operation(
         graph: &CheckedGraph,
         operation: &str,
@@ -329,7 +294,6 @@ impl ReferenceTransitionGraph {
     }
 
     /// Whether any path from `initial` reaches one of the target states.
-    #[implements("FR-1051-AC-17")]
     pub fn can_reach(&self, initial: usize, targets: &[bool]) -> Result<bool, ReferenceRefusal> {
         if initial >= self.states.len() || targets.len() != self.states.len() {
             return Err(unsupported(
@@ -354,7 +318,6 @@ impl ReferenceTransitionGraph {
 
 /// Checks state changes against the admitted operation effect row. The tiny
 /// fragment supports field writes only; object and relationship effects refuse.
-#[implements("FR-1051-AC-17")]
 fn operation_frame_allows_transition(
     graph: &CheckedGraph,
     operation: &str,
@@ -454,7 +417,6 @@ impl ReferenceTimedTrace {
     /// Evaluates a closed eventually window relative to `origin`. A jump
     /// from before the window to after it does not invent an observation at
     /// an intermediate time.
-    #[implements("FR-1051-AC-17")]
     pub fn eventually_within(
         &self,
         graph: &CheckedGraph,
@@ -494,7 +456,6 @@ impl ReferenceLasso {
 
     /// Whether a checked state predicate holds at some position of the
     /// represented infinite trace.
-    #[implements("FR-1051-AC-17")]
     pub fn eventually(
         &self,
         graph: &CheckedGraph,
@@ -511,7 +472,6 @@ impl ReferenceLasso {
 
     /// Whether a checked state predicate holds at every position of the
     /// represented infinite trace.
-    #[implements("FR-1051-AC-17")]
     pub fn always(
         &self,
         graph: &CheckedGraph,
@@ -562,7 +522,6 @@ impl ReferenceClockState {
 
     /// Evaluates the indexed checked guard when it is one clock-only
     /// conjunction. Any other guard feature is refused by name.
-    #[implements("FR-1051-AC-17")]
     pub fn satisfies_guard(
         &self,
         model: &TimedModel,
@@ -604,7 +563,6 @@ impl ReferenceClockState {
     }
 
     /// Evaluates one checked conjunction of clock bounds from a time invariant.
-    #[implements("FR-1051-AC-17")]
     pub fn satisfies_invariant(
         &self,
         model: &TimedModel,
@@ -641,7 +599,6 @@ impl ReferenceClockState {
     }
 
     /// Applies the indexed checked reset clause when all its resets are to zero.
-    #[implements("FR-1051-AC-17")]
     pub fn apply_zero_resets(
         &self,
         model: &TimedModel,
@@ -723,7 +680,6 @@ impl ReferenceFiniteState {
 
     /// Enumerates the Cartesian product of finite scalar field domains in
     /// deterministic field order, refusing products larger than 2^16.
-    #[implements("FR-1051-AC-17")]
     pub fn enumerate(
         fields: Vec<(String, String, Vec<Value>)>,
     ) -> Result<Vec<Self>, ReferenceRefusal> {
@@ -762,7 +718,6 @@ impl ReferenceFiniteState {
 /// values. The admitted expression fragment is literals, locals, field reads,
 /// integer comparisons, equality, conjunction, negation, and integer addition
 /// or subtraction by a literal. Every other checked node refuses by name.
-#[implements("FR-1051-AC-17")]
 pub fn evaluate_boolean(
     graph: &CheckedGraph,
     expression: CheckedNode<'_>,
@@ -779,7 +734,6 @@ pub fn evaluate_boolean(
 }
 
 /// Evaluates one finite scalar value from the checked graph.
-#[implements("FR-1051-AC-17")]
 pub fn evaluate_finite_value(
     graph: &CheckedGraph,
     expression: CheckedNode<'_>,
@@ -971,7 +925,7 @@ fn finite_state_value(value: &Value) -> bool {
     )
 }
 
-fn node_name<Child, Literal>(kind: &NodeKind<Child, Literal>) -> &'static str {
+pub(crate) fn node_name<Child, Literal>(kind: &NodeKind<Child, Literal>) -> &'static str {
     match kind {
         NodeKind::Literal(_) => "literal",
         NodeKind::ReferenceLiteral { .. } => "reference literal",
@@ -1061,11 +1015,10 @@ fn unsupported(construct: impl Into<String>) -> ReferenceRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{probability_weight, ReferenceFiniteState, ReferenceProbabilityWeight};
+    use super::ReferenceFiniteState;
     use filament_exact::{Integer, Rational, Value};
     use ix_trace_rs::trace;
 
-    #[trace("FR-1051-AC-17")]
     #[test]
     fn finite_boolean_fields_enumerate_the_complete_product() {
         let states = ReferenceFiniteState::enumerate(vec![
@@ -1099,16 +1052,6 @@ mod tests {
             vec![Value::Rational(Rational::from_integer(Integer::one()))],
         )])
         .is_err());
-    }
-
-    #[trace("FR-1051-AC-19")]
-    #[test]
-    fn refuses_a_non_literal_probability_weight_without_a_value() {
-        let refusal = probability_weight(&ReferenceProbabilityWeight::Expression(
-            "self.weight".to_owned(),
-        ))
-        .expect_err("state-dependent transition weights are outside the fragment");
-        assert_eq!(refusal.construct, "non-literal probability weight");
     }
 
     #[trace("FR-1051-AC-19")]

@@ -1,85 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-1051's false-claim corpus and oracle isolation checks.
+//!
+//! The seed tests below feed hand-written states to the reference's
+//! primitives; the reference does not yet run a checked model itself.
 
 use ix_trace_rs::trace;
 
-struct FalseSeed {
-    issue: &'static str,
-    route: &'static str,
-    claim: &'static str,
-    hand_value: &'static str,
-    derivation: &'static str,
-}
-
-/// FR-1051-AC-17's six historical false proofs. Each row records the route,
-/// claim, and the value calculation or concrete falsity witness from the
-/// requirement's seed table.
-#[trace("FR-1051-AC-17")]
-#[test]
-fn ac17_corpus_names_all_six_false_proofs_and_their_hand_values() {
-    let corpus = [
-        FalseSeed {
-            issue: "QSL-923",
-            route: "R-38",
-            claim: "(not holds(l@a=1)) and eventually holds(l@a=1)",
-            hand_value: "false",
-            derivation: "step(0) loops at (0,0), so l is 0 at every position",
-        },
-        FalseSeed {
-            issue: "QSL-3324",
-            route: "R-17",
-            claim: "always[0,0] eventually[2,2] P",
-            hand_value: "false",
-            derivation: "the race advances 3 time units, skipping the required position at 2",
-        },
-        FalseSeed {
-            issue: "QSL-3414",
-            route: "R-13",
-            claim: ">= quantile with a complete claim-side upper bound",
-            hand_value: "initial value 0; a reachable tight activation violates the bound",
-            derivation: "the initial state is inactive and has value 0; breadth-first activation reaches the tight state",
-        },
-        FalseSeed {
-            issue: "QSL-3444",
-            route: "R-18",
-            claim: "eventually[0 ms,4 ms] holds(c.late), probability <= 0.999",
-            hand_value: "maximum 1, minimum 0",
-            derivation: "first at 1/2 ms and third at absolute time 6/5 ms meet the strict guards; never taking third gives 0",
-        },
-        FalseSeed {
-            issue: "QSL-3445",
-            route: "R-17",
-            claim: "elapsed quantile 0.4 <= 1 ms under every scheduler",
-            hand_value: "P(M <= 1 ms)=0 for t in (0,1); integer delays give at least 1/2",
-            derivation: "for lost, M=2-t; for not lost, M=t+1, both exceed 1 at every interior t",
-        },
-        FalseSeed {
-            issue: "QSL-3478",
-            route: "R-27 and R-28",
-            claim: "always possible phase>=2; unique path phase=1 to phase>=2",
-            hand_value: "false for both claims",
-            derivation: "every t>0 run reaches a trapped phase-1 state; zero is the only delay enabling the phase-2 transition",
-        },
-    ];
-    assert_eq!(corpus.len(), 6);
-    for seed in corpus {
-        assert!(!seed.issue.is_empty(), "seed issue is named");
-        assert!(!seed.route.is_empty(), "{} has a route", seed.issue);
-        assert!(!seed.claim.is_empty(), "{} has a claim", seed.issue);
-        assert!(
-            !seed.hand_value.is_empty(),
-            "{} has a hand value",
-            seed.issue
-        );
-        assert!(
-            !seed.derivation.is_empty(),
-            "{} has a derivation",
-            seed.issue
-        );
-    }
-}
-
-#[trace("FR-1051-AC-17")]
 #[test]
 fn reference_interprets_a_checked_postcondition_over_pre_and_current_states() {
     use filament_exact::{
@@ -177,7 +103,6 @@ fn reference_refuses_an_uninterpreted_conjunct_even_after_false() {
 
 /// QSL-923's `step(0)` lasso keeps `l = 0`, so `not l = 1 and eventually
 /// l = 1` is false. The same hand valuation is used by both product copies.
-#[trace("FR-1051-AC-17")]
 #[test]
 fn qsl_923_reference_refutes_the_never_set_output_lasso() {
     use filament_exact::{
@@ -230,7 +155,6 @@ fn qsl_923_reference_refutes_the_never_set_output_lasso() {
 
 /// QSL-3324's three-unit race has no observation at the required time 2, so
 /// the nested `[2,2]` eventuality is false even though the path later reaches P.
-#[trace("FR-1051-AC-17")]
 #[test]
 fn qsl_3324_reference_does_not_invent_an_observation_during_a_race_delay() {
     use filament_exact::{
@@ -292,7 +216,6 @@ fn qsl_3324_reference_does_not_invent_an_observation_during_a_race_delay() {
 
 /// QSL-3444's strict witness waits to absolute time 1/2 for `first`, resets
 /// x, then reaches absolute time 6/5 with x=7/10 and y=6/5 for `third`.
-#[trace("FR-1051-AC-17")]
 #[test]
 fn qsl_3444_reference_evaluates_the_strict_two_clock_witness() {
     use filament_exact::{Integer, Rational};
@@ -343,7 +266,6 @@ fn qsl_3444_reference_evaluates_the_strict_two_clock_witness() {
 
 /// QSL-3445 uses an interior first delay. Both outcomes then take 3/2 ms,
 /// giving zero mass at or below 1 ms, less than the claimed 0.4 quantile.
-#[trace("FR-1051-AC-17")]
 #[test]
 fn qsl_3445_reference_computes_zero_mass_for_the_elapsed_quantile_bound() {
     use filament_exact::{Integer, Rational};
@@ -373,7 +295,6 @@ fn qsl_3445_reference_computes_zero_mass_for_the_elapsed_quantile_bound() {
 
 /// QSL-3478's trapped phase has no transition to phase 2; its checked
 /// next-state clause yields a closed component containing only phase 1.
-#[trace("FR-1051-AC-17")]
 #[test]
 fn qsl_3478_reference_finds_no_path_from_the_trapped_phase() {
     use filament_exact::{
@@ -428,7 +349,6 @@ fn qsl_3478_reference_finds_no_path_from_the_trapped_phase() {
     // no state with phase >= 2; both existential reachability claims are false.
 }
 
-#[trace("FR-1051-AC-17")]
 #[test]
 fn reference_interprets_checked_random_support_probability_and_reward() {
     use filament_exact::{
@@ -507,7 +427,6 @@ fn reference_interprets_checked_random_support_probability_and_reward() {
 /// QSL-3414's value-bounds route has initial value 0 and reaches a tight
 /// activation. On this finite checked fragment, each of the two literal
 /// supports has mass 1/2, so one-step activation has exact value 1/2.
-#[trace("FR-1051-AC-17")]
 #[test]
 fn qsl_3414_reference_builds_the_one_step_mdp_from_checked_support() {
     use filament_exact::{
@@ -565,7 +484,6 @@ fn qsl_3414_reference_builds_the_one_step_mdp_from_checked_support() {
 
 /// The same hand-valued activation is sent through the analyzer route: a
 /// one-step success mass of 1/2 cannot prove a lower bound of 3/4.
-#[trace("FR-1051-AC-17")]
 #[test]
 fn qsl_3414_analysis_does_not_prove_a_bound_above_the_reference_value() {
     use filament_exact::{
@@ -732,7 +650,6 @@ fn qsl_3414_analysis_does_not_prove_a_bound_above_the_reference_value() {
     // outcomes sets v=1, so the one-step probability is 1/(1+1)=1/2.
 }
 
-#[trace("FR-1051-AC-17")]
 #[test]
 fn reference_interprets_checked_clock_guards_invariants_and_zero_resets() {
     use filament_exact::{Integer, Rational};
@@ -951,13 +868,15 @@ fn reference_refuses_disjunctive_timed_guards() {
     assert_eq!(refusal.construct, "disjunctive timed guard");
 }
 
-/// A checked workload names one fixed scheduler, not existential scheduling.
-/// The reference refuses this unsupported quantile route by its actual kind.
+/// A quantile under a declared workload names one fixed scheduler, not some
+/// scheduler, and is inside the fragment.
 #[trace("FR-1051-AC-19")]
 #[test]
-fn reference_refuses_quantiles_under_unsupported_declared_workload() {
-    let model = crate::prob_world::tossed_coin(
-        "probabilistic Q using ev on M over (c: M::Coin) under Even on origin \
+fn reference_accepts_quantiles_under_a_declared_workload() {
+    let model = writing_coin(
+        "post Written using ev on M::Coin::toss { self.v = b }\n\
+         workload Even on M { weight Coin::toss = 1; }\n\
+         probabilistic Q using ev on M over (c: M::Coin) under Even on origin \
          { quantile 0.5 of (steps from holds(c.v = 0) until holds(c.v = 1) within 2) <= 1 }",
     );
     let world = crate::prob_world::World::try_new_with_evaluator(
@@ -966,11 +885,9 @@ fn reference_refuses_quantiles_under_unsupported_declared_workload() {
     )
     .expect("the checked package admits the quantile claim");
 
-    let refusal = fsl_definitional_reference::validate_tiny_fragment(world.package.graph())
-        .expect_err("the named workload quantile solver is unsupported");
     assert_eq!(
-        refusal.construct,
-        "quantile over an unsupported declared workload"
+        fsl_definitional_reference::validate_tiny_fragment(world.package.graph()),
+        Ok(())
     );
 }
 
@@ -1050,4 +967,129 @@ fn reference_refuses_state_dependent_hybrid_rates() {
     let refusal = fsl_definitional_reference::validate_tiny_fragment(&graph)
         .expect_err("the reference refuses a state-dependent hybrid rate");
     assert_eq!(refusal.construct, "hybrid mode with a non-constant rate");
+}
+
+fn fragment_refusal(model: &crate::prob_world::Model) -> Option<String> {
+    let world = crate::prob_world::World::try_new_with_evaluator(
+        model,
+        &fsl_definitional_reference::ReferenceRewardEvaluator,
+    )
+    .expect("the front end admits the model");
+    fsl_definitional_reference::validate_tiny_fragment(world.package.graph())
+        .err()
+        .map(|refusal| refusal.construct)
+}
+
+/// A coin whose operation writes `v` and deletes nothing.
+fn writing_coin(clause: &str) -> crate::prob_world::Model {
+    let mut model = crate::prob_world::tossed_coin("");
+    model.operations[0].deletes = false;
+    model.operations[0].modifies = vec!["v"];
+    model.body = format!("random Coin::toss(b) ~ {{ 0: 1, 1: 1 }};\n{clause}\n");
+    model
+}
+
+/// The accept side of the allow-list, and the guard, expression and effect
+/// shapes outside it. A negated conjunction and an implication are
+/// disjunctions however they are written.
+#[trace("FR-1051-AC-19")]
+#[test]
+fn reference_accepts_only_conjunctive_comparisons_in_operation_clauses() {
+    assert_eq!(
+        fragment_refusal(&writing_coin(
+            "pre Ready using v on M::Coin::toss { self.v = 0 and self.v != 1 }\n\
+             post Written using ev on M::Coin::toss { self.v = b }"
+        )),
+        None
+    );
+    for (guard, construct) in [
+        ("self.v = 0 or self.v = 1", "disjunctive operation guard"),
+        (
+            "self.v = 0 implies self.v = 1",
+            "implication in a guard or effect",
+        ),
+        ("not (self.v != 0 and self.v != 1)", "conjunction"),
+        ("self.v * self.v = 1", "multiplication"),
+    ] {
+        let model = writing_coin(&format!("pre Ready using v on M::Coin::toss {{ {guard} }}"));
+        assert_eq!(
+            fragment_refusal(&model).as_deref(),
+            Some(construct),
+            "{guard}"
+        );
+    }
+}
+
+/// A native Rational or Text field has no finite valuation set, and a deleting
+/// operation changes the instance set.
+#[trace("FR-1051-AC-19")]
+#[test]
+fn reference_refuses_infinite_fields_and_object_deletion() {
+    for native in ["Rational", "Text"] {
+        let mut model = writing_coin("");
+        model.fields[0].1 = format!("ix://filament/native/{native}");
+        assert_eq!(
+            fragment_refusal(&model).as_deref(),
+            Some("field type that is not finite"),
+            "{native}"
+        );
+    }
+    let mut deleting = writing_coin("");
+    deleting.operations[0].deletes = true;
+    assert_eq!(
+        fragment_refusal(&deleting).as_deref(),
+        Some("object creation or deletion effect")
+    );
+}
+
+/// The grammar admits only literal weights, so a state-dependent weight is
+/// refused by the parser and no checked model carries one to the reference.
+#[test]
+fn the_parser_refuses_a_non_literal_probability_weight() {
+    let parses = |weight: &str| {
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+             model M = \"test/tossed\";\n\
+             random Coin::toss(b) ~ {{ 0: {weight}, 1: 1 }};\n"
+        );
+        fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "weight"),
+            "weight.native",
+            unit.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("the parser runs")
+        .is_admissible()
+    };
+    assert!(parses("1"));
+    assert!(!parses("self.v"));
+}
+
+/// The strict two-clock subject of the region-route seed is inside the
+/// fragment.
+#[trace("FR-1051-AC-19")]
+#[test]
+fn reference_accepts_a_conjunctive_integer_clock_subject() {
+    let document = crate::timed_world::document(
+        &["x", "y"],
+        &[("first", &["phase", "x"]), ("third", &["phase", "late"])],
+    );
+    let body = format!(
+        "{}pre First using v on M::Call::first {{ self.phase = 0 and self.x > 0 ms and self.x < 1 ms }}\n\
+         post FirstDone using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Third using v on M::Call::third {{ self.phase = 1 and self.x < 1 ms and self.y > 1 ms }}\n\
+         post ThirdDone using v on M::Call::third {{ self.phase = 2 and self.late = true }}\n\
+         time invariant Bounded when {{ self.phase < 2 }} {{ self.y <= 3 ms }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world(
+        &document,
+        "profile ev = \"filament.temporal.timed/v1\";\n",
+        &body,
+    );
+    assert_eq!(
+        fsl_definitional_reference::validate_tiny_fragment(world.package.graph()),
+        Ok(())
+    );
 }
