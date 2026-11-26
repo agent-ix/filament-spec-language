@@ -782,6 +782,8 @@ impl CompileRefusal {
                 | Setting::ZoneCheckMaxSymbolicTransitions
                 | Setting::ZoneCheckMaxAutomatonStates
                 | Setting::ZoneCheckMaxZoneBytes
+                | Setting::ZoneCheckMaxCheckWork
+                | Setting::AnalysisRetainedBytes
                 | Setting::CertificateCheckMaxCertificateEdges
                 | Setting::CertificateCheckMaxCertificateBytes
                 | Setting::CertificateCheckMaxWorkingBytes

@@ -3,7 +3,7 @@
 //! (ADR-011 §7.3 X-2).
 //!
 //! Module order, per ADR-011 §6.1's F row: [`backend`] < [`json_number`] < [`serde_object`] <
-//! [`setting`] < [`wire_format`] < [`source`] (with
+//! [`setting`] < [`budget`] < [`wire_format`] < [`source`] (with
 //! [`source_map`]) < [`selection`] < [`bound`] < [`diagnostic`]. Every module here depends only on
 //! `filament-exact` (K) and external crates -- no module imports the FSL root
 //! crate or a SEAM module (ADR-011 §6.1's leaf-of-FSL-workspace rule for
@@ -22,6 +22,10 @@ extern crate alloc;
 
 pub mod backend;
 pub mod bound;
+/// Gated on 64-bit atomics, as [`tally`] is: its totals are `u64` counters that
+/// clones share.
+#[cfg(target_has_atomic = "64")]
+pub mod budget;
 pub mod canonical_json;
 pub mod diagnostic;
 pub mod identity_limits;
