@@ -240,13 +240,6 @@ impl World {
         Self::build(model, DIVISION_PROFILE, body, starts, CheckMode::Kernel)
     }
 
-    /// The world of `model` with function bodies checked under Kernel and
-    /// integer division enabled, for fixtures whose runtime evaluation has
-    /// an intentionally refused result.
-    pub(crate) fn kernel(model: Model, body: &str, starts: &[&[Object<'_>]]) -> Self {
-        Self::build(model, DIVISION_PROFILE, body, starts, CheckMode::Kernel)
-    }
-
     /// As [`Self::new`], with `profiles` (header `profile` lines) after the
     /// value profile.
     pub(crate) fn with_profiles(
