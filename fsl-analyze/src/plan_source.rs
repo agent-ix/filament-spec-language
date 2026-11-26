@@ -738,6 +738,7 @@ impl<'a> SourcePlan<'a> {
             .policy_instances
             .as_ref()
             .and_then(|instances| instances.get(index))
+            .cloned()
             .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
         let instances = policy_instances.as_deref().unwrap_or(&[]);
         let identity = node.identity();
