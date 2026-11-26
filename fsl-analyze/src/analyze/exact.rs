@@ -22,18 +22,15 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::{ClaimForm, SubjectLimits};
 use fsl_replay::{
-    check_probability_certificate_document,
     check_probability_certificate_document_as_with_work_scope, claim_binding,
-    partial_lower_probability_proof_document,
-    partial_lower_probability_proof_document_with_work_scope, probability_proof_document,
+    partial_lower_probability_proof_document_with_work_scope,
     probability_proof_document_with_work_scope, write_probability_certificate,
-    write_probability_proof_document, write_probability_proof_document_with_work_scope,
-    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
-    ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
-    ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
-    ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
-    TimedProbabilityRoute,
+    write_probability_proof_document_with_work_scope, ExactProbBuildIssue, ExactProbBuildRecord,
+    ExactProbabilityCertificate, ExactProbabilityCertificateCheck, ExactProbabilityGraphError,
+    ExactProbabilityValue, Extremum, ModelCheckLimit, ProbabilityBoundSide,
+    ProbabilityCertificateDocument, ProbabilityDocumentError, ProbabilityDocumentLimits,
+    ProbabilityObjective, ProbabilityProductKey, TerminalRecord, TimedProbabilityForm,
+    TimedProbabilityObjective, TimedProbabilityRoute,
 };
 use fsl_replay::{
     replay_probabilistic_witness, replay_probabilistic_witness_from_package,
