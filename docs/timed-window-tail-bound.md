@@ -228,9 +228,10 @@ states must therefore be left, and its value is its best exit (FR-196 item
 which stated the region-MDP equality without restricting to divergent
 schedulers. The criterion values do not change.
 
-The rule reads divergence as almost-sure. Under the every-path reading,
-§6's `Try` maximum is a supremum that no scheduler attains. FSpec FR-416
-owns that choice **[open]**.
+The rule reads divergence as almost-sure, as FSpec FR-416 "Time divergence"
+states: a scheduler is admitted when with probability 1 a run diverges or
+reaches a time-lock and ends there. Under the every-path reading, §6's
+`Try` maximum would be a supremum that no scheduler attains.
 
 ## 6. Positions before the tail: an unbounded case
 

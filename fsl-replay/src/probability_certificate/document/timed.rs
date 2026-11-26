@@ -1358,6 +1358,7 @@ fn deadline_event(
 
 /// The independently checked FR-204 bounded monitor shape. Operator node
 /// positions are retained so nested occurrences remain distinct in the key.
+#[implements("FR-204-AC-21")]
 fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound, Watch<'_>)> {
     use fsl_semantics::check::ProbForm;
     let ProbForm::Probability {
@@ -1513,6 +1514,7 @@ enum Phase {
 }
 
 impl Phase {
+    #[implements("FR-204-AC-21")]
     fn decided(&self) -> bool {
         match self {
             Self::Pending | Self::Inactive | Self::Active => false,
@@ -1524,6 +1526,7 @@ impl Phase {
     }
 }
 
+#[implements("FR-204-AC-21")]
 fn phase_value(phase: &Phase) -> Option<bool> {
     use fsl_eval::probabilistic::DeadlinePhase as MonitorPhase;
     match phase {
@@ -1616,6 +1619,7 @@ enum Watch<'a> {
 }
 
 impl Watch<'_> {
+    #[implements("FR-204-AC-21")]
     fn start(&self) -> Phase {
         match self {
             Self::Deadline(_) => Phase::Pending,
@@ -1631,6 +1635,7 @@ impl Watch<'_> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn horizon(&self) -> u64 {
         match self {
             Self::Bounded { horizon, .. } | Self::Nested { horizon, .. } => *horizon,
@@ -2378,6 +2383,7 @@ fn enumerate_digital_deadline(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
+#[implements("FR-204-AC-21")]
 fn enumerate_region_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4422,11 +4428,75 @@ fn digital_state_after_delay(
     Ok(Some(state))
 }
 
+/// Move a region representative's live fractions as low as their order allows
+/// (FR-922): clocks below their caps and a running claim clock. The region key
+/// is unchanged, and the walk to the time successor then never carries a clock
+/// off an integer and another onto one in the same unit. A nested formula's
+/// monitor reads concrete times, so its representative stays.
+///
+/// Interim: part of a walk over a finer grid, not the symbolic region MDP of
+/// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
+#[implements("FR-922-AC-4")]
+fn lower_fractions(
+    watch: &Watch<'_>,
+    current: &RegionState,
+    caps: &[u64],
+    subdivisions: u64,
+    scale: u64,
+    deadline: u64,
+) -> Result<RegionState, ProbabilityDocumentError> {
+    if matches!(watch, Watch::Nested { .. }) {
+        return Ok(current.clone());
+    }
+    let mut units = Vec::with_capacity(caps.len() + 1);
+    for value in current.timed.clocks().values() {
+        units.push(time_units(value, scale).ok_or(ProbabilityDocumentError::Unsupported)?);
+    }
+    let mut live: Vec<bool> = units
+        .iter()
+        .zip(caps)
+        .map(|(value, cap)| value < cap)
+        .collect();
+    units.push(current.elapsed);
+    live.push(current.phase != Phase::Inactive && current.elapsed < deadline + subdivisions);
+
+    // Visit the fractions upwards, giving each one in use the next free slot.
+    let mut lowered = units.clone();
+    let mut slot = 0;
+    for fraction in 1..subdivisions {
+        let mut used = false;
+        for ((value, live), target) in units.iter().zip(&live).zip(&mut lowered) {
+            if *live && value % subdivisions == fraction {
+                if !used {
+                    slot += 1;
+                    used = true;
+                }
+                *target = value - fraction + slot;
+            }
+        }
+    }
+
+    let elapsed = lowered.pop().ok_or(ProbabilityDocumentError::Malformed)?;
+    let clocks = lowered
+        .into_iter()
+        .map(|value| rational_units(value, scale))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RegionState {
+        timed: TimedState::new(
+            current.timed.discrete().clone(),
+            ClockValuation::new(clocks),
+        ),
+        elapsed,
+        phase: current.phase.clone(),
+        tail: current.tail,
+    })
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
-#[implements("FR-204-AC-21")]
+#[implements("FR-204-AC-21", "FR-922-AC-4")]
 fn next_region_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4461,7 +4531,7 @@ fn next_region_delay(
         .saturating_mul(subdivisions)
         .saturating_add(2);
     let mut steps = 0_u64;
-    let mut state = current.clone();
+    let mut state = lower_fractions(watch, current, caps, subdivisions, scale, deadline)?;
     while state.elapsed <= deadline {
         if let Some(cause) = cancel.tripped() {
             return Err(ProbabilityDocumentError::Cancelled(cause));
@@ -5318,6 +5388,7 @@ fn price_paths(
 
 /// Whether `claim` is a timed form this module replays a witness of: an
 /// independently recognized FR-204 bounded monitor or FR-877 elapsed quantile.
+#[implements("FR-204-AC-21")]
 pub(in crate::probability_certificate) fn is_timed_witness_claim(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
