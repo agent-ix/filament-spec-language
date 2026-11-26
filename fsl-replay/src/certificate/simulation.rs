@@ -407,13 +407,11 @@ impl Serialize for FailedStep {
     }
 }
 
-/// FSpec FR-364's encoding of a transition identity: the RFC 8785 identity
-/// document FSpec FR-181 defines.
+/// FSpec FR-364's encoding of a transition identity, written as FR-120 writes
+/// every transition.
+#[implements("FR-120-AC-40")]
 fn transition_wire(transition: &ModelTransition) -> Result<serde_json::Value, String> {
-    let bytes = transition
-        .canonical_bytes(quire_canonical::Limits::new(u64::MAX))
-        .map_err(|refusal| format!("a transition identity encodes: {refusal:?}"))?;
-    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+    crate::task_source_transition_wire(transition).map_err(|error| error.to_string())
 }
 
 /// The kind of expression an undefined evaluation names.
@@ -864,5 +862,34 @@ impl Run<'_, '_> {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod written_verdict_tests {
+    use super::FailedStep;
+    use filament_semantic_value::model_transition::ModelTransition;
+    use ix_trace_rs::trace;
+
+    /// FR-120-AC-40: a simulation certificate's verdict writes its transition's
+    /// `operation` as every writer does.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_verdict_transition_writes_a_name_identity_as_the_name() {
+        let object = r#"{"node":"ix://a/b/C/d","package":"a/b"}"#;
+        for (identity, written) in [(r#""tick""#, "tick"), (object, object)] {
+            let verdict = FailedStep::NoAbstractMatch {
+                position: 0,
+                transition: ModelTransition::new(
+                    identity.to_owned(),
+                    None,
+                    Vec::new(),
+                    quire_canonical::Limits::new(u64::MAX),
+                )
+                .expect("a canonical transition"),
+            };
+            let wire = serde_json::to_value(&verdict).expect("a verdict spells");
+            assert_eq!(wire["transition"]["operation"], written, "{identity}");
+        }
     }
 }
