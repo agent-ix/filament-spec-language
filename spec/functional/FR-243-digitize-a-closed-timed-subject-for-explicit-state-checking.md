@@ -67,23 +67,32 @@ decided on the digital-clock route with an exact value.
   and time invariants is non-strict. When it is not, or the claim carries a
   strict (open or half-open) interval, the route SHALL decline the item
   `invalid-input` naming the strict constraint or interval.
-- A temporal claim is **digitisable** when, with `implies` and `iff`
-  expanded and every negation pushed to the atoms:
+- The **normal form** of a temporal claim is the normal form of the claim
+  itself, not of its negation: `implies` and `iff` expanded and every
+  negation pushed to the atoms. Each occurrence of an operator or atom in it
+  keeps the source span it came from. A temporal claim is **digitisable**
+  when, in the normal form of the claim:
   - (a) every timed interval is closed;
   - (b) no atom reads a clock;
-  - (c) at most one `eventually`, `until`, `once` or `since` carries an
-    interval other than `[0, *]`;
-  - (d) that operator's interval, if there is one, has lower bound 0 or no
-    upper bound;
-  - (e) that operator is not inside the operand of any `eventually` or
+  - (c) at most one occurrence of `eventually`, `until`, `once` or `since`
+    carries an interval other than `[0, *]`;
+  - (d) each such occurrence's interval has lower bound 0 or no upper bound;
+  - (e) no such occurrence is inside the operand of any `eventually` or
     `once`, an operand of any `until` or `since`, or the left operand of any
     `release` or `triggered`; and
   - (f) when the claim declares a fairness constraint, the subject has no
     clock constraint.
 
   EN-1's digital-clock route SHALL decline a claim that is not digitisable
-  `invalid-input`, naming the operator, atom or constraint that fails the
-  rule.
+  `invalid-input`, naming the one part that fails the rule.
+- EN-1's digital-clock route SHALL choose the named part as follows. The occurrences of the normal
+  form are read in the source order of the claim: by the start of their
+  source spans, and of two with the same start, the longer span first. The
+  first source span with an occurrence that breaks one of (a) to (e) is
+  named, with the first rule in (a) to (e) order that it breaks; (c) is
+  broken by every counted occurrence after the first in that order. When (a)
+  to (e) hold and (f) does not, the first clock constraint of the subject in
+  source order is named, with rule (f).
 - Of the state-graph forms (FR-852), EN-1's digital-clock route SHALL decide
   `possible` and SHALL decline `always possible` and `unique path`
   `invalid-input` naming the form: each quantifies over every reachable
@@ -94,6 +103,13 @@ decided on the digital-clock route with an exact value.
   catalogued cause `invalid_runtime_input`/`invalid-value`. EN-6, the route
   of an item whose `options.method` is absent or `zones`, decides such an
   item.
+- When a `probabilistic-satisfaction` item over a timed subject names
+  `exact` evidence, the request writer SHALL route it to EN-5's
+  digital-clock route (FR-204); when it names `statistical` evidence, to
+  EN-4 (FR-254).
+- The route SHALL be a function of the capability kind, the requested
+  evidence kind and the item's `options` alone, negotiated against the
+  published manifests, so one item always reaches one engine.
 
 ### Decision: digitise only what one rounding preserves
 
@@ -108,15 +124,23 @@ within the interval `I` of one position holds" needs the positions outside
 side only. A two-sided `I`, two such statements, or one read at many
 positions can need two thresholds at once. In the two-step subject of
 FR-243-AC-5, `first` at a time strictly between 0 and 1 leaves no position in
-`[1, 2]`, and no integer time stamps reproduce that. The rule is
-conservative: it declines some claims that digitisation would preserve.
-- When a `probabilistic-satisfaction` item over a timed subject names
-  `exact` evidence, the request writer SHALL route it to EN-5's
-  digital-clock route (FR-204); when it names `statistical` evidence, to
-  EN-4 (FR-254).
-- The route SHALL be a function of the capability kind, the requested
-  evidence kind and the item's `options` alone, negotiated against the
-  published manifests, so one item always reaches one engine.
+`[1, 2]`, and no integer time stamps reproduce that.
+
+Rule (b): rounding keeps non-strict clock comparisons only, and a negated
+clock atom is a strict one.
+
+Rule (f): fairness asks whether an operation is enabled at every instant. A
+disabled constrained operation can be a strict region such as `x > b`, which
+the integer grid can miss. Take an operation `loop`, guarded by `x <= 1 ms`,
+that resets `x`, the time invariant `x <= 1 ms`, and an operation `t`,
+guarded by `x >= 1 ms`, that reaches a quiescent state `done`. Taking `loop`
+every half millisecond never enables `t`, so that behaviour is fair under
+`strong t` and refutes `eventually holds(done)`; every integer-clock
+behaviour that diverges without `t` enables `t` again and again, so none of
+them is fair.
+
+The rule is conservative: it declines some claims that digitisation would
+preserve.
 
 ## Acceptance Criteria
 

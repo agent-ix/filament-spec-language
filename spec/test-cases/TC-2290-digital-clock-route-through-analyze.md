@@ -38,27 +38,32 @@ and only position 0 lies at time 0.
 
 | Claim | Dense value, by hand | EN-6 | EN-1 |
 |-------|----------------------|------|------|
-| `eventually[1 ms, 2 ms] P` | false: no position in the window | refuted | declined |
-| `P until[1 ms, 2 ms] P` | false: no position in the window | refuted | declined |
-| `eventually[0 ms, 0 ms] eventually[1 ms, 2 ms] P` | false: only position 0 is at time 0 | refuted | declined |
-| `always[0 ms, 0 ms] eventually[1 ms, 2 ms] P` | false: fails at position 0 | refuted | declined |
-| `always (holds(c.phase = 0) implies eventually[1 ms, 2 ms] P)` | false: fails at position 0 | refuted | declined |
-| `eventually (holds(c.phase = 0) and eventually[1 ms, 2 ms] P)` | false: only position 0 has `phase` 0 | refuted | declined |
-| `eventually[1 ms, 1 ms] P` | false: no position at time 1 | refuted | declined |
-| `eventually[2 ms, 3 ms] holds(c.phase = 2)` | true: `t + 2` is in `[2, 3]` | proved | declined (conservative) |
-| `eventually[0 ms, 1 ms] holds(c.phase = 2) or eventually[0 ms, 2 ms] holds(c.phase = 1)` | true: `phase` 1 at `t <= 1` | proved | declined (conservative) |
+| `eventually[1 ms, 2 ms] P` | false: no position in the window | refuted | declined: `eventually`, (d) |
+| `P until[1 ms, 2 ms] P` | false: no position in the window | refuted | declined: `until`, (d) |
+| `eventually[0 ms, 0 ms] eventually[1 ms, 2 ms] P` | false: only position 0 is at time 0 | refuted | declined: the inner `eventually`, (c) |
+| `always[0 ms, 0 ms] eventually[1 ms, 2 ms] P` | false: fails at position 0 | refuted | declined: `eventually`, (d) |
+| `always (holds(c.phase = 0) implies eventually[1 ms, 2 ms] P)` | false: fails at position 0 | refuted | declined: `eventually`, (d) |
+| `eventually (holds(c.phase = 0) and eventually[1 ms, 2 ms] P)` | false: only position 0 has `phase` 0 | refuted | declined: the inner `eventually`, (d) |
+| `eventually[1 ms, 1 ms] P` | false: no position at time 1 | refuted | declined: `eventually`, (d) |
+| `eventually[2 ms, 3 ms] holds(c.phase = 2)` | true: `t + 2` is in `[2, 3]` | proved | declined (conservative): `eventually`, (d) |
+| `eventually[0 ms, 1 ms] holds(c.phase = 2) or eventually[0 ms, 2 ms] holds(c.phase = 1)` | true: `phase` 1 at `t <= 1` | proved | declined (conservative): the second `eventually`, (c) |
 | `eventually[0 ms, 2 ms] holds(c.phase >= 1)` | true: `phase` 1 at `t <= 1` | proved | proved |
 | `holds(c.phase < 2) until[0 ms, 2 ms] holds(c.phase = 1)` | true: position 1 at `t <= 1`, `phase` 0 before it | proved | proved |
 | `always (holds(c.phase = 1) implies eventually[0 ms, 2 ms] holds(c.phase = 2))` | true: exactly 2 after | proved | proved |
 | `always eventually[0 ms, 1 ms] P` | true: each position is its own witness | proved | proved |
 | `always[1 ms, 2 ms] holds(c.phase = 0)` | false: `t = 1` puts `phase` 1 at time 1 | refuted | refuted |
 | `F release[1 ms, 2 ms] F` | false: `t = 1` puts a position in the window | refuted | refuted |
+| `always[0 ms, 4 ms] eventually[0 ms, 1 ms] holds(c.phase >= 1)` | true: from position 0, `phase` 1 is at `t <= 1`; every later position has `phase >= 1` itself | proved | `inconclusive` `replay-parity` until QSL-3480 is fixed, then proved |
+| `always[0 ms, 4 ms] eventually[0 ms, 1 ms] holds(c.phase = 1)` | false: the position of `phase` 2 at `t + 2 <= 3` has no `phase` 1 at or after it | refuted | refuted |
+| `eventually[0 ms, 4 ms] always[0 ms, 1 ms] holds(c.phase = 2)` | true: from `t + 2 <= 3` every position has `phase` 2 | proved | `inconclusive` `replay-parity` until QSL-3480 is fixed, then proved |
+| `always (holds(c.phase < 1) until[0 ms, 2 ms] holds(c.phase >= 1))` | true: at position 0, `phase` 1 is at `t <= 2` with `phase` 0 before it; every later position satisfies the right side | proved | proved |
+| `always (holds(c.phase < 2) until[0 ms, 2 ms] holds(c.phase = 1))` | false: no `phase` 1 at or after the position of `phase` 2 | refuted | refuted |
 
 ## Expected Results
 
 - Step 1: `proved`, basis `exhaustive`, backend `en-1`, the same verdict as the zone route.
 - Steps 2 and 3: `declined` `invalid-input` naming the strict constraint or interval; no engine runs.
-- Step 4: the table's verdicts; each EN-1 decline is `declined` `invalid-input`, `invalid_runtime_input`/`invalid-value`, naming the failing operator, with `backend` `en-1`, and no search runs.
+- Step 4: the table's verdicts; each EN-1 decline is `declined` `invalid-input`, `invalid_runtime_input`/`invalid-value`, with `backend` `en-1`, and no search runs. The EN-1 column gives the part and rule the decline names (FR-243). No typed member of the refusal wire carries them today (the `invalid-value` payload of FSpec FR-272 is an input path and role), so the test asserts them when such a member is defined.
 - Step 5: declined the same way, naming a clock constraint of the subject.
 - Assertions compare typed members and the exit code, never message text.
 

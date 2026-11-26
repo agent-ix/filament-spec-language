@@ -39,7 +39,7 @@ engine.
 - Step 4: `unsupported` `unsupported-requested-capability`, exit 21; `incomplete` `LimitReached{max_states}`, exit 22.
 - Step 5: each `state_graph_forms` lists `possible`, `always-possible` and `unique-path`.
 - Step 6: the same verdicts on `en-1`, basis `exhaustive`, integer delays that replay.
-- Step 7: each `declined` `invalid-input` naming the form, `backend` `en-1`, and no search runs. This step asserts the decline only and compares nothing with EN-6. The route that gives a verdict for these two forms is EN-6 (steps 2 and 3), whose node-level reading of a partly covered zone is wrong until QSL-3478 is fixed.
-- Step 8: each declined the same way, never `proved`. By hand both claims are false: with `first` strictly between 0 and 1, `x` at `y = 2 ms` is strictly between 1 and 2, so neither `zero` nor `one` is ever taken. The step relies on no EN-6 verdict: EN-6's node-level reading of this subject is wrong (QSL-3478), and the verdict is to be asserted on EN-6 by the test that fixes it.
+- Step 7: each `declined` `invalid-input`, `invalid_runtime_input`/`invalid-value`, naming the form, `backend` `en-1`, and no search runs. This step asserts the decline only and compares nothing with EN-6. The route that gives a verdict for these two forms is EN-6 (steps 2 and 3), whose node-level reading of a partly covered zone is wrong until QSL-3478 is fixed.
+- Step 8: each declined the same way, with the cause `invalid_runtime_input`/`invalid-value`, never `proved`. By hand both claims are false: with `first` strictly between 0 and 1, `x` at `y = 2 ms` is strictly between 1 and 2, so neither `zero` nor `one` is ever taken. The step relies on no EN-6 verdict: EN-6's node-level reading of this subject is wrong (QSL-3478), and the verdict is to be asserted on EN-6 by the test that fixes it.
 
 Test: `fsl-analyze/tests/it/timed_state_graph.rs`.
