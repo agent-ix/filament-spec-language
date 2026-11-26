@@ -1,0 +1,196 @@
+   Compiling cfg-if v1.0.4
+   Compiling memchr v2.8.3
+   Compiling serde_core v1.0.228
+   Compiling num-traits v0.2.19
+   Compiling libc v0.2.189
+   Compiling once_cell v1.21.4
+   Compiling typenum v1.20.1
+   Compiling zerofrom v0.1.8
+   Compiling smallvec v1.16.0
+   Compiling stable_deref_trait v1.2.1
+   Compiling yoke v0.8.3
+   Compiling zerocopy v0.8.57
+   Compiling hashbrown v0.17.1
+   Compiling aho-corasick v1.1.5
+   Compiling num-integer v0.1.47
+   Compiling zerovec v0.11.8
+   Compiling generic-array v0.14.7
+   Compiling num-bigint v0.4.8
+   Compiling getrandom v0.3.4
+   Compiling num-iter v0.1.46
+   Compiling num-complex v0.4.6
+   Compiling cpufeatures v0.2.17
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling ryu-js v1.0.3
+   Compiling rand_core v0.10.1
+   Compiling regex-automata v0.4.18
+   Compiling sha2 v0.10.9
+   Compiling tinyvec_macros v0.1.1
+   Compiling percent-encoding v2.3.2
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling tinyvec v1.13.2
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.151
+   Compiling num-rational v0.4.2
+   Compiling num v0.4.3
+   Compiling parking_lot_core v0.9.12
+   Compiling ref-cast v1.0.27
+   Compiling parking_lot v0.12.5
+   Compiling getrandom v0.4.3
+   Compiling unicode-normalization v0.1.25
+   Compiling tinystr v0.8.4
+   Compiling arrayvec v0.7.8
+   Compiling writeable v0.6.4
+   Compiling bytecount v0.6.9
+   Compiling quire-canonical v0.3.2 (https://github.com/agent-ix/quire-canonical?tag=v0.3.2#f00840e4)
+   Compiling borrow-or-share v0.2.4
+   Compiling num-cmp v0.1.0
+   Compiling triomphe v0.1.17
+   Compiling spin v0.9.9
+   Compiling litemap v0.8.3
+   Compiling filament-exact v0.3.0 (https://github.com/agent-ix/filament-exact?rev=08a5a1763ef4bd1ea7d1147717c959af5a3522cc#08a5a176)
+   Compiling icu_locale_core v2.3.0
+   Compiling ahash v0.8.12
+   Compiling regex v1.13.1
+   Compiling fluent-uri v0.4.1
+   Compiling fraction v0.17.0
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling bit-vec v0.8.0
+   Compiling utf8_iter v1.0.4
+   Compiling micromap v0.3.0
+   Compiling icu_collections v2.3.0
+   Compiling bit-set v0.8.0
+   Compiling icu_provider v2.3.1
+   Compiling crossbeam-utils v0.8.23
+   Compiling outref v0.5.2
+   Compiling vsimd v0.8.0
+   Compiling strum v0.28.0
+   Compiling fancy-regex v0.19.2
+   Compiling icu_normalizer_data v2.3.0
+   Compiling icu_properties_data v2.3.0
+   Compiling uuid-simd v0.8.0
+   Compiling crossbeam-epoch v0.9.21
+   Compiling unicode-general-category v1.1.0
+   Compiling email_address v0.2.9
+   Compiling data-encoding v2.11.1
+   Compiling crossbeam-deque v0.8.8
+   Compiling icu_properties v2.3.0
+   Compiling icu_normalizer v2.3.0
+   Compiling utf8parse v0.2.2
+   Compiling uuid v1.26.0
+   Compiling anstyle-parse v1.0.0
+   Compiling filament-semantic-value v0.1.5 (https://github.com/agent-ix/filament-semantic-value?rev=689f259eab592b62cb362f5e649dba16adf874f7#689f259e)
+   Compiling bstr v1.13.1
+   Compiling anstyle-query v1.1.5
+   Compiling same-file v1.0.6
+   Compiling bitflags v2.13.1
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling bit-vec v0.6.3
+   Compiling powerfmt v0.2.0
+   Compiling deranged v0.5.8
+   Compiling colorchoice v1.0.5
+   Compiling anstyle v1.0.14
+   Compiling globset v0.4.20
+   Compiling idna_adapter v1.2.2
+   Compiling anstream v1.0.0
+   Compiling idna v1.1.0
+   Compiling bit-set v0.5.3
+   Compiling walkdir v2.5.0
+   Compiling psm v0.1.32
+   Compiling rayon-core v1.13.0
+   Compiling referencing v0.55.1
+   Compiling referencing v0.56.0
+   Compiling jsonschema-value v0.55.1
+   Compiling time v0.3.55
+   Compiling jsonschema-value v0.56.0
+   Compiling indexmap v2.14.2
+   Compiling form_urlencoded v1.2.2
+   Compiling nom v8.0.0
+   Compiling jsonschema-regex v0.55.1
+   Compiling jsonschema-regex v0.56.0
+   Compiling either v1.18.0
+   Compiling libyaml-rs v0.3.0
+   Compiling lazy_static v1.5.0
+   Compiling clap_lex v1.1.1
+   Compiling filament-walk v0.1.1 (https://github.com/agent-ix/filament-walk?tag=v0.1.1#6b37f032)
+   Compiling ryu v1.0.23
+   Compiling strsim v0.11.1
+   Compiling fraction v0.13.1
+   Compiling clap_builder v4.6.6
+   Compiling yaml_serde v0.10.7
+   Compiling fsl-foundation v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-foundation)
+   Compiling jsonschema v0.56.0
+   Compiling rayon v1.12.0
+   Compiling iso8601 v0.6.5
+   Compiling jsonschema v0.55.1
+   Compiling url v2.5.8
+   Compiling logos v0.16.1
+   Compiling ignore v0.4.33
+   Compiling stacker v0.1.15
+   Compiling fancy-regex v0.11.0
+   Compiling anyhow v1.0.104
+   Compiling regress v0.11.1
+   Compiling agent-ix-semantic-schema v0.3.0 (https://github.com/agent-ix/filament-core-data?branch=main#a92d60e6)
+   Compiling base64 v0.21.7
+   Compiling linux-raw-sys v0.12.1
+   Compiling jsonschema v0.17.1
+   Compiling rustix v1.1.4
+   Compiling clap v4.6.6
+   Compiling serde_stacker v0.1.11
+   Compiling fsl-cst v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-cst)
+   Compiling serde_path_to_error v0.1.20
+   Compiling agent-ix-semantic-ir v0.1.1 (https://github.com/agent-ix/filament-core-data?rev=a92d60e650c37fec5800ed5952f579cd3cc8d064#a92d60e6)
+   Compiling fastrand v2.5.0
+   Compiling filament-verification-contracts v0.2.1 (https://github.com/agent-ix/filament-verification-contracts?rev=e6eebb660c6d9b3dee25d643923d3984cbc745b6#e6eebb66)
+   Compiling tempfile v3.27.0
+   Compiling filament-checked v0.1.6 (https://github.com/agent-ix/filament-eval?rev=b50cfacb80459d5f1fb3b8deeafc63222db69401#b50cfacb)
+   Compiling filament-eval v0.1.6 (https://github.com/agent-ix/filament-eval?rev=b50cfacb80459d5f1fb3b8deeafc63222db69401#b50cfacb)
+   Compiling quire-rs v0.53.0 (https://github.com/agent-ix/quire-rs?rev=71a1f970bebc8d7267424dda26cf4c665bcc5ae5#71a1f970)
+   Compiling filament-observation v0.1.1 (https://github.com/agent-ix/filament-observation?rev=a36e5ed2e1bde35a27461fa38084d3e140e09fcd#a36e5ed2)
+   Compiling cpufeatures v0.3.1
+   Compiling base64 v0.22.1
+   Compiling chacha20 v0.10.2
+   Compiling fsl-forms v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-forms)
+   Compiling rand v0.10.4
+   Compiling rand_xorshift v0.5.0
+   Compiling core_detect v1.0.0
+   Compiling unarray v0.1.4
+   Compiling proptest v1.12.0
+   Compiling quire-canonical v0.3.2 (https://github.com/agent-ix/quire-canonical?rev=3b542158649da80c3003a8b6799af90d1feb7b52#3b542158)
+   Compiling filament-contract-model v0.1.2 (https://github.com/agent-ix/filament-contract-ir?rev=dc9b220b92390eb8c5999a1b26ac8ff94cfffd33#dc9b220b)
+   Compiling fsl-proptest-policy v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-proptest-policy)
+   Compiling filament-specification-qualification v0.1.1 (https://github.com/agent-ix/filament-specification?rev=3200a4ed7f18fbbf5d934c22d3c3fa467914ddca#3200a4ed)
+   Compiling agent-ix-extraction-frontend v0.2.1 (https://github.com/agent-ix/filament-core-data?rev=a92d60e650c37fec5800ed5952f579cd3cc8d064#a92d60e6)
+   Compiling fsl-semantics v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-semantics)
+   Compiling fsl-package v0.3.0 (/mnt/build/dev/worktrees/q-3843/fsl-package)
+   Compiling fsl-route v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-route)
+   Compiling fsl-eval v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-eval)
+   Compiling fsl-replay v0.3.0 (/mnt/build/dev/worktrees/q-3843/fsl-replay)
+   Compiling fsl-hybrid-reference v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-hybrid-reference)
+   Compiling fsl-analyze v0.3.0 (/mnt/build/dev/worktrees/q-3843/fsl-analyze)
+warning: method `expand` is never used
+    --> fsl-analyze/src/model_check/check.rs:1843:8
+     |
+1841 | trait Chooser<State, Transition> {
+     |       ------- method in this trait
+1842 |     /// `state`'s expansion, holding every step to its footprint.
+1843 |     fn expand(
+     |        ^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling fsl-bench v0.1.0 (/mnt/build/dev/worktrees/q-3843/fsl-bench)
+warning: `fsl-analyze` (lib) generated 1 warning
+    Finished `test` profile [unoptimized] target(s) in 5m 38s
+     Running tests/it/main.rs (/home/peter/dev/worktrees/q-shared-target/debug/deps/it-1fff9f602c7934d4)
+
+running 2 tests
+test dispatch_link_compile::execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names ... ok
+test dispatch_link_compile::accepted_execution_points_are_keyed_to_authored_state_clauses_and_emitted ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 429 filtered out; finished in 0.04s
+
