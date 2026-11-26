@@ -265,22 +265,25 @@ FR-186's closed, bounded, `on origin` conditions.
 
 ## 7. Criterion values confirmed
 
-The checker recomputed each of these by hand. All formulas are in F.
+All formulas are in F. The last column says who derived each value: the
+author's argument, the independent checker's full recomputation, or the
+checker's spot check only.
 
-| Criterion | Formula | Values |
-| --- | --- | --- |
-| FR-204-AC-21 | `eventually[0, 4] always[1, 1] D` | min `99999/100000`, max `1` |
-| FR-204-AC-21, FR-498-AC-8 | `always[0, 4] eventually[2, 2] D` | min `0`, max `99/100`; rejection value `9/10` |
-| FR-204-AC-21 | single-operator and `until` forms | min `99/100`, max `9999/10000` |
-| FR-204-AC-26 | Retx `always[0, 4] always[2, 2] false` | min `0`, max `1`, digital max `9/10` |
-| FR-204-AC-26 | Gap `always[1, 2] false` | min `0`, max `1`, digital max `0` |
+| Criterion | Formula | Values | Derived by |
+| --- | --- | --- | --- |
+| FR-204-AC-21 | `eventually[0, 4] always[1, 1] D` | min `99999/100000`, max `1` | author; checker recomputed |
+| FR-204-AC-21, FR-498-AC-8 | `always[0, 4] eventually[2, 2] D` | min `0`, max `99/100`; rejection value `9/10` | author; checker recomputed |
+| FR-204-AC-21 | `eventually[1, 4] D` and `holds(not D) until[1, 4] D` | min `99/100`, max `9999/10000` | checker spot check only |
+| FR-204-AC-21 | `always[0, 4] D` | `0` (min and max) | neither; the value is FR-204-AC-21's own, from FR-204 "Worked example: pointwise values", item 2 (position 0 has `D` false) |
+| FR-204-AC-26 | Retx `always[0, 4] always[2, 2] false` | min `0`, max `1`, digital max `9/10` | author; checker recomputed |
+| FR-204-AC-26 | Gap `always[1, 2] false` | min `0`, max `1`, digital max `0` | checker recomputed (the author's argument does not cover Gap) |
 
 The extremal schedulers use at most 5 tail stutters in the window.
 
 For the tail rule specifically, FR-196's reviewer checked every
 criterion's tail-entry states by hand:
 
-- Each is decided at layer `L_0` to `L_5` by stop (a), or by folding.
+- Each is decided at layer `L_0` to `L_5` by stop (a) (target found), or by stop (b) (an empty layer). An entry whose folded residual is the non-target constant decides by (b): for example, an entry folded to accept decides the minimum at once, because `L_0` holds only that constant, which is not expanded, and `L_1` is empty.
 - In AC-21's `eventually`-then-`always` form, entries fold to accept.
 - Gap and the `Step` items are decided before tail entry.
 
