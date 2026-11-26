@@ -1596,7 +1596,11 @@ fn run(
     } else {
         document_limits
     };
-    let mut candidate_budget = (expected_reward || eventual || bounded_fair || fair_eventual)
+    let mut candidate_budget = (expected_reward
+        || eventual
+        || bounded_formula.is_some()
+        || bounded_fair
+        || fair_eventual)
         .then(|| candidate::CandidateBudget::new(candidate_limits, &work, cancel));
     record_work_checkpoint(ExactWorkPhase::Product, &work, false);
     let built = if let Some(budget) = candidate_budget.as_mut() {
@@ -1808,7 +1812,7 @@ fn run(
                 upper,
                 precision_bits,
                 policy,
-            }) if !bounded_fair && candidate_budget.is_none() => {
+            }) if !bounded_fair => {
                 let values = lower
                     .iter()
                     .map(|end| ExtRational::Finite(end.rational()))
