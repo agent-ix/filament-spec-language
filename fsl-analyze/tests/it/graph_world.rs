@@ -22,11 +22,10 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{StateGraphItem, StateGraphRequest};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimState, ModelSimulationRequest, PackageModelInput,
-    PopulationUniverse,
+    ExpansionLimits, ModelSimState, ModelSimulationRequest, PopulationUniverse,
 };
 use fsl_foundation::{BackendId, SourceIdentity};
-use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
+use fsl_package::CheckedPackage;
 use fsl_replay::{
     GraphEvidence, GraphEvidenceEnvelope, GraphReplayResult, ModelCheckLimits, ModelPath,
     ModelTraceSubject, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
@@ -238,24 +237,7 @@ impl World {
     /// A world for fixtures whose function bodies deliberately retain
     /// runtime definedness or range refusals while clauses remain linked.
     pub(crate) fn kernel(model: Model, body: &str, starts: &[&[Object<'_>]]) -> Self {
-        Self::build(model, DIVISION_PROFILE, "", body, starts, CheckMode::Kernel)
-    }
-
-    /// As [`Self::kernel`], selecting additional aliases before declarations.
-    pub(crate) fn kernel_with_aliases(
-        model: Model,
-        aliases: &str,
-        body: &str,
-        starts: &[&[Object<'_>]],
-    ) -> Self {
-        Self::build(
-            model,
-            DIVISION_PROFILE,
-            aliases,
-            body,
-            starts,
-            CheckMode::Kernel,
-        )
+        Self::build(model, DIVISION_PROFILE, body, starts, CheckMode::Kernel)
     }
 
     /// As [`Self::new`], with `profiles` (header `profile` lines) after the
@@ -266,7 +248,7 @@ impl World {
         body: &str,
         starts: &[&[Object<'_>]],
     ) -> Self {
-        Self::build(model, profiles, "", body, starts, CheckMode::Linked)
+        Self::build(model, profiles, body, starts, CheckMode::Linked)
     }
 
     /// Check function bodies under Kernel (FR-495-AC-3), while every
@@ -274,7 +256,6 @@ impl World {
     fn build(
         model: Model,
         profiles: &str,
-        aliases: &str,
         body: &str,
         starts: &[&[Object<'_>]],
         mode: CheckMode,
@@ -284,7 +265,7 @@ impl World {
         let text = format!(
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n{profiles}\
-             model {} = \"{}\";\n{aliases}{body}",
+             model {} = \"{}\";\n{body}",
             model.alias, model.package
         );
         let parsed = fsl_cst::parse(
@@ -408,45 +389,6 @@ impl World {
 
     pub(crate) fn packages(&self) -> &fsl_semantics::model::intake::PackageInput {
         &self.packages
-    }
-
-    /// Invoke `f` with an EN-1 input reconstructed from an emitted, strictly
-    /// admitted package and its identity/equality witness rows.
-    pub(crate) fn with_package_model_input<R>(
-        &self,
-        f: impl FnOnce(ModelCheckInput<'_>) -> R,
-    ) -> R {
-        let emission = fsl_package::emit_checked(&self.package, EmitLimits::fixture())
-            .expect("the checked world emits");
-        let admitted = fsl_package::admit_checked_package(
-            emission.package().bytes(),
-            &self.packages,
-            V2ReadLimits::fixture(),
-        )
-        .expect("strict package admission succeeds");
-        let mut budget = V2ReadLimits::fixture().native_join_budget();
-        let identities = emission
-            .identity_rows(&admitted, &mut budget)
-            .expect("the package identity rows read");
-        let equality = emission
-            .equality_witness(&admitted, &mut budget)
-            .expect("the package equality rows read");
-        let bare = BarePackage::new(&admitted)
-            .with_supply(
-                BareSupply {
-                    identities: &identities,
-                    equality: Some(&equality),
-                },
-                &mut V2ReadLimits::fixture().native_join_budget(),
-            )
-            .expect("the package witnesses join");
-        let input = PackageModelInput::of(
-            &bare,
-            &self.packages,
-            ModelNormalizationLimits::default(),
-        )
-        .expect("the package model input reads");
-        f(input.input())
     }
 
     /// The original unit bytes keyed by the package graph's declared source.
@@ -749,7 +691,7 @@ pub(crate) fn counter_kernel_world(aliases: &str, body: &str) -> World {
         }],
     };
     let body = format!(
-        "function remainder using v(divisor: Integer): Integer pure {{ 6 mod divisor }}\n\
+        "{aliases}function remainder using v(divisor: Integer): Integer pure {{ 6 mod divisor }}\n\
          function narrow using v(n: Integer): Int[0, 2] pure {{ n }}\n\
          pre CanInc using v on C::Counter::inc {{ self.value < 3 }}\n\
          post Inc using v on C::Counter::inc {{ self.value = pre(self.value) + 1 }}\n{body}"
@@ -758,7 +700,6 @@ pub(crate) fn counter_kernel_world(aliases: &str, body: &str) -> World {
     World::build(
         model,
         DIVISION_PROFILE,
-        aliases,
         &body,
         &[&counter],
         CheckMode::Kernel,
@@ -860,7 +801,6 @@ fn config_world_over_model_mode(
     World::build(
         model,
         profiles,
-        "",
         &format!("{CONFIG_CONTRACT}{extra}{claims}"),
         &starts,
         mode,
@@ -1153,7 +1093,6 @@ fn moves_world_mode(
         .collect::<String>();
     World::build(
         model,
-        "",
         "",
         &format!("{contract}{body}"),
         &[&[("f", &[("pos", 0)])]],

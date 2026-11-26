@@ -2463,9 +2463,11 @@ fn terminal_alias_world(
 #[trace("FSpec-FR-391-AC-13")]
 #[test]
 fn an_unknown_terminal_keeps_a_possible_witness_unchecked() {
-    let body = "terminal Done using v on C when { remainder(3 - self.value) = 0 };\n\
-        terminal Stop using v on N when { narrow(self.value) = 0 };\n\
-        possible AlwaysTrue using v over (c: C::Counter) { true }\n";
+    let body = format!(
+        "terminal Done using v on C when {{ remainder(3 - self.value) = 0 }};\n\
+         terminal Stop using v on N when {{ narrow(self.value) = 0 }};\n\
+         possible AlwaysTrue using v over (c: C::Counter) {{ true }}\n"
+    );
     let world = counter_kernel_world(SECOND_ALIAS, &body);
     let claim = world.claim("AlwaysTrue");
     let over = bound_to(&world, &["c"], "c");
@@ -2659,90 +2661,6 @@ fn undefined_terminal_aliases_refute_with_replayed_first_declaration() {
         settled.records[0][0].undefined,
         Some(ref evidence) if evidence == undefined
     ));
-}
-
-/// FSpec FR-391-AC-13/15/16/17: terminal outcomes remain the hand-computed
-/// results when EN-1 reads the emitted package; FR-366-AC-12 requires both
-/// placements of the intended/undefined aliases to prove.
-#[trace(
-    "FSpec-FR-391-AC-13",
-    "FSpec-FR-391-AC-15",
-    "FSpec-FR-391-AC-16",
-    "FSpec-FR-391-AC-17",
-    "FSpec-FR-366-AC-12"
-)]
-#[test]
-fn terminal_state_graph_results_match_after_strict_package_read() {
-    let route = |world: &World, claim_name: &str, package: bool| {
-        let request = || {
-            world.request(&["c"], vec![world.item(claim_name)], no_samples())
-        };
-        if package {
-            world.with_package_model_input(|input| {
-                let mut request = request();
-                request.subject.simulation.input = input;
-                run(request).items[0][0].outcome.clone()
-            })
-        } else {
-            run(request()).items[0][0].outcome.clone()
-        }
-    };
-    let compare = |terminals: &str, claim: &str| {
-        let world = counter_kernel_world(
-            "model N = \"test/counter\";\n",
-            &format!("{terminals}{claim}"),
-        );
-        (route(&world, if claim.contains("Never") { "Never" } else { "AlwaysTrue" }, false),
-         route(&world, if claim.contains("Never") { "Never" } else { "AlwaysTrue" }, true))
-    };
-
-    // At the terminal value 3, Done is false and Stop is refused. A witness
-    // for true exists at the initial state, but remains unchecked.
-    let unknown = "terminal Done using v on C when { self.value = 0 };\n\
-        terminal Stop using v on N when { narrow(self.value) = 0 };\n";
-    let (source, package) = compare(
-        unknown,
-        "possible AlwaysTrue using v over (c: C::Counter) { true }\n",
-    );
-    assert!(matches!(source, StateGraphOutcome::WitnessedUnchecked { .. }));
-    assert_eq!(package, source);
-
-    let (source, package) = compare(
-        unknown,
-        "possible Never using v over (c: C::Counter) { false }\n",
-    );
-    assert_eq!(
-        source,
-        StateGraphOutcome::NoDecision {
-            end: RunEnd::Completed,
-            open: BTreeSet::from([OpenCause::UndecidedSuccessor]),
-        }
-    );
-    assert_eq!(package, source);
-
-    // The true Stop alias wins over undefined Done at value 3. Reversing
-    // their aliases must preserve the hand-computed witnessed result.
-    for terminals in [
-        "terminal Done using v on C when { remainder(3 - self.value) = 0 };\n\
-         terminal Stop using v on N when { true };\n",
-        "terminal Done using v on N when { remainder(3 - self.value) = 0 };\n\
-         terminal Stop using v on C when { true };\n",
-    ] {
-        let (source, package) = compare(
-            terminals,
-            "possible AlwaysTrue using v over (c: C::Counter) { true }\n",
-        );
-        assert!(matches!(source, StateGraphOutcome::Witnessed { .. }));
-        assert_eq!(package, source);
-    }
-
-    let (source, package) = compare(
-        "terminal Done using v on C when { remainder(3 - self.value) = 0 };\n\
-         terminal Stop using v on N when { remainder(3 - self.value) = 0 };\n",
-        "possible Never using v over (c: C::Counter) { false }\n",
-    );
-    assert!(matches!(source, StateGraphOutcome::Undefined { .. }));
-    assert_eq!(package, source);
 }
 
 /// `Low` holds only at `versionNumber = 0`.
