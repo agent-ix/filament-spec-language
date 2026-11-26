@@ -48,6 +48,6 @@ Tag the tests `#[trace("TC-602", "FR-177-AC-n")]`, and step 13 `#[trace("TC-602"
 - Step 8: `Violated` with `WitnessExhausted{position: 1}`; `Undecided(MatchUndetermined)`.
 - Step 9: loop entry 0 for step 1's lasso; `WitnessExhausted{position: 1}` with loop entry 2, three steps, the last the terminal stutter.
 - Step 10: `Violated` with an `Undefined` counterexample at position 1, cause `division-by-zero`, `a`'s trace one step long and `b`'s with no step; `variables` and `state_keys` of two entries, then three in the order `a`, `c`, `b`.
-- Step 11: the first instance's counterexample; `Violated` at `max_states` 7 and `Stopped` at 6; the second instance's `Undefined` counterexample at position 0.
-- Step 12: `HyperRefusal::NoPartnerPath`, no outcome, at the earlier position.
+- Step 11: the first instance's counterexample in each case where it is violated, whatever the second instance finds; the second instance's `Violated` where the first stops on `MaxWitnessSet`.
+- Step 12: `HyperRefusal::NoPartnerPath`, no outcome, at the earlier position and where the refusing instance is first; the other instance's `Violated` where it is first.
 - Step 13: `inconclusive`, `Verdicts` for the `μ_E` locus; `reproduced-with-evaluated-witness` for the `μ_U` locus.
