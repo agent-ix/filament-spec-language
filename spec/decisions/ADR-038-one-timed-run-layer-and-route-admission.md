@@ -70,54 +70,49 @@ On regions a trap can hold delay moves and still not diverge, so each side
 applies the progress condition of FSpec FR-753 and not a zero-delay test
 alone.
 
-### Drafted amendment to FSL FR-921 (for the arch ruling; not applied)
+### What the two sides share as data
 
-FR-921 item 1 has the checker compute the route with code EN-5 does not share,
-and item 5 the same for the end components and time-locks. One admission table
-read by both (QSL-3494), and one reading of a locked run, contradict that if
-"route" and "time-lock" mean the declaration as well as the facts. The draft
-separates them:
+The producer and each checker read one declaration of two things, in the
+qualified core (RL-7):
 
-- **Shared declarations.** The route admission table (its rows and the
-  conditions each row tests) and the mapping of FSpec FR-416 "How claims read
-  a time-lock" from a claim monitor's kind and reading to a value are declared
-  once, in the qualified core, and read by EN-5 and its checker. Neither
-  computes a fact about a subject.
-- **Item 1** becomes: every condition a row tests (closedness, delay class,
-  whether a time-lock is reachable, claim form, position read), each
-  established by the checker's own code; and the route the declared table
-  gives those conditions.
-- **Item 5** becomes: the maximal end components, their exits, their progress
-  and the time-locks it finds, by its own code; a locked state's value is the
-  shared mapping.
+| ID | Rule |
+| --- | --- |
+| RL-7 | **Declared data.** The route admission table (its rows and the names of the conditions each row tests) and the mapping of FSpec FR-416 "How claims read a time-lock" from a claim monitor's kind and reading to a value are declared once and read by EN-5 and its checker. Neither computes a fact about a subject. Every condition a row tests (closedness, delay class, whether a time-lock is reachable, claim form, position read) is established by each side's own code, and end components, their exits and progress, and lock detection are written separately on each side (RL-2). |
 
-A wrong row or a wrong mapping is then a defect both sides carry. The theorem
-cited by each row, review, and the RL-4 oracle are what catch it. Without the
-amendment each side writes the table and the mapping itself, and the two can
-drift apart, as the producer's and checker's region scale rules do today.
+This is a decided amendment to what a checker may share (FSL FR-921, FSpec
+FR-751). A wrong row or a wrong mapping is a defect both sides carry; the
+theorem or argument each row cites, review and the RL-4 oracle are what catch
+it. So each side also checks each row and each mapping entry against
+expectations written by hand in its tests (FR-921-AC-5). The certificate
+checker's trusted base records the table and the mapping as a named exception
+to its rule of no other shared semantics; that record is in the requirement
+that declares the trusted base.
 
 ### Route admission
 
 A route decides a claim only where a row admits it. A subject is **closed**
 when every clock constraint, time invariant and claim interval is non-strict;
-every constraint is diagonal-free (ADR-026 CK-4). The delay classes `given`,
-`free` and `mixed` and the time-lock condition are those of FSpec FR-421
-"Closed and strict conditions".
+every constraint is diagonal-free (ADR-026 CK-4). The delay classes `given`
+and `free` and the time-lock condition are those of FSpec FR-421 "Closed and
+strict conditions". A subject with some delays given and others not is in
+neither class.
 
 "Checked" means the author of this record read the cited statement. A row
 marked "argument below" rests on an argument written here that no published
-theorem states and that no second reader has checked.
+theorem states.
 
 | Route | Claim form | Subject class | Justification |
 | --- | --- | --- | --- |
 | EN-6 zones | Every non-probabilistic timed item: TT-1 to TT-4, deadlock freedom, time-lock freedom, state-graph items | Any timed subject | Region equivalence is a time-abstract bisimulation (Alur and Dill, 1994), with zone extrapolation for diagonal-free automata (Behrmann, Bouyer, Larsen and Pelanek, 2006). Statements not checked; existing route, unchanged |
-| EN-1 `digital-clocks` | TT-1 over the discrete state; location reachability (`possible`) | Closed | KNPS 2006 Lemma 17 (checked: `t - t' ~ c` for `~` in `<=`, `=`, `>=` survives rounding with any threshold) and Lemma 20 (a path diverges exactly when its rounding does) |
-| EN-1 `digital-clocks` | Deadlock freedom | Closed | Lemmas 17 and 20, argument D below |
-| EN-1 `digital-clocks` | The digitisable claims of FR-243 (a) to (f) | Closed | Lemmas 17 and 20, argument A below |
-| EN-5 digital | The rows of FSpec FR-421's table marked `all` and `given only` | Closed, class `given` | Argument G below |
-| EN-5 digital | Reachability and until over state predicates; `expected accumulate`; measures of the discrete step sequence | Closed, class `free` or `mixed` (argument M below), no time-lock | KNPS 2006 Theorem 24 (locations, minimum and maximum), Theorem 27 (expected cost) and Proposition 23 (for each threshold an integer-time adversary gives the rounded paths their probabilities), all checked, over adversaries that diverge with probability 1 (Definition 8) |
-| EN-5 digital | `expected elapsed until holds(B)` | the same | KNPS 2006 Theorem 27 (checked) |
-| EN-5 digital | Deadline events, `steps` and `accumulate` within a time horizon, each `on origin`; `M <= c` of an elapsed measure that starts at position 0 on every run | the same | Proposition 23, argument B below |
+| EN-1 `digital-clocks` | TT-1 over the discrete state; location reachability (`possible`) | Closed | KNPS 2006 Lemma 17 (checked: `t - t' ~ c` for `~` in `<=`, `=`, `>=` survives rounding with any threshold) and Lemma 20 with the proof of Proposition 23 (a path diverges exactly when its rounding does) |
+| EN-1 `digital-clocks` | Deadlock freedom | Closed | Lemma 17, Lemma 20 with Proposition 23's proof, argument D below |
+| EN-1 `digital-clocks` | The digitisable claims of FR-243 (a) to (f) | Closed | Lemma 17, Lemma 20 with Proposition 23's proof, argument A below |
+| EN-5 digital | Every claim form FSpec FR-421's table admits | Closed, class `given` | Argument G below |
+| EN-5 digital | Reachability and until over state predicates; `expected accumulate ... until` | Closed, class `free`, no time-lock | KNPS 2006 Theorem 24 (locations, minimum and maximum) and Theorem 27 (expected cost), both checked, over adversaries that diverge with probability 1 (Definition 8) |
+| EN-5 digital | `expected elapsed until holds(B)` | Closed, class `free`, no time-lock | KNPS 2006 Theorem 27 (checked) |
+| EN-5 digital | Step-bounded and long-run measures that read only the sequence of discrete steps | Closed, class `free`, no time-lock | Argument S below (argument below) |
+| EN-5 digital | Deadline events; `steps` and `accumulate` within a time horizon; a `weighted by R` fraction over `[0, h]`, `R` reading no clock; each `on origin`; `M <= c` of an elapsed measure that starts at position 0 on every run | Closed, class `free`, no time-lock | KNPS 2006 Proposition 23 (checked) with argument B below (argument below) |
+| EN-5 digital | The maximum, with no fairness set, of the probability of a reachability, until or deadline event over state predicates, which is the minimum of the matching `always` | Closed, class `free`, a time-lock reachable | Argument E below (argument below) |
 | EN-5 region | Every other exact probabilistic timed claim with `discrete` or free delays | Any such subject | Region graph of a probabilistic timed automaton (Kwiatkowska, Norman, Segala and Sproston, 2002). Statement not checked. A claim monitor adds clocks to the region key |
 | EN-4 sampler | Statistical items | Every racing delay given | A measurement, not a proof (ADR-026 SS-2, SS-3) |
 | Replay | A counterexample or witness of any route | Any | Executes the concrete run (RL-1); no abstraction |
@@ -128,22 +123,31 @@ KNPS 2006 is M. Kwiatkowska, G. Norman, D. Parker and J. Sproston,
 Formal Methods in System Design 29.
 
 **Not on digital clocks.** Everything outside the table: a strict constraint
-or interval; any other bounded-window formula; in classes `free` and `mixed`,
-a form read from a position after position 0, a fraction over a time window, a
-`weighted by delay` long-run fraction, and any claim over a subject with a
-reachable time-lock; an unweighted fraction over a time window in every class;
-a mixed subject whose drawn window reads a clock that need not be whole; and,
-on EN-1, `always possible`, `unique path` and every claim FR-243 declines.
+or interval; any other bounded-window formula; any claim over a subject with
+some delays given and others not; in class `free`, a form read from a position
+after position 0, a `weighted by delay` fraction or long-run fraction, and,
+where a time-lock is reachable, every quantity but the one argument E covers
+(the minimum of such an event, the maximum of an `always`, every expectation
+and every other measure); an unweighted fraction over a time window in every
+class; and, on EN-1, `always possible`, `unique path` and every claim FR-243
+declines.
 
-**One case this table does not decide.** A workload race among two or more
-identities with free delays: choosing "this identity later than the winner"
-is a strict comparison, so the race is not a closed automaton edge and no row
-above is shown to cover it. The free-delay workload rule is held by a
-separate ruling; until it is made the route stays as FR-204 states.
+**One case this table does not decide.** A workload race in which a
+scheduler-chosen delay competes with another delay turns on the strict
+comparison "this delay less than that one", so it is not a closed automaton
+edge and no row above is shown to cover it. Against a given delay the subject
+is outside both classes and is read over regions (the `Overtake` vector). Among
+free delays only, the workload rule is held by a separate ruling; until it is
+made the route stays as FR-204 states.
 
 **Region measures with no route.** A `weighted by delay` measure turns on
 exact delays that a region key does not hold. Outside class `given` no route
-above is shown to decide it, and it settles a typed `Incomplete`.
+above decides it, and it settles a typed `Incomplete`. For a `weighted by
+delay` event over a time window the `Skew` vector shows integer times wrong.
+For the mean of a `weighted by delay` fraction and the long-run fraction there
+is no theorem here: KNPS 2006 Theorem 34 covers expected cost to a target with
+location-dependent rates, and was not shown to cover a ratio over a window or a
+long-run ratio.
 
 ### Arguments
 
@@ -161,17 +165,32 @@ fraction, or equal to it, does the same by symmetry.
 `D`, `t <= D` holds exactly when the rounded `t <= D`. The threshold does not
 depend on the run, so Proposition 23 gives one integer-time adversary under
 which a deadline event, or a count or sum over the positions stamped at most
-`D`, has the probabilities it has densely. Rounding down does the same for
-`t < D`. A reading from a later position `r` needs a threshold that depends on
-`r`, which differs between runs, so no single adversary is given and no row
-admits it. FSpec FR-421's examples and the vectors below show such readings
-are wrong on digital clocks.
+`D`, has the probabilities it has densely. A `weighted by R` fraction over
+`[0, D]` is the ratio of two such sums, a terminal stutter step weighing 0, so
+it is the same value on a run and on its rounding. Rounding down does the same
+for `t < D`. A reading from a later position `r` needs a threshold that depends
+on `r`, which differs between runs, so no single adversary is given and no row
+admits it.
 
-**M (mixed delays).** Where every clock that bounds a drawn identity's window
-is whole at the draw, the conditioned distribution depends only on whole
-values, so each draw is a probabilistic edge of a closed automaton and the
-`free` rows apply. Where one is not whole, rounding can admit a delay the
-dense window excludes and change the distribution, so no row applies.
+**S (discrete steps).** Rounding keeps the sequence of locations and discrete
+events of a run and maps an adversary that diverges with probability 1 to a
+randomized integer-time one that does (Proposition 23 and its proof), and every
+integer-time adversary is a dense one. So a measure that is a function of that
+sequence has the same set of attainable expectations and probabilities, and so
+the same minimum and maximum, on both.
+
+**E (maximum with a reachable time-lock).** The event is decided by a finite
+prefix. Every integer-time prefix is a dense prefix, and from every state some
+admitted continuation exists, one that lets time diverge or one that ends in a
+time-lock (FSpec FR-416 "Time divergence"), so the integer maximum is attained
+densely. Conversely, round each stamp of a dense prefix with one threshold:
+closed guards, invariants and deadlines still hold (Lemma 17, argument B), the
+discrete steps are the same, and a dense adversary's finite prefixes give, for
+each threshold, a randomized integer-time choice with the probabilities of the
+dense prefixes that round to it. So some integer-time adversary meets the event
+with at least the dense probability. Nothing here holds for a minimum: an
+integer-time adversary can fail to find a dense schedule that runs into a lock
+(`Split`, `Pinch`).
 
 **D (deadlock freedom).** A dense deadlock is a quiescent state from which no
 step is ever enabled. Delay it past every constant and round: the integer run
@@ -199,8 +218,21 @@ Each has a closed, diagonal-free subject.
   so `M = t + 1`. The dense minimum of `Pr(M <= 1 ms)` is 0, the integer one
   1/2. This applies to an elapsed quantile, and equally to a deadline, `steps`
   or `accumulate` horizon read from the position that starts `M`.
-- **Time-lock** (FSpec TC-374 `Split`): the dense minimum of reaching `Done`
-  is 0, the integer one 1/2.
+- **Given against free** (FSpec TC-374 `Overtake`): operations `a` and `b` at
+  `Init`, `c` and `d` after `b`, all of weight 1; `a` and `c` take exactly 1 ms,
+  `b` is free, and `d` is free with guard `z >= 1 ms`, `z` never reset. `d` is
+  reached with probability 1 densely (`b` at 1/2 ms) and with at most 1/2 at
+  integer times (`b` at 0 leaves `d` to tie with `c`; `b` at 1 ties with `a`).
+- **Time-lock, minimum** (FSpec TC-374 `Split`): the dense minimum of reaching
+  `Done` is 0, the integer one 1/2.
+- **Time-lock, maximum of an expectation** (FSpec TC-374 `Pinch`): `first` at
+  `t` in `[0, 1]` ms resets `z`, under `z <= 0` only `x <= 0` or `x >= 1` leads
+  on, so every `t` strictly between time-locks. The dense maximum of the
+  expected elapsed time to `Done` is infinite, the integer one 1 ms.
+- **`weighted by delay` event** (FSpec TC-374 `Skew`): a fair branch after a
+  free time `t` in `[0, 1]` spends `1 - t` or `t` in the counted states within
+  `[0, 2]` ms. Densely both reach 1/4 of the window at `t = 1/2`, probability 1;
+  at integer times exactly one does, probability 1/2.
 - **Count over an idle tail** (FSpec TC-374 `Burst`):
   `fraction holds(phase = 1) over [0, 1 ms]` is `(1 + m)/(2 + m)` for every
   `m >= 0`, supremum 1; whole-unit stutters give at most 2/3.
@@ -215,6 +247,9 @@ This record replaces the statements below; each now points here.
 | ADR-026 TD-1, TD-6 | Every claim over a time-locked state is vacuous | Temporal claims only; probabilistic items count the run (FSpec FR-416) |
 | ADR-028 TA-1, TA-3, TA-4 | A timed claim is read on the digital route when closed | The route admission table |
 | ADR-028 CE-7 | The product construction is shared with EN-1 | RL-1 and RL-2 |
+| ADR-028 SP-2 | EN-5 reuses `model_check`'s product, monitor translations and decomposition for every subject | For a timed subject, RL-1 and RL-2 |
+| ADR-026 SD-4 | A bounded-delay state where no identity races is `NotStochastic` | A time-lock |
+| FSL FR-921 | The checker shares the concrete run and the key type only | RL-7 |
 | FSL FR-196 Description | EN-5 reuses `model_check`'s product, monitors and decompositions | The concrete run is shared; EN-5's abstraction and products are its own |
 | FSL FR-243 Description | Only a probabilistic claim takes the digital-clock route | A temporal claim takes it on request |
 | FSL FR-204, FR-877, FR-924, FR-254 | Their own route and time-lock statements | FSpec FR-416, FSpec FR-421 and this table |
@@ -222,13 +257,20 @@ This record replaces the statements below; each now points here.
 ## Consequences
 
 - Items move from a digital-clock verdict to the region route, and settle
-  `Incomplete` until RL-3 is built: forms read from a later position, fractions
-  over a time window, and claims over subjects with a time-lock, in the
-  classes named above.
-- Digital admission in classes `free` and `mixed` needs a time-lock test over
-  the dense runs. EN-6's time-lock-freedom item asks only that some run lets
-  time diverge, which is weaker than "with probability 1" and does not answer
-  it.
+  `Incomplete` until RL-3 is built: claims over subjects with some delays given
+  and others not, forms read from a later position, unweighted fractions over a
+  time window, and, in class `free`, claims over subjects with a time-lock
+  other than the maximum argument E covers.
+- Behaviour the engine computes today on integer units for a mixed workload
+  race (FR-204-AC-6 to AC-12, FR-196-AC-14, FR-202-AC-8, FR-920-AC-4) is no
+  longer a basis for a verdict. Their stated values are unchanged; they are
+  met on the region route.
+- Digital admission in class `free` needs a test over the dense runs that no
+  reachable state is time-locked, except for the maximum argument E covers.
+  Where none is, a scheduler that diverges with probability 1 exists from every
+  reachable state: over the finitely many regions each state has a finite path
+  that lets a unit of time pass, taken with probability bounded below, and
+  following such paths does so infinitely often almost surely (argument below).
 - The sampler reads a time-locked sample (FSL FR-254).
 
 ## References

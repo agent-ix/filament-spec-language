@@ -126,7 +126,9 @@ server is available. Each estimate comes with its confidence and the grid
   its window, or at an idle tail. The window ends its time horizon after the
   activating position's stamp, and for `elapsed` after the stamp of the first
   position where `A` holds.
-- If a sample reaches a local time-lock before its horizon, where no
+- If a sample reaches a local time-lock before its horizon, where delay is
+  bounded and no identity races (one whose non-empty window holds no mass of
+  its distribution does not race, FSpec FR-420), or where no
   positive delay is admissible and no transition identity is enabled, then
   the sample ends there, and EN-4 SHALL read it as FSpec FR-416 "How claims
   read a time-lock" states: an event not yet met is not met, an `always` that

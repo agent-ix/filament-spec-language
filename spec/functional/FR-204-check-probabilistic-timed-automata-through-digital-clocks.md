@@ -86,16 +86,19 @@ unsupported cause `DelayDistribution{operation}`.
 - **Route.** The route of an exact probabilistic timed claim SHALL be the one
   FSpec FR-421 "Closed and strict conditions" gives, recorded with its
   justification in ADR-038's route admission table. It depends on the
-  subject's closedness and delay class (every delay given, none given, or
-  both), on whether a time-lock is reachable where a delay is not given, on
-  the claim form, and on the position the claim is read from. The digital MDP
-  SHALL decide no claim that rule does not admit; every other claim SHALL be
-  decided over the region MDP (FR-922), closed or not. The region MDP is
-  symbolic, advancing by region time successor (ADR-038 RL-3); while EN-5
-  cannot build the one a claim needs, the item settles a typed `Incomplete`,
-  never a digital value and never `unsupported`. A workload race among two or
-  more identities with free delays keeps the route this requirement states
-  below, pending the ruling on that rule (ADR-038).
+  subject's closedness and delay class (every delay given, or none given), on
+  whether a time-lock is reachable where no delay is given, on the claim form,
+  and on the position the claim is read from. The digital MDP SHALL decide no
+  claim that rule does not admit; every other claim SHALL be decided over the
+  region MDP (FR-922), closed or not. The region MDP is symbolic, advancing by
+  region time successor (ADR-038 RL-3); while EN-5 cannot build the one a claim
+  needs, the item settles a typed `Incomplete`, never a digital value and never
+  `unsupported`. A subject with some delays given and others not is not
+  admitted to the digital MDP: its post-draw race is the one stated below, the
+  integer-unit rows below are no basis for a verdict, and the item is decided
+  over the region MDP. A workload race among two or more identities with free
+  delays only keeps the route this requirement states below, pending the ruling
+  on that rule (ADR-038).
 - **Pending target times.** For some admitted forms the number of pending
   target times the claim's monitor keeps can grow without bound on the region
   MDP (an interval operator nested under another, read at arbitrarily many

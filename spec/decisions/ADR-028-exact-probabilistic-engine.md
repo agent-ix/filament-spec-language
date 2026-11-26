@@ -93,7 +93,7 @@ are cited as `ADR-024 PM-8`.
 | ID | Rule |
 | --- | --- |
 | SP-1 | **Engine EN-5.** EN-5 computes, over the full finite subject, the exact value or a sound interval of a probabilistic claim's quantity: a probability, a conditional probability, the expectation of a fraction, a long-run fraction or an expected reward. It decides the claim from that value, under a workload or over every scheduler, and every verdict carries evidence a checker verifies in exact rationals with no engine present: a certificate for a proof (§11), a witness for a refutation (§10). |
-| SP-2 | **Placement.** EN-5 lives in FSL layer A, crate `fsl-analyze`, module `exact_probabilistic`, beside `model_check` and `statistical`, above the qualified core (ADR-029 CB-3), and runs in ADR-018's stage S6c over E10. It reuses `model_check`'s product `TransitionSystem`, its monitor translations, its edge retention and its SCC decomposition, and reads FR-120's `ModelSystem` from layer 5, `fsl-eval`. It reads the monitor translation and enabledness from `fsl-eval` (ADR-018 LA-5), so its checker rebuilds the product with no `fsl-analyze` code. Its verdict types (`ExactOutcome`, `ProductKey`, the certificate and witness types), its witness replay arm, its certificate checker and its settlement map live in layer 6, `fsl-replay`, beside `replay_model_trace` (§10, §11), as does every type CG reads. CG keeps the Kani C-09 map (ADR-013 C-09, ADR-011 T-13). FSL owns settlement only for its native engines, and that settlement lives in `fsl-replay`. Every EN-5 proof carries a certificate that the in-core checker checks (CE-4), so the rule that a proof whose engine has no core certificate checker settles `proved` labelled `uncertified` does not arise for EN-5. |
+| SP-2 | **Placement.** EN-5 lives in FSL layer A, crate `fsl-analyze`, module `exact_probabilistic`, beside `model_check` and `statistical`, above the qualified core (ADR-029 CB-3), and runs in ADR-018's stage S6c over E10. For an untimed subject it reuses `model_check`'s product `TransitionSystem`, its monitor translations, its edge retention and its SCC decomposition; for a timed subject it shares the concrete run only and builds its own abstraction, monitors, product and decompositions (ADR-038 RL-1, RL-2). It reads FR-120's `ModelSystem` from layer 5, `fsl-eval`. It reads enabledness, and for an untimed subject the monitor translation, from `fsl-eval` (ADR-018 LA-5), so its checker rebuilds the product with no `fsl-analyze` code. Its verdict types (`ExactOutcome`, `ProductKey`, the certificate and witness types), its witness replay arm, its certificate checker and its settlement map live in layer 6, `fsl-replay`, beside `replay_model_trace` (§10, §11), as does every type CG reads. CG keeps the Kani C-09 map (ADR-013 C-09, ADR-011 T-13). FSL owns settlement only for its native engines, and that settlement lives in `fsl-replay`. Every EN-5 proof carries a certificate that the in-core checker checks (CE-4), so the rule that a proof whose engine has no core certificate checker settles `proved` labelled `uncertified` does not arise for EN-5. |
 | SP-3 | **Evidence kind `exact`.** EN-5's provider manifest advertises (`probabilistic-satisfaction`, evidence `exact`) (ADR-024 SV-9). Routing by evidence kind is FSpec FR-290's negotiation rule, which FSL does not restate. One claim may be requested with either kind; the two results are separate items with separate terminal records. |
 | SP-4 | **Confidence parameters.** ADR-024 PF-10's `α`, `β` and `ι` are for statistical evidence only (ADR-024 RU-6, RU-2 here). When a claim states them they stay part of its obligation identity; EN-5 decides the claim's bound itself, which entails every stated confidence, so it reads none of them. A claim that states none is exact-only: statistical checking refuses it at negotiation (`MissingConfidence`, ADR-024 SV-5), and EN-5 checks it. |
 | SP-5 | **Proof from the engine's evidence.** An EN-5 `proved` leaves S6c with its certificate over ADR-018's E11, as a refutation leaves with its counterexample, and settles only after the layer-6 checker accepts the certificate (CE-5), as ADR-026 CF-4 states for EN-6. An EN-5 `refuted` settles only after its witness replays (WS-5). |
@@ -517,19 +517,19 @@ delays retain time divergence. Recompute maximal such components by the
 existing FS-4 refinement, additionally removing components without any
 observation edge; an ordinary zero-delay cycle still triggers TA-5 rather
 than gaining admission. Let R be the almost-sure winning region for reaching
-their union, obtained by the usual exact qualitative reachability graph
-check. Admissible continuations exist exactly in R. Only choices whose
-positive-probability successors all stay in R may appear on a finite prefix
-of an admitted scheduler, except that reaching a time-lock ends a run and is
-an allowed end of such a prefix (FSpec FR-416 "Time divergence", ADR-038).
-These choices retain every arbitrary finite wait;
+the union of those components and the time-locks, obtained by the usual exact
+qualitative reachability graph check. Only choices whose positive-probability
+successors all stay in R may appear on a finite prefix of an admitted
+scheduler, and reaching a time-lock ends such a prefix (FSpec FR-416 "Time
+divergence", ADR-038). These choices retain every arbitrary finite wait;
 they are not required to stay in an accepting component at every instant.
 
 For reachability, the supremum is the ordinary maximum over those choices
 in R: finite choices before success can be followed by an admissible policy.
 For the infimum, use FS-6's complement construction with the union of
-observation-admissible target-avoiding end components, including the actual
-fairness refinements. Until failure is checked at its observation letter.
+observation-admissible target-avoiding end components and of the time-locks
+reached with the target unmet, including the actual fairness refinements.
+Until failure is checked at its observation letter.
 For elapsed rewards, the minimum uses the target-reaching stochastic shortest
 path on R; a scheduler that does not reach the target has +infinity by the
 existing expected-until meaning. For the maximum, first apply that same
