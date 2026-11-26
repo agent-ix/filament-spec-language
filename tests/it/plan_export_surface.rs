@@ -3696,7 +3696,7 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
         (first, second)
     };
 
-    let unit = plan_unit("Int[0,0]", "", "true").replace(
+    let unit = plan_unit("Int[0,1]", "", "true").replace(
         "synthesis Reach",
         r#"temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber != 4) }
  synthesis Reach"#,

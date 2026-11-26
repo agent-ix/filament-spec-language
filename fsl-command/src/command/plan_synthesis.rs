@@ -312,12 +312,16 @@ pub(super) fn run(
     }
     for policy in &policies {
         if let Some(population) = system.unlisted_population_overlapping(&policy.clause().over().1) {
-            let package = population
-                .key
-                .package
-                .strip_prefix("ix://")
-                .unwrap_or(&population.key.package);
-            let identity = format!("ix://{package}/{}", population.key.node);
+            let identity = if population.key.node.starts_with("ix://") {
+                population.key.node.clone()
+            } else {
+                let package = population
+                    .key
+                    .package
+                    .strip_prefix("ix://")
+                    .unwrap_or(&population.key.package);
+                format!("ix://{package}/{}", population.key.node)
+            };
             return Err(RunCause::SynthesisSnapshot {
                 file: initial.to_owned(),
                 record: Box::new(fsl_semantics::model::observation::AdmissionRecord {
