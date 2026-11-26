@@ -63,3 +63,4 @@ No stub or inflated evidence was found.
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-005 | low | FR-201-AC-5 was untagged and is now tagged by a test over the `link` quantile, not AC-5's `Opt` model (TC-636 step 5). AC-5's accepted half ("only `skip` tight") and its fixture remain untested while the matrix reports the criterion tagged | tools/fsl-probability-check/tests/it/value_bounds.rs:1579-1581 |
+| FND-005 | fixed | `("TC-636", "FR-201-AC-5")` tag removed; the test keeps `("TC-1197", "FR-201-AC-6")`, the rejection-locus criterion it asserts; `tight_activation` keeps `implements("FR-201-AC-5")` |
