@@ -3401,10 +3401,7 @@ impl<O> Checker<'_, '_, O> {
                     CertificateLocus::ModelState(state_key.clone()),
                 )
             };
-            let Some(starts) = self.live_initial(&state)? else {
-                return missing();
-            };
-            for (_, q, mark, zone) in starts {
+            for (_, q, mark, zone) in self.live_initial(&state)? {
                 let cell = self.cell_zone_of(&state, &zone)?;
                 let mut covered = None;
                 for &node in &certificate.initials {

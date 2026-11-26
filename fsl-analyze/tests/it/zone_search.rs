@@ -166,7 +166,7 @@ pub(crate) const SUBJECT: &str = "c";
 pub(crate) type Outcome = ZoneCheckOutcome<&'static str>;
 
 /// The `claim` occurrence of `world`'s first clause.
-fn claim_occurrence(world: &World) -> OccurrenceKey {
+pub(crate) fn claim_occurrence(world: &World) -> OccurrenceKey {
     fsl_replay::node_occurrence(&world.package.graph().temporal_clauses()[0])
 }
 

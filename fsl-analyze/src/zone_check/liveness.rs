@@ -95,6 +95,13 @@ impl Cells {
     }
 }
 
+/// The one way past an undefined reading: `q` stays and the claim is read no
+/// further. The certificate lists such a vertex as the reserved automaton
+/// state, so the checker, which enters every undefined reading, finds it.
+fn past(q: StateId, locus: UndefinedLocus, cause: UndefinedCause) -> Vec<Taken> {
+    vec![(None, q, Some(Box::new((locus, cause))))]
+}
+
 /// One vertex of the product.
 #[derive(Clone, Debug)]
 pub(super) struct LiveVertex {
@@ -112,7 +119,8 @@ pub(super) struct LiveVertex {
     pub(super) tail: bool,
     /// The initial state's index, for an initial vertex.
     pub(super) initial: Option<usize>,
-    /// Under a fairness, the undefined reading the behaviour has passed:
+    /// The undefined reading the behaviour has passed, under a fairness or
+    /// where no behaviour diverges from it:
     /// from there the claim is read no further, `q` stays and the vertex is
     /// in every automaton acceptance set, so a fair accepting cycle here is
     /// an admitted behaviour through that position, and none is none.
@@ -850,7 +858,8 @@ impl Run<'_, '_, '_> {
     /// How the position at `state` is taken from `q`, `passed` the undefined
     /// reading the behaviour is already past: the transitions, or, with no
     /// fairness declared, the undefined reading, which the caller settles at
-    /// once. Under a fairness an undefined reading is entered instead
+    /// once and, if no behaviour diverges from it, enters with [`past`].
+    /// Under a fairness an undefined reading is entered here
     /// ([`LiveVertex::undefined`]), since only the finished product says
     /// whether a fair behaviour passes through it.
     fn take(
@@ -877,7 +886,7 @@ impl Run<'_, '_, '_> {
                 if live.universal || live.cells.constrained.is_empty() {
                     Err((locus, cause))
                 } else {
-                    Ok(vec![(None, q, Some(Box::new((locus, cause))))])
+                    Ok(past(q, locus, cause))
                 }
             }
         })
@@ -895,10 +904,12 @@ impl Run<'_, '_, '_> {
                 Ok(taken) => taken,
                 Err((locus, cause)) => {
                     let at = Origin::Initial(index);
-                    if let Some(found) = self.undefined(live, at, &state, &zero, locus, cause)? {
+                    if let Some(found) =
+                        self.undefined(live, at, &state, &zero, locus.clone(), cause.clone())?
+                    {
                         return Ok(Some(found));
                     }
-                    continue;
+                    past(live.start, locus, cause)
                 }
             };
             for (read, q, undefined) in taken {
@@ -1014,11 +1025,18 @@ impl Run<'_, '_, '_> {
                     Ok(taken) => taken,
                     Err((locus, cause)) => {
                         let origin = Origin::Edge(at, via);
-                        let found = self.undefined(live, origin, &post, &next, locus, cause)?;
+                        let found = self.undefined(
+                            live,
+                            origin,
+                            &post,
+                            &next,
+                            locus.clone(),
+                            cause.clone(),
+                        )?;
                         if let Some(found) = found {
                             return Ok(Expansion::Found(Box::new(found)));
                         }
-                        continue;
+                        past(vertex.q, locus, cause)
                     }
                 };
                 for (read, q, undefined) in taken {

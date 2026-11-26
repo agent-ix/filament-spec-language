@@ -9,7 +9,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Meter, Undefined};
-use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
+use fsl_analyze::model_check::digital::{
+    check_digital, DigitalLimits, DigitalRefusal, DigitalRequest,
+};
 use fsl_analyze::zone_check::{ZoneCheckLimits, ZoneCheckOutcome, ZoneUndecided};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::TimedVacuity;
@@ -897,6 +899,19 @@ fn expected_on_both_routes<const N: usize>(
         .collect()
 }
 
+/// [`expected_on_both_routes`] for fair claims over a clock constraint, which
+/// EN-1 declines `invalid-input` (FR-243-AC-7).
+fn expected_with_digital_declined<const N: usize>(
+    per_claim: [(&str, &str); N],
+) -> Vec<(String, String, String)> {
+    let mut expected = expected_on_both_routes(per_claim);
+    for entry in &mut expected[N..] {
+        "declined".clone_into(&mut entry.1);
+        "invalid-input".clone_into(&mut entry.2);
+    }
+    expected
+}
+
 /// FR-232 "Vacuity", FR-240 "Vacuity": FR-232-AC-3's `Stall` is closed and has
 /// no time-divergent behaviour, so every claim over it, the false one
 /// included, is `inconclusive` `no-admitted-behaviour` on both routes, with
@@ -1010,7 +1025,7 @@ const IDLE_OR_GO: &str = "pre Idle using v on M::Call::idle { self.phase = 0 }\n
 /// hand over [`IDLE_OR_GO`]: `go` breaks `phase != 1`, at once or within the
 /// window; no step leaves `phase <= 1`; and a behaviour that idles past 3 ms
 /// has not reached `phase` 1 by then.
-#[trace("FSpec-FR-416-AC-10", "FSpec-FR-161-AC-16")]
+#[trace("FSpec-FR-416-AC-10", "FSpec-FR-161-AC-16", "FR-243-AC-7")]
 #[test]
 fn a_fair_invariant_or_window_claim_states_no_non_zeno_premise() {
     let items = items_on_both_routes(
@@ -1042,14 +1057,14 @@ fn a_fair_invariant_or_window_claim_states_no_non_zeno_premise() {
     for item in &items {
         assert_eq!(item["record"]["non_zeno"], Value::Null, "{item}");
     }
+    // EN-6 decides all five; EN-1 declines each fair claim over `Busy`.
     let found: Vec<&str> = items.iter().map(label).collect();
-    let expected = ["proved", "refuted", "proved", "refuted", "refuted"];
-    assert_eq!(found[..5], expected, "{items:#?}");
-    // EN-1's verdict on `Window`, the eighth item, is not asserted: it fails
-    // replay on any TT-2 `always` window over a quiescent state, fair or not
-    // (QSL-3532).
-    assert_eq!(found[5..7], expected[..2], "{items:#?}");
-    assert_eq!(found[8..], expected[3..], "{items:#?}");
+    assert_eq!(
+        found[..5],
+        ["proved", "refuted", "proved", "refuted", "refuted"],
+        "{items:#?}"
+    );
+    assert_eq!(found[5..], ["declined"; 5], "{items:#?}");
 }
 
 /// From `phase` 0, `block` enters `phase` 2, where the invariant lets no time
@@ -1153,6 +1168,32 @@ fn digital_on(
     check_digital(&request, &Cancel::new())
         .expect("digital route accepts")
         .outcome
+}
+
+/// EN-1 declines `world`'s fair claim over a subject with a clock constraint
+/// (FR-243 rule (f)).
+fn digital_declines_fairness(world: &crate::timed_world::World) {
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("clause letters");
+    let request = DigitalRequest {
+        subject: &timed,
+        clause: node.clause(),
+        letters: &letters,
+        limits: UNLIMITED,
+    };
+    let found = check_digital(&request, &Cancel::new()).map(|checked| checked.outcome);
+    assert!(
+        matches!(
+            found,
+            Err(DigitalRefusal::NotDigitisable(fsl_replay::NotDigitisable {
+                rule: fsl_replay::NotDigitisableRule::FairnessOverClockConstraint,
+                ..
+            }))
+        ),
+        "{found:?}"
+    );
 }
 
 const UNLIMITED: DigitalLimits = DigitalLimits {
@@ -1524,8 +1565,9 @@ fn a_zero_time_loop_entered_by_a_delay_hides_no_violation() {
 /// FSpec FR-161 "Vacuity": `go` is enabled at every instant of the one
 /// divergent behaviour (the `idle` loop) and leads to a time-lock, so under
 /// `fair weak go` the subject admits no behaviour: every claim, the false one
-/// included, is `inconclusive` `no-admitted-behaviour` on both routes.
-#[trace("FSpec-FR-161-AC-15")]
+/// included, is `inconclusive` `no-admitted-behaviour` on EN-6. EN-1 declines
+/// each fair claim over a clock constraint (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-15", "FR-243-AC-7")]
 #[test]
 fn a_timed_claim_with_no_fair_behaviour_is_never_proved() {
     let model = "pre Idle using v on M::Call::idle { self.phase = 0 }\n\
@@ -1534,7 +1576,7 @@ fn a_timed_claim_with_no_fair_behaviour_is_never_proved() {
          post Gone using v on M::Call::go { self.phase = 2 and self.x = 0 ms }\n\
          time invariant Busy when { self.phase = 0 } { self.x <= 1 ms }\n\
          time invariant Done when { self.phase = 2 } { self.x <= 0 ms }\n";
-    let expected = expected_on_both_routes([("inconclusive", "no-admitted-behaviour"); 3]);
+    let expected = expected_with_digital_declined([("inconclusive", "no-admitted-behaviour"); 3]);
     let found = routes_over(
         "timed-no-fair-behaviour",
         &crate::timed_world::document(&["x"], &[("idle", &["x"]), ("go", &["phase", "x"])]),
@@ -1559,7 +1601,8 @@ fn a_timed_claim_with_no_fair_behaviour_is_never_proved() {
 /// FSpec FR-161 "Fairness over time": `phase` 3 is left only unfairly (the
 /// `idle` loop, with `go` always enabled) or into a time-lock, so a claim
 /// false only there holds on every fair behaviour; idling in `phase` 0 is one.
-#[trace("FSpec-FR-161-AC-16")]
+/// EN-1 declines the fair claim over a clock constraint (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-16", "FR-243-AC-7")]
 #[test]
 fn a_violation_only_on_unfair_behaviours_refutes_nothing() {
     let model = "pre Bad using v on M::Call::block { self.phase = 0 }\n\
@@ -1570,7 +1613,7 @@ fn a_violation_only_on_unfair_behaviours_refutes_nothing() {
          post Gone using v on M::Call::go { self.phase = 2 and self.x = 0 ms }\n\
          time invariant Busy when { self.phase = 3 } { self.x <= 1 ms }\n\
          time invariant Done when { self.phase = 2 } { self.x <= 0 ms }\n";
-    let expected = expected_on_both_routes([("proved", "")]);
+    let expected = expected_with_digital_declined([("proved", "")]);
     let found = routes_over(
         "timed-unfair-violation",
         &crate::timed_world::document(
@@ -1595,8 +1638,10 @@ fn a_violation_only_on_unfair_behaviours_refutes_nothing() {
 /// FSpec FR-161 "Vacuity" ahead of an undefined reading: the reading is
 /// undefined at `phase` 2, from which time diverges only on the `spin` loop
 /// that `fair weak go` rejects, and no behaviour at all is fair. Both routes
-/// settle `no-admitted-behaviour`, not `undefined-evaluation`.
-#[trace("FSpec-FR-161-AC-15")]
+/// that `fair weak go` rejects, and no behaviour at all is fair. EN-6
+/// settles `no-admitted-behaviour`, not `undefined-evaluation`; EN-1 declines
+/// the fair claim over a clock constraint (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-15", "FR-243-AC-7")]
 #[test]
 fn no_fair_behaviour_comes_before_an_undefined_refutation() {
     let world = kernel_world(
@@ -1616,18 +1661,7 @@ fn no_fair_behaviour_comes_before_an_undefined_refutation() {
          time invariant Done when { self.phase = 1 } { self.x <= 0 ms }\n",
         "fair weak M::Call::go; always holds(mod_defined(c.phase))",
     );
-    let system = world.system();
-    let digital = digital_on(&world, &system);
-    assert!(
-        matches!(
-            digital,
-            ModelCheckOutcome::Undecided {
-                cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
-                ..
-            }
-        ),
-        "{digital:?}"
-    );
+    digital_declines_fairness(&world);
     let zones = claim(&world, ZoneCheckLimits::default(), &Cancel::new());
     assert!(
         matches!(
@@ -1722,10 +1756,10 @@ fn unfair_phase_world(formula: &str) -> crate::timed_world::World {
 /// FSpec FR-416 "Undefined evaluation" refutes only at a position of an
 /// admitted behaviour. By hand: `fair weak go` rejects staying at `phase` 2,
 /// and `go` leads into a time-lock, so no admitted behaviour reaches the
-/// undefined reading; `rest` for ever is admitted. Both routes prove, and the
+/// undefined reading; `rest` for ever is admitted. EN-6 proves, and the
 /// FR-245 checker accepts the certificate, for an invariant claim and an
-/// eventuality alike.
-#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+/// eventuality alike. EN-1 declines each (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5", "FR-243-AC-7")]
 #[test]
 fn an_undefined_reading_only_on_unfair_behaviours_refutes_nothing() {
     for formula in [
@@ -1733,40 +1767,158 @@ fn an_undefined_reading_only_on_unfair_behaviours_refutes_nothing() {
         "fair weak M::Call::go; always eventually holds(mod_defined(c.phase))",
     ] {
         let world = unfair_phase_world(formula);
-        let system = world.system();
-        let digital = digital_on(&world, &system);
-        assert!(
-            matches!(digital, ModelCheckOutcome::HoldsReduced { .. }),
-            "{formula}: {digital:?}"
-        );
+        digital_declines_fairness(&world);
         let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
         assert_edges_cover(&world, &certificate);
     }
 }
 
 /// The same model under `fair weak spin`: looping at `phase` 2 is now fair,
-/// so `block` reaches the undefined reading on an admitted behaviour and both
-/// routes refute there, with a counterexample that replays.
-#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+/// so `block` reaches the undefined reading on an admitted behaviour and EN-6
+/// refutes there, with a counterexample that replays. EN-1 declines the fair
+/// claim over a clock constraint (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5", "FR-243-AC-7")]
 #[test]
 fn an_undefined_reading_on_a_fair_behaviour_still_refutes() {
     let world = unfair_phase_world("fair weak M::Call::spin; always holds(mod_defined(c.phase))");
-    let system = world.system();
-    let ModelCheckOutcome::Violated { counterexample, .. } = digital_on(&world, &system) else {
-        panic!("en-1 refutes");
-    };
-    let zones = violated(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
-    for counterexample in [*counterexample, zones] {
-        assert!(
-            matches!(
-                counterexample.kind,
-                CounterexampleKind::UndefinedEvaluation(_)
-            ),
-            "{counterexample:?}"
+    digital_declines_fairness(&world);
+    let counterexample = violated(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert!(
+        matches!(
+            counterexample.kind,
+            CounterexampleKind::UndefinedEvaluation(_)
+        ),
+        "{counterexample:?}"
+    );
+    assert_eq!(operations(&counterexample), ["block"]);
+    let settlement = replay(&world, &counterexample).expect("replays");
+    assert!(reproduced(&settlement), "{settlement:?}");
+}
+
+/// `rest` loops at `phase` 0 and `block` enters the time-locked `phase` 2,
+/// the one value at which `mod_defined` is undefined.
+fn locked_undefined_world(formula: &str) -> crate::timed_world::World {
+    kernel_world(
+        &[("block", &["phase", "x"]), ("rest", &["x"])],
+        "pre Block using v on M::Call::block { self.phase = 0 }\n\
+         post Blocked using v on M::Call::block { self.phase = 2 and self.x = 0 ms }\n\
+         pre Rest using v on M::Call::rest { self.phase = 0 }\n\
+         post Rested using v on M::Call::rest { self.x = 0 ms }\n\
+         time invariant Done when { self.phase = 2 } { self.x <= 0 ms }\n",
+        formula,
+    )
+}
+
+/// FSpec FR-416 "Undefined evaluation" refutes only at a position of an
+/// admitted behaviour. By hand, with no fairness: the one undefined reading is
+/// at `phase` 2, a time-lock, and resting at `phase` 0 for ever is admitted
+/// and satisfies the claim. EN-6 proves it and the FR-245 checker accepts the
+/// certificate, which enters the reading as the reserved automaton state.
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+#[test]
+fn an_undefined_reading_only_at_a_time_lock_is_certified_without_fairness() {
+    let world = locked_undefined_world("always eventually holds(mod_defined(c.phase))");
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_edges_cover(&world, &certificate);
+    assert!(certificate
+        .nodes
+        .iter()
+        .any(|node| node.automaton_state == fsl_replay::UNDEFINED_POSITION_STATE));
+}
+
+/// A node past an undefined reading is the checker's own reading: relabelling
+/// it as a claim automaton state, or claiming the reserved state for a node
+/// whose positions are all defined, is rejected, with a fairness and without.
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+#[test]
+fn a_tampered_undefined_position_state_is_rejected() {
+    let reserved = fsl_replay::UNDEFINED_POSITION_STATE;
+    let worlds = [
+        unfair_phase_world("fair weak M::Call::go; always holds(mod_defined(c.phase))"),
+        locked_undefined_world("always eventually holds(mod_defined(c.phase))"),
+        locked_undefined_world("always eventually holds(true)"),
+    ];
+    for (index, world) in worlds.iter().enumerate() {
+        let certificate = proved(claim(world, ZoneCheckLimits::default(), &Cancel::new()));
+        let rejects = |tampered: &crate::zone_search::Certificate, what: &str| {
+            let verdict = crate::zone_search::check(
+                world,
+                tampered,
+                fsl_replay::CertificateCheckLimits::default(),
+            );
+            assert!(
+                !matches!(verdict, Ok(fsl_replay::ZoneCertificateVerdict::Accepted)),
+                "world {index}, {what}: {verdict:?}"
+            );
+        };
+        let defined = certificate
+            .nodes
+            .iter()
+            .map(|node| node.automaton_state)
+            .find(|&state| state != reserved)
+            .expect("a defined node");
+        let past = certificate
+            .nodes
+            .iter()
+            .filter(|node| node.automaton_state == reserved)
+            .count();
+        assert_eq!(past > 0, index < 2, "world {index}");
+        for (at, node) in certificate.nodes.iter().enumerate() {
+            let mut tampered = certificate.clone();
+            tampered.nodes[at].automaton_state = if node.automaton_state == reserved {
+                defined
+            } else {
+                reserved
+            };
+            rejects(&tampered, &format!("node {at}"));
+        }
+        let mut tampered = certificate.clone();
+        for node in &mut tampered.nodes {
+            node.automaton_state = reserved;
+        }
+        rejects(&tampered, "every node reserved");
+    }
+}
+
+/// The checker enters an undefined reading with no fairness too, so its
+/// component reasons are what refuse a behaviour that stays past one. The
+/// proof under `fair weak go` stays at `phase` 2 only unfairly; held to the
+/// same claim with no fairness that behaviour is admitted, and no reason
+/// stated for the components makes the checker accept it.
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+#[test]
+fn no_component_reason_certifies_a_divergent_undefined_reading() {
+    use fsl_replay::{AcceptanceSet, ComponentReason};
+
+    let fair =
+        unfair_phase_world("fair weak M::Call::go; always eventually holds(mod_defined(c.phase))");
+    let certificate = proved(claim(&fair, ZoneCheckLimits::default(), &Cancel::new()));
+    let open = unfair_phase_world("always eventually holds(mod_defined(c.phase))");
+    let reasons = [
+        None,
+        Some(ComponentReason::Acyclic),
+        Some(ComponentReason::Lacks(AcceptanceSet::Divergence)),
+        Some(ComponentReason::Lacks(AcceptanceSet::Position)),
+        Some(ComponentReason::Lacks(AcceptanceSet::Automaton(0))),
+    ];
+    for reason in reasons {
+        let mut forged = certificate.clone();
+        forged.obligation.kind = fsl_route::deadlock::ObligationKind::Authored(
+            crate::zone_search::claim_occurrence(&open),
         );
-        assert_eq!(operations(&counterexample), ["block"]);
-        let settlement = replay(&world, &counterexample).expect("replays");
-        assert!(reproduced(&settlement), "{settlement:?}");
+        if let Some(reason) = &reason {
+            let components = forged.components.as_mut().expect("a component part");
+            components.reasons.fill(reason.clone());
+        }
+        let verdict = crate::zone_search::check(
+            &open,
+            &forged,
+            fsl_replay::CertificateCheckLimits::default(),
+        );
+        assert!(
+            matches!(verdict, Ok(fsl_replay::ZoneCertificateVerdict::Rejected(_))),
+            "{reason:?}: {verdict:?}"
+        );
     }
 }
 

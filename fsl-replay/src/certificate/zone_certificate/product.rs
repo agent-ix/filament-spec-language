@@ -26,11 +26,11 @@
 //! re-derived from the nodes and edges: that no fair accepting cycle lies
 //! in it.
 //!
-//! With no fairness declared, a reachable position whose letter is
-//! undefined is rejected `BadState`: the checker does not decide whether
-//! such a position diverges. Under a fairness the position is entered as
-//! [`UNDEFINED_POSITION_STATE`], and the component reasons must show that
-//! no fair behaviour passes through it.
+//! A position whose letter is undefined is entered as
+//! [`UNDEFINED_POSITION_STATE`], with a fairness or without, and the
+//! component reasons must show that no admitted behaviour passes through
+//! it: past it every automaton acceptance set holds, so a behaviour there
+//! that diverges and takes its positions is a fair accepting one.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -287,11 +287,10 @@ impl<O> Checker<'_, '_, O> {
     }
 
     /// How the position at `state` is taken from `q`: each target automaton
-    /// state with its transition; `None` when a reading there is undefined
-    /// and the clause declares no fairness. Under a fairness the behaviour
-    /// passes an undefined reading into [`UNDEFINED_POSITION_STATE`], where
-    /// it stays, so the component reasons must show that no fair behaviour
-    /// passes through it (FSpec FR-161, FR-416).
+    /// state with its transition. The behaviour passes an undefined reading
+    /// into [`UNDEFINED_POSITION_STATE`], where it stays, so the component
+    /// reasons must show that no admitted behaviour passes through it
+    /// (FSpec FR-161, FR-416).
     #[implements("FSpec-FR-161-AC-16")]
     fn take(
         &self,
@@ -299,7 +298,7 @@ impl<O> Checker<'_, '_, O> {
         q: usize,
         state: &ModelSimState,
         initial: bool,
-    ) -> Step<Option<Vec<(usize, ClockedEdge)>>, O> {
+    ) -> Step<Vec<(usize, ClockedEdge)>, O> {
         let live = self.live()?;
         let past = || {
             vec![(
@@ -312,17 +311,16 @@ impl<O> Checker<'_, '_, O> {
             )]
         };
         if q == UNDEFINED_POSITION_STATE {
-            return Ok(Some(past()));
+            return Ok(past());
         }
         let Some(letter) = self.letter(instance, state, initial)? else {
-            return Ok((!live.fairness.is_empty()).then(past));
+            return Ok(past());
         };
-        Ok(Some(
-            self.reads(instance, q, letter)?
-                .into_iter()
-                .map(|read| (read.target.index(), read))
-                .collect(),
-        ))
+        Ok(self
+            .reads(instance, q, letter)?
+            .into_iter()
+            .map(|read| (read.target.index(), read))
+            .collect())
     }
 
     /// The checker's automaton state of index `q`, one it has reached.
@@ -340,15 +338,13 @@ impl<O> Checker<'_, '_, O> {
     pub(super) fn live_initial(
         &self,
         state: &ModelSimState,
-    ) -> Step<Option<Vec<(usize, usize, ProductMark, Zone)>>, O> {
+    ) -> Step<Vec<(usize, usize, ProductMark, Zone)>, O> {
         let live = self.live()?;
         let mut found = Vec::new();
         // The admission instance is read only when the certificate has one.
         let admission = (0..self.certificate.nodes.len()).any(|node| self.admission(node));
         for instance in 0..live.instances.len() + usize::from(admission) {
-            let Some(taken) = self.take(instance, live.start.index(), state, true)? else {
-                return Ok(None);
-            };
+            let taken = self.take(instance, live.start.index(), state, true)?;
             for (q, read) in taken {
                 let mut zero = Zone::zero(self.dim());
                 self.read_at(&mut zero, &read)?;
@@ -369,7 +365,7 @@ impl<O> Checker<'_, '_, O> {
                 }
             }
         }
-        Ok(Some(found))
+        Ok(found)
     }
 
     /// FR-232's enabledness of `step` over clocks: each convex part of its
@@ -576,9 +572,7 @@ impl<O> Checker<'_, '_, O> {
                     if next.is_empty() {
                         continue;
                     }
-                    let Some(taken) = self.take(instance, q, step.post(), false)? else {
-                        return reject(CertificateRule::BadState, at_node(node));
-                    };
+                    let taken = self.take(instance, q, step.post(), false)?;
                     for (target_q, read) in taken {
                         let mut read_zone = next.clone();
                         self.read_at(&mut read_zone, &read)?;
@@ -681,9 +675,7 @@ impl<O> Checker<'_, '_, O> {
             }
         }
         if mark.tail || self.idles_at(state)? {
-            let Some(taken) = self.take(instance, q, state, false)? else {
-                return reject(CertificateRule::BadState, at_node(node));
-            };
+            let taken = self.take(instance, q, state, false)?;
             for (target_q, read) in taken {
                 let mut read_zone = zone.clone();
                 self.read_at(&mut read_zone, &read)?;
