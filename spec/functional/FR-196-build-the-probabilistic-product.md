@@ -198,7 +198,7 @@ without it replays to several model states. Every other step has
 `ProductAction` is the following new closed semantic action type, owned with
 ProductKey in fsl-replay. The untimed build uses its first three members,
 `Identity`, `PostState` and `TerminalStutter`; the six delay, observation
-and race members exist in a timed product only (FR-204). `Reset` is never an
+and race members and `EnterIdleTail` exist in a timed product only (FR-204). `Reset` is never an
 edge of the product: it names the action the reset process adds
 ("Conditioned readings") where a certificate policy chooses it. The enum below is the
 `fsl-replay` form, whose `PostState` holds the canonical `ProductKey`; the
@@ -214,6 +214,7 @@ pub enum ProductAction {
     EnterIdleDelay,             // positive delay committing to TS-5 idle tail
     IdleDelay,                  // positive delay already in idle tail
     IdleObserve,                // clock-valued observation, no additional elapsed time
+    EnterIdleTail,              // zero-time move to a bounded-window tail-entry state ("Idle tail of a timed window monitor")
     WorkloadResolve { identity: ScheduledIdentity, delay: u64 }, // all-free workload race choice (FR-204)
     FreeDelays(Vec<FreeDelayRow>), // mixed given/free workload race: post-draw free delays (FR-204, ADR-026 SD-3)
     Reset,                       // the reset process's step back to the instance's initial key ("Conditioned readings")
@@ -227,6 +228,7 @@ pub struct FreeDelayRow {
 Canonical semantic action bodies use exactly `["identity",schedule]`,
 `["post-state",product_key]`, `["terminal-stutter"]`, `["delay"]`,
 `["enter-idle-delay"]`, `["idle-delay"]`, `["idle-observe"]`,
+`["enter-idle-tail"]`,
 `["workload-resolve",schedule,delay]`,
 `["free-delays",[[given,free],...]]` and `["reset"]` respectively, where `delay` is the digital
 unit count as a canonical unsigned decimal string, and where schedule uses the full existing schedule form below and product_key
@@ -255,6 +257,11 @@ deadline one digital unit and commits to idle-delayed. IdleDelay is enabled
 in idle-ready or idle-delayed, advances one digital unit and yields
 idle-delayed. IdleObserve is enabled only in idle-delayed, emits its current
 clock-valued stutter letter, increments no clock/reward and yields idle-ready.
+EnterIdleTail is enabled only on the region route of a timed bounded-window
+formula, exactly at the states where EnterIdleDelay would otherwise be
+enabled, and never together with it; it emits no letter, advances no clock,
+has elapsed reward zero and leads with probability 1 to the tail-entry state
+of "Idle tail of a timed window monitor".
 Each delay has elapsed reward one digital unit (1/scale in the model unit);
 Observe has elapsed reward zero. All delay guards/invariants still rederive.
 Identity/PostState follow the actual discrete draw/reset relation and emit
@@ -606,9 +613,12 @@ The rule:
 1. **Tail entry.** At a quiescent product state `q` whose `tail` is
    `"running"` and which admits TS-5's idle-tail alternative, the
    EnterIdleDelay moves of the region route SHALL NOT be built. In their
-   place `q` has one zero-time move, with probability 1, to the tail-entry
-   state `e(q)`: `q`'s complete product key with `tail` set to
-   `"idle-entry"` and every other member, the residual included, unchanged.
+   place `q` has one action `ProductAction::EnterIdleTail` (canonical body
+   `["enter-idle-tail"]`), with one edge of probability 1 and elapsed reward
+   zero, to the tail-entry state `e(q)`. The key of `e(q)` is `q`'s complete
+   product key with `tail` set to `"idle-entry"` and every other member
+   byte for byte unchanged; in particular its residual is `q`'s residual,
+   not the folded residual of item 3, which exists only inside the search.
    The position at `q`'s time stamp has already been read. `e(q)` is
    decided and has no successor. No `"idle-ready"` or `"idle-delayed"`
    state is part of a bounded-window region product. Every other move of
@@ -625,11 +635,15 @@ The rule:
    so the tail is deterministic once its stutter times are fixed, and these
    values are its extrema over every scheduler. The stutter times are the
    scheduler's choice under a workload as well (FR-920's residual
-   time-passing choices). A tail-entry state whose two values differ counts
-   as a state with more than one choice for FR-920's `optimization`
-   spelling.
-3. **Tail folding.** Before the search, the residual of `e(q)` SHALL be
-   folded on `q`'s discrete state, which no tail position changes. For each
+   time-passing choices). For FR-920's `optimization` spelling, every
+   tail-entry state counts as a state with more than one choice, whatever
+   its values, so a product that reaches a tail-entry state is never
+   spelled `workload`. Only the value for the item's own optimization (the
+   document's `optimization`) is computed, searched and counted; a value for
+   the other extremum is not part of the run.
+3. **Tail folding.** Before the search, a copy of the residual of `e(q)`
+   SHALL be folded on `q`'s discrete state; the key of `e(q)` keeps the
+   unfolded residual. Folding uses `q`'s discrete state, which no tail position changes. For each
    subformula the tail truth is: an atom without clock atoms, its value at
    `q`; `and` and `or`, their operands' tail truth where it decides them;
    `eventually_I p` and `p until_I q'` are tail-false when `p`, resp. `q'`,
@@ -671,8 +685,8 @@ The rule:
    - (c) the formula is in F and layer `L_K` is complete without the
      target, where `K = (m + 2) · Σ_{d=0..D} n^d`, `D = (n + 1)(⌊H⌋ + 1)`
      and `m` the number of obligations in the folded residual: the tail
-     value is the other value. Exact for F by the tail witness bound (the
-     QSL-3324 bound argument, Theorem 3.3, checked independently): when
+     value is the other value. Exact for F by the tail witness bound
+     (Theorem 3.3 of [the bound argument](../../docs/timed-window-tail-bound.md)): when
      some stutter set brings the residual to the target, one with at most
      `K` stutters in `(T, H]` does, `T` being `q`'s time stamp; for a
      minimum the bound is applied to the negation normal form dual, which
@@ -685,22 +699,32 @@ The rule:
    ends at (d), and that is the expected outcome; it is not a defect of an
    implementation.
 6. **Limit stop.** The states of a tail search SHALL count towards
-   `exact_prob.max_states` together with the product's own states. The count
-   is the number of reachable product states, tail-entry states included,
-   plus, for each tail-entry state, the number of states in its layers
-   `L_0` to `L_k`, `k` the layer at which (a), (b) or (c) decides it; each
-   tail search is counted separately even when two of them share a state.
-   When that count exceeds the limit (an undecidable search or an infinite
-   product has no finite count), the run SHALL stop with FR-203's
-   `Incomplete(LimitReached{MaxStates, value, exact_prob.max_states})`.
+   `exact_prob.max_states`, and towards no other limit: tail-search moves
+   are not product edges and spend no `exact_prob.max_transitions` capacity
+   (FR-203's transition check applies to the product's own edges,
+   `EnterIdleTail` included, only). The tail count of one tail-entry state
+   is the number of distinct keys in `L_0 ∪ … ∪ L_k`, where `k` is the layer
+   at which (a), (b) or (c) decides it, and the layer `L_k` is counted
+   complete even when (a) finds the target in it: an implementation that
+   meets the target part-way through `L_k` SHALL finish and count `L_k`
+   before it reports the value. A layer `L_{k+1}` found empty adds nothing.
+   The run's count is the number of reachable product states, tail-entry
+   states included, plus the tail count of every tail-entry state, each
+   tail search counted separately even when two of them share a key, and
+   only for the item's own optimization (item 2). The run SHALL stop with
+   FR-203's `Incomplete(LimitReached{MaxStates, value,
+   exact_prob.max_states})` exactly when that count exceeds the limit; an
+   undecided search or an infinite product has no finite count and always
+   stops. An implementation may stop as soon as the states it has counted
+   so far exceed the limit, because the run's count is at least that.
    Because the product and every layer are sets fixed by this rule, EN-5 and
-   the checker reach the same count on the same request, whatever order
-   they build in. The
+   the checker reach the same count, and so the same stop, on the same
+   request, whatever order they build in. The
    run SHALL NOT report a truncated or budgeted value, SHALL NOT settle
    `unsupported`, and SHALL NOT settle a verdict it has not decided. The same
    stop applies when the product before tail entry is itself not finite
    within the limit: positions before an idle tail can need unboundedly many
-   pending target times (the QSL-3324 `Try` model), and outside F a
+   pending target times (the `Try` model of the bound argument's §6), and outside F a
    zero-delay cycle can grow the residual without a new clock, because the
    normalization above has no absorption rule.
 7. **Time divergence.** Values over the product SHALL range over the
@@ -717,8 +741,14 @@ The rule:
 What this rule leaves unproved, stated so that no implementation reads it
 as settled:
 
-- (c) relies on a hand argument with one independent check (QSL-3324,
-  ticket comments 9f3b2629 and 72dbe987), not a machine-checked proof.
+- (c) relies on a hand argument with one independent check, recorded with
+  its stated limits in
+  [docs/timed-window-tail-bound.md](../../docs/timed-window-tail-bound.md),
+  not a machine-checked proof.
+- No criterion exercises (c). A tail whose layers stay nonempty needs a
+  nested formula (`n >= 2`), and then `K` is at least `2 · 127` even for
+  `H = 1`, far beyond a testable search; (c) is checked by inspection of
+  the rule only.
 - Attainment: on a finite product the minimum and maximum are attained by
   region-memoryless schedulers, realised concretely. That the concrete
   realisation of a found tail path can be chosen as a measurable function
@@ -1218,7 +1248,7 @@ result.
 | FR-196-AC-16 | Over FSpec FR-407-AC-18's model with a further action `stay` at `s0` that loops at `s0` without activating, the reset process sends the state after `a` from which `g` is unreachable back to `s0` and gives the end component `{s0}` under `stay` a reset action; the conditioned minimum is `1/2` and the maximum 1, never 0 by a scheduler that stays forever, and over the model without `stay`, under the workload choosing `a` and `b` with `1/2` each, the value is `3/5`. | Test (TC-3060) |
 | FR-196-AC-17 | Under `filament.temporal.event-position.false-extension/v1`, EN-5 builds the bounded formula product with its FR-338 monitor for the reachability/v1 subset FR-201 admits: `eventually[0,2] holds(P)` over FR-201-AC-13's horizon-2 model settles with its exact value `3/4`, and `always[0,1] holds(P)` over FR-201-AC-16's model has minimum `1/4` and maximum `3/4`, accepted at those bounds. Each product reads a formula position once at its model state and applies the event-position false-extension closure at terminal model states; EN-5 does not substitute the timed-deadline monitor or refuse these admitted forms as `unsupported` or `not-yet-implemented`. | Test |
 | FR-196-AC-18 | For a conditional reading whose reset process is built from a model with more than one canonical initial root, every product key in that reset process has the ninth `root` member equal to that root's zero-based index in FR-101 canonical initial-root order, including states reached after convergence and reset edges. For a single-root model, and for any model without a reset process, the key is exactly the existing eight-member canonical array with its existing RFC 8785 bytes. | Test |
-| FR-196-AC-19 | Over `Retx` of FR-204-AC-1, for `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)` on the region route, the behaviour whose first attempt at 1 ms is delivered reaches a quiescent running state `q` whose residual is `["and",["always","0","1","0"],["eventually","1","0","0"],["eventually","1","1","0"]]`. The product has no `"idle-ready"` or `"idle-delayed"` state; `q`'s idle-tail alternative is one move to the decided state with `q`'s key and `tail` `"idle-entry"`. Its tail value is `0` for the minimum, decided at layer `L_0` (a delay past 2 ms with no stutter rejects), and `1` for the maximum, decided at layer `L_5` (stutters at 2, 3, 4, 5 and 6 ms; no tail with fewer stutters accepts). EN-5 and FR-921's checker give these values for that key in the minimum's and the maximum's documents, and the overall values remain FR-204-AC-21's minimum `0` and maximum `99/100`. A document with that row's value changed is rejected `InequalityFails` at that key. A claim whose tail search reaches neither the target nor an empty layer within `exact_prob.max_states` stops `Incomplete(LimitReached{MaxStates, value, exact_prob.max_states})` with no truth value and no certificate. | Test |
+| FR-196-AC-19 | Over `Retx` of FR-204-AC-1, for `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)` on the region route, the behaviour whose first attempt at 1 ms is delivered reaches a quiescent running state `q` whose residual is `["and",["always","0","1","0"],["eventually","1","0","0"],["eventually","1","1","0"]]`. The product has no `"idle-ready"` or `"idle-delayed"` state; `q`'s idle-tail alternative is one move to the decided state with `q`'s key and `tail` `"idle-entry"`. Its tail value is `0` for the minimum, decided at layer `L_0` (a delay past 2 ms with no stutter rejects), and `1` for the maximum, decided at layer `L_5` (stutters at 2, 3, 4, 5 and 6 ms; no tail with fewer stutters accepts). EN-5 and FR-921's checker give these values for that key in the minimum's and the maximum's documents, and the overall values remain FR-204-AC-21's minimum `0` and maximum `99/100`. A document with that row's value changed is rejected `InequalityFails` at that key. For the maximum's item (`probability <= 0.99`), let `N` be the run's count of item 6 recorded by an instrumented run with the default limits; with `exact_prob.max_states` set to `N - 1` the item stops `Incomplete(LimitReached{MaxStates, N - 1, exact_prob.max_states})` with no truth value and no certificate, and with `N` it settles `proved` as FR-204-AC-21 states; the producer and the checker record the same `N`. Stop (c) is not exercised (see the rule's unproved list). | Test |
 
 ## Dependencies
 

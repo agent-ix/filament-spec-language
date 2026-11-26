@@ -102,14 +102,16 @@ would have refused the certificate before reading a value.
   alike. Two keys whose residuals differ in any byte are different states.
 - A bounded-window document SHALL hold a row for every tail-entry state of
   FR-196 "Idle tail of a timed window monitor": the region key with `tail`
-  `"idle-entry"`, valued with its tail value for the document's
+  `"idle-entry"` and every other member, the unfolded residual included,
+  byte for byte that of the quiescent state it is entered from, valued with its tail value for the document's
   optimization (0 or 1). It is a decided state: an entry of value 1 is a
   target and one of value 0 a rejecting decided state (FR-201), neither
   expanded, each with FR-201's decided-state rank 0. The document SHALL carry no stutter time, tail path, layer or
   tail-search member, and no row for an `"idle-ready"` or `"idle-delayed"`
   state of that product; the checker computes the tail value itself. A
-  `policy` names a state's move to its tail-entry state like any other
-  move, never a stutter time.
+  `policy` names a state's move to its tail-entry state by the action body
+  `["enter-idle-tail"]` (FR-196 `ProductAction::EnterIdleTail`), never a
+  stutter time.
 - For `expected-elapsed` on the region route, the key SHALL be the region key
   with the model member's tag `"boundary-region"` and a trailing `corner`, one
   canonical integer string per clock entry in entry order, then the deadline

@@ -81,8 +81,10 @@ share:
    tail value, by its own search code, together with that rule's end
    components of undecided states (its item 7, FR-924). A tail-entry row
    whose value differs from the checker's tail value rejects
-   `InequalityFails` at that key. When the checker's count under that
-   rule's item 6 exceeds the limit it checks under, the check stops with
+   `InequalityFails` at that key. The checker computes that rule's item 6
+   count (complete deciding layers, the document's optimization only, no
+   transition capacity spent by tail moves). When it exceeds the limit the
+   checker checks under, the check stops with
    FR-203's typed `Incomplete(LimitReached{…})` before any truth value, as
    any limit reached before checking completes does; it neither accepts nor
    rejects the document;

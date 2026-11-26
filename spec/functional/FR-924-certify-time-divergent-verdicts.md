@@ -46,8 +46,9 @@ value per pair equal to its best exit, and rejects the Zeno certificate.
 ## Behavior
 
 - A zero-time action SHALL be one whose every outcome takes no time: a
-  discrete move, a `WorkloadResolve`, a race won at delay 0, or
-  `IdleObserve`. The checker SHALL compute, by its own end-component
+  discrete move, a `WorkloadResolve`, a race won at delay 0, `IdleObserve`
+  or `EnterIdleTail` (whose target is decided, so it is never inside a
+  component). The checker SHALL compute, by its own end-component
   decomposition, the maximal end components of the rebuilt product whose
   actions are all zero-time and whose states are undecided.
 - All states of such a component SHALL carry one value. Its exits are the
