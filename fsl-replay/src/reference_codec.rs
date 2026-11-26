@@ -181,11 +181,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
         transition: &ModelTransition,
     ) -> Result<Value, ReferenceCodecError> {
         self.scope.member(name, |scope| {
-            self.codec.encode_transition_in(
-                transition,
-                scope,
-                crate::outcome::task_source_operation,
-            )
+            self.codec.encode_transition_in(transition, scope)
         })
     }
 
@@ -285,7 +281,8 @@ impl ReferenceScope<'_, '_, '_, '_> {
         })
     }
 
-    /// Encode a native transition with the generic operation identity intact.
+    /// Encode a native transition, a source arm included, with `operation`
+    /// spelled by FR-120's one writer rule.
     ///
     /// # Errors
     /// Retains the codec's typed identity, resource and cancellation failures.
@@ -293,8 +290,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
         &mut self,
         value: &ModelTransition,
     ) -> Result<Value, ReferenceCodecError> {
-        self.codec
-            .encode_transition_in(value, &mut self.scope, identity_text)
+        self.codec.encode_transition_in(value, &mut self.scope)
     }
 
     /// Restore native canonical values before transition construction.
@@ -307,21 +303,6 @@ impl ReferenceScope<'_, '_, '_, '_> {
     ) -> Result<ModelTransition, ReferenceCodecError> {
         self.codec
             .restore_transition_in(value, &mut self.scope, self.limits)
-    }
-
-    /// Encode the task-source arm using its existing operation-string adapter.
-    ///
-    /// # Errors
-    /// Retains reference and caller resource/cancellation failures.
-    pub fn encode_task_transition(
-        &mut self,
-        value: &ModelTransition,
-    ) -> Result<Value, ReferenceCodecError> {
-        self.codec.encode_transition_in(
-            value,
-            &mut self.scope,
-            crate::outcome::task_source_operation,
-        )
     }
 
     /// Restore a task-source arm; its operation must be a string.
@@ -1381,7 +1362,11 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         // FR-120's reader rule: a string holding an identity text is that
         // text, any other string a name, and an object its canonical text.
         let operation = scope.member("operation", |s| match &map["operation"] {
-            Value::String(text) if crate::outcome::is_identity_text(text) => s.text(text),
+            Value::String(text)
+                if crate::written_operation::WrittenOperation::is_identity_text(text) =>
+            {
+                s.text(text)
+            }
             Value::String(_) | Value::Object(_) => {
                 let operation = s.json(&map["operation"], 0)?;
                 canonical_text(&operation, s, limits)
@@ -1457,14 +1442,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             path: String::new(),
             max_depth,
         };
-        self.encode_transition_in(transition, &mut scope, identity_text)
+        self.encode_transition_in(transition, &mut scope)
     }
 
+    #[implements("FR-120-AC-40")]
     fn encode_transition_in(
         &self,
         transition: &ModelTransition,
         scope: &mut Scope<'_, 'm>,
-        spell: for<'a> fn(&'a Value, &'a str) -> &'a str,
     ) -> Result<Value, ReferenceCodecError> {
         let identity = scope.member("operation", |s| parse_text(transition.operation(), s))?;
         if !matches!(identity, Value::String(_) | Value::Object(_)) {
@@ -1475,7 +1460,10 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         }
         // FSpec FR-181 writes the operation as one string.
         let operation = scope.member("operation", |s| {
-            s.text(spell(&identity, transition.operation()))
+            s.text(crate::written_operation::WrittenOperation::spelling(
+                &identity,
+                transition.operation(),
+            ))
         })?;
         let receiver = scope.member("receiver", |s| match transition.receiver() {
             None => Ok(Value::Null),
@@ -1615,11 +1603,6 @@ pub fn admit_native_value_bytes(
     let text =
         std::str::from_utf8(written).map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
     parse_text(text, &mut scope)
-}
-
-/// The generic transition arm's operation string: the identity text itself.
-fn identity_text<'a>(_: &'a Value, text: &'a str) -> &'a str {
-    text
 }
 
 fn parse_text(text: &str, scope: &mut Scope<'_, '_>) -> Result<Value, ReferenceCodecError> {
@@ -2020,6 +2003,7 @@ mod tests {
     }
 
     /// Trace: FSpec-FR-181, FSpec-FR-418-AC-11
+    #[trace("TC-471", "FR-120-AC-40")]
     #[test]
     fn call_reference_adapter_uses_checked_admission_and_environment() {
         use super::{ReferenceCodec, reference_fixture};
@@ -2142,7 +2126,7 @@ mod tests {
         )
         .unwrap();
         let transition = ModelTransition::new(
-            r#"{"name":"keep"}"#.to_owned(),
+            r#"{"node":"ix://test/tasks/Task/keep","package":"test/tasks"}"#.to_owned(),
             Some(native_text.clone()),
             vec![native_text],
             quire_canonical::Limits::new(100000),
@@ -2166,7 +2150,10 @@ mod tests {
             quire_canonical::Limits::new(100000),
         );
         let mut task_wire = carrier.encode_task_template(&template).unwrap();
-        assert_eq!(task_wire["release"]["operation"], "keep");
+        assert_eq!(
+            task_wire["release"]["operation"],
+            r#"{"node":"ix://test/tasks/Task/keep","package":"test/tasks"}"#
+        );
         assert_eq!(task_wire["release"]["receiver"], wire);
         assert_eq!(task_wire["source_transition"]["arguments"][0], wire);
         let restored = carrier.restore_task_template(&task_wire).unwrap();
@@ -2551,6 +2538,31 @@ mod tests {
                 .unwrap(),
             transition
         );
+        // FR-120-AC-40: the codec writes the name identity `"tick"` as the
+        // bare name and reads it back as that identity.
+        let named = filament_semantic_value::model_transition::ModelTransition::new(
+            r#""tick""#.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(100000),
+        )
+        .unwrap();
+        let named_wire = codec
+            .encode_transition(&named, &mut budget, &cancel, 64)
+            .unwrap();
+        assert_eq!(named_wire["operation"], "tick");
+        assert_eq!(
+            codec
+                .restore_transition(
+                    &named_wire,
+                    &mut budget,
+                    &cancel,
+                    64,
+                    quire_canonical::Limits::new(100000)
+                )
+                .unwrap(),
+            named
+        );
         // FR-120-AC-39: a literal spelling is a name, an object its canonical
         // text, and no other member is read.
         let mut restore_written = |operation: Value| {
@@ -2564,14 +2576,16 @@ mod tests {
                 quire_canonical::Limits::new(100000),
             )
         };
-        for name in ["true", "false", "null", "1", "[1]"] {
+        for name in ["tick", "true", "false", "null", "1", "[1]"] {
             assert_eq!(
                 restore_written(json!(name)).unwrap().operation(),
                 format!("\"{name}\"")
             );
         }
         assert_eq!(
-            restore_written(json!({"name": "tick"})).unwrap().operation(),
+            restore_written(json!({"name": "tick"}))
+                .unwrap()
+                .operation(),
             r#"{"name":"tick"}"#
         );
         for other in [json!(true), json!(1), json!([1]), json!(null)] {
