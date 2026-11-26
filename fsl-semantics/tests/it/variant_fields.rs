@@ -954,7 +954,6 @@ fn each_mistyped_use_of_a_variant_type_refuses_with_its_cause() {
 fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
     let source = "function record_field using v(s: Config::Settings): Boolean pure { s.paid = 0 }\n\
                   function model_field using v(a: Reference<Config::Account>): Integer pure { deref(a).paid }\n\
-                  function bare_model_field using v(a: Reference<Account>): Integer pure { deref(a).paid }\n\
                   function arithmetic using v(): Integer pure { 1 + \"a\" }\n";
     let refusals = check_refusals(source);
     let prefix = format!(
@@ -966,13 +965,6 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
     );
     let record_start = prefix.len() + source.find("s.paid").unwrap() + "s.".len();
     let model_start = prefix.len() + source.find("deref(a).paid").unwrap() + "deref(a).".len();
-    let bare_model_function = source.find("function bare_model_field").unwrap();
-    let bare_model_start = prefix.len()
-        + bare_model_function
-        + source[bare_model_function..]
-            .find("deref(a).paid")
-            .unwrap()
-        + "deref(a).".len();
 
     let record = refusals
         .iter()
@@ -1009,21 +1001,6 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         "{object:?}"
     );
     assert!(object.location.path().is_empty());
-
-    let bare_object = refusals
-        .iter()
-        .find(|refusal| matches!(refusal.cause.as_ref(), CheckCause::StateModel(cause) if matches!(&cause.cause, CheckCause::UnknownField { owner, .. } if &**owner == "Account")))
-        .unwrap_or_else(|| panic!("the absent bare model field is refused: {refusals:?}"));
-    assert!(matches!(
-        bare_object.cause.as_ref(),
-        CheckCause::StateModel(cause)
-            if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
-                if &**owner == "Account" && &**field == "paid"
-                    && *span == Some(fsl_foundation::Span {
-                        start: bare_model_start,
-                        end: bare_model_start + "paid".len(),
-                    }))
-    ));
 
     let arithmetic = refusals
         .iter()

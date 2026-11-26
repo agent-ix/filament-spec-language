@@ -396,6 +396,7 @@ impl ModelSpellings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
 
     fn source(identity: &str) -> RawSourceRef {
         RawSourceRef::new("repo".to_owned(), identity.to_owned()).expect("a source reference")
@@ -412,6 +413,36 @@ mod tests {
             types: vec![value_type],
             ..ModelName::default()
         }
+    }
+
+    /// FR-363-AC-9: a one-segment source-model type remains bare.
+    #[test]
+    #[trace("FR-363-AC-9")]
+    fn a_source_model_object_type_name_keeps_its_single_segment_spelling() {
+        let object = EffectiveId::new(
+            None,
+            filament_exact::OriginalDeclarationKey::new("source", "Account"),
+        );
+        let mut spellings = ModelSpellings::new(source("a"));
+        let package = spellings.add_package(selection("source"));
+        spellings.bind_model(&source("a"), super::super::source_model::ALIAS, Some(package));
+        spellings.set_names(
+            package,
+            package_names(
+                super::super::source_model::ALIAS,
+                [("Account", ModelName {
+                    object: Some(object.clone()),
+                    ..ModelName::default()
+                })],
+            ),
+        );
+
+        assert_eq!(
+            spellings
+                .object_type_name(Some(&source("a")), &object)
+                .as_deref(),
+            Some("Account")
+        );
     }
 
     /// Unit `a` selects package 0 as `M` and `N`, unit `b` binds `N` to
