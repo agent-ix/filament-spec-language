@@ -6,7 +6,8 @@
 //! `cargo xtask
 //! canonical-types [<workspace>]` runs on demand, over this workspace or the
 //! one named. `cargo xtask pin-check` checks Agent-IX git dependency pins;
-//! `cargo xtask merge-gate-recipe [--preflight] <changed-path>...` prints test commands.
+//! `cargo xtask merge-gate-recipe --workspace <path> [--preflight]
+//! <changed-path>...` prints test commands for that workspace.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
