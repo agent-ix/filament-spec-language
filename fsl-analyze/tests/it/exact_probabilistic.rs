@@ -5078,3 +5078,367 @@ fn until_avoidance_cannot_cross_an_already_reached_target() {
         ]
     );
 }
+
+/// FR-200 refinement, FR-1041 "Check": `s` and `u` form one SCC. Strong
+/// fairness to `z_go`, enabled at `s` alone and leaving the SCC for `g`,
+/// removes `s`; `{u}` remains a fair non-target end component.
+///
+/// By hand: `U = {u}`, so `v(g) = 1`, `v(u) = 0` and
+/// `v(s) = min(v(s), 1/2 v(g) + 1/2 v(u), v(u)) = 0`. The all-ones vector
+/// satisfies every Bellman equation and inequality and meets the threshold, so
+/// only the refined component rejects it, as `InequalityFails` at `u`.
+#[trace("TC-3150", "TC-635")]
+#[test]
+fn fair_checker_rejects_positive_values_on_a_component_refined_out_of_its_scc() {
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_replay::{
+        CertificateRole, ExactProbabilityCertificateCheck, ProbabilityCertificateLocus,
+        ProbabilityCertificateRule, SubsystemBoundKind,
+    };
+
+    const CLAIM: &str = "probabilistic FairGo using inf on M over (w: M::W) \
+         under every scheduler fair strong W::z_go on origin \
+         { probability >= rational(2,5) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_mec_refinement(CLAIM));
+    let product = built(&world, "FairGo");
+    assert_eq!(product.states.len(), 3);
+    let target = product
+        .labels
+        .iter()
+        .map(|labels| labels[0])
+        .collect::<Vec<_>>();
+    let s = start(&product);
+    let [g] = product
+        .ids()
+        .filter(|id| target[id.index()])
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one target state: {target:?}");
+    };
+    let [u] = product
+        .ids()
+        .filter(|id| *id != s && *id != g)
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one other state");
+    };
+
+    let system = ModelSystem::new(world.subject().simulation).expect("the model is admitted");
+    let claims = world.package.graph().probabilistic_model().claims();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("FairGo"))
+        .expect("canonical claim identity");
+    let binding = fsl_replay::claim_binding(&system, world.claim("FairGo"))
+        .expect("the claim binding is checked")
+        .map(|binding| binding.reference);
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    let key = |state: ProbStateId| {
+        fsl_replay::ProbabilityProductKey::for_model_state_with_limits(
+            binding.as_ref(),
+            &product.states[state.index()].model,
+            fsl_replay::ProbabilityDocumentIoLimits {
+                bytes: limits.bytes,
+                storage_bytes: limits.storage_bytes,
+            },
+            &Cancel::new(),
+        )
+        .expect("canonical product key")
+    };
+    // The exact document and the `lower` value-bounds document of one vector.
+    let check = |at_s: i64, at_u: i64, at_g: i64| {
+        let mut values = [(s, at_s), (u, at_u), (g, at_g)]
+            .map(|(state, value)| fsl_replay::ExactProbabilityValue {
+                state: key(state),
+                value: ratio(value, 1),
+            })
+            .to_vec();
+        values.sort_by(|left, right| left.state.cmp(&right.state));
+        let proof = fsl_replay::probability_proof_document(
+            &system,
+            claims,
+            &item,
+            &fsl_replay::ExactProbabilityCertificate { values },
+            limits,
+            &Cancel::new(),
+        )
+        .expect("the vector satisfies the local equations and ranks");
+        assert!(proof.is_fair_mdp());
+        let exact = fsl_replay::write_probability_proof_document(&proof, limits, &Cancel::new())
+            .expect("canonical exact document");
+        let lower = fsl_replay::write_value_bounds_proof_document(
+            &proof,
+            SubsystemBoundKind::Lower,
+            limits,
+            &Cancel::new(),
+        )
+        .expect("canonical lower document");
+        [
+            fsl_replay::check_probability_certificate_document(
+                &system,
+                claims,
+                &item,
+                &exact,
+                limits,
+                &Cancel::new(),
+            ),
+            fsl_replay::check_probability_certificate_document_as(
+                &system,
+                claims,
+                &item,
+                &lower,
+                CertificateRole::Claim,
+                limits,
+                &Cancel::new(),
+            ),
+        ]
+    };
+    for (route, checked) in ["exact", "lower"].into_iter().zip(check(1, 1, 1)) {
+        assert!(
+            matches!(
+                &checked,
+                Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+                    if rejection.rule == ProbabilityCertificateRule::InequalityFails
+                        && rejection.at == ProbabilityCertificateLocus::ProductState(key(u))
+            ),
+            "{route}: a positive value on the refined component: {checked:?}"
+        );
+    }
+    // The hand-derived vector passes every condition but the threshold.
+    for (route, checked) in ["exact", "lower"].into_iter().zip(check(0, 0, 1)) {
+        assert!(
+            matches!(
+                &checked,
+                Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+                    if rejection.rule == ProbabilityCertificateRule::ThresholdMissed
+                        && rejection.at == ProbabilityCertificateLocus::ProductState(key(s))
+            ),
+            "{route}: {checked:?}"
+        );
+    }
+}
+
+/// FR-1041-AC-6 over FR-1041-AC-1's `W`, whose `{s}` the strong constraint on
+/// `go` refines away. `never` requires `g` and `f` together, which no run
+/// reaches, so its constraint is retained and the value stays `1/2`. A cancel
+/// at meter charges across the run and work budgets short of the whole run
+/// settle `incomplete`.
+#[trace("TC-3150", "FR-1041-AC-6")]
+#[test]
+fn fair_eventual_stops_settle_incomplete_and_an_unused_constraint_changes_nothing() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, AnalyzeRecord, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{IncompleteCause, TerminalValue};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    const CLAIMS: &str = "probabilistic Used using inf on M over (w: M::W) \
+         under every scheduler fair strong W::go on origin \
+         { probability >= rational(1,2) [ eventually holds(w.g) ] }\n\
+         probabilistic Unused using inf on M over (w: M::W) \
+         under every scheduler fair strong W::go fair strong W::never on origin \
+         { probability >= rational(1,2) [ eventually holds(w.g) ] }";
+    let mut model = prob_world::fair_bounds_w(CLAIMS);
+    model.operations.push(prob_world::Operation {
+        name: "never",
+        parameters: vec![],
+        modifies: vec!["s"],
+        deletes: false,
+    });
+    model.body = model.body.replace(
+        "weight W::go = 1; }",
+        "weight W::go = 1; weight W::never = 1; }",
+    );
+    model.body.push_str(
+        "\npre NeverBoth using v on M::W::never { self.g and self.f }\n\
+         post Nevered using v on M::W::never { self.s = false }\n",
+    );
+    let world = World::new(&model);
+    let engines = Engines::fsl().expect("FSL engines");
+    let run = |claim: &str, edit: &dyn Fn(&mut ModelCheckLimits), work: u64, cancel: &Cancel| {
+        let mut limits = ModelCheckLimits::default();
+        edit(&mut limits);
+        let mut request = world.request(claim, limits);
+        request.subject.simulation.meter.work_units = work;
+        analyze_items(
+            &engines,
+            vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+            cancel,
+        )
+        .remove(0)
+    };
+    let work = world
+        .request("Unused", ModelCheckLimits::default())
+        .subject
+        .simulation
+        .meter
+        .work_units;
+    let unlimited = |_: &mut ModelCheckLimits| {};
+
+    // The unused constraint is in the objective and changes no value.
+    let document = |claim: &str| -> serde_json::Value {
+        let record = run(claim, &unlimited, work, &Cancel::new());
+        let terminal = record.terminal().expect("a terminal record");
+        assert!(
+            matches!(terminal.value(), TerminalValue::Proved { .. }),
+            "{claim}: {record:#?}"
+        );
+        serde_json::from_slice(
+            terminal
+                .exact_certificate_document()
+                .expect("the exact document"),
+        )
+        .expect("a JSON document")
+    };
+    let (used, unused) = (document("Used"), document("Unused"));
+    let records = |document: &serde_json::Value| {
+        document["objective"]["fairness"]
+            .as_array()
+            .expect("fairness records")
+            .len()
+    };
+    assert_eq!((records(&used), records(&unused)), (1, 2));
+    let numbers = |document: &serde_json::Value| {
+        let mut numbers = document["values"]
+            .as_array()
+            .expect("values")
+            .iter()
+            .map(|row| row["value"].to_string())
+            .collect::<Vec<_>>();
+        numbers.sort();
+        numbers
+    };
+    let mut by_hand = [(0, 1), (1, 2), (1, 1)]
+        .map(|(numerator, denominator)| {
+            serde_json::json!({
+                "numerator": numerator.to_string(),
+                "denominator": denominator.to_string()
+            })
+            .to_string()
+        })
+        .to_vec();
+    by_hand.sort();
+    assert_eq!(numbers(&used), by_hand);
+    assert_eq!(numbers(&unused), by_hand);
+
+    let stopped = |record: &AnalyzeRecord, what: &str| -> IncompleteCause {
+        let terminal = record.terminal().expect("a terminal record");
+        assert!(terminal.exact_certificate_document().is_none(), "{what}");
+        match terminal.value() {
+            TerminalValue::Incomplete(cause) => cause.clone(),
+            other => panic!("{what}: {other:?}"),
+        }
+    };
+
+    // Pre-cancellation.
+    let cancel = Cancel::new();
+    cancel.cancel(CancelCause::Requested);
+    assert_eq!(
+        stopped(&run("Unused", &unlimited, work, &cancel), "pre-cancelled"),
+        IncompleteCause::Cancelled {
+            source: CancelCause::Requested
+        }
+    );
+
+    // The state and edge limits are named with their value.
+    let one_state = |limits: &mut ModelCheckLimits| {
+        limits.limits = limits.limits.with_max_states(1);
+    };
+    assert_eq!(
+        stopped(&run("Unused", &one_state, work, &Cancel::new()), "states"),
+        IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::ExactProbMaxStates,
+            value: 1,
+            required: None,
+        }
+    );
+    let one_edge = |limits: &mut ModelCheckLimits| limits.limits.max_transitions = 1;
+    assert_eq!(
+        stopped(&run("Unused", &one_edge, work, &Cancel::new()), "edges"),
+        IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::ExactProbMaxTransitions,
+            value: 1,
+            required: None,
+        }
+    );
+
+    // Arithmetic.
+    let mut request = world.request("Unused", ModelCheckLimits::default());
+    request.subject.simulation.meter.integer_bits = 0;
+    let record = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert!(
+        matches!(
+            stopped(&record, "integer bits"),
+            IncompleteCause::LimitReached { value: 0, .. }
+        ),
+        "{record:#?}"
+    );
+
+    // Work budgets short of the whole run, spread over it up to the last unit.
+    let proves = |budget: u64| {
+        matches!(
+            run("Unused", &unlimited, budget, &Cancel::new())
+                .terminal()
+                .map(|terminal| terminal.value()),
+            Some(TerminalValue::Proved { .. })
+        )
+    };
+    let (mut short, mut enough) = (0, work);
+    assert!(!proves(short) && proves(enough));
+    while enough - short > 1 {
+        let middle = short + (enough - short) / 2;
+        if proves(middle) {
+            enough = middle;
+        } else {
+            short = middle;
+        }
+    }
+    for budget in (0..=8).map(|step| short * step / 8) {
+        let record = run("Unused", &unlimited, budget, &Cancel::new());
+        let cause = stopped(&record, &format!("work {budget}"));
+        assert!(
+            matches!(cause, IncompleteCause::LimitReached { value, .. } if value == budget),
+            "work {budget}: {cause:?}"
+        );
+    }
+    println!("work needed: {enough}");
+
+    // A cancel at meter charges spread over the whole run, up to the last.
+    let live = Cancel::new();
+    let counting = live.count_charges();
+    run("Unused", &unlimited, work, &live);
+    let total = live.charges();
+    drop(counting);
+    assert!(total > 0);
+    println!("charges: {total}");
+    for at in (0..=8).map(|step| 1 + (total - 1) * step / 8) {
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = AtomicU32::new(0);
+        let cancel = Cancel::observing(move || {
+            if polls.fetch_add(1, Ordering::Relaxed) + 1 == at {
+                weak.upgrade()
+                    .expect("the run owns the slot")
+                    .get()
+                    .expect("the slot is initialized")
+                    .cancel(CancelCause::Requested);
+            }
+        });
+        slot.set(cancel.clone()).expect("initialized once");
+        assert_eq!(
+            stopped(
+                &run("Unused", &unlimited, work, &cancel),
+                &format!("cancel at charge {at} of {total}")
+            ),
+            IncompleteCause::Cancelled {
+                source: CancelCause::Requested
+            }
+        );
+    }
+}
