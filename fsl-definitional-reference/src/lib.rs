@@ -20,7 +20,10 @@ use fsl_semantics::model::domain_package::{DomainPackageRecord, NativeValueType,
 use ix_trace_rs::implements;
 
 mod interpreter;
-pub use interpreter::{evaluate_boolean, ReferenceClockState, ReferenceFiniteState};
+pub use interpreter::{
+    evaluate_boolean, probability_weight, ReferenceClockState, ReferenceFiniteState,
+    ReferenceProbabilityWeight,
+};
 
 /// Maximum horizon enumerated by the reference's finite-horizon solver.
 pub const MAX_HORIZON_STEPS: usize = 256;

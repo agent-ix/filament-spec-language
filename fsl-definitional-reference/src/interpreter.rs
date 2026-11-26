@@ -14,6 +14,35 @@ const MAX_EXPRESSION_NODES: usize = 100_000;
 const MAX_EXPRESSION_DEPTH: usize = 256;
 const MAX_FINITE_STATES: usize = 1 << 16;
 
+/// A probabilistic support weight before the reference admits a transition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReferenceProbabilityWeight {
+    /// A literal exact rational from the checked package.
+    Literal(Rational),
+    /// Any authored expression, retained only so refusal can name it.
+    Expression(String),
+}
+
+/// Admits only exact literal rational weights for an interpreted transition.
+#[implements("FR-1051-AC-19")]
+pub fn probability_weight(
+    weight: &ReferenceProbabilityWeight,
+) -> Result<Rational, ReferenceRefusal> {
+    match weight {
+        ReferenceProbabilityWeight::Literal(value)
+            if value >= &Rational::from_integer(filament_exact::Integer::zero()) =>
+        {
+            Ok(value.clone())
+        }
+        ReferenceProbabilityWeight::Literal(_) => {
+            Err(unsupported("negative literal probability weight"))
+        }
+        ReferenceProbabilityWeight::Expression(_) => {
+            Err(unsupported("non-literal probability weight"))
+        }
+    }
+}
+
 /// One concrete finite state, indexed by object identity and field name.
 #[derive(Clone, Debug, Default)]
 pub struct ReferenceFiniteState {
@@ -523,7 +552,7 @@ fn unsupported(construct: impl Into<String>) -> ReferenceRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::ReferenceFiniteState;
+    use super::{probability_weight, ReferenceFiniteState, ReferenceProbabilityWeight};
     use filament_exact::{Integer, Rational, Value};
     use ix_trace_rs::trace;
 
@@ -561,5 +590,15 @@ mod tests {
             vec![Value::Rational(Rational::from_integer(Integer::one()))],
         )])
         .is_err());
+    }
+
+    #[trace("FR-1051-AC-19")]
+    #[test]
+    fn refuses_a_non_literal_probability_weight_without_a_value() {
+        let refusal = probability_weight(&ReferenceProbabilityWeight::Expression(
+            "self.weight".to_owned(),
+        ))
+        .expect_err("state-dependent transition weights are outside the fragment");
+        assert_eq!(refusal.construct, "non-literal probability weight");
     }
 }
