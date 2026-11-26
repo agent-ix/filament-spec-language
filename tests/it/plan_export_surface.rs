@@ -3473,8 +3473,11 @@ synthesis Reach"#,
         .split_once("hybrid Braking")
         .expect("the hybrid declaration follows its profile")
         .1;
-    let wrong_over_unit = format!(
-        "{unit}\nprofile p = \"filament.temporal.infinite-trace/v1\";\nhybrid Braking{braking}"
+    let wrong_over_unit = unit.replace(
+        "synthesis Reach",
+        &format!(
+            "profile p = \"filament.temporal.infinite-trace/v1\";\nhybrid Braking{braking}\nsynthesis Reach"
+        ),
     );
     let (exit, value) = plan_in(
         directory.path(),
@@ -3706,11 +3709,13 @@ population config_history: ConfigVersion;
         (first, second)
     };
 
-    let unit = plan_unit("Int[0,1]", "", "true").replace(
-        "synthesis Reach",
-        r#"temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber != 4) }
- synthesis Reach"#,
-    );
+    let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+model Config = "example/config-version";
+type Lengths = Int[0,1];
+temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber != 4) }
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
+"#;
     for (second_value, settings, status, exit_expected, states, work) in [
         (0, json!({}), "optimal", 0, 1, 3),
         (4, json!({}), "infeasible", 10, 1, 1),
