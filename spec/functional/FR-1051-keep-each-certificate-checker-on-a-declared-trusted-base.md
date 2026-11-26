@@ -79,7 +79,7 @@ relative to `fsl-replay/src` unless they name a crate.
 | Settling code | `model_check/settle.rs`, `model_check/graph_settle.rs`, `model_check/hyper_settle.rs`, `model_check/existential_settle.rs`, `model_check/refinement_settle.rs`, `model_check/step_settle.rs`, `model_check/step_safety.rs`, `hybrid.rs`, `proof_result.rs`, `proof_result/**` |
 | Trusted-base crates | the workspace crates `fsl-foundation`, `fsl-cst`, `fsl-source`, `fsl-forms`, `fsl-semantics`, `fsl-package`, `fsl-route`, `fsl-walk-grow` and `fsl-eval` (what checker code may name of `fsl-eval` is set by the Trusted base table) |
 | Out of scope | `statistical/**`, `protocol_analysis/**` |
-| Producer code | the crates `fsl-analyze`, `fsl-hybrid-reference`, `fsl-command`, `fsl-inspect`, `fsl-conformance`, `fsl-jit`, `tools/fsl-hybrid-test-provider` and the root crate `filament-spec-language`; and every file of `fsl-replay/src` in no other class |
+| Producer code | the crates `fsl-analyze`, `fsl-hybrid-reference`, `fsl-command`, `fsl-inspect`, `fsl-conformance`, `fsl-jit`, `tools/fsl-hybrid-test-provider` and the root crate `filament-spec-language`; and, in `fsl-replay/src`, the files `admitted.rs`, `application.rs`, `axes.rs`, `backends.rs`, `bounds.rs`, `build_inventory.rs`, `call_replay_context.rs`, `call_requirements.rs`, `call_site.rs`, `canonical_atom.rs`, `clause_evaluation.rs`, `compile.rs`, `composite.rs`, `exact_probabilistic.rs`, `execute/argument.rs`, `execute/composite_domain.rs`, `execute/composite_parity.rs`, `execute/composite_site.rs`, `execute/frame.rs`, `execute/object_environment.rs`, `execute/operator_parity.rs`, `execute/parity_identity.rs`, `execute.rs`, `execute/scalar_site.rs`, `execute/state_clause.rs`, `execute/value_parity.rs`, `hybrid/locus.rs`, `hybrid/process_request.rs`, `hybrid/provider.rs`, `identity.rs`, `id_text.rs`, `lib.rs`, `limits.rs`, `model_check/counterexample.rs`, `model_check/digital_state_graph.rs`, `model_check/existential_outcome.rs`, `model_check/hyper_counterexample.rs`, `model_check/hyper_outcome.rs`, `model_check/hyper_smt_outcome.rs`, `model_check/hyper_smt_query.rs`, `model_check/identity.rs`, `model_check/item.rs`, `model_check/limits.rs`, `model_check/outcome.rs`, `model_check.rs`, `model_check/smt_query.rs`, `model_check/state_graph.rs`, `model_check/subject_identity.rs`, `monitor_plan.rs`, `object_environment.rs`, `outcome/counterexample.rs`, `outcome/hint.rs`, `outcome.rs`, `planner/admitted_declaration.rs`, `planner/compose.rs`, `planner/composition_graph.rs`, `planner/declaration.rs`, `planner/entry.rs`, `planner/from_admitted.rs`, `planner/from_package.rs`, `planner/item.rs`, `planner/json.rs`, `planner/key_build.rs`, `planner/key.rs`, `planner/mismatch.rs`, `planner/request.rs`, `planner.rs`, `planner/settle.rs`, `planner/transfer.rs`, `product_action.rs`, `protocol_analysis.rs`, `reference_budget.rs`, `reference_codec/json.rs`, `reference_codec.rs`, `reference_codec/values.rs`, `refinement_query/handoff.rs`, `refinement_query.rs`, `replay_model_input.rs`, `request/package.rs`, `request.rs`, `result.rs`, `result/wire/replay/arms.rs`, `result/wire/replay.rs`, `result/wire.rs`, `result/wire/value.rs`, `scalar.rs`, `source_inventory.rs`, `statistical.rs`, `spine/bind.rs`, `spine/call.rs`, `spine/clause/clause_state/progress.rs`, `spine/clause/clause_state.rs`, `spine/clause/clause_state/snapshot.rs`, `spine/clause/correction.rs`, `spine/clause/late_data.rs`, `spine/clause/ledger_wire.rs`, `spine/clause/model_trace.rs`, `spine/clause/package_authentication.rs`, `spine/clause/progress.rs`, `spine/clause.rs`, `spine/clause/temporal/package_selection.rs`, `spine/clause/temporal/package_window.rs`, `spine/clause/temporal.rs`, `spine/clause/temporal/source_render.rs`, `spine/clause/trace_refusal.rs`, `spine/clause/trace_subject.rs`, `spine/clocks.rs`, `spine_eval_api.rs`, `spine/identity_form.rs`, `spine/lifecycle.rs`, `spine/native_fences.rs`, `spine/native_result/protocol.rs`, `spine/native_result.rs`, `spine/native_result/temporal/model_read.rs`, `spine/native_result/temporal.rs`, `spine/package_call.rs`, `spine/protocol_premises.rs`, `spine/protocol_proof.rs`, `spine/protocol_structure.rs`, `spine/query_proof.rs`, `spine/refinement.rs`, `spine/relationships.rs`, `spine/request.rs`, `spine.rs`, `spine/run_value/canonical.rs`, `spine/run_value/references.rs`, `spine/run_value.rs`, `spine/subject.rs`, `supplied_limits.rs`, `target.rs`, `task_transition.rs`, `timed.rs`, `value_check.rs`, `witness/derivation.rs`, `witness_entry_name.rs`, `witness/frame.rs`, `witness.rs`, `witness/state_clause.rs`, `witness/value.rs`, `witness/value_text.rs`, `written_operation.rs` |
 | Tools | `xtask`, `tools/arch-lint`, `fsl-string-edge`, `fsl-proptest-policy`, `fsl-bench`, `tests/fixtures/**`, `fuzz`, the mutation harness crate and the definitional reference crate |
 
 Classes are by file, except the two items of checker code inside the producer files `refinement_query.rs` and `outcome/counterexample.rs`. The Trusted base table says what checker code may name; it does not class files, so a file of `fsl-replay` whose type items are trusted base (rows B-11, B-12) is still producer or out-of-scope code for its functions.
@@ -111,6 +111,8 @@ from these paths only:
 - path token runs written inside macro arguments, as the api-surface rule
   matches them;
 - a bare path bound by a `use` leaf or glob import, and a path through a `type` alias, each naming the item it stands for;
+- the function paths a `serde` attribute writes as strings (`default`,
+  `with`, `serialize_with`, `deserialize_with`, `skip_serializing_if`);
 
 each resolved through the `pub use` re-exports of the workspace crates to
 the item it names. The check SHALL scan every non-test file with every
@@ -156,7 +158,7 @@ tests (AC-8).
 | B-9 | Position automaton | the position automaton of `fsl_eval::automaton` (`position_automaton` and the types it returns and reads: clocked edges, reads, stamps, window claims, atoms, letters, state ids, automaton errors) | the items the check's data records under B-9 |
 | B-10 | Declared route table and locked-run mapping | `fsl-eval`: the declaration of the route admission table (its rows and the names of the conditions each row tests, FSpec FR-421 "Closed and strict conditions") and of the mapping from a claim monitor kind and reading to the value of a locked run (FSpec FR-416 "How claims read a time-lock"), as data only. No function that tests a condition or reads a subject | data items only (constants, statics, type items) |
 | B-11 | Replay services | `request`, `bounds`, `limits`, `identity`, `execute`, `spine`, `application`, `model_check::identity`, `model_check::limits`, `spine_eval_api` | type items |
-| B-12 | Replay codecs and result data | `reference_codec`, `product_action`, `outcome`, `outcome::counterexample`, `result`, `result::wire`, `proof_result`, `witness`, `task_transition`, `exact_probabilistic`, `hybrid`, `protocol_analysis`, `model_check::counterexample`, `model_check::hyper_counterexample`, `model_check::graph_settle`, `model_check::outcome`, `model_check::state_graph`, `model_check::item` | type items |
+| B-12 | Replay codecs and result data | `reference_codec`, `product_action`, `outcome`, `outcome::counterexample`, `result`, `result::wire`, `proof_result`, `witness`, `task_transition`, `exact_probabilistic`, `hybrid`, `protocol_analysis`, `model_check::counterexample`, `model_check::hyper_counterexample`, `model_check::graph_settle`, `model_check::outcome`, `model_check::state_graph`, `model_check::item`, `written_operation` | type items |
 
 Named exception (B-10): the producer and the checker read one declared route
 table and one locked-run value mapping. It is permanent and is not one of
@@ -197,19 +199,21 @@ not caught by mutation; the false-claim corpus is the evidence against them.
   document), the checked package or byte provision, the claim and subject
   binding, the checker's limits and `&Cancel`.
 - A check entry SHALL NOT take, as a parameter, as `self`, or through a field
-  of a checker-code type it takes, a value of a producer-built type: a
-  `ModelSystem`, `TimedSystem`, `ProtocolSystem`, `TaskProductSystem`,
+  of any type it takes, a value of a producer-built type: a `ModelSystem`,
+  `TimedSystem`, `ProtocolSystem`, `TaskProductSystem`,
   `AbstractProtocolSystem`, `RefinementSystems` or `FiniteTracePopulation`;
-  a `dyn` object or generic implementation of `ModelLetters`,
-  `TemporalLetters`, `HyperLetters`, `TupleLetters`, `StepMatch` or
-  `ModelEvaluator`; a closure, function pointer or `dyn Fn*`; or a value that
-  carries behaviour of an S-1 to S-9 row (a translation, monitor, measure
-  plan, product or encoder, such as `BoundedTranslation`, `SafetyTranslation`,
-  `PropertyAutomaton`, `Monitor`, `QualifiedBoundedMonitor`, `MeasurePlan`,
-  `HyperProduct`, `ProjectedProduct` or `WitnessProduct`) or a reading of the
-  claim the checker must derive itself (the quantifier list `FiniteQuantifier`
-  of a finite hyper claim). The checker SHALL build its own from the checked
-  package.
+  any implementation of `ModelLetters`, `TemporalLetters`, `HyperLetters`,
+  `TupleLetters`, `StepMatch` or `ModelEvaluator`; a closure, function
+  pointer or `dyn Fn*`; a value that carries behaviour of an S-1 to S-9 row,
+  namely a `BoundedTranslation`, `SafetyTranslation`, `PropertyAutomaton`,
+  `Monitor`, `QualifiedBoundedMonitor`, `MeasurePlan`, `HyperProduct`,
+  `ProjectedProduct`, `WitnessProduct`, `CheckedStepMatch` or
+  `CheckedHyperLetters`; or the quantifier list `FiniteQuantifier` of a finite
+  hyper claim, a reading of the claim the checker must derive itself. The
+  checker SHALL build its own from the checked package.
+- Two implementations of those traits are not producer objects: the checked
+  package (`CheckedPackage`, or `BarePackage` on the package route) and a type
+  of checker code.
 - A plain data type an S row concerns is not a producer object: it carries no
   behaviour the producer supplies and no value the checker must derive. These
   are allowed: `AutomatonStateKey` (a certificate member the checker
@@ -229,6 +233,10 @@ each entry naming the row. The change that removes a sharing SHALL delete
 the row's entries, and the row when none is left, in the same change. No
 other exception is allowed.
 
+The check's data records items, not calling files. A new caller of an item a
+row already records passes the check; the review of the change that adds the
+caller is what refuses it.
+
 | ID | Rule broken | Code it concerns | Sharing | Removed by |
 | --- | --- | --- | --- | --- |
 | S-1 | Shared semantics | `fsl_eval::automaton` outside B-9; `model_check::item`'s translations | The EN-1 product translations, which ADR-028 CE-7 no longer permits: property-automaton, safety, bounded and qualified bounded monitor translations and their key contexts, used by the closure, SMT, zone, product-closure, hyper-replay and EN-5 checkers and by `fsl-analyze`; and the per-instance translations of a model-check item, built by the same code for both. AC-15 keeps CE-7 from permitting them again | QSL-3501 |
@@ -247,7 +255,7 @@ other exception is allowed.
 | S-14 | Shared semantics | `model_check/identity.rs` | Clause, state-graph and hyper identity derivation (`ClauseIdentity::of_admitted`, `StateGraphIdentity::resolve`, `HyperIdentity::resolve`), named by counterexample and graph replay and by `fsl-analyze` and settling code | QSL-3501 |
 | P-1 | Producer call into checker | `probability_certificate/document/measure.rs` | The checker's own objective plan, measure key and measure control, called by `fsl-analyze` exact measure and undefined-witness code | QSL-3501 |
 | P-2 | Producer call into checker | `probability_certificate.rs`, `probability_certificate/key_admission.rs`, `probability_certificate/document/timed.rs` | Product-key encoding (model-state, formula-state, digital and region keys, every budget and limit form), digital clock decoding and key accounting, called by `fsl-analyze` exact, candidate and digital analysis | QSL-3501 |
-| P-3 | Producer call into checker | `probability_certificate/document.rs`, `probability_certificate/document/{measure,mdp,partial,long_run}.rs`, `probability_certificate/witness.rs` | Writers that derive ranks, the objective, coverage, the bound ranking, the fair objective, fairness records, cyclic-MDP ranks and policy, partial ranks, long-run keys, optimisation and weight objective, or a subsystem's base objective | QSL-3501 |
+| P-3 | Producer call into checker | `probability_certificate/document.rs`, `probability_certificate/document/{measure,mdp,partial,long_run}.rs`, `probability_certificate/witness.rs` | Writers that derive ranks, the objective, coverage, the bound ranking, the fair objective, fairness records, cyclic-MDP ranks and policy, partial ranks, long-run keys, optimisation and weight objective, a subsystem's base objective, or which of the ranking and the policy a value-bounds certificate keeps | QSL-3501 |
 | P-4 | Producer call into checker | `probability_certificate/document/instances.rs` | The on-each producer lives in the checker file and shares its helpers with the on-each checker | QSL-3501 |
 | P-5 | Producer call into checker | `probability_certificate/bounded.rs`, `probability_certificate/cyclic.rs`, `probability_certificate/document.rs`, `probability_certificate.rs` | The monitor context, the subject admission (acyclicity, reward subject) and the claim identity and binding derivation, called by `fsl-analyze` before it writes | QSL-3501 |
 | P-6 | Producer call into checker | `refinement/**`, `refinement.rs` | The refinement step judge, subject admission and system opening, the abstract protocol system (stepping, keys, fairness), the protocol step view and the refinement liveness check and abstract classes, called by `fsl-analyze` refinement, contract and protocol analysis | QSL-3501 |
@@ -255,18 +263,19 @@ other exception is allowed.
 | P-8 | Producer call into checker | `certificate/closed_form/task_set.rs` | Closed-form subject admission and priority order, used by `fsl-analyze` schedulability analysis | QSL-3501 |
 | P-9 | Producer call into checker | `certificate/task_product.rs`, `certificate/task_product/**` | Task-product key order, transition identity, queue bounds and closure method, derived by checker functions for `fsl-analyze` task search | QSL-3501 |
 | P-10 | Producer call into checker | `certificate/product.rs` | The product-closure writer (fairness components, canonical closure), its key and the package-hyper subject binding, called by `fsl-analyze` hyper search | QSL-3501 |
-| P-11 | Producer call into checker | `hybrid_replay/**` | The hybrid checker's model reader, interval machine, box operations, flowpipe rule probe and class admission, used by `fsl-hybrid-reference` to build and probe boxes | QSL-3501 |
+| P-11 | Producer call into checker | `hybrid_replay/**` | The hybrid checker's model reader, interval machine, box operations, flowpipe rule probe, class admission and trace admission, used by `fsl-hybrid-reference` to build and probe boxes; trace admission is also called by the replay arm (`execute.rs`), the result wire code (`result/wire.rs`) and the plugin-result reader (settling code) | QSL-3501 |
 | P-12 | Producer call into checker | `contract_check.rs` | The operation-contract arm in `fsl-analyze` selects the claim, builds the target, enumerates declared and initial cases, evaluates each case and writes and reads its counterexample with the code its replay uses | QSL-3501 |
 | P-13 | Producer call into checker | `certificate/zone.rs` | Zone construction and DBM closure (`Zone::zero`, `Zone::from_matrix`), used by the zone producers to write certificates | QSL-3501 |
 | P-14 | Producer call into checker | `certificate/zone_certificate/task_check.rs` | The checker's task-product exploration and recomputed `task_product` member (`explore_task_product`, `recomputed_member`), re-exported at the `fsl-replay` crate root, whose only other callers are tests | QSL-3501 |
 | O-1 | Producer object | `probability_certificate.rs`, `probability_certificate/**` | The checked-subject form of the EN-5 checker and the probability witness replays take the producer's `ModelSystem` and compare it by pointer | QSL-3501 |
-| O-2 | Producer object | `model_check/replay.rs`, `certificate/zone_certificate.rs` | Counterexample replay and the zone checker read atoms through the producer's letters, and the reference-literal and timed replays step the producer's system | QSL-3501 |
+| O-2 | Producer object | `model_check/replay.rs`, `certificate/zone_certificate.rs`, `certificate/closure.rs`, `certificate/smt.rs` | Counterexample replay and the zone checker read atoms through the producer's letters, and the reference-literal and timed replays step the producer's system. The closure, SCC-components, protocol-closure and SMT proof checkers read every atom through the letters the producer put in the request's model-check item | QSL-3501 |
 | O-3 | Producer object | `outcome/counterexample.rs` | Task-product trace replay checks keys of the producer's own product object | QSL-3501 |
 | O-4 | Producer object | `model_check/refinement_replay.rs` | Refinement replay steps the systems the producer opened | QSL-3501 |
 | O-5 | Producer object | `model_check/hyper_replay.rs`, `model_check/finite_hyper_replay.rs`, `certificate/product.rs` | Hyper trace and match-witness replay take the producer's systems, letters and step matcher; model-relation replay takes its systems and evaluator; finite hyper replay decides with the producer's population, body closure and quantifier list; the package-hyper and model-relation closure requests carry the producer's evaluator | QSL-3501 |
 | O-6 | Producer object | `contract_check.rs` | The operation-contract replay reads the `ModelSystem` the producer opened through `self` | QSL-3501 |
 | O-7 | Producer object | `probability_certificate/document.rs`, `probability_certificate/document/mdp.rs`, `probability_certificate/document/long_run.rs`, `probability_certificate/witness.rs` | The test-support `*_observing` entries take the caller's `observe` closure, which receives each checker phase and returns nothing | QSL-3501 |
 | O-8 | Producer object | `certificate/zone_certificate.rs` | `check_zone_certificate` and `check_free_delay_zone_certificate` take the producer's `item_of` closure, which maps the certificate's obligation to the item identity the FR-245 identity check compares | QSL-3501 |
+| O-9 | Producer object | `certificate/closure.rs`, `certificate/product.rs`, `certificate/simulation.rs`, `certificate/smt.rs`, `certificate/state_graph.rs`, `certificate/zone_certificate.rs` | The zone, explicit state-graph, closure, SCC-components, protocol-closure, product-closure, SMT proof, refinement SMT proof and simulation checkers take the producer's model evaluator in the request's subject and evaluate the model's values with it | QSL-3501 |
 
 ### Routes
 
@@ -418,13 +427,13 @@ part of the fragment:
 | FR-1051-AC-1 | Over fixture crates, the arch-lint check fails when checker code names an item outside the trusted base and in no exception row, naming the file, line and the named item (for example a checker module that names `fsl_analyze::...` or `fsl_eval::probabilistic::MeasurePlan`), and passes when every named item is in the trusted base. | Test |
 | FR-1051-AC-2 | Over fixture crates, the check fails when a function defined outside checker code and outside the trusted base is named both by checker code and by producer code, naming the item and one site on each side, including when the producer names it by an associated-function path `T::f`; with the function named on one side only, or when it is a codec function, it reports nothing for it. | Test |
 | FR-1051-AC-3 | Over fixture crates, the check fails when producer code names a function or method of checker code that is neither a check entry nor a codec function, naming the item and the site; naming `check_probability_certificate_document`, `write_probability_certificate` or a checker type item passes. | Test |
-| FR-1051-AC-4 | Over fixture crates, the check fails when a check entry takes a producer-built value of "No producer objects" as a parameter, as `self` or through a field of a checker type it takes, including a closure parameter, naming the entry, the parameter or field and the type. | Test |
+| FR-1051-AC-4 | Over fixture crates, the check fails when a check entry takes a producer-built value of "No producer objects" as a parameter, as `self` or through a field of any type it takes, including a closure parameter, naming the entry, the parameter or field and the type. | Test |
 | FR-1051-AC-5 | Over fixture crates, the check reports a sharing whose only path is in code under `#[cfg(feature = "test-support")]`, one written inside a macro argument, one reached through a glob import and one through an `as` alias or a `pub use` re-export. | Test |
 | FR-1051-AC-6 | Over fixture crates, the check fails, naming the crate or file, when a workspace member crate or a non-test file of `fsl-replay` is in no class of "Classes of code" or in two. | Test |
 | FR-1051-AC-7 | On the repository, every finding of the check matches an entry of the check's data that names an exception row and the rule it breaks; a finding that matches no entry fails, naming the item and site. An exception entry that matches no finding fails as stale, naming the entry and its row. | Test |
 | FR-1051-AC-8 | The check fails, naming the entry, when an entry of its data names an item that does not exist (an entry recorded as planned, such as B-10 before QSL-3494, is exempt until its item exists), names a row, route or codec class that is not in this requirement's tables, names an item defined outside the modules its row concerns (for an O row, a check entry defined outside them), or breaks a rule other than its row's; naming the row, when an exception row of this requirement has no entry and is not recorded as planned; and, naming the item, when an item recorded under B-10 is a function or method. | Test |
 | FR-1051-AC-9 | A spec-consistency test reads this requirement's "Classes of code", Trusted base, exception, Routes and "No producer objects" text and fails, naming the difference, when the check's class paths, base rows with their extents, exception row IDs with their modules and rules, route IDs or producer-built type list differ from them. | Test |
-| FR-1051-AC-10 | The check fails, naming the entry, when a check entry of its data names no route, or a route of the Routes table has no check entry; and, naming the function, when producer code or settling code names a public checker-code function that is in neither its check-entry nor its codec data. | Test |
+| FR-1051-AC-10 | The check fails, naming the entry, when a check entry of its data names no route, or a route of the Routes table has no check entry; and, naming the function, when producer code or settling code names a public checker-code function that is in neither its check-entry nor its codec data. A producer-call exception entry for the function covers its producer and settling callers. | Test |
 | FR-1051-AC-11 | For every registered fixture of every route, every single mutation that is not on the route's allowed-to-survive list is refused or rejected by the route's check entry (or not reproduced by a replay route); a mutation the entry accepts fails the harness, naming the route, the fixture, the member path and the mutation. Verified by the harness's own tests, including one where a deliberately weakened check closure accepts a changed value, run once over a canonical document and once through a typed adapter. | Test |
 | FR-1051-AC-12 | An allowed-to-survive entry without a reason, or one whose mutation the harness no longer makes or the check entry now rejects, fails the harness as stale, naming the entry. | Test |
 | FR-1051-AC-13 | The harness fails, naming each route, when a route of the Routes table has no registered accepted fixture, or when a registered fixture is not accepted by its check entry. The harness crate's manifest has no `fsl-replay` dependency and it is a dev-dependency only. The first registered routes are R-12 (finite-horizon measure), R-13 (value bounds), R-11 (cyclic-MDP fair), R-27 and R-28 (zone `always possible` and `unique path`, decoding with `ZoneCertificate::from_wire`) and R-50 (counterexample replay, byte route); R-32 (explicit state graph) registers through a typed adapter. | Test |
@@ -437,9 +446,10 @@ part of the fragment:
 
 ## Status
 
-PLANNED. No criterion is met on main. The exception rows record the sharing
-on origin/main as of this requirement. The arch-lint check and its data, the
-restructuring that removes S-1 and S-3 to S-14, P-1 to P-14 and O-1 to O-8
+AC-1 to AC-10 and AC-15 are met by `tools/arch-lint` (`trusted-base`); AC-11
+to AC-14 and AC-16 to AC-19 are PLANNED. The exception rows record the sharing
+on origin/main as of this requirement. The
+restructuring that removes S-1 and S-3 to S-14, P-1 to P-14 and O-1 to O-9
 (QSL-3501), the separate timed monitor that removes S-2 (QSL-3324), the
 shared admission data of B-10 (QSL-3494, after FSL PR #4042), the mutation
 harness (QSL-3505) and the definitional reference with its corpus (QSL-3500)

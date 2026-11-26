@@ -6,7 +6,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use syn::visit::Visit;
+use ix_trace_rs::implements;
+use syn::{punctuated::Punctuated, visit::Visit};
 
 use super::index::{is_test_only, line_of, Binding, Index, Kind, Resolved};
 use crate::api_surface::{flatten_tokens, use_leaves, LocatedToken, Token};
@@ -108,15 +109,100 @@ impl Scanner<'_> {
 
     fn walk(&mut self, start: Resolved, rest: &[String], line: usize) {
         let mut current = start;
+        let mut parent = None;
         for name in rest {
             if matches!(current, Resolved::Type(_)) {
                 let passed = self.index.dealias(current.clone());
                 self.record(&passed, line);
             }
+            if let Resolved::Module(module) = current {
+                parent = Some((module, name));
+            }
             current = self.index.step(current, name);
         }
         let end = self.index.dealias(current);
+        if let (Resolved::Module(_), Some((module, name))) = (&end, parent) {
+            self.namesake(module, name, line);
+        }
         self.record(&end, line);
+    }
+
+    /// Record the item a module path's last name also stands for.
+    fn namesake(&mut self, module: usize, name: &str, line: usize) {
+        if let Some(found) = self.index.namesake(module, name) {
+            let found = self.index.dealias(found);
+            self.record(&found, line);
+        }
+    }
+
+    /// Record the function paths a `serde` attribute writes as strings.
+    fn serde_paths(&mut self, meta: &syn::Meta) {
+        let syn::Meta::List(list) = meta else {
+            return;
+        };
+        let Ok(members) =
+            list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+        else {
+            return;
+        };
+        if list.path.is_ident("cfg_attr") {
+            for member in &members {
+                self.serde_paths(member);
+            }
+            return;
+        }
+        if !list.path.is_ident("serde") {
+            return;
+        }
+        for member in &members {
+            let syn::Meta::NameValue(pair) = member else {
+                continue;
+            };
+            let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(text),
+                ..
+            }) = &pair.value
+            else {
+                continue;
+            };
+            let suffixes: &[&str] = if pair.path.is_ident("with") {
+                &["serialize", "deserialize"]
+            } else if [
+                "default",
+                "serialize_with",
+                "deserialize_with",
+                "skip_serializing_if",
+            ]
+            .iter()
+            .any(|key| pair.path.is_ident(key))
+            {
+                &[""]
+            } else {
+                continue;
+            };
+            let Ok(path) = text.parse::<syn::Path>() else {
+                continue;
+            };
+            for suffix in suffixes {
+                let mut segments: Vec<String> = path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect();
+                if !suffix.is_empty() {
+                    segments.push((*suffix).to_owned());
+                }
+                // A one-segment path names an item of this module.
+                if let [name] = segments.as_slice() {
+                    if let Some((found, _)) = self.first(name) {
+                        let found = self.index.dealias(found);
+                        self.record(&found, line_of(text));
+                    }
+                } else {
+                    self.path(path.leading_colon.is_some(), &segments, line_of(text));
+                }
+            }
+        }
     }
 
     fn qualified(&mut self, qself: Option<&syn::QSelf>, path: &syn::Path) {
@@ -253,8 +339,11 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
     unless_test_only!(visit_arm, syn::Arm);
     unless_test_only!(visit_expr_block, syn::ExprBlock);
 
-    // Attribute and visibility paths are not among the namings FR-1051 reads.
-    fn visit_attribute(&mut self, _: &'ast syn::Attribute) {}
+    // Of attribute and visibility paths, FR-1051 reads only the function
+    // paths of `serde` attributes.
+    fn visit_attribute(&mut self, node: &'ast syn::Attribute) {
+        self.serde_paths(&node.meta);
+    }
     fn visit_visibility(&mut self, _: &'ast syn::Visibility) {}
 
     fn visit_item(&mut self, item: &'ast syn::Item) {
@@ -405,6 +494,16 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
                 segments.pop();
             }
             let target = self.use_target(node.leading_colon.is_some(), &segments);
+            // A `use` of a module also brings in its namesake item.
+            if let (Resolved::Module(_), false, Some((last, prefix))) =
+                (&target, glob, segments.split_last())
+            {
+                if let Resolved::Module(parent) =
+                    self.use_target(node.leading_colon.is_some(), prefix)
+                {
+                    self.namesake(parent, last, line);
+                }
+            }
             match target {
                 // A glob over another crate brings in names this check cannot
                 // enumerate, so the glob itself is what is named.
@@ -473,6 +572,7 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
 }
 
 /// Every naming in the files `wanted` accepts (by module of the file's root).
+#[implements("FR-1051-AC-5")]
 pub(super) fn references(index: &Index, wanted: impl Fn(usize) -> bool) -> Vec<Reference> {
     let mut found = Vec::new();
     let mut seen = BTreeSet::new();

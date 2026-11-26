@@ -101,6 +101,7 @@ fn class_differences(differences: &mut Vec<String>, text: &str, policy: &Policy)
     }
     checker.extend(owned(classes.checker_crates));
     let mut producer = owned(classes.producer_crates);
+    producer.extend(owned(classes.producer_files));
     producer.insert(by_file);
     let data = BTreeMap::from([
         ("Checker code", checker),
@@ -182,6 +183,33 @@ fn base_differences(differences: &mut Vec<String>, text: &str, policy: &Policy) 
     }
 }
 
+/// The names a concern with a `{a,b}` group stands for.
+fn expansions(name: &str) -> Vec<String> {
+    let group = name.split_once('{').and_then(|(before, rest)| {
+        let (members, after) = rest.split_once('}')?;
+        Some((before, members, after))
+    });
+    match group {
+        Some((before, members, after)) => members
+            .split(',')
+            .map(|member| format!("{before}{member}{after}"))
+            .collect(),
+        None => vec![name.to_owned()],
+    }
+}
+
+/// Whether `selector` covers no more than the concern `name` says: a file
+/// ending in it, or a module path equal to or under it.
+fn selects(name: &str, selector: &str) -> bool {
+    expansions(name).iter().any(|name| {
+        let separator = if selector.contains('/') { "/" } else { "::" };
+        let within = format!("{separator}{selector}{separator}");
+        selector == name
+            || selector.ends_with(&format!("{separator}{name}"))
+            || (separator == "::" && within.contains(&format!("::{name}::")))
+    })
+}
+
 fn exception_differences(differences: &mut Vec<String>, text: &str, policy: &Policy) {
     let mut seen = BTreeSet::new();
     for row in rows(section(text, "### Recorded exceptions")) {
@@ -198,6 +226,19 @@ fn exception_differences(differences: &mut Vec<String>, text: &str, policy: &Pol
                 "exception row {id}: rule \"{rule}\" is not the data's \"{}\"",
                 data.rule.as_str()
             ));
+        }
+        for (name, selectors) in data.concerns {
+            // S-9 names the loop-proof types of `protocol.rs` one by one.
+            if *id == "S-9" && *name == "protocol.rs" {
+                continue;
+            }
+            for selector in *selectors {
+                if !selects(name, selector) {
+                    differences.push(format!(
+                        "exception row {id}: selector {selector} does not match the concern {name}"
+                    ));
+                }
+            }
         }
         compare(
             differences,

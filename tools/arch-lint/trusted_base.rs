@@ -113,6 +113,7 @@ pub(crate) struct Classes {
     pub(crate) checker_crates: &'static [&'static str],
     pub(crate) settling_files: &'static [&'static str],
     pub(crate) out_of_scope_files: &'static [&'static str],
+    pub(crate) producer_files: &'static [&'static str],
     pub(crate) trusted_crates: &'static [&'static str],
     pub(crate) producer_crates: &'static [&'static str],
     pub(crate) tool_crates: &'static [&'static str],
@@ -252,6 +253,7 @@ impl Check<'_> {
             (classes.checker_files, Class::Checker),
             (classes.settling_files, Class::Settling),
             (classes.out_of_scope_files, Class::OutOfScope),
+            (classes.producer_files, Class::Producer),
         ]
         .into_iter()
         .filter(|(patterns, _)| {
@@ -259,9 +261,6 @@ impl Check<'_> {
         })
         .map(|(_, class)| class)
         .collect();
-        if found.is_empty() && in_source {
-            found.push(Class::Producer);
-        }
         found.extend(self.crate_classes(package));
         found
     }
@@ -544,27 +543,52 @@ impl Check<'_> {
                     }
                 }
                 self.arguments(walk, &last.arguments, module, at);
-                let resolved = self.index.resolve_path(module, &path.path, walk.self_type);
+                let segments: Vec<String> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect();
+                let resolved = self.index.resolve_aliased(
+                    module,
+                    path.path.leading_colon.is_some(),
+                    &segments,
+                    walk.self_type,
+                );
                 let Resolved::Type(id) = resolved else {
                     return;
                 };
-                let record = &self.index.types[id];
-                let name = record.item.path.rsplit("::").next().unwrap_or_default();
-                if self.policy.producer_types.contains(&name) {
-                    walk.hit(name, at);
-                } else if walk.seen.insert(id) {
-                    if let Some(alias) = self.index.alias_of(id) {
-                        self.taken(walk, alias, record.item.module, at);
-                    } else if self.item_class(&record.item) == Some(Class::Checker) {
-                        for (field, inner) in &record.fields {
-                            let saved = walk.self_type.replace(id);
-                            self.taken(walk, inner, record.item.module, &format!("{at}.{field}"));
-                            walk.self_type = saved;
-                        }
-                    }
-                }
+                self.taken_type(walk, id, at);
             }
             _ => {}
+        }
+    }
+
+    /// What a value of the workspace type `id` carries.
+    fn taken_type(&self, walk: &mut Taken, id: usize, at: &str) {
+        let record = &self.index.types[id];
+        // The alias's written type, whose arguments dealiasing would lose.
+        if let Some(alias) = self.index.alias_of(id) {
+            if walk.seen.insert(id) {
+                self.taken(walk, alias, record.item.module, at);
+            }
+            return;
+        }
+        let name = self.index.name_of(id);
+        let producer = |name: &str| self.policy.producer_types.contains(&name);
+        // An implementation of a producer trait carries the trait's behaviour,
+        // unless the checker defines it or it is the checked package.
+        let implementation = record.implements.iter().any(|name| producer(name))
+            && !matches!(name, "CheckedPackage" | "BarePackage")
+            && self.item_class(&record.item) != Some(Class::Checker);
+        if producer(name) || implementation {
+            walk.hit(name, at);
+        } else if walk.seen.insert(id) {
+            for (field, inner) in &record.fields {
+                let saved = walk.self_type.replace(id);
+                self.taken(walk, inner, record.item.module, &format!("{at}.{field}"));
+                walk.self_type = saved;
+            }
         }
     }
 
@@ -596,13 +620,30 @@ impl Check<'_> {
             let Some(last) = bound.path.segments.last() else {
                 continue;
             };
-            let name = last.ident.to_string();
+            let mut name = last.ident.to_string();
             if matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce") {
                 walk.hit("closure", at);
-            } else if self.policy.producer_types.contains(&name.as_str()) {
+                continue;
+            }
+            let resolved = match self.index.resolve_path(module, &bound.path, walk.self_type) {
+                Resolved::Type(id) => {
+                    self.index.name_of(id).clone_into(&mut name);
+                    Some(id)
+                }
+                _ => None,
+            };
+            if self.policy.producer_types.contains(&name.as_str()) {
                 walk.hit(&name, at);
-            } else {
-                self.arguments(walk, &last.arguments, module, at);
+                continue;
+            }
+            self.arguments(walk, &last.arguments, module, at);
+            // A workspace trait carries what its supertraits carry.
+            if let Some(id) = resolved {
+                if walk.supertraits.insert(id) {
+                    let record = &self.index.types[id];
+                    self.bounds(walk, record.supertraits.iter(), record.item.module, at);
+                    walk.supertraits.remove(&id);
+                }
             }
         }
     }
@@ -622,6 +663,7 @@ impl Check<'_> {
                     self_type: value.self_type,
                     seen: BTreeSet::new(),
                     expanding: BTreeSet::new(),
+                    supertraits: BTreeSet::new(),
                     found: BTreeMap::new(),
                 };
                 for input in &signature.inputs {
@@ -746,11 +788,19 @@ impl Check<'_> {
                 }
                 let public = record.named.item.as_ref().is_some_and(|item| item.public);
                 if public && !record.settling.is_empty() {
-                    outcome.findings.push(format!(
-                        "settling code names checker item {path}, neither a check entry nor a \
-                         codec function: {}",
-                        list(&record.settling)
-                    ));
+                    // A producer-call entry covers the item's settling
+                    // callers too.
+                    if cover(Rule::ProducerCall, path, "") {
+                        if record.producer.is_empty() {
+                            outcome.recorded += 1;
+                        }
+                    } else {
+                        outcome.findings.push(format!(
+                            "settling code names checker item {path}, neither a check entry nor \
+                             a codec function: {}",
+                            list(&record.settling)
+                        ));
+                    }
                 }
                 continue;
             }
@@ -813,6 +863,7 @@ struct Taken {
     self_type: Option<usize>,
     seen: BTreeSet<usize>,
     expanding: BTreeSet<String>,
+    supertraits: BTreeSet<usize>,
     found: BTreeMap<String, BTreeSet<String>>,
 }
 

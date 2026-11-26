@@ -370,6 +370,132 @@ fn sharing_through_every_naming_form_is_reported() {
     }
 }
 
+#[trace("FR-1051-AC-2", "FR-1051-AC-5")]
+#[test]
+fn a_module_does_not_hide_the_function_of_the_same_name() {
+    let eval = format!(
+        "{EVAL}pub mod shim {{\n    mod advance {{\n        pub fn advance() {{}}\n    }}\n    \
+         pub use advance::advance;\n}}\n"
+    );
+    for source in [
+        "pub fn f() {\n    fsl_eval::shim::advance();\n}\n",
+        "use fsl_eval::shim::advance;\npub fn f() {\n    advance();\n}\n",
+        "use fsl_eval::shim;\npub fn f() {\n    shim::advance();\n}\n",
+    ] {
+        let fixture = Fixture::new();
+        fixture
+            .write("fsl-eval/src/lib.rs", &eval)
+            .checker(source)
+            .analyze("pub fn g() {\n    fsl_eval::shim::advance();\n}\n");
+        let outcome = fixture.run(&BARE);
+        assert_eq!(outcome.findings.len(), 1, "{source}: {}", outcome.report());
+        assert!(
+            outcome.findings[0].starts_with(
+                "function fsl_eval::shim::advance::advance is shared outside the trusted base: "
+            ),
+            "{source}: {}",
+            outcome.report()
+        );
+    }
+}
+
+#[trace("FR-1051-AC-3", "FR-1051-AC-5")]
+#[test]
+fn a_function_path_in_a_serde_attribute_is_a_naming() {
+    for attribute in [
+        "serde(default = \"fsl_replay::certificate::derive_rank\")",
+        "serde(serialize_with = \"fsl_replay::certificate::derive_rank\")",
+        "cfg_attr(feature = \"x\", serde(deserialize_with = \"fsl_replay::certificate::derive_rank\"))",
+        "serde(with = \"fsl_replay::certificate\")",
+    ] {
+        let fixture = Fixture::new();
+        fixture
+            .checker(
+                "pub fn derive_rank() {}\npub fn serialize() {}\npub fn deserialize() {}\n",
+            )
+            .analyze(&format!("pub struct Wire {{\n    #[{attribute}]\n    pub x: u32,\n}}\n"));
+        let outcome = fixture.run(&BARE);
+        assert!(!outcome.findings.is_empty(), "{attribute}");
+        assert!(
+            outcome.findings.iter().all(|finding| finding
+                .starts_with("producer code names checker item fsl_replay::certificate::")
+                && finding.ends_with("fsl-analyze/src/lib.rs:2")),
+            "{attribute}: {}",
+            outcome.report()
+        );
+    }
+}
+
+#[trace("FR-1051-AC-4")]
+#[test]
+fn a_producer_built_value_inside_another_type_is_found() {
+    let fixture = Fixture::new();
+    fixture
+        .checker(
+            "use crate::planner::{Imported, Wrapper};
+use fsl_eval::simulation::model::{ModelLetters, ModelSystem};
+use std::sync::Arc;
+type Shared = Arc<ModelSystem>;
+pub trait ProbeLetters: ModelLetters {}
+pub struct OwnLetters;
+impl ModelLetters for OwnLetters {}
+pub fn by_wrapper(wrapper: &Wrapper) {}
+pub fn by_alias(shared: &Shared) {}
+pub fn by_imported_alias(shared: &Imported) {}
+pub fn by_subtrait(letters: &dyn ProbeLetters) {}
+pub fn by_implementation(letters: &crate::planner::Letters) {}
+pub fn clean(own: &OwnLetters, package: &crate::planner::CheckedPackage) {}
+",
+        )
+        .write(
+            "fsl-replay/src/lib.rs",
+            "pub mod certificate;\npub mod planner;\n",
+        )
+        .write(
+            "fsl-replay/src/planner.rs",
+            "use fsl_eval::simulation::model::{ModelLetters, ModelSystem};
+use std::sync::Arc;
+pub struct Wrapper {
+    pub system: ModelSystem,
+}
+pub type Imported = Arc<ModelSystem>;
+pub struct Letters;
+impl ModelLetters for Letters {}
+pub struct CheckedPackage;
+impl ModelLetters for CheckedPackage {}
+",
+        );
+    let policy = Policy {
+        routes: &["R-1"],
+        check_entries: &[
+            ("fsl_replay::certificate::by_wrapper", &["R-1"]),
+            ("fsl_replay::certificate::by_alias", &["R-1"]),
+            ("fsl_replay::certificate::by_imported_alias", &["R-1"]),
+            ("fsl_replay::certificate::by_subtrait", &["R-1"]),
+            ("fsl_replay::certificate::by_implementation", &["R-1"]),
+            ("fsl_replay::certificate::clean", &["R-1"]),
+        ],
+        ..BARE
+    };
+    let outcome = fixture.run(&policy);
+    let entry = "check entry fsl_replay::certificate";
+    let taken: Vec<&String> = outcome
+        .findings
+        .iter()
+        .filter(|finding| finding.starts_with(entry))
+        .collect();
+    assert_eq!(
+        taken,
+        [
+            &format!("{entry}::by_wrapper takes producer-built ModelSystem through wrapper.system"),
+            &format!("{entry}::by_alias takes producer-built ModelSystem through shared"),
+            &format!("{entry}::by_imported_alias takes producer-built ModelSystem through shared"),
+            &format!("{entry}::by_subtrait takes producer-built ModelLetters through letters"),
+            &format!("{entry}::by_implementation takes producer-built Letters through letters"),
+        ]
+    );
+}
+
 #[trace("FR-1051-AC-5")]
 #[test]
 fn test_only_code_is_not_read() {
@@ -402,11 +528,14 @@ fn a_crate_or_file_in_no_class_or_two_fails() {
     fixture.package("fsl-new", "");
     fixture.write("fsl-new/src/lib.rs", "");
     fixture.write("fsl-replay/build.rs", "fn main() {}\n");
+    fixture.write("fsl-replay/src/lib.rs", "mod new_checker;\n");
+    fixture.write("fsl-replay/src/new_checker.rs", "pub fn check() {}\n");
     let outcome = fixture.run(&BARE);
     assert_eq!(
         outcome.errors,
         [
             "crate fsl-new is in no class",
+            "file fsl-replay/src/new_checker.rs is in no class",
             "file fsl-replay/build.rs is in no class",
         ]
     );
@@ -620,6 +749,26 @@ fn settling_code_naming_an_undeclared_checker_function_fails() {
              check entry nor a codec function: fsl-replay/src/proof_result.rs:2"
         ]
     );
+
+    const ROWS: &[ExceptionRow] = &[ExceptionRow {
+        id: "P-1",
+        rule: Rule::ProducerCall,
+        concerns: &[("certificate.rs", &["fsl-replay/src/certificate.rs"])],
+        planned: false,
+    }];
+    const RECORDED: &[Entry] = &[Entry {
+        row: "P-1",
+        rule: Rule::ProducerCall,
+        item: "fsl_replay::certificate::derive_rank",
+        takes: "",
+    }];
+    let outcome = fixture.run(&Policy {
+        exceptions: ROWS,
+        entries: RECORDED,
+        ..DOCUMENT_POLICY
+    });
+    assert!(outcome.passed(), "{}", outcome.report());
+    assert_eq!(outcome.recorded, 1);
 }
 
 fn repository() -> &'static Path {
@@ -657,7 +806,20 @@ fn a_changed_table_is_named() {
         .replace("| module, except S-9 |", "| module |")
         .replace("| S-2 | Shared semantics |", "| S-2 | Producer object |")
         .replace("| R-62 |", "| R-63 |")
-        .replace("`FiniteTracePopulation`", "`FiniteTrace`");
+        .replace("`FiniteTracePopulation`", "`FiniteTrace`")
+        .replace(
+            "`num_integer`, `num_traits` | whole crate |",
+            "`num_integer`, `num_traits` | type items |",
+        )
+        .replace(
+            "`fsl_eval::model_subject` | module |",
+            "`fsl_eval::model_reading` | module |",
+        )
+        .replace(
+            "| `model_check/identity.rs` |",
+            "| `model_check/identities.rs` |",
+        )
+        .replace("| S-11 | Shared semantics |", "| S-99 | Shared semantics |");
     let differences = spec::differences(&changed, &data::FSL);
     for expected in [
         "class \"Checker code\": FR-1051 has timed/search.rs, the data does not",
@@ -668,10 +830,36 @@ fn a_changed_table_is_named() {
         "routes: the data has R-62, FR-1051 does not",
         "producer-built types: FR-1051 has FiniteTrace, the data does not",
         "producer-built types: the data has FiniteTracePopulation, FR-1051 does not",
+        "base row B-4: extent \"type items\" is not the data's WholeCrate",
+        "base row B-8: FR-1051 has fsl_eval::model_reading, the data does not",
+        "base row B-8: the data has fsl_eval::model_subject, FR-1051 does not",
+        "exception row S-14: FR-1051 has model_check/identities.rs, the data does not",
+        "exception row S-14: the data has model_check/identity.rs, FR-1051 does not",
+        "exception row S-99: not in the data",
+        "exception row S-11: not in FR-1051",
     ] {
         assert!(has(&differences, expected), "{expected}\n{differences:#?}");
     }
-    assert_eq!(differences.len(), 8, "{differences:#?}");
+    assert_eq!(differences.len(), 15, "{differences:#?}");
+}
+
+#[trace("FR-1051-AC-9")]
+#[test]
+fn a_selector_wider_than_its_concern_is_named() {
+    const WIDENED: &[ExceptionRow] = &[ExceptionRow {
+        id: "S-4",
+        rule: Rule::SharedSemantics,
+        concerns: &[("fsl_eval::fairness", &["fsl_eval"])],
+        planned: false,
+    }];
+    let policy = Policy {
+        exceptions: WIDENED,
+        ..data::FSL
+    };
+    let differences = spec::differences(&read(REQUIREMENT), &policy);
+    let expected =
+        "exception row S-4: selector fsl_eval does not match the concern fsl_eval::fairness";
+    assert!(has(&differences, expected), "{differences:#?}");
 }
 
 #[trace("FR-1051-AC-15")]

@@ -95,6 +95,10 @@ pub(super) struct TypeItem {
     assoc: BTreeMap<String, usize>,
     /// The target of a `type` alias.
     alias: Option<syn::Type>,
+    /// A trait's supertraits.
+    pub(super) supertraits: Vec<syn::TypeParamBound>,
+    /// The names of the traits implemented for the type.
+    pub(super) implements: BTreeSet<String>,
     /// Every field of a struct or of an enum's variants, with its name.
     pub(super) fields: Vec<(String, syn::Type)>,
 }
@@ -433,6 +437,8 @@ impl Index {
             variants,
             assoc: BTreeMap::new(),
             alias,
+            supertraits: Vec::new(),
+            implements: BTreeSet::new(),
             fields,
         });
         self.define(module, name, Def::Type(id));
@@ -620,6 +626,7 @@ impl Index {
                         None,
                         Vec::new(),
                     );
+                    self.types[id].supertraits = node.supertraits.iter().cloned().collect();
                     for member in &node.items {
                         let (ident, kind, signature) = match member {
                             syn::TraitItem::Fn(method) if !is_test_only(&method.attrs) => {
@@ -742,6 +749,16 @@ impl Index {
                 continue;
             };
             let trait_impl = pending.block.trait_.is_some();
+            if let Some((_, path, _)) = &pending.block.trait_ {
+                let name = match self.resolve_path(pending.module, path, None) {
+                    Resolved::Type(implemented) => Some(self.name_of(implemented).to_owned()),
+                    _ => path
+                        .segments
+                        .last()
+                        .map(|segment| segment.ident.to_string()),
+                };
+                self.types[id].implements.extend(name);
+            }
             for member in &pending.block.items {
                 let (ident, kind, signature, visibility) = match member {
                     syn::ImplItem::Fn(method) if !is_test_only(&method.attrs) => (
@@ -848,9 +865,12 @@ impl Index {
                 Resolved::Module(target) if target != module => {
                     self.lookup(target, name).map(|(resolved, _)| resolved)
                 }
-                Resolved::Type(id) if self.types[id].variants.contains(name) => {
-                    Some(Resolved::Type(id))
-                }
+                aliased @ Resolved::Type(_) => match self.dealias(aliased) {
+                    Resolved::Type(id) if self.types[id].variants.contains(name) => {
+                        Some(Resolved::Type(id))
+                    }
+                    _ => None,
+                },
                 _ => None,
             };
             if let Some(resolved) = found {
@@ -860,8 +880,82 @@ impl Index {
         None
     }
 
+    /// An imported `type` alias stays the alias, so that its written type can
+    /// still be read; [`Self::resolve`] follows it.
     fn resolve_import(&self, module: usize, import: &Import) -> Resolved {
-        self.resolve(module, import.leading_colon, &import.segments, None)
+        self.resolve_aliased(module, import.leading_colon, &import.segments, None)
+    }
+
+    /// The name of a type item below its module.
+    pub(super) fn name_of(&self, id: usize) -> &str {
+        let path = &self.types[id].item.path;
+        path.rsplit("::").next().unwrap_or(path)
+    }
+
+    /// The function, constant or type `name` also stands for in `module`
+    /// where it names a module there too: modules are their own namespace, so
+    /// `mod x; pub use x::x;` binds both.
+    pub(super) fn namesake(&self, module: usize, name: &str) -> Option<Resolved> {
+        self.namesake_in(module, name, &mut HashSet::new())
+    }
+
+    fn namesake_in(
+        &self,
+        module: usize,
+        name: &str,
+        seen: &mut HashSet<usize>,
+    ) -> Option<Resolved> {
+        if !seen.insert(module) {
+            return None;
+        }
+        let record = &self.modules[module];
+        let local = record
+            .items
+            .get(name)
+            .into_iter()
+            .flatten()
+            .find_map(|def| match *def {
+                Def::Type(id) => Some(Resolved::Type(id)),
+                Def::Value(id) => Some(Resolved::Value(id)),
+                Def::Module(_) => None,
+            });
+        if local.is_some() {
+            return local;
+        }
+        // Each `(module, name)` the name is brought in from.
+        let imported = record
+            .imports
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter_map(|import| {
+                let (last, prefix) = import.segments.split_last()?;
+                if prefix.is_empty() {
+                    return None;
+                }
+                match self.resolve_aliased(module, import.leading_colon, prefix, None) {
+                    Resolved::Module(from) => Some((from, last.as_str())),
+                    _ => None,
+                }
+            });
+        let globbed =
+            record
+                .globs
+                .iter()
+                .filter_map(|glob| match self.resolve_import(module, glob) {
+                    Resolved::Module(from) if from != module => Some((from, name)),
+                    _ => None,
+                });
+        for (from, bound) in imported.chain(globbed) {
+            let found = match self.lookup(from, bound) {
+                Some((found @ (Resolved::Type(_) | Resolved::Value(_)), _)) => Some(found),
+                _ => self.namesake_in(from, bound, seen),
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
     }
 
     /// Resolve `path` from `module`, with `self_type` as `Self`.
@@ -882,6 +976,17 @@ impl Index {
     /// Resolve `segments` from `module`, following a `type` alias at the end
     /// to the item it stands for.
     pub(super) fn resolve(
+        &self,
+        module: usize,
+        leading_colon: bool,
+        segments: &[String],
+        self_type: Option<usize>,
+    ) -> Resolved {
+        self.dealias(self.resolve_aliased(module, leading_colon, segments, self_type))
+    }
+
+    /// [`Self::resolve`], leaving a `type` alias at the end as the alias.
+    pub(super) fn resolve_aliased(
         &self,
         module: usize,
         leading_colon: bool,
@@ -909,10 +1014,8 @@ impl Index {
                 },
             }
         };
-        let end = rest
-            .iter()
-            .fold(start, |current, name| self.step(current, name));
-        self.dealias(end)
+        rest.iter()
+            .fold(start, |current, name| self.step(current, name))
     }
 
     /// One more path segment after `current`.
