@@ -278,7 +278,8 @@ route; a route it does not yet cover is tracked by QSL-3500.
   mutation harness. The harness is a Rust test-support crate that is only a
   dev-dependency, has no `fsl-replay` dependency, and takes each
   registration's check as a closure from the fixture to a verdict.
-- A route whose certificate has a canonical byte form SHALL register its
+- A route whose certificate has a canonical byte form, except R-27 and R-28,
+  SHALL register its
   canonical document; the harness mutates the canonical tree, and the
   closure either calls the route's byte or source check entry (for EN-5, the
   source or package entry) or decodes the bytes with the route's codec reader
