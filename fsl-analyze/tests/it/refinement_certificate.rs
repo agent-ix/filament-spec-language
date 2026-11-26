@@ -17,6 +17,7 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::ClauseOutcome;
 use fsl_eval::simulation::model::{operation_identity_text, ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
     check_simulation_certificate, check_step, map_state, open_systems, settle_refinement_safety,
     CertificateLocus, CertificateRule, Certification, CertifiedEdge, CertifiedPosition,
@@ -26,9 +27,12 @@ use fsl_replay::{
     StaleIdentity, StepRejection, StepVerdict, Taken, TemporalCertificateCheck, TerminalValue,
 };
 use fsl_replay::{EvalFailure, MappingRowRef, MappingUndetermined, Undetermined, UndeterminedStep};
+use fsl_replay::{UndefinedEvaluation, UndefinedLocus, UndefinedSite};
 use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::trace;
 
+use crate::certificate_rejection_support::state_locus;
+use crate::provider_schema_support::{assert_valid, provider_definition};
 use crate::refinement_fixture::{
     cas_refines_counter, cas_state, key, lost_update_refinement, mutated, Variant, World, CAS,
     SPEC, UNLIMITED,
@@ -1121,6 +1125,42 @@ fn a_rejection_serializes_its_locus_and_verdict() {
             expected
         );
     }
+}
+
+/// FR-149-AC-8 (TC-556): an `UndefinedEvaluation` verdict writes its state as
+/// FSpec FR-331's State locus, in a step verdict the provider schema admits.
+#[trace("TC-556", "FR-149-AC-8")]
+#[test]
+fn an_undefined_step_verdict_writes_a_state_locus() {
+    let state_key = fsl_eval::simulation::StateKey::from_canonical_bytes(b"state".to_vec());
+    let verdict = FailedStep::Undefined(Box::new(UndefinedEvaluation {
+        site: UndefinedSite {
+            position: 4,
+            state_key: state_key.clone(),
+            locus: UndefinedLocus::Activation,
+            transition: None,
+            time: None,
+        },
+        cause: UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero),
+    }));
+    let wire = serde_json::to_value(&verdict).expect("a verdict serializes");
+    assert_eq!(
+        wire,
+        serde_json::json!({
+            "kind": "UndefinedEvaluation",
+            "where": {
+                "position": "4",
+                "state_key": state_locus(&state_key),
+                "locus": "activation",
+            },
+            "cause": "kernel",
+        })
+    );
+    assert_valid(
+        &provider_definition("StepVerdict"),
+        &wire,
+        "the undefined verdict",
+    );
 }
 
 /// FR-149-AC-8 (TC-556): the checker's `NoAbstractMatch` verdict writes the

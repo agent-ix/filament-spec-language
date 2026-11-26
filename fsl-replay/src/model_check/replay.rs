@@ -1868,6 +1868,24 @@ struct ProtocolReplay<'r> {
 impl ProtocolReplay<'_> {
     /// FR-217 over `system`, under whichever memory model the subject's
     /// resolved models need (FR-227).
+    #[implements(
+        "FR-217-AC-1",
+        "FR-217-AC-2",
+        "FR-217-AC-3",
+        "FR-217-AC-4",
+        "FR-217-AC-5",
+        "FR-217-AC-6",
+        "FR-217-AC-7",
+        "FR-217-AC-8",
+        "FR-217-AC-9",
+        "FR-227-AC-1",
+        "FR-227-AC-2",
+        "FR-227-AC-3",
+        "FR-227-AC-4",
+        "FR-227-AC-5",
+        "FR-227-AC-6",
+        "FR-227-AC-7"
+    )]
     fn settle<M: MemoryModel>(
         &self,
         system: &ProtocolSystem<'_, M>,
@@ -3184,6 +3202,7 @@ pub enum BehaviourValuationEnd {
 /// [`ReplayRefusal`] when the system is not simulated (an unbounded root or
 /// an unencodable key) or the evaluator broke an invariant or refused a
 /// trace.
+#[implements("FR-931-AC-4", "FR-931-AC-6")]
 pub fn behaviour_valuations(
     system: &ModelSystem<'_>,
     clause: &CheckedTemporalClause,
