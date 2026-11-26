@@ -169,9 +169,20 @@ pub(super) fn request_with_accounting(
     kernel: bool,
 ) -> (Option<Value>, Settlement) {
     let (mut requests, settlement) =
-        requests_for(source, snapshot, exact, domain, kernel, None, accounting);
+        requests_with_accounting(source, snapshot, exact, domain, accounting, kernel);
     let first = (!requests.is_empty()).then(|| requests.remove(0));
     (first, settlement)
+}
+
+pub(super) fn requests_with_accounting(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    accounting: filament_exact::ScalarLimits,
+    kernel: bool,
+) -> (Vec<Value>, Settlement) {
+    requests_for(source, snapshot, exact, domain, kernel, None, accounting)
 }
 
 fn request_with_mode(
