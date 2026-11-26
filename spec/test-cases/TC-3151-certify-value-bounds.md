@@ -19,7 +19,7 @@ alike, that settlement checks the pairing, and that the long-run form, which
 has no dyadic method, settles a typed incomplete result.
 
 Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7 to FR-1042-AC-14, FR-1042-AC-25 to
-FR-1042-AC-28 and FR-203-AC-9.
+FR-1042-AC-30 and FR-203-AC-9.
 
 ## Test Procedure
 
@@ -106,5 +106,7 @@ Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
   and EN-5's own subset `lower` accepted; the changed bounded rank is
   rejected `RankBroken` at that state.
 - Step 15: every one rejected `Malformed` at `kind`.
-- Step 16: `InequalityFails` at the activated state; accepted.
-- Step 17: `InequalityFails` at the initial key; nothing is proved.
+- Step 16: `ThresholdMissed` at the initial key; accepted.
+- Step 17: `InequalityFails` at the initial key. Over two initial states each
+  `<= c` quantile settles `unsupported` from the dyadic interval and from exact
+  values, and no claim settles `proved`.

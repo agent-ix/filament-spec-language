@@ -1532,8 +1532,8 @@ fn a_fraction_or_fair_lower_over_a_stopped_graph_stays_stopped() {
 }
 
 /// FR-1042 "Pairing" over FR-1043-AC-3's `>= c` quantile with the maximum
-/// shifted value exactly 0: the claim-side `upper` is refused where its tight
-/// actions reach an activated state, as the exact document is.
+/// shifted value exactly 0: the claim-side `upper` whose tight actions reach an
+/// activated state misses its threshold at the initial key.
 #[trace("TC-3151", "FR-1042-AC-28")]
 #[test]
 fn a_strict_quantile_upper_of_zero_with_tight_activation_is_rejected() {
@@ -1555,13 +1555,15 @@ fn a_strict_quantile_upper_of_zero_with_tight_activation_is_rejected() {
     replace_source_and_rebind(&mut request, &quantile("rational(1,3)", ">= 2"));
     let (code, output) = run(&request);
     assert_eq!(code, 1, "{output}");
-    assert_eq!(output["rule"], "inequality-fails", "{output}");
+    assert_eq!(output["rule"], "threshold-missed", "{output}");
+    let initial = ranked(&document(&request), 4).remove(0).0;
+    assert_eq!(output["at"], at_key(&initial), "{output}");
 }
 
-/// FR-1043 "Forms and documents", FR-1043-AC-10: where activation is
+/// FR-1042-AC-29, FR-1043 "Forms and documents": where activation is
 /// unreachable the checker refuses an offered numeric bound document, in
 /// either role, at the initial key.
-#[trace("TC-3151", "FR-1043-AC-10")]
+#[trace("TC-3151", "FR-1042-AC-29")]
 #[test]
 fn a_numeric_quantile_bound_without_activation_is_rejected() {
     let never = |text: String| text.replace("from holds(true)", "from holds(false)");
@@ -1693,7 +1695,7 @@ fn from_two_initials(source: &str, second: (u64, bool), exact: ExactProbLimits) 
 /// two initial states it is refused as the exact document is, and EN-5 proves
 /// nothing from the interval route. Each claim below is false at one of the
 /// two initial states.
-#[trace("TC-3151")]
+#[trace("TC-3151", "FR-1042-AC-30")]
 #[test]
 fn measure_bounds_over_two_initial_states_prove_nothing() {
     let interval = ExactProbLimits {

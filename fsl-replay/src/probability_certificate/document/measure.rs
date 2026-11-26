@@ -2352,24 +2352,23 @@ fn tight_activation(
     }
     Ok(activated.into_iter().next())
 }
-/// The rejection of a `>= c` quantile's claim-side document whose initial
-/// shifted maximum is exactly 0 and whose tight actions reach an activated
-/// state, so some scheduler may meet the level while activating (FR-1042
-/// "Pairing"). Tight actions are those that attain the document's own values.
+/// For a `>= c` quantile whose initial shifted maximum is exactly 0, the first
+/// activated state its tight actions reach: some scheduler may then meet the
+/// level while activating (FR-1042 "Pairing"). Tight actions are those that
+/// attain the document's own values. Each route names its own rejection.
 #[implements("FR-1042-AC-28")]
-fn tight_zero_rejection(
+fn tight_zero_activation(
     plan: &Plan<'_>,
     graph: &Graph,
     values: &BTreeMap<ProbabilityProductKey, Rational>,
     initial: &Rational,
     meter: &mut filament_exact::Meter,
     cancel: &Cancel,
-) -> Result<Option<ExactProbabilityCertificateCheck>, ProbabilityDocumentError> {
+) -> Result<Option<ProbabilityProductKey>, ProbabilityDocumentError> {
     if !(plan.strict && initial.is_zero()) {
         return Ok(None);
     }
-    Ok(tight_activation(graph, values, meter, cancel)?
-        .map(|key| rejected(ProbabilityCertificateRule::InequalityFails, key)))
+    tight_activation(graph, values, meter, cancel)
 }
 fn acceptance(
     document: &MeasureProbabilityDocument,
@@ -2733,10 +2732,10 @@ pub(super) fn check(
         .ok_or(ProbabilityDocumentError::Malformed)?
         .clone();
     let (holds, side) = if document.payoff == MeasurePayoffKind::Shifted {
-        if let Some(rejection) =
-            tight_zero_rejection(&plan, &graph, &values, &value, &mut meter, cancel)?
+        if let Some(key) =
+            tight_zero_activation(&plan, &graph, &values, &value, &mut meter, cancel)?
         {
-            return Ok(rejection);
+            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
         }
         (
             if plan.strict {
@@ -2942,9 +2941,13 @@ fn check_value_bounds(
                 },
             ));
         }
-        if let Some(rejection) = tight_zero_rejection(plan, graph, &values, initial, meter, cancel)?
-        {
-            return Ok(rejection);
+        // A bound is not exact: an activation on its tight actions misses the
+        // threshold, which more precision may meet.
+        if tight_zero_activation(plan, graph, &values, initial, meter, cancel)?.is_some() {
+            return Ok(rejected(
+                ProbabilityCertificateRule::ThresholdMissed,
+                graph.initial.clone(),
+            ));
         }
     }
     let accepted_side = match certified {
