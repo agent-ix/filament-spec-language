@@ -251,6 +251,37 @@ fn tc_774_certification_reader_accepts_only_trusted() {
     ));
 }
 
+/// FR-290-AC-8, FR-290-AC-9: `mapping-undetermined` states are FR-331
+/// `State` objects, in `state_key` and in each `prefix` step.
+#[trace("TC-774", "FR-290-AC-8", "FR-290-AC-9")]
+#[test]
+fn tc_774_mapping_undetermined_reads_state_objects() {
+    let state = json!({"key": "WzAsW11d"});
+    let cause = |state_key: &Value, post_state: &Value| {
+        json!({"type": "mapping-undetermined", "row": "r", "state_key": state_key,
+            "prefix": [{"post_state": post_state, "transition":
+                {"type": "transition", "operation": "tick", "receiver": null,
+                    "arguments": []}}]})
+    };
+    assert_eq!(
+        read_plugin_inconclusive_cause(&cause(&state, &state)),
+        Ok(InconclusiveCause::MappingUndetermined)
+    );
+    let hex = json!("0".repeat(64));
+    for (value, pointer) in [
+        (cause(&hex, &state), "/cause/state_key"),
+        (cause(&state, &hex), "/cause/prefix/0/post_state"),
+    ] {
+        assert_eq!(
+            read_plugin_inconclusive_cause(&value),
+            Err(PluginResultRefusal::Malformed {
+                pointer: pointer.to_owned(),
+                cause: ValueFault::WrongValueKind,
+            })
+        );
+    }
+}
+
 /// FR-290-AC-8.
 #[trace("TC-774", "FR-290-AC-8")]
 #[test]
@@ -505,7 +536,12 @@ fn tc_774_cause_reader_refuses_in_order() {
         ),
         (
             json!({"type": "mapping-undetermined", "row": "r", "state_key": "abc", "prefix": []}),
-            invalid("/cause/state_key"),
+            wrong("/cause/state_key"),
+        ),
+        (
+            json!({"type": "mapping-undetermined", "row": "r", "state_key": {"key": "a"},
+                "prefix": []}),
+            invalid("/cause/state_key/key"),
         ),
         (
             json!({"type": "no-instance", "depth": 1}),
@@ -1238,8 +1274,7 @@ fn tc_774_a_state_clause_record_is_not_replayable() {
 #[trace("TC-774", "FR-290-AC-12")]
 #[test]
 fn tc_774_a_transitive_dependency_replays() {
-    let header =
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    let header = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
     let c = format!("{header}function big using v(x: Int[0, 9]): Boolean pure {{ x > 3 }}\n");
     let b = format!(
         "{header}import \"test/c\" as c;\nfunction big using v(x: Int[0, 9]): Boolean pure {{ c::big(x) }}\n"
@@ -1292,8 +1327,7 @@ fn tc_774_a_transitive_dependency_replays() {
 #[trace("TC-774", "FR-290-AC-12")]
 #[test]
 fn plugin_replay_retains_every_source_of_each_selected_library() {
-    let header =
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    let header = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
     let first =
         format!("{header}function big using v(x: Int[0, 9]): Boolean pure {{ helper(x) }}\n");
     let second =

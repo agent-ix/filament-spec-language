@@ -429,7 +429,7 @@ fn enumerate(
             Ok(if state.oversized {
                 json!({"position": at})
             } else {
-                json!({"state_key": base64url(&state.key)})
+                json!({"state_key": fsl_replay::shared_wire::state_key_text(&state.key)})
             })
         })
         .collect::<Result<Vec<_>, SimulationFault>>()?;
@@ -520,13 +520,6 @@ fn clause_cause(outcome: &ClauseOutcome) -> Value {
         ClauseOutcome::Incomplete(incomplete) => meter_cause(incomplete),
         ClauseOutcome::NotBoolean => json!({"kind": "not-boolean"}),
     }
-}
-
-/// The unpadded base64url spelling of a state key, FR-621's spelling, which
-/// the document writer reads back into the state it names.
-fn base64url(key: &StateKey) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes())
 }
 
 fn sample(
@@ -693,7 +686,6 @@ mod tests {
         assert_eq!(cause["value"], 40);
     }
 }
-
 
 #[cfg(test)]
 mod written_step_tests {

@@ -10,7 +10,9 @@
 //! payload members each spelling defines, and the spellings refused for a
 //! plugin. Those are the [`BASIS`] and [`CAUSE`] tables below.
 
+use crate::shared_wire::{StateLocus, TransitionIdentity, WireDefectKind};
 use filament_exact::NodeKey;
+use ix_trace_rs::implements;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
@@ -482,7 +484,7 @@ fn read_reduction(value: &Value, pointer: String) -> Result<AppliedReduction, Pl
             return Err(PluginResultRefusal::Unsupported {
                 pointer: reduction_pointer,
                 feature: reduction.to_owned(),
-            })
+            });
         }
         "partial-order" => read_proviso(parameters, parameters_pointer)?,
         "copy-swap" => read_classes(parameters, parameters_pointer)?,
@@ -691,7 +693,7 @@ pub fn read_plugin_inconclusive_cause(
         _ => {
             check_prefix(member(members, "prefix", BASE)?, child(BASE, "prefix"))?;
             text_of(member(members, "row", BASE)?, child(BASE, "row"))?;
-            check_state_key(
+            check_state(
                 member(members, "state_key", BASE)?,
                 child(BASE, "state_key"),
             )?;
@@ -805,18 +807,18 @@ fn read_result(value: &Value, pointer: String) -> Result<ItemLabel, PluginResult
     })
 }
 
-/// An FR-331 `StateKey`: 64 lowercase hex digits.
-fn check_state_key(value: &Value, pointer: String) -> Result<(), PluginResultRefusal> {
-    let digits = value.as_str().filter(|text| {
-        text.len() == 64
-            && text
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    });
-    match digits {
-        Some(_) => Ok(()),
-        None => Err(malformed(value.is_string(), pointer)),
-    }
+/// An FR-331 State `{key}`.
+#[implements("FR-290-AC-9")]
+fn check_state(value: &Value, pointer: String) -> Result<(), PluginResultRefusal> {
+    StateLocus::read(value).map(drop).map_err(|defect| {
+        let at = format!("{pointer}{}", defect.pointer);
+        match defect.kind {
+            WireDefectKind::Missing => missing(at),
+            WireDefectKind::UnknownMember => unknown_member(at),
+            WireDefectKind::WrongKind => wrong_kind(at),
+            WireDefectKind::Invalid | WireDefectKind::UnknownVariant => invalid(at),
+        }
+    })
 }
 
 /// The `prefix` of a `mapping-undetermined` cause: FR-331 `ModelStep`s
@@ -847,7 +849,7 @@ fn check_model_step(step: &Value, pointer: String) -> Result<(), PluginResultRef
     if let Some(delay) = members.get("delay") {
         check_delay(delay, child(&pointer, "delay"))?;
     }
-    check_state_key(
+    check_state(
         member(members, "post_state", &pointer)?,
         child(&pointer, "post_state"),
     )?;
@@ -856,12 +858,7 @@ fn check_model_step(step: &Value, pointer: String) -> Result<(), PluginResultRef
     let well_formed = transition.as_object().is_some_and(|fields| {
         match fields.get("type").and_then(Value::as_str) {
             Some("terminal-stutter") => fields.len() == 1,
-            Some("transition") => {
-                fields.len() == 4
-                    && fields.get("operation").is_some_and(Value::is_string)
-                    && fields.contains_key("receiver")
-                    && fields.get("arguments").is_some_and(Value::is_array)
-            }
+            Some("transition") => TransitionIdentity::read(transition).is_ok(),
             _ => false,
         }
     });
