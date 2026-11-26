@@ -182,10 +182,12 @@ edges, automaton states and stored zone bytes.
   own `temporal.limits.max_states` and `max_transitions` bound its symbolic
   states and symbolic edges; its `max_check_work` is the work bound. A bound
   stated both by an item member and by the caller's `zone_check.*` setting is
-  refused as FR-255 states.
+  refused as FR-255 states. On an item that reads no timed model these
+  members bound its own engine and state no `zone_check.*` setting.
 - **Task-product symbolic pass.** The symbolic pass over a task product SHALL
   charge each symbolic state, symbolic transition, stored zone byte and
-  retained byte (`analysis.retained_bytes`) before storing it, and each unit
+  retained byte (`analysis.retained_bytes`) before storing it, each distinct
+  discrete task location against `zone_check.max_automaton_states`, and each unit
   of work against `zone_check.max_check_work`, and SHALL stop at the first
   denied charge naming that bound.
 - If an atom of the claim evaluates `Undefined` at a point of a symbolic

@@ -73,7 +73,8 @@ pub fn run_model_based_test(
   transitions, `expansion.max_candidates` defaults to 200000, the trace-step limit defaults to 16777216, and the distinct
   model-domain `position_limit` defaults to 10000.
 - A direct `model_based_test` request member is run with the
-  `expansion.max_candidates` default 200000 and with the caller's accounting
+  `expansion.max_candidates` default 200000, the `simulation.max_steps` in
+  force, and with the caller's accounting
   limits, `accounting.work_units` defaulting to 1000000; the command route
   SHALL pass these and no fixed value of its own (FR-255).
 - The entry SHALL build the run's model system itself. For a clause over a
@@ -188,6 +189,21 @@ pub fn run_model_based_test(
   ceiling, and each operation the stopped coverage exploration left open is
   `uncovered` with reason `undetermined`, limit `candidates` and that bound as
   its value.
+- A sampled trace is truncated when an expansion of its final state stopped
+  (at the candidate ceiling, at a simulation or accounting limit) before the
+  trace held `max_trace_length` steps, or when `simulation.max_steps`, below
+  the requested `max_trace_length`, cut it while its final state had a
+  successor or a stopped expansion. A temporal clause SHALL NOT be judged
+  under closed finite-trace semantics on a truncated trace: it is read as a
+  prefix of an unknown continuation, so it fails the case only when every
+  continuation violates the clause, and a shrink candidate of such a trace is
+  read the same way. A run that retains no counterexample and in which a
+  trace was truncated SHALL settle `incomplete`: for a stopped expansion with
+  that limit's `limit-reached` cause, and for the step setting with
+  `limit-reached{limit: max_steps, value, setting: simulation.max_steps}`.
+- A precondition or postcondition clause whose own case expansion of one
+  state reaches the candidate ceiling SHALL skip that state and go on with the
+  others, under the same two settlements.
 - Partition cases SHALL be built as FSpec FR-190 "Partitions" states: in the
   domain through the shortest enabled prefix the coverage exploration finds,
   or as refusal cases through the native admission that guards the root.
@@ -285,6 +301,9 @@ pub fn run_model_based_test(
 | FR-752-AC-15 | A direct `model_based_test` request member run with no caller setting gives the entry `expansion.max_candidates` 200000 and `accounting.work_units` 1000000. With the caller override `accounting.work_units=5` the run stops at that bound, settling `incomplete` with a `limit-reached` cause naming `work_units`, value 5 and setting `accounting.work_units`. | Test |
 | FR-752-AC-16 | AC-13's holding-claim fixture, run as a direct `model_based_test` request member with no caller candidate setting, settles `incomplete` with cause `limit-reached{limit: max_candidates, value: 200000, setting: expansion.max_candidates}`. | Test |
 | FR-752-AC-17 | AC-13's holding-claim fixture with the clause body `false` in place of the holding claim, run with no caller candidate setting, settles `refuted` with a 1-minimal, replay-reproduced counterexample of zero invocations, and its `attemptUpdate` operation is `uncovered` with reason `undetermined`, limit `candidates` and value 200000; this holds for a direct `model_based_test` request member and for a `model_based_test` plan step. | Test |
+| FR-752-AC-18 | Over a counter with `value` in `Int[0, 5]` incremented one step at a time, the temporal clause `always[0,5] holds(c.value <= 5)` under the false-extension profile, run with `expansion.max_candidates` below what an expansion of its initial state needs, settles `incomplete` with cause `limit-reached{limit: max_candidates, value, setting: expansion.max_candidates}` and no counterexample; the same holds for `eventually[0,5] holds(c.value >= 4)`. | Test |
+| FR-752-AC-19 | Over the same counter, `eventually[0,5] holds(c.value >= 4)` with requested `max_trace_length` 8 and `simulation.max_steps` 2 settles `incomplete` with cause `limit-reached{limit: max_steps, value: 2, setting: simulation.max_steps}` and no counterexample; with `simulation.max_steps` 8 it settles as with no step setting. | Test |
+| FR-752-AC-20 | A precondition clause over two initial states, one whose case expansion exceeds `expansion.max_candidates` and one within it whose precondition evaluates undefined, settles `refuted`; with the undefined state absent the run settles `incomplete` naming `expansion.max_candidates`. | Test |
 
 ## Dependencies
 

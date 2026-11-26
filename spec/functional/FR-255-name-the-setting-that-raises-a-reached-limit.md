@@ -468,6 +468,10 @@ bound given twice: `analyze` and `monitor` SHALL refuse the request
 before any work, so no run depends on which of the two bounds wins (as FR-312
 refuses `observation_limits` and FR-1015 refuses `export.limits`). A caller
 setting no item states takes effect for every item whose engine reads it.
+An item's `temporal.limits.max_states`, `max_transitions` and
+`max_check_work` state the `zone_check.*` settings only when the item reads a
+timed model; that refusal is made once the program is compiled, before any
+item runs.
 
 “All ten `accounting.*` settings” expands to `accounting.integer_bits`,
 `accounting.decimal_digits`, `accounting.scale_expansion`,
