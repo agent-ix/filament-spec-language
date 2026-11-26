@@ -2182,7 +2182,7 @@ fn resolve_one(
         });
         match (owner, own_subject.protocol.as_ref()) {
             (Some(owner), Some(selected))
-                if selected.protocol == owner.name || protocol_global_kind =>
+                if selected.protocol == owner.name =>
             {
                 match selected.binding(package, &own_subject.memory) {
                     Some(binding) => Some(binding),

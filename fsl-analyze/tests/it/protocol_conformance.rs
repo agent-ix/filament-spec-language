@@ -521,9 +521,11 @@ fn bound_protocol_subject(key: &str) -> Value {
 #[trace("TC-2800", "FR-896-AC-7", "FR-896-AC-8")]
 #[test]
 fn global_conformance_checks_every_key_and_honors_bound_over() {
+    // FR-896-AC-7: the constraint of `send Placed`, the first control of `Main`,
+    // is `{ k.r1 = 0 }`.
     let protocol = order_protocol(true).replace(
-        "run sequence Main {",
-        "run sequence Main {\ncheck Ready using pp { k.r1 = 0 };",
+        "send Placed via Order as (placed: Ack) { true }",
+        "send Placed via Order as (placed: Ack) { k.r1 = 0 }",
     );
     let snapshots = keyed_core_snapshots("1");
     let items = json!([{"claim": "Flow", "kind": "global-conformance"}]);
@@ -590,7 +592,7 @@ fn protocol_deadlock_item_declines_without_subject_protocol() {
         &crate::litmus::unit_text(&order_protocol(true)),
         &crate::litmus::resulting_document(),
         &[],
-        json!({"items": [{"claim": "Flow",
+        json!({"items": [{"claim": "Flow", "kind": "temporal-satisfaction",
             "temporal": {"item_kind": "deadlock-freedom"}}]}),
     );
     let item = analyze(&request).item(0);

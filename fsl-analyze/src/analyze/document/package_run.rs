@@ -2407,8 +2407,31 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let candidates = self.registry.candidates(kind, named.as_ref());
         let temporal = selection.temporal.clone().unwrap_or_default();
         let own_subject = self.own_subject(index, selection)?;
-        let item_form = (kind == Capability::GlobalConformance)
-            .then(|| ItemForm::Temporal(temporal_settings(&temporal)));
+        // FR-896-AC-8/9: a `subject.protocol` binding this protocol selects
+        // the item's `over` and roles; one binding another protocol declines.
+        let mut form = temporal_settings(&temporal);
+        if kind == Capability::GlobalConformance {
+            if own_subject
+                .protocol
+                .as_ref()
+                .is_some_and(|selected| selected.protocol != name)
+            {
+                return Ok(Resolution::Settled(super::invalid_value(
+                    index,
+                    name,
+                    "temporal.subject.protocol",
+                )));
+            }
+            form.protocol = match protocol_binding(&own_subject, input) {
+                Ok(protocol) => protocol,
+                Err(member) => {
+                    return Ok(Resolution::Settled(super::invalid_value(
+                        index, name, member,
+                    )));
+                }
+            };
+        }
+        let item_form = (kind == Capability::GlobalConformance).then(|| ItemForm::Temporal(form));
         Ok(Resolution::Claim(
             Box::new(ResolvedClaim {
                 item: ClaimItem {

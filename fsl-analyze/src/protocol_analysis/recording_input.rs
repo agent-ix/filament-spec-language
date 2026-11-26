@@ -367,7 +367,8 @@ impl<'a> Protocol<'a> {
             ranged: true,
         });
         let mut vias = Vec::new();
-        let mut edges = Vec::new();
+        let mut edges = structural_edges(&controls);
+        let mut messages = Vec::new();
         for control in &program.form.controls {
             let node = *ids.get(&control.id)?;
             match &control.body {
@@ -397,7 +398,7 @@ impl<'a> Protocol<'a> {
                             .controls
                             .iter()
                             .find(|candidate| &candidate.node.node_id == *of)?;
-                        edges.push(check::CausalEdge {
+                        messages.push(check::CausalEdge {
                             kind: check::EdgeKind::Message,
                             from: check::PortRef {
                                 node: *ids.get(&source.id)?,
@@ -413,7 +414,8 @@ impl<'a> Protocol<'a> {
                 _ => {}
             }
         }
-        edges.sort_by_key(|edge| edge.to.node);
+        messages.sort_by_key(|edge| edge.to.node);
+        edges.extend(messages);
         let mut channels = Vec::new();
         for channel in &program.form.channels {
             if protocol_view::channel_ordering(channel).ok()?
@@ -530,4 +532,72 @@ impl Input<'_> {
             Self::Package(input) => input.types,
         }
     }
+}
+
+/// The structural causal edges of the control tree, in node order as the
+/// source route's compiled relation lists them (FSpec FR-464 "Derived causal
+/// relation"): a sequence enters its first child, steps child to child and
+/// exits with its last; a choice enters and exits through each case's body.
+fn structural_edges(controls: &[CheckedControl]) -> Vec<check::CausalEdge> {
+    let port = |node: ProtocolNodeId, port| check::PortRef { node, port };
+    let edge = |kind, from, to| check::CausalEdge { kind, from, to };
+    let mut edges = Vec::new();
+    for control in controls {
+        match control.kind {
+            fsl_forms::ProtocolNodeKind::Sequence => {
+                let node = control.node;
+                if let (Some(&first), Some(&last)) =
+                    (control.children.first(), control.children.last())
+                {
+                    let sequence = check::EdgeKind::Sequence;
+                    edges.push(edge(
+                        sequence,
+                        port(node, check::Port::Enter),
+                        port(first, check::Port::Enter),
+                    ));
+                    for pair in control.children.windows(2) {
+                        edges.push(edge(
+                            sequence,
+                            port(pair[0], check::Port::Exit),
+                            port(pair[1], check::Port::Enter),
+                        ));
+                    }
+                    edges.push(edge(
+                        sequence,
+                        port(last, check::Port::Exit),
+                        port(node, check::Port::Exit),
+                    ));
+                } else {
+                    edges.push(edge(
+                        check::EdgeKind::Sequence,
+                        port(node, check::Port::Enter),
+                        port(node, check::Port::Exit),
+                    ));
+                }
+            }
+            fsl_forms::ProtocolNodeKind::Choice => {
+                for case in &control.children {
+                    let body = controls
+                        .iter()
+                        .find(|candidate| candidate.node == *case)
+                        .and_then(|case| case.children.first().copied());
+                    if let Some(body) = body {
+                        let branch = check::EdgeKind::Branch;
+                        edges.push(edge(
+                            branch,
+                            port(control.node, check::Port::Enter),
+                            port(body, check::Port::Enter),
+                        ));
+                        edges.push(edge(
+                            branch,
+                            port(body, check::Port::Exit),
+                            port(control.node, check::Port::Exit),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    edges
 }
