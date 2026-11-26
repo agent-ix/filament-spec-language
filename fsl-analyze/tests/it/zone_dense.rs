@@ -28,7 +28,7 @@ use crate::zone_liveness::decide;
 use crate::zone_replay::{replay, reproduced};
 use crate::zone_search::{
     check, claim_with, deadlock, deadlock_result, deadlock_with, delays, operations, proved,
-    time_lock_item_with, violated, INFINITE,
+    time_lock_item_with, violated, INFINITE, TIMED,
 };
 
 /// The population of [`timers`].
@@ -56,8 +56,20 @@ fn timers_claiming(latching: bool, body: &str) -> World {
 /// [`timers_claiming`] over the timers `keys`, those `armed` armed at
 /// the start.
 fn timers_over(latching: bool, body: &str, keys: &[&str], armed: &[&str]) -> World {
-    timers_declaring(latching, body, keys, armed, "")
+    timers_declaring(latching, body, keys, armed, "", STEPS)
 }
+
+/// A temporal profile and the header that reads a claim under it.
+type ClaimHeader = (&'static str, &'static str);
+
+/// A claim over `model-steps`, which reads no timed interval.
+const STEPS: ClaimHeader = (
+    INFINITE,
+    "using inf over (t: M::Call) clock \"model-steps\"",
+);
+
+/// A claim over `model-time`, which reads timed intervals.
+const CLOCKED: ClaimHeader = (TIMED, "using tt over (t: M::Call) clock \"model-time\"");
 
 /// FR-430-AC-3's latching `Timer` pair, whose both-armed state is terminal,
 /// with the model text `terminal` (a `terminal` declaration, or none)
@@ -69,6 +81,7 @@ pub(crate) fn latching_timers(terminal: &str) -> World {
         &["t1", "t2"],
         &[],
         terminal,
+        STEPS,
     )
 }
 
@@ -79,6 +92,7 @@ fn timers_declaring(
     keys: &[&str],
     armed: &[&str],
     terminal: &str,
+    (profile, header): ClaimHeader,
 ) -> World {
     let arm: (&str, &[&str]) = ("arm", &["inflight", "x"]);
     let both = [arm, ("disarm", &["inflight", "x"])];
@@ -91,15 +105,14 @@ fn timers_declaring(
     };
     world_armed(
         &symmetric_document(&["x"], operations),
-        INFINITE,
+        profile,
         &format!(
             "{DENSE}\
              pre Arm using v on M::Call::arm {{ not self.inflight and self.x >= 1 ms }}\n\
              post Armed using v on M::Call::arm {{ self.inflight and self.x = 0 ms }}\n\
              {disarm}\
              {terminal}\
-             temporal Unarmed using inf over (t: M::Call) clock \"model-steps\" on origin \
-             {{ {body} }}\n"
+             temporal Unarmed {header} on origin {{ {body} }}\n"
         ),
         keys,
         armed,
@@ -251,6 +264,67 @@ fn a_claim_over_a_timer_is_checked_once_per_orbit() {
     );
     let settlement = replay(&world, &reduced).expect("replays");
     assert!(reproduced(&settlement), "{settlement:?}");
+}
+
+/// FR-430-AC-3 (TC-1170), FR-159's preservation row for symmetry under a
+/// fairness: under `fair weak M::Call::arm`, a claim over `t` read by an
+/// invariant or by a window is decided under `[[t1, t2]]` as with no
+/// reduction. `t1` is armed after 1 ms, so `always holds(not t.inflight)`
+/// is violated at `t1`; no timer need be armed within 2 ms, so the window
+/// `eventually` is violated; the two claims every state satisfies hold,
+/// settling `Proved{Reduced{symmetry}, Uncertified}`.
+#[trace("TC-1170", "FR-430-AC-3", "FR-159-AC-2")]
+#[test]
+fn a_fair_claim_over_a_timer_is_decided_under_symmetry() {
+    let limits = ZoneCheckLimits::default();
+    let fair = |formula: &str| {
+        let body = format!("fair weak M::Call::arm; {formula}");
+        timers_declaring(false, &body, &["t1", "t2"], &[], "", CLOCKED)
+    };
+    for formula in [
+        "always holds(not t.inflight)",
+        "eventually[0 ms, 2 ms] holds(t.inflight)",
+    ] {
+        let world = fair(formula);
+        let none = Reductions::default();
+        let plain = violated(claim_with(&world, limits, &Cancel::new(), &none));
+        let reduced = violated(claim_with(&world, limits, &Cancel::new(), &swap()));
+        assert_eq!(reduced.kind, plain.kind, "{formula}");
+        assert_eq!(
+            reduced
+                .over_binding
+                .as_ref()
+                .map(|binding| binding.key.as_str()),
+            Some("t1"),
+            "{formula}"
+        );
+        // The instance's product is explored unreduced, so the lasso is
+        // the unreduced one.
+        assert_eq!(operations(&reduced), operations(&plain), "{formula}");
+        assert_eq!(receivers(&reduced), receivers(&plain), "{formula}");
+        let settlement = replay(&world, &reduced).expect("replays");
+        assert!(reproduced(&settlement), "{formula}: {settlement:?}");
+    }
+    for formula in [
+        "always holds(t.inflight or not t.inflight)",
+        "eventually[0 ms, 2 ms] holds(not t.inflight)",
+    ] {
+        let world = fair(formula);
+        let none = Reductions::default();
+        let plain = claim_with(&world, limits, &Cancel::new(), &none);
+        assert!(
+            matches!(plain, ZoneCheckOutcome::Holds { .. }),
+            "{formula}: {plain:?}"
+        );
+        let reduced = claim_with(&world, limits, &Cancel::new(), &swap());
+        let ZoneCheckOutcome::HoldsReduced { reductions, .. } = &reduced else {
+            panic!("{formula}: expected a reduced proof, got {reduced:?}");
+        };
+        assert!(
+            matches!(reductions.as_slice(), [AppliedReduction::Symmetry { .. }]),
+            "{formula}: {reductions:?}"
+        );
+    }
 }
 
 /// FR-430-AC-3 (TC-1170): the symbolic state with `t1` armed, `t2`
