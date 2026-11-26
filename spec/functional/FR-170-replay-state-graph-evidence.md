@@ -205,6 +205,22 @@ pub enum GraphEvidence {
   stem, and a constraint false at one (a boundary state, which the engine
   never expands) SHALL settle `inconclusive`, `Verdicts`.
 
+### Timed subject
+
+These rules bind a replay of a state-graph claim from source and from package
+bytes alike. Each refusal is `stale_dependency`/`content-mismatch` and settles
+no result.
+
+- The executor SHALL take a timed reading exactly when the subject is timed:
+  evidence over a timed subject read without its clocks, or a timed reading or
+  zone certificate over an untimed subject, SHALL refuse.
+- A zone reading SHALL carry the envelope's zone certificate (FR-245), which
+  the executor checks.
+- A `digital-clocks` reading SHALL be replayed only over a closed subject
+  (FR-243): a strict clock constraint of a guard or time invariant SHALL
+  refuse. A replay from package bytes reads no digital-clock reading and
+  refuses one.
+
 ### Engine independence
 
 - Evidence found under a reduction SHALL be concretised before it is
@@ -226,6 +242,8 @@ pub enum GraphEvidence {
 | FR-170-AC-6 | A `Witness` arm holding a `WitnessPath::Lasso` over §7.1's subject whose loop is `upd(a)` from `(2, 0)` back to `(2, 0)`, for `possible c.versionNumber = 2`, replays the loop by FR-128's rules; the same lasso with its loop entry moved so the loop does not close refuses as FR-128 refuses. A `Trap` with `TrapClosure::Product` is routed to FR-181's product replay and never explored as a state-graph closure. | Test (TC-595) |
 | FR-170-AC-7 | FR-168-AC-11's guard evidence, FR-168-AC-12's terminal-predicate evidence and FR-168-AC-13's state-constraint evidence each replay to `reproduced-with-evaluated-witness`, and FR-168-AC-13's evidence does so through a request that selects `Half` and through one that selects no constraint, since the replay reads `Half` from `where.locus`; the guard evidence with `where.transition` naming another transition, or with its stem's last step removed, settles `inconclusive`, `Verdicts`. FR-168-AC-13's evidence with its stem's last step removed, which ends at `va = 1` where `Half` is defined, and with its cause changed to another reason, each settle `inconclusive`, `Verdicts`. | Test (TC-612) |
 | FR-170-AC-8 | Over ADR-022 §7.2's game model, `CanStillWin`'s trap at `Lost` replays by exploring its forward closure `{Lost}`, which holds no target node, reports node count 1, reproduces, and FR-169 settles it `refuted`, `closed-scope` (V-10) with no certificate checked. The same trap with its stem ending at `Mid`, whose forward closure reaches `Won`, settles `inconclusive`, `Verdicts`, and its replay result names `Won`'s state key as the first target node. | Test (TC-595) |
+| FR-170-AC-9 | Over a timed subject, a state-graph replay with no timed reading, and a zone reading whose envelope carries no zone certificate, each refuse `stale_dependency`/`content-mismatch`, from source and from package bytes. | Test (TC-595) |
+| FR-170-AC-10 | A `digital-clocks` reading of a timed subject with a strict clock constraint in a guard or time invariant refuses `stale_dependency`/`content-mismatch` and settles no result, and a replay from package bytes refuses a `digital-clocks` reading of any subject it reads. | Test (TC-595) |
 
 ## Dependencies
 

@@ -883,6 +883,82 @@ fn altered_timed_witness_is_not_refuted() {
     assert!(record.probabilistic_counterexample.is_none());
 }
 
+/// FR-202-AC-47: a timed deadline witness names the claim's binding and no
+/// instance. One with no binding, another object or an instance is refused.
+#[trace("TC-637", "FR-202-AC-47")]
+#[test]
+fn a_timed_witness_with_another_binding_is_refused() {
+    use filament_exact::{ObjectId, ObjectReference};
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_replay::{ProbabilityWitnessError, ProbabilityWitnessReplay};
+
+    // `send` draws nothing. A scheduler may take it by 2 ms, so `late` is
+    // reached with maximum probability 1 and `<= 0.9999` is refuted. The
+    // package route reads no deadline claim, so only the source replay is here.
+    let body = format!(
+        "{}\
+         pre Send using v on M::Call::send {{ not self.late }}\n\
+         post Sent using v on M::Call::send {{ self.late = true }}\n\
+         {}",
+        timed_world::DENSE,
+        deadline("Max", "under every scheduler", "<= 0.9999"),
+    );
+    let world = timed_world::world(
+        &timed_world::document(&["x"], &[("send", &["late"])]),
+        PROFILES,
+        &body,
+    );
+    let record = settle(&world, "Max");
+    let witness = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .evidence()
+        .clone();
+    let bound = witness.binding.clone().expect("the claim binds `c`");
+    assert_eq!(bound.object().as_str(), "c");
+    let mut unbound = witness.clone();
+    unbound.binding = None;
+    let mut other = witness.clone();
+    other.binding = Some(ObjectReference::new(
+        bound.universe().clone(),
+        bound.object_type().clone(),
+        ObjectId::new("other").expect("an id"),
+    ));
+
+    let simulation = world.request();
+    let limits = ExactProbLimits::default();
+    let source = ModelSystem::new(simulation.clone()).expect("the source system admits");
+    let from_source = |witness: &fsl_replay::ProbabilisticCounterexample| {
+        fsl_replay::replay_probabilistic_witness(
+            &world.package,
+            &source,
+            &witness.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    let replayed = from_source(&witness);
+    let Ok(ProbabilityWitnessReplay::Reproduced(token)) = replayed else {
+        panic!("the produced witness reproduces: {replayed:?}");
+    };
+    assert_eq!(token.mass(), &ratio(1, 1));
+    let mut named = witness.clone();
+    named.instance = named.binding.clone();
+    for (name, altered) in [
+        ("unbound", &unbound),
+        ("other object", &other),
+        ("named instance", &named),
+    ] {
+        let replayed = from_source(altered);
+        assert!(
+            matches!(replayed, Err(ProbabilityWitnessError::Refused)),
+            "{name}: {replayed:?}"
+        );
+    }
+}
+
 /// FR-921: the clock valuation a digital key names is placed by clock identity
 /// in the model's place order, never by the position of the clock in the key.
 /// The same two-clock key with its clocks listed in the opposite order names

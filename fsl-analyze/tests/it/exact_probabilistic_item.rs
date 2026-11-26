@@ -837,6 +837,42 @@ fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
     ));
 }
 
+/// FR-202-AC-47: a claim with no `on each` has no failing instance, so an
+/// undefined witness that names one is refused.
+#[trace("TC-637", "FR-202-AC-47")]
+#[test]
+fn undefined_replay_refuses_a_witness_that_names_an_instance() {
+    use fsl_replay::{
+        replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
+    };
+    let claims = "probabilistic Open using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
+    let world = World::new(&prob_world::coin(claims));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let witness = undefined_evidence(&world, "Open");
+    let limits = world.request("Open", ModelCheckLimits::default()).limits;
+    let replay = |witness: &fsl_replay::ProbabilityUndefinedWitness| {
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &witness.path.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    assert!(matches!(
+        replay(&witness),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    let mut named = witness.clone();
+    named.path.instance = Some(named.path.binding.clone().expect("the claim binds `c`"));
+    assert!(matches!(
+        replay(&named),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+}
+
 #[trace(
     "TC-3153",
     "FR-202-AC-25",

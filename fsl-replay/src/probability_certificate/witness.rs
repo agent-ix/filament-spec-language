@@ -11,6 +11,7 @@ use fsl_eval::simulation::model::{
     TimedSystem, TransitionId,
 };
 use fsl_package::CheckedPackage;
+use ix_trace_rs::implements;
 
 mod bounded;
 mod measure;
@@ -562,6 +563,7 @@ pub fn replay_probabilistic_witness_from_package(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-202-AC-47")]
 fn replay_probabilistic_witness_impl(
     probabilistic: &fsl_semantics::check::CheckedProbabilisticModel,
     system: &ModelSystem<'_>,
@@ -579,6 +581,10 @@ fn replay_probabilistic_witness_impl(
         ExactProbabilityGraphError::ClaimNotBound => ProbabilityWitnessError::Refused,
         _ => ProbabilityWitnessError::Graph(error),
     })?;
+    // An `on each` instance has its own replay entry.
+    if witness.instance.is_some() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
     if witness.subsystem.is_some() {
         return if matches!(claim.form, ProbForm::MeanOfFraction { .. }) {
             measure::replay_subsystem(system, claim, witness, limits, cancel)

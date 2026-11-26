@@ -4,6 +4,7 @@
 use super::*;
 use fsl_eval::automaton::{BoundedState, QualifiedBoundedMonitor, StateId};
 use fsl_semantics::check::Event;
+use ix_trace_rs::implements;
 
 /// Untrusted path and the exact pre-read location it claims is undefined.
 #[derive(Clone, Debug)]
@@ -20,6 +21,7 @@ pub struct ProbabilityUndefinedWitness {
 /// The threshold has no role: only the first undefined observation of an
 /// undecided claim can issue a reproduced-witness token. This entry admits
 /// untimed product forms whose checked predicates are replayed here.
+#[implements("FR-202-AC-47")]
 pub fn replay_probabilistic_undefined(
     package: &CheckedPackage,
     system: &ModelSystem<'_>,
@@ -30,7 +32,7 @@ pub fn replay_probabilistic_undefined(
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
     let evidence = &witness.path;
-    if evidence.subsystem.is_some() {
+    if evidence.subsystem.is_some() || evidence.instance.is_some() {
         return Err(ProbabilityWitnessError::Refused);
     }
     if !system

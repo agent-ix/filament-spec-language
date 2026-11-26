@@ -49,6 +49,8 @@ finite-horizon measure and quantile bases.
    `lower` document, replace only the `value` in the row keyed by the initial
    complete product key `K0` with the valid dyadic `1/16`; check that mutated
    document independently.
+10. Over AC-28's claim, a two-state model with exact mean `10999/11000` and
+    threshold `<= 0.99999`, run EN-5 with `max_rational_bits` 1.
 
 Tag the AC-17 assertions `#[trace("TC-3212", "FR-1042-AC-17")]`; tag each
 other assertion `#[trace("TC-3212", "FR-1042-AC-n")]` for its criterion.
@@ -73,3 +75,5 @@ other assertion `#[trace("TC-3212", "FR-1042-AC-n")]` for its criterion.
   at least 0; each shifted document is accepted by a separate checker. The
   mutated `lower.values[K0] = 1/16` document is rejected `InequalityFails` at
   `K0`.
+- Step 10 settles `proved`, `ValueBounds` enclosing `10999/11000` with the upper
+  end at most `0.99999`.
