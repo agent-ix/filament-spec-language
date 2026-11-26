@@ -8,14 +8,14 @@ use ix_trace_rs::trace;
 /// Trace: FR-1051-AC-11, FR-1051-AC-13.
 #[trace("FR-1051-AC-11", "FR-1051-AC-13")]
 #[test]
-fn value_bounds_certificate_rejects_each_single_mutation() {
+pub(crate) fn value_bounds_certificate_rejects_each_single_mutation() {
     let exact = proof(&link(">=", "rational(2,5)"));
     let Keys { s, .. } = keys(&exact);
     let request = bound(&exact, "lower", &[(&s, rational(7, 16))], None, true);
     let document = document(&request);
     let result = check_document(
         Fixture {
-            route: "value-bounds/v1",
+            route: "R-13 value-bounds/v1",
             name: "cyclic-chain-lower-bound",
             document,
             allowed_to_survive: Vec::new(),

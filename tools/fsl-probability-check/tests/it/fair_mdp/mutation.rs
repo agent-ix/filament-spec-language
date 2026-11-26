@@ -11,7 +11,7 @@ use ix_trace_rs::trace;
 /// Trace: FR-1051-AC-11, FR-1051-AC-13.
 #[trace("FR-1051-AC-11", "FR-1051-AC-13")]
 #[test]
-fn cyclic_mdp_fair_certificate_rejects_each_single_mutation() {
+pub(crate) fn cyclic_mdp_fair_certificate_rejects_each_single_mutation() {
     let source = fair_w_source();
     let (request, settlement) = request_with(
         &source,
@@ -25,7 +25,7 @@ fn cyclic_mdp_fair_certificate_rejects_each_single_mutation() {
             .expect("certificate document");
     let result = check_document(
         Fixture {
-            route: "cyclic-mdp-fair-eventual/v1",
+            route: "R-11 cyclic-mdp-fair-eventual/v1",
             name: "fair-w-minimum",
             document,
             allowed_to_survive: vec![AllowedMutation {

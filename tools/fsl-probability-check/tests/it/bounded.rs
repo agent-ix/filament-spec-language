@@ -20,7 +20,7 @@ use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
-mod mutation;
+pub(crate) mod mutation;
 
 pub(super) const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");

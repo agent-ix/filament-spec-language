@@ -417,6 +417,9 @@ pub fn decide_bounded_probability_claim(
         return Err(refuse("initial state outside the chain"));
     }
     let horizon = usize::try_from(*horizon).map_err(|_| refuse("horizon beyond the platform"))?;
+    if horizon > crate::MAX_HORIZON_STEPS {
+        return Err(refuse("horizon exceeds the reference step bound"));
+    }
     let zero = Rational::from_integer(Integer::zero());
     let mut mass = zero.clone();
     let mut paths = 0_usize;

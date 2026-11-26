@@ -864,19 +864,24 @@ fn evaluate_value(
                 filament_semantic_value::declaration::EqualityOperator::NotEqual => !equal,
             }))
         }
-        NodeKind::Connective(Connective::And, _, left, right) => {
-            let left = child(*left, active_state, budget)?;
-            let Value::Boolean(left) = left else {
-                return Err(unsupported("non-Boolean conjunction operand"));
+        NodeKind::Connective(
+            connective @ (Connective::And | Connective::Or | Connective::Implies),
+            _,
+            left,
+            right,
+        ) => {
+            let operand = |node, budget: &mut usize| match child(node, active_state, budget)? {
+                Value::Boolean(value) => Ok(value),
+                _ => Err(unsupported("non-Boolean connective operand")),
             };
-            let right = child(*right, active_state, budget)?;
-            let Value::Boolean(right) = right else {
-                return Err(unsupported("non-Boolean conjunction operand"));
-            };
-            Ok(Value::Boolean(left && right))
+            let left = operand(*left, budget)?;
+            let right = operand(*right, budget)?;
+            Ok(Value::Boolean(match connective {
+                Connective::And => left && right,
+                Connective::Or => left || right,
+                _ => !left || right,
+            }))
         }
-        NodeKind::Connective(Connective::Or, ..) => Err(unsupported("disjunction")),
-        NodeKind::Connective(Connective::Implies, ..) => Err(unsupported("implication")),
         NodeKind::Not(operand) => {
             let value = child(*operand, active_state, budget)?;
             let Value::Boolean(value) = value else {

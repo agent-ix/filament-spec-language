@@ -125,3 +125,44 @@ fn reference_decides_unique_path_by_counting_edge_sequences() {
         "InOneWay"
     ));
 }
+
+/// Disjunction and implication in a claim predicate are evaluated, not
+/// refused: phase 2 or 3 is reachable; "phase 2 and 3" in either order is not;
+/// phase 3 together with "3 implies 2" is not.
+#[trace("FR-1051")]
+#[test]
+fn reference_evaluates_disjunction_and_implication_in_claim_predicates() {
+    use crate::graph_world::game_world;
+    let world = game_world(
+        false,
+        false,
+        "possible Either using v over (x: G::Game) { x.phase = 2 or x.phase = 3 }\n\
+         possible Never using v over (x: G::Game) { x.phase = 2 and x.phase = 3 or x.phase = 3 and x.phase = 2 }\n\
+         possible Vacuous using v over (x: G::Game) { x.phase = 3 and (x.phase = 3 implies x.phase = 2) }\n",
+    );
+    let play = &["play", "win", "lose"];
+    assert!(verdict(
+        &world,
+        "g",
+        "Game",
+        play,
+        &[("phase", 0)],
+        "Either"
+    ));
+    assert!(!verdict(
+        &world,
+        "g",
+        "Game",
+        play,
+        &[("phase", 0)],
+        "Never"
+    ));
+    assert!(!verdict(
+        &world,
+        "g",
+        "Game",
+        play,
+        &[("phase", 0)],
+        "Vacuous"
+    ));
+}

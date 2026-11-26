@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeSet;
+use std::sync::Mutex;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ix_trace_rs::implements;
@@ -114,6 +115,29 @@ pub fn canonical_bytes(value: &Value) -> Result<Vec<u8>, HarnessError> {
         .map_err(|error| HarnessError::Canonical(error.to_string()))
 }
 
+static REGISTERED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+/// Records the Routes-table id (the first word of a route label) of a fixture
+/// the check accepted.
+fn record_route(label: &str) {
+    if let Some(id) = label.split_whitespace().next() {
+        REGISTERED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.to_owned());
+    }
+}
+
+/// The Routes-table ids whose accepted fixtures this process has checked.
+pub fn registered_routes() -> Vec<String> {
+    REGISTERED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .cloned()
+        .collect()
+}
+
 /// Apply every generated single mutation to a canonical document and require rejection.
 #[implements("FR-1051-AC-11")]
 pub fn check_document(
@@ -129,6 +153,7 @@ pub fn check_document(
             fixture: name,
         });
     }
+    record_route(&route);
     let mutants = mutations(&fixture.document);
     check_mutants(route, name, fixture.allowed_to_survive, mutants, |value| {
         canonical_bytes(value).ok().map(|bytes| check(&bytes))
@@ -183,6 +208,7 @@ pub fn check_typed_with_adapter<T>(
             fixture: fixture_name,
         });
     }
+    record_route(&route);
     let mutants = mutations(&value);
     check_mutants(
         route.clone(),
@@ -339,7 +365,7 @@ fn walk(root: &Value, value: &Value, path: &str, out: &mut Vec<Mutant>) {
                     for (index, row) in rows.iter().enumerate() {
                         if row.is_object() {
                             let row_path = format!("{child_path}/{index}");
-                            let mut dropped = value.clone();
+                            let mut dropped = root.clone();
                             if let Some(array) =
                                 pointer_mut(&mut dropped, &child_path).and_then(Value::as_array_mut)
                             {
@@ -352,7 +378,7 @@ fn walk(root: &Value, value: &Value, path: &str, out: &mut Vec<Mutant>) {
                                 },
                                 value: dropped,
                             });
-                            let mut duplicated = value.clone();
+                            let mut duplicated = root.clone();
                             if let Some(array) = pointer_mut(&mut duplicated, &child_path)
                                 .and_then(Value::as_array_mut)
                             {
@@ -783,6 +809,31 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// A row below the top level is dropped or duplicated in the whole
+    /// document, not in the sub-object the walk is standing in.
+    #[trace("FR-1051-AC-11")]
+    #[test]
+    fn nested_row_drop_and_duplicate_change_the_whole_document() {
+        let doc = json!({"body": {"rows": [{"state": "a"}, {"state": "b"}]}});
+        let mutants = mutations(&doc);
+        let find = |member: &str, kind: MutationKind| {
+            mutants
+                .iter()
+                .find(|mutant| mutant.id.member == member && mutant.id.kind == kind)
+                .expect("the nested row has this mutation")
+                .value
+                .clone()
+        };
+        assert_eq!(
+            find("$/body/rows/0", MutationKind::RowDropped),
+            json!({"body": {"rows": [{"state": "b"}]}})
+        );
+        assert_eq!(
+            find("$/body/rows/1", MutationKind::RowDuplicated),
+            json!({"body": {"rows": [{"state": "a"}, {"state": "b"}, {"state": "b"}]}})
+        );
     }
 
     /// Trace: FR-1051-AC-13.

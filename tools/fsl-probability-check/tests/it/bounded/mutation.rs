@@ -8,7 +8,7 @@ use ix_trace_rs::trace;
 /// Trace: FR-1051-AC-11, FR-1051-AC-13.
 #[trace("FR-1051-AC-11", "FR-1051-AC-13")]
 #[test]
-fn finite_horizon_measure_certificate_rejects_each_single_mutation() {
+pub(crate) fn finite_horizon_measure_certificate_rejects_each_single_mutation() {
     let mut source = model_source()
         .replace("{ true: 1, false: 9 }", "{ true: 1, false: 1 }")
         .replace("{ true: 1, false: 4 }", "{ true: 1, false: 3 }")
@@ -26,7 +26,7 @@ fn finite_horizon_measure_certificate_rejects_each_single_mutation() {
     );
     let result = check_document(
         Fixture {
-            route: "finite-horizon-measure/v1",
+            route: "R-12 finite-horizon-measure/v1",
             name: "finite-horizon-fraction-mean",
             document,
             allowed_to_survive: Vec::new(),
