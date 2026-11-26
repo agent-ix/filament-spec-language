@@ -97,11 +97,7 @@ fn an_mitl_claim_proves_certified_and_refutes_with_exact_delays() {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]
-                    .as_str()
-                    .and_then(|node| node.rsplit('/').next())
-                    .unwrap_or("-")
-                    .to_owned(),
+                operation_name(step),
             )
         })
         .collect();
@@ -346,6 +342,16 @@ fn an_unread_member_settles_unsupported_not_requires_bound() {
     assert_eq!(run.exit, 21);
 }
 
+/// The operation's name in `step`'s transition, whose `operation` is its
+/// declaration identity text (FR-120); `-` when it is not one.
+fn operation_name(step: &Value) -> String {
+    step["transition"]["operation"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .and_then(|identity| Some(identity["node"].as_str()?.rsplit('/').next()?.to_owned()))
+        .unwrap_or_else(|| "-".to_owned())
+}
+
 /// The first two steps of `item`'s counterexample: each delay's numerator and
 /// denominator and its operation's name.
 fn head(item: &Value) -> Vec<(String, String, String)> {
@@ -359,11 +365,7 @@ fn head(item: &Value) -> Vec<(String, String, String)> {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]
-                    .as_str()
-                    .and_then(|node| node.rsplit('/').next())
-                    .unwrap_or("-")
-                    .to_owned(),
+                operation_name(step),
             )
         })
         .collect()

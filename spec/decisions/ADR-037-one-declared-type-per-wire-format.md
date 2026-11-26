@@ -93,8 +93,6 @@ hand-written table when the owner schema or shared type already defines it.
 Every writer of a transition operation identity SHALL call the same writer
 function: it emits the identity text, except that a name identity is emitted
 as the bare name. FR-120 owns this operation-identity rule.
-FR-120 does not yet state this rule; QSL-3440 amends it, prose and criteria;
-arch ruling QSL-3498 comment 440767b3 governs until then.
 
 ### Format owners and implementation homes
 
