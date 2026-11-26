@@ -16,11 +16,12 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    check_match_witness, replay_hyper_trace_tuple, settle_hyper_check, DisagreementCause, HyperCounterexample,
-    HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperReplay, HyperStep, HyperTrace,
-    InconclusiveCause, MatchWitness, MatchWitnessCheck, ModelCheckLimit, ModelCheckLimits,
-    ModelStep, ModelTraceRefusal, ModelTraceSettlement, ModelTraceValue, ReachedLimit,
-    ReplayLimits, ReplayRefusal, RunStats, StepMark, TerminalValue, DEFAULT_MAX_WITNESS_SET,
+    check_match_witness, replay_hyper_trace_tuple, settle_hyper_check, DisagreementCause,
+    HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperReplay, HyperStep,
+    HyperTrace, InconclusiveCause, MatchWitness, MatchWitnessCheck, ModelCheckLimit,
+    ModelCheckLimits, ModelStep, ModelTraceRefusal, ModelTraceSettlement, ModelTraceValue,
+    ReachedLimit, ReplayLimits, ReplayRefusal, RunStats, StepMark, TerminalValue,
+    DEFAULT_MAX_WITNESS_SET,
 };
 use ix_trace_rs::trace;
 
@@ -1544,9 +1545,7 @@ fn unadmitted_w(vault: Vault) -> World {
 #[test]
 fn an_instance_no_initial_state_admits_is_refused_before_replay() {
     const NOT_AN_INSTANCE: &str = "binds a parameter to a key that is not one of its instances";
-    let not_an_instance = |refused: &ModelTraceRefusal| {
-        matches!(refused, ModelTraceRefusal::HyperShape { reason } if *reason == NOT_AN_INSTANCE)
-    };
+    let not_an_instance = |refused: &ModelTraceRefusal| matches!(refused, ModelTraceRefusal::HyperShape { reason } if *reason == NOT_AN_INSTANCE);
 
     let world = unadmitted_w(Vault::Secure);
     let witness = |key: &str, initial: u32| {

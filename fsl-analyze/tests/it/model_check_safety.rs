@@ -457,7 +457,10 @@ fn a_lasso_bound_over_an_unadmitted_key_is_refused_before_any_step() {
     };
     let at_z = replay("z");
     assert_eq!(at_z, fsl_replay::ModelTraceRefusal::OverBinding);
-    assert_eq!(at_z.code(), fsl_foundation::diagnostic::Code::InvalidRuntimeInput);
+    assert_eq!(
+        at_z.code(),
+        fsl_foundation::diagnostic::Code::InvalidRuntimeInput
+    );
     assert_eq!(at_z.cause(), "invalid-value");
     assert!(matches!(
         replay("c"),
@@ -1333,8 +1336,8 @@ fn an_on_each_past_or_interval_proof_settles_certified() {
         &world.clauses[0],
         vec![value(|v| Some(v <= 3)), value(|v| Some(v <= 3))],
     );
-    let outcome = run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default())
-        .expect("checked");
+    let outcome =
+        run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default()).expect("checked");
     let ModelCheckOutcome::Holds { certificate, .. } = &outcome else {
         panic!("expected Holds, got {outcome:?}");
     };

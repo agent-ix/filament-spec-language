@@ -124,8 +124,8 @@ use fsl_eval::simulation::model::{
     check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem,
 };
 use fsl_eval::simulation::{
-    Expansion, ExpansionLimit, ExpansionStop, Limit, Limits, Outcome, SymmetryClass,
-    SymmetryGroup, TransitionSystem,
+    Expansion, ExpansionLimit, ExpansionStop, Limit, Limits, Outcome, SymmetryClass, SymmetryGroup,
+    TransitionSystem,
 };
 use fsl_eval::temporal::{
     evaluate_tuple, AtomReading, ComponentPosition, ComponentTrace, LetterStop, TemporalOutcome,
@@ -979,10 +979,7 @@ impl<'a> Run<'_, 'a> {
             &'x [ParameterBinding],
             &mut Totals,
         ) -> Result<InstanceRun<'x, 'a>, ModelCheckRefusal>,
-        holds: impl FnOnce(
-            &[Explored<'x, 'a>],
-            &Totals,
-        ) -> Result<HyperOutcome, ModelCheckRefusal>,
+        holds: impl FnOnce(&[Explored<'x, 'a>], &Totals) -> Result<HyperOutcome, ModelCheckRefusal>,
     ) -> Result<HyperOutcome, ModelCheckRefusal> {
         let mut explored = Vec::with_capacity(instances.len());
         let mut first_open = None;

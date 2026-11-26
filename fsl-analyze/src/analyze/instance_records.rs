@@ -4,8 +4,8 @@
 
 use filament_exact::Rational;
 use fsl_replay::{
-    Certification, EXPLICIT_STATE, Execution, InconclusiveCause, ProofBasis, ResultLabel, RunStats,
-    SettlementBasis, StateGraphMethod, StateGraphRecord, TerminalValue, Truth,
+    Certification, Execution, InconclusiveCause, ProofBasis, ResultLabel, RunStats,
+    SettlementBasis, StateGraphMethod, StateGraphRecord, TerminalValue, Truth, EXPLICIT_STATE,
 };
 use ix_trace_rs::implements;
 
@@ -241,8 +241,7 @@ mod tests {
             max_depth: None,
             seed: 0,
         };
-        let EngineReport::StateGraph(report) =
-            undecided(InconclusiveCause::NoInstance, &method, 0)
+        let EngineReport::StateGraph(report) = undecided(InconclusiveCause::NoInstance, &method, 0)
         else {
             panic!("a state-graph report");
         };
@@ -273,18 +272,36 @@ mod tests {
         };
         let solver = ProofBasis::BoundedSolver {
             method: SolverMethod::FlowpipeOutwardRounded,
-            horizon: SolverHorizon::new(Rational::new(3_i64.into(), 1_i64.into()).expect("nonzero")).expect("a horizon"),
+            horizon: SolverHorizon::new(
+                Rational::new(3_i64.into(), 1_i64.into()).expect("nonzero"),
+            )
+            .expect("a horizon"),
             jumps: 1,
             exhaustive: BTreeSet::new(),
         };
         // (a) to (l) of FR-621-AC-25, `p` first.
-        assert_eq!(pick((exhaustive(), Certified), (exhaustive(), Uncertified)), 1);
-        assert_eq!(pick((bounded(3), Certified), (exhaustive(), Uncertified)), 1);
-        assert_eq!(pick((exhaustive(), Uncertified), (exhaustive(), Trusted)), 1);
+        assert_eq!(
+            pick((exhaustive(), Certified), (exhaustive(), Uncertified)),
+            1
+        );
+        assert_eq!(
+            pick((bounded(3), Certified), (exhaustive(), Uncertified)),
+            1
+        );
+        assert_eq!(
+            pick((exhaustive(), Uncertified), (exhaustive(), Trusted)),
+            1
+        );
         assert_eq!(pick((reduced(), Uncertified), (bounded(5), Uncertified)), 1);
         assert_eq!(pick((bounded(5), Certified), (bounded(3), Certified)), 1);
-        assert_eq!(pick((exhaustive(), Uncertified), (reduced(), Uncertified)), 1);
-        assert_eq!(pick((exhaustive(), Certified), (exhaustive(), Certified)), 0);
+        assert_eq!(
+            pick((exhaustive(), Uncertified), (reduced(), Uncertified)),
+            1
+        );
+        assert_eq!(
+            pick((exhaustive(), Certified), (exhaustive(), Certified)),
+            0
+        );
         assert_eq!(pick((exhaustive(), Certified), (inductive(), Certified)), 0);
         assert_eq!(pick((inductive(), Certified), (bounded(5), Certified)), 1);
         assert_eq!(pick((witness(), Certified), (bounded(5), Certified)), 1);

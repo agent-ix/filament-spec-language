@@ -15,7 +15,6 @@ use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
-use ix_trace_rs::implements;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
@@ -26,6 +25,7 @@ use fsl_eval::simulation::{
 use fsl_foundation::ReductionKind;
 use fsl_replay::{ModelCheckItem, ReductionCause, SymmetryBrokenCause, SymmetryRefusal};
 use fsl_route::reductions::{Reductions, SymmetryDeclaration};
+use ix_trace_rs::implements;
 
 /// A row of the preservation table (ADR-021 PT-2): an item's form, with
 /// whether its formula has an interval operator.

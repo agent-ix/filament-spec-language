@@ -93,7 +93,11 @@ pub(super) fn settle(
         (_, Some(_), _) => return Err(refused(ModelTraceRefusal::StrayFinalDelay)),
     }
     if let Some(formula) = &formula {
-        super::admitted_over(timed.system(), formula.clause, payload.over_binding.as_ref())?;
+        super::admitted_over(
+            timed.system(),
+            formula.clause,
+            payload.over_binding.as_ref(),
+        )?;
     }
     let Some(replayed) = replay_prefix(timed, payload)? else {
         return Ok((no_value(), Vec::new()));

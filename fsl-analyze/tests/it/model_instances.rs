@@ -41,9 +41,7 @@ use fsl_replay::{
     ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ResultLabel,
     StateGraphMethod, settle_existential,
 };
-use fsl_semantics::check::{
-    CheckedTemporalClause, FormulaNode, FormulaNodeId,
-};
+use fsl_semantics::check::{CheckedTemporalClause, FormulaNode, FormulaNodeId};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
@@ -183,7 +181,7 @@ pub(crate) struct World {
     pub(crate) package: CheckedPackage,
     packages: fsl_semantics::model::intake::PackageInput,
     pub(crate) snapshots: fsl_semantics::model::observation::DocumentProvision,
-    initial: Vec<DocumentRef>,
+    pub(crate) initial: Vec<DocumentRef>,
 }
 
 pub(crate) fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {

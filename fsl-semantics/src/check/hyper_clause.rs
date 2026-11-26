@@ -32,10 +32,10 @@ use fsl_forms::{
     TypeFormHead,
 };
 use fsl_foundation::Span;
-use ix_trace_rs::implements;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use ix_trace_rs::implements;
 
 use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
@@ -877,7 +877,9 @@ impl CheckedHyperClause {
 
     /// The declared object type of parameter `index`.
     pub fn parameter_object_type(&self, index: usize) -> Option<&EffectiveId> {
-        self.parameters.get(index).map(|parameter| &parameter.object)
+        self.parameters
+            .get(index)
+            .map(|parameter| &parameter.object)
     }
 
     /// The quantifier prefix, in source order.
@@ -2674,9 +2676,7 @@ fn check_atom(
     variables: &Variables<'_>,
     found: &mut Vec<Found>,
 ) {
-    let parameter = |name: &str| {
-        parameters.iter().find(|parameter| parameter.name == name)
-    };
+    let parameter = |name: &str| parameters.iter().find(|parameter| parameter.name == name);
     let enclosing = lowering::enclosing_reads(expression);
     let mut located: Vec<Option<Span>> = vec![None; expression.len()];
     walk(expression, spans, |visit| {

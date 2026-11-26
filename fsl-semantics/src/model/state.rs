@@ -544,7 +544,12 @@ impl StateModel {
         budget: &mut NativeJoinBudget,
     ) -> Result<Self, RetainedModelFailure> {
         Self::reserve_retained_wrapper(budget)?;
-        Self::from_retained_parts(selections, StateTypes::Owned(Box::new(types)), owners, budget)
+        Self::from_retained_parts(
+            selections,
+            StateTypes::Owned(Box::new(types)),
+            owners,
+            budget,
+        )
     }
 
     /// Construct a retained model sharing the immutable genuine type environment

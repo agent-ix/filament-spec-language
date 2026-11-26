@@ -14,7 +14,6 @@ use fsl_analyze::model_check::{
     SingleExistentialRequest, SingleExistentialRun,
 };
 use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch};
-use fsl_semantics::model::observation::AdmissionFailure;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
@@ -23,6 +22,7 @@ use fsl_replay::{
     ProductClosureRefusal, ProductClosureRequest, ResultLabel, StateGraphMethod, UndecidedCause,
 };
 use fsl_route::reductions::Reductions;
+use fsl_semantics::model::observation::AdmissionFailure;
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
@@ -106,10 +106,7 @@ impl Pets<'_> {
         held: &[("P1", &[("d", "Lamp")]), ("P2", &[("a", "Switch")])],
         listed: &[
             ("P1", &[("d", "Lamp"), ("u", "Lamp")]),
-            (
-                "P2",
-                &[("u", "Switch"), ("a", "Switch"), ("d", "Switch")],
-            ),
+            ("P2", &[("u", "Switch"), ("a", "Switch"), ("d", "Switch")]),
         ],
     };
 
@@ -211,10 +208,8 @@ fn the_single_existential_instances_are_the_admitted_keys() {
             panic!("one hyper clause");
         };
         let both = || universes(&[("pets", &["l", "m"])]);
-        let system =
-            ModelSystem::new(held.subject(&package, both()).simulation).expect("admitted");
-        let letters =
-            CheckedHyperLetters::new(&package, clause, vec![&system]).expect("letters");
+        let system = ModelSystem::new(held.subject(&package, both()).simulation).expect("admitted");
+        let letters = CheckedHyperLetters::new(&package, clause, vec![&system]).expect("letters");
         let run = check_single_existential(
             SingleExistentialRequest {
                 clause,
@@ -444,7 +439,8 @@ fn a_parameter_with_no_overlapping_population_settles_no_instance() {
         let item = run.item(0);
         assert_eq!(label(&item), "inconclusive", "{}", run.document());
         assert_eq!(
-            item["record"]["cause"]["kind"], "no-instance",
+            item["record"]["cause"]["kind"],
+            "no-instance",
             "{}",
             run.document()
         );
@@ -473,7 +469,8 @@ fn the_instancing_outcomes_are_never_a_fault() {
         let item = run.item(0);
         assert_eq!(label(&item), "inconclusive", "{}", run.document());
         assert_eq!(
-            item["record"]["cause"]["kind"], "no-instance",
+            item["record"]["cause"]["kind"],
+            "no-instance",
             "{}",
             run.document()
         );
@@ -614,11 +611,12 @@ fn a_single_existential_item_takes_the_refuted_instance_past_an_undecided_one() 
         &["p", "q"],
         item(),
     );
-println!("PROBE {}", run.document());
+    println!("PROBE {}", run.document());
     assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
     assert_eq!(run.exit, 10, "{}", run.document());
     assert_eq!(
-        run.item(0)["counterexample"]["instance"]["key"]["identity"], "q",
+        run.item(0)["counterexample"]["instance"]["key"]["identity"],
+        "q",
         "{}",
         run.document()
     );
@@ -639,7 +637,8 @@ println!("PROBE {}", run.document());
     );
     assert_eq!(label(&run.item(0)), "inconclusive", "{}", run.document());
     assert_eq!(
-        run.item(0)["record"]["cause"]["kind"], "no-instance",
+        run.item(0)["record"]["cause"]["kind"],
+        "no-instance",
         "{}",
         run.document()
     );
@@ -1009,7 +1008,8 @@ fn an_empty_initial_list_reports_no_initial_state() {
         let item = run.item(0);
         assert_eq!(label(&item), "inconclusive", "{}", run.document());
         assert_eq!(
-            item["record"]["cause"]["kind"], "no-initial-state",
+            item["record"]["cause"]["kind"],
+            "no-initial-state",
             "{}",
             run.document()
         );

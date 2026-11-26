@@ -24,9 +24,10 @@ use fsl_eval::hyper::{
 use fsl_eval::simulation::model::ModelSimState;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_replay::{
-    HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperStep, IncompleteCause, InconclusiveCause, ModelCheckLimit,
-    ModelCheckLimits, ModelTraceRefusal, ModelTraceSettlement, ModelTraceValue, ReachedLimit,
-    ReplayRefusal, TerminalValue, UndecidedCause, DEFAULT_MAX_RELATION_TUPLES, DEFAULT_MAX_WITNESS_SET,
+    HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperStep, IncompleteCause,
+    InconclusiveCause, ModelCheckLimit, ModelCheckLimits, ModelTraceRefusal, ModelTraceSettlement,
+    ModelTraceValue, ReachedLimit, ReplayRefusal, TerminalValue, UndecidedCause,
+    DEFAULT_MAX_RELATION_TUPLES, DEFAULT_MAX_WITNESS_SET,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -1573,7 +1574,12 @@ fn an_undefined_universal_match_over_an_empty_set_is_refused_and_ranks_first() {
     };
     let counterexample = refuted(
         world
-            .run_through(&second, &second, ModelCheckLimits::default(), &Cancel::new())
+            .run_through(
+                &second,
+                &second,
+                ModelCheckLimits::default(),
+                &Cancel::new(),
+            )
             .expect("the first instance ends the item"),
     );
     assert_eq!(counterexample.instance, [("v".to_owned(), "v".to_owned())]);
