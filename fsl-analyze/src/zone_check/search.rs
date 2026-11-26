@@ -2717,6 +2717,7 @@ pub(super) enum Split {
 /// disjoint from it is skipped. The pieces still to be read are held in a
 /// list, not on the call stack, so any number of covers can be read; `meter`
 /// stops the subtraction by returning an error.
+#[implements("FR-852-AC-33")]
 pub(super) fn subtract<E: From<DbmError>>(
     zone: &Dbm,
     covers: &[Dbm],

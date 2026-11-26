@@ -174,7 +174,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
 
     /// `possible`: from each initial valuation, a forward search for a state
     /// where `p` holds.
-    #[implements("FR-852-AC-1")]
+    #[implements("FR-852-AC-1", "FR-852-AC-32")]
     pub(super) fn possible(
         &mut self,
         p: &[bool],
@@ -224,7 +224,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
 
     /// `always possible`: every valuation of a node where `q` holds is in
     /// `E(P)`, the backward fixpoint from the states where `p` holds.
-    #[implements("FR-852-AC-2", "FSpec-FR-712-AC-2")]
+    #[implements("FR-852-AC-2", "FR-852-AC-32", "FSpec-FR-712-AC-2")]
     pub(super) fn always_possible(
         &mut self,
         q: &[bool],
@@ -260,7 +260,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
 
     /// `unique path`: from every valuation of a node where `x` holds, one
     /// transition sequence leads to a state where `y` holds.
-    #[implements("FR-852-AC-3", "FSpec-FR-712-AC-3")]
+    #[implements("FR-852-AC-3", "FR-852-AC-32", "FSpec-FR-712-AC-3")]
     pub(super) fn unique_path(
         &mut self,
         x: &[bool],
@@ -413,6 +413,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
 
     /// Charge one held zone against `max_symbolic_states` and
     /// `max_zone_bytes`.
+    #[implements("FR-852-AC-33")]
     fn charge_zone(&mut self, zone: &Dbm) -> Result<(), ZoneCheckRefusal> {
         self.stored = self.stored.saturating_add(1);
         let limit = self.limits.max_symbolic_states;
@@ -438,6 +439,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
     }
 
     /// The parts of `zone` outside every zone of `held`.
+    #[implements("FR-852-AC-33")]
     fn outside(&mut self, zone: &Dbm, held: &[Dbm]) -> Result<Vec<Dbm>, ZoneCheckRefusal> {
         let room = self.limits.max_symbolic_states.saturating_sub(self.stored);
         let states = self.limits.max_symbolic_states;
@@ -456,6 +458,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
 
     /// Whether some zone of `zones` meets one the forward search reached at
     /// its state.
+    #[implements("FR-852-AC-33")]
     fn meets(
         &mut self,
         zones: &BTreeMap<usize, Vec<Dbm>>,
@@ -474,6 +477,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         Ok(false)
     }
 
+    #[implements("FR-852-AC-33")]
     fn charge_step(&mut self) -> Result<(), ZoneCheckRefusal> {
         self.poll()?;
         self.computed = self.computed.saturating_add(1);

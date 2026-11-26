@@ -65,7 +65,13 @@ struct Space {
 impl<O> Checker<'_, '_, O> {
     /// FSpec FR-712's form of the state-graph claim, decided on the timed
     /// states.
-    #[implements("FSpec-FR-712-AC-1", "FSpec-FR-712-AC-2", "FSpec-FR-712-AC-3")]
+    #[implements(
+        "FR-852-AC-32",
+        "FSpec-FR-712-AC-1",
+        "FSpec-FR-712-AC-2",
+        "FSpec-FR-712-AC-3",
+        "FSpec-FR-712-AC-10"
+    )]
     pub(super) fn state_graph(&self) -> Step<(), O> {
         let Some(state_graph) = &self.state_graph else {
             return malformed(CertificateMember::Nodes);
@@ -424,12 +430,14 @@ impl<O> Checker<'_, '_, O> {
     }
 
     /// [`outside`], charged to `max_certificate_edges`.
+    #[implements("FR-852-AC-33")]
     fn outside(&self, zone: &Zone, held: &[Zone]) -> Step<Vec<Zone>, O> {
         outside(zone, held, &|count| self.charge(count))
     }
 
     /// The nonempty intersections of `left` with `right`, location by
     /// location, each pair charged.
+    #[implements("FR-852-AC-33")]
     fn shared(&self, left: &[Region], right: &[Region]) -> Step<Vec<Region>, O> {
         let mut both = Vec::new();
         for (location, zone) in left {
@@ -451,6 +459,7 @@ impl<O> Checker<'_, '_, O> {
 /// `charge` is called with zero before each pair of a held zone and a piece
 /// is read, to poll, and with the number of pieces each split makes; its
 /// error stops the subtraction.
+#[implements("FR-852-AC-33")]
 fn outside<O>(
     zone: &Zone,
     held: &[Zone],
