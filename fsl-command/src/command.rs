@@ -3029,10 +3029,6 @@ fn extraction_record(
     let original = map.original();
     let body = map.body();
     let outcome = extracted.extraction();
-    let availability: fsl_replay::spine::ExtractionAvailability = serde_json::from_value(
-        serde_json::to_value(&outcome.availability).map_err(RunCause::Output)?,
-    )
-    .map_err(RunCause::Output)?;
     let segments: Vec<_> = map
         .segments()
         .iter()
@@ -3061,7 +3057,7 @@ fn extraction_record(
             package: package.to_owned(),
         },
         outcome: fsl_replay::spine::ExtractionOutcome {
-            availability,
+            availability: outcome.availability.clone(),
             clause_text: outcome.clause_text.clone(),
             diagnostics: outcome
                 .diagnostics
