@@ -592,7 +592,7 @@ fn claim_side_bound(form: &ProbForm) -> Option<Bound> {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-1042-AC-28")]
+#[implements("FR-1042-AC-31")]
 fn finish_measure_interval(
     bound: &Bound,
     system: &ModelSystem<'_>,

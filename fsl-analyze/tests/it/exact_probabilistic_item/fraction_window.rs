@@ -122,9 +122,9 @@ fn the_edge_ceiling_is_reported_before_the_next_successors_key_is_encoded() {
     ));
 }
 
-/// FR-1042-AC-28: a mean ceiling settled by bounds takes the `upper` document
+/// FR-1042-AC-31: a mean ceiling settled by bounds takes the `upper` document
 /// as the claim side. The exact mean is 10999/11000, below 0.99999.
-#[trace("TC-3212", "FR-1042-AC-28")]
+#[trace("TC-3212", "FR-1042-AC-31")]
 #[test]
 fn a_mean_ceiling_certified_by_bounds_takes_the_upper_document_as_the_claim() {
     let model = prob_world::health(

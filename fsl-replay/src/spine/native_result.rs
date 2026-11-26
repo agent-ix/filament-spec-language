@@ -11,6 +11,11 @@ use fsl_foundation::LocatedSpan;
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
+use quire_rs::semantic::{
+    AvailabilityState, ClauseRef, KindAvailability, SemanticDiagnostic, SemanticSeverity,
+    SourceLocus,
+};
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
@@ -22,6 +27,7 @@ use fsl_semantics::model::observation::{
     DocumentRef, FrameChange, FrameWitness, LinkDifference, SelectedObject,
 };
 use fsl_semantics::value::environment_stage::membership_failure_cause;
+use ix_trace_rs::implements;
 
 mod protocol;
 pub use protocol::{
@@ -265,7 +271,8 @@ pub struct ClauseRunRecord(
 impl ClauseRunRecord {
     /// The Quire-backed source extraction record, when this run consumed a
     /// Markdown source through extraction.
-    pub fn extraction(&self) -> Option<&serde_json::Value> {
+    #[implements("FR-267-AC-17")]
+    pub fn extraction(&self) -> Option<&ExtractionRecord> {
         self.0.extraction.as_ref()
     }
 
@@ -1216,7 +1223,7 @@ struct ClauseRead {
     #[serde(default, deserialize_with = "present")]
     witness: Option<RecordWire<Box<RawValue>>>,
     #[serde(default, deserialize_with = "present")]
-    extraction: Option<serde_json::Value>,
+    extraction: Option<ExtractionRecord>,
     #[serde(default, deserialize_with = "present")]
     ledger: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present")]
@@ -1240,115 +1247,425 @@ struct ClauseRead {
     _evidence_ledger: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionRead {
-    original: ExtractionOriginalRead,
-    body: ExtractionBodyRead,
-    binding: ExtractionBindingRead,
-    outcome: serde_json::Value,
-    map: ExtractionMapRead,
-    #[serde(default, deserialize_with = "present")]
-    original_regions: Option<Vec<ExtractionRegionRead>>,
+trait ExtractionShape {
+    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String>;
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionOriginalRead {
-    authority: String,
-    identity: String,
-    path: String,
-    bytes: Vec<u8>,
+macro_rules! extraction_leaf_shape {
+    ($($type:ty),+ $(,)?) => {
+        $(
+            impl ExtractionShape for $type {
+                fn missing_member(_: NodeRef<'_>, _: &str) -> Option<String> {
+                    None
+                }
+            }
+        )+
+    };
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionBodyRead {
-    authority: String,
-    identity: String,
-    document: String,
-    bytes: Vec<u8>,
+extraction_leaf_shape!(
+    String,
+    u8,
+    u64,
+    usize,
+    bool,
+    AvailabilityState,
+    SemanticSeverity
+);
+
+impl<K, V> ExtractionShape for BTreeMap<K, V> {
+    fn missing_member(_: NodeRef<'_>, _: &str) -> Option<String> {
+        None
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionBindingRead {
-    clause: String,
-    package: String,
+impl<T: ExtractionShape> ExtractionShape for Vec<T> {
+    #[implements("FR-267-AC-17")]
+    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+        let Node::Array(entries) = node.node() else {
+            return None;
+        };
+        entries
+            .enumerate()
+            .find_map(|(index, entry)| T::missing_member(entry, &format!("{path}[{index}]")))
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionMapRead {
-    region: ExtractionSpanRead,
-    segments: Vec<ExtractionSegmentRead>,
+impl<T: ExtractionShape> ExtractionShape for Option<T> {
+    #[implements("FR-267-AC-17")]
+    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+        if matches!(node.node(), Node::Null) {
+            None
+        } else {
+            T::missing_member(node, path)
+        }
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionSpanRead {
-    start: u64,
-    end: u64,
+macro_rules! extraction_record_type {
+    (
+        $name:ident {
+            $($(#[$field_attribute:meta])* $field:ident: $field_type:ty),* $(,)?
+            ;
+            $($(#[$optional_attribute:meta])* $optional_field:ident: $optional_type:ty),* $(,)?
+        }
+    ) => {
+        #[derive(Clone, Debug, Serialize)]
+        #[allow(missing_docs, reason = "fields implement the native extraction wire record")]
+        pub struct $name {
+            $($(#[$field_attribute])* pub $field: $field_type,)*
+            $($(#[$optional_attribute])* pub $optional_field: $optional_type,)*
+        }
+
+        // Serde's derived struct decoder also accepts a positional array, so
+        // the members are decoded only after object syntax is confirmed.
+        const _: () = {
+            type Record = $name;
+
+            #[derive(Deserialize)]
+            #[serde(remote = "Record", deny_unknown_fields)]
+            #[allow(dead_code, reason = "a Serde remote decoder is never constructed")]
+            struct Members {
+                $($(#[$field_attribute])* $field: $field_type,)*
+                $($(#[$optional_attribute])* $optional_field: $optional_type,)*
+            }
+
+            struct Decoded(Record);
+
+            impl<'de> Deserialize<'de> for Decoded {
+                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                    Members::deserialize(decoder).map(Self)
+                }
+            }
+
+            impl<'de> Deserialize<'de> for $name {
+                #[implements("FR-267-AC-17")]
+                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                    fsl_foundation::serde_object::from_object::<D, Decoded>(decoder)
+                        .map(|Decoded(record)| record)
+                }
+            }
+        };
+
+        impl ExtractionShape for $name {
+            #[implements("FR-267-AC-17")]
+            fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+                if !matches!(node.node(), Node::Object(_)) {
+                    return None;
+                }
+                $(
+                    let field_path = format!("{path}.{}", stringify!($field));
+                    let Some(value) = node.get(stringify!($field)) else {
+                        return Some(field_path);
+                    };
+                    if let Some(missing) = <$field_type as ExtractionShape>::missing_member(value, &field_path) {
+                        return Some(missing);
+                    }
+                )*
+                $(
+                    if let Some(value) = node.get(stringify!($optional_field)) {
+                        let field_path = format!("{path}.{}", stringify!($optional_field));
+                        if let Some(missing) = <$optional_type as ExtractionShape>::missing_member(value, &field_path) {
+                            return Some(missing);
+                        }
+                    }
+                )*
+                None
+            }
+        }
+
+    };
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionSegmentRead {
-    body_start: u64,
-    body_end: u64,
-    original_start: u64,
-    original_end: u64,
+extraction_record_type! {
+    ExtractionRecord {
+        original: ExtractionOriginal,
+        body: ExtractionBody,
+        binding: ExtractionBinding,
+        outcome: ExtractionOutcome,
+        map: ExtractionMap;
+        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        original_regions: Option<Vec<ExtractionRegion>>
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionRegionRead {
-    start: ExtractionPositionRead,
-    end: ExtractionPositionRead,
+extraction_record_type! {
+    ExtractionOriginal {
+        authority: String,
+        identity: String,
+        path: String,
+        bytes: Vec<u8>;
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionPositionRead {
-    byte: u64,
-    line: u64,
-    column: u64,
+extraction_record_type! {
+    ExtractionBody {
+        authority: String,
+        identity: String,
+        document: String,
+        bytes: Vec<u8>;
+    }
+}
+
+extraction_record_type! {
+    ExtractionBinding {
+        clause: String,
+        package: String;
+    }
+}
+
+extraction_record_type! {
+    ExtractionMap {
+        region: ExtractionSpan,
+        segments: Vec<ExtractionSegment>;
+    }
+}
+
+extraction_record_type! {
+    ExtractionSpan {
+        start: u64,
+        end: u64;
+    }
+}
+
+extraction_record_type! {
+    ExtractionSegment {
+        body_start: u64,
+        body_end: u64,
+        original_start: u64,
+        original_end: u64;
+    }
+}
+
+extraction_record_type! {
+    ExtractionRegion {
+        start: ExtractionPosition,
+        end: ExtractionPosition;
+    }
+}
+
+extraction_record_type! {
+    ExtractionPosition {
+        byte: u64,
+        line: u64,
+        column: u64;
+    }
+}
+
+extraction_record_type! {
+    ExtractionOutcome {
+        #[serde(deserialize_with = "closed_object")]
+        availability: KindAvailability,
+        clause_text: std::collections::BTreeMap<String, String>,
+        #[serde(deserialize_with = "closed_objects")]
+        diagnostics: Vec<SemanticDiagnostic>;
+        #[serde(default, deserialize_with = "present_closed_objects", skip_serializing_if = "Option::is_none")]
+        clauses: Option<Vec<ClauseRef>>
+    }
+}
+
+/// A Quire record this reader decodes as a closed JSON object. Quire's own
+/// derived decoders accept a positional array and unknown members.
+trait ClosedRecord: Sized {
+    fn closed<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error>;
+}
+
+/// The closed decoder and the missing-member walk of one Quire record, which
+/// Quire writes with its own encoding. Serde's remote derive builds the Quire
+/// type, so a member Quire adds, removes or retypes stops the build.
+macro_rules! quire_record {
+    (
+        $record:ident {
+            $($wire:literal $field:ident: $field_type:ty $(=> $with:literal)?),*
+            ;
+            $($optional_wire:literal $optional_field:ident: $optional_type:ty => $optional_with:literal),*
+        }
+    ) => {
+        const _: () = {
+            type Record = $record;
+
+            #[derive(Deserialize)]
+            #[serde(remote = "Record", deny_unknown_fields)]
+            #[allow(dead_code, reason = "a Serde remote decoder is never constructed")]
+            struct Members {
+                $(
+                    #[serde(rename = $wire $(, deserialize_with = $with)?)]
+                    $field: $field_type,
+                )*
+                $(
+                    #[serde(rename = $optional_wire, default, deserialize_with = $optional_with)]
+                    $optional_field: Option<$optional_type>,
+                )*
+            }
+
+            struct Decoded(Record);
+
+            impl<'de> Deserialize<'de> for Decoded {
+                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                    Members::deserialize(decoder).map(Self)
+                }
+            }
+
+            impl ClosedRecord for $record {
+                #[implements("FR-267-AC-17")]
+                fn closed<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                    fsl_foundation::serde_object::from_object::<D, Decoded>(decoder)
+                        .map(|Decoded(record)| record)
+                }
+            }
+        };
+
+        impl ExtractionShape for $record {
+            #[implements("FR-267-AC-17")]
+            fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+                if !matches!(node.node(), Node::Object(_)) {
+                    return None;
+                }
+                $(
+                    let field_path = format!("{path}.{}", $wire);
+                    let Some(value) = node.get($wire) else {
+                        return Some(field_path);
+                    };
+                    if let Some(missing) = <$field_type as ExtractionShape>::missing_member(value, &field_path) {
+                        return Some(missing);
+                    }
+                )*
+                $(
+                    if let Some(value) = node.get($optional_wire) {
+                        let field_path = format!("{path}.{}", $optional_wire);
+                        if let Some(missing) = <$optional_type as ExtractionShape>::missing_member(value, &field_path) {
+                            return Some(missing);
+                        }
+                    }
+                )*
+                None
+            }
+        }
+    };
+}
+
+quire_record! {
+    KindAvailability {
+        "state" state: AvailabilityState => "string_variant",
+        "lossy" lossy: bool
+        ;
+        "reason" reason: String => "present"
+    }
+}
+
+quire_record! {
+    SemanticDiagnostic {
+        "code" code: String,
+        "severity" severity: SemanticSeverity => "string_variant",
+        "message" message: String
+        ;
+        "line" line: usize => "present",
+        "column" column: usize => "present",
+        "reason" reason: String => "present",
+        "sourceSpan" source_span: SourceLocus => "present_closed_object",
+        "section" section: String => "present"
+    }
+}
+
+quire_record! {
+    ClauseRef {
+        "language" language: String,
+        "clauseId" clause_id: String
+        ;
+        "sourceSpan" source_span: SourceLocus => "present_closed_object"
+    }
+}
+
+quire_record! {
+    SourceLocus {
+        "sourceIdentity" source_identity: String,
+        "path" path: String,
+        "startLine" start_line: usize,
+        "startColumn" start_column: usize
+        ;
+        "endLine" end_line: usize => "present",
+        "endColumn" end_column: usize => "present"
+    }
+}
+
+/// One closed record, wherever a decoder needs a `Deserialize` type.
+struct Closed<T>(T);
+
+impl<'de, T: ClosedRecord> Deserialize<'de> for Closed<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        T::closed(decoder).map(Self)
+    }
+}
+
+fn closed_object<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
+    decoder: D,
+) -> Result<T, D::Error> {
+    T::closed(decoder)
+}
+
+fn present_closed_object<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
+    decoder: D,
+) -> Result<Option<T>, D::Error> {
+    T::closed(decoder).map(Some)
+}
+
+#[implements("FR-267-AC-17")]
+fn closed_objects<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
+    decoder: D,
+) -> Result<Vec<T>, D::Error> {
+    Vec::<Closed<T>>::deserialize(decoder)
+        .map(|entries| entries.into_iter().map(|Closed(entry)| entry).collect())
+}
+
+fn present_closed_objects<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
+    decoder: D,
+) -> Result<Option<Vec<T>>, D::Error> {
+    closed_objects(decoder).map(Some)
+}
+
+/// A Quire enum, admitted only as a JSON string: Serde's derived enum decoder
+/// also accepts `{"error": null}`.
+#[implements("FR-267-AC-17")]
+fn string_variant<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    decoder: D,
+) -> Result<T, D::Error> {
+    let name = String::deserialize(decoder)?;
+    T::deserialize(serde::de::value::StringDeserializer::new(name))
+}
+
+#[implements("FR-267-AC-17")]
+fn validate_extraction(extraction: Option<NodeRef<'_>>) -> Result<(), NativeRunReadError> {
+    let Some(value) = extraction.filter(|value| !matches!(value.node(), Node::Null)) else {
+        return Ok(());
+    };
+    if let Some(member) = ExtractionRecord::missing_member(value, "extraction") {
+        return Err(NativeRunReadError::MalformedMember {
+            member,
+            source: serde_json::Error::custom("missing required extraction member"),
+        });
+    }
+    let segments_empty = value
+        .get("map")
+        .and_then(|map| map.get("segments"))
+        .is_some_and(
+            |segments| matches!(segments.node(), Node::Array(entries) if entries.len() == 0),
+        );
+    if segments_empty {
+        return Err(NativeRunReadError::Invalid {
+            member: "extraction.map.segments",
+            reason: "a non-empty segment array",
+        });
+    }
+    let regions_empty = value.get("original_regions").is_some_and(
+        |regions| matches!(regions.node(), Node::Array(entries) if entries.len() == 0),
+    );
+    if regions_empty {
+        return Err(NativeRunReadError::Invalid {
+            member: "extraction.original_regions",
+            reason: "a non-empty region array",
+        });
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -2741,6 +3058,7 @@ pub fn read_outcome_diagnostics(
 /// working-byte bounds. An over-long input is refused before it is decoded;
 /// a growth past the working bound is refused before it happens, with no
 /// partial result.
+#[implements("FR-267-AC-17")]
 #[ix_trace_rs::string_edge]
 pub fn read_native_run_result_bounded(
     bytes: &[u8],
@@ -2798,6 +3116,7 @@ pub fn read_native_run_result_bounded(
             .canonical(&splice)
             .map_err(|_| budget.copy_failure("witness", "cannot traverse witness document"))?;
         budget.charge(u64::try_from(shallow.len()).unwrap_or(u64::MAX))?;
+        validate_extraction(root.get("extraction"))?;
         let document: ClauseRead = read_typed(&shallow)?;
         if let Some(limits) = &document.limits {
             let value = &limits.0.max_candidates;
@@ -2809,14 +3128,6 @@ pub fn read_native_run_result_bounded(
                     reason: "a canonical positive Count string",
                 });
             }
-        }
-        if let Some(extraction) = &document.extraction {
-            let _: ExtractionRead = serde_json::from_value(extraction.clone()).map_err(|_| {
-                NativeRunReadError::Invalid {
-                    member: "extraction",
-                    reason: "a closed native extraction record",
-                }
-            })?;
         }
         let deciding_element = splice
             .element
@@ -3370,7 +3681,7 @@ struct ClauseRunDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<RecordWire<Box<RawValue>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    extraction: Option<serde_json::Value>,
+    extraction: Option<ExtractionRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ledger: Option<serde_json::Value>,
     /// FR-641-AC-8, FSpec FR-352-AC-19: the effective limits a `model`
@@ -4189,11 +4500,24 @@ pub fn write_clause_run_result_for(
 
 /// [`write_clause_run_result_for`] with the source extraction record required
 /// for a command run that selected a Markdown clause through Quire.
+#[implements("FR-267-AC-17")]
 pub fn write_clause_run_result_for_with_extraction(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
-    extraction: Option<serde_json::Value>,
+    extraction: Option<ExtractionRecord>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
+    check_report(report, selection)?;
+    write_document(report, selection, extraction)
+}
+
+/// The refusals every writer applies before it writes a clause run: a model
+/// counterexample without its model selection, and a basis that does not
+/// match the witness or the disposition.
+#[implements("FR-267-AC-1")]
+fn check_report(
+    report: &ClauseRunReport,
+    selection: Option<&super::ClauseRunSelection>,
+) -> Result<(), NativeRunResultError> {
     if matches!(
         report.counterexample,
         Some(crate::ClauseRunCounterexample::Model(_))
@@ -4216,7 +4540,7 @@ pub fn write_clause_run_result_for_with_extraction(
     } else if !verdict_basis(report) {
         return Err(NativeRunResultError::BasisDisposition);
     }
-    write_document(report, selection, extraction)
+    Ok(())
 }
 
 /// FR-266: a verdict has a decisive or closed settlement, a non-verdict
@@ -4245,7 +4569,7 @@ fn verdict_basis(report: &ClauseRunReport) -> bool {
 fn write_document(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
-    extraction: Option<serde_json::Value>,
+    extraction: Option<ExtractionRecord>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
     let witness = report.witness.as_ref().map(RecordWire::of).transpose()?;
     let ledger = report
@@ -4357,5 +4681,632 @@ fn run_limits(
             max_candidates.to_string(),
         )])),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod qsl_3117_deciding_run {
+    use super::{read_native_run_result, NativeRunReadError};
+    use ix_trace_rs::trace;
+    use serde_json::{json, Value};
+
+    fn valid_extraction_outcome() -> Value {
+        json!({
+            "availability": {"state": "available", "lossy": false},
+            "clause_text": {},
+            "diagnostics": []
+        })
+    }
+
+    /// The strict-reader decision case from QSL-3117: an empty map must be
+    /// refused with its member path, rather than admitted as a valid extraction.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_rejects_empty_map_segments() {
+        let mut result: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native-run-result-decisive.json"
+        ))
+        .unwrap();
+        result["extraction"] = json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": valid_extraction_outcome(),
+            "map": {"region": {"start": 0, "end": 0}, "segments": []}
+        });
+
+        let encoded = serde_json::to_vec(&result).unwrap();
+        let read = read_native_run_result(&encoded);
+        let observed = match &read {
+            Ok(_) => "reader accepted map.segments: []",
+            Err(_) => "reader refused but did not report the required member path",
+        };
+        assert!(
+            match &read {
+                Err(NativeRunReadError::Invalid { member, .. })
+                    if *member == "extraction.map.segments" =>
+                    true,
+                Err(NativeRunReadError::MalformedMember { member, .. })
+                    if member == "extraction.map.segments" =>
+                    true,
+                _ => false,
+            },
+            "strict extraction reader must refuse `map.segments: []` and name `extraction.map.segments`; {observed}"
+        );
+    }
+
+    /// FR-267-AC-17: malformed extraction members report the first exact path.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_malformed_extraction_members() {
+        let cases = [
+            ("extraction.source", json!({"source": null})),
+            ("extraction.map", json!({"map": null})),
+            ("extraction.binding", json!({"binding": null})),
+            ("extraction.body.identity", json!({"body": {"identity": 1}})),
+            (
+                "extraction.map.segments",
+                json!({"map": {"region": {"start": 0, "end": 0}, "segments": []}}),
+            ),
+        ];
+        for (expected, malformed) in cases {
+            let mut document: Value = serde_json::from_str(include_str!(
+                "../../../tests/fixtures/native-run-result-decisive.json"
+            ))
+            .unwrap();
+            let mut extraction = json!({
+                "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+                "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+                "binding": {"clause": "check", "package": "fixture/package"},
+                "outcome": valid_extraction_outcome(),
+                "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+            });
+            if malformed.get("source").is_some() {
+                extraction["source"] = malformed["source"].clone();
+            } else if malformed.get("body").is_some() {
+                extraction["body"]["identity"] = malformed["body"]["identity"].clone();
+            } else {
+                for (key, value) in malformed.as_object().unwrap() {
+                    extraction[key] = value.clone();
+                }
+            }
+            document["extraction"] = extraction;
+            let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+            let observed = match &result {
+                Err(NativeRunReadError::Invalid { member, .. }) => *member,
+                Err(NativeRunReadError::MalformedMember { member, .. }) => member.as_str(),
+                Ok(_) => "accepted",
+                Err(_) => "refused without a member path",
+            };
+            assert!(
+                matches!(&result, Err(NativeRunReadError::Invalid { member, .. }) if *member == expected)
+                    || matches!(&result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
+                "expected refusal naming {expected}, got {observed}"
+            );
+        }
+    }
+
+    /// FR-267-AC-17: a missing required map names `extraction.map`.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_missing_extraction_map() {
+        let mut document: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native-run-result-decisive.json"
+        ))
+        .unwrap();
+        let mut extraction = json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": valid_extraction_outcome(),
+            "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+        });
+        extraction.as_object_mut().unwrap().remove("map");
+        document["extraction"] = extraction;
+
+        let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+        assert!(
+            matches!(
+                result,
+                Err(NativeRunReadError::Invalid {
+                    member: "extraction.map",
+                    ..
+                })
+            ) || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.map"),
+            "missing extraction.map must be reported at that member"
+        );
+    }
+
+    /// FR-267-AC-17: an empty original-regions array is refused at its path.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_rejects_empty_extraction_original_regions() {
+        let mut document: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native-run-result-decisive.json"
+        ))
+        .unwrap();
+        document["extraction"] = json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": valid_extraction_outcome(),
+            "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]},
+            "original_regions": []
+        });
+
+        let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+        assert!(
+            matches!(
+                result,
+                Err(NativeRunReadError::Invalid {
+                    member: "extraction.original_regions",
+                    ..
+                })
+            ) || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.original_regions"),
+            "empty extraction.original_regions must be reported at that member"
+        );
+    }
+
+    /// FR-267-AC-17: the Quire extraction outcome retains its required shape.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_malformed_extraction_outcome_members() {
+        let cases = [
+            (
+                "extraction.outcome.availability",
+                "/outcome/availability",
+                None,
+            ),
+            (
+                "extraction.outcome.clause_text",
+                "/outcome/clause_text",
+                None,
+            ),
+            (
+                "extraction.outcome.diagnostics",
+                "/outcome/diagnostics",
+                None,
+            ),
+            (
+                "extraction.outcome.availability",
+                "/outcome/availability",
+                Some(Value::Null),
+            ),
+            (
+                "extraction.outcome.clause_text",
+                "/outcome/clause_text",
+                Some(json!(1)),
+            ),
+            (
+                "extraction.outcome.diagnostics",
+                "/outcome/diagnostics",
+                Some(json!({})),
+            ),
+            (
+                "extraction.outcome.clauses",
+                "/outcome/clauses",
+                Some(json!({})),
+            ),
+            (
+                "extraction.outcome.availability.state",
+                "/outcome/availability/state",
+                Some(json!("unknown")),
+            ),
+            (
+                "extraction.outcome.availability.reason",
+                "/outcome/availability/reason",
+                Some(Value::Null),
+            ),
+        ];
+        for (expected, pointer, replacement) in cases {
+            let mut extraction = json!({
+                "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+                "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+                "binding": {"clause": "check", "package": "fixture/package"},
+                "outcome": valid_extraction_outcome(),
+                "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+            });
+            let (parent, member) = pointer.rsplit_once('/').unwrap();
+            let Some(container) = extraction.pointer_mut(parent) else {
+                panic!("missing test container at {parent}");
+            };
+            let Value::Object(fields) = container else {
+                panic!("expected object at {parent}");
+            };
+            if let Some(replacement) = replacement {
+                fields.insert(member.to_owned(), replacement);
+            } else {
+                assert!(fields.remove(member).is_some());
+            }
+
+            let mut document: Value = serde_json::from_str(include_str!(
+                "../../../tests/fixtures/native-run-result-decisive.json"
+            ))
+            .unwrap();
+            document["extraction"] = extraction;
+            let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+            let observed = match &result {
+                Err(NativeRunReadError::MalformedMember { member, .. }) => member.as_str(),
+                Err(NativeRunReadError::Invalid { member, .. }) => *member,
+                Ok(_) => "accepted",
+                Err(_) => "refused without a member path",
+            };
+            assert!(
+                matches!(&result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
+                "expected refusal naming {expected}, got {observed}"
+            );
+        }
+    }
+
+    /// FR-267-AC-17: missing members are reported at every extraction nesting level.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_missing_extraction_members_at_nested_levels() {
+        let cases = [
+            ("extraction.original", "/original"),
+            ("extraction.body", "/body"),
+            ("extraction.binding", "/binding"),
+            ("extraction.outcome", "/outcome"),
+            ("extraction.original.authority", "/original/authority"),
+            ("extraction.body.identity", "/body/identity"),
+            ("extraction.binding.clause", "/binding/clause"),
+            ("extraction.map.region", "/map/region"),
+            ("extraction.map.region.start", "/map/region/start"),
+            ("extraction.map.segments", "/map/segments"),
+            (
+                "extraction.map.segments[0].body_start",
+                "/map/segments/0/body_start",
+            ),
+            (
+                "extraction.original_regions[0].start.byte",
+                "/original_regions/0/start/byte",
+            ),
+        ];
+        let valid = json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": valid_extraction_outcome(),
+            "map": {
+                "region": {"start": 0, "end": 1},
+                "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
+            },
+            "original_regions": [{
+                "start": {"byte": 0, "line": 1, "column": 1},
+                "end": {"byte": 1, "line": 1, "column": 2}
+            }]
+        });
+
+        for (expected, pointer) in cases {
+            let mut extraction = valid.clone();
+            let (parent, member) = pointer.rsplit_once('/').unwrap();
+            let Some(container) = extraction.pointer_mut(parent) else {
+                panic!("missing test container at {parent}");
+            };
+            match container {
+                Value::Object(fields) => assert!(fields.remove(member).is_some()),
+                Value::Array(entries) => {
+                    let index = member.parse::<usize>().unwrap();
+                    entries.remove(index);
+                }
+                other => panic!("expected object or array at {parent}, got {other}"),
+            }
+
+            let mut document: Value = serde_json::from_str(include_str!(
+                "../../../tests/fixtures/native-run-result-decisive.json"
+            ))
+            .unwrap();
+            document["extraction"] = extraction;
+            let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+            let observed = match &result {
+                Err(NativeRunReadError::MalformedMember { member, .. }) => member.as_str(),
+                Err(NativeRunReadError::Invalid { member, .. }) => *member,
+                Ok(_) => "accepted",
+                Err(_) => "refused without a member path",
+            };
+            assert!(
+                matches!(&result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
+                "expected refusal naming {expected}, got {observed}"
+            );
+        }
+    }
+
+    fn read_with_extraction(extraction: Value) -> Option<String> {
+        let mut document: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native-run-result-decisive.json"
+        ))
+        .unwrap();
+        document["extraction"] = extraction;
+        match read_native_run_result(&serde_json::to_vec(&document).unwrap()) {
+            Ok(_) => None,
+            Err(NativeRunReadError::MalformedMember { member, .. }) => Some(member),
+            Err(NativeRunReadError::Invalid { member, .. }) => Some(member.to_owned()),
+            Err(other) => panic!("refused without a member path: {other}"),
+        }
+    }
+
+    /// A record holding every extraction object, `original_regions` included.
+    fn complete_extraction() -> Value {
+        json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": {
+                "availability": {"state": "available", "reason": "why", "lossy": false},
+                "clause_text": {},
+                "diagnostics": []
+            },
+            "map": {
+                "region": {"start": 0, "end": 1},
+                "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
+            },
+            "original_regions": [{
+                "start": {"byte": 0, "line": 1, "column": 1},
+                "end": {"byte": 1, "line": 1, "column": 2}
+            }]
+        })
+    }
+
+    /// FR-267-AC-17: an array where an object is required is a value of
+    /// another JSON type, even when its elements are the members in order.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_refuses_positional_arrays_at_every_level() {
+        assert_eq!(read_with_extraction(complete_extraction()), None);
+        let original = json!(["agent-ix", "ix://agent-ix/spec", "spec.md", []]);
+        let body = json!(["agent-ix", "body", "Body", []]);
+        let binding = json!(["check", "fixture/package"]);
+        let availability = json!(["available", "why", false]);
+        let outcome = json!([{"state": "available", "lossy": false}, {}, []]);
+        let region = json!([0, 1]);
+        let segment = json!([0, 1, 0, 1]);
+        let position = json!([0, 1, 1]);
+        let map = json!([
+            {"start": 0, "end": 1},
+            [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
+        ]);
+        let original_region = json!([
+            {"byte": 0, "line": 1, "column": 1},
+            {"byte": 1, "line": 1, "column": 2}
+        ]);
+        let cases = [
+            ("extraction.original", "/original", original),
+            ("extraction.body", "/body", body),
+            ("extraction.binding", "/binding", binding),
+            ("extraction.outcome", "/outcome", outcome),
+            (
+                "extraction.outcome.availability",
+                "/outcome/availability",
+                availability,
+            ),
+            ("extraction.map", "/map", map),
+            ("extraction.map.region", "/map/region", region),
+            ("extraction.map.segments[0]", "/map/segments/0", segment),
+            (
+                "extraction.original_regions[0]",
+                "/original_regions/0",
+                original_region,
+            ),
+            (
+                "extraction.original_regions[0].start",
+                "/original_regions/0/start",
+                position.clone(),
+            ),
+            (
+                "extraction.original_regions[0].end",
+                "/original_regions/0/end",
+                position,
+            ),
+        ];
+        for (expected, pointer, positional) in cases {
+            let mut extraction = complete_extraction();
+            *extraction.pointer_mut(pointer).unwrap() = positional;
+            assert_eq!(
+                read_with_extraction(extraction).as_deref(),
+                Some(expected),
+                "positional array at {pointer}"
+            );
+        }
+
+        let whole = complete_extraction();
+        let positional = json!([
+            whole["original"],
+            whole["body"],
+            whole["binding"],
+            whole["outcome"],
+            whole["map"]
+        ]);
+        assert_eq!(
+            read_with_extraction(positional).as_deref(),
+            Some("extraction")
+        );
+    }
+
+    /// FR-267-AC-17: a positional array cannot carry an empty `segments` or
+    /// `original_regions` array past the reader.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_refuses_positional_arrays_holding_empty_arrays() {
+        let mut extraction = complete_extraction();
+        extraction["map"] = json!([{"start": 0, "end": 0}, []]);
+        assert_eq!(
+            read_with_extraction(extraction).as_deref(),
+            Some("extraction.map")
+        );
+
+        let whole = complete_extraction();
+        let empty_segments = json!([
+            whole["original"],
+            whole["body"],
+            whole["binding"],
+            whole["outcome"],
+            {"region": {"start": 0, "end": 0}, "segments": []}
+        ]);
+        let empty_regions = json!([
+            whole["original"],
+            whole["body"],
+            whole["binding"],
+            whole["outcome"],
+            whole["map"],
+            []
+        ]);
+        for positional in [empty_segments, empty_regions] {
+            assert_eq!(
+                read_with_extraction(positional).as_deref(),
+                Some("extraction")
+            );
+        }
+    }
+
+    /// FR-267-AC-17: `availability` refuses an unknown member, and its
+    /// `state` is a string.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_closes_the_extraction_availability() {
+        let mut unknown = complete_extraction();
+        unknown["outcome"]["availability"]["source"] = json!("x");
+        assert_eq!(
+            read_with_extraction(unknown).as_deref(),
+            Some("extraction.outcome.availability.source")
+        );
+
+        let mut tagged = complete_extraction();
+        tagged["outcome"]["availability"]["state"] = json!({"available": null});
+        assert_eq!(
+            read_with_extraction(tagged).as_deref(),
+            Some("extraction.outcome.availability.state")
+        );
+    }
+
+    /// Quire's extraction outcome with every optional member of a diagnostic,
+    /// a clause reference and its source locus.
+    fn extraction_with_entries() -> Value {
+        let span = json!({
+            "sourceIdentity": "ix://agent-ix/spec", "path": "spec.md",
+            "startLine": 3, "startColumn": 1, "endLine": 4, "endColumn": 2
+        });
+        let mut extraction = complete_extraction();
+        extraction["outcome"]["diagnostics"] = json!([{
+            "code": "unchecked-language", "severity": "advisory", "message": "unchecked",
+            "line": 3, "column": 1, "reason": "unknown-token",
+            "sourceSpan": span.clone(), "section": "Invariants"
+        }]);
+        extraction["outcome"]["clauses"] =
+            json!([{"language": "ix:native", "clauseId": "check", "sourceSpan": span}]);
+        extraction
+    }
+
+    /// FR-267-AC-17: `diagnostics` and `clauses` entries are Quire's closed
+    /// objects.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_refuses_values_of_another_type_among_outcome_entries() {
+        assert_eq!(read_with_extraction(extraction_with_entries()), None);
+        let positional_span = json!(["ix://agent-ix/spec", "spec.md", 3, 1]);
+        for (member, positional) in [
+            ("diagnostics", json!(["code", "error", "message"])),
+            ("clauses", json!(["ix:native", "check"])),
+        ] {
+            let others = [
+                json!(null),
+                json!(1),
+                json!("x"),
+                json!([]),
+                positional,
+                json!({"bogus": true}),
+            ];
+            for other in others {
+                let mut extraction = extraction_with_entries();
+                extraction["outcome"][member] = json!([other.clone()]);
+                let refused = read_with_extraction(extraction)
+                    .unwrap_or_else(|| panic!("{member} accepted {other}"));
+                assert!(
+                    refused.starts_with(&format!("extraction.outcome.{member}[0]")),
+                    "{member} {other}: {refused}"
+                );
+            }
+            let mut extraction = extraction_with_entries();
+            extraction["outcome"][member][0]["sourceSpan"] = positional_span.clone();
+            assert_eq!(
+                read_with_extraction(extraction),
+                Some(format!("extraction.outcome.{member}[0].sourceSpan"))
+            );
+        }
+    }
+
+    /// FR-267-AC-17: an unknown, missing or `null` member, or a member of
+    /// another JSON type, is refused at its path inside an entry.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_malformed_outcome_entry_members() {
+        let objects: [(&str, &str, &[&str], &[&str]); 4] = [
+            (
+                "extraction.outcome.diagnostics[0]",
+                "/outcome/diagnostics/0",
+                &["code", "severity", "message"],
+                &["line", "column", "reason", "sourceSpan", "section"],
+            ),
+            (
+                "extraction.outcome.diagnostics[0].sourceSpan",
+                "/outcome/diagnostics/0/sourceSpan",
+                &["sourceIdentity", "path", "startLine", "startColumn"],
+                &["endLine", "endColumn"],
+            ),
+            (
+                "extraction.outcome.clauses[0]",
+                "/outcome/clauses/0",
+                &["language", "clauseId"],
+                &["sourceSpan"],
+            ),
+            (
+                "extraction.outcome.clauses[0].sourceSpan",
+                "/outcome/clauses/0/sourceSpan",
+                &["sourceIdentity", "path", "startLine", "startColumn"],
+                &["endLine", "endColumn"],
+            ),
+        ];
+        let refused_at = |pointer: &str, member: &str, value: Option<Value>| {
+            let mut extraction = extraction_with_entries();
+            let fields = extraction
+                .pointer_mut(pointer)
+                .unwrap()
+                .as_object_mut()
+                .unwrap();
+            match value {
+                Some(value) => drop(fields.insert(member.to_owned(), value)),
+                None => assert!(fields.remove(member).is_some()),
+            }
+            read_with_extraction(extraction)
+        };
+        for (path, pointer, required, optional) in objects {
+            assert_eq!(
+                refused_at(pointer, "bogus", Some(json!(true))),
+                Some(format!("{path}.bogus"))
+            );
+            for member in required {
+                assert_eq!(
+                    refused_at(pointer, member, None),
+                    Some(format!("{path}.{member}"))
+                );
+            }
+            for member in required.iter().chain(optional) {
+                for value in [json!(null), json!(true)] {
+                    assert_eq!(
+                        refused_at(pointer, member, Some(value.clone())),
+                        Some(format!("{path}.{member}")),
+                        "{path}.{member}: {value}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            refused_at(
+                "/outcome/diagnostics/0",
+                "severity",
+                Some(json!({"error": null}))
+            )
+            .as_deref(),
+            Some("extraction.outcome.diagnostics[0].severity")
+        );
     }
 }
