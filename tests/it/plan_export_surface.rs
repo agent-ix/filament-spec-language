@@ -2249,10 +2249,16 @@ fn transfer_run_declaring(
     for (name, member) in members {
         request[*name] = member.clone();
     }
-    write_request(
-        directory.path(),
-        &json!({"format": "native-run/1", "request": request}),
-    )
+    let path = directory.path().join("request.json");
+    let request = json!({"format": "native-run/1", "request": request});
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    match fsl_command::command::run_with_overrides(&path, overrides, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).expect("a JSON document"),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
 }
 
 /// The held-id precondition of a refuted transfer premise: the exact closure

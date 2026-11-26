@@ -857,14 +857,19 @@ fn a_synthesis_run_applies_the_callers_accounting_counters() {
         let (exit, kept) = run_overridden(
             &unit,
             package,
-            json!({"synthesis": {"declaration": "Pick", "accounting": {"work_units": 0}}}),
+            json!({"synthesis": {"declaration": "Pick", "accounting": {"work_units": 1}}}),
             &RequestOverrides {
                 accounting: Some(&other),
                 ..Default::default()
             },
         );
         assert_eq!(exit, 22, "{package}: {kept}");
-        assert_eq!(kept["synthesis"]["cause"], work_stop(), "{kept}");
+        assert_eq!(
+            kept["synthesis"]["cause"],
+            json!({"kind": "limit-reached", "limit": "work_units", "value": 1,
+                "setting": "accounting.work_units"}),
+            "{kept}"
+        );
     }
 }
 
@@ -891,14 +896,17 @@ fn a_synthesis_run_refuses_clocks_given_twice() {
 }
 
 /// FR-255 Behavior 15: the source synthesis run compiles under the caller's
-/// stage limits; `Pick * Pick = 49` is five expression nodes.
+/// stage limits; `1 + 1 + 1` is five expression nodes.
 #[test]
 #[trace("FR-255-AC-32")]
 fn a_source_synthesis_run_applies_the_callers_stage_limit() {
     let mut limits = SpineLimits::default();
     assert!(limits.set_bound(Setting::S3Nodes, 4));
     let (exit, found) = run_overridden(
-        &pick("Pick * Pick = 49", ""),
+        &format!(
+            "{}function f using v(): Integer pure {{ 1 + 1 + 1 }}\n",
+            pick("Pick = 7", "")
+        ),
         false,
         json!({"synthesis": {"declaration": "Pick"}}),
         &RequestOverrides {

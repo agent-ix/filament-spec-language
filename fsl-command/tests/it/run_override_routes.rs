@@ -53,8 +53,7 @@ fn run(
 
 fn refusal(path: &std::path::Path, overrides: &RequestOverrides<'_>) -> Value {
     run(path, overrides)
-        .err()
-        .expect("the run refuses")
+        .expect_err("the run refuses")
         .value()
         .expect("a refusal envelope")
 }
@@ -166,5 +165,5 @@ fn a_monitor_run_applies_the_callers_accounting_counter() {
     .expect("an exhausted budget settles, it does not refuse");
     let document = result.value.to_string();
     assert_eq!(result.exit_code, 22, "{document}");
-    assert!(document.contains("accounting.work_units"), "{document}");
+    assert!(document.contains(r#""limit":"work_units""#), "{document}");
 }

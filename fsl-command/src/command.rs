@@ -10,10 +10,10 @@ mod handoff;
 mod items;
 pub mod limits;
 mod model_based_test;
-mod overrides;
 pub mod monitor;
 mod output;
 mod output_file;
+mod overrides;
 mod package_run;
 pub mod plan;
 mod relationships;
@@ -55,8 +55,8 @@ use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
 use fsl_replay::spine::SpineLimits;
-use ix_trace_rs::implements;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
+use ix_trace_rs::implements;
 use settle::Settle;
 use std::{
     fs::File,
@@ -789,7 +789,9 @@ pub enum RunCause {
     )]
     OutputGivenTwice,
     /// FR-255 Behavior 15: the run route cannot apply a caller override.
-    #[error("invalid request: the {member} override cannot be applied to a {route} run; remove it")]
+    #[error(
+        "invalid request: the {member} override cannot be applied to a {route} run; remove it"
+    )]
     OverrideUnapplied {
         /// The run route.
         route: overrides::RunRoute,
@@ -2193,14 +2195,8 @@ fn run_configured(
     let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
         request_shape::admit(request_shape::Family::Run, bytes)?;
         if monitor::is_monitor_request(bytes) {
-            monitor::run_bytes(
-                directory,
-                bytes,
-                limits.dependent_bytes,
-                overrides,
-                &settle,
-            )
-            .map(Some)
+            monitor::run_bytes(directory, bytes, limits.dependent_bytes, overrides, &settle)
+                .map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             let caller = overrides::command_limits(
@@ -4409,7 +4405,10 @@ pub struct RequestOverrides<'a> {
 impl RequestOverrides<'_> {
     /// `request`'s accounting limits with each counter the caller names
     /// replaced.
-    fn accounting_over(&self, request: filament_exact::ScalarLimits) -> filament_exact::ScalarLimits {
+    fn accounting_over(
+        &self,
+        request: filament_exact::ScalarLimits,
+    ) -> filament_exact::ScalarLimits {
         let mut limits = fsl_replay::AccountingLimits(request);
         for (setting, bound) in self.accounting.into_iter().flatten() {
             limits.set_bound(*setting, *bound);
@@ -4422,9 +4421,8 @@ impl RequestOverrides<'_> {
 /// selection, never a fresh allowance.
 fn apply_accounting_override(request: &mut wire::Request, overrides: &RequestOverrides<'_>) {
     let apply = |accounting: &mut wire::Accounting| {
-        *accounting = wire::Accounting::from_limits(
-            overrides.accounting_over(call_accounting(accounting)),
-        );
+        *accounting =
+            wire::Accounting::from_limits(overrides.accounting_over(call_accounting(accounting)));
     };
     if let Some(call) = &mut request.call {
         apply(&mut call.accounting);

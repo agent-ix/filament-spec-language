@@ -17,7 +17,7 @@ use fsl_replay::planner::{
     TransferPremiseValue, TransferSettlement,
 };
 use fsl_replay::spine::CheckedUnit;
-use fsl_replay::{Certification, ItemLabel};
+use fsl_replay::{CallerLimits, Certification, ItemLabel};
 use fsl_semantics::check::{
     AbstractSide, CheckedGraph, CheckedRefinement, StepClass, StepTarget, TemporalClauseNode,
     TemporalProfile,
@@ -26,10 +26,8 @@ use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
     document_reference, AdmissionFailure, DocumentProvision, DocumentRef,
 };
-use serde_json::{json, Map, Value};
-
-use fsl_replay::CallerLimits;
 use ix_trace_rs::implements;
+use serde_json::{json, Map, Value};
 
 use super::{
     check_sources, intake_with_bytes, package_name, wire, FileCounts, FormalSource, NativeResult,
@@ -536,8 +534,6 @@ impl Transfer<'_> {
         })
     }
 
-    /// FR-1031's `initial` row: FR-106 admits each initial snapshot of each
-    /// subject for its model before any premise or transfer settles.
     /// The published analysis limits under the run's effective limits.
     #[implements("FR-255-AC-32")]
     fn analyze_limits(&self) -> AnalyzeLimits {
@@ -550,6 +546,8 @@ impl Transfer<'_> {
         }
     }
 
+    /// FR-1031's `initial` row: FR-106 admits each initial snapshot of each
+    /// subject for its model before any premise or transfer settles.
     fn admit_snapshots(&self, refinement: &CheckedRefinement, subjects: &Subjects) -> Result<()> {
         let package = self.checked.package();
         let published = self.analyze_limits();

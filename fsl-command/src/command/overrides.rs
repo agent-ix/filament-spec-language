@@ -157,7 +157,8 @@ pub(super) fn effective_limits(
     if request.observation.is_some() && overrides.observation.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "observation_limits".to_owned(),
-            reason: "request member and RequestOverrides::observation were both supplied".to_owned(),
+            reason: "request member and RequestOverrides::observation were both supplied"
+                .to_owned(),
         });
     }
     Ok(CallerLimits {

@@ -4583,21 +4583,32 @@ fn run_member_overridden(overrides: &fsl_command::command::RequestOverrides<'_>)
     }
 }
 
-/// FR-752-AC-15: with the caller's `accounting.work_units` at 5 the direct
-/// member stops at that bound.
+/// FR-752-AC-15: with the caller's `accounting.work_units` at 5 a direct
+/// member over AC-16's fixture stops at that bound.
 #[test]
 #[trace("FR-752-AC-15")]
 fn a_direct_member_stops_at_the_callers_work_bound() {
-    let (exit, control) = run_member_overridden(&Default::default());
-    assert_eq!(exit, 0, "{control}");
-    let accounting = std::collections::BTreeMap::from([(
-        fsl_foundation::AccountingSetting::WorkUnits,
-        5,
-    )]);
-    let (exit, value) = run_member_overridden(&fsl_command::command::RequestOverrides {
-        accounting: Some(&accounting),
-        ..Default::default()
-    });
+    let directory = two_field_directory();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "model_based_test": {"clause": "Ready", "seed": 7, "max_cases": 20,
+            "max_trace_length": 8, "initial": "initial.json"}}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let accounting =
+        std::collections::BTreeMap::from([(fsl_foundation::AccountingSetting::WorkUnits, 5)]);
+    let result = fsl_command::command::run_with_overrides(
+        &path,
+        &fsl_command::command::RequestOverrides {
+            accounting: Some(&accounting),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .expect("an exhausted budget settles, it does not refuse");
+    let value: Value = serde_json::from_str(&result.value.to_string()).expect("a JSON document");
     let record = &value["model_based_test"];
     assert_eq!(record["status"], "incomplete", "{value}");
     assert_eq!(
@@ -4606,7 +4617,7 @@ fn a_direct_member_stops_at_the_callers_work_bound() {
             "setting": "accounting.work_units"}),
         "{value}"
     );
-    assert_eq!(exit, 22, "{value}");
+    assert_eq!(result.exit_code, 22, "{value}");
 }
 
 /// FR-255 Behavior 15: a direct member, which compiles without clock
@@ -4635,6 +4646,9 @@ fn a_direct_member_refuses_an_override_it_cannot_apply() {
         let (exit, value) = run_member_overridden(&overrides);
         assert_eq!(exit, 20, "{value}");
         assert_eq!(value["code"], "invalid-request", "{value}");
-        assert!(value["message"].as_str().unwrap().contains(member), "{value}");
+        assert!(
+            value["message"].as_str().unwrap().contains(member),
+            "{value}"
+        );
     }
 }
