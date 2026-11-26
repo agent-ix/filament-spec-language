@@ -124,6 +124,7 @@ mod temporal_trace;
 mod text_size;
 mod text_to_number;
 mod tick_monitor;
+mod timed_measures;
 mod timed_recorded_trace;
 mod timed_subject;
 mod timed_trace;
