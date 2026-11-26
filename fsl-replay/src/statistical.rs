@@ -590,12 +590,7 @@ impl StatisticalVerdict {
 pub enum StatisticalStop {
     /// A reading over a dense idle tail is not decided over every
     /// completion (FR-254 "Undecided completions").
-    IdleTailUndecided {
-        /// The idle tail's first timed state.
-        state: fsl_eval::simulation::StateKey,
-        /// Which kind of reading is not decided.
-        reason: IdleTailReason,
-    },
+    IdleTailUndecided(IdleTailUndecided),
     /// A test would exceed a budget: the budget and the value it was set
     /// to; [`StatisticalLimit::setting`] names the member that raises it.
     Limit {
@@ -639,6 +634,21 @@ pub enum IdleTailReason {
     ClockPredicate,
     /// A timed formula.
     TimedFormula,
+}
+
+/// The `idle-tail-undecided` stop (FR-254 "Undecided completions"): the one
+/// record the sampler writes and the run, settlement and wire carry.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct IdleTailUndecided {
+    /// The canonical timed-state key at the idle tail's first position.
+    pub state: fsl_eval::simulation::StateKey,
+    /// Which kind of reading is not decided.
+    pub reason: IdleTailReason,
+}
+
+impl IdleTailUndecided {
+    /// The wire cause's name, which its writer and its reader share.
+    pub const CAUSE: &'static str = "idle-tail-undecided";
 }
 
 impl IdleTailReason {

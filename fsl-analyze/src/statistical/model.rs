@@ -40,9 +40,9 @@ use fsl_eval::temporal::{AtomReading, TemporalOutcome, UndefinedCause};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
 use fsl_replay::statistical::{
-    ClaimForm, Confidence, IdleTailReason, MeasureValue, StatisticalLimits, StatisticalMethod,
-    StatisticalOutcome, StatisticalRefusal, TestProvenance, TimedSampling, WitnessReadStop,
-    WitnessReader, WitnessReading, WitnessValue,
+    ClaimForm, Confidence, IdleTailReason, IdleTailUndecided, MeasureValue, StatisticalLimits,
+    StatisticalMethod, StatisticalOutcome, StatisticalRefusal, TestProvenance, TimedSampling,
+    WitnessReadStop, WitnessReader, WitnessReading, WitnessValue,
 };
 use fsl_replay::{
     ClaimPredicate, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
@@ -1400,10 +1400,10 @@ impl<'c> Shared<'_, '_, 'c> {
         let Some(pieces) = window::flat_interval_bounds(formula.formula())
             .and_then(|bounds| window::piece_stamps(&bounds, from, horizon))
         else {
-            return Err(SampleHalt::IdleTailUndecided {
+            return Err(SampleHalt::IdleTailUndecided(IdleTailUndecided {
                 state: self.tail_state(&window)?,
                 reason: IdleTailReason::TimedFormula,
-            });
+            }));
         };
         let mut agreed = self.completion(&window, binding, formula, horizon, &[])?;
         for choice in 1u32..(1u32 << pieces.len()) {
@@ -2255,7 +2255,7 @@ impl From<SampleHalt> for WitnessReadStop {
             }
             SampleHalt::NotStochastic { .. }
             | SampleHalt::NotStochasticIdleTail { .. }
-            | SampleHalt::IdleTailUndecided { .. }
+            | SampleHalt::IdleTailUndecided(_)
             | SampleHalt::TimeLockedSample { .. }
             | SampleHalt::MaxSampleSteps { .. } => {
                 return Self::Sample(Box::new(SampleStop::Expansion(ExpansionStop {

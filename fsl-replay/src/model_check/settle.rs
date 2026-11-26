@@ -961,7 +961,7 @@ impl Row {
                     | IncompleteCause::UnresolvedDynamics
                     | IncompleteCause::CertificateUnchecked
                     | IncompleteCause::PrecisionBudget { .. }
-                    | IncompleteCause::IdleTailUndecided { .. } => None,
+                    | IncompleteCause::IdleTailUndecided(_) => None,
                 };
                 Self::incomplete(cause, limit_reached)
             }

@@ -189,11 +189,8 @@ pub fn settle_statistical(
                 required: Some(required.clone()),
             })),
             StatisticalStop::Expansion(stop) => expansion_stop(stop, subject),
-            StatisticalStop::IdleTailUndecided { state, reason } => StatisticalRecord::of(
-                TerminalValue::Incomplete(IncompleteCause::IdleTailUndecided {
-                    state: state.clone(),
-                    reason: *reason,
-                }),
+            StatisticalStop::IdleTailUndecided(stop) => StatisticalRecord::of(
+                TerminalValue::Incomplete(IncompleteCause::IdleTailUndecided(stop.clone())),
             ),
             StatisticalStop::AutomatonStates { value } => {
                 StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {

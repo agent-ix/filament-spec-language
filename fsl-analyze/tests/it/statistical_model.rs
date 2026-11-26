@@ -3370,10 +3370,10 @@ fn a_nested_timed_formula_on_a_dense_idle_tail_stops_incomplete() {
     let expected = state_after_send(&world);
     match probe(&world) {
         StatisticalOutcome::Stopped {
-            stop: StatisticalStop::IdleTailUndecided { state, reason },
+            stop: StatisticalStop::IdleTailUndecided(stopped),
             ..
         } => assert_eq!(
-            (state, reason),
+            (stopped.state, stopped.reason),
             (
                 expected,
                 fsl_replay::statistical::IdleTailReason::TimedFormula

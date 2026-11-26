@@ -553,12 +553,7 @@ pub enum IncompleteCause {
     },
     /// A statistical sample's reading over a dense idle tail is not decided
     /// over every completion (FR-254; FSpec FR-420 "Undecided completions").
-    IdleTailUndecided {
-        /// The canonical timed-state key at the idle tail's first position.
-        state: fsl_eval::simulation::StateKey,
-        /// Which kind of reading is not decided.
-        reason: crate::statistical::IdleTailReason,
-    },
+    IdleTailUndecided(crate::statistical::IdleTailUndecided),
 }
 
 impl IncompleteCause {
@@ -569,7 +564,7 @@ impl IncompleteCause {
             Self::Cancelled { .. } => "cancelled",
             Self::ResourceExhausted | Self::LimitReached { .. } => "limit-reached",
             Self::PrecisionBudget { .. } => "precision-budget",
-            Self::IdleTailUndecided { .. } => "idle-tail-undecided",
+            Self::IdleTailUndecided(_) => crate::statistical::IdleTailUndecided::CAUSE,
             Self::UnresolvedDynamics | Self::CertificateUnchecked => "bounded-search-incomplete",
         }
     }

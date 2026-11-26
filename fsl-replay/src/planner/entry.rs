@@ -675,7 +675,11 @@ const INCOMPLETE: Table = &[
     ),
     ("bounded-search-incomplete", &["reason"], &[]),
     ("precision-budget", &["lower", "upper"], &[]),
-    ("idle-tail-undecided", &["reason", "state"], &[]),
+    (
+        crate::statistical::IdleTailUndecided::CAUSE,
+        &["reason", "state"],
+        &[],
+    ),
     ("cancelled", &["source"], &[]),
     ("timed-out", &[], &[]),
 ];

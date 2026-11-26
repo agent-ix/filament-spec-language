@@ -1473,9 +1473,9 @@ impl OutcomeItem {
                         item.setting = Some(limit.setting());
                         item.required = required.as_ref().map(ToString::to_string);
                     }
-                    IncompleteCause::IdleTailUndecided { state, reason } => {
-                        item.state = Some(state.into());
-                        item.search_reason = Some(reason.as_str());
+                    IncompleteCause::IdleTailUndecided(stop) => {
+                        item.state = Some((&stop.state).into());
+                        item.search_reason = Some(stop.reason.as_str());
                     }
                     IncompleteCause::PrecisionBudget { lower, upper } => {
                         item.lower = Some((**lower).clone());
@@ -5244,10 +5244,10 @@ mod tests {
             ),
         ] {
             let undecided = cause(TerminalValue::Incomplete(
-                IncompleteCause::IdleTailUndecided {
+                IncompleteCause::IdleTailUndecided(crate::statistical::IdleTailUndecided {
                     state: state.clone(),
                     reason,
-                },
+                }),
             ));
             assert_eq!(undecided["kind"], "idle-tail-undecided");
             assert_eq!(undecided["state"]["key"], "WzAsW11d");
