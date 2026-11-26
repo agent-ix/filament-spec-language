@@ -13,7 +13,7 @@ relationships:
 Verify that `encode_smt_query` prints the unrolling and induction queries
 in canonical order and bytes, and refuses a construct it cannot encode.
 
-Scope: FR-315-AC-1 to FR-315-AC-6, FR-315-AC-15 to FR-315-AC-32 and FR-315-AC-53 to FR-315-AC-57.
+Scope: FR-315-AC-1 to FR-315-AC-6, FR-315-AC-15 to FR-315-AC-32, FR-315-AC-53 to FR-315-AC-57 and FR-315-AC-62.
 
 Steps 8, 10, 18 and 20 read scripts with a `QF_LIA` solver, steps 18 and
 20 with replay as well; step 29 reads normalized terms, and every other step
@@ -100,6 +100,7 @@ reads the printed script or the stated refusal.
     normalize `(+ (- x) (- y))` and `(+ (* 2 x) (- y))` and assert those
     general canonical `+` forms. Rule 9's subtraction form has precedence
     only for exactly two atoms with coefficients +1 and -1 and zero constant.
+30. Encode FR-315-AC-62's three requests.
 
 Tag the tests `#[trace("TC-900", "FR-315-AC-n")]`.
 
@@ -212,3 +213,5 @@ and no other application is enabled, so the script is unsatisfiable.
 - Step 29: both Int terms print as `(+ x (- y) 1)`; their bytes are equal.
   `(+ x (- y))` prints as `(- x y)`. The linear normalizer does not expand a
   product of two nonconstant terms.
+- Step 30: `requires-bound`; `subject-admission` carrying
+  `conflicting-identity`; `no-instance`; no script.
