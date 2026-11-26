@@ -2193,15 +2193,24 @@ fn assert_source_assessment_pair(source: &str, recording: &Value, item: &Value) 
         .expect("incremental item prefixes");
     assert_eq!(item_prefixes.len(), incremental.len());
     for (assessment, prefix) in incremental.iter().zip(item_prefixes) {
-        assert_eq!(
-            serde_json::to_value(&assessment.obligations).expect("prefix obligations"),
-            prefix["obligations"]
-        );
+        let mut obligations =
+            serde_json::to_value(&assessment.obligations).expect("prefix obligations");
+        for obligation in obligations.as_array_mut().expect("serialized obligations") {
+            obligation
+                .as_object_mut()
+                .expect("serialized obligation object")
+                .insert("basis".to_owned(), json!("recording"));
+        }
+        assert_eq!(obligations, prefix["obligations"]);
     }
-    assert_eq!(
-        serde_json::to_value(&batch.obligations).expect("batch obligations"),
-        item["obligations"]
-    );
+    let mut obligations = serde_json::to_value(&batch.obligations).expect("batch obligations");
+    for obligation in obligations.as_array_mut().expect("serialized obligations") {
+        obligation
+            .as_object_mut()
+            .expect("serialized obligation object")
+            .insert("basis".to_owned(), json!("recording"));
+    }
+    assert_eq!(obligations, item["obligations"]);
 }
 
 /// An open incremental assessment of `observations` over [`cancel_in_repeat_protocol`]:
