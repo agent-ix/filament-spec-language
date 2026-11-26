@@ -2,7 +2,7 @@
 //! FR-921's independent timed-product certificate admission.
 
 use super::*;
-use crate::timed::clock_constraints;
+use crate::timed::{clock_constraints, follow_carries};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive};
@@ -853,24 +853,7 @@ fn enumerate_region_mean_time(
         TimedProbabilityRoute::Region => region_scale_parts(timed, claim, scale)?,
         TimedProbabilityRoute::Digital => (scale, 1),
     };
-    let mut caps = Vec::with_capacity(timed.places().len());
-    for place in timed.places() {
-        let mut largest = 0_u64;
-        for constraint in clock_constraints(timed)
-            .into_iter()
-            .filter(|constraint| constraint.clock() == place.clock())
-        {
-            largest = largest.max(
-                time_units(constraint.bound(), scale)
-                    .ok_or(ProbabilityDocumentError::Unsupported)?,
-            );
-        }
-        caps.push(
-            largest
-                .checked_add(1)
-                .ok_or(ProbabilityDocumentError::Unsupported)?,
-        );
-    }
+    let caps = place_caps(timed, scale)?;
     let mut initial = timed.initial();
     if initial.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -1931,24 +1914,7 @@ fn enumerate_digital_deadline(
     storage: &mut u64,
     terminals: &mut BTreeMap<ProbabilityProductKey, (Rational, bool)>,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
-    let mut caps = Vec::with_capacity(timed.places().len());
-    for place in timed.places() {
-        let mut largest = 0_u64;
-        for constraint in clock_constraints(timed)
-            .into_iter()
-            .filter(|constraint| constraint.clock() == place.clock())
-        {
-            largest = largest.max(
-                time_units(constraint.bound(), key_scale)
-                    .ok_or(ProbabilityDocumentError::Unsupported)?,
-            );
-        }
-        caps.push(
-            largest
-                .checked_add(1)
-                .ok_or(ProbabilityDocumentError::Unsupported)?,
-        );
-    }
+    let caps = place_caps(timed, key_scale)?;
     let mut initial = timed.initial();
     if initial.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -2402,24 +2368,7 @@ fn enumerate_region_deadline(
     activated: &mut BTreeSet<ProbabilityProductKey>,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
     let (base_scale, subdivisions) = region_scale_parts(timed, claim, scale)?;
-    let mut caps = Vec::with_capacity(timed.places().len());
-    for place in timed.places() {
-        let mut largest = 0_u64;
-        for constraint in clock_constraints(timed)
-            .into_iter()
-            .filter(|constraint| constraint.clock() == place.clock())
-        {
-            largest = largest.max(
-                time_units(constraint.bound(), key_scale)
-                    .ok_or(ProbabilityDocumentError::Unsupported)?,
-            );
-        }
-        caps.push(
-            largest
-                .checked_add(1)
-                .ok_or(ProbabilityDocumentError::Unsupported)?,
-        );
-    }
+    let caps = place_caps(timed, key_scale)?;
     let mut initial = timed.initial();
     if initial.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -4618,6 +4567,35 @@ fn charge_work(
 
 fn one() -> Rational {
     Rational::from_integer(Integer::from(1_i64))
+}
+
+/// Each clock place's cap (FR-196 "Canonical probability product key"): one
+/// plus the largest scaled constant its value is compared with, in its clock
+/// field or in one a collection write carries it into.
+fn place_caps(
+    timed: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+    scale: u64,
+) -> Result<Vec<u64>, ProbabilityDocumentError> {
+    let mut largest = vec![0_u64; timed.model().clocks().len()];
+    for constraint in clock_constraints(timed) {
+        let constant =
+            time_units(constraint.bound(), scale).ok_or(ProbabilityDocumentError::Unsupported)?;
+        let entry = largest
+            .get_mut(constraint.clock().index())
+            .ok_or(ProbabilityDocumentError::Unsupported)?;
+        *entry = (*entry).max(constant);
+    }
+    follow_carries(timed, &mut largest);
+    timed
+        .places()
+        .iter()
+        .map(|place| {
+            largest
+                .get(place.clock().index())
+                .and_then(|largest| largest.checked_add(1))
+                .ok_or(ProbabilityDocumentError::Unsupported)
+        })
+        .collect()
 }
 
 /// The checker derives the route from the checked clock constraints and

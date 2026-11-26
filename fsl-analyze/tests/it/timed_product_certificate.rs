@@ -163,7 +163,7 @@ fn retx(guard: &str, reset: bool, declarations: &str, claims: &str) -> World {
     )
 }
 
-fn request<'a>(world: &'a World, claim: &str) -> ProductRequest<'a> {
+pub(crate) fn request<'a>(world: &'a World, claim: &str) -> ProductRequest<'a> {
     ProductRequest {
         subject: ModelSubject {
             simulation: world.request(),
@@ -179,7 +179,7 @@ fn request<'a>(world: &'a World, claim: &str) -> ProductRequest<'a> {
     }
 }
 
-fn settle(world: &World, claim: &str) -> AnalyzeRecord {
+pub(crate) fn settle(world: &World, claim: &str) -> AnalyzeRecord {
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request(world, claim));
     analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
@@ -197,7 +197,7 @@ fn settle_tampered(
 }
 
 /// The exact value of a `proved` record.
-fn proved_value(record: &AnalyzeRecord) -> Rational {
+pub(crate) fn proved_value(record: &AnalyzeRecord) -> Rational {
     let terminal = record
         .terminal()
         .unwrap_or_else(|| panic!("expected a terminal record, got {record:#?}"));
@@ -210,7 +210,7 @@ fn proved_value(record: &AnalyzeRecord) -> Rational {
     }
 }
 
-fn is_refuted(record: &AnalyzeRecord) -> bool {
+pub(crate) fn is_refuted(record: &AnalyzeRecord) -> bool {
     matches!(
         record.terminal().map(|terminal| terminal.value()),
         Some(TerminalValue::Refuted)
@@ -218,7 +218,7 @@ fn is_refuted(record: &AnalyzeRecord) -> bool {
 }
 
 /// The `timed-product/v1` document a proof retains.
-fn document(record: &AnalyzeRecord) -> Value {
+pub(crate) fn document(record: &AnalyzeRecord) -> Value {
     let bytes = record
         .terminal()
         .and_then(|terminal| terminal.exact_certificate_document())
@@ -231,7 +231,7 @@ fn document(record: &AnalyzeRecord) -> Value {
     document
 }
 
-fn check(
+pub(crate) fn check(
     world: &World,
     claim: &str,
     document: &Value,
@@ -261,7 +261,7 @@ fn check(
     )
 }
 
-fn accepted(world: &World, claim: &str, document: &Value) -> bool {
+pub(crate) fn accepted(world: &World, claim: &str, document: &Value) -> bool {
     matches!(
         check(world, claim, document),
         Ok(ExactProbabilityCertificateCheck::Accepted(_))

@@ -2857,16 +2857,25 @@ fn scaled_bounds(
     constants.extend(automaton_constants.iter().cloned());
     let factor = scale_constants(&constants).factor().clone();
     let max = |values: &[Rational]| values.iter().max().map(|value| scaled(value, &factor));
-    let mut lower: Vec<Option<BigInt>> = timed
-        .places()
-        .iter()
-        .map(|place| max(&lower[place.clock().index()]))
-        .collect();
-    let mut upper: Vec<Option<BigInt>> = timed
-        .places()
-        .iter()
-        .map(|place| max(&upper[place.clock().index()]))
-        .collect();
+    // A clock carried into another field is compared with its constants too.
+    let of_places = |fields: Vec<Vec<Rational>>| -> Vec<Option<BigInt>> {
+        let mut largest: Vec<Option<Rational>> = fields
+            .into_iter()
+            .map(|values| values.into_iter().max())
+            .collect();
+        timed.raise_by_carries(&mut largest);
+        timed
+            .places()
+            .iter()
+            .map(|place| {
+                largest[place.clock().index()]
+                    .as_ref()
+                    .map(|value| scaled(value, &factor))
+            })
+            .collect()
+    };
+    let mut lower = of_places(lower);
+    let mut upper = of_places(upper);
     // The horizon clock is compared with every interval end, from both
     // sides.
     if window.is_some() {

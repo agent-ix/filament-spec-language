@@ -56,7 +56,7 @@ fn verdict(world: &crate::timed_world::World, certificate: &Certificate) -> Zone
     check(world, certificate, CertificateCheckLimits::default()).expect("the check runs")
 }
 
-fn rejected(rule: CertificateRule, at: CertificateLocus) -> ZoneCertificateVerdict {
+pub(crate) fn rejected(rule: CertificateRule, at: CertificateLocus) -> ZoneCertificateVerdict {
     ZoneCertificateVerdict::Rejected(CertificateRejection { rule, at })
 }
 
@@ -557,7 +557,7 @@ fn retarget(mut certificate: Certificate, world: &World) -> Certificate {
     certificate
 }
 
-fn summary(outcome: &Outcome) -> &'static str {
+pub(crate) fn summary(outcome: &Outcome) -> &'static str {
     match outcome {
         ZoneCheckOutcome::Holds { .. } => "Holds",
         ZoneCheckOutcome::HoldsReduced { .. } => "HoldsReduced",
@@ -1286,8 +1286,13 @@ const FAMILY_CLOCKS: std::num::NonZeroU64 = std::num::NonZeroU64::MIN.saturating
 
 /// [`claim`] over a timed subject of at most [`FAMILY_CLOCKS`] live clocks.
 fn family_claim(world: &World) -> Outcome {
+    claim_within(world, FAMILY_CLOCKS)
+}
+
+/// [`claim`] over a timed subject of at most `max_clocks` live clocks.
+pub(crate) fn claim_within(world: &World, max_clocks: std::num::NonZeroU64) -> Outcome {
     let system = world.system();
-    let timed = TimedSystem::with_max_clocks(&system, "M", FAMILY_CLOCKS).expect("a timed subject");
+    let timed = TimedSystem::with_max_clocks(&system, "M", max_clocks).expect("a timed subject");
     let node = &world.package.graph().temporal_clauses()[0];
     let letters = system.clause_letters(node).expect("letters");
     fsl_analyze::zone_check::check_timed_model(
@@ -1313,6 +1318,16 @@ fn family_claim(world: &World) -> Outcome {
 /// The core's verdict on `certificate` for `world`'s clause under
 /// [`FAMILY_CLOCKS`].
 fn family_verdict(world: &World, certificate: &Certificate) -> ZoneCertificateVerdict {
+    verdict_within(world, FAMILY_CLOCKS, certificate)
+}
+
+/// The core's verdict on `certificate` for `world`'s clause over at most
+/// `max_clocks` live clocks.
+pub(crate) fn verdict_within(
+    world: &World,
+    max_clocks: std::num::NonZeroU64,
+    certificate: &Certificate,
+) -> ZoneCertificateVerdict {
     let system = world.system();
     let node = &world.package.graph().temporal_clauses()[0];
     let letters = system.clause_letters(node).expect("letters");
@@ -1320,7 +1335,7 @@ fn family_verdict(world: &World, certificate: &Certificate) -> ZoneCertificateVe
         fsl_replay::ZoneCertificateRequest {
             simulation: world.request(),
             model: "M",
-            max_clocks: FAMILY_CLOCKS,
+            max_clocks,
             item: fsl_replay::CertifiedItem::Clause {
                 clause: node.clause(),
                 letters: &letters,

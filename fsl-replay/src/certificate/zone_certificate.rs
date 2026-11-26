@@ -131,7 +131,7 @@ use crate::refinement::{
     check_initial, check_step, open_systems, CandidateStep, ConcreteStep, RefinementPosition,
     StepVerdict, SubjectRefusal, Taken,
 };
-use crate::timed::clock_constraints;
+use crate::timed::{clock_constraints, follow_carries};
 
 type CandidateRow = (
     usize,
@@ -4504,8 +4504,9 @@ fn scaled(value: &Rational, scale: &Integer) -> Option<Integer> {
 
 /// The LU bounds the checker computes from the model and, for a TT-2
 /// claim, its automaton's `constants` for the horizon clock: per clock,
-/// the largest constant a guard, invariant or reset compares it with from
-/// below and from above, scaled; `None` when the scale makes any constant
+/// the largest constant a guard, invariant or reset compares it with, in its
+/// field or in one a collection write carries it into, from below and from
+/// above, scaled; `None` when the scale makes any constant
 /// not an integer.
 #[implements("FR-245-AC-2", "FR-245-AC-7")]
 #[allow(
@@ -4565,13 +4566,21 @@ fn computed_bounds(
             None => Some(None),
         }
     };
-    let mut lows = Vec::new();
-    let mut highs = Vec::new();
-    for place in timed.places() {
-        let clock = place.clock().index();
-        lows.push(max(lower.get(clock)?)?);
-        highs.push(max(upper.get(clock)?)?);
-    }
+    let of_places = |fields: &[Vec<Rational>]| -> Option<Vec<Option<Integer>>> {
+        let mut largest: Vec<Option<&Rational>> =
+            fields.iter().map(|values| values.iter().max()).collect();
+        follow_carries(timed, &mut largest);
+        timed
+            .places()
+            .iter()
+            .map(|place| match largest.get(place.clock().index())? {
+                Some(value) => scaled(value, scale).map(Some),
+                None => Some(None),
+            })
+            .collect()
+    };
+    let mut lows = of_places(&lower)?;
+    let mut highs = of_places(&upper)?;
     if let Some(constants) = constants {
         // The horizon clock is compared with every interval end, from both
         // sides.

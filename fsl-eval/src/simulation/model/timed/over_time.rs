@@ -12,7 +12,9 @@
 
 use filament_exact::{Integer, NonZeroInteger, Rational};
 
-use fsl_semantics::check::{ClockConstraint, ClockOp, ConvexPart, DelayDistribution};
+use fsl_semantics::check::{
+    ClockConstraint, ClockOp, ConvexPart, DelayDistribution, PlaceStep, Written,
+};
 use ix_trace_rs::implements;
 
 use super::{zero, GuardedStep, PlaceConstraint, TimedState, TimedStop, TimedSystem};
@@ -439,6 +441,51 @@ impl TimedSystem<'_, '_> {
         found
     }
 
+    /// Raise each clock field's entry of `largest`, indexed as the model's
+    /// clock fields are, to the entry of every field a collection write carries its value into
+    /// (FR-230 "Collection-valued writes"), directly or through further
+    /// writes: the value is compared with that field's constants after the
+    /// write. Every engine's per-field bound or cap is read through this.
+    pub fn raise_by_carries<T: Clone + Ord>(&self, largest: &mut [T]) {
+        let Some(model) = self.timed_model() else {
+            return;
+        };
+        // `(into, from)`: a write moves a value of `from` into `into`.
+        let mut moves = Vec::new();
+        for write in model.resets().iter().flat_map(|resets| resets.writes()) {
+            let mut read = Vec::new();
+            fields_read(write.written(), &mut read);
+            for (into, below) in model
+                .clock_fields()
+                .filter_map(|(id, field)| Some((id, below_slot(field.path(), write.field())?)))
+            {
+                for source in &read {
+                    moves.extend(model.clock_fields().filter_map(|(from, field)| {
+                        let from_below = below_slot(field.path(), source)?;
+                        same_place(below, from_below).then_some((into.index(), from.index()))
+                    }));
+                }
+            }
+        }
+        // Entries only rise, each to another's, so this ends.
+        let mut raised = true;
+        while raised {
+            raised = false;
+            for &(into, from) in &moves {
+                let (Some(after), Some(before)) = (largest.get(into), largest.get(from)) else {
+                    continue;
+                };
+                if after > before {
+                    let after = after.clone();
+                    if let Some(entry) = largest.get_mut(from) {
+                        *entry = after;
+                        raised = true;
+                    }
+                }
+            }
+        }
+    }
+
     /// The largest constant any guard, time invariant or reset of the model
     /// compares a clock with (FR-236 "Timed lasso").
     #[implements("FR-236-AC-3")]
@@ -706,6 +753,48 @@ fn past(value: &Rational, ceiling: &Rational, total: &Rational) -> Rational {
     let (whole, _) = gap.numerator().div_mod_floor(denominator);
     let count = Rational::from_integer(whole.add(&Integer::one()));
     value.add(&total.mul(&count))
+}
+
+/// The receiver's collection fields `written` carries elements from.
+fn fields_read<'w>(written: &'w Written, read: &mut Vec<&'w str>) {
+    match written {
+        Written::Field { field, .. } => read.push(field),
+        // A traversal's element is read from its `Map`'s source; a fresh
+        // element carries no clock.
+        Written::Element(_) | Written::Fresh(_) => {}
+        Written::Literal { occurrences, .. } => {
+            for occurrence in occurrences {
+                fields_read(occurrence, read);
+            }
+        }
+        Written::Filter(source) | Written::Flatten(source) | Written::Convert(source) => {
+            fields_read(source, read);
+        }
+        Written::Map { source, body } => {
+            fields_read(source, read);
+            fields_read(body, read);
+        }
+    }
+}
+
+/// The steps of a clock's `path` below a slot of the collection field
+/// `collection`.
+fn below_slot<'p>(path: &'p [PlaceStep], collection: &str) -> Option<&'p [PlaceStep]> {
+    match path {
+        [PlaceStep::Field(head), PlaceStep::Slot(_), below @ ..] if head == collection => {
+            Some(below)
+        }
+        _ => None,
+    }
+}
+
+/// Whether two paths below an element name the same clock of it, whatever
+/// the shapes of the collections on the way.
+fn same_place(left: &[PlaceStep], right: &[PlaceStep]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|pair| {
+            matches!(pair, (PlaceStep::Slot(_), PlaceStep::Slot(_))) || pair.0 == pair.1
+        })
 }
 
 #[cfg(test)]

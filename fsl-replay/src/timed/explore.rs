@@ -28,7 +28,7 @@ use num_bigint::BigInt;
 use num_integer::Integer as _;
 
 use crate::certificate::zone::{Zone, ZoneError};
-use crate::timed::clock_constraints;
+use crate::timed::model_constants;
 
 /// What the exploration finds.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -249,26 +249,17 @@ struct Scale {
 
 impl Scale {
     fn of(timed: &TimedSystem<'_, '_>, start: &TimedState) -> Self {
-        let model = timed.model();
-        let constants: Vec<Rational> = clock_constraints(timed)
-            .into_iter()
-            .map(|constraint| constraint.bound().clone())
-            .chain(
-                model
-                    .resets()
-                    .iter()
-                    .flat_map(|resets| resets.resets())
-                    .map(|reset| reset.value().clone()),
-            )
-            .collect();
+        let constants = model_constants(timed);
         let factor = constants
             .iter()
+            .copied()
             .chain(start.clocks().values())
             .fold(BigInt::from(1), |factor, value| {
                 factor.lcm(value.denominator().as_big())
             });
         let scaled_max = constants
             .iter()
+            .copied()
             .chain(start.clocks().values())
             .map(|value| scaled(value, &factor))
             .max()

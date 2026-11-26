@@ -611,21 +611,25 @@ fn units(value: &Rational, scale: u64) -> Option<u64> {
     remainder.is_zero().then(|| quotient.to_u64()).flatten()
 }
 
-/// Each clock place's cap: one plus its clock's largest scaled compared
-/// constant (FR-196 "Canonical probability product key").
+/// Each clock place's cap: one plus the largest scaled constant its value is
+/// compared with, in its clock field or in one a collection write carries it
+/// into (FR-196 "Canonical probability product key").
 fn caps_of(timed: &TimedSystem<'_, '_>, scale: &u64) -> Result<Vec<u64>, ProductRefusal> {
-    let mut largest: BTreeMap<fsl_semantics::check::ClockId, u64> = BTreeMap::new();
+    let mut largest = vec![0_u64; timed.model().clocks().len()];
     for constraint in model_constraints(timed) {
         let constant = units(constraint.bound(), *scale).ok_or_else(|| fault("constant-scales"))?;
-        let entry = largest.entry(constraint.clock()).or_insert(0);
+        let entry = largest
+            .get_mut(constraint.clock().index())
+            .ok_or_else(|| fault("clock-field-exists"))?;
         *entry = (*entry).max(constant);
     }
+    timed.raise_by_carries(&mut largest);
     timed
         .places()
         .iter()
         .map(|place| {
             largest
-                .get(&place.clock())
+                .get(place.clock().index())
                 .copied()
                 .unwrap_or(0)
                 .checked_add(1)

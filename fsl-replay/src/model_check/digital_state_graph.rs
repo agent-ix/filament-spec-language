@@ -10,6 +10,8 @@ use fsl_eval::simulation::StateKey;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 
+use crate::timed::model_constants;
+
 /// A limit that stopped integer-clock graph expansion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DigitalGraphLimit {
@@ -183,50 +185,16 @@ fn capped(state: TimedState, cap: &Rational) -> TimedState {
 }
 
 fn grid(timed: &TimedSystem<'_, '_>) -> (Rational, Rational) {
-    let model = timed.model();
-    let mut constants: Vec<Rational> = model
-        .guards()
-        .iter()
-        .flat_map(|guard| guard.parts())
-        .flat_map(|part| {
-            part.clocks()
-                .iter()
-                .map(|constraint| constraint.bound().clone())
-        })
-        .chain(
-            model
-                .guards()
-                .iter()
-                .flat_map(|guard| guard.parts())
-                .flat_map(|part| part.families())
-                .flat_map(|family| family.parts())
-                .flat_map(|part| {
-                    part.clocks()
-                        .iter()
-                        .map(|constraint| constraint.bound().clone())
-                }),
-        )
-        .chain(model.invariants().iter().flat_map(|invariant| {
-            invariant
-                .bounds()
-                .iter()
-                .map(|constraint| constraint.bound().clone())
-        }))
-        .chain(
-            model
-                .resets()
-                .iter()
-                .flat_map(|resets| resets.resets().iter().map(|reset| reset.value().clone())),
-        )
-        .collect();
+    let constants = model_constants(timed);
     let scale = constants.iter().fold(BigInt::from(1), |scale, value| {
         scale.lcm(value.denominator().as_big())
     });
     let unit = Rational::new(Integer::one(), Integer::from_big(scale))
         .unwrap_or_else(|_| Rational::from_integer(Integer::one()));
     let largest = constants
-        .drain(..)
+        .into_iter()
         .max()
+        .cloned()
         .unwrap_or_else(|| Rational::from_integer(Integer::zero()));
     let cap = largest.add(&unit);
     (unit, cap)

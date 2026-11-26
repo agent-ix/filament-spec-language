@@ -87,7 +87,7 @@ fn a_loop_below_a_quantifier_family_constant_does_not_close() {
 /// model's constants. `tick` (`z >= 1`, `x <= 5`) resets `z`, which the
 /// invariant holds at most 1, so every behaviour stops by `x = 6`: the
 /// initial state is time-locked.
-#[trace("TC-692")]
+#[trace("TC-692", "FR-237-AC-4")]
 #[test]
 fn a_time_lock_past_a_quantifier_family_constant_reproduces() {
     let world = family_world(
@@ -135,7 +135,6 @@ fn a_time_lock_past_a_quantifier_family_constant_reproduces() {
 
 /// FR-419's task product keeps each source clock exactly up to the largest
 /// constant it is compared with: 5 for the element's `x`.
-#[trace("FR-249-AC-3")]
 #[test]
 fn a_task_automaton_ceiling_reads_a_quantifier_family() {
     let world = family_world(

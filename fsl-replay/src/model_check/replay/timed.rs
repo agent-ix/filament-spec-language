@@ -39,6 +39,7 @@ use crate::model_check::counterexample::{
 };
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::timed::explore::{explore, widen, Closure};
+use crate::timed::model_constants;
 
 /// The timed subject of the recompiled system under the timed model of
 /// `model`, the alias the subject names, bounded by `max_clocks`.
@@ -505,7 +506,12 @@ fn close_loop(
             entry: lasso.entry,
         }));
     }
-    let ceiling = timed.max_constant();
+    // The largest constant of the model, by the core's own walk.
+    let ceiling = model_constants(timed)
+        .into_iter()
+        .max()
+        .cloned()
+        .unwrap_or_else(zero);
     let looped = &positions[lasso.entry + 1..];
     let entry_clocks = entry.state.clocks().values();
     let last_clocks = last.state.clocks().values();

@@ -1133,17 +1133,9 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         if let Ok((ZoneCertificateVerdict::Stopped(cause), _)) = &check {
             return EngineReport::Refused(Refusal::Incomplete(cause.clone()));
         }
-        // The checker's own decision, never the rule a rejection names: the
-        // coverage checks reject a broken certificate under the same rules.
-        let checked = matches!(
-            check,
-            Ok((ZoneCertificateVerdict::Accepted, Some(StateGraphCertificateDecision::Holds)))
-                if held
-        ) || matches!(
-            check,
-            Ok((_, Some(StateGraphCertificateDecision::Violated))) if !held
-        );
-        if !checked {
+        let confirmed =
+            check.is_ok_and(|(verdict, decision)| checker_confirms(held, &verdict, decision));
+        if !confirmed {
             return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
         }
         let evidence = timed_evidence(read.claim, decision, instance.clone());
@@ -1624,5 +1616,63 @@ impl<'a> PackageStateGraphSubject<'a> {
             },
         )
         .claimed(key)
+    }
+}
+
+/// Whether the certificate checker confirms the engine's answer: for a claim
+/// the engine proved, an accepted certificate the checker decided holds; for
+/// one it refuted, the checker's own decision that the claim is violated.
+/// Never the rule a rejection names: the coverage checks reject a broken
+/// certificate under the same rules.
+fn checker_confirms(
+    held: bool,
+    verdict: &ZoneCertificateVerdict,
+    decision: Option<StateGraphCertificateDecision>,
+) -> bool {
+    match decision {
+        Some(StateGraphCertificateDecision::Holds) => {
+            held && matches!(verdict, ZoneCertificateVerdict::Accepted)
+        }
+        Some(StateGraphCertificateDecision::Violated) => !held,
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fsl_replay::{
+        CertificateLocus, CertificateMember, CertificateRejection, CertificateRule,
+        StateGraphCertificateDecision, ZoneCertificateVerdict,
+    };
+    use ix_trace_rs::trace;
+
+    use super::checker_confirms;
+
+    /// A rejection under a rule a violation also reports, with no decision
+    /// of the checker's, confirms neither answer.
+    #[trace("FR-852-AC-32")]
+    #[test]
+    fn a_rejection_without_a_decision_confirms_no_answer() {
+        let accepted = ZoneCertificateVerdict::Accepted;
+        let holds = Some(StateGraphCertificateDecision::Holds);
+        let violated = Some(StateGraphCertificateDecision::Violated);
+        for rule in [
+            CertificateRule::SuccessorMissing,
+            CertificateRule::InitialMissing,
+            CertificateRule::CountBroken,
+        ] {
+            let rejected = ZoneCertificateVerdict::Rejected(CertificateRejection {
+                rule,
+                at: CertificateLocus::CertificateMember(CertificateMember::Nodes),
+            });
+            assert!(!checker_confirms(false, &rejected, None), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, None), "{rule:?}");
+            assert!(checker_confirms(false, &rejected, violated), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, violated), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, holds), "{rule:?}");
+        }
+        assert!(checker_confirms(true, &accepted, holds));
+        assert!(!checker_confirms(false, &accepted, holds));
+        assert!(!checker_confirms(true, &accepted, None));
     }
 }
