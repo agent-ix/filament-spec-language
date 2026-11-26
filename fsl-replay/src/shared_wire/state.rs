@@ -4,7 +4,6 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use fsl_eval::simulation::StateKey;
-use ix_trace_rs::implements;
 use serde::de::{Deserialize, Deserializer, Error as _};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use serde_json::Value;
@@ -57,7 +56,6 @@ impl StateLocus {
     /// # Errors
     /// [`WireDefect`] for anything but `{key}` with a canonical unpadded
     /// base64url `key`.
-    #[implements("FR-290-AC-9")]
     pub fn read(value: &Value) -> Result<Self, WireDefect> {
         let map = closed_object(value, &Self::MEMBERS, &[])?;
         let text = member(map, "key")?
@@ -106,7 +104,7 @@ mod tests {
 
     // FSpec FR-331: `[0,[]]` is the octets `5b 30 2c 5b 5d 5d`, whose unpadded
     // base64url is `WzAsW11d`.
-    #[trace("FR-290-AC-9", "FR-338-AC-12")]
+    #[trace("FR-290-AC-9")]
     #[test]
     fn a_state_locus_is_the_key_object_both_ways() {
         let locus = StateLocus::from(StateKey::from_canonical_bytes(b"[0,[]]".to_vec()));
