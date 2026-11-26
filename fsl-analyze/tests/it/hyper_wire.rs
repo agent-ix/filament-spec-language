@@ -9,9 +9,9 @@ use crate::hyper_world::{
     EQUAL_INPUTS, STARTS, Vault, non_interference, opaque, request_files_over_starts,
 };
 
-/// FR-125-AC-13: a single-existential hyper claim with bounded but empty
+/// FR-125-AC-21: a single-existential hyper claim with bounded but empty
 /// universes reports `NoInstance` rather than refusing the analysis.
-#[trace("TC-520", "FR-125-AC-13", "FR-181-AC-7")]
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-21", "FR-181-AC-7")]
 #[test]
 fn qsl_3366_single_existential_over_an_empty_universe_reports_no_instance() {
     let clause = "hyper Possible using inf over behaviours (v: V::Vault) exists trace b of V { eventually always holds(v.l @ b = 1) }";
@@ -36,8 +36,8 @@ fn qsl_3366_single_existential_over_an_empty_universe_reports_no_instance() {
     );
 }
 
-/// FR-125-AC-13: no initial state takes precedence over an empty universe.
-#[trace("TC-520", "FR-125-AC-13", "FR-181-AC-7")]
+/// FR-125-AC-21: no initial state takes precedence over an empty universe.
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-21", "FR-181-AC-7")]
 #[test]
 fn qsl_3366_single_existential_without_initial_state_reports_no_initial_state() {
     let clause = "hyper Possible using inf over behaviours (v: V::Vault) exists trace b of V { eventually always holds(v.l @ b = 1) }";

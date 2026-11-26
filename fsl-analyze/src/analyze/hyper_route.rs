@@ -240,7 +240,7 @@ struct SingleControl<'a> {
     cancel: &'a Cancel,
 }
 
-#[implements("FR-125-AC-13")]
+#[implements("FR-125-AC-13", "FR-125-AC-21")]
 fn single(
     package: &fsl_package::CheckedPackage,
     clause: &fsl_semantics::check::CheckedHyperClause,
