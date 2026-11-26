@@ -2463,12 +2463,10 @@ fn terminal_alias_world(
 #[trace("FSpec-FR-391-AC-13")]
 #[test]
 fn an_unknown_terminal_keeps_a_possible_witness_unchecked() {
-    let body = format!(
-        "terminal Done using v on C when {{ remainder(3 - self.value) = 0 }};\n\
-         terminal Stop using v on N when {{ narrow(self.value) = 0 }};\n\
-         possible AlwaysTrue using v over (c: C::Counter) {{ true }}\n"
-    );
-    let world = counter_kernel_world(SECOND_ALIAS, &body);
+    let body = "terminal Done using v on C when { remainder(3 - self.value) = 0 };\n\
+         terminal Stop using v on N when { narrow(self.value) = 0 };\n\
+         possible AlwaysTrue using v over (c: C::Counter) { true }\n";
+    let world = counter_kernel_world(SECOND_ALIAS, body);
     let claim = world.claim("AlwaysTrue");
     let over = bound_to(&world, &["c"], "c");
     let request = world.request(&["c"], vec![world.item("AlwaysTrue")], no_samples());
@@ -2556,52 +2554,57 @@ fn an_unknown_terminal_refuses_a_no_witness_possible_item_as_undecided() {
     assert_eq!((model.label(), model.ordinal()), ("N", 0));
 }
 
-/// FR-391-AC-15: an intended terminal declaration wins over another alias's
-/// undefined predicate, so the possible-item witness settles without an
-/// Undefined evidence arm.
-#[trace("FSpec-FR-391-AC-15")]
+/// FR-391-AC-15 / FR-366-AC-12: an intended terminal declaration wins over
+/// another alias's undefined predicate in either alias placement.
+#[trace("FSpec-FR-391-AC-15", "FSpec-FR-366-AC-12")]
 #[test]
 fn an_intended_terminal_alias_settles_a_possible_item_with_undefined_sibling() {
-    let world = terminal_alias_world(
+    for terminals in [
         "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
          terminal Stop using v on N when { true };",
-        "possible AlwaysTrue using v over (x: M::Vault) { true }",
-        "",
-    );
-    let claim = world.claim("AlwaysTrue");
-    let over = bound_to(&world, &["v"], "v");
-    let request = world.request(&["v"], vec![world.item("AlwaysTrue")], no_samples());
-    let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
-        let StateGraphOutcome::Witnessed { paths, .. } = &instance.outcome else {
-            panic!(
-                "intended terminal keeps the witness decisive: {:?}",
-                instance.outcome
-            );
-        };
-        let witness = paths.first().expect("one initial-state witness");
-        Ok(world.replay_witness(
-            claim,
-            Some(over.clone()),
-            witness.path.clone(),
-            witness.source.clone(),
-            &["v"],
-        ))
-    })
-    .expect("the state-graph run and witness replay complete");
+        "terminal Done using v on N when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on M when { true };",
+    ] {
+        let world = terminal_alias_world(
+            terminals,
+            "possible AlwaysTrue using v over (x: M::Vault) { true }",
+            "",
+        );
+        let claim = world.claim("AlwaysTrue");
+        let over = bound_to(&world, &["v"], "v");
+        let request = world.request(&["v"], vec![world.item("AlwaysTrue")], no_samples());
+        let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+            let StateGraphOutcome::Witnessed { paths, .. } = &instance.outcome else {
+                panic!(
+                    "intended terminal keeps the witness decisive: {:?}",
+                    instance.outcome
+                );
+            };
+            let witness = paths.first().expect("one initial-state witness");
+            Ok(world.replay_witness(
+                claim,
+                Some(over.clone()),
+                witness.path.clone(),
+                witness.source.clone(),
+                &["v"],
+            ))
+        })
+        .expect("the state-graph run and witness replay complete");
 
-    assert!(settled.run.graph.open.is_empty());
-    assert!(matches!(
-        settled.run.items[0][0].outcome,
-        StateGraphOutcome::Witnessed { .. }
-    ));
-    assert!(matches!(
-        settled.records[0][0].value,
-        TerminalValue::Proved { .. }
-    ));
-    assert_eq!(
-        settled.records[0][0].basis,
-        SettlementBasis::DecisiveWitness
-    );
+        assert!(settled.run.graph.open.is_empty());
+        assert!(matches!(
+            settled.run.items[0][0].outcome,
+            StateGraphOutcome::Witnessed { .. }
+        ));
+        assert!(matches!(
+            settled.records[0][0].value,
+            TerminalValue::Proved { .. }
+        ));
+        assert_eq!(
+            settled.records[0][0].basis,
+            SettlementBasis::DecisiveWitness
+        );
+    }
 }
 
 /// FR-391-AC-17: when every terminal declaration is undefined, undefined
