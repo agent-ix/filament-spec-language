@@ -103,7 +103,7 @@ pub use tick_monitor::{
 };
 pub use tick_shape::{NodeShape, TickShape, operator_parts, temporal_leaves};
 pub use timed::{TimedTrace, evaluate_timed_at};
-pub use timed_measure::{MeasureReading, timed_elapsed, timed_fraction, timed_steps};
+pub use timed_measure::{timed_elapsed, timed_fraction, timed_steps, MeasureReading};
 pub use tuple::{
     ComponentPosition, ComponentTrace, TupleLetters, evaluate_closed_tuple,
     evaluate_projected_prefix, evaluate_tuple,

@@ -28,12 +28,12 @@ pub(super) enum Verdict {
     /// Refuted; a sampled route's rejected test reads here.
     Refuted(Option<Rational>),
     /// Unsupported, declined, incomplete or refused: no answer, honestly.
-    Unsettled(String),
+    Unsettled(#[expect(dead_code, reason = "read through Debug in failures")] String),
     /// Inconclusive with the named FSpec cause: no admitted behaviour or no
     /// instance.
     Vacuous(&'static str),
     /// A rejected certificate, a replay disagreement or a failed run.
-    Broken(String),
+    Broken(#[expect(dead_code, reason = "read through Debug in failures")] String),
 }
 
 /// One route's verdict on one claim.
