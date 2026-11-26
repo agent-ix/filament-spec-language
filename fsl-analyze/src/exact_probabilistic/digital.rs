@@ -1997,6 +1997,59 @@ impl<'c> Builder<'_, '_, 'c> {
         })
     }
 
+    /// The representative of `state`'s region that the delay walk starts from:
+    /// the same integer parts and the same order of fractions, each nonzero
+    /// fraction moved down to its rank among them (FR-922). A representative
+    /// can leave a fraction one unit below the next integer while another
+    /// clock sits on one, and a single unit step then leaves both at once,
+    /// passing the region between. Packed at their ranks, the fractions leave
+    /// that unit free, since there are fewer of them than subdivisions.
+    ///
+    /// A mean-time claim keys concrete corner values and a nested formula
+    /// keys concrete monitor times, so neither representative is moved.
+    fn packed_representative(&self, state: &DState) -> Step<DState> {
+        let parts = self.subdivisions;
+        if parts == 1 || matches!(self.form, Form::MeanTime { .. } | Form::NestedDeadline(_)) {
+            return Ok(state.clone());
+        }
+        // The deadline or measure clock has a fraction while it is inside the
+        // range its key ranks.
+        let deadline_end = self.deadline_bound()?.map(|bound| bound + parts);
+        let deadline = state
+            .deadline
+            .filter(|elapsed| deadline_end.is_some_and(|end| *elapsed < end));
+        let fractions: BTreeSet<u64> = state
+            .clocks
+            .iter()
+            .zip(&self.caps)
+            .filter(|(value, cap)| value < cap)
+            .map(|(value, _)| *value)
+            .chain(deadline)
+            .map(|value| value % parts)
+            .filter(|fraction| *fraction > 0)
+            .collect();
+        let pack = |value: u64| match value % parts {
+            0 => value,
+            fraction => value - fraction + fractions.range(..=fraction).count() as u64,
+        };
+        Ok(DState {
+            clocks: state
+                .clocks
+                .iter()
+                .zip(&self.caps)
+                .map(|(value, cap)| if value < cap { pack(*value) } else { *value })
+                .collect(),
+            deadline: state.deadline.map(|elapsed| {
+                if deadline.is_some() {
+                    pack(elapsed)
+                } else {
+                    elapsed
+                }
+            }),
+            ..state.clone()
+        })
+    }
+
     /// The delay and observation moves every running state offers.
     fn running_delays(
         &mut self,
@@ -2005,6 +2058,7 @@ impl<'c> Builder<'_, '_, 'c> {
         local: &Local,
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
+        let state = &self.packed_representative(state)?;
         if let Some(first_delay) = self.unit_delay(local, state)? {
             if self.subdivisions == 1 {
                 let unit = self.delay_move(DelayMove {
