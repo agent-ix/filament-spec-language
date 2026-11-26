@@ -3720,7 +3720,7 @@ population config_history: ConfigVersion;
 profile v = "filament.temporal.infinite-trace/v1";
 profile g = "filament.model.complete/v1";
 model Config = "example/config-version";
-post VersionAdvances using g on Config::ConfigVersion::attemptUpdate { result implies self.versionNumber = pre(self.versionNumber) + 1 }
+post VersionAdvances using g on Config::ConfigVersion::attemptUpdate { result implies self.versionNumber = pre(self.versionNumber) }
 type Lengths = Int[0,1];
 pre NeverUpdate using v on Config::ConfigVersion::attemptUpdate { false }
 temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber != 4) }
