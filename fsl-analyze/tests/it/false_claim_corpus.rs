@@ -581,7 +581,8 @@ fn qsl_3414_analysis_does_not_prove_a_bound_above_the_reference_value() {
     model.body = "bound B on M::coins [1]\n\
                   post Activate using ev on M::Coin::toss { self.v = b }\n\
                   random Coin::toss(b) ~ { 0: 1, 1: 1 };\n\
-                  probabilistic FalseBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.75 [ eventually[0,1] holds(c.v = 1) ] }\n"
+                  probabilistic FalseBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.75 [ eventually[0,1] holds(c.v = 1) ] }\n\
+                  probabilistic TrueBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.5 [ eventually[0,1] holds(c.v = 1) ] }\n"
         .to_owned();
     let world = crate::prob_world::World::try_new_with_evaluator(
         &model,
@@ -637,6 +638,94 @@ fn qsl_3414_analysis_does_not_prove_a_bound_above_the_reference_value() {
         record.terminal().expect("the route settles").value(),
         &TerminalValue::Refuted,
         "the hand value 1/2 is below the claimed lower bound 3/4"
+    );
+
+    let proof_item = exact_probabilistic_item(
+        RequestIndex::new(0),
+        world.request("TrueBound", ModelCheckLimits::default()),
+    );
+    let proof = analyze_items(&engines, vec![proof_item], &Cancel::new()).remove(0);
+    let proof_bytes = proof
+        .terminal()
+        .expect("the neighboring true bound settles")
+        .exact_certificate_document()
+        .expect("the neighboring true bound has an accepted proof");
+    let limits = fsl_replay::ProbabilityDocumentLimits {
+        bytes: 1_000_000,
+        storage_bytes: 8_000_000,
+        states: 128,
+        edges: 1024,
+        scalar_bits: 128,
+        accounting: fsl_replay::AccountingLimits::default().0,
+    };
+    let mut candidate =
+        fsl_replay::read_probability_certificate(proof_bytes, limits, &Cancel::new())
+            .expect("the proof has a canonical certificate document");
+    fn replace_claim_name(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::String(text) => {
+                *text = text
+                    .replace("TrueBound", "FalseBound")
+                    .replace("1/2", "3/4");
+            }
+            serde_json::Value::Array(values) => values.iter_mut().for_each(replace_claim_name),
+            serde_json::Value::Object(values) => values.values_mut().for_each(replace_claim_name),
+            _ => {}
+        }
+    }
+    fn retarget_key(key: &mut fsl_replay::ProbabilityProductKey) {
+        let mut encoded: serde_json::Value =
+            serde_json::from_slice(key.as_bytes()).expect("a product key is canonical JSON");
+        replace_claim_name(&mut encoded);
+        *key = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
+            quire_canonical::to_vec(&encoded, quire_canonical::Limits::new(u64::MAX))
+                .expect("the retargeted key re-encodes canonically"),
+        );
+    }
+    for key in &mut candidate.targets {
+        retarget_key(key);
+    }
+    for key in &mut candidate.failures {
+        retarget_key(key);
+    }
+    for value in &mut candidate.values {
+        retarget_key(&mut value.state);
+    }
+    for (key, _) in &mut candidate.ranking {
+        retarget_key(key);
+    }
+    if let Some(policy) = &mut candidate.policy {
+        for (key, _) in policy {
+            retarget_key(key);
+        }
+    }
+    let false_identity = fsl_replay::probabilistic_claim_identity(world.claim("FalseBound"))
+        .expect("the false claim has a checked identity");
+    candidate.identity = false_identity.clone();
+    let candidate = fsl_replay::write_probability_certificate(&candidate, limits, &Cancel::new())
+        .expect("the retargeted exact-value certificate is well formed");
+    let system = fsl_eval::simulation::model::ModelSystem::new(world.subject().simulation)
+        .expect("the checked model binds to its independent checker system");
+    let checked = fsl_replay::check_probability_certificate_document(
+        &system,
+        graph.probabilistic_model().claims(),
+        &false_identity,
+        &candidate,
+        limits,
+        &Cancel::new(),
+    )
+    .expect("the false claim certificate is structurally self-consistent");
+    assert!(
+        matches!(
+            checked,
+            fsl_replay::ExactProbabilityCertificateCheck::Rejected(
+                fsl_replay::ProbabilityCertificateRejection {
+                    rule: fsl_replay::ProbabilityCertificateRule::ThresholdMissed,
+                    ..
+                }
+            )
+        ),
+        "the checker rejects the hand-valued 1/2 certificate below 3/4: {checked:?}"
     );
 
     // Hand derivation: b has literal weights 1 and 1, exactly one of the two
