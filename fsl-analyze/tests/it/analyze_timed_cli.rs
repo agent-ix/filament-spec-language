@@ -298,7 +298,8 @@ fn a_state_graph_claim_over_a_timed_subject_proves_on_zones() {
         .expect("a concrete witness path");
     assert_eq!(steps.len(), 1, "{item}");
     assert_eq!(
-        steps[0]["transition"]["operation"]["node"], "ix://test/timed/Call/send",
+        steps[0]["transition"]["operation"],
+        r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#,
         "{item}"
     );
     assert_eq!(

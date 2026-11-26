@@ -26,6 +26,12 @@ wrong value once a constraint is strict: a guard `x > 1` excludes the delay 1
 that digital clocks would take, so the strict case has its own route and its
 own certificate.
 
+When a timed claim is a bounded-window formula that FR-204 Admission "Route"
+does not give the digital MDP, EN-5 SHALL decide it over the region MDP in
+the same way, with a `route: "region"` document, even when every constraint
+is closed: its value can turn on a position being absent from a window,
+which integer time stamps cannot always arrange (FR-204-AC-26).
+
 ## Use case
 
 With `send` guarded `self.x > 1 ms`, `Retx`'s best scheduler sends just after
@@ -58,8 +64,9 @@ unsound, and the checker rejects a certificate that states it.
   between corners, whose minimum and maximum are the dense infimum and
   supremum.
 - The checker SHALL refuse `ObjectiveMismatch` for a digital document over a
-  claim with a strict constraint, and for a region document over a claim with
-  none.
+  claim the region route decides (a strict constraint, or a bounded-window
+  form FR-204 Admission "Route" sends to regions), and for a region document
+  over a claim the digital route decides.
 
 ## Acceptance Criteria
 
