@@ -8935,6 +8935,7 @@ impl CheckedGraph {
     /// # Errors
     ///
     /// An [`AbstractionRefusal`] when a derivation refuses.
+    #[implements("FR-306-AC-5")]
     pub fn with_abstraction(
         &self,
         relation: CheckedAbstractionRelation,

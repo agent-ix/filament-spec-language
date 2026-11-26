@@ -648,6 +648,7 @@ impl CheckedPackage {
     ///
     /// Every refusal of the bindings; a refusal leaves the package unchanged.
     #[implements("NFR-015-AC-10")]
+    #[implements("FR-306-AC-5")]
     pub fn bind_abstraction_at(
         &mut self,
         bindings: &[AuthoredBinding],
@@ -672,6 +673,7 @@ impl CheckedPackage {
     /// Records `emission`, the emitter's output for this package. Only the
     /// emitter calls this (ADR-013 O-02).
     #[cfg(feature = "std")]
+    #[implements("FR-640-AC-16")]
     pub(crate) fn remember_emission(&self, emission: &Emission) {
         *self
             .emission
