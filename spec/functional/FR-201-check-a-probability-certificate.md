@@ -39,6 +39,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-contract-ir/FR-070
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
 ---
 # FR-201: Check a probability certificate
 
@@ -90,7 +92,13 @@ pub fn check_probability_certificate(
     limits: &ExactProbLimits,
 ) -> Result<CertificateCheck, ReplayRefusal>;
 
-pub enum CertificateCheck { Accepted { bound_side: Bound }, Rejected(CertificateRejection), Stopped(ExactProbLimit) }
+pub enum CertificateCheck {
+    Accepted { bound_side: Bound },
+    Rejected(CertificateRejection),
+    Stopped(ExactProbLimit),
+    NoInitialState,                             // FR-125; see "Instancing outcomes"
+    NoInstance,
+}
 ```
 
 The checker uses FR-338's `CertificateRejection{rule, at}`. FR-338's
@@ -790,6 +798,25 @@ AST or additional body field is added.
   canonical order.
 - A checker run stopped by a budget SHALL return `Stopped` naming it.
 
+### Instancing outcomes
+
+- Every checker entry SHALL derive FR-125's instancing outcomes, in
+  FR-125's order, from the checked subject and claim by its own code, never
+  from an engine result. For `NoInitialState` and `NoInstance` it SHALL
+  return that member: `CertificateCheck` from the wire form and
+  `ExactProbabilityCertificateCheck`, which has the same two members, from
+  the checked-subject and document forms. Neither is an acceptance, a
+  rejection or a refusal. `RequiresBound` and `conflicting-identity` are
+  refusals of the entry.
+- The checker SHALL first read the certificate and compare its identity, and
+  those refusals take precedence: malformed, noncanonical or incomplete
+  bytes, an identity mismatch, a byte limit and cancellation are reported as
+  they are for any subject. It SHALL decide the instancing outcomes next,
+  before it admits the claim's form, compares the certificate's objective or
+  kind with the claim, or enumerates a product.
+- `fsl-probability-check` SHALL write `status` `no-initial-state` or
+  `no-instance` for them, never `accepted` or `rejected`.
+
 ### Conditional certificates
 
 A proof of a conditioned reading (FR-196 "Conditioned readings": an `on each`
@@ -963,7 +990,9 @@ it SHALL NOT be encoded as this profile.
 
 - FSL's settlement map in `fsl-replay` SHALL run the checker on the
   certificate that left S6c over E11 and settle `proved` only on `Accepted`; `Rejected` SHALL settle
-  `inconclusive`, `CertificateRejected`; `Stopped` SHALL settle V-7.
+  `inconclusive`, `CertificateRejected`; `Stopped` SHALL settle V-7;
+  `NoInitialState` and `NoInstance` SHALL settle `inconclusive` with the
+  cause `no-initial-state` or `no-instance`.
 - The checker's arithmetic and graph algorithms SHALL be code separate from
   EN-5's iterative and linear-algebra methods.
 
@@ -1776,6 +1805,8 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-82 | On AC-81's graph, each pretarget row has positive rank, every positive-probability nonterminal policy successor has strictly smaller rank, and the goal-observation edge has terminal rank 0; `fsl-probability-check` accepts the AC-81 Lower document with bound side `AtLeast`. | Test (TC-639) |
 | FR-201-AC-83 | On AC-81's document, omitting the `ranking` member rejects `Malformed` at `CertificateMember("ranking")` before graph enumeration. | Test (TC-639) |
 | FR-201-AC-84 | On AC-81's document, changing only K0's rank from 3 to 2 while K1 remains rank 2 rejects `RankBroken` at K0, the initial pretarget key and first failing key in canonical order. | Test (TC-639) |
+| FR-201-AC-85 | Over a subject with an empty `initial` list, the document form called with a document of another item's identity refuses `IdentityMismatch`, and with truncated bytes refuses `Malformed`; with a well-formed document of the claim's identity, whatever its kind, it returns `NoInitialState`, the wire form returns `CertificateCheck::NoInitialState`, and `fsl-probability-check` writes `status` `no-initial-state`. Over a subject with no admitted key the three give `NoInstance` and `no-instance`. | Test (TC-3241) |
+| FR-201-AC-86 | The wire form, the document form and `fsl-probability-check`, given a well-formed document of the claim's identity, refuse `RequiresBound` over a subject with a universe missing and an empty `initial` list, never returning `NoInitialState`; and refuse `invalid_runtime_input/conflicting-identity` over records typing `c` as `Animal` in `animals` and `Dog` in `dogs`, never accepting or rejecting the document. | Test (TC-3241) |
 
 ## Dependencies
 
