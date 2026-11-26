@@ -298,7 +298,7 @@ fn empty_window(drawn: bool) -> Row {
     }
     let mut space = Space::new(4, Lock::Frozen);
     if drawn {
-        space.fixed = vec![("step", 3)];
+        space.fixed = vec![("step", whole(3))];
     }
     let low = || AtMost(ratio(1, 100));
     let mut claims = vec![
@@ -387,7 +387,7 @@ fn workload_windows(drawn: bool) -> Row {
     }
     let mut space = Space::new(3, Lock::Frozen);
     if drawn {
-        space.fixed = vec![("b", 2)];
+        space.fixed = vec![("b", whole(2))];
     }
     Row {
         name: if drawn {
@@ -720,9 +720,9 @@ fn pair(name: &str, form: &str) -> String {
 }
 
 fn fixed_row(name: &'static str, send: u32, reply: Option<u32>, text: &str, claim: Claim) -> Row {
-    let delays = [("send", i64::from(send))]
+    let delays = [("send", whole(i64::from(send)))]
         .into_iter()
-        .chain(reply.map(|reply| ("reply", i64::from(reply))))
+        .chain(reply.map(|reply| ("reply", whole(i64::from(reply)))))
         .collect();
     let mut space = Space::new(i64::from(send.max(reply.unwrap_or(0))) + 1, Lock::Frozen);
     space.fixed = delays;
@@ -982,7 +982,7 @@ fn horizon_without_a_position() -> Row {
         + &pair("High", &format!("probability <= 0.5 [ {form} ]"))
         + &formula("F", form);
     let mut space = Space::new(6, Lock::Frozen);
-    space.fixed = vec![("send", 5)];
+    space.fixed = vec![("send", whole(5))];
     let row = |name, sample, bound| {
         claim(name, Payoff::Holds("F"), bound, zero(), zero()).also_sampled(sample)
     };
@@ -1121,7 +1121,7 @@ fn burst() -> Row {
     let form = "mean of (fraction holds(c.phase = 1) over [0, 1 ms]) <= 0.7";
     let text = pair("Burst", form) + &phases();
     let mut space = Space::new(1, Lock::Frozen);
-    space.fixed = vec![("send", 0)];
+    space.fixed = vec![("send", whole(0))];
     space.idle = vec![ratio(7, 3), ratio(1, 100)];
     Row {
         name: "tc374-burst",
@@ -1161,6 +1161,7 @@ fn sampled_lock() -> Row {
         sampled("One", "LockS", &format!("probability <= 0.5 [ {form} ]")) + &formula("F", form);
     let mut space = Space::new(1, Lock::Frozen);
     space.delays = Some(vec![ratio(1, 2)]);
+    space.fixed = vec![("go", ratio(1, 2))];
     Row {
         name: "254-ac4-sampled-lock",
         world: models::lock_after_a_step(&text),

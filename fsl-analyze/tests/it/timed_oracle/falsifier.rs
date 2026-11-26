@@ -64,7 +64,7 @@ pub(super) struct Space {
     pub(super) drawn: Vec<&'static str>,
     /// Operations with a one-point `delay` distribution: they fire that long
     /// after the state that enables them is entered.
-    pub(super) fixed: Vec<(&'static str, i64)>,
+    pub(super) fixed: Vec<(&'static str, Rational)>,
     /// The delays walked, in place of the grids.
     pub(super) delays: Option<Vec<Rational>>,
     /// The time past which no claim of the model reads a position: a
@@ -171,7 +171,7 @@ impl Walk<'_, '_, '_, '_> {
             .fixed
             .iter()
             .find(|(name, _)| named(operation, name))
-            .map(|(_, delay)| whole(*delay))
+            .map(|(_, delay)| delay.clone())
     }
 
     /// The extrema over every continuation from `state`, or `None` when no
