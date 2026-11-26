@@ -1893,6 +1893,7 @@ pub fn probability_certificate_document(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-201-AC-11", "FR-1042-AC-25")]
 fn construct_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
