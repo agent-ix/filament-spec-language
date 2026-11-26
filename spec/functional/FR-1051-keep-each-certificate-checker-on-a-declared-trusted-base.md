@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
 ---
 # FR-1051: Keep each certificate checker on a declared trusted base
 
