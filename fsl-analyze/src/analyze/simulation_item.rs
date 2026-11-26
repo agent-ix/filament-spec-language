@@ -715,7 +715,9 @@ mod written_step_tests {
                 quire_canonical::Limits::new(u64::MAX),
             )
             .expect("a canonical transition");
-            let wire = transition_value(&transition).expect("a step spells");
+            let Ok(wire) = transition_value(&transition) else {
+                panic!("a step spells: {identity}");
+            };
             assert_eq!(wire["operation"], written, "{identity}");
             assert_eq!(wire["type"], "transition");
         }
