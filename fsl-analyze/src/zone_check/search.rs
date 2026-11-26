@@ -2699,48 +2699,80 @@ pub(super) fn uncovered(zone: &Dbm, covers: &[Dbm]) -> Result<Vec<Dbm>, DbmError
             distinct.push(cover.clone());
         }
     }
-    subtract(zone, &distinct)
+    subtract(zone, &distinct, &mut |_| Ok(()))
 }
 
-/// [`uncovered`] over covers already distinct: a cover that holds all of
-/// `zone` leaves nothing, and one disjoint from it is skipped.
-fn subtract(zone: &Dbm, covers: &[Dbm]) -> Result<Vec<Dbm>, DbmError> {
-    if zone.is_empty() {
-        return Ok(Vec::new());
-    }
-    let Some((first, rest)) = covers.split_first() else {
-        return Ok(vec![zone.clone()]);
-    };
-    if first.includes(zone)? {
-        return Ok(Vec::new());
-    }
-    let mut meet = zone.clone();
-    intersect(&mut meet, first)?;
-    if meet.is_empty() {
-        return subtract(zone, rest);
-    }
+/// What [`subtract`] reports before it goes on, for its caller to charge,
+/// poll and cap.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Split {
+    /// One cover is about to be read against one piece.
+    Read,
+    /// One piece was made; so many pieces are now held.
+    Piece(usize),
+}
+
+/// `zone` without the union of `covers`, as [`uncovered`] gives it, over the
+/// covers as listed. A cover that holds all of a piece drops it, and one
+/// disjoint from it is skipped. The pieces still to be read are held in a
+/// list, not on the call stack, so any number of covers can be read; `meter`
+/// stops the subtraction by returning an error.
+#[implements("FR-852-AC-33")]
+pub(super) fn subtract<E: From<DbmError>>(
+    zone: &Dbm,
+    covers: &[Dbm],
+    meter: &mut impl FnMut(Split) -> Result<(), E>,
+) -> Result<Vec<Dbm>, E> {
     let mut parts = Vec::new();
-    for i in 0..zone.dim() {
-        for j in 0..zone.dim() {
-            if i == j {
-                continue;
-            }
-            let Bound::Finite { value, strict } = first.bound(i, j)? else {
-                continue;
-            };
-            if zone.bound(i, j)? <= first.bound(i, j)? {
-                continue;
-            }
-            // Outside `x_i - x_j ≺ value`: `x_j - x_i ≺' -value`.
-            let mut outside = zone.clone();
-            let negation = if *strict {
-                Bound::le(-value)
-            } else {
-                Bound::lt(-value)
-            };
-            outside.constrain(j, i, negation)?;
-            parts.extend(subtract(&outside, rest)?);
+    // Each piece with the position of the first cover it has not read; the
+    // last is read next, which keeps the parts in order.
+    let mut pending = Vec::new();
+    if !zone.is_empty() {
+        pending.push((zone.clone(), 0));
+    }
+    while let Some((piece, next)) = pending.pop() {
+        let Some(cover) = covers.get(next) else {
+            parts.push(piece);
+            continue;
+        };
+        meter(Split::Read)?;
+        if cover.includes(&piece)? {
+            continue;
         }
+        let mut meet = piece.clone();
+        intersect(&mut meet, cover)?;
+        if meet.is_empty() {
+            pending.push((piece, next + 1));
+            continue;
+        }
+        let mut made = Vec::new();
+        for i in 0..piece.dim() {
+            for j in 0..piece.dim() {
+                if i == j {
+                    continue;
+                }
+                let Bound::Finite { value, strict } = cover.bound(i, j)? else {
+                    continue;
+                };
+                if piece.bound(i, j)? <= cover.bound(i, j)? {
+                    continue;
+                }
+                // Outside `x_i - x_j ≺ value`: `x_j - x_i ≺' -value`.
+                let mut outside = piece.clone();
+                let negation = if *strict {
+                    Bound::le(-value)
+                } else {
+                    Bound::lt(-value)
+                };
+                outside.constrain(j, i, negation)?;
+                if outside.is_empty() {
+                    continue;
+                }
+                meter(Split::Piece(pending.len() + parts.len() + made.len() + 1))?;
+                made.push((outside, next + 1));
+            }
+        }
+        pending.extend(made.into_iter().rev());
     }
     Ok(parts)
 }

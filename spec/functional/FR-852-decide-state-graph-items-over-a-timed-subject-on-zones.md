@@ -77,10 +77,14 @@ and `exploration`.
   `digital-clocks` matches no candidate and settles by FSpec FR-290's
   empty-candidate row, `unsupported` (FSpec FR-712 "Routing").
 - **Deciding.** On zones, EN-6 SHALL decide each claim instance by FSpec FR-712:
-  `possible` by forward zone reachability of `P`; `always possible` by the
-  backward fixpoint of `EF P` over zones, compared with the forward reachable
-  zones where `Q` holds; `unique path` by counting realizable discrete-step
-  sequences on the zone graph. On `digital-clocks`, EN-1 SHALL decide a
+  `possible` by forward zone reachability of `P` from each initial state;
+  `always possible` by the backward fixpoint of `E(P)` over unions of zones,
+  which every reached valuation where `Q` holds must be in; `unique path` by
+  requiring every reached valuation where `X` holds to be in `E(Y)` and no two
+  transition sequences, read backwards from `Y` as unions of zones, to lead
+  from one of them. A zone-graph node holds many timed states and an edge says
+  only that some of them can take it, so EN-6 SHALL NOT decide a form on whole
+  nodes or on node edges. It explores the graph under the aM bounds (`L = U`). On `digital-clocks`, EN-1 SHALL decide a
   `possible` instance by FSpec FR-712 over the digitized timed state graph,
   with basis `exhaustive` and integer delays that replay, and SHALL decline
   `always possible` and `unique path` (FR-243).
@@ -88,14 +92,16 @@ and `exploration`.
   initial state, a witness path; an `always possible` refutation carries a
   path to a reachable state where `Q` holds and from which no `P` state is
   reachable; a `unique path` refutation carries the two distinct step
-  sequences or the cycle. Each path SHALL be concretized with exact rational
+  sequences or the cycle, or, when a reachable state where `X` holds has no
+  sequence to `Y`, a path to that state as FSpec FR-393 trap evidence. Each path SHALL be concretized with exact rational
   delays (FR-241), written in FSpec FR-393's timed evidence form, and replayed
   through FSpec FR-393's model-graph arm before it reaches the document; a
   path replay does not reproduce settles `inconclusive` `replay-parity`
   (FR-281).
 - **Certificate.** A proof or refutation SHALL carry EN-6's zone certificate
   (FR-245) over the explored zone graph and, for `always possible`, FSpec
-  FR-712's `state_graph` part whose `ef_nodes` list the `EF P` zones; the
+  FR-712's `state_graph` part whose `ef_nodes` list the nodes whose whole zone
+  lies in `E(P)`; the
   item's `certificate` member carries that certificate as its `document`, and
   certification is `certified` once FR-245's core checker
   accepts the certificate, and `uncertified` otherwise. The proof basis is
@@ -105,7 +111,13 @@ and `exploration`.
   state-graph verdict.
 - **Budgets.** Reaching a `temporal.limits` limit settles the item
   `incomplete` with `LimitReached{limit}` naming it; `exploration` reports
-  the zone states and transitions explored.
+  the zone states and transitions explored. The exploration and the decision
+  draw on one budget: each zone the decision holds counts against
+  `max_states` with the graph's states, and each predecessor or successor it
+  computes, each piece a zone subtraction makes and each pair of zones it
+  intersects counts against `max_transitions` with the graph's edges. No
+  subtraction recurses once per zone of a union. The certificate checker
+  charges the same work to its `max_certificate_edges`.
 - **Derived items.** A request whose items over the timed subject include a
   state-graph item also holds the subject's derived deadlock-freedom and
   time-lock-freedom items, as FR-626 states for a timed temporal item.
@@ -120,12 +132,14 @@ invariants `x <= 3 ms` while in flight and `x <= 4 ms` while `phase` is 1.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-852-AC-1 | `possible Replied using v over (c: M::Call) { c.phase = 2 }` settles `proved` on `en-6` with a witness path `send` then `reply` whose delay before `reply` is an exact rational in `[1, 3]`, the path replays, and certification is `certified`; `possible Late using v over (c: M::Call) { c.phase = 3 }`, unreachable because the server deadline of 3 ms forces `reply` before the 4 ms timeout, settles `refuted`. | Test (TC-2412) |
-| FR-852-AC-2 | `always possible BackToIdle using v over (c: M::Call) { c.phase = 0 }` settles `proved`, its `certificate` accepted with `document.state_graph.ef_nodes` listing the `EF P` zones; the same subject with `reset` removed settles `always possible BackToIdle` `refuted` with a counterexample path ending at `phase` 2. | Test (TC-2412) |
+| FR-852-AC-2 | `always possible BackToIdle using v over (c: M::Call) { c.phase = 0 }` settles `proved`, its `certificate` accepted with `document.state_graph.ef_nodes` listing the nodes whose whole zone lies in `E(P)`; the same subject with `reset` removed settles `always possible BackToIdle` `refuted` with a counterexample path ending at `phase` 2. | Test (TC-2412) |
 | FR-852-AC-3 | `unique path OneReply using v over (c: M::Call) from (c.phase = 0) to (c.phase = 2);` settles `refuted` with a cycle through `reset`, and over the subject with `reset` removed settles `proved`. | Test (TC-2412) |
 | FR-852-AC-4 | AC-1's `Replied` item with `backend` `en-1` and no `options.method` settles `unsupported` with `unsupported_projection`/`unsupported-requested-capability`, exit 21; with `temporal.limits.max_states` 1 it settles `incomplete` `LimitReached{max_states}`, exit 22. | Test (TC-2412) |
 | FR-852-AC-5 | `Engines::fsl()`'s `en-6` registration lists `possible`, `always-possible` and `unique-path` in `state_graph_forms`. | Test (TC-2412) |
 | FR-852-AC-6 | AC-1's `Replied` and `Late` items with `options.method` `digital-clocks` settle the same verdicts on backend `en-1`, the proof with basis `exhaustive` and witness delays that are integers and replay; `Engines::fsl()`'s `en-1` registration lists the three state-graph forms. | Test (TC-2412) |
 | FR-852-AC-7 | Over the Zeno-only variant of AC-1's subject (time invariant `x <= 0 ms` at every state, every infinite path zero-delay), `possible Replied` on `en-6` settles `proved` with a witness and a zone `certificate` that carries no `admitted` member and is accepted (FR-244-AC-7, FR-245-AC-11), and `possible Late` (the item whose predicate is `c.phase = 3`, the `TimedOut` state) settles `refuted`; neither is refused by backend candidate selection as `invalid_capability`/`inconsistent-candidates` or for a missing divergence witness, and a certificate given an `admitted` member settles `inconclusive`, `certificate-rejected`, `malformed`. | Test (TC-3030) |
+| FR-852-AC-32 | EN-6 and its certificate checker decide each form on timed states, not on whole zone nodes. Over TC-2412 step 8's subject, `always possible` of `c.phase >= 2` and `unique path` from `c.phase = 1` to `c.phase >= 2` each settle `refuted`, replayed, with an unaccepted certificate; both do so with `one`'s guard replaced by `false`, and by `y >= 2 ms and x < 2 ms and x > 1 ms`. With `one`'s guard `y >= 2 ms and x < 2 ms` both settle `proved` with an accepted certificate, and with `x <= 2 ms` `unique path` settles `refuted`. With `one` never enabled the checker rejects an `always possible` certificate that lists all of phases 0, 1 and 2 in `ef_nodes` with `rank-broken`. | Test (TC-2412) |
+| FR-852-AC-33 | A `max_states` or `max_transitions` that the explored graph fills exactly lets the exploration finish and stops the decision, and the item settles `incomplete` `LimitReached` naming it. A zone subtraction over a union of more than 10,000 zones completes, or stops at its budget with a typed result, on both the producer and the checker. | Test (TC-2412) |
 
 ## Dependencies
 
