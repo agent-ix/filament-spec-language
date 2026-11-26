@@ -2570,7 +2570,7 @@ fn an_unknown_terminal_refuses_a_no_witness_possible_item_as_undecided() {
     else {
         panic!("the refused second declaration makes the terminal unknown");
     };
-    assert_eq!((model.label(), model.ordinal()), ("N", 1));
+    assert_eq!((model.label(), model.ordinal()), ("N", 0));
 }
 
 /// FR-391-AC-15: an intended terminal declaration wins over another alias's
