@@ -123,6 +123,40 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
+
+/// A non-empty, canonically ordered set of admitted claim instances.
+///
+/// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
+/// an empty instance list to an exploration engine.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimInstances(Vec<ModelInstance>);
+
+impl ClaimInstances {
+    /// The first instance in canonical order.
+    pub fn first(&self) -> &ModelInstance {
+        // The private field is only constructed after checking non-emptiness.
+        &self.0[0]
+    }
+
+    /// All instances in canonical order.
+    pub fn as_slice(&self) -> &[ModelInstance] {
+        &self.0
+    }
+}
+
+/// Why a claim has no non-empty admitted instance set.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum NoClaimInstances {
+    /// The model could not be simulated or its extent could not be classified.
+    #[error("the model cannot be simulated: {0}")]
+    NotSimulated(#[from] NotSimulated),
+    /// The subject has no initial state.
+    #[error("the subject has no initial state")]
+    NoInitialState,
+    /// No initial record admits a key in the overlapping populations.
+    #[error("the claim has no admitted instance")]
+    NoInstance,
+}
 use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
 use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
 use crate::simulation::footprint::{Footprint, Location};
@@ -2530,6 +2564,27 @@ impl<'a> ModelSystem<'a> {
             }
         }
         Ok(instances)
+    }
+
+    /// Return the non-empty admitted instances for a claim's `over` type.
+    ///
+    /// The refusal order is FR-125-AC-13: extent/bound failures from
+    /// [`Self::instances`], then no initial state, then no admitted instance.
+    /// Conflicting identities are rejected by [`Self::new`] before a system
+    /// is available.
+    #[implements("FR-125-AC-13", "FR-125-AC-21")]
+    pub fn claim_instances(
+        &self,
+        over: &ValueType,
+    ) -> Result<ClaimInstances, NoClaimInstances> {
+        let instances = self.instances(over).map_err(NoClaimInstances::NotSimulated)?;
+        if self.initial_base.is_empty() {
+            return Err(NoClaimInstances::NoInitialState);
+        }
+        if instances.is_empty() {
+            return Err(NoClaimInstances::NoInstance);
+        }
+        Ok(ClaimInstances(instances))
     }
 
     /// FR-125 Instancing: the instances of a hyper clause parameter of object
