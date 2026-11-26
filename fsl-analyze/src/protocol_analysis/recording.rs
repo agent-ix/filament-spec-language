@@ -15,6 +15,7 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_forms::ChannelDelivery;
 use fsl_semantics::check::ProtocolNodeId;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 const FORMAT: &str = "filament.protocol-recording/1";
@@ -2103,48 +2104,7 @@ fn assess_obligations(
                     .iter()
                     .find(|repeat| repeat.node == control.node);
                 repeat.map(|repeat| {
-                    let descendants = protocol
-                        .controls
-                        .controls
-                        .iter()
-                        .filter(|child| {
-                            child.path.len() > control.path.len()
-                                && child.path.starts_with(&control.path)
-                        })
-                        .map(|child| format!("{}::{}", protocol.name, child.path.join("::")))
-                        .collect::<BTreeSet<_>>();
-                    let mut counts = BTreeMap::<String, Vec<usize>>::new();
-                    for (position, observation) in document.observations.iter().enumerate() {
-                        if descendants.contains(&observation.node)
-                            && observation.instance == instance
-                        {
-                            counts
-                                .entry(observation.node.clone())
-                                .or_default()
-                                .push(position);
-                        }
-                    }
-                    if counts.is_empty() {
-                        // A closed recording does not show whether the repeat
-                        // guard was false or an iteration was omitted. Without
-                        // an iteration/guard witness, absence is unsettled.
-                        return (RecordingVerdict::Pending, None, Vec::new());
-                    }
-                    let iterations = counts.values().map(Vec::len).max().unwrap_or_default();
-                    let witness = counts.into_values().flatten().collect::<Vec<_>>();
-                    if iterations == 0 {
-                        (RecordingVerdict::Pending, None, witness)
-                    } else if repeat.max.is_some_and(|maximum| {
-                        u64::try_from(iterations).is_ok_and(|count| count > maximum)
-                    }) {
-                        (
-                            RecordingVerdict::Violated,
-                            Some(RecordingCause::Duplicated),
-                            witness,
-                        )
-                    } else {
-                        (RecordingVerdict::Satisfied, None, witness)
-                    }
+                    repeat_control_verdict(protocol, document, control, repeat.max, instance)
                 })
             } else {
                 None
@@ -3793,6 +3753,7 @@ fn observation_enabled(
 /// not ordered before the step is `Some(false)` at once, as is one the step
 /// itself causally precedes: order between two observations present is fixed
 /// when both are, so nothing can repair either.
+#[implements("FR-895-AC-42")]
 fn earlier_steps_precede(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -3838,6 +3799,21 @@ fn earlier_steps_precede(
                 .map_or(occurrence, |(nth, _)| nth + 1);
         }
         if parent.kind.label() == "sequence" {
+            // A repeat body's earlier sequence steps are predecessors only
+            // for the iteration the recording identifies. Without a counter
+            // on the main sequence, a prior choice cannot be assigned to this
+            // step's outer iteration; requiring every observed case would
+            // retroactively invalidate steps when another case is recorded.
+            let body_repeat = level.checked_sub(1).and_then(|repeat_level| {
+                let repeat = ancestry[repeat_level];
+                (repeat.kind.label() == "repeat" && repeat.children.first() == Some(&parent.node))
+                    .then_some(repeat_level)
+            });
+            if body_repeat.is_some_and(|repeat_level| {
+                repeat_iteration(protocol, document, position, ancestry, repeat_level).is_none()
+            }) {
+                continue;
+            }
             for sibling in parent
                 .children
                 .iter()
@@ -4255,6 +4231,123 @@ fn subtree_nodes(protocol: &CheckedProtocol, node: ProtocolNodeId, out: &mut BTr
     out.insert(qualified_name(protocol, control));
     for child in &control.children {
         subtree_nodes(protocol, *child, out);
+    }
+}
+
+/// Whether this repeat's own main-sequence steps exceed its maximum, grouped
+/// by each enclosing repeat iteration that the recording determines.
+#[implements("FR-895-AC-45")]
+fn repeat_control_verdict(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    control: &fsl_semantics::check::CheckedControl,
+    maximum: Option<u64>,
+    instance: &Option<String>,
+) -> (RecordingVerdict, Option<RecordingCause>, Vec<usize>) {
+    let pending = || (RecordingVerdict::Pending, None, Vec::new());
+    let Some(body_id) = control.children.first() else {
+        return pending();
+    };
+    let Some(body) = protocol.controls.control(*body_id) else {
+        return pending();
+    };
+    if body.kind.label() != "sequence" {
+        return pending();
+    }
+    let Some(root) = protocol.controls.root() else {
+        return pending();
+    };
+    let mut repeat_path = Vec::new();
+    if !control_path(protocol, root.node, control.node, &mut repeat_path) {
+        return pending();
+    }
+    let enclosing_repeats = repeat_path
+        .iter()
+        .enumerate()
+        .take(repeat_path.len().saturating_sub(1))
+        .filter_map(|(level, ancestor)| {
+            (ancestor.kind.label() == "repeat"
+                && ancestor.children.first() == repeat_path.get(level + 1).map(|child| &child.node))
+            .then_some(level)
+        })
+        .collect::<Vec<_>>();
+    let is_step = |label: &str| {
+        matches!(
+            label,
+            "send" | "receive" | "event" | "attempt" | "effect" | "commit"
+        )
+    };
+    let mut grouped = BTreeMap::<Vec<usize>, BTreeMap<String, Vec<usize>>>::new();
+    for child in &body.children {
+        let Some(counter) = protocol.controls.control(*child) else {
+            continue;
+        };
+        if !is_step(counter.kind.label()) {
+            continue;
+        }
+        let name = qualified_name(protocol, counter);
+        let mut counter_path = Vec::new();
+        if !control_path(protocol, root.node, counter.node, &mut counter_path) {
+            continue;
+        }
+        for (position, observation) in document.observations.iter().enumerate() {
+            if observation.node != name || observation.instance != *instance {
+                continue;
+            }
+            let mut key = Vec::with_capacity(enclosing_repeats.len());
+            let mut determined = true;
+            for level in &enclosing_repeats {
+                if counter_path.get(*level).map(|entry| entry.node)
+                    != repeat_path.get(*level).map(|entry| entry.node)
+                {
+                    determined = false;
+                    break;
+                }
+                let Some(iteration) =
+                    repeat_iteration(protocol, document, position, &counter_path, *level)
+                else {
+                    determined = false;
+                    break;
+                };
+                key.push(iteration);
+            }
+            // Rule 31 makes an unknown enclosing iteration a missed
+            // over-limit finding, never evidence for a duplicated repeat.
+            if determined {
+                grouped
+                    .entry(key)
+                    .or_default()
+                    .entry(name.clone())
+                    .or_default()
+                    .push(position);
+            }
+        }
+    }
+    if grouped.is_empty() {
+        return pending();
+    }
+    let mut witness = grouped
+        .values()
+        .flat_map(|counters| counters.values().flatten().copied())
+        .collect::<Vec<_>>();
+    witness.sort_unstable();
+    witness.dedup();
+    let over_limit = maximum.and_then(|maximum| {
+        grouped
+            .values()
+            .flat_map(|counters| counters.values())
+            .find(|positions| u64::try_from(positions.len()).is_ok_and(|count| count > maximum))
+            .cloned()
+    });
+    if let Some(mut over_limit) = over_limit {
+        over_limit.sort_unstable();
+        (
+            RecordingVerdict::Violated,
+            Some(RecordingCause::Duplicated),
+            over_limit,
+        )
+    } else {
+        (RecordingVerdict::Satisfied, None, witness)
     }
 }
 

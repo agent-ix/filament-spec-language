@@ -2175,6 +2175,35 @@ fn control_results_in(prefix: &Value, node: &str) -> Vec<(String, Option<String>
         .collect()
 }
 
+/// Assert that the source assessor's batch and incremental results agree with
+/// the analyzer's incremental item, including every obligation prefix.
+fn assert_source_assessment_pair(source: &str, recording: &Value, item: &Value) {
+    use fsl_analyze::protocol_analysis::recording::{
+        assess_recording, assess_recording_incrementally,
+    };
+
+    let package = package_of(source);
+    let bytes = recording.to_string();
+    let incremental = assess_recording_incrementally(&package, bytes.as_bytes())
+        .expect("source incremental assessment");
+    let batch = assess_recording(&package, bytes.as_bytes()).expect("source batch assessment");
+    assert_eq!(incremental.last(), Some(&batch));
+    let item_prefixes = item["prefixes"]
+        .as_array()
+        .expect("incremental item prefixes");
+    assert_eq!(item_prefixes.len(), incremental.len());
+    for (assessment, prefix) in incremental.iter().zip(item_prefixes) {
+        assert_eq!(
+            serde_json::to_value(&assessment.obligations).expect("prefix obligations"),
+            prefix["obligations"]
+        );
+    }
+    assert_eq!(
+        serde_json::to_value(&batch.obligations).expect("batch obligations"),
+        item["obligations"]
+    );
+}
+
 /// An open incremental assessment of `observations` over [`cancel_in_repeat_protocol`]:
 /// `Buyer`'s observations at `buyer` in order, `Seller`'s at `seller`, and
 /// the correlations `(send, receive)`.
@@ -2366,6 +2395,24 @@ fn nested_cancel_item(
     seller: &[usize],
     correlations: &[(usize, usize)],
 ) -> Value {
+    let recording = nested_cancel_recording(observations, buyer, seller, correlations);
+    replay_with(
+        name,
+        source,
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0)
+}
+
+/// The open causal recording used by [`nested_cancel_item`].
+fn nested_cancel_recording(
+    observations: Value,
+    buyer: &[usize],
+    seller: &[usize],
+    correlations: &[(usize, usize)],
+) -> Value {
     let mut recording = repeat_recording(
         observations,
         json!(seller),
@@ -2378,14 +2425,7 @@ fn nested_cancel_item(
         ),
     );
     recording["closure"] = json!({"state": "open", "premises": []});
-    replay_with(
-        name,
-        source,
-        &recording,
-        json!({"file": "recording.json", "identity": recording_identity()}),
-        assessed_item("incremental"),
-    )
-    .item(0)
+    recording
 }
 
 /// FR-895-AC-39 (TC-2531): a cancelling `parallel` in an inner `repeat` in an
@@ -2655,7 +2695,7 @@ fn a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration() {
 /// `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`,
 /// `yes` leaves both iterations' `L` and `R` `satisfied` in batch and every
 /// prefix, as under `outstanding continue`.
-#[trace("TC-2531", "FR-895-AC-42")]
+#[trace("TC-2531", "FR-895-AC-42", "FSpec-FR-059-AC-4")]
 #[test]
 fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
     let step = |path: &str| {
@@ -2693,6 +2733,13 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
             &[5, 6, 12, 13],
             &[(4, 5), (11, 12)],
         );
+        let recording = nested_cancel_recording(
+            Value::Array(all.clone()),
+            &[0, 1, 2, 3, 4, 7, 8, 9, 10, 11],
+            &[5, 6, 12, 13],
+            &[(4, 5), (11, 12)],
+        );
+        assert_source_assessment_pair(&source, &recording, &item);
         let prefixes = item["prefixes"].as_array().expect("prefixes");
         assert_eq!(prefixes.len(), 14, "{outstanding}: {item}");
         for prefix in prefixes {
@@ -2717,7 +2764,7 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
 /// the inner repeat is never falsely reported duplicated; when `L` runs
 /// twice in one known outer iteration, the second `L` is the over-limit
 /// witness.
-#[trace("TC-2531", "FR-895-AC-45")]
+#[trace("TC-2531", "FR-895-AC-45", "FSpec-FR-059-AC-4")]
 #[test]
 fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
     let source = repeat_protocol().replace(
@@ -2729,20 +2776,33 @@ fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
     let step = |path: &str| loop_event(path);
     let nested_item = |name: &str, observations: Value| {
         let count = observations.as_array().expect("observations").len();
-        nested_cancel_item(
+        let recording = repeat_recording(
+            observations,
+            json!([]),
+            json!((0..count).collect::<Vec<_>>()),
+            json!([]),
+        );
+        let item = replay_with(
             name,
             &source,
-            observations,
-            &(0..count).collect::<Vec<_>>(),
-            &[],
-            &[],
+            &recording,
+            json!({"file": "recording.json", "identity": recording_identity()}),
+            assessed_item("incremental"),
         )
+        .item(0);
+        (item, recording)
     };
 
-    let legitimate = nested_item(
+    let (legitimate, recording) = nested_item(
         "replay-repeat-controls-nested-within-max",
-        json!([step("P"), step("Inner::IBody::L"), step("P"), step("Inner::IBody::L")]),
+        json!([
+            step("P"),
+            step("Inner::IBody::L"),
+            step("P"),
+            step("Inner::IBody::L")
+        ]),
     );
+    assert_source_assessment_pair(&source, &recording, &legitimate);
     let prefixes = legitimate["prefixes"].as_array().expect("prefixes");
     assert_eq!(prefixes.len(), 4, "{legitimate}");
     for prefix in prefixes {
@@ -2764,12 +2824,16 @@ fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
     }
     let order: Vec<usize> = (0..4).collect();
     assert_every_verdict_only_advances(prefixes, &order);
-    assert_eq!(prefixes[3]["obligations"], legitimate["obligations"], "{legitimate}");
+    assert_eq!(
+        prefixes[3]["obligations"], legitimate["obligations"],
+        "{legitimate}"
+    );
 
-    let undetermined = nested_item(
+    let (undetermined, recording) = nested_item(
         "replay-repeat-controls-outer-iteration-undetermined",
         json!([step("Inner::IBody::L"), step("Inner::IBody::L")]),
     );
+    assert_source_assessment_pair(&source, &recording, &undetermined);
     let prefixes = undetermined["prefixes"].as_array().expect("prefixes");
     for prefix in prefixes {
         assert!(
@@ -2785,12 +2849,16 @@ fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
             .all(|(verdict, _)| verdict != "violated"),
         "{undetermined}"
     );
-    assert_eq!(prefixes[1]["obligations"], undetermined["obligations"], "{undetermined}");
+    assert_eq!(
+        prefixes[1]["obligations"], undetermined["obligations"],
+        "{undetermined}"
+    );
 
-    let over_limit = nested_item(
+    let (over_limit, recording) = nested_item(
         "replay-repeat-controls-inner-over-max",
         json!([step("P"), step("Inner::IBody::L"), step("Inner::IBody::L")]),
     );
+    assert_source_assessment_pair(&source, &recording, &over_limit);
     let prefixes = over_limit["prefixes"].as_array().expect("prefixes");
     for prefix in &prefixes[..2] {
         assert!(
@@ -2811,7 +2879,10 @@ fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
         [("violated".to_owned(), Some("duplicated".to_owned()))],
         "{over_limit}"
     );
-    assert_eq!(prefixes[2]["obligations"], over_limit["obligations"], "{over_limit}");
+    assert_eq!(
+        prefixes[2]["obligations"], over_limit["obligations"],
+        "{over_limit}"
+    );
 }
 
 /// [`cancel_in_repeat_protocol`] with `extra` after `P` in the loop body.
