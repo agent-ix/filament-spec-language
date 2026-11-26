@@ -392,7 +392,7 @@ fn bindings(
         .into_iter()
         .map(|instance| {
             let reference = system
-                .bound_reference(object.clone(), &instance)
+                .written_reference(object.clone(), &instance)
                 .map_err(StatisticalRefusal::Internal)?;
             Ok((Some(instance), Some(reference)))
         })

@@ -283,8 +283,6 @@ impl ProbKey {
         match &self.binding {
             Some(binding) => {
                 identity.push_str("binding=some;");
-                cycle_identity_field(&mut identity, binding.population.package.as_bytes());
-                cycle_identity_field(&mut identity, binding.population.node.as_bytes());
                 cycle_identity_field(&mut identity, binding.key.as_bytes());
             }
             None => identity.push_str("binding=none;"),

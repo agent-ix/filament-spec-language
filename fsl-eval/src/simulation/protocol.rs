@@ -1094,7 +1094,7 @@ pub(crate) fn over_value(
         return Err(refused());
     }
     model
-        .bound_reference(object_type.clone(), over)
+        .written_reference(object_type.clone(), over)
         .map(Value::Reference)
         .map_err(|_| refused())
 }
@@ -1766,7 +1766,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 }
                 BoundedDomain::single(Value::Reference(
                     model
-                        .bound_reference(object_type.clone(), &subject.over)
+                        .written_reference(object_type.clone(), &subject.over)
                         .map_err(|_| ProtocolRefusal::fault("a-package-over-reference-resolves"))?,
                 ))
             }

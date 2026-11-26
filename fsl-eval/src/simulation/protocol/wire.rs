@@ -107,5 +107,5 @@ pub fn over_reference(
     if !instances.contains(over) {
         return None;
     }
-    model.bound_reference(object_type.clone(), over).ok()
+    model.written_reference(object_type.clone(), over).ok()
 }

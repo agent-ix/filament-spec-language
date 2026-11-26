@@ -652,8 +652,8 @@ fn probabilistic_on_each_settles_per_instance() {
     let (each, origin) = (entry(item), entry(&document["items"][1]));
     assert_eq!(each["value"], origin["value"], "{document}");
     assert_eq!(each["binding"], Value::Null, "{each}");
-    assert_eq!(each["instance"]["key"], "m", "{each}");
-    assert_eq!(origin["binding"]["key"], "m", "{origin}");
+    assert_eq!(each["instance"]["identity"], "m", "{each}");
+    assert_eq!(origin["binding"]["identity"], "m", "{origin}");
     assert_eq!(origin["instance"], Value::Null, "{origin}");
     assert!(each["value"].to_string().contains("391"), "{each}");
 }
@@ -790,7 +790,7 @@ fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
         .as_array()
         .expect("entries");
     assert_eq!(entries.len(), 1, "{item}");
-    assert_eq!(entries[0]["instance"]["key"], "m", "{item}");
+    assert_eq!(entries[0]["instance"]["identity"], "m", "{item}");
     assert_eq!(entries[0]["binding"], Value::Null, "{item}");
     assert!(entries[0]["value"].to_string().contains("391"), "{item}");
     // `m` activates at position 0, so at its initial key the numerator is the
@@ -901,7 +901,7 @@ fn probabilistic_on_each_product_preserves_multi_initial_keys() {
             panic!("the activation is over a reference type");
         };
         system
-            .bound_reference(over.clone(), instance)
+            .written_reference(over.clone(), instance)
             .expect("the instance has its checked reference")
     };
     let product_key = |instance: &str, phase| {
@@ -998,7 +998,7 @@ fn probabilistic_on_each_product_preserves_multi_initial_keys() {
         entry
             .instance
             .as_ref()
-            .map(|instance| instance.key.as_str()),
+            .map(|instance| instance.object().as_str()),
         Some("m")
     );
     assert!(entry.binding.is_none());
@@ -2638,12 +2638,13 @@ fn on_each_statistical_evidence_builds_no_product() {
     );
 }
 
-/// The `native-analyze/1` document of the claim `OverBase`, whose
-/// `over (b: M::Base)` ranges over the key `m`: the `Link` model with `Msg`
+/// The `native-analyze/1` document of the claim `OverBase`, whose parameter
+/// of type `M::Base` ranges over the key `m`: the `Link` model with `Msg`
 /// extending a fieldless `Base`, so the admitted record under `m` is a `Msg`.
-/// `event` is the path formula the claim asks to have probability at least
-/// one half.
-fn run_over_base(name: &str, event: &str) -> Value {
+/// `scope` is the claim's scheduler and activation, which bind the parameter,
+/// and `event` is the path formula the claim asks to have probability at
+/// least one half.
+fn run_over_base(name: &str, scope: &str, event: &str) -> Value {
     const BASE: &str = "ix://test/link/Base";
     let mut model: Value = serde_json::from_slice(LINK_MODEL).expect("the Link model");
     let types = model["types"].as_array_mut().expect("types");
@@ -2662,8 +2663,8 @@ fn run_over_base(name: &str, event: &str) -> Value {
         "generatorVersion": "1.0.0", "inputIdentities": [BASE]}});
     types.push(base);
     let claim = format!(
-        "probabilistic OverBase using ev on M over (b: M::Base) under Even on origin \
-         {{ probability >= rational(1, 2) [ {event} ] }}"
+        "probabilistic OverBase using ev on M {scope} {{ probability >= rational(1, 2) \
+         [ {event} ] }}"
     );
     let ws = Workspace::new(name);
     analyze(&request_over(
@@ -2676,17 +2677,30 @@ fn run_over_base(name: &str, event: &str) -> Value {
     .document()
 }
 
-/// FR-125 "Instancing": the refuted binding of `over (b: M::Base)` at the key
-/// `m` carries the admitted type `Msg`, not the declared `over` type `Base`.
-#[trace("TC-520")]
-#[test]
-fn a_refuted_probability_binding_names_the_admitted_member_type() {
-    let document = run_over_base("over-base-refuted", "eventually[0,2] holds(b != b)");
-    let item = &document["items"][0];
-    assert!(item.is_object(), "{document}");
-    assert_eq!(label(item), "refuted", "{document}");
-    let binding = &item["counterexample"]["binding"];
-    assert_eq!(binding["identity"], "m", "{document}");
+const OVER_BASE: &str = "over (b: M::Base) under Even on origin";
+const EACH_BASE: &str = "under Even on each (b: M::Base) when (b = b)";
+
+/// `binding` is the FR-181 reference to the key `m` with the admitted type
+/// `Msg`, with no other member.
+fn assert_admitted_msg_reference(binding: &Value) {
+    let members = binding.as_object().map(|object| {
+        object
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>()
+    });
+    assert_eq!(
+        members,
+        Some(std::collections::BTreeSet::from([
+            "identity",
+            "object_type",
+            "type",
+            "universe"
+        ])),
+        "{binding}"
+    );
+    assert_eq!(binding["type"], "reference", "{binding}");
+    assert_eq!(binding["identity"], "m", "{binding}");
     assert_eq!(
         binding["object_type"]["original"],
         json!({"node": "ix://test/link/Msg", "package": "test/link"}),
@@ -2694,16 +2708,52 @@ fn a_refuted_probability_binding_names_the_admitted_member_type() {
     );
 }
 
+/// FR-125 "Instancing": the refuted binding of `over (b: M::Base)` at the key
+/// `m` carries the admitted type `Msg`, not the declared `over` type `Base`.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_refuted_probability_binding_names_the_admitted_member_type() {
+    let document = run_over_base(
+        "over-base-refuted",
+        OVER_BASE,
+        "eventually[0,2] holds(b != b)",
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "refuted", "{document}");
+    assert_admitted_msg_reference(&item["counterexample"]["binding"]);
+}
+
 /// FR-125 "Instancing", FR-741 "Binding": an exact entry's `over` binding is
-/// a typed reference and carries no population.
-#[trace("TC-520")]
+/// the reference with the admitted type and no population.
+#[trace("TC-520", "FR-125-AC-9")]
 #[test]
 fn a_probability_entry_over_binding_carries_no_population() {
-    let document = run_over_base("over-base-entry", "eventually[0,2] holds(b = b)");
+    let document = run_over_base("over-base-entry", OVER_BASE, "eventually[0,2] holds(b = b)");
     let item = &document["items"][0];
-    assert!(item.is_object(), "{document}");
     assert_eq!(label(item), "proved", "{document}");
-    let binding = &item["record"]["basis"]["entries"][0]["binding"];
-    assert!(binding.is_object(), "{document}");
-    assert_eq!(binding.get("population"), None, "{binding}");
+    let entry = &item["record"]["basis"]["entries"][0];
+    assert_admitted_msg_reference(&entry["binding"]);
+    assert_eq!(entry["instance"], Value::Null, "{entry}");
+}
+
+/// FR-125 "Instancing", FR-741 "Binding": the `on each` object of a refuted
+/// claim and of an exact entry is the reference with the admitted type.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_probability_on_each_instance_names_the_admitted_member_type() {
+    let refuted = run_over_base(
+        "each-base-refuted",
+        EACH_BASE,
+        "eventually[0,2] holds(b != b)",
+    );
+    let item = &refuted["items"][0];
+    assert_eq!(label(item), "refuted", "{refuted}");
+    assert_admitted_msg_reference(&item["counterexample"]["instance"]);
+
+    let proved = run_over_base("each-base-entry", EACH_BASE, "eventually[0,2] holds(b = b)");
+    let item = &proved["items"][0];
+    assert_eq!(label(item), "proved", "{proved}");
+    let entry = &item["record"]["basis"]["entries"][0];
+    assert_admitted_msg_reference(&entry["instance"]);
+    assert_eq!(entry["binding"], Value::Null, "{entry}");
 }

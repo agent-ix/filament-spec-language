@@ -102,7 +102,7 @@ pub(super) fn build<'s, 'a>(
                 .into_iter()
                 .map(|instance| {
                     let reference = system
-                        .bound_reference(object.clone(), &instance)
+                        .written_reference(object.clone(), &instance)
                         .map_err(ProductRefusal::Internal)?;
                     Ok((Some(instance), Some(reference)))
                 })
