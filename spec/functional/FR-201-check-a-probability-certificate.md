@@ -33,6 +33,12 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-1043
     type: references
+  - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-413
+    type: depends_on
+  - target: ix://agent-ix/filament-contract-ir/FR-070
+    type: depends_on
 ---
 # FR-201: Check a probability certificate
 
