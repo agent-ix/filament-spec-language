@@ -166,6 +166,8 @@ relationships:
     type: contains
   - target: ix://agent-ix/filament-spec-language/ADR-028
     type: contains
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: contains
   - target: ix://agent-ix/filament-spec-language/ADR-020
     type: contains
   - target: ix://agent-ix/filament-spec-language/ADR-023
@@ -1416,6 +1418,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [ADR-024](decisions/ADR-024-statistical-and-probabilistic-properties.md) | ADR |
 | [ADR-028](decisions/ADR-028-exact-probabilistic-engine.md) | ADR |
 | [ADR-026](decisions/ADR-026-dense-time.md) | ADR |
+| [ADR-038](decisions/ADR-038-one-timed-run-layer-and-route-admission.md) | ADR |
 | [ADR-021](decisions/ADR-021-state-space-reduction.md) | ADR |
 
 | [FR-312](functional/FR-312-read-a-clause-run-request-and-run-it.md) | FR |

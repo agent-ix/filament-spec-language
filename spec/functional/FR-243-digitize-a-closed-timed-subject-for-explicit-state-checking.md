@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
 ---
 # FR-243: Route timed items to the zone engine or the digital-clock route
 
@@ -23,10 +25,12 @@ relationships:
 The request writer SHALL route every non-probabilistic timed item (TT-1 to
 TT-4, the deadlock-freedom item and the time-lock-freedom item) to EN-6's
 zone search (FR-239), so a timed invariant is proved by `Holds` with a CF-1
-certificate (ADR-026 EZ-10). Only a probabilistic claim over a timed
-subject that names `exact` evidence takes the digital-clock route, EN-5's
-reading of a closed subject through integer-valued clocks (ADR-028 TA-1 to
-TA-3, FR-204), whose results settle by FR-203.
+certificate (ADR-026 EZ-10). Two kinds of item are read through
+integer-valued clocks: a probabilistic claim over a timed subject that names
+`exact` evidence goes to EN-5, which decides it on digital clocks or on clock
+regions as ADR-038's route admission table states (ADR-028 TA-1 to TA-3,
+FR-204), and its results settle by FR-203; and a `temporal-satisfaction` item
+that names `options.method` `digital-clocks` goes to EN-1 ("Behavior").
 
 ## Use case
 
@@ -42,7 +46,7 @@ decided on the digital-clock route with an exact value.
 
 ## Outputs
 
-- The routed engine for the item: EN-6, EN-5's digital-clock route for an exact probabilistic claim, or EN-1 over the digital-clock reading for a `temporal-satisfaction` item that names `options.method` `digital-clocks`.
+- The routed engine for the item: EN-6, EN-5 for an exact probabilistic claim, or EN-1 over the digital-clock reading for a `temporal-satisfaction` item that names `options.method` `digital-clocks`.
 
 ## Behavior
 
@@ -114,8 +118,8 @@ decided on the digital-clock route with an exact value.
   of an item whose `options.method` is absent or `zones`, decides such an
   item.
 - When a `probabilistic-satisfaction` item over a timed subject names
-  `exact` evidence, the request writer SHALL route it to EN-5's
-  digital-clock route (FR-204); when it names `statistical` evidence, to
+  `exact` evidence, the request writer SHALL route it to EN-5
+  (FR-204); when it names `statistical` evidence, to
   EN-4 (FR-254).
 - The route SHALL be a function of the capability kind, the requested
   evidence kind and the item's `options` alone, negotiated against the
@@ -161,6 +165,10 @@ every half millisecond never enables `t`, so that behaviour is fair under
 behaviour that diverges without `t` enables `t` again and again, so none of
 them is fair.
 
+Why (a) to (e) suffice is argument A of ADR-038 (a closed comparison survives
+every threshold, Kwiatkowska, Norman, Parker and Sproston 2006, Lemma 17); it
+covers this temporal route only and no probabilistic claim.
+
 The rule is conservative: it declines some claims that digitisation would
 preserve.
 
@@ -178,7 +186,8 @@ preserve.
 
 ## Dependencies
 
-- ADR-026 §8 EZ-10, §8.1 CF-4; ADR-028 TA-1 to TA-3 (EN-5's digital route).
+- ADR-026 §8 EZ-10, §8.1 CF-4; ADR-028 TA-1 to TA-3 (EN-5's digital route);
+  ADR-038 (route admission).
 - [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md),
   [FR-235](FR-235-settle-a-timed-verdict-as-a-terminal-record.md),
   [FR-238](FR-238-represent-zones-as-difference-bound-matrices.md),
