@@ -13,6 +13,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-751
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-421
+    type: depends_on
 ---
 # FR-921: Check a timed-product certificate without the engine
 
@@ -50,13 +54,22 @@ certificate `InequalityFails` at the first such state; the item settles
 ### Re-derived by the checker
 
 The checker SHALL compute, with code in the qualified core that EN-5 does not
-share:
+share (excepted: the one concrete timed run, which is exact clock values,
+delay admissibility, the discrete step, positions and outcome types, and the
+one type of a product state key with its validator and encoder, ADR-038 RL-1,
+RL-2, RL-5; and, as data only, the route admission table, being its rows and
+the names of the conditions each row tests, and the mapping of FSpec FR-416
+"How claims read a time-lock" from a claim monitor's kind and reading to a
+value, ADR-038 RL-7):
 
-1. the route, digital exactly when every clock constraint of every guard and
-   time invariant, every timed interval of the claim and every elapsed
-   comparison is non-strict, the transform's `M < c` counting as strict, and
-   the claim's form is one FR-204 Admission "Route" gives the digital MDP;
-   region for every other bounded-window formula, closed or not;
+1. the route: the checker establishes every condition a row of FSpec FR-421
+   "Closed and strict conditions" (ADR-038's route admission table) tests with
+   its own code (the subject's closedness, its delay class, whether the claim
+   states a fairness set, whether a
+   time-lock is reachable where no delay is given, from the dense subject and
+   never from the digital product, the claim form and the position it is read
+   from; the transform's `M < c` counts as strict) and then looks the route up
+   in the shared table; every claim the table does not admit is region;
 2. the unit, the scale (FR-196's least common denominator) and each clock's
    cap;
 3. the digital moves, or each region's time successor and each guard's
@@ -65,8 +78,9 @@ share:
 4. each race's drawn vectors with their exact probabilities, conditioned on
    their windows, from the checked `delay_distribution` nodes, and the
    scheduler's remaining choices (FR-923);
-5. the maximal end components whose actions take zero time, their exits, and
-   the time-locks (FR-924);
+5. the maximal end components whose actions take zero time, their exits, their
+   progress and the time-locks, each found by its own code (FR-924); a locked
+   state's value is the shared mapping's;
 6. the deadline and elapsed clocks, activation, completion, censoring and the
    quantile transform's terminal reward (FR-877);
 7. the claim monitor of every other bounded-window formula, nested interval
@@ -115,6 +129,7 @@ the result.
 | FR-921-AC-2 | The same document with `route` set to `"region"`, or `scale` set to `"2"`, is refused `ObjectiveMismatch`; with the cap of `x` in one key changed from 3 to 2 it is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-3 | The same document with one reachable row removed, or with one added row for a key the product does not reach, is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-4 | `fsl-probability-check`, a separate process with no `fsl-analyze` linkage, accepts the documents of FR-922-AC-1, FR-923-AC-1, FR-924-AC-1 and FR-877-AC-1 from their bytes and the byte provision, and rejects each with one value altered. | Test (TC-2495) |
+| FR-921-AC-5 | For each row of the route admission table and each entry of the locked-run value mapping, EN-5 and the checker each give the route or value the test states by hand, none derived from the shared declaration. | Test (TC-2490) |
 
 ## Dependencies
 
