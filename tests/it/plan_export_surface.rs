@@ -3449,7 +3449,7 @@ synthesis Reach"#,
         assert_eq!(exit, 22, "{value}");
         assert_eq!(value["code"], "incomplete_population", "{value}");
         assert_eq!(value["cause"], cause, "{value}");
-        assert_eq!(value["fields"]["population"], population, "{value}");
+        assert_eq!(value["details"]["fields"]["population"], population, "{value}");
         names(&value, "/request/synthesis/initial");
         assert!(value.get("synthesis").is_none(), "{value}");
     }
@@ -3465,7 +3465,7 @@ synthesis Reach"#,
     assert_eq!(exit, 22, "{value}");
     assert_eq!(value["code"], "incomplete_population", "{value}");
     assert_eq!(value["cause"], "incomplete-scope", "{value}");
-    assert_eq!(value["fields"]["population"], population, "{value}");
+    assert_eq!(value["details"]["fields"]["population"], population, "{value}");
     names(&value, "/request/synthesis/initial");
     assert!(value.get("synthesis").is_none(), "{value}");
 
@@ -3669,6 +3669,17 @@ fn an_unknown_later_policy_refuses_before_no_instance() {
 fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
+    const MODEL: &str = r#"language "ix:native" edition "1-draft";
+domain "example/config-version";
+type VersionNumber = Int[0,4];
+object ConfigVersion { versionNumber: VersionNumber; }
+population config_history: ConfigVersion;
+"#;
+    std::fs::write(
+        directory.path().join("spine-model.semantic-ir.json"),
+        crate::support::plan_model::compile(MODEL),
+    )
+    .unwrap();
     crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
     let path = directory.path().join("spine-initial.json");
     let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -3685,13 +3696,12 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
         assert!(objects.len() >= 2, "the fixture starts with two objects");
         let mut first = objects[0].clone();
         let mut second = objects[1].clone();
+        first["fields"].as_object_mut().unwrap().remove("parent");
+        second["fields"].as_object_mut().unwrap().remove("parent");
         first["key"] = json!("b");
         first["fields"]["versionNumber"] = json!({"integer":"0"});
         second["key"] = json!("a");
         second["fields"]["versionNumber"] = json!({"integer":"0"});
-        if second["fields"]["parent"]["present"].is_object() {
-            second["fields"]["parent"]["present"]["reference"]["key"] = json!("b");
-        }
         *objects = vec![first.clone(), second.clone()];
         (first, second)
     };
