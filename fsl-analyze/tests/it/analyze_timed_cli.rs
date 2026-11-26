@@ -807,3 +807,162 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
         run.item(0)
     );
 }
+
+/// FR-125 "Instancing", FR-125-AC-7: a claim whose `over` type admits no key
+/// settles `inconclusive` `no-instance`, never proved, on both timed routes.
+#[trace("FR-125-AC-7")]
+#[test]
+fn timed_claims_over_no_instance_are_never_proved() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}temporal Never using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ always holds(false) }}\n"
+        ),
+    );
+    let mut snapshot: Value = serde_json::from_slice(&rpc_snapshot()).unwrap();
+    snapshot["populations"][0]["objects"] = json!([]);
+    let ws = Workspace::new("timed-no-instance");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[("ping", &[])]),
+        &[serde_json::to_vec(&snapshot).unwrap()],
+        json!({"items": [{"claim": "Never"},
+            {"claim": "Never", "options": {"method": "digital-clocks"}}]}),
+    ));
+    let settled: Vec<(String, String)> = (0..2)
+        .map(|n| {
+            let item = run.item(n);
+            (
+                label(&item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    let expected = vec![("inconclusive".to_owned(), "no-instance".to_owned()); 2];
+    assert_eq!(settled, expected, "{}", run.document()["items"]);
+}
+
+/// Reads the first false atom as undefined, and every other letter as
+/// `inner` does.
+struct UndefinedAtFirstFalseAtom<'a> {
+    inner: &'a dyn ModelLetters,
+    seen: Cell<bool>,
+}
+
+impl ModelLetters for UndefinedAtFirstFalseAtom<'_> {
+    fn atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        let reading = self.inner.atom(atom, instance, state, meter)?;
+        if matches!(reading, AtomReading::False) && !self.seen.replace(true) {
+            return Ok(AtomReading::Undefined(UndefinedCause::Kernel(
+                Undefined::DivisionByZero,
+            )));
+        }
+        Ok(reading)
+    }
+
+    fn activation(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        self.inner.activation(instance, state, meter)
+    }
+
+    fn captures(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<CaptureReading, AtomStop> {
+        self.inner.captures(instance, state, meter)
+    }
+
+    fn reads(&self, atom: FormulaNodeId) -> crate::units::Reads {
+        self.inner.reads(atom)
+    }
+
+    fn activation_reads(&self) -> crate::units::Reads {
+        self.inner.activation_reads()
+    }
+}
+
+/// FR-632-AC-2: an undefined reading at a time-locked state, which no admitted
+/// behaviour passes, does not stop the search of the other branches.
+/// `block` (searched first) locks time; `go` leads to a quiescent state that
+/// violates `always holds(c.phase = 0)`.
+#[trace("TC-1592", "FR-632-AC-2")]
+#[test]
+fn digital_undefined_at_a_time_lock_does_not_hide_a_violation() {
+    let body = format!(
+        "{}\
+         pre Block using v on M::Call::block {{ self.phase = 0 }}\n\
+         post Blocked using v on M::Call::block {{ self.phase = 2 }}\n\
+         pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Went using v on M::Call::go {{ self.phase = 1 }}\n\
+         time invariant Locked when {{ self.phase = 2 }} {{ self.x <= 0 ms }}\n\
+         temporal Stays using tt over (c: M::Call) clock \"model-time\" on origin \
+         {{ always holds(c.phase = 0) }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x"], &[("block", &["phase"]), ("go", &["phase"])]),
+        crate::zone_search::TIMED,
+        &body,
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("clause letters");
+    let wrapped = UndefinedAtFirstFalseAtom {
+        inner: &letters,
+        seen: Cell::new(false),
+    };
+    let limits = || DigitalLimits {
+        max_states: u64::MAX,
+        max_transitions: u64::MAX,
+        max_automaton_states: u64::MAX,
+    };
+    let control = check_digital(
+        &DigitalRequest {
+            subject: &timed,
+            clause: node.clause(),
+            letters: &letters,
+            limits: limits(),
+        },
+        &Cancel::new(),
+    )
+    .expect("digital route accepts");
+    assert!(
+        matches!(control.outcome, ModelCheckOutcome::Violated { .. }),
+        "with every letter defined: {control:?}"
+    );
+    let outcome = check_digital(
+        &DigitalRequest {
+            subject: &timed,
+            clause: node.clause(),
+            letters: &wrapped,
+            limits: limits(),
+        },
+        &Cancel::new(),
+    )
+    .expect("digital route accepts");
+    assert!(wrapped.seen.get(), "the undefined reading was reached");
+    assert!(
+        matches!(outcome.outcome, ModelCheckOutcome::Violated { .. }),
+        "{outcome:?}"
+    );
+}
