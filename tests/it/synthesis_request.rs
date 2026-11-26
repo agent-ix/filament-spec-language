@@ -879,9 +879,12 @@ fn a_synthesis_run_applies_the_callers_accounting_counters() {
 #[trace("FR-255-AC-34")]
 fn a_callers_counter_replaces_the_requests_only_when_named() {
     let unit = pick("Pick * Pick > 48", "");
-    let member = json!({"synthesis": {"declaration": "Pick", "accounting": {"work_units": 0}}});
+    let member = json!({"synthesis": {"declaration": "Pick", "accounting": {"work_units": 1}}});
     let more = BTreeMap::from([(AccountingSetting::WorkUnits, 1_000_000)]);
     let other = BTreeMap::from([(AccountingSetting::ValueOccurrences, 1_000_000)]);
+    // The request reader takes no zero bound, so the request states 1.
+    let kept_stop = json!({"kind": "limit-reached", "limit": "work_units", "value": 1,
+        "setting": "accounting.work_units"});
     for package in [false, true] {
         let (_, replaced) = run_overridden(
             &unit,
@@ -892,7 +895,7 @@ fn a_callers_counter_replaces_the_requests_only_when_named() {
                 ..Default::default()
             },
         );
-        assert_ne!(replaced["synthesis"]["cause"], work_stop(), "{replaced}");
+        assert_ne!(replaced["synthesis"]["cause"], kept_stop, "{replaced}");
         assert_ne!(replaced["synthesis"]["status"], "incomplete", "{replaced}");
 
         let (exit, kept) = run_overridden(
@@ -905,7 +908,7 @@ fn a_callers_counter_replaces_the_requests_only_when_named() {
             },
         );
         assert_eq!(exit, 22, "{package}: {kept}");
-        assert_eq!(kept["synthesis"]["cause"], work_stop(), "{kept}");
+        assert_eq!(kept["synthesis"]["cause"], kept_stop, "{kept}");
     }
 }
 
@@ -985,8 +988,8 @@ fn a_synthesis_run_refuses_an_override_it_cannot_apply() {
         (true, clocks, "clocks"),
         (false, written, "output"),
         (true, written, "output"),
-        (false, observed, "observation_limits"),
-        (true, observed, "observation_limits"),
+        (false, observed, "observation.input_bytes"),
+        (true, observed, "observation.input_bytes"),
         (true, staged, "s3.nodes"),
     ] {
         let (exit, found) = run_overridden(

@@ -536,7 +536,8 @@ pub(super) fn run_bytes(
                 fsl_replay::spine::ProgramBatchRefusal::Compile(report) => match report.disposition
                 {
                     fsl_replay::spine::ClauseDisposition::Compile(refusal)
-                        if refusal.stage() == fsl_replay::spine::SpineStage::Source =>
+                        if refusal.stage() == fsl_replay::spine::SpineStage::Source
+                            || refusal.code() == fsl_foundation::Code::StageLimitExceeded =>
                     {
                         if let Some((source, path)) = batch_source {
                             RunCause::Spine(Box::new(super::SpineFailure {

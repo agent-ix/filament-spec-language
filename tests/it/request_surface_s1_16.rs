@@ -4863,7 +4863,9 @@ fn a_package_call_reads_the_package_under_the_callers_reader_limit() {
     let unit = format!("{VALUE_HEADER}function one using v(): Integer pure {{ 1 }}\n");
     let directory = bump_directory(&unit, &["a"], true);
     let models = compile_handoff(directory.path(), &unit);
-    let request = json!({"format": "native-run/1", "request": {"models": models,
+    // The unit selects no model, so the request names none of the handoff's.
+    assert!(models.is_array(), "{models}");
+    let request = json!({"format": "native-run/1", "request": {"models": [],
         "package": {"directory": "handoff"}, "call": {"function": "one", "arguments": []}}});
     let (code, value) = write_request_overridden(directory.path(), &request, &Default::default());
     assert_eq!(code, 0, "{value}");
@@ -4877,7 +4879,12 @@ fn a_package_call_reads_the_package_under_the_callers_reader_limit() {
         },
     );
     assert_ne!(code, 0, "{value}");
-    assert!(value.to_string().contains("i2.nodes"), "{value}");
+    // A bound of one node admits node 0 and stops at node 1.
+    assert_eq!(value["code"], "resource_exhausted", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/semantic_graph/nodes/1",
+        "{value}"
+    );
 }
 
 /// FR-255-AC-32: a call selection of an `items` run compiles under the
@@ -4902,8 +4909,10 @@ fn an_items_call_selection_compiles_under_the_callers_stage_limit() {
         },
     );
     assert_ne!(code, 0, "{value}");
+    assert_eq!(value["code"], "stage_limit_exceeded", "{value}");
+    let text = value.to_string();
     assert!(
-        value.to_string().contains("S3 node limit 4 reached"),
+        text.contains("S3 node limit 4 reached (5)") && text.contains("--limit s3.nodes=<n>"),
         "{value}"
     );
 }
