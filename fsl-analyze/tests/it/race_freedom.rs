@@ -1914,6 +1914,7 @@ fn analyzed(items: Vec<fsl_analyze::analyze::AnalyzeItem<'_>>) -> Vec<AnalyzeRec
         &Engines::fsl().expect("the layer-A manifests register"),
         items,
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
 }
 

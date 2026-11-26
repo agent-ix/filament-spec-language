@@ -551,7 +551,7 @@ pub use proof_result::{
     read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
     read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
-    BackendProviderSource, BoundsExploration, BoundsMethod, Certification, DeclineCode,
+    BackendProviderSource, BoundsExploration, BoundsMethod, Certification, CertificationPolicy, DeclineCode,
     EmptyEnvelopeSet, ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
     IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
     PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,

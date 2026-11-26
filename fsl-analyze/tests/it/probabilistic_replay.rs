@@ -39,6 +39,7 @@ fn evidence(world: &World, claim: &str) -> ProbabilisticCounterexample {
             world.request(claim, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
@@ -102,6 +103,7 @@ fn a_refuted_exact_probabilistic_item_is_spelled_and_its_path_set_replays() {
             world.request("TooMuch", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (terminals, counterexamples) = fsl_analyze::analyze::split_records(records, &world.package);
     let [item] = counterexamples.as_slice() else {
@@ -410,6 +412,7 @@ fn witness_limits_and_final_acceptance_cancellation_never_yield_tokens() {
                 world.request("TooMuch", ModelCheckLimits::default()),
             )],
             &cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         assert_eq!(
@@ -593,7 +596,7 @@ fn replay_parity_and_refusal_settle_inconclusive_without_evidence() {
                 }
             },
         );
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
         if duplicate {
             assert!(matches!(
                 record.terminal().unwrap().value(),
@@ -719,6 +722,7 @@ fn cancellation_at_the_en5_replay_acceptance_boundary_has_no_evidence() {
                 world.request("TooMuch", ModelCheckLimits::default()),
             )],
             cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     };
@@ -782,6 +786,7 @@ fn merged_draws_expand_into_actual_vectors_with_a_witness_storage_limit() {
         &engines,
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(
@@ -838,6 +843,7 @@ fn fix_round_producer_path_exhaustion_settles_incomplete_without_evidence() {
         &engines,
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(
@@ -986,7 +992,7 @@ fn an_unfair_witness_settles_inconclusive_replay_parity() {
             witness.scheduler.remove(0);
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     assert!(matches!(
         record.terminal().unwrap().value(),
         TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(_))
@@ -1120,6 +1126,7 @@ fn source_object_wire(profile: &str, measure: &str) -> serde_json::Value {
             world.request("Seen", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     record
@@ -1186,6 +1193,7 @@ fn a_source_enum_draw_is_spelled_in_an_undefined_counterexample() {
             world.request("Seen", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let wire = record

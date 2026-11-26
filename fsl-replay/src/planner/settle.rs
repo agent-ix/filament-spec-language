@@ -24,6 +24,7 @@ use super::request::{
 };
 use crate::outcome::{ItemLabel, OutcomeItem};
 use crate::proof_result::{
+    CertificationPolicy,
     Certification, IncompleteCause, InconclusiveCause, PremiseOutcome, SettlementBasis,
     TerminalRecord, TerminalValue, TransferReason, UnavailabilityCause,
 };
@@ -278,7 +279,38 @@ pub struct PlannerResult {
     pub mismatch: Option<InterfaceMismatch>,
 }
 
-/// Settle the declaration `request` names in `package` from `request`.
+/// The value, cause and certification of a planner result under `policy`: a
+/// `proved` whose certification the policy withholds is `inconclusive`,
+/// `proof-not-certified`, with no certification. A planner result has no
+/// basis object, so the cause carries none (FSpec FR-492).
+#[ix_trace_rs::implements("FR-1052-AC-11", "FR-1052-AC-12")]
+pub(super) fn under_policy(
+    policy: CertificationPolicy,
+    value: PlannerValue,
+    cause: Option<PlannerCause>,
+    certification: Option<Certification>,
+) -> (PlannerValue, Option<PlannerCause>, Option<Certification>) {
+    match certification {
+        Some(certification)
+            if value == PlannerValue::Proved && policy.withholds(certification) =>
+        {
+            (
+                PlannerValue::Inconclusive,
+                Some(PlannerCause::Inconclusive(
+                    InconclusiveCause::ProofNotCertified {
+                        basis: None,
+                        certification,
+                    },
+                )),
+                None,
+            )
+        }
+        other => (value, cause, other),
+    }
+}
+
+/// Settle the declaration `request` names in `package` from `request`,
+/// admitting as `proved` what `policy` admits.
 ///
 /// # Errors
 ///
@@ -290,13 +322,27 @@ pub fn settle(
     package: &CheckedPackage,
     request: &SettlementRequest,
     budget: Budget,
+    policy: CertificationPolicy,
 ) -> Result<PlannerResult, SettleRefusal> {
     if request.package != package.graph().package_name() {
         return Err(SettleRefusal::Mismatch);
     }
     let declaration = PlannerDeclaration::from_package(package, &request.item.node)
         .map_err(|_| SettleRefusal::Mismatch)?;
-    settle_declared(&declaration, request, budget)
+    let mut result = settle_declared(&declaration, request, budget)?;
+    let (value, cause, certification) = under_policy(
+        policy,
+        result.value,
+        result.cause.take(),
+        result.certification,
+    );
+    if value != result.value {
+        result.conclusion = None;
+    }
+    result.value = value;
+    result.cause = cause;
+    result.certification = certification;
+    Ok(result)
 }
 
 /// Settle `declaration` from `request`.

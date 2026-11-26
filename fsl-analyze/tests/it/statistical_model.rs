@@ -3115,7 +3115,7 @@ fn exact_outcome(world: &crate::timed_world::World, name: &str) -> String {
     );
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the linked engines are admitted");
     let record =
-        fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     let terminal = record.terminal().expect("a terminal record");
     let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal))
         .expect("the outcome serializes");

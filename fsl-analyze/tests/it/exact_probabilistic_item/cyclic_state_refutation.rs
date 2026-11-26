@@ -279,7 +279,7 @@ fn settle_tampered(
         world.request(name, ModelCheckLimits::default()),
         tamper,
     );
-    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0)
+    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
 }
 
 /// `ok` (phase 0) keeps P and moves to `ok` or `down` (phase 1) with 1/2

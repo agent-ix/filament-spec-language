@@ -163,6 +163,7 @@ fn analyzed(items: Vec<AnalyzeItem<'_>>) -> Vec<AnalyzeRecord> {
         &Engines::fsl().expect("the layer-A manifests register"),
         items,
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
 }
 
@@ -424,6 +425,7 @@ fn an_untimed_subjects_deadlock_item_settles_on_en1() {
             &Engines::fsl().expect("the layer-A manifests register"),
             vec![derived_model_item(derived, obligation, item).expect("the deadlock-freedom run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let record = records.remove(0);
         assert_eq!(record.request_index.get(), 1);
@@ -613,7 +615,7 @@ fn a_deadlock_verdict_is_joined_on_the_terminal_declaration() {
 
     let engines = Engines::fsl().expect("the layer-A manifests register");
     let run = |item| {
-        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+        let mut records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
         settled(&records.remove(0)).1
     };
     let value =

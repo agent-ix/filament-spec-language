@@ -3842,7 +3842,7 @@ pub struct AnalyzeRun<'a> {
     /// The shared limits.
     pub limits: AnalyzeLimits,
     /// Which proofs settle `proved`.
-    pub certification: super::CertificationPolicy,
+    pub certification: fsl_replay::CertificationPolicy,
 }
 
 /// Why no FR-621 document could be written.

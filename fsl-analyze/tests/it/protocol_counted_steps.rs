@@ -309,6 +309,7 @@ fn a_refuted_protocol_clause_carries_its_spelled_counterexample() {
         &Engines::fsl().expect("the linked engines register"),
         vec![item],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (terminals, found) = split_records(records, &case.checked);
     assert_eq!(terminals[0].value(), &TerminalValue::Refuted);
@@ -352,6 +353,7 @@ fn a_protocol_clause_item_is_settled_by_en1_not_refused() {
         &Engines::fsl().expect("the linked engines register"),
         vec![item],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert!(

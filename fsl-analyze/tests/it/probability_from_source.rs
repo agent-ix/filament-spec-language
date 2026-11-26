@@ -557,6 +557,7 @@ fn probabilistic_witness_replays() {
             world.request("TooLikely", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let reproduced = record
@@ -976,6 +977,7 @@ fn probabilistic_on_each_product_preserves_multi_initial_keys() {
                 world.request(name, ModelCheckLimits::default()),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     };
@@ -1132,6 +1134,7 @@ fn the_refutation_without_random_has_value_zero() {
             world.request("Every", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let witness = record
@@ -1743,7 +1746,7 @@ fn native_probability_reward_admission_cancellation_keeps_its_cause() {
                 },
             )
         };
-        let records = analyze_items(&engines, vec![item], &cancel);
+        let records = analyze_items(&engines, vec![item], &cancel, fsl_replay::CertificationPolicy::AdmitAny);
         assert_eq!(cancel.tripped(), Some(CancelCause::Requested));
         let terminal = records[0].terminal().expect("native cancellation settles");
         assert_eq!(
@@ -2685,7 +2688,7 @@ fn on_each_statistical_cancellation_keeps_its_cause() {
             timed_sampling: fsl_replay::statistical::TimedSampling::default(),
         },
     );
-    let records = analyze_items(&engines, vec![item], &cancel);
+    let records = analyze_items(&engines, vec![item], &cancel, fsl_replay::CertificationPolicy::AdmitAny);
     let terminal = records[0].terminal().expect("cancellation settles");
     assert_eq!(
         terminal.value(),
@@ -2727,7 +2730,7 @@ fn on_each_statistical_evidence_builds_no_product() {
         },
     );
     reset_product_construction_counts();
-    let records = analyze_items(&engines, vec![item], &Cancel::new());
+    let records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
     assert_eq!(product_construction_counts(), Default::default());
     assert!(
         matches!(

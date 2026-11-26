@@ -2,13 +2,14 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    AnalyzeLimits, AnalyzeRefusal, CertificationPolicy, Engines, ItemCounterexample,
+    AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample,
     NegotiatedItem, SourceProvision, SubjectBinding, analyze_bound,
 };
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_package::CheckedPackage;
+use fsl_replay::CertificationPolicy;
 use fsl_replay::ToolFailure;
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
 pub use fsl_replay::{

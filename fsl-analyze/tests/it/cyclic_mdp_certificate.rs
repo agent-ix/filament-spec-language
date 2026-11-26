@@ -20,6 +20,7 @@ fn produce(world: &World, name: &str) -> Vec<u8> {
             world.request(name, fsl_replay::ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     records[0]
         .terminal()

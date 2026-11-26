@@ -79,10 +79,11 @@ would have refused the certificate before reading a value.
 - The document SHALL carry no component, exit, time-lock, race, region
   successor, activation or transition member. A list of these would be a
   second, unchecked statement of what the checker computes.
-- For `expected-elapsed` under every scheduler whose least expected time is
-  `+infinity`, `optimization` SHALL be `minimum`, `targets` the complete
-  target set, which MAY be empty, and `values` and `ranking` SHALL be empty
-  arrays: no finite value or rank exists, and FR-921 rederives the infinity.
+- For `expected-elapsed` whose least expected time is `+infinity`,
+  `optimization` SHALL be `minimum` under every scheduler and `workload` under
+  a workload, `values` and `ranking` SHALL be empty arrays (no finite value or
+  rank exists, and FR-921 rederives the infinity), and `targets`, which MAY be
+  empty, SHALL be the complete target set of the product the engine built.
 
 ### Keys
 

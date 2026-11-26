@@ -14,8 +14,9 @@ use fsl_analyze::analyze::document::{
     SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
 };
 use fsl_analyze::analyze::{
-    AnalyzeLimits, CertificationPolicy, DeadlineSupply, Engine, Engines, SourceProvision,
+    AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision,
 };
+use fsl_replay::CertificationPolicy;
 use fsl_analyze::provider::ProviderOptions;
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_semantics::model::observation::DocumentProvision;
@@ -945,7 +946,7 @@ fn read<'d>(
 
 /// FR-620 "Reading": `require_certified` selects the certification policy.
 #[implements("FR-1052-AC-7")]
-fn read_certification(member: Option<serde_json::Value>) -> Result<CertificationPolicy> {
+pub(super) fn read_certification(member: Option<serde_json::Value>) -> Result<CertificationPolicy> {
     match member {
         None | Some(serde_json::Value::Bool(false)) => Ok(CertificationPolicy::AdmitAny),
         Some(serde_json::Value::Bool(true)) => Ok(CertificationPolicy::RequireCertified),

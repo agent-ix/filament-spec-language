@@ -560,7 +560,7 @@ impl World {
             .with(fsl_analyze::analyze::Engine::model_check().expect("EN-1 is registered"))
             .expect("the engine id is unique");
         let mut records =
-            fsl_analyze::analyze::analyze_items(&engines, vec![analyze_item], &Cancel::new());
+            fsl_analyze::analyze::analyze_items(&engines, vec![analyze_item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
         assert_eq!(records.len(), 1);
         records.remove(0)
     }

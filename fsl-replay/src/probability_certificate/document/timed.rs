@@ -241,7 +241,11 @@ fn check_expected_elapsed(
     let Some((bound, predicate)) = mean_time_query(claim) else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
-    if !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every)
+    let workload = matches!(
+        claim.scheduler,
+        fsl_semantics::check::ProbScheduler::Workload(_)
+    );
+    if (workload && !claim.fairness.is_empty())
         || document.cyclic_dtmc
         || document.event.is_some()
         || !document.failures.is_empty()
@@ -250,6 +254,7 @@ fn check_expected_elapsed(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let optimization = match bound {
+        _ if workload => ProbabilityObjective::Workload,
         Bound::AtLeast(_) => ProbabilityObjective::Minimum,
         Bound::AtMost(_) => ProbabilityObjective::Maximum,
     };
@@ -276,6 +281,25 @@ fn check_expected_elapsed(
         meter,
         storage,
     )?;
+    if workload {
+        return check_workload_mean_time(
+            system,
+            claim,
+            bytes,
+            &document,
+            timed,
+            route,
+            scale,
+            binding.as_ref(),
+            predicate,
+            &graph,
+            &bound,
+            limits,
+            cancel,
+            meter,
+            storage,
+        );
+    }
     if target_keys(&graph) != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
@@ -304,6 +328,71 @@ fn check_expected_elapsed(
         }
         rejected => Ok(rejected),
     }
+}
+
+/// A workload's expected elapsed time is certified only where it is
+/// infinite: no value is checked for a finite one. The workload is one of
+/// the schedulers, so a graph under every scheduler with no policy that
+/// reaches the target almost surely proves it. Where some scheduler does
+/// reach it, the checker's own workload product decides, on the digital
+/// route, whose keys are the mean-time product's.
+#[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-24", "FR-921-AC-7")]
+fn check_workload_mean_time(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    bytes: &[u8],
+    document: &ProbabilityCertificateDocument,
+    timed: &TimedSystem<'_, '_>,
+    route: TimedProbabilityRoute,
+    scale: u64,
+    binding: Option<&filament_exact::ObjectReference>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    every: &CheckerGraph,
+    bound: &Bound,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    if !some_policy_reaches_almost_surely(every, cancel, meter)?.contains(&every.initial) {
+        let targets = target_keys(every);
+        if !document
+            .targets
+            .iter()
+            .all(|target| targets.contains(target))
+        {
+            return Err(ProbabilityDocumentError::ObjectiveMismatch);
+        }
+        return check_infinite_mean_time(every.initial.clone(), bytes, document, bound);
+    }
+    if route != TimedProbabilityRoute::Digital {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let graph = enumerate_digital_deadline(
+        system,
+        timed,
+        claim,
+        binding,
+        &Watch::Until(predicate),
+        0,
+        scale,
+        limits,
+        cancel,
+        meter,
+        storage,
+        &mut BTreeMap::new(),
+    )?;
+    if target_keys(&graph) != document.targets {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    if some_policy_reaches_almost_surely(&graph, cancel, meter)?.contains(&graph.initial) {
+        return Ok(rejected(
+            ProbabilityCertificateRule::Malformed,
+            graph.initial,
+        ));
+    }
+    check_infinite_mean_time(graph.initial, bytes, document, bound)
 }
 
 /// The checker's expected-elapsed graph.
@@ -1610,6 +1699,13 @@ enum Phase {
     Complete,
     /// The elapsed clock passed the window first.
     Censored,
+    /// An unbounded `until` whose predicate has held at no position.
+    Unmeasured,
+    /// An unbounded `until` whose predicate holds at this position.
+    Reached,
+    /// An unbounded `until` whose predicate held at an earlier position of
+    /// the same product step.
+    Passed,
     /// One checked timed operator occurrence.
     Bounded(fsl_eval::probabilistic::TimedOperatorState),
     /// A nested formula retains both checked operator occurrences.
@@ -1623,7 +1719,7 @@ impl Phase {
     #[implements("FR-204-AC-21")]
     fn decided(&self) -> bool {
         match self {
-            Self::Pending | Self::Inactive | Self::Active => false,
+            Self::Pending | Self::Inactive | Self::Active | Self::Unmeasured => false,
             Self::Bounded(operator) | Self::NestedBounded(operator, _) => {
                 operator.phase != fsl_eval::probabilistic::DeadlinePhase::Pending
             }
@@ -1636,7 +1732,7 @@ impl Phase {
 fn phase_value(phase: &Phase) -> Option<bool> {
     use fsl_eval::probabilistic::DeadlinePhase as MonitorPhase;
     match phase {
-        Phase::Accepted => Some(true),
+        Phase::Accepted | Phase::Reached | Phase::Passed => Some(true),
         Phase::Rejected => Some(false),
         Phase::Bounded(operator) => match operator.phase {
             MonitorPhase::Accept => Some(true),
@@ -1722,6 +1818,8 @@ enum Watch<'a> {
         horizon: u64,
     },
     Elapsed(ElapsedWatch<'a>),
+    /// An unbounded `until`, read at every position and never closed.
+    Until(&'a fsl_semantics::check::CheckedPredicate),
 }
 
 impl Watch<'_> {
@@ -1738,6 +1836,7 @@ impl Watch<'_> {
                 Phase::NestedBounded(root, *nested)
             }
             Self::Elapsed(_) => Phase::Inactive,
+            Self::Until(_) => Phase::Unmeasured,
         }
     }
 
@@ -1779,6 +1878,8 @@ impl Watch<'_> {
                 Phase::Bounded(bounded_at(previous, *root, elapsed)),
                 elapsed,
             )),
+            // A delay changes no discrete state, so no reading changes.
+            Self::Until(_) => Ok((previous, 0)),
             Self::Nested { .. } | Self::Elapsed(_) => {
                 self.observe(system, binding, state, previous, elapsed, deadline, cancel)
             }
@@ -1802,7 +1903,7 @@ impl Watch<'_> {
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         match self {
             Self::Nested { .. } => Ok((previous, elapsed)),
-            Self::Deadline(_) | Self::Bounded { .. } | Self::Elapsed(_) => {
+            Self::Deadline(_) | Self::Bounded { .. } | Self::Elapsed(_) | Self::Until(_) => {
                 self.observe(system, binding, state, previous, elapsed, deadline, cancel)
             }
         }
@@ -1868,6 +1969,23 @@ impl Watch<'_> {
                     elapsed,
                 );
                 return Ok((Phase::NestedBounded(root, nested), elapsed));
+            }
+            Self::Until(predicate) => {
+                let readings = system
+                    .state_predicates_with_cancel(state, &[(*predicate, binding)], cancel)
+                    .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+                let phase = match (readings.as_slice(), previous) {
+                    ([fsl_eval::simulation::model::PredicateReading::True], _) => Phase::Reached,
+                    (
+                        [fsl_eval::simulation::model::PredicateReading::False],
+                        Phase::Reached | Phase::Passed,
+                    ) => Phase::Passed,
+                    ([fsl_eval::simulation::model::PredicateReading::False], _) => {
+                        Phase::Unmeasured
+                    }
+                    _ => return Err(ProbabilityDocumentError::Unsupported),
+                };
+                return Ok((phase, 0));
             }
             Self::Elapsed(watch) => watch,
         };
@@ -2154,6 +2272,9 @@ fn enumerate_digital_deadline(
                 continue;
             }
             Phase::Pending
+            | Phase::Unmeasured
+            | Phase::Reached
+            | Phase::Passed
             | Phase::Inactive
             | Phase::Active
             | Phase::Bounded(_)
@@ -2635,6 +2756,9 @@ fn enumerate_region_deadline(
                 continue;
             }
             Phase::Pending
+            | Phase::Unmeasured
+            | Phase::Reached
+            | Phase::Passed
             | Phase::Inactive
             | Phase::Active
             | Phase::Bounded(_)
@@ -3159,22 +3283,31 @@ fn digital_key(
         Phase::Censored => Some(("censored", Some(state.elapsed))),
         _ => None,
     };
-    let monitor = monitor_json(&state.phase);
+    // An unbounded `until` keys as the mean-time product does, with no
+    // deadline and no monitor. A position passed inside a step has a key no
+    // such product holds, so a document never agrees with it silently.
+    let untimed = matches!(
+        state.phase,
+        Phase::Unmeasured | Phase::Reached | Phase::Passed
+    );
+    let monitor = match (&state.phase, measure) {
+        (Phase::Unmeasured | Phase::Reached, _) => None,
+        (Phase::Passed, _) => Some(json!(["until", "passed"])),
+        (_, Some((name, _))) => Some(json!(["measure", null, name])),
+        (phase, None) => Some(monitor_json(phase)),
+    };
     digital_probability_product_key(DigitalProductKeyInput {
         binding,
         discrete,
         unit,
         scale,
         clocks,
-        deadline: measure.is_none().then_some(DigitalDeadlineKey {
+        deadline: (measure.is_none() && !untimed).then_some(DigitalDeadlineKey {
             limit: deadline,
             elapsed: state.elapsed,
         }),
         tail: state.tail,
-        monitor: Some(match measure {
-            Some((name, _)) => json!(["measure", null, name]),
-            None => monitor,
-        }),
+        monitor,
         accumulator: None,
         pending: None,
         elapsed: measure.map(|(_, value)| (deadline, value)),
@@ -3236,8 +3369,10 @@ fn next_digital_delay(
         if key != current_key {
             return Ok(Some((key, reached)));
         }
-        if reached.phase == Phase::Inactive {
-            // An unactivated measure has no clock to move: no later delay differs.
+        // An unactivated measure and an unbounded `until` count no elapsed
+        // time, so a key one delay leaves unchanged stays unchanged: no later
+        // delay differs, and the elapsed bound would never end the loop.
+        if matches!(reached.phase, Phase::Inactive | Phase::Unmeasured) {
             return Ok(None);
         }
         state = reached;
@@ -4992,7 +5127,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     // check does: a nested window ends past its root operator's upper bound.
     let clock_bound = match &watch {
         Watch::Bounded { .. } | Watch::Nested { .. } => watch.horizon(),
-        Watch::Deadline(_) | Watch::Elapsed(_) => {
+        Watch::Deadline(_) | Watch::Elapsed(_) | Watch::Until(_) => {
             time_bound(claim, scale).map_err(from_document)?
         }
     };

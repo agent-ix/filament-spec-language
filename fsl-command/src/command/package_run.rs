@@ -12,6 +12,8 @@
 
 use std::path::Path;
 
+use fsl_replay::CertificationPolicy;
+
 use super::{FileCounts, Result, RunCause, RunResult, output, wire};
 
 /// The FR-517 files a `{directory}` selection reads.
@@ -32,6 +34,8 @@ pub struct PreparedPackageRun {
     packages: fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
     work: Work,
+    /// FR-1052: which of a call's item proofs settle `proved`.
+    certification: CertificationPolicy,
     /// The request's `package` selection, echoed by the result.
     selection: serde_json::Value,
     /// The domain package sources the request supplied.
@@ -299,6 +303,7 @@ pub(super) fn prepare(
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Call(Box::new(spine_call), requirements),
+        certification: super::analyze::read_certification(request.require_certified.clone())?,
         selection: admitted.selection,
         models: admitted.models,
         sources: admitted.sources,
@@ -1207,6 +1212,7 @@ fn execute_inner(
             function: &call.function,
             requirements,
             settle,
+            certification,
             budget,
         })?)
     } else {
@@ -1231,6 +1237,7 @@ struct ValueCall<'a> {
     function: &'a str,
     requirements: &'a super::requirements::Requirements,
     settle: &'a super::settle::Settle<'a>,
+    certification: CertificationPolicy,
     budget: filament_contract_model::NativeJoinBudget,
 }
 
@@ -1244,6 +1251,7 @@ fn settle_value_call(
         function,
         requirements,
         settle,
+        certification,
         budget,
     }: ValueCall<'_>,
 ) -> Result<fsl_analyze::analyze::document::SettledRun> {
@@ -1337,7 +1345,7 @@ fn settle_value_call(
             engines: settle.engines,
             limits: fsl_analyze::analyze::AnalyzeLimits::unbounded(),
             budget,
-            certification: fsl_analyze::analyze::CertificationPolicy::AdmitAny,
+            certification,
         },
         function,
         &items,

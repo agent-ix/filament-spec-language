@@ -17,7 +17,7 @@ use fsl_replay::planner::{
     TransferPremiseValue, TransferSettlement,
 };
 use fsl_replay::spine::CheckedUnit;
-use fsl_replay::{Certification, ItemLabel};
+use fsl_replay::{Certification, CertificationPolicy, ItemLabel};
 use fsl_semantics::check::{
     AbstractSide, CheckedGraph, CheckedRefinement, StepClass, StepTarget, TemporalClauseNode,
     TemporalProfile,
@@ -58,8 +58,10 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &Settle<'_>) -> Result
         extensions,
         clocks,
         refinement_transfer,
+        require_certified,
         ..
     } = request;
+    let certification = super::analyze::read_certification(require_certified)?;
     let Some(member) = refinement_transfer else {
         return Err(invalid("refinement_transfer", "missing transfer member"));
     };
@@ -125,6 +127,7 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &Settle<'_>) -> Result
                 checked: &checked,
                 packages: &packages,
                 settle,
+                certification,
                 observation_limits,
                 observation_bytes: &observation_bytes,
             }
@@ -139,6 +142,7 @@ struct Transfer<'a> {
     checked: &'a CheckedUnit,
     packages: &'a PackageInput,
     settle: &'a Settle<'a>,
+    certification: CertificationPolicy,
     observation_limits: ObservationLimits,
     observation_bytes: &'a BTreeMap<String, Vec<u8>>,
 }
@@ -347,7 +351,7 @@ impl Transfer<'_> {
                     (facts.abstract_claim_identity.clone(), claim),
                 ],
             );
-            let result = fsl_replay::planner::settle_transfer(&settlement, budget)
+            let result = fsl_replay::planner::settle_transfer(&settlement, budget, self.certification)
                 .map_err(|_| RunCause::AnalyzeFault)?;
             transfers.push(json!({"clause": node.clause().name(), "result": result}));
         }
@@ -686,7 +690,7 @@ impl Transfer<'_> {
                 items,
                 engines: self.settle.engines,
                 limits,
-                certification: fsl_analyze::analyze::CertificationPolicy::AdmitAny,
+                certification: self.certification,
             },
             self.settle.negotiate,
             self.settle.cancel,

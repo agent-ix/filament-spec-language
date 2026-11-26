@@ -53,7 +53,7 @@ fn settle(
 ) -> fsl_analyze::analyze::AnalyzeRecord {
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), world.request(claim, limits));
-    let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+    let mut records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
     assert_eq!(records.len(), 1);
     records.remove(0)
 }
@@ -228,7 +228,7 @@ fn cancellation_at_the_checker_acceptance_boundary_settles_incomplete_without_ev
             RequestIndex::new(0),
             world.request("Likely", ModelCheckLimits::default()),
         );
-        analyze_items(&engines, vec![item], cancel).remove(0)
+        analyze_items(&engines, vec![item], cancel, fsl_replay::CertificationPolicy::AdmitAny).remove(0)
     };
     let live = Cancel::new();
     let _counting = live.count_charges();
@@ -286,7 +286,7 @@ fn cancelling_after_the_solver_finishes_is_observed_by_the_independent_checker()
                 cancel.cancel(source);
             },
         );
-        let record = analyze_items(&engines, vec![item], &cancel).remove(0);
+        let record = analyze_items(&engines, vec![item], &cancel, fsl_replay::CertificationPolicy::AdmitAny).remove(0);
         assert!(
             reached_checker.get(),
             "the solver must finish before cancellation"
@@ -331,7 +331,7 @@ fn a_rejected_certificate_never_settles_proved() {
                 .value = ratio(1, 1);
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     assert!(record.exact_probabilistic.is_none());
     let terminal = record.terminal().expect("a terminal record");
     assert!(record.probabilistic_counterexample.is_none());
@@ -399,7 +399,7 @@ fn a_malformed_probability_certificate_settles_a_typed_rejection() {
             certificate.values.remove(omitted);
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     assert_eq!(
         record.terminal().expect("a terminal record").value(),
         &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
@@ -568,7 +568,7 @@ fn analyzer_document_budgets_preserve_stage_specific_stops_without_certification
         let item = exact_probabilistic_item_tampered(RequestIndex::new(0), request, move |_| {
             observed.store(true, Ordering::Relaxed);
         });
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
         assert_eq!(
             reached_candidate.load(Ordering::Relaxed),
             !storage,
@@ -938,7 +938,7 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
                     fsl_replay::ProbabilisticSchedulerChoice::Deterministic(choice.clone());
             },
         );
-        let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
         assert_eq!(
             record.terminal().unwrap().value(),
             &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
@@ -1019,6 +1019,7 @@ fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
             &Engines::fsl().unwrap(),
             vec![exact_probabilistic_item(RequestIndex::new(0), request)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         assert!(
@@ -1533,7 +1534,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
     request.limits.max_rational_bits = 1024;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     let terminal = record.terminal().expect("a terminal record");
     let TerminalValue::Proved {
         basis:
@@ -1604,7 +1605,7 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     let request_limits = request.limits;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     let terminal = record.terminal().expect("a terminal record");
     let lower = terminal
         .exact_certificate_document()
@@ -1671,7 +1672,7 @@ fn settle_interval_claim<'a>(
     request.limits.max_rational_bits = 1024;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item_tampered(RequestIndex::new(0), request, tamper);
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
 }
 
 /// The first value strictly between the terminals, which no equation pins to
@@ -1768,7 +1769,7 @@ fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() 
     let request_limits = request.limits;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     let terminal = record.terminal().expect("a terminal record");
     let mut lower: serde_json::Value =
         serde_json::from_slice(terminal.exact_certificate_document().expect("lower")).unwrap();
@@ -1886,7 +1887,7 @@ fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel
             request.limits.document.storage_bytes = bytes;
         }
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
-        analyze_items(&engines, vec![item], cancel).remove(0)
+        analyze_items(&engines, vec![item], cancel, fsl_replay::CertificationPolicy::AdmitAny).remove(0)
     };
     let settled_or_stopped = |record: &fsl_analyze::analyze::AnalyzeRecord, what: &str| {
         assert!(

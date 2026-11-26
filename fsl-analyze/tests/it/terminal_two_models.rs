@@ -412,6 +412,7 @@ fn package_state_graph_value(
         &Engines::fsl().expect("the linked engines admit"),
         vec![item],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .into_iter()
     .next()
@@ -1503,6 +1504,7 @@ fn settled_records(world: &Two) -> [fsl_analyze::analyze::AnalyzeRecord; 2] {
             &Engines::fsl().expect("the layer-A manifests register"),
             vec![run],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     })

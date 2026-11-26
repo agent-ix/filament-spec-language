@@ -1305,6 +1305,7 @@ pub(crate) fn analyzed(world: &Refining) -> fsl_analyze::analyze::AnalyzeRecord 
             item,
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(records.len(), 1);
     records.remove(0)

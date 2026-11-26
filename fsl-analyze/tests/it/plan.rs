@@ -96,6 +96,7 @@ fn inputs<'a>(world: &'a World, plan: &VerificationPlan) -> PlanInputs<'a> {
         seed: Some(7),
         max_trace_length: None,
         max_value_bits: None,
+        certification: fsl_replay::CertificationPolicy::AdmitAny,
     }
 }
 
@@ -267,6 +268,49 @@ fn value_check_negotiates_value_validity_without_generation_inputs() {
         record.diagnostic_detail().expect("unsupported kind")["kind"],
         "value-validity"
     );
+}
+
+/// FR-1052 (TC-3240): a verification plan step proved by a process provider,
+/// trusted, settles `inconclusive` when the run requires certified proofs.
+#[trace("TC-3240", "FR-1052-AC-13")]
+#[test]
+fn a_plan_that_requires_certified_proofs_withholds_a_provider_step() {
+    use crate::provider_external_contract::{engines, EXTERNAL};
+    let world = value_world("Integer");
+    let mut plan = plan(&world, &[("value", "value_check")], &[]);
+    select_value_claim(&world, &mut plan.nodes[0]);
+    let (engines, _) = engines(
+        fsl_analyze::provider::ProviderVerdict::Proved,
+        true,
+        fsl_route::ProviderOrigin::Process,
+        false,
+    );
+    for (certification, status) in [
+        (
+            fsl_replay::CertificationPolicy::AdmitAny,
+            PlanStatus::Proved,
+        ),
+        (
+            fsl_replay::CertificationPolicy::RequireCertified,
+            PlanStatus::Inconclusive,
+        ),
+    ] {
+        let mut inputs = inputs(&world, &plan);
+        inputs.backend = Some(fsl_foundation::BackendId::new(EXTERNAL));
+        inputs.certification = certification;
+        let outcome = execute_plan(
+            &world.package,
+            &plan,
+            &inputs,
+            &engines,
+            &Recording::default(),
+            &AnalyzeLimits::unbounded(),
+            &Cancel::new(),
+        )
+        .expect("a provider route")
+        .into_value();
+        assert_eq!(outcome.dispositions[0].1.status, status);
+    }
 }
 
 #[trace("FR-753-AC-4", "FR-753-AC-5", "TC-2103", "TC-3028")]
@@ -898,6 +942,7 @@ fn probability_methods_keep_their_evidence_and_only_statistical_consumes_seed() 
         seed: Some(7),
         max_trace_length: None,
         max_value_bits: None,
+        certification: fsl_replay::CertificationPolicy::AdmitAny,
     };
     let negotiate = Recording {
         refuse: true,

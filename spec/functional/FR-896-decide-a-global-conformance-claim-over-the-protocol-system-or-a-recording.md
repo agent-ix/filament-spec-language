@@ -143,6 +143,13 @@ is not one. An out-of-protocol send cannot arise from the composition,
 because the protocol system takes only enabled steps. It arises only in a
 recording, where replay mode reports it as `unexpected`.
 
+- A `proved` item decided over the protocol system is `certified` only when the
+  core's closure check (FR-338) covers every obligation. That check reads
+  closure and deadlock freedom; it reads neither the premise that an
+  `exactly-once-premise` channel holds no undelivered message at `finish` nor
+  a `requires temporal` requirement, so over a protocol with either the item
+  SHALL settle `uncertified`.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -157,6 +164,7 @@ recording, where replay mode reports it as `unexpected`.
 | FR-896-AC-8 | Over AC-7's first state, with `subject.protocol` naming `Flow` and binding both roles, `over` `p` settles `proved`, and `over` `q` settles `refuted` with AC-7's counterexample. | Test (TC-2532) |
 | FR-896-AC-9 | Over AC-7's fixture with a second protocol clause `Other` declared, a request whose `subject.protocol` binds `Other` holds two `global-conformance` items claiming `Flow`: the first inherits that subject and settles `declined` `invalid-input` with `invalid_runtime_input`/`invalid-value` naming `temporal.subject.protocol`, carrying no `obligations`, `closure`, `global`, `projections` or `counterexample`; the second, whose `temporal.subject` binds `Flow` to `p`, settles `proved`. | Test (TC-2532) |
 | FR-896-AC-10 | The protocol deadlock item of AC-7's fixture (`claim` `Flow`, `temporal.item_kind` `deadlock-freedom`) with no `subject.protocol` settles `declined` `invalid-input` with `invalid_runtime_input`/`invalid-value` naming `temporal.subject.protocol`. | Test (TC-2532) |
+| FR-896-AC-11 | The order fixture, whose `Order` channel is `exactly-once-premise`, settles `proved`, `uncertified`; with that channel `at-most-once` and no `requires temporal`, `proved`, `certified`. | Test (TC-2532) |
 
 ## Dependencies
 

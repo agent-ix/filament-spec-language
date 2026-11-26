@@ -572,3 +572,28 @@ fn closure_premises_carry_their_componentwise_identity() {
         assert!(item["obligations"].is_null(), "{name}: {item}");
     }
 }
+
+/// FR-896: the behaviour route runs the closure check alone, so a
+/// requirement it never evaluates is not `satisfied`, and the item is not
+/// `proved`, though the protocol itself closes.
+#[trace("TC-2532", "FR-896-AC-11")]
+#[test]
+fn a_requirement_no_check_evaluates_is_not_reported_satisfied() {
+    let unit = format!(
+        "temporal Never using t0 over (k: M::Core) clock \"model-steps\" on origin \
+         {{ always holds(false) }}\n{}",
+        order_protocol(true).replacen(
+            "run sequence Main {",
+            "requires temporal Never;\nrun sequence Main {",
+            1,
+        )
+    );
+    let item = conformance("gc-requirement", &unit, json!({}), &[]);
+    let requirement = obligations(&item)
+        .into_iter()
+        .find(|entry| entry["obligation"]["kind"] == "requirement")
+        .unwrap_or_else(|| panic!("a requirement obligation: {item}"));
+    assert_ne!(requirement["verdict"], "satisfied", "{item}");
+    assert_ne!(label(&item), "proved", "{item}");
+    assert_ne!(item["global"]["label"], "proved", "{item}");
+}

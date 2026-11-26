@@ -350,6 +350,7 @@ fn analyze_case_items(
         &Engines::fsl().expect("EN-1 registers"),
         items,
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (terminals, counterexamples) = split_records(records, &case.checked);
     assert_eq!(

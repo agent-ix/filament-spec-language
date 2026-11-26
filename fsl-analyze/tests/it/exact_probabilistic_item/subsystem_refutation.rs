@@ -361,7 +361,7 @@ fn settle_tampered(
         world.request(name, ModelCheckLimits::default()),
         tamper,
     );
-    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0)
+    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
 }
 
 fn replay_refused(record: &fsl_analyze::analyze::AnalyzeRecord) {

@@ -7,12 +7,14 @@ use filament_semantic_value::fairness::FairnessConstraint;
 use fsl_foundation::node_wire::node_key_to_json;
 use serde_json::{json, Value};
 
+use super::settle::under_policy;
 use super::{
     settle::{fairness_value, fold_certifications, label_str},
     Budget, PlannerCause, PlannerValue,
 };
 use crate::outcome::ItemLabel;
 use crate::proof_result::{
+    CertificationPolicy,
     Certification, InconclusiveCause, PremiseOutcome, TerminalValue, TransferReason,
 };
 
@@ -119,10 +121,12 @@ impl TransferSettlement {
     }
 }
 
-/// Settle an admitted transfer item using the FR-820 decision order.
+/// Settle an admitted transfer item using the FR-820 decision order,
+/// admitting as `proved` what `policy` admits.
 pub fn settle_transfer(
     request: &TransferSettlement,
     budget: Budget,
+    policy: CertificationPolicy,
 ) -> Result<Value, super::KeyWireError> {
     let transfer = transfer_record(request)?;
     let step_for_step_holds = request
@@ -207,6 +211,7 @@ pub fn settle_transfer(
         (PlannerValue::Proved, None, Some(certification))
     };
 
+    let (value, cause, certification) = under_policy(policy, value, cause, certification);
     let mut result = json!({
         "format": "filament.planner-result/v1",
         "item": {"role": "transfer", "node": node_key_to_json(&request.refinement)?},

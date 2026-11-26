@@ -53,6 +53,7 @@ fn a_model_replay_allocation_keeps_the_actual_item_resource_evidence() {
         &Engines::fsl().unwrap(),
         vec![crate::derived_request_support::derived_deadlock(item)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (records, found) = split_records(records, case.checked());
     assert!(found.is_empty());

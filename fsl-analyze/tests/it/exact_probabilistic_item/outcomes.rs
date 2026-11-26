@@ -268,7 +268,7 @@ fn cancelling_a_long_run_claim_at_any_poll_is_never_unbuilt() {
             RequestIndex::new(0),
             world.request("Lower", ModelCheckLimits::default()),
         );
-        diagnostic_of(analyze_items(&engines, vec![item], cancel).remove(0))
+        diagnostic_of(analyze_items(&engines, vec![item], cancel, fsl_replay::CertificationPolicy::AdmitAny).remove(0))
     };
     let live = Cancel::new();
     let _counting = live.count_charges();

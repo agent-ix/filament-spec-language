@@ -302,7 +302,7 @@ pub struct PackageRun<'a> {
     /// composition and its component packages continues (FR-531, FR-1044).
     pub budget: filament_contract_model::NativeJoinBudget,
     /// Which proofs settle `proved`.
-    pub certification: super::super::CertificationPolicy,
+    pub certification: fsl_replay::CertificationPolicy,
 }
 
 /// One item as the package's name tables resolve it.
@@ -1033,8 +1033,7 @@ fn settle_package_run_inner(
             analyzed.push(work.item(route, item));
         }
     }
-    let mut records = super::super::analyze_items(engines, analyzed, cancel);
-    certification.apply(&mut records);
+    let mut records = super::super::analyze_items(engines, analyzed, cancel, certification);
     let details = records.iter().map(super::super::ItemDetail::of).collect();
     let protocol_conformance = records
         .iter()

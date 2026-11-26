@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::{settle_transfer, Budget, TransferPremiseValue, TransferSettlement};
 use crate::outcome::ItemLabel;
-use crate::proof_result::Certification;
+use crate::proof_result::{Certification, CertificationPolicy};
 
 fn node(name: &str) -> NodeKey {
     NodeKey::new(
@@ -47,7 +47,7 @@ fn request(step_for_step: bool, fragment_operator: Option<&str>) -> TransferSett
 #[test]
 #[ix_trace_rs::trace("FSpec-TC-2000", "FSpec-FR-820-AC-1")]
 fn a_step_for_step_transfer_records_both_premises_and_is_proved() {
-    let result = settle_transfer(&request(true, Some("once[1,1]")), Budget::default())
+    let result = settle_transfer(&request(true, Some("once[1,1]")), Budget::default(), CertificationPolicy::AdmitAny)
         .expect("a transfer record is writable");
     assert_eq!(result["value"], "proved");
     assert_eq!(result["basis"], "decisive-witness");
@@ -71,7 +71,7 @@ fn a_transfer_keeps_the_weakest_certification_of_its_premises() {
     ] {
         let mut request = request(true, None);
         request.premises[1].1 = TransferPremiseValue::Proved(second);
-        let result = settle_transfer(&request, Budget::default()).expect("a record is writable");
+        let result = settle_transfer(&request, Budget::default(), CertificationPolicy::AdmitAny).expect("a record is writable");
         assert_eq!(result["value"], "proved");
         assert_eq!(result["certification"], expected);
     }
@@ -82,7 +82,7 @@ fn a_transfer_keeps_the_weakest_certification_of_its_premises() {
 fn a_dense_time_refinement_is_not_step_for_step_before_any_row() {
     let mut request = request(false, Some("once[1,1]"));
     request.step_for_step = json!({"holds": false, "time": "dense"});
-    let result = settle_transfer(&request, Budget::default()).expect("a record is writable");
+    let result = settle_transfer(&request, Budget::default(), CertificationPolicy::AdmitAny).expect("a record is writable");
     assert_eq!(result["cause"]["reason"], "fragment");
     assert_eq!(result["cause"]["operator"], "once[1,1]");
     assert_eq!(result["transfer"]["step_for_step"]["time"], "dense");
@@ -92,7 +92,7 @@ fn a_dense_time_refinement_is_not_step_for_step_before_any_row() {
 #[test]
 #[ix_trace_rs::trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
 fn a_non_step_for_step_transfer_names_the_first_position_counting_operator() {
-    let result = settle_transfer(&request(false, Some("eventually[0,2]")), Budget::default())
+    let result = settle_transfer(&request(false, Some("eventually[0,2]")), Budget::default(), CertificationPolicy::AdmitAny)
         .expect("a transfer record is writable");
     assert_eq!(result["value"], "inconclusive");
     assert_eq!(result["basis"], "unsettled");
@@ -107,14 +107,14 @@ fn a_non_step_for_step_transfer_names_the_first_position_counting_operator() {
 fn transfer_settlement_checks_premise_form_then_premise_values() {
     let mut request = request(true, None);
     request.liveness = true;
-    let result = settle_transfer(&request, Budget::default()).expect("a record is writable");
+    let result = settle_transfer(&request, Budget::default(), CertificationPolicy::AdmitAny).expect("a record is writable");
     assert_eq!(result["cause"]["reason"], "stutter-closure");
 
     assert_eq!(result["transfer"]["premise_form"], "maximal");
 
     request.stutter_closure = true;
     request.premises[0].1 = TransferPremiseValue::Other(ItemLabel::Unsupported);
-    let result = settle_transfer(&request, Budget::default()).expect("a record is writable");
+    let result = settle_transfer(&request, Budget::default(), CertificationPolicy::AdmitAny).expect("a record is writable");
     assert_eq!(result["cause"]["type"], "premise-unproved");
     assert_eq!(result["cause"]["premise"], 0);
     assert_eq!(result["cause"]["result"], "unsupported");
@@ -127,7 +127,7 @@ fn transfer_settlement_checks_premise_form_then_premise_values() {
         (ItemLabel::Refuted, "refuted"),
     ] {
         request.premises[1].1 = TransferPremiseValue::Other(label);
-        let result = settle_transfer(&request, Budget::default()).expect("a record is writable");
+        let result = settle_transfer(&request, Budget::default(), CertificationPolicy::AdmitAny).expect("a record is writable");
         assert_eq!(result["value"], "inconclusive");
         assert_eq!(result["cause"]["premise"], 1);
         assert_eq!(result["cause"]["result"], spelling);
@@ -137,7 +137,7 @@ fn transfer_settlement_checks_premise_form_then_premise_values() {
 #[test]
 #[ix_trace_rs::trace("FSpec-TC-2000", "FSpec-FR-820-AC-5")]
 fn transfer_work_limit_keeps_the_complete_transfer_record() {
-    let result = settle_transfer(&request(true, None), Budget { max_work: 0 })
+    let result = settle_transfer(&request(true, None), Budget { max_work: 0 }, CertificationPolicy::AdmitAny)
         .expect("a record is writable");
     assert_eq!(result["value"], "incomplete");
     assert_eq!(result["cause"]["type"], "limit-reached");

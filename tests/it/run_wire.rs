@@ -2360,6 +2360,55 @@ fn command_monitor_items_equal_the_package_route_of_its_clocked_compile() {
     assert_eq!(summary.exit_code, 10);
 }
 
+/// FR-1052 (TC-3240): under `require_certified` a monitor request's routed
+/// provider items, trusted by default, settle `inconclusive`; without
+/// `items` the member is refused.
+#[test]
+#[trace("TC-3240", "FR-1052-AC-14")]
+fn require_certified_withholds_a_monitor_s_trusted_items() {
+    use fsl_analyze::provider::ProviderVerdict;
+
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let recorded = Recorded::new();
+    let (summary, _) = monitor_with_members(
+        clauses.clone(),
+        json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
+            "require_certified": true}),
+        vec![recorded.provider(ProviderVerdict::Proved)],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let value = summary.expect("the stream runs");
+    let items = value.as_value()["items"].as_array().expect("items");
+    assert!(!items.is_empty(), "{}", value.as_value());
+    for item in items {
+        assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+        assert_eq!(
+            item["record"]["cause"]["type"], "proof-not-certified",
+            "{item}"
+        );
+        assert_eq!(
+            item["record"]["cause"]["certification"], "trusted",
+            "{item}"
+        );
+        assert!(item["record"].get("certification").is_none(), "{item}");
+    }
+
+    let alone = Recorded::new();
+    let (refused, _) = monitor_with_members(
+        clauses,
+        json!({"require_certified": true}),
+        Vec::new(),
+        &alone,
+        &filament_exact::Cancel::new(),
+    );
+    let refusal = match refused {
+        Ok(summary) => panic!("the member alone is refused: {}", summary.as_value()),
+        Err(refusal) => format!("{refusal:?}"),
+    };
+    assert!(refusal.contains("require_certified"), "{refusal}");
+}
+
 /// The summary with the members `items` adds removed.
 fn clause_summary(summary: &Value) -> Value {
     let mut summary = summary.clone();

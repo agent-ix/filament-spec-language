@@ -183,6 +183,7 @@ fn proof_source_request(
             },
         )],
         &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let record = records.remove(0);
     let evidence = record

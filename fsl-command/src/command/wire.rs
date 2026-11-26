@@ -350,6 +350,9 @@ pub(super) struct Request {
     /// refinement, exclusive with the other native-run selections.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub refinement_transfer: Option<RefinementTransfer>,
+    /// FR-1052: a boolean; whether only `certified` proofs settle `proved`.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub require_certified: Option<serde_json::Value>,
     /// FR-1022: closed export-evidence selection, admitted by its own reader.
     #[serde(default, deserialize_with = "present_json_value")]
     pub export_evidence: Option<serde_json::Value>,
@@ -993,6 +996,9 @@ pub(super) struct MonitorRequest {
     /// can be reported at the single `/request/target` locus.
     #[serde(default, deserialize_with = "present_raw_value")]
     pub target: Option<Box<RawValue>>,
+    /// FR-1052: read only beside `items`, whose provider proofs it governs.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub require_certified: Option<serde_json::Value>,
     /// Snapshot files by key, for records that name a snapshot by key.
     #[serde(default, deserialize_with = "from_object")]
     pub observations: std::collections::BTreeMap<String, String>,

@@ -484,6 +484,7 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
             Ok(native_request),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert!(
         matches!(

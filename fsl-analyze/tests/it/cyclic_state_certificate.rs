@@ -82,6 +82,7 @@ fn settle(
         &Engines::fsl().unwrap(),
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0)
 }
@@ -577,7 +578,7 @@ fn cancelling_the_cyclic_subject_check_past_the_rational_budget_keeps_its_cause(
     };
     let run = |cancel: &Cancel| {
         let item = exact_probabilistic_item(RequestIndex::new(0), request());
-        analyze_items(&engines, vec![item], cancel).remove(0)
+        analyze_items(&engines, vec![item], cancel, fsl_replay::CertificationPolicy::AdmitAny).remove(0)
     };
     let live = Cancel::new();
     let _counting = live.count_charges();

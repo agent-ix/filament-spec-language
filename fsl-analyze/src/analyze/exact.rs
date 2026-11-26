@@ -1182,15 +1182,18 @@ fn run_timed_mean(
             return broken();
         }
     };
-    if matches!(claim.scheduler, ProbScheduler::Workload(_)) {
-        return not_yet();
-    }
     // An infinite least time holds any `>=` bound; its certificate carries no
     // value or rank, and the checker rederives it from its own graph.
     let infinite = matches!(
         solved.values.get(start.index()),
         Some(ExtRational::PlusInfinity)
     );
+    // Under a workload no checker reads a finite expected time, so only an
+    // infinite one that holds its bound is decided.
+    let workload = matches!(claim.scheduler, ProbScheduler::Workload(_));
+    if workload && !(infinite && matches!(bound, Bound::AtLeast(_))) {
+        return not_yet();
+    }
     let holds = match (solved.values.get(start.index()), bound) {
         (Some(ExtRational::PlusInfinity), Bound::AtLeast(_)) => true,
         (Some(ExtRational::Finite(value)), Bound::AtLeast(threshold)) => value >= threshold,
@@ -1258,6 +1261,7 @@ fn run_timed_mean(
         }
     };
     let optimization = match objective {
+        _ if workload => ProbabilityObjective::Workload,
         UnboundedObjective::Min => ProbabilityObjective::Minimum,
         UnboundedObjective::Max => ProbabilityObjective::Maximum,
     };
@@ -1305,7 +1309,13 @@ fn run_timed_mean(
         Ok(binding) => binding,
         Err(error) => return graph_failure(error, &limits, subject),
     };
-    checked_report(checked, certificate, binding, extremum, subject)
+    checked_report(
+        checked,
+        certificate,
+        binding,
+        extremum.filter(|_| !workload),
+        subject,
+    )
 }
 
 pub(super) fn run_package_exact(request: ProductRequest<'_>, cancel: &Cancel) -> EngineReport {

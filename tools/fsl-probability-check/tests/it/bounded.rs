@@ -294,7 +294,7 @@ fn requests_for(
         Some(offered) => exact_probabilistic_item_tampered(RequestIndex::new(0), request, offered),
         None => exact_probabilistic_item(RequestIndex::new(0), request),
     };
-    let mut records = analyze_items(&engines, vec![item], &cancel);
+    let mut records = analyze_items(&engines, vec![item], &cancel, fsl_replay::CertificationPolicy::AdmitAny);
     let record = records.remove(0);
     let Some(terminal) = record.terminal() else {
         return (Vec::new(), record.settlement);

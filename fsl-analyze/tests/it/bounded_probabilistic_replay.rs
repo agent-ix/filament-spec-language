@@ -192,6 +192,7 @@ fn evidence(world: &World, claim: &str) -> ProbabilisticCounterexample {
             world.request(claim, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let record = records.first().unwrap();
     assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
@@ -680,6 +681,7 @@ fn adapter_exhaustion_preserves_incomplete_without_accepted_evidence() {
                 &Engines::fsl().unwrap(),
                 vec![exact_probabilistic_item(RequestIndex::new(0), request)],
                 &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
             )
             .remove(0);
             assert!(record.terminal().is_some(), "{budget}: {record:?}");
@@ -772,6 +774,7 @@ fn interval_bounds_and_precision_budget_cannot_be_cast_into_bounded_refutations(
                 &Engines::fsl().unwrap(),
                 vec![exact_probabilistic_item(RequestIndex::new(0), request)],
                 &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
             )
             .remove(0);
             if precision_budget {
@@ -812,6 +815,7 @@ fn one_admitted_over_binding_uses_the_actual_s3_parameter_node() {
         &Engines::fsl().unwrap(),
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
@@ -906,7 +910,7 @@ fn an_exact_engine_value_cannot_settle_refuted_after_bounded_replay_disagrees() 
                 }
             },
         );
-        let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
         if duplicate {
             assert!(matches!(
                 record.terminal().unwrap().value(),
@@ -1001,6 +1005,7 @@ fn proof_document(world: &World, claim: &str) -> Vec<u8> {
             world.request(claim, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().expect("a settled claim");
     assert!(

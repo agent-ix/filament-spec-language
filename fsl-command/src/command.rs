@@ -55,6 +55,7 @@ use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
 use fsl_replay::spine::SpineLimits;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
+use fsl_replay::CertificationPolicy;
 use ix_trace_rs::implements;
 use settle::Settle;
 use std::{
@@ -638,6 +639,8 @@ struct FunctionRunData {
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// FR-960: the call's `requirements`; `None` settles no item.
     requirements: Option<requirements::Requirements>,
+    /// FR-1052: which of those items' proofs settle `proved`.
+    certification: CertificationPolicy,
 }
 
 /// Owned inputs passed to the driver's existing execution pipeline.
@@ -660,6 +663,10 @@ pub struct FunctionRunInput {
 impl PreparedFunctionRun {
     pub(in crate::command) fn requirements(&self) -> Option<&requirements::Requirements> {
         self.data.requirements.as_ref()
+    }
+
+    pub(in crate::command) fn certification(&self) -> CertificationPolicy {
+        self.data.certification
     }
 
     /// Transfer the prepared typed values without executing a stage.
@@ -4528,6 +4535,9 @@ fn prepare_run_bytes_with_sources(
     }
     // FR-1031: the first refusal in table order is the selection conflict.
     refuse_transfer_selection_conflict(&request)?;
+    // FR-1052: a `require_certified` that is not a boolean refuses before any
+    // selected file is opened.
+    analyze::read_certification(request.require_certified.clone())?;
     // FR-1045: reject malformed correlation selection before any selected
     // program, package, model or snapshot file is opened.
     relationships::validate_request(request.call.as_ref())?;
@@ -5135,6 +5145,7 @@ fn prepare_complete_run(
             call: spine_call,
             integer_division,
             requirements,
+            certification: analyze::read_certification(request.require_certified)?,
         }),
     }))
 }
@@ -5361,7 +5372,14 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             }),
             prepared.integer_division,
             |checked, members| {
-                settle::settle_call(checked, members, selection, &prepared.packages, settle)
+                settle::settle_call(
+                    checked,
+                    members,
+                    selection,
+                    &prepared.packages,
+                    settle,
+                    prepared.certification,
+                )
             },
         )
         .map_err(compile_failure)?;

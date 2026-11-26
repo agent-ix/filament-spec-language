@@ -444,6 +444,27 @@ pub enum Certification {
     Trusted,
 }
 
+/// Which proofs a request admits as `proved` (FSL FR-1052), the one
+/// definition every route that can settle `proved` takes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CertificationPolicy {
+    /// Every certification settles `proved` (ADR-018 PC-1).
+    #[default]
+    AdmitAny,
+    /// Only a `certified` proof settles `proved`.
+    RequireCertified,
+}
+
+impl CertificationPolicy {
+    /// Whether a proof of `certification` may not settle `proved`.
+    pub const fn withholds(self, certification: Certification) -> bool {
+        match (self, certification) {
+            (Self::AdmitAny, _) | (Self::RequireCertified, Certification::Certified) => false,
+            (Self::RequireCertified, Certification::Uncertified | Certification::Trusted) => true,
+        }
+    }
+}
+
 impl Certification {
     /// The required FSpec FR-331 certification member's spelling.
     pub const fn as_str(self) -> &'static str {
@@ -1150,11 +1171,11 @@ pub enum InconclusiveCause {
     },
     /// FSpec FR-331 `proof-not-certified{basis, certification}`: the request
     /// requires certified proofs and no core check stands behind this one.
-    /// Only [`TerminalRecord::require_certified`] constructs it (FSL
-    /// FR-1052).
+    /// Only the certified-proof requirement constructs it (FSL FR-1052).
     ProofNotCertified {
-        /// The basis of the proof.
-        basis: Box<ProofBasis>,
+        /// The basis of the proof; none for a planner result, which has no
+        /// basis object.
+        basis: Option<Box<ProofBasis>>,
         /// Who stands behind the proof.
         certification: Certification,
     },
@@ -2152,14 +2173,11 @@ impl TerminalRecord {
         else {
             return;
         };
-        match certification {
-            Certification::Certified => {}
-            Certification::Uncertified | Certification::Trusted => {
-                self.value = TerminalValue::Inconclusive(InconclusiveCause::ProofNotCertified {
-                    basis: Box::new(basis.clone()),
-                    certification: *certification,
-                });
-            }
+        if CertificationPolicy::RequireCertified.withholds(*certification) {
+            self.value = TerminalValue::Inconclusive(InconclusiveCause::ProofNotCertified {
+                basis: Some(Box::new(basis.clone())),
+                certification: *certification,
+            });
         }
     }
 

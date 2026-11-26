@@ -29,7 +29,7 @@ use fsl_route::{Candidate, Mode, ProviderOrigin};
 use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
 
-const EXTERNAL: &str = "fsl.canonical-test-provider";
+pub(crate) const EXTERNAL: &str = "fsl.canonical-test-provider";
 const UNBOUNDED: &str = "function q using v(a: Integer, b: Integer): Integer pure { a div b }";
 const FINITE_VIOLATED: &str =
     "function q using v(a: Int[0,3], b: Int[0,1]): Integer pure { a div b }";
@@ -124,7 +124,7 @@ impl ExternalProvider for RecordingProvider {
     }
 }
 
-fn engines(
+pub(crate) fn engines(
     verdict: ProviderVerdict,
     bounded: bool,
     origin: ProviderOrigin,
@@ -674,7 +674,7 @@ fn a_required_certification_withholds_provider_proofs_at_both_entries() {
         assert_eq!(
             analyzed.records[0].value(),
             &TerminalValue::Inconclusive(InconclusiveCause::ProofNotCertified {
-                basis: Box::new(ProofBasis::Inductive { depth: 0 }),
+                basis: Some(Box::new(ProofBasis::Inductive { depth: 0 })),
                 certification,
             })
         );

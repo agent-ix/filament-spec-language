@@ -736,6 +736,7 @@ fn package_replay_authenticates_owner_ordinal_model_and_slice(claim: &str) {
             world.request("TooLikely", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(

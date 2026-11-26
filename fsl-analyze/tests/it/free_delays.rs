@@ -392,7 +392,7 @@ fn timed_race_replays_the_maximum_and_minimum_free_delay_rows() {
                 limits: ExactProbLimits::default(),
             },
         );
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
         let evidence = record
             .probabilistic_counterexample
             .as_ref()
@@ -1105,7 +1105,7 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
             limits: ExactProbLimits::default(),
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     let replayed_witness = record
         .probabilistic_counterexample
         .as_ref()
@@ -1215,7 +1215,7 @@ fn timed_detour_scheduler_tampering_is_refused() {
             },
             tamper,
         );
-        analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+        analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
     };
     let refusal = |record: fsl_analyze::analyze::AnalyzeRecord| {
         assert_eq!(
@@ -1414,7 +1414,7 @@ fn a_witness_row_naming_b_alone_refuses() {
             limits: ExactProbLimits::default(),
         },
     );
-    let admitted = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let admitted = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     let evidence = admitted
         .probabilistic_counterexample
         .as_ref()
@@ -1458,7 +1458,7 @@ fn a_witness_row_naming_b_alone_refuses() {
             rows[0].free.retain(|(identity, _)| identity != &c);
         },
     );
-    let refused = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let refused = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     assert_eq!(
         refused.terminal().expect("terminal result").value(),
         &fsl_replay::TerminalValue::Inconclusive(

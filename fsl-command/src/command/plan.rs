@@ -123,6 +123,7 @@ pub(super) fn run_bytes(
         });
     }
     let integer_division = request_integer_division(request.integer_division.take())?;
+    let certification = super::analyze::read_certification(request.require_certified.take())?;
     let program = super::required_program(&request)?;
     let mut intake = intake_with_bytes(
         directory,
@@ -226,6 +227,7 @@ pub(super) fn run_bytes(
                 seed: plan_request.seed,
                 max_trace_length: plan_request.max_trace_length,
                 max_value_bits: plan_request.max_value_bits,
+                certification,
             };
             // The native-run request carries no analysis limits or deadline member
             // (FSpec FR-824 "no member sets a step's limits"), so the limits are

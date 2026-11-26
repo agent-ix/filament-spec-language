@@ -1029,6 +1029,7 @@ fn fair_availability_uses_long_run_limit_and_randomized_refutation() {
             world.request("AvailFair", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let record = &records[0];
     let terminal = record.terminal().unwrap_or_else(|| {
@@ -1954,6 +1955,7 @@ fn fair_coin_analysis_emits_independently_checked_value_one() {
             world.request("FairTerminates", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let record = records.into_iter().next().expect("one analyzed claim");
     let terminal = record
@@ -2023,6 +2025,7 @@ fn fair_eventual_w_exact_minimum_maximum_and_forgery_vectors() {
             })
             .collect(),
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let min = records[0].terminal().expect("AC-1 minimum settles");
     let TerminalValue::Proved {
@@ -2278,6 +2281,7 @@ fn fair_eventual_value_bounds_are_independently_checked() {
         &Engines::fsl().expect("EN-5 is admitted"),
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let terminal = record
@@ -2391,6 +2395,7 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
         &Engines::fsl().expect("EN-5 is admitted"),
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let TerminalValue::Proved {
@@ -2596,6 +2601,7 @@ fn fair_mdp_checker_rejects_a_fair_non_target_end_component() {
             world.request("FairTerminates", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let genuine = valid[0]
         .terminal()
@@ -2840,6 +2846,7 @@ fn coin2_stall_is_a_fair_end_component_and_witness() {
             world.request("StuckFair", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let record = analyzed.first().expect("one fair refutation");
     let terminal = record.terminal().unwrap_or_else(|| {
@@ -2908,6 +2915,7 @@ fn coin2_stall_is_a_fair_end_component_and_witness() {
         &fsl_analyze::analyze::Engines::fsl().expect("FSL engines"),
         vec![unfair_item],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert!(
@@ -3034,6 +3042,7 @@ fn fair_minimum_replays_drift_into_a_zero_value_fair_component() {
             world.request("DriftRefuted", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(
@@ -3250,6 +3259,7 @@ fn fair_minimum_replays_drift_into_a_zero_value_fair_component() {
         &Engines::fsl().expect("FSL engines"),
         vec![forged_wait],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert!(
@@ -4216,7 +4226,7 @@ fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
             RequestIndex::new(0),
             world.request(name, ModelCheckLimits::default()),
         );
-        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+        let mut records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
         assert_eq!(records.len(), 1);
         let record = records.remove(0);
         let terminal = record.terminal().expect("exact analysis settles");

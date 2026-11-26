@@ -43,8 +43,8 @@ or solver outside the core proved it and no core checker re-checked it, and
 `trusted` when a third-party plugin proved it. By default all three settle
 `proved` and the label tells the reader which kind of proof it is.
 
-An `analyze` request MAY instead require certified proofs. Under
-that policy a `proved` result whose certification is not `certified` SHALL
+A request MAY instead require certified proofs, on every route that can
+settle `proved`. Under that policy a `proved` result whose certification is not `certified` SHALL
 settle `inconclusive`, so a reader who must act only on checked proofs never
 receives an unchecked `proved`. The policy is off by default; with it off,
 every result and every label is as it is without this requirement.
@@ -62,13 +62,21 @@ pub enum CertificationPolicy {
 }
 ```
 
-It is the `certification` member of FR-281's `AnalyzeRequest`, of the document
-route's `AnalyzeRun` and of `PackageRun` (FR-850), and the argument of
-`provider::run`. A
-`native-analyze/1` request (FR-620) selects it with the request member
-`require_certified`, a JSON boolean, absent meaning `false`; the driver's
-commands that send that request select it with the flag
-`--require-certified`, which sets that member (FSpec FR-301). An assurance
+The type is `fsl-replay`'s, the one definition every route takes. Each route
+selects it as follows; an absent member is `false`:
+
+| Route | Selected by |
+| --- | --- |
+| `analyze` over a request | The `certification` member of FR-281's `AnalyzeRequest`, of the document route's `AnalyzeRun` and of `PackageRun` (FR-850) |
+| `analyze_items` and `provider::run` | Their `CertificationPolicy` argument |
+| The verification planner's `settle` and `settle_transfer` (FR-529) | Their `CertificationPolicy` argument |
+| A verification plan run (FR-753) | The `certification` member of `PlanInputs` |
+| `native-analyze/1` (FR-620) | The request member `require_certified`, a JSON boolean |
+| `native-run/1`: a `call`'s claim items (FR-960), a checked-package run (FR-1039), `refinement_transfer` (FR-1030) and `verification_plan` (FR-1038) | The request member `require_certified`, a JSON boolean |
+| A monitor request's provider-routed `items` (FR-644) | The request member `require_certified`, a JSON boolean read only beside `items` |
+
+The driver's commands that send these requests select it with the flag
+`--require-certified`, which sets the member (FSpec FR-301). An assurance
 profile turns it on (see "Assurance profile" below).
 
 ## Rationale
@@ -87,8 +95,8 @@ No assurance profile that a request can name is defined in FSL or in FSpec
 today; the quoin `AssuranceProfile` artifact selects a repository's review
 requirements and is not an input of `analyze`. Selecting one is not specified
 here. When an assurance profile is defined, it SHALL set
-`CertificationPolicy::RequireCertified`; until then the policy is selected
-only by the request member or the flag.
+`CertificationPolicy::RequireCertified`; until then the policy is off unless a
+request or caller selects it.
 
 ## Inputs
 
@@ -130,7 +138,8 @@ Each item's terminal record, changed only as "Behavior" states.
   | Symmetry- or partial-order-reduced proof; proof under a state constraint | `uncertified` | ADR-021 RV-1, FR-160 |
   | Hybrid `bounded-solver` or `inductive-solver` proof with no certificate, or from a method with no certificate form | `uncertified` (a plugin's `trusted`) | FR-250 |
   | Refinement liveness half, which no core checker covers (dense and discrete) | `uncertified` | ADR-020 CT-4 |
-  | State-graph, hyper and refinement simulation proofs whose checker FR-282 lists as "none yet", and protocol-analysis and conformance proofs, which have no core checker | `uncertified` | FR-282, ADR-018 PC-1 |
+  | State-graph, hyper and refinement simulation proofs whose checker FR-282 lists as "none yet", and protocol-analysis proofs, which have no core checker | `uncertified` | FR-282, ADR-018 PC-1 |
+  | A global-conformance proof with an obligation the closure check does not cover: a `exactly-once-premise` channel or a `requires temporal` requirement, and every proof over a recording | `uncertified` | FR-896, FR-338 |
   | A finite-domain value-validity proof evaluated exhaustively, whose method has no core certificate checker | `uncertified` | FSpec FR-483 |
   | A linked provider's `proved` | `uncertified` | FR-635 |
   | A process provider's or plugin's `proved` | `trusted` | FR-290 |
@@ -139,10 +148,17 @@ Each item's terminal record, changed only as "Behavior" states.
   `CertificateRejected{rule, at}` (ADR-018 PC-2, FR-751), and a closed
   search whose certificate no core check read already settles `incomplete`,
   `CertificateUnchecked` (FR-182), with or without the policy.
-- This requirement covers the `analyze` entries named in "Description". The
-  `refinement_transfer` request (FR-1031), the claim items of a `run` call
-  (FR-960) and the verification planner's results take no such member and
-  settle as under `AdmitAny`.
+- Every route of "Description"'s table SHALL apply the same rule to each
+  result it would write `proved`. A `refinement_transfer` request SHALL
+  analyze its premises under the policy, and its transfer result, and a
+  planner guarantee or composition result, whose fold of premise
+  certifications is `uncertified` or `trusted` SHALL settle `inconclusive`
+  with cause `proof-not-certified{certification}`, with no `certification`
+  member and no conclusion record. A planner result has no proof `basis`
+  object, so that cause carries none (FSpec FR-492).
+- A supplied transfer premise that is `proved`, `uncertified` or `trusted` is
+  folded as FSpec FR-820 folds it, so the transfer result it would certify no
+  better than that settles `inconclusive`.
 - A global-conformance item whose record is not a `certified` proof SHALL
   write each FR-990 label that is `proved` as `inconclusive`: a `proved`
   `global` member becomes label `inconclusive`, basis `unsettled`, `complete`
@@ -170,7 +186,14 @@ Each item's terminal record, changed only as "Behavior" states.
 | FR-1052-AC-6 | A `native-analyze/1` request whose only required item is AC-1's uncertified entry has `aggregate` `{"status": "complete", "gaps": []}` by default and, under `require_certified` `true`, `{"status": "incomplete", "gaps": [{"request_index": 0, "reason": "not-proved", "result": "inconclusive"}]}`. | Test (TC-3240) |
 | FR-1052-AC-7 | A `native-analyze/1` request with `"require_certified": "yes"`, and one with `"require_certified": 1`, each refuse the whole request at the request stage with `invalid-request`, exit 20, naming `require_certified`, and run no item. | Test (TC-3240) |
 | FR-1052-AC-8 | `analyze` and `provider::run` over AC-2's request and AC-4's request settle the item under `CertificationPolicy::RequireCertified` as AC-2 and AC-4 state, and under `AdmitAny` settle it `proved`. | Test (TC-3240) |
-| FR-1052-AC-9 | A global-conformance item over a recording with a closed closure record, whose record is `proved`, `uncertified` and whose `global` member is `proved`, settles under `RequireCertified` `inconclusive` and writes `global` with label `inconclusive`, basis `unsettled`, `complete` `false` and cause `proof-not-certified`, with the same closure record and obligation verdicts. The same claim decided over the protocol system, whose record is `proved`, `certified`, is unchanged. | Test (TC-3240) |
+| FR-1052-AC-9 | A global-conformance item over a recording with a closed closure record, whose record is `proved`, `uncertified` and whose `global` member is `proved`, settles under `RequireCertified` `inconclusive` and writes `global` with label `inconclusive`, basis `unsettled`, `complete` `false` and cause `proof-not-certified`, with the same closure record and obligation verdicts. The same claim over a protocol system whose channels are `at-most-once` and that declares no `requires temporal`, whose record is `proved`, `certified`, is unchanged. | Test (TC-3240) |
+| FR-1052-AC-10 | A `native-run/1` call whose claim item settles `proved`, `uncertified` by default settles it `inconclusive` with `proof-not-certified` under `require_certified` `true`. | Test (TC-3240) |
+| FR-1052-AC-11 | A `refinement_transfer` request whose transfer settles `proved` with a supplied `uncertified` premise settles it `inconclusive` with `proof-not-certified` `uncertified` under `require_certified` `true`. | Test (TC-3240) |
+| FR-1052-AC-12 | The planner's `settle` over a composition whose fold is `trusted` settles `proved` under `AdmitAny`, and under `RequireCertified` `inconclusive` with `proof-not-certified` `trusted`, no `certification` and no conclusion; a `certified` fold is unchanged. | Test (TC-3240) |
+| FR-1052-AC-13 | A `verification_plan` run whose step settles `proved`, `uncertified` by default settles that step `inconclusive` under `require_certified` `true`. | Test (TC-3240) |
+| FR-1052-AC-14 | A monitor request's provider-routed item that settles `proved`, `uncertified` or `trusted` by default settles `inconclusive` under `require_certified` `true`; `require_certified` without `items` is refused. | Test (TC-3240) |
+| FR-1052-AC-15 | `analyze_items` over an item whose engine proves it `uncertified` settles it `proved` under `AdmitAny` and `inconclusive` with `proof-not-certified` under `RequireCertified`. | Test (TC-3240) |
+| FR-1052-AC-16 | A global-conformance claim over a protocol with an `exactly-once-premise` channel and every obligation satisfied settles `proved`, `uncertified`. | Test (TC-3240) |
 
 ## Dependencies
 

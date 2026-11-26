@@ -760,7 +760,7 @@ fn routed_hp4_hyper_item_settles_unsupported_requested_capability() {
 
     let analyze_item =
         hyper_form_item(&world.package, item, &form).expect("HP-4 settles at negotiation");
-    let results = analyze_items(&Engines::default(), vec![analyze_item], &Cancel::new());
+    let results = analyze_items(&Engines::default(), vec![analyze_item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
     let [result] = results.as_slice() else {
         panic!("one analysis result");
     };

@@ -445,6 +445,7 @@ fn run_in(
         engines,
         vec![value_item(index(), package, key, request)],
         &guarded(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0)
 }
@@ -903,6 +904,7 @@ fn recursive_function_body_evaluations_consume_the_item_case_budget() {
             }),
         )],
         &guarded(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert!(matches!(
@@ -1020,6 +1022,7 @@ fn an_unsatisfiable_domain_is_inconclusive_with_the_value_check_vacuity_cause() 
             }),
         )],
         &guarded(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     // This is an inconclusive ValueValidity result, not a Kani proof with
@@ -1250,6 +1253,7 @@ fn a_huge_domain_and_a_huge_budget_are_enumerated_lazily() {
         &Engines::fsl().unwrap(),
         vec![value_item(index(), &package, &breaks, request)],
         &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert!(
@@ -1281,6 +1285,7 @@ fn a_cancelled_run_is_incomplete_cancelled_and_evaluates_nothing() {
         &Engines::fsl().unwrap(),
         vec![value_item(index(), &package, &key, request)],
         &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert!(matches!(
         terminal(&records[0]),
@@ -1326,6 +1331,7 @@ fn an_unbounded_integer_parameter_needs_a_bound_and_a_bound_makes_it_bounded() {
             }),
         )],
         &guarded(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert!(matches!(
@@ -1380,6 +1386,7 @@ fn the_production_registry_holds_the_arm_and_an_absent_provider_is_refused() {
         &Engines::default(),
         vec![value_item(index(), &package, &key, request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let Settlement::Disposed(disposed) = &records[0].settlement else {
         panic!("a disposition")
@@ -1472,7 +1479,7 @@ fn negotiated_refusals_run_no_arm() {
         });
         let item: AnalyzeItem<'_> =
             value_item(index(), &package, &key, request).disposed(disposition, None);
-        let records = analyze_items(&Engines::fsl().unwrap(), vec![item], &guarded());
+        let records = analyze_items(&Engines::fsl().unwrap(), vec![item], &guarded(), fsl_replay::CertificationPolicy::AdmitAny);
         let Settlement::Disposed(disposed) = &records[0].settlement else {
             panic!()
         };
@@ -1830,6 +1837,7 @@ fn provider_run(engines: &Engines, package: &CheckedPackage, key: &OccurrenceKey
             },
         )],
         &guarded(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0)
 }
@@ -1866,6 +1874,7 @@ fn a_provider_item_over_a_package_that_does_not_emit_settles_unsupported() {
             },
         )],
         &guarded(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let Settlement::Disposed(disposed) = &record.settlement else {
@@ -1993,6 +2002,7 @@ fn an_unnamed_single_candidate_item_is_sent_without_backend_at_its_request_posit
             },
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(records[0].request_index, at);
     assert!(
@@ -2258,6 +2268,7 @@ fn a_provider_item_stopped_by_the_case_budget_or_cancellation_is_incomplete() {
             },
         )],
         &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert!(matches!(

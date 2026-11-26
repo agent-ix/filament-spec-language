@@ -281,6 +281,7 @@ fn reachable_zero_weight_components_take_their_unweighted_fraction() {
             world.request("Fraction", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert!(
         !matches!(records[0].settlement, Settlement::Disposed(_)),
@@ -483,6 +484,7 @@ fn global_negative_admission_precedes_proofs_and_zero_binding_invents_nothing() 
                 world.request("Fraction", ModelCheckLimits::default()),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         assert!(matches!(
             records[0].terminal().unwrap().value(),
@@ -503,6 +505,7 @@ fn global_negative_admission_precedes_proofs_and_zero_binding_invents_nothing() 
             world.request("Fraction", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let Settlement::Disposed(disposed) = &records[0].settlement else {
         panic!("{:?}", records[0]);
@@ -566,6 +569,7 @@ fn admitted_object_parameter_draws_do_not_coerce_negative_weight_to_zero() {
                 world.request("Fraction", ModelCheckLimits::default()),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let Settlement::Disposed(disposed) = &records[0].settlement else {
             panic!("{:?}", records[0]);
@@ -606,6 +610,7 @@ fn undefined_actual_weights_and_predicates_preserve_typed_nonacceptance() {
                 world.request("Fraction", ModelCheckLimits::default()),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         assert!(records[0].exact_probabilistic.is_none());
         assert!(!matches!(

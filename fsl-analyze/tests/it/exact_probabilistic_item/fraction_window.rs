@@ -26,7 +26,7 @@ fn settle_under(world: &World, work_units: u64) -> fsl_analyze::analyze::Analyze
     let mut request = world.request("Up", ModelCheckLimits::default());
     request.subject.simulation.meter.work_units = work_units;
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
 }
 
 #[trace("TC-3152", "FR-1043-AC-5")]

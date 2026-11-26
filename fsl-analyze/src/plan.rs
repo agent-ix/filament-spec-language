@@ -48,6 +48,8 @@ pub struct PlanInputs<'a> {
     pub max_trace_length: Option<u64>,
     /// The request's unbounded-value generation size.
     pub max_value_bits: Option<u64>,
+    /// Which of a step's proofs settle `proved` (FSL FR-1052).
+    pub certification: fsl_replay::CertificationPolicy,
 }
 
 /// A whole-plan preflight refusal; no step has executed.
@@ -803,7 +805,7 @@ impl Execution<'_> {
                 disposition,
                 diagnostic,
             }],
-            certification: Default::default(),
+            certification: inputs.certification,
         };
         let outcome = match analyze(package, &request, engines, limits, cancel) {
             Ok(staged) => staged.into_value(),

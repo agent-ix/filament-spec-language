@@ -24,6 +24,7 @@ struct CallOutput {
     source: fsl_foundation::source::Source,
     function: String,
     requirements: Option<super::requirements::Requirements>,
+    certification: fsl_replay::CertificationPolicy,
     packages: fsl_semantics::model::intake::PackageInput,
 }
 
@@ -418,6 +419,7 @@ pub(super) fn run_bytes(
                 }
                 Ok(super::PreparedRun::Function(prepared_function)) => {
                     let requirements = prepared_function.requirements().cloned();
+                    let certification = prepared_function.certification();
                     let mut input = prepared_function.into_input();
                     if let (Some(parameter), Some(object)) =
                         (population_parameters.get(&index), object.as_ref())
@@ -430,6 +432,7 @@ pub(super) fn run_bytes(
                         source: input.source.clone(),
                         function: input.call.function.clone(),
                         requirements: requirements.clone(),
+                        certification,
                         packages: input.packages.clone(),
                     });
                     ItemExecution::Batch {
@@ -579,6 +582,7 @@ pub(super) fn run_bytes(
                                     &selection,
                                     &call_output.packages,
                                     settle,
+                                    call_output.certification,
                                 )?)
                             }
                             (None, None) => None,

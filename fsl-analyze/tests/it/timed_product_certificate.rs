@@ -183,7 +183,7 @@ fn request<'a>(world: &'a World, claim: &str) -> ProductRequest<'a> {
 fn settle(world: &World, claim: &str) -> AnalyzeRecord {
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request(world, claim));
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
 }
 
 fn settle_tampered(
@@ -194,7 +194,7 @@ fn settle_tampered(
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item =
         exact_probabilistic_item_tampered(RequestIndex::new(0), request(world, claim), tamper);
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
 }
 
 /// The exact value of a `proved` record.
@@ -578,28 +578,106 @@ fn fair_expected_elapsed_certifies_both_extrema() {
     }
 }
 
-/// FR-204-AC-24: workload expected elapsed time is not decided, an infinite
-/// one included.
+/// A send that sets `late` and a toggle that sets `retried`, each disabling
+/// the other, both drawing their delay: under `One` (weight 1 each) the one
+/// that draws the lower delay fires, and a tie is ordered by the weights.
+fn race(toggle_delay: u32) -> World {
+    let declarations = format!(
+        "pre Send using v on M::Call::send {{ not self.late and not self.retried }}\n\
+         post Sent using v on M::Call::send {{ self.late }}\n\
+         pre Give using v on M::Call::toggle {{ not self.late and not self.retried }}\n\
+         post Gave using v on M::Call::toggle {{ self.retried }}\n\
+         delay M::Call::send ~ discrete {{ 1 ms: 1 }};\n\
+         delay M::Call::toggle ~ discrete {{ {toggle_delay} ms: 1 }};\n\
+         workload One on M {{ weight Call::send = 1; weight Call::toggle = 1; }}\n\
+         time invariant Deadline when {{ not self.late and not self.retried }} {{ self.x <= 2 ms }}\n\
+         probabilistic MeanTime using inf on M over (c: M::Call) under One on origin \
+         {{ expected elapsed until holds(c.late) >= 3 ms }}\n"
+    );
+    timed_world::world(
+        &timed_world::document(&["x"], &[("send", &["late"]), ("toggle", &["retried"])]),
+        PROFILES,
+        &format!("{}{declarations}", timed_world::DENSE),
+    )
+}
+
+fn is_certified_infinite(world: &World, claim: &str) -> Value {
+    let record = settle(world, claim);
+    assert!(
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                certification: Certification::Certified,
+            })
+        ),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
+    let doc = document(&record);
+    assert_eq!(doc["objective"]["timed"]["form"], "expected-elapsed");
+    assert_eq!(doc["objective"]["optimization"], "workload");
+    assert_eq!(doc["values"], json!([]));
+    assert_eq!(doc["ranking"], json!([]));
+    assert!(matches!(
+        check(world, claim, &doc),
+        Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))
+    ));
+    doc
+}
+
+/// FR-204-AC-24, over `Retx`: no scheduler reaches `false`, so the workload
+/// does not either; the proof is certified, and a row added is rejected.
 #[trace("TC-639", "FR-204-AC-24")]
+#[trace("TC-2490", "FR-921-AC-7")]
 #[test]
-fn workload_mean_time_is_not_proved_when_infinite() {
-    let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under One on origin { expected elapsed until holds(false) >= 3 ms }\n";
+fn workload_infinite_mean_time_is_certified() {
     let world = retx(
         GUARD,
         true,
         "workload One on M { weight Call::send = 1; }\n",
-        claims,
+        "probabilistic MeanTime using inf on M over (c: M::Call) under One on origin { expected elapsed until holds(false) >= 3 ms }\n",
     );
-    let record = settle(&world, "MeanTime");
+    let mut doc = is_certified_infinite(&world, "MeanTime");
+    assert_eq!(doc["objective"]["targets"], json!([]));
+    let key = doc["identity"].clone();
+    doc["values"] = json!([{"state": key, "value": {"numerator": "3", "denominator": "1"}}]);
+    assert!(!matches!(
+        check(&world, "MeanTime", &doc),
+        Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))
+    ));
+}
+
+/// FR-204-AC-24: a scheduler could always pick `send`, so only the workload
+/// makes the expected time infinite: both draw 1 ms, and `toggle` goes first
+/// with probability 1/2, after which `late` never holds and no clock bound is
+/// left, so the checker's delay search must end at that state. With `toggle`
+/// drawing 2 ms, `send` fires first on every run at 1 ms, so the same
+/// document claims an infinity the checker's workload graph denies.
+#[trace("TC-639", "FR-204-AC-24")]
+#[trace("TC-2490", "FR-921-AC-7")]
+#[test]
+fn a_workload_alone_makes_a_mean_time_infinite() {
+    let tie = race(1);
+    let doc = is_certified_infinite(&tie, "MeanTime");
+    assert_eq!(
+        doc["objective"]["targets"]
+            .as_array()
+            .expect("targets")
+            .len(),
+        1
+    );
+
+    let sure = race(2);
+    assert_eq!(
+        rejected_rule(&sure, "MeanTime", &doc),
+        ProbabilityCertificateRule::Malformed
+    );
+    let record = settle(&sure, "MeanTime");
     let Settlement::Disposed(disposed) = &record.settlement else {
-        panic!("expected a disposition: {record:#?}");
+        panic!("a finite workload expected time is not certified: {record:#?}");
     };
     assert_eq!(disposed.kind, DispositionKind::Unsupported);
-    let diagnostic = disposed.diagnostic.as_ref().expect("a diagnostic");
-    assert_eq!(
-        diagnostic.code.to_string(),
-        "unsupported_construct/not-yet-implemented"
-    );
 }
 
 const NEVER: &str = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
@@ -900,7 +978,7 @@ fn settle_witness_tampered(
         request(world, claim),
         tamper,
     );
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
 }
 
 /// FR-923-AC-1: a forged path into a decided state the chosen choice has no
@@ -1532,7 +1610,7 @@ fn timed_dense_working_bytes_limit_settles_incomplete() {
         let mut request = request(world, claim);
         request.limits.document.storage_bytes = 1;
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
-        let records = analyze_items(&engines, vec![item], &Cancel::new());
+        let records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
         let terminal = records[0].terminal().unwrap_or_else(|| {
             panic!(
                 "{claim} must settle incomplete: {:?}",
@@ -1930,7 +2008,7 @@ fn settle_with_rational_bits(world: &World, claim: &str, bits: u64) -> AnalyzeRe
     let mut request = request(world, claim);
     request.limits.max_rational_bits = bits;
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
 }
 
 /// FR-203-AC-1: a timed deadline whose exact value outgrows
@@ -2082,7 +2160,7 @@ fn cancelling_a_timed_refutation_at_any_poll_settles_cancelled_or_refuted() {
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let run = |cancel: &Cancel| {
         let item = exact_probabilistic_item(RequestIndex::new(0), request(&world, "Strict"));
-        analyze_items(&engines, vec![item], cancel).remove(0)
+        analyze_items(&engines, vec![item], cancel, fsl_replay::CertificationPolicy::AdmitAny).remove(0)
     };
     let live = Cancel::new();
     let _counting = live.count_charges();
@@ -2133,7 +2211,7 @@ fn a_timed_refutation_settles_refuted_or_incomplete_at_every_storage_budget() {
         let mut request = request(&world, "Strict");
         request.limits.document.storage_bytes = bytes;
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
         let value = record.terminal().expect("a terminal record").value();
         assert!(
             matches!(value, TerminalValue::Refuted | TerminalValue::Incomplete(_)),

@@ -71,7 +71,7 @@ fn an_en5_item_over_no_instances_is_unsupported_without_proof_or_counterexample(
         RequestIndex::new(0),
         world.request("Likely", ModelCheckLimits::default()),
     );
-    let records = analyze_items(&engines, vec![item], &Cancel::new());
+    let records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
     let [record] = records.as_slice() else {
         panic!("the empty binding must still settle exactly one item: {records:?}");
     };

@@ -1628,6 +1628,7 @@ fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
             &Engines::fsl().unwrap(),
             vec![projection_item(RequestIndex::new(0), &admitted, request)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let artifact = records[0].protocol_analysis.as_ref().unwrap();
         let ProtocolAnalysisArtifact::Projection(result) = artifact.as_ref() else {

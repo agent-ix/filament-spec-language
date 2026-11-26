@@ -8,7 +8,9 @@ use fsl_analyze::analyze::document::{
     SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision};
+use fsl_replay::CertificationPolicy;
 use fsl_semantics::model::observation::DocumentProvision;
+use ix_trace_rs::implements;
 
 use super::requirements::Requirements;
 use super::{Result, RunCause};
@@ -32,12 +34,14 @@ pub(super) struct Settle<'a> {
 /// [`RunCause::UnknownRequirementClaim`] for an `items` entry whose claim
 /// names no item of the call, before any item is negotiated; the analyze
 /// settlement's refusal or fault otherwise.
+#[implements("FR-1052-AC-10")]
 pub(super) fn settle_call(
     checked: &fsl_replay::spine::CheckedUnit,
     members: &fsl_replay::CallRequirements,
     selection: &Requirements,
     packages: &fsl_semantics::model::intake::PackageInput,
     settle: &Settle<'_>,
+    certification: CertificationPolicy,
 ) -> Result<SettledRun> {
     let claims = members
         .members()
@@ -93,7 +97,7 @@ pub(super) fn settle_call(
         items: resolved,
         engines: settle.engines,
         limits: AnalyzeLimits::unbounded(),
-        certification: fsl_analyze::analyze::CertificationPolicy::AdmitAny,
+        certification,
     };
     settle_run(run, settle.negotiate, settle.cancel).map_err(|error| match error {
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),

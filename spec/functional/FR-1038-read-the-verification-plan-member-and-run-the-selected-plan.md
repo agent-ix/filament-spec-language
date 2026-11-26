@@ -96,6 +96,9 @@ coordinator when `execute` holds, and write FSpec FR-824's
   on a selected plan with no step that consumes it, `unknown-member` at its
   pointer.
 
+- The request member `require_certified`, a JSON boolean, absent meaning
+  `false`, sets the `certification` the run's steps settle under ([FR-1052](FR-1052-settle-a-proof-that-is-not-certified-inconclusive-when-the-request-requires-certified-proofs.md)).
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

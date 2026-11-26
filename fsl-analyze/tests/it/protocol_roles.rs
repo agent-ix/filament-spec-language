@@ -1945,6 +1945,7 @@ fn a_protocol_derived_items_max_live_instances_reaches_the_run_and_the_check() {
             &Engines::fsl().expect("the layer-A manifests register"),
             vec![derived_protocol_item(derived, obligation, item).expect("the run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     };

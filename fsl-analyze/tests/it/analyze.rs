@@ -83,6 +83,7 @@ fn a_broken_item_settles_refuted_and_its_counterexample_replays() {
         &en1(),
         vec![derived_deadlock(case.model_item())],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     let terminal = record.terminal().expect("a terminal record");
@@ -136,6 +137,7 @@ fn three_items_give_three_records_the_first_unsupported_naming_its_kind() {
             .expect("a clause run"),
         ],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(
         records.iter().map(|r| r.request_index).collect::<Vec<_>>(),
@@ -300,6 +302,7 @@ fn a_rejected_certificate_is_inconclusive_and_an_accepted_one_certified() {
             &en1(),
             vec![model_item(index(0), item).expect("a clause run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         ))
     };
     let accepted = run(
@@ -355,6 +358,7 @@ fn a_proof_with_no_core_checker_settles_proved_uncertified_naming_its_engine() {
             &en1(),
             vec![model_item(index(0), item).expect("a clause run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         ))
     };
     let reduced = run(true);
@@ -397,6 +401,7 @@ fn a_counterexample_settles_refuted_only_when_replay_reproduces_it() {
             &en1(),
             vec![derived_deadlock(item)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )))
     };
 
@@ -433,6 +438,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
         )
         .expect("a clause run")],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(
         value(&record),
@@ -455,6 +461,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
         )
         .expect("a clause run")],
         &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(
         value(&records[0]),
@@ -536,6 +543,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
         &en1(),
         vec![derived_deadlock(item)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     record
@@ -598,6 +606,7 @@ fn an_undefined_step_evaluation_settles_refuted_with_its_successor_and_transitio
         &en1(),
         vec![derived_deadlock(case.model_item())],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     let counterexample = record

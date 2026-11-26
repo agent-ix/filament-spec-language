@@ -1131,7 +1131,7 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
         .expect("one engine");
     let settled = |item: fsl_analyze::analyze::ModelItem<'_>| {
         let item = derived_model_item(derived, obligation, item).expect("the join admits");
-        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+        let mut records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
         format!("{:?}", records.remove(0))
     };
     let from_source = settled(source_item());

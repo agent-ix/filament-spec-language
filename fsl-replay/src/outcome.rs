@@ -919,7 +919,7 @@ impl ItemCause {
                 basis,
                 certification,
             }) => {
-                item.proof_basis = Some(basis.clone());
+                item.proof_basis = basis.clone();
                 item.certification = Some(*certification);
             }
             ReportedInconclusiveCause::Cause(

@@ -78,7 +78,7 @@ pub(super) fn exact(world: &World, claim: &str) -> Answer {
         limits: ExactProbLimits::default(),
     };
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     let verdict = match &record.settlement {
         Settlement::Disposed(disposed) => match disposed.kind {
             DispositionKind::RequiresBound => Verdict::Declined("requires-bound".to_owned()),

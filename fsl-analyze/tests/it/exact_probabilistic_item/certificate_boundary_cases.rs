@@ -49,7 +49,7 @@ fn changing_the_one_loss_value_rejects_at_the_first_failed_bellman_state() {
             row.value = ratio(9, 10);
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
     assert_eq!(
         record.terminal().expect("terminal").value(),
         &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {

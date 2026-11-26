@@ -1252,6 +1252,7 @@ fn a_driver_run_settles_each_kind_under_each_label() {
         &Engines::fsl().expect("they register"),
         items,
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(records.len(), 13);
 
@@ -1432,6 +1433,7 @@ fn a_declined_item_writes_no_protocol_analysis_record() {
             missing,
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert!(matches!(
         records[0].terminal().map(|record| record.value()),
@@ -1654,6 +1656,7 @@ fn a_symbolic_capacity_premise_carries_the_bound_value_in_the_key() {
                 bound(capacities),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let terminal = records[0].terminal().expect("a terminal record");
         assert!(matches!(terminal.value(), TerminalValue::Declined { .. }));
@@ -1800,6 +1803,7 @@ fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
             realizability_item(RequestIndex::new(1), &loss.admitted, loss.request(64)),
         ],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let expected_keys: Vec<_> = records
         .iter()
@@ -2069,6 +2073,7 @@ fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
             other_root,
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (other_terminals, mut other_found) = split_records(records, &hidden.checked);
     assert_eq!(other_found.len(), 1, "the second genuine analysis refutes");

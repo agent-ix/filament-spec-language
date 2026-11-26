@@ -65,6 +65,7 @@ fn run(world: &World, limits: ClauseLimits) -> fsl_analyze::analyze::AnalyzeReco
         &engines,
         vec![subject.item(RequestIndex::new(0))],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(records.len(), 1);
     records.remove(0)
@@ -98,6 +99,7 @@ fn a_clause_a_transition_breaks_settles_refuted_with_a_replayed_counterexample()
             &engines,
             vec![subject(&world, ClauseLimits::default()).item(RequestIndex::new(0))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         fsl_analyze::analyze::split_records(records, &world.package).1
     };
@@ -180,6 +182,7 @@ fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefine
             &engines,
             vec![subject.item(RequestIndex::new(0))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         fsl_analyze::analyze::split_records(records, &world.package)
     };
@@ -242,6 +245,7 @@ fn an_unspelled_counterexample_fails_its_item_and_not_the_document() {
             &engines,
             vec![subject(world, ClauseLimits::default()).item(RequestIndex::new(0))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
     };
     // The real record, its counterexample not handed on.
@@ -436,6 +440,7 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
         &Engines::fsl().expect("the engines register"),
         vec![subject.item(RequestIndex::new(0))],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(records.len(), 1);
     assert_eq!(
@@ -581,6 +586,7 @@ fn a_package_route_refutation_replays_from_the_handoff_as_the_source_refutation(
         &engines,
         vec![subject.item(RequestIndex::new(0))],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let package = records.remove(0);
     assert_eq!(format!("{package:?}"), format!("{source:?}"));
@@ -681,6 +687,7 @@ fn package_fairness_matches_source_and_capture_remains_typed_pending() {
             &engines,
             vec![subject.item(RequestIndex::new(0))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         assert_eq!(records.len(), 1);
         let package = records.remove(0);
@@ -767,6 +774,7 @@ fn a_failed_replay_emission_settles_failed_with_the_package_emission_fault() {
         &engines,
         vec![subject.item(RequestIndex::new(0))],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().expect("a terminal record");
     assert_eq!(terminal.value(), &TerminalValue::Failed, "{terminal:?}");
@@ -1038,7 +1046,7 @@ fn closure_round_trip(formula: &str, stem: usize) {
         engines
             .with(Engine::model_check().expect("EN-1's own manifest is admitted"))
             .expect("one engine");
-        analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+        analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
     }
 
     let source_subject = subject(&world, ClauseLimits::default()).configured(temporal());
