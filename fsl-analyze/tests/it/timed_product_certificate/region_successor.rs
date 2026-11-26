@@ -4,6 +4,7 @@
 
 use fsl_analyze::analyze::AnalyzeRecord;
 use fsl_replay::{ProofBasis, TerminalValue};
+use ix_trace_rs::trace;
 
 use super::{PROFILES, settle};
 use crate::timed_world::{self, World};
@@ -70,6 +71,7 @@ fn two_clocks(invariant: &str) -> World {
 /// holding such a `third` lies between the instant `x` leaves zero and the
 /// instant `y` passes 1 ms.
 #[test]
+#[trace("TC-2491", "FR-922-AC-4")]
 fn a_delay_reaches_the_region_between_two_clocks_integer_crossings() {
     let world = two_clocks("time invariant Bounded when { self.phase < 2 } { self.y <= 3 ms }\n");
     assert_eq!(observed(&world), all_refuted());
@@ -88,7 +90,9 @@ fn forced_third(third: &str, phase_one: &str) -> World {
          time invariant Zeroth when {{ self.phase = 0 }} {{ self.y < 1 ms }}\n\
          time invariant Oneth when {{ self.phase = 1 }} {{ {phase_one} }}\n\
          probabilistic Reached using ev on M over (c: M::Call) under every scheduler on origin \
-         {{ probability >= 0.5 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n",
+         {{ probability >= 0.5 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n\
+         probabilistic Until using ev on M over (c: M::Call) under every scheduler on origin \
+         {{ probability >= 0.5 [ holds(not c.late) until[0 ms, 4 ms] holds(c.late) ] }}\n",
         timed_world::DENSE,
     );
     timed_world::world(
@@ -101,10 +105,20 @@ fn forced_third(third: &str, phase_one: &str) -> World {
     )
 }
 
+/// The until form walks the same delays: it holds with value 1 on the same
+/// subject, where the skip refuted it.
+#[test]
+#[trace("TC-2491", "FR-922-AC-4")]
+fn an_until_over_the_skipped_region_is_proved() {
+    let world = forced_third("self.x < 1 ms", "self.x < 1 ms");
+    assert_eq!(outcome(&settle(&world, "Until")), "proved 1/1");
+}
+
 /// A strict invariant: the walk that skips a region lands on `x = 1 ms`, which
 /// the invariant excludes, so the delay itself is lost and the state reads as
 /// time-locked.
 #[test]
+#[trace("TC-2491", "FR-922-AC-4")]
 fn a_strict_invariant_does_not_turn_the_skip_into_a_time_lock() {
     let world = forced_third("self.x < 1 ms", "self.x < 1 ms");
     assert_eq!(outcome(&settle(&world, "Reached")), "proved 1/1");
@@ -113,6 +127,7 @@ fn a_strict_invariant_does_not_turn_the_skip_into_a_time_lock() {
 /// A closed invariant admits the point the walk lands on, so `third` at
 /// `x <= 1 ms` is still reached.
 #[test]
+#[trace("TC-2491", "FR-922-AC-4")]
 fn a_closed_invariant_keeps_its_last_instant() {
     let world = forced_third("self.x <= 1 ms", "self.x <= 1 ms");
     assert_eq!(outcome(&settle(&world, "Reached")), "proved 1/1");

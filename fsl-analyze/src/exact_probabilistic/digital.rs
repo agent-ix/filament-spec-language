@@ -2007,6 +2007,7 @@ impl<'c> Builder<'_, '_, 'c> {
     ///
     /// A mean-time claim keys concrete corner values and a nested formula
     /// keys concrete monitor times, so neither representative is moved.
+    #[implements("FR-922-AC-4")]
     fn packed_representative(&self, state: &DState) -> Step<DState> {
         let parts = self.subdivisions;
         if parts == 1 || matches!(self.form, Form::MeanTime { .. } | Form::NestedDeadline(_)) {
@@ -2103,6 +2104,7 @@ impl<'c> Builder<'_, '_, 'c> {
     /// The region route's delay, taken to the time successor (FR-922): the
     /// first region the walk reaches that differs from the one `state` is in,
     /// both read under the tail `tail`.
+    #[implements("FR-922-AC-4")]
     fn successor_delay(
         &mut self,
         at: usize,
