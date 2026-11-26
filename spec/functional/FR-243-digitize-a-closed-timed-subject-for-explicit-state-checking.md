@@ -93,18 +93,16 @@ decided on the digital-clock route with an exact value.
   breaks one of (a) to (e) is named, with the first rule in (a) to (e) order
   that any occurrence with that span breaks; (c) is broken by every counted
   occurrence after the first in that order. When (a) to (e) hold and (f) does
-  not, the first clock constraint of the subject in source order is named,
-  with rule (f).
+  not, the first `fair` constraint the claim declares, in source order, is
+  named, with rule (f).
 - When EN-1's digital-clock route declines a claim that is not digitisable or
   a state-graph form, it SHALL carry the diagnostic member `not_digitisable`,
   an object `{rule, span: {start, end}}` (FSpec FR-272): `span` is the byte
-  range of the named part, or of the claim's declaration for a state-graph
-  form, and `rule` is one of the spellings below. For rule (f) the range is
-  in the subject's source unit, the one that declares the named clock
-  constraint; otherwise it is in the claim's source unit. No other decline
-  carries the member. A strict interval is declined by the strict-constraint
-  rule above before (a) is read, and that decline carries no
-  `not_digitisable`.
+  range, in the claim's source unit, of the named part, or of the claim's
+  declaration for a state-graph form, and `rule` is one of the spellings
+  below. No other decline carries the member. A strict interval is declined
+  by the strict-constraint rule above before (a) is read, and that decline
+  carries no `not_digitisable`.
 - Of the state-graph forms (FR-852), EN-1's digital-clock route SHALL decide
   `possible` and SHALL decline `always possible` and `unique path`
   `invalid-input` naming the form: each quantifies over every reachable
@@ -176,7 +174,7 @@ preserve.
 | FR-243-AC-4 | `NoLateReply` over the all-closed `Rpc` with `T = 4 ms` and `options.method` `digital-clocks` routes to EN-1's explicit-state search over the integer-clock reading and settles `proved`, basis `exhaustive`, as the zone route proves it; the same item over ADR-026 §9's strict-constraint retry model settles `declined` `invalid-input` with `settled_by` `result` and `backend` `en-1`, and no search runs; with `options.method` absent it negotiates to EN-6. | Test (TC-2290) |
 | FR-243-AC-5 | Over the two-step closed subject (`first`, taken by `x <= 1 ms`, resets `x`; `second` is taken at exactly `x = 2 ms`), `eventually[1 ms, 2 ms] holds(c.phase >= 0)`, `holds(c.phase >= 0) until[1 ms, 2 ms] holds(c.phase >= 0)`, `eventually[0 ms, 0 ms] eventually[1 ms, 2 ms] holds(c.phase >= 0)` and `eventually (holds(c.phase = 0) and eventually[1 ms, 2 ms] holds(c.phase >= 0))` are each refuted by EN-6 and declined `invalid-input` by EN-1 with `not_digitisable` naming the rule and the failing operator's span, never `proved`; `eventually[0 ms, 2 ms] holds(c.phase >= 1)` and `always (holds(c.phase = 1) implies eventually[0 ms, 2 ms] holds(c.phase = 2))` are proved by both. | Test (TC-2290) |
 | FR-243-AC-6 | An `always possible` and a `unique path` item with `options.method` `digital-clocks` are declined `invalid-input` with `not_digitisable` naming the form, with `backend` `en-1`, and no search runs; a `possible` item is decided. | Test (TC-2412) |
-| FR-243-AC-7 | Over the two-step closed subject, a temporal claim that declares a fairness constraint is declined `invalid-input` by EN-1 with `not_digitisable` rule `fairness-over-clock-constraint` and the span of a clock constraint of the subject, and no search runs. | Test (TC-2290) |
+| FR-243-AC-7 | Over the two-step closed subject, a temporal claim that declares a fairness constraint is declined `invalid-input` by EN-1 with `not_digitisable` rule `fairness-over-clock-constraint` and the span of the claim's first `fair` constraint in source order, and no search runs. | Test (TC-2290) |
 
 ## Dependencies
 

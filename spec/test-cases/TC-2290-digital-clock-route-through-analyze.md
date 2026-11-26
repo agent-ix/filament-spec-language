@@ -34,7 +34,7 @@ and only position 0 lies at time 0.
 2. Analyze the same item over ADR-026 §9's strict-constraint retry model.
 3. Analyze `eventually[0 ms, 2 ms) holds(not c.late)` over the closed `Rpc` with `options.method` `digital-clocks`.
 4. Over the two-step subject, analyze each claim of the table below twice: with `options.method` absent and with `digital-clocks`. `P` is `holds(c.phase >= 0)` and `F` is `holds(c.phase < 0)`.
-5. Over the two-step subject, analyze `eventually[0 ms, 2 ms] holds(c.phase >= 1)` with a fairness constraint on `second`, with `digital-clocks`.
+5. Over the two-step subject, analyze `eventually[0 ms, 2 ms] holds(c.phase >= 1)` with a fairness constraint on `second` followed by one on `first`, with `digital-clocks`.
 
 | Claim | Dense value, by hand | EN-6 | EN-1 |
 |-------|----------------------|------|------|
@@ -64,7 +64,7 @@ and only position 0 lies at time 0.
 - Step 1: `proved`, basis `exhaustive`, backend `en-1`, the same verdict as the zone route.
 - Steps 2 and 3: `declined` `invalid-input` naming the strict constraint or interval; no engine runs.
 - Step 4: the table's verdicts; each EN-1 decline is `declined` `invalid-input`, `invalid_runtime_input`/`invalid-value`, with `backend` `en-1`, and no search runs. Each decline carries `not_digitisable`: `rule` is the FR-243 spelling of the rule the EN-1 column lists, (c) `second-bounded-operator` and (d) `two-sided-interval`, and `span` is the byte range in the unit source of the occurrence of the operator the column names.
-- Step 5: declined the same way, `not_digitisable` `rule` `fairness-over-clock-constraint` and `span` that of the subject's first clock constraint in source order.
+- Step 5: declined the same way, `not_digitisable` `rule` `fairness-over-clock-constraint` and `span` that of the claim's `fair` constraint on `second`, the first of the two in source order.
 - Assertions compare typed members and the exit code, never message text.
 
 Test: `fsl-analyze/tests/it/analyze_reach_rulings.rs`
