@@ -60,7 +60,7 @@ pub struct SourceMap {
     region_groups: Vec<RegionGroup>,
     layout: Layout,
     #[cfg(test)]
-    region_lookup_steps: std::cell::Cell<usize>,
+    region_lookup_steps: core::cell::Cell<usize>,
     #[cfg(test)]
     region_index_build_steps: usize,
 }
@@ -220,7 +220,7 @@ impl SourceMap {
             region_groups,
             layout,
             #[cfg(test)]
-            region_lookup_steps: std::cell::Cell::new(0),
+            region_lookup_steps: core::cell::Cell::new(0),
             #[cfg(test)]
             region_index_build_steps,
         })

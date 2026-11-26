@@ -2,6 +2,7 @@
 //! Extracted source executes against admitted observations; family requirements
 //! arise from checked applications rather than the run's capability request.
 
+#[cfg(feature = "quire-extraction")]
 use crate::config_version_spine::{spine, Case};
 use filament_exact::Cancel;
 use fsl_command::command::{self, RunLimits};
@@ -18,6 +19,7 @@ fn source(file: &str, identity: &str, document: &str) -> Value {
         "document": document, "formal_revision": 1})
 }
 
+#[cfg(feature = "quire-extraction")]
 fn body() -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -30,6 +32,7 @@ fn body() -> String {
     )
 }
 
+#[cfg(feature = "quire-extraction")]
 fn request() -> Value {
     let program = json!({
             "source": source("spec.md", "ix://agent-ix/native-workflow/original", "Original"),
@@ -62,6 +65,7 @@ fn run(path: &Path) -> command::RunResult {
         .unwrap_or_else(|error| panic!("{}", error.value().expect("error document")))
 }
 
+#[cfg(feature = "quire-extraction")]
 fn object_keys(value: &Value) -> Vec<&str> {
     value
         .as_object()
@@ -71,11 +75,13 @@ fn object_keys(value: &Value) -> Vec<&str> {
         .collect()
 }
 
+#[cfg(feature = "quire-extraction")]
 fn markdown(body: &str, newline: &str) -> String {
     format!("# Original\n\n## Invariants\n\n### parent_order\n```ix:native\n{body}```\n")
         .replace('\n', newline)
 }
 
+#[cfg(feature = "quire-extraction")]
 #[test]
 #[trace("FR-031-AC-4")]
 fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenance() {
@@ -205,6 +211,7 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
 
 /// TC-742: command output uses the strict `/2` reader's shape and keeps
 /// codegen artifact identities out of the FSL result document.
+#[cfg(feature = "quire-extraction")]
 #[test]
 #[trace("TC-742")]
 fn command_clause_result_v2_omits_codegen_artifact_members() {
@@ -268,6 +275,7 @@ fn command_clause_result_v2_omits_codegen_artifact_members() {
     );
 }
 
+#[cfg(feature = "quire-extraction")]
 #[test]
 #[trace("TC-109")]
 fn extracted_bodies_refuse_missing_models_and_absent_declarations() {
@@ -295,6 +303,7 @@ fn extracted_bodies_refuse_missing_models_and_absent_declarations() {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 #[test]
 #[trace("FR-031-AC-2")]
 fn an_absent_extracted_selection_and_a_formal_fence_never_become_native_truth() {
@@ -342,6 +351,7 @@ fn an_absent_extracted_selection_and_a_formal_fence_never_become_native_truth() 
     assert!(document["disposition"]["truth"].is_null());
 }
 
+#[cfg(feature = "quire-extraction")]
 #[test]
 #[trace("FR-031-AC-9", "TC-109")]
 fn an_extracted_body_with_two_clauses_refuses_its_actual_count() {
@@ -378,6 +388,7 @@ fn an_extracted_body_with_two_clauses_refuses_its_actual_count() {
     assert!(document["disposition"]["truth"].is_null());
 }
 
+#[cfg(feature = "quire-extraction")]
 #[test]
 #[trace("FR-031-AC-9", "TC-109")]
 fn an_extracted_body_with_a_syntax_error_refuses_at_the_source() {
