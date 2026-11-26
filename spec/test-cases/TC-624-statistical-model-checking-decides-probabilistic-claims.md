@@ -12,11 +12,11 @@ relationships:
 
 Verify EN-4's Okamoto and SPRT decisions on `P95`, its Clopper–Pearson decisions and interval on the `N = 231` stub, the exact sample counts and thresholds, Bonferroni and symmetry, activation, and the stops and refusals.
 
-Scope: FR-189-AC-1 to FR-189-AC-5, FR-189-AC-7 to FR-189-AC-12, FR-189-AC-13 to FR-189-AC-16.
+Scope: FR-189-AC-1 to FR-189-AC-5, FR-189-AC-7 to FR-189-AC-12, FR-189-AC-13 to FR-189-AC-20.
 
 ## Test Procedure
 
-Fixtures: FR-189-AC-8's `ClaimSampler` stubs with one test and with two, `BehaviourSampler` stubs giving FR-189-AC-10's (decision, estimate) pairs, an empty-subject request, the activation-probability-0 variant of FR-189-AC-4 with `max_draws` 1,000; `Service` and `P95` at `5 ms` and `2 ms`; a two-initial-state variant; a two-server variant with an admitted symmetry declaration, run with a workload that weights each operation equally and with one whose operation weights differ from one another (FR-189-AC-3); `BehaviourSampler` stubs giving FR-189-AC-15's samples, `Quantity<ms>` `M` variants for whole and fractional magnitudes, S3 threshold/support refusal variants, and a quantile test whose stub returns no counted sample; the activation variant and the two-point `M` variant of FR-189-AC-4; `NoFault`; the `Health` variants; a `mean of` claim; the `Wide` model of FR-189-AC-7. Seed 7 throughout.
+Fixtures: FR-189-AC-8's `ClaimSampler` stubs with one test and with two, `BehaviourSampler` stubs giving FR-189-AC-10's (decision, estimate) pairs, a request with an empty `initial` list, the `Coin` requests of FR-189-AC-17, the activation-probability-0 variant of FR-189-AC-4 with `max_draws` 1,000; `Service` and `P95` at `5 ms` and `2 ms`; a two-initial-state variant; a two-server variant with an admitted symmetry declaration, run with a workload that weights each operation equally and with one whose operation weights differ from one another (FR-189-AC-3); `BehaviourSampler` stubs giving FR-189-AC-15's samples, `Quantity<ms>` `M` variants for whole and fractional magnitudes, S3 threshold/support refusal variants, and a quantile test whose stub returns no counted sample; the activation variant and the two-point `M` variant of FR-189-AC-4; `NoFault`; the `Health` variants; a `mean of` claim; the `Wide` model of FR-189-AC-7. Seed 7 throughout.
 
 1. `P95` at `5 ms` and `2 ms` with Okamoto, then with SPRT.
 2. Compute Okamoto's `N` for `m = 1` and `m = 2`, and the SPRT thresholds; run step 1's first request twice.
@@ -27,12 +27,21 @@ Fixtures: FR-189-AC-8's `ClaimSampler` stubs with one test and with two, `Behavi
 7. Run FR-189-AC-8's one-test and two-test requests.
 8. Read the estimate and interval of FR-189-AC-9's tests: Okamoto and the mean of a fraction ended by an undefined second sample, a decided Okamoto test, an SPRT test, and a `LongRun` test ended before its first positive-weight cycle.
 9. Select the least favourable test for each case of FR-189-AC-10.
-10. Run the empty-subject request (FR-189-AC-11) and the activation-probability-0 variant (FR-189-AC-12).
+10. Run the empty-`initial` request (FR-189-AC-11) and the activation-probability-0 variant (FR-189-AC-12).
 
 11. Give a mean-of-fraction claim event samples from a stub: 3 holding of 4 (FR-189-AC-13).
 12. Run a two-test regenerative request and a two-test Okamoto request, each at `max_draws` `u64::MAX` (FR-189-AC-14).
 13. Give a quantile claim samples from a stub that ends the test at exactly 4 counted samples: 1, 3, 2, 5 at `q = 1/2`; 1, 3, 2 and a censored sample at `q = 9/10` and at `q = 1/2`; those samples as `1 ms`, `3 ms`, `2 ms`, `5 ms` for `M: Quantity<ms>` at threshold `3 ms`, `q = 1/2`; and `1 ms`, `1.50 ms`, `2 ms`, `5 ms` at `q = 1/2`, then repeat with `rational(3, 2) ms` replacing `1.50 ms`. Also check threshold `0.005 s` normalizes to `5 ms`, a `1 s` support value for `Quantity<ms>` refuses `value-outside-type` before a sample, and a `5 m` threshold refuses `ill_typed`/`unit-mismatch` before a sample; finish with a quantile test whose stub returns no counted sample and the `P95` test (FR-189-AC-15).
 14. Give a `probability >= 9/10` claim (`α = β = 1/100`, `ι = 1/10`) `k` holding samples of 231 from a stub, at `k` = 231, 219, 218, 197, 196 and 184, under `ClopperPearson` and under `Okamoto`; read the interval at 219; request `ClopperPearson` for a mean-of-fraction claim and for a long-run fraction claim (FR-189-AC-16).
+15. Run the `Coin` claim with the universe `[k]` over one initial state that
+    holds no object, then over an empty `initial` list (FR-189-AC-17).
+16. Run it over an empty `initial` list with no universe for `coins`
+    (FR-189-AC-18).
+17. Run a claim over `Animal` over records typing `c` as `Animal` and `Dog`,
+    then with a third overlapping population's universe removed
+    (FR-189-AC-19).
+18. Run a claim under every scheduler over an empty `initial` list
+    (FR-189-AC-20).
 
 Tag the tests `#[trace("TC-624", "FR-189-AC-n")]`.
 
@@ -47,8 +56,12 @@ Tag the tests `#[trace("TC-624", "FR-189-AC-n")]`.
 - Step 7: the rejected test with `estimate` `None`, `undefined` naming test 0, trace 0, position 0, and the verdict's `estimate` `None`; the variant keeps test 0's Accepted result.
 - Step 8: the first sample's value as the estimate and no interval for the ended tests; an interval for the decided Okamoto test only; `None` for the `LongRun` test.
 - Step 9: the verdict's `estimate` and `interval` of the test AC-10 names for each case.
-- Step 10: `NoTest`, settled `inconclusive`, `no-initial-state`; `Stopped` `Limit{MaxDraws, 1000}` with 0 counted.
+- Step 10: `NoInitialState`, settled `inconclusive`, `no-initial-state`; `Stopped` `Limit{MaxDraws, 1000}` with 0 counted.
 - Step 11: estimate `3/4`, no refusal.
 - Step 12: the regenerative request runs; the Okamoto request is refused `TraceIndexRange`.
 - Step 13: `quantile` `Value(2)`; `Censored`; `Value(2)` interpreted in `ms` by the checked reward type with canonical rational magnitude `2/1`; `Value(3/2)` for both equivalent quantity inputs; the checked threshold normalized to `5 ms`; both unit/type refusals before sampling; absent for the no-sample test; absent for the `P95` test.
 - Step 14: under `ClopperPearson`, Accepted at 231 and 219, Undecided (`IndifferenceRegion`) at 218 and 197, Rejected at 196 and 184; under `Okamoto`, Accepted only at 231 and Rejected only at 184; at 219 the reported lower end is at most the exact lower end `0.90351472792271070929…` (exact ends truncated after 20 digits) and within `2^-64` of it, and the reported upper end is at least the exact upper end `0.97621175445884490995…` and within `2^-64` of it, with basis `ClopperPearson` and coverage `FiniteSample`; both fraction requests refuse `NotStatistical` with no sample drawn.
+- Step 15: `NoInstance`, settled `inconclusive`, `no-instance`, with no sample drawn; then `NoInitialState`.
+- Step 16: `RequiresBound` naming `coins`.
+- Step 17: refused `conflicting-identity` with no sample; then `RequiresBound`.
+- Step 18: `EveryScheduler`.
