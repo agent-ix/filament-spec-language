@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-253/FR-254: exact conditioning of timed delay laws over enabled windows.
 
-use filament_exact::{Integer, Rational};
+use filament_exact::{Integer, NonZeroInteger, Rational};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::DelayDistribution;
 use ix_trace_rs::implements;
@@ -26,6 +26,10 @@ pub enum TimedDelayRefusal {
         /// The refused exponent.
         q: u32,
     },
+    /// An exponential delay's rounding up to the `2^-q` grid left its
+    /// interval and the interval holds no multiple of `2^-q` (FSpec FR-420).
+    #[error("the delay interval holds no multiple of the delay grid")]
+    NoGridPoint,
     /// An exact-arithmetic invariant broke.
     #[error("internal fault: {0:?}")]
     Internal(InternalFault),
@@ -188,6 +192,48 @@ fn inside(delay: Rational, range: &DelayInterval, q: u32, unbounded: &Rational) 
     }
 }
 
+const GRID_DIVISOR: InternalFault = InternalFault::new("timed-delay", "nonzero-grid-divisor");
+
+/// `floor(value · 2^q)`, the index of the greatest multiple of `2^-q` that is
+/// at most `value`, and whether `value` is itself that multiple.
+fn grid_floor(value: &Rational, q: u32) -> Result<(Integer, bool), TimedDelayRefusal> {
+    let divisor = NonZeroInteger::try_from(value.denominator()).map_err(|_| GRID_DIVISOR)?;
+    let (index, remainder) = value
+        .numerator()
+        .shifted_left(u64::from(q))
+        .div_mod_floor(divisor);
+    Ok((index, remainder.is_zero()))
+}
+
+/// `delay` of an exponential law, which `inside` has moved into `range`,
+/// rounded up to a multiple of `2^-q`. A result outside `range` becomes the
+/// greatest multiple of `2^-q` inside it, and a range with none refuses
+/// (FSpec FR-420 "Delay from the grid value").
+#[implements("FSpec-FR-420-AC-17", "FSpec-FR-420-AC-18")]
+fn on_grid(delay: Rational, range: &DelayInterval, q: u32) -> Result<Rational, TimedDelayRefusal> {
+    let one = Integer::one();
+    let at = |index: &Integer| Rational::from_integer(index.clone()).divided_by_power_of_two(u64::from(q));
+    let (floor, exact) = grid_floor(&delay, q)?;
+    let up = if exact { floor } else { floor.add(&one) };
+    let rounded = at(&up);
+    let Some((upper, closed)) = range.upper() else {
+        return Ok(rounded);
+    };
+    if rounded < *upper || (rounded == *upper && closed) {
+        return Ok(rounded);
+    }
+    // The greatest multiple at or below the upper end, below it if excluded.
+    let (floor, exact) = grid_floor(upper, q)?;
+    let last = if exact && !closed { floor.sub(&one) } else { floor };
+    let point = at(&last);
+    let (lower, lower_closed) = range.lower();
+    if point > *lower || (point == *lower && lower_closed) {
+        Ok(point)
+    } else {
+        Err(TimedDelayRefusal::NoGridPoint)
+    }
+}
+
 fn draw_uniform(
     ranges: &[DelayInterval],
     at: ChoicePoint,
@@ -298,7 +344,7 @@ fn conditioned_exponential(
         if value <= zero {
             // Only a bounded interval's far end is left within the precision.
             let (upper, _) = range.upper().ok_or(TimedDelayRefusal::NoMass)?;
-            return Ok(inside(upper.clone(), range, q, &unbounded));
+            return on_grid(inside(upper.clone(), range, q, &unbounded), range, q);
         }
         if !exact {
             value = significant_floor(&value, SURVIVAL_BITS)?;
@@ -306,7 +352,7 @@ fn conditioned_exponential(
         let inverse = one.div(&value).ok_or(TimedDelayRefusal::NoMass)?;
         let elapsed = ln(&inverse)?.upper;
         let delay = first.add(&elapsed.div(rate).ok_or(TimedDelayRefusal::NoMass)?);
-        return Ok(inside(delay, range, q, &unbounded));
+        return on_grid(inside(delay, range, q, &unbounded), range, q);
     }
     Err(TimedDelayRefusal::NoMass)
 }
@@ -533,6 +579,73 @@ mod tests {
     }
 
     #[trace("FSpec-FR-420-AC-2")]
+    #[trace("FSpec-FR-420-AC-17")]
+    #[test]
+    fn an_exponential_delay_moves_inside_the_window_then_rounds_up_to_the_grid() {
+        // (2, inf) at rate 2, u = 0, q = 0: the raw delay 2 is excluded, so
+        // it moves to 2 + (1/2) / 2^(0+1) = 9/4, which rounds up to the
+        // multiple of 2^0, 3.
+        let rate = DelayDistribution::Exponential { rate: exact(2, 1) };
+        assert_eq!(draw_at_zero(&rate, from(2, false)), Ok(exact(3, 1)));
+        // (2, 4] at rate 1, q = 0: 2 + 2/2 = 3, already a multiple.
+        let rate = DelayDistribution::Exponential { rate: exact(1, 1) };
+        assert_eq!(
+            draw_at_zero(&rate, range((2, false), (4, true))),
+            Ok(exact(3, 1))
+        );
+        // A uniform delay is never rounded: (2, 5/2] at u = 0 is
+        // 2 + (1/2) / 2 = 9/4, off the grid of 2^0.
+        let open = DelayInterval::between((exact(2, 1), false), Some((exact(5, 2), true)));
+        assert_eq!(draw_at_zero(&DelayDistribution::Uniform, open), Ok(exact(9, 4)));
+    }
+
+    #[trace("FSpec-FR-420-AC-18")]
+    #[test]
+    fn an_exponential_delay_with_no_grid_point_in_its_interval_has_no_draw() {
+        // [1/2, 3/4] at q = 0: the raw delay 1/2 rounds up to 1, outside, and
+        // no multiple of 1 lies in the interval.
+        let narrow = DelayInterval::between((exact(1, 2), true), Some((exact(3, 4), true)));
+        let rate = DelayDistribution::Exponential { rate: exact(1, 1) };
+        assert_eq!(
+            draw_at_zero(&rate, narrow),
+            Err(TimedDelayRefusal::NoGridPoint)
+        );
+        // (2, 5/2] at q = 0: 2 + (1/2) / 2 = 9/4 rounds up to 3, outside,
+        // and 2 is excluded, so there is none.
+        let open = DelayInterval::between((exact(2, 1), false), Some((exact(5, 2), true)));
+        assert_eq!(
+            draw_at_zero(&rate, open),
+            Err(TimedDelayRefusal::NoGridPoint)
+        );
+    }
+
+    #[trace("FSpec-FR-420-AC-18")]
+    #[test]
+    fn an_exponential_delay_rounded_out_of_its_interval_is_the_last_grid_point_inside() {
+        // (1, 9/4] at rate 1, q = 1 (grid 1/2), u = 1 - 2^-20: the quantile
+        // is just below 9/4 and above 2, so it rounds up to 5/2, outside;
+        // the largest multiple of 1/2 in the interval is 2.
+        let window = DelayInterval::between((exact(1, 1), false), Some((exact(9, 4), true)));
+        let u = exact(1_048_575, 1_048_576);
+        assert_eq!(
+            conditioned_exponential(&exact(1, 1), &[window], &u, 1),
+            Ok(exact(2, 1))
+        );
+        // The same window with an open upper end 9/4 gives the same 2.
+        let window = DelayInterval::between((exact(1, 1), false), Some((exact(9, 4), false)));
+        assert_eq!(
+            conditioned_exponential(&exact(1, 1), &[window], &u, 1),
+            Ok(exact(2, 1))
+        );
+        // (1, 2) at q = 1: 2 is excluded, so the last multiple inside is 3/2
+        // when the quantile is above it.
+        let window = DelayInterval::between((exact(1, 1), false), Some((exact(2, 1), false)));
+        assert_eq!(
+            conditioned_exponential(&exact(1, 1), &[window], &u, 1),
+            Ok(exact(3, 2))
+        );
+    }
+
     #[test]
     fn an_exponential_law_has_no_mass_on_points() {
         assert_eq!(

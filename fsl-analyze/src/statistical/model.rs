@@ -1262,9 +1262,11 @@ struct TimedWalking {
     taken: u64,
 }
 
-/// The halt of a refused timed advance.
-fn timed_halt(stop: TimedSampleStop) -> SampleHalt {
-    match stop {
+/// The end of a refused timed advance: an undecided successor where an
+/// exponential delay's interval holds no grid multiple, else a halt.
+fn timed_halt(stop: TimedSampleStop) -> Ended {
+    Ended::Halt(match stop {
+        TimedSampleStop::Race(TimedRaceStop::NoGridDelay) => return Ended::Undecided,
         TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
             SampleHalt::NotStochastic { state, identity }
         }
@@ -1273,7 +1275,7 @@ fn timed_halt(stop: TimedSampleStop) -> SampleHalt {
             SampleHalt::Expansion(stop)
         }
         _ => broken(),
-    }
+    })
 }
 
 impl ModelWalk<'_, '_, '_> {
