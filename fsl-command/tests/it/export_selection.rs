@@ -4,7 +4,8 @@
 use std::path::Path;
 
 use fsl_command::command::{
-    export_with_limits_and_overrides, ExportSelection, RequestOverrides, RunLimits,
+    export_with_limits_and_overrides, replay_with_limits, run_with_limits, CommandLimits,
+    ExportSelection, RequestOverrides, RunLimits,
 };
 use fsl_replay::Operation;
 use ix_trace_rs::trace;
@@ -202,6 +203,48 @@ fn deeply_nested_export_inputs_refuse_without_aborting() {
             );
         }
     }
+}
+
+/// The run, replay and export entries read the whole request tree before they
+/// name a request's defects. A deep unknown member beside absent required
+/// members refuses at each, on a 2 MiB stack, from the everyday bar of 1,000
+/// levels up to 100,000.
+#[test]
+#[trace("FR-026-AC-3", "TC-104")]
+fn deeply_nested_requests_refuse_at_every_entry_on_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("request.json");
+            let write = |format: &str, depth: usize| {
+                let deep = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
+                let bytes =
+                    format!(r#"{{"format":"{format}","request":{{"models":[],"z":{deep}}}}}"#);
+                assert!(bytes.len() < RunLimits::default().request_bytes);
+                std::fs::write(&path, bytes).unwrap();
+            };
+            for depth in [1_000, 16_000, 100_000] {
+                write("native-run/1", depth);
+                let export = run(&path, ExportSelection::Ordinary, RunLimits::default());
+                assert_eq!(export["exit"], 20, "export at depth {depth}");
+                let error =
+                    run_with_limits(&path, RunLimits::default(), &crate::negotiation::Fr290)
+                        .err()
+                        .unwrap_or_else(|| panic!("run at depth {depth} must refuse"));
+                assert_eq!(error.category().exit_code(), 20, "run at depth {depth}");
+
+                write("native-replay/1", depth);
+                let error =
+                    replay_with_limits(&path, RunLimits::default(), &CommandLimits::replay())
+                        .err()
+                        .unwrap_or_else(|| panic!("replay at depth {depth} must refuse"));
+                assert_eq!(error.category().exit_code(), 20, "replay at depth {depth}");
+            }
+        })
+        .expect("spawn the small-stack control")
+        .join()
+        .expect("no deep request overflows");
 }
 
 /// An explicit streamed operand receives the same bounded, required-selection intake.

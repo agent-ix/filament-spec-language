@@ -11,8 +11,6 @@ use fsl_foundation::diagnostic::Code;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use fsl_command::unique_json::read as parse_unique_json;
-
 use crate::error::{Error, Result};
 use crate::Outcome;
 
@@ -1090,6 +1088,12 @@ fn render_text(report: &Report) -> String {
         ));
     }
     output
+}
+
+/// [`fsl_command::unique_json::read`], handing the tree to this module's own
+/// owners.
+fn parse_unique_json(bytes: &[u8]) -> std::result::Result<Value, String> {
+    fsl_command::unique_json::read(bytes).map(fsl_command::unique_json::Deep::into_inner)
 }
 
 /// An untrusted JSON tree whose release never uses the native call stack.

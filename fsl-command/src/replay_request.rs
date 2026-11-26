@@ -99,9 +99,8 @@ pub fn read<E: From<RequestDefect>>(
         .ok_or_else(|| RequestDefect::new("/package", "missing member"))?;
     let package = fsl_replay::ReplayPackage::read(raw_package.get().as_bytes(), input_bytes)
         .map_err(|error| RequestDefect::new("/package", error.to_string()))?;
-    let value = Deep::new(
-        crate::unique_json::read(request).map_err(|message| RequestDefect::new("", message))?,
-    );
+    let value =
+        crate::unique_json::read(request).map_err(|message| RequestDefect::new("", message))?;
     decode(&value, provide, package, documents)
 }
 
@@ -1046,10 +1045,8 @@ mod tests {
                 bytes
                     .extend_from_slice(br#"{"kind":"exact_integer","decimal":"9007199254740993"}"#);
                 bytes.extend_from_slice(&b"]}".repeat(depth));
-                let value = super::Deep::new(
-                    crate::unique_json::read(&bytes)
-                        .expect("the byte-bounded witness reads past 128 levels"),
-                );
+                let value = crate::unique_json::read(&bytes)
+                    .expect("the byte-bounded witness reads past 128 levels");
                 let graph = fsl_replay::WireGraph::new([]).expect("an unused, empty key lookup");
                 let witness = super::witness(&value, "/source/assignments/0/value", &graph)
                     .unwrap_or_else(|_| panic!("the owner admits the complete typed witness"));

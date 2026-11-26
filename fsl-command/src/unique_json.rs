@@ -7,15 +7,19 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-/// A JSON tree that is released without recursing, however deeply it nests.
-pub(crate) struct Deep(Value);
+/// A JSON tree that is released without recursing, however deeply it nests
+/// (ADR-030 D-1: the derived `Drop` of a [`Value`] recurses once per level).
+pub struct Deep(Value);
 
 impl Deep {
     pub(crate) fn new(value: Value) -> Self {
         Self(value)
     }
 
-    pub(crate) fn into_inner(mut self) -> Value {
+    /// Take the tree out. The caller then releases it without recursing, with
+    /// [`fsl_foundation::node_wire::discard_node_json`].
+    #[must_use]
+    pub fn into_inner(mut self) -> Value {
         std::mem::take(&mut self.0)
     }
 }
@@ -42,13 +46,13 @@ impl Drop for Deep {
 
 /// Read `bytes` as one JSON document, refusing a repeated member name.
 /// Numbers keep their original lexeme; nesting costs input bytes, not a
-/// fixed depth. Release a deep result with
-/// [`fsl_foundation::node_wire::discard_node_json`].
+/// fixed depth. The result releases its tree without recursing, so a caller
+/// that only asks whether the document reads may drop it at once.
 ///
 /// # Errors
 ///
 /// The reader's message for malformed JSON or a duplicate member name.
-pub fn read(bytes: &[u8]) -> std::result::Result<Value, String> {
+pub fn read(bytes: &[u8]) -> std::result::Result<Deep, String> {
     use quire_canonical::{Node, NodeRef, ReadError};
 
     // The file was admitted under the caller's byte ceiling. The shared
@@ -138,8 +142,5 @@ pub fn read(bytes: &[u8]) -> std::result::Result<Value, String> {
         };
         values.push(Deep::new(value));
     }
-    values
-        .pop()
-        .map(Deep::into_inner)
-        .ok_or_else(|| "missing JSON value".to_owned())
+    values.pop().ok_or_else(|| "missing JSON value".to_owned())
 }
