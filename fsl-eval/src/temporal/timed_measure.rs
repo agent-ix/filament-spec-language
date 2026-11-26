@@ -240,7 +240,6 @@ fn between(
 /// # Errors
 ///
 /// As [`timed_elapsed`].
-#[implements("FSpec-FR-407-AC-23")]
 pub fn timed_steps(
     trace: &TimedTrace,
     activation: TemporalPosition,

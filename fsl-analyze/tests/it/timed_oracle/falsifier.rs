@@ -86,18 +86,28 @@ impl Space {
     }
 }
 
-/// One behaviour: its positions' states and stamps, the last repeating
-/// forever after `idle`.
+/// How long past its last position a locked run's record is complete: past
+/// every window of the corpus.
+const CLOSED_AFTER: i64 = 1000;
+
+/// One behaviour: its positions' states and stamps. With `idle`, the last
+/// position repeats forever after that delay; without it the run ended in a
+/// time-lock and has no later position (FSpec FR-416).
 pub(super) struct Behaviour {
     pub(super) states: Vec<ModelSimState>,
     pub(super) stamps: Vec<Rational>,
-    idle: Rational,
+    idle: Option<Rational>,
 }
 
 impl Behaviour {
     pub(super) fn trace(&self) -> TimedTrace {
+        let Some(idle) = &self.idle else {
+            let last = self.stamps.last().expect("a position");
+            return TimedTrace::through(self.stamps.clone(), last.add(&whole(CLOSED_AFTER)))
+                .expect("a closed timed trace");
+        };
         let last = u64::try_from(self.stamps.len() - 1).expect("a short behaviour");
-        TimedTrace::lasso(self.stamps.clone(), last, self.idle.clone()).expect("a timed lasso")
+        TimedTrace::lasso(self.stamps.clone(), last, idle.clone()).expect("a timed lasso")
     }
 }
 
@@ -144,7 +154,7 @@ impl Extrema {
 
 /// Whether the operation whose declaration identity text (FR-181) is
 /// `operation` is the one named `name`: the identity's last path segment.
-fn named(operation: &str, name: &str) -> bool {
+pub(super) fn named(operation: &str, name: &str) -> bool {
     operation.contains(&format!("/{name}\""))
 }
 
@@ -158,7 +168,12 @@ struct Walk<'w, 's, 'a, 'p> {
 }
 
 impl Walk<'_, '_, '_, '_> {
-    fn leaf(&self, states: &[ModelSimState], stamps: &[Rational], idle: Rational) -> Extrema {
+    fn leaf(
+        &self,
+        states: &[ModelSimState],
+        stamps: &[Rational],
+        idle: Option<Rational>,
+    ) -> Extrema {
         Extrema::one((self.payoff)(&Behaviour {
             states: states.to_vec(),
             stamps: stamps.to_vec(),
@@ -184,7 +199,7 @@ impl Walk<'_, '_, '_, '_> {
     ) -> Option<Extrema> {
         let now = stamps.last().expect("a position");
         if self.space.horizon.is_some_and(|h| now > &whole(h)) {
-            return Some(self.leaf(states, stamps, ratio(7, 3)));
+            return Some(self.leaf(states, stamps, Some(ratio(7, 3))));
         }
         // Zero-delay steps without end pass no time: no admitted behaviour.
         if states.len() > DEPTH {
@@ -239,7 +254,7 @@ impl Walk<'_, '_, '_, '_> {
                     .expect("a decided time lock")
                     .is_some()
             {
-                choices.push(self.leaf(states, stamps, whole(1000)));
+                choices.push(self.leaf(states, stamps, None));
             }
         }
         let quiescent = self
@@ -248,13 +263,13 @@ impl Walk<'_, '_, '_, '_> {
             .expect("a decided state");
         if quiescent && !forced {
             for idle in &self.space.idle {
-                choices.push(self.leaf(states, stamps, idle.clone()));
+                choices.push(self.leaf(states, stamps, Some(idle.clone())));
             }
         }
         // Time bounded below a strict invariant with nothing enabled: the
         // lock is approached and never reached.
         if !quiescent && !stepped && self.space.lock == Lock::Frozen {
-            choices.push(self.leaf(states, stamps, whole(1000)));
+            choices.push(self.leaf(states, stamps, None));
         }
         Extrema::or(choices)
     }

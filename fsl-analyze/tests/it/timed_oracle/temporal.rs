@@ -2,15 +2,18 @@
 //! The non-probabilistic rows of the corpus: temporal and state-graph claims
 //! under the timed profile, on EN-6 (zones) and EN-1 (digital clocks). A
 //! behaviour is admitted when its stamps diverge, so a time-locked or Zeno
-//! behaviour is none.
+//! behaviour is none. Each `_routes` row names the one outcome each route
+//! must give; a falsifier-only `_hand` test carries no criterion tag.
 
 use std::cell::Cell;
 
 use filament_exact::{Cancel, Meter, Undefined};
 use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::{ModelSimState, TimedState, TimedSystem};
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem, TimedState, TimedSystem};
+use fsl_eval::simulation::StateKey;
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
+use fsl_foundation::IdentityLimits;
 use fsl_replay::ModelCheckOutcome;
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -21,13 +24,29 @@ use super::models::{formula, two_step_body};
 use super::routes::{self, Answer, Verdict};
 use crate::timed_world::{self, World, DENSE};
 
-/// What a claim's dense meaning is.
-#[derive(Clone, Copy, Debug)]
-enum Meaning {
-    True,
-    False,
+/// The outcome one route must give for a claim.
+#[derive(Clone, Debug)]
+enum Expected {
+    Proved,
+    Refuted,
     /// `inconclusive` with this cause, never proved or refuted.
     Vacuous(&'static str),
+    /// EN-1's decline of what it cannot digitise (FR-243), naming the
+    /// `not_digitisable` rule.
+    NotDigitisable(&'static str),
+}
+
+impl Expected {
+    fn agrees(&self, verdict: &Verdict) -> bool {
+        match (self, verdict) {
+            (Self::Proved, Verdict::Proved(_)) | (Self::Refuted, Verdict::Refuted(_)) => true,
+            (Self::Vacuous(expected), Verdict::Vacuous(found)) => expected == found,
+            (Self::NotDigitisable(rule), Verdict::Declined(found)) => {
+                found == &format!("declined:invalid_runtime_input/invalid-value:{rule}")
+            }
+            _ => false,
+        }
+    }
 }
 
 /// A world over the timed profile `ev` whose `temporal` claims are `claims`.
@@ -39,32 +58,28 @@ fn world(clocks: &[&str], operations: &[(&str, &[&str])], body: &str) -> World {
     )
 }
 
-/// Every answer agrees with `meaning`, or is an honest decline.
-fn assert_answers(row: &str, meaning: Meaning, answers: &[Answer]) {
-    assert_none(disagreeing(row, meaning, answers));
-}
-
 fn assert_none(wrong: Vec<String>) {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// The answers that neither agree with `meaning` nor honestly decline.
-fn disagreeing(row: &str, meaning: Meaning, answers: &[Answer]) -> Vec<String> {
+/// The answers that differ from what their route must give: `en6` for the
+/// zone route, `en1` for the digital one.
+fn disagreeing(row: &str, en6: &Expected, en1: &Expected, answers: &[Answer]) -> Vec<String> {
+    assert!(!answers.is_empty(), "{row}: a route answers");
     answers
         .iter()
         .filter_map(|answer| {
+            let expected = match answer.route {
+                "en-6" => en6,
+                "en-1" => en1,
+                route => panic!("{row}: no expectation for {route}"),
+            };
             let line = format!(
-                "{row} {} meaning={meaning:?}: {:?}",
+                "{row} {} expected={expected:?}: {:?}",
                 answer.route, answer.verdict
             );
             eprintln!("OBSERVED {line}");
-            let agrees = match (&answer.verdict, meaning) {
-                (Verdict::Proved(_), Meaning::True) | (Verdict::Refuted(_), Meaning::False) => true,
-                (Verdict::Vacuous(found), Meaning::Vacuous(expected)) => *found == expected,
-                (Verdict::Unsettled(_), _) => true,
-                _ => false,
-            };
-            (!agrees).then_some(line)
+            (!expected.agrees(&answer.verdict)).then_some(line)
         })
         .collect()
 }
@@ -127,20 +142,23 @@ fn two_step(claims: &[(&str, &str)]) -> World {
     )
 }
 
-fn two_step_routes(claims: &[(&str, &str)], meaning: Meaning) {
+/// Every claim gets `en6` from the zone route and, from the digital route,
+/// the outcome beside it.
+fn two_step_routes(claims: &[(&str, &str)], en6: Expected, en1: &[Expected]) {
+    assert_eq!(claims.len(), en1.len());
     let world = two_step(claims);
     assert_none(
         claims
             .iter()
-            .flat_map(|(name, _)| {
+            .zip(en1)
+            .flat_map(|((name, _), en1)| {
                 let row = format!("3446-{name}");
-                disagreeing(&row, meaning, &routes::command(&row, &world, name))
+                disagreeing(&row, &en6, en1, &routes::command(&row, &world, name))
             })
             .collect(),
     );
 }
 
-#[trace("FR-243-AC-5")]
 #[test]
 fn row_3446_two_step_clauses_hand() {
     let space = Space::new(3, Lock::Excluded);
@@ -160,22 +178,36 @@ fn row_3446_two_step_clauses_hand() {
 
 #[trace("FR-243-AC-5")]
 #[test]
-#[ignore = "QSL-3446: en-1 proves clauses over empty windows that are false"]
+#[ignore = "QSL-3446: en-1 proves clauses it must decline as not digitisable"]
 fn row_3446_empty_window_clauses_routes() {
-    two_step_routes(&EMPTY, Meaning::False);
+    // The rule each of `EMPTY` breaks (FR-243 "Behavior").
+    let rules = [
+        "two-sided-interval",
+        "two-sided-interval",
+        "second-bounded-operator",
+        "two-sided-interval",
+    ];
+    two_step_routes(
+        &EMPTY,
+        Expected::Refuted,
+        &rules.map(Expected::NotDigitisable),
+    );
 }
 
 #[trace("FR-243-AC-5")]
 #[test]
 fn row_3446_true_clauses_routes() {
-    two_step_routes(&TRUE, Meaning::True);
+    two_step_routes(
+        &TRUE,
+        Expected::Proved,
+        &[Expected::Proved, Expected::Proved],
+    );
 }
 
-#[trace("FR-243-AC-5")]
 #[test]
 #[ignore = "QSL-3480: en-1 settles a true eventually-always clause inconclusive replay-parity"]
 fn row_3446_nested_true_clause_routes() {
-    two_step_routes(&[SETTLED], Meaning::True);
+    two_step_routes(&[SETTLED], Expected::Proved, &[Expected::Proved]);
 }
 
 // --- QSL-3446, QSL-3478: state-graph claims over a fractional trap ----------
@@ -234,7 +266,6 @@ fn half_millisecond_is_trapped(world: &World) -> bool {
     })
 }
 
-#[trace("FR-852-AC-2", "FR-852-AC-3")]
 #[test]
 fn row_3478_fractional_trap_hand() {
     // Phase 1 after `first` at 0.5 ms: `x = y - 0.5`, so `zero` would need
@@ -245,69 +276,93 @@ fn row_3478_fractional_trap_hand() {
     assert!(half_millisecond_is_trapped(&trap(AT_ONE, POSSIBLE)));
 }
 
-/// The claim `claim` over the trap, on the route `route`: en-6 or en-1.
-fn trap_route(row: &str, one_guard: &str, claim: &str, route: &str) {
+/// The claim `claim` over the trap on the zone route: false.
+fn trap_zones(row: &str, one_guard: &str, claim: &str) {
+    trap_route(row, one_guard, claim, "en-6", Expected::Refuted);
+}
+
+/// The claim over the trap on the digital route, which must decline the
+/// state-graph form naming `rule` (FR-243-AC-6).
+fn trap_digital(row: &str, one_guard: &str, claim: &str, rule: &'static str) {
+    trap_route(
+        row,
+        one_guard,
+        claim,
+        "en-1",
+        Expected::NotDigitisable(rule),
+    );
+}
+
+fn trap_route(row: &str, one_guard: &str, claim: &str, route: &str, expected: Expected) {
     let world = trap(one_guard, claim);
     let answers: Vec<Answer> = routes::command(row, &world, "Done")
         .into_iter()
         .filter(|answer| answer.route == route)
         .collect();
     assert_eq!(answers.len(), 1, "{route} answers");
-    assert_answers(row, Meaning::False, &answers);
+    assert_none(disagreeing(row, &expected, &expected, &answers));
 }
 
-#[trace("FR-852-AC-2")]
 #[test]
 #[ignore = "QSL-3478: en-6 proves a false always possible over a partly trapped zone"]
 fn row_3478_always_possible_never_one_zones() {
-    trap_route("3478-possible-never-zones", NEVER, POSSIBLE, "en-6");
+    trap_zones("3478-possible-never-zones", NEVER, POSSIBLE);
 }
 
-#[trace("FR-852-AC-6")]
+#[trace("FR-243-AC-6")]
 #[test]
+#[ignore = "QSL-3446: en-1 decides an always possible item it must decline"]
 fn row_3478_always_possible_never_one_digital() {
-    trap_route("3478-possible-never-digital", NEVER, POSSIBLE, "en-1");
+    trap_digital(
+        "3478-possible-never-digital",
+        NEVER,
+        POSSIBLE,
+        "always-possible",
+    );
 }
 
-#[trace("FR-852-AC-2")]
 #[test]
 #[ignore = "QSL-3478: en-6 proves a false always possible over a partly trapped zone"]
 fn row_3446_always_possible_one_at_one_zones() {
-    trap_route("3446-possible-at-one-zones", AT_ONE, POSSIBLE, "en-6");
+    trap_zones("3446-possible-at-one-zones", AT_ONE, POSSIBLE);
 }
 
-#[trace("FR-852-AC-6")]
+#[trace("FR-243-AC-6")]
 #[test]
-#[ignore = "QSL-3446: en-1 proves a false always possible over a fractional trap"]
+#[ignore = "QSL-3446: en-1 proves a false always possible it must decline"]
 fn row_3446_always_possible_one_at_one_digital() {
-    trap_route("3446-possible-at-one-digital", AT_ONE, POSSIBLE, "en-1");
+    trap_digital(
+        "3446-possible-at-one-digital",
+        AT_ONE,
+        POSSIBLE,
+        "always-possible",
+    );
 }
 
-#[trace("FR-852-AC-3")]
 #[test]
 #[ignore = "QSL-3478: en-6 proves a false unique path over a partly trapped zone"]
 fn row_3478_unique_path_never_one_zones() {
-    trap_route("3478-unique-never-zones", NEVER, UNIQUE, "en-6");
+    trap_zones("3478-unique-never-zones", NEVER, UNIQUE);
 }
 
-#[trace("FR-852-AC-6")]
+#[trace("FR-243-AC-6")]
 #[test]
+#[ignore = "QSL-3446: en-1 decides a unique path item it must decline"]
 fn row_3478_unique_path_never_one_digital() {
-    trap_route("3478-unique-never-digital", NEVER, UNIQUE, "en-1");
+    trap_digital("3478-unique-never-digital", NEVER, UNIQUE, "unique-path");
 }
 
-#[trace("FR-852-AC-3")]
 #[test]
 #[ignore = "QSL-3478: en-6 settles unique path failed with established-invariant-broken"]
 fn row_3446_unique_path_one_at_one_zones() {
-    trap_route("3446-unique-at-one-zones", AT_ONE, UNIQUE, "en-6");
+    trap_zones("3446-unique-at-one-zones", AT_ONE, UNIQUE);
 }
 
-#[trace("FR-852-AC-6")]
+#[trace("FR-243-AC-6")]
 #[test]
-#[ignore = "QSL-3446: en-1 proves a false unique path over a fractional trap"]
+#[ignore = "QSL-3446: en-1 proves a false unique path it must decline"]
 fn row_3446_unique_path_one_at_one_digital() {
-    trap_route("3446-unique-at-one-digital", AT_ONE, UNIQUE, "en-1");
+    trap_digital("3446-unique-at-one-digital", AT_ONE, UNIQUE, "unique-path");
 }
 
 // --- QSL-3483, QSL-3484: no behaviour and no instance -----------------------
@@ -329,7 +384,6 @@ fn stall_claims() -> World {
     )
 }
 
-#[trace("FR-232-AC-3")]
 #[test]
 fn row_3483_stalled_subject_hand() {
     let mut space = Space::new(1, Lock::Excluded);
@@ -346,8 +400,13 @@ fn row_3483_stalled_subject_routes() {
             .iter()
             .flat_map(|name| {
                 let row = format!("3483-{name}");
-                let vacuous = Meaning::Vacuous("no-admitted-behaviour");
-                disagreeing(&row, vacuous, &routes::command(&row, &world, name))
+                let vacuous = Expected::Vacuous("no-admitted-behaviour");
+                disagreeing(
+                    &row,
+                    &vacuous,
+                    &vacuous,
+                    &routes::command(&row, &world, name),
+                )
             })
             .collect(),
     );
@@ -364,11 +423,13 @@ fn row_3484_no_instance_routes() {
     let mut snapshot: Value = serde_json::from_slice(own).expect("JSON");
     snapshot["populations"][0]["objects"] = Value::Array(Vec::new());
     let bytes = serde_json::to_vec(&snapshot).expect("serializes");
-    assert_answers(
+    let vacuous = Expected::Vacuous("no-instance");
+    assert_none(disagreeing(
         "3484-no-instance",
-        Meaning::Vacuous("no-instance"),
+        &vacuous,
+        &vacuous,
         &routes::command_over("3484", &world, "Never", &[bytes]),
-    );
+    ));
 }
 
 // --- QSL-3485: an undefined letter on a branch no behaviour passes ----------
@@ -389,27 +450,36 @@ fn locking_branch() -> World {
 }
 
 /// `go` leads to a quiescent state with `phase` 1, so the claim is false.
-#[trace("FR-632-AC-2")]
 #[test]
 fn row_3485_locking_branch_hand_and_routes() {
     let world = locking_branch();
     let space = Space::new(1, Lock::Excluded);
     assert_eq!(on_every_behaviour(&world, &space, "Stays"), Some(false));
-    assert_answers(
+    assert_none(disagreeing(
         "3485-defined",
-        Meaning::False,
+        &Expected::Refuted,
+        &Expected::Refuted,
         &routes::command("3485", &world, "Stays"),
-    );
+    ));
 }
 
-/// Reads the first false atom as undefined, and every other letter as
-/// `inner` does.
-struct UndefinedAtFirstFalseAtom<'a> {
+fn state_key(system: &ModelSystem<'_>, state: &ModelSimState) -> StateKey {
+    system
+        .state_key(state, IdentityLimits::default())
+        .expect("the state encodes")
+        .1
+}
+
+/// Reads every atom at the state whose key is `at` as undefined, and every other letter
+/// as `inner` does.
+struct UndefinedAt<'a> {
     inner: &'a dyn ModelLetters,
+    system: &'a ModelSystem<'a>,
+    at: StateKey,
     seen: Cell<bool>,
 }
 
-impl ModelLetters for UndefinedAtFirstFalseAtom<'_> {
+impl ModelLetters for UndefinedAt<'_> {
     fn atom(
         &self,
         atom: FormulaNodeId,
@@ -417,13 +487,13 @@ impl ModelLetters for UndefinedAtFirstFalseAtom<'_> {
         state: &ModelSimState,
         meter: &mut Meter,
     ) -> Result<AtomReading, AtomStop> {
-        let reading = self.inner.atom(atom, instance, state, meter)?;
-        if matches!(reading, AtomReading::False) && !self.seen.replace(true) {
+        if state_key(self.system, state) == self.at {
+            self.seen.set(true);
             return Ok(AtomReading::Undefined(UndefinedCause::Kernel(
                 Undefined::DivisionByZero,
             )));
         }
-        Ok(reading)
+        self.inner.atom(atom, instance, state, meter)
     }
 
     fn activation(
@@ -455,7 +525,6 @@ impl ModelLetters for UndefinedAtFirstFalseAtom<'_> {
 
 /// The undefined letter is at the time-locked `block` state, which no
 /// admitted behaviour passes, so the violation through `go` stands.
-#[trace("FR-632-AC-2")]
 #[test]
 #[ignore = "QSL-3485: en-1 drops the search after an undefined reading at a time lock"]
 fn row_3485_undefined_at_a_time_lock_routes() {
@@ -464,8 +533,24 @@ fn row_3485_undefined_at_a_time_lock_routes() {
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let node = &world.package.graph().temporal_clauses()[0];
     let letters = system.clause_letters(node).expect("clause letters");
-    let wrapped = UndefinedAtFirstFalseAtom {
+    let initial = timed.initial().remove(0);
+    let (_, blocked) = timed
+        .steps(&initial)
+        .expect("decided steps")
+        .into_iter()
+        .find(|(step, _)| falsifier::named(step.operation(), "block"))
+        .expect("block runs from the initial state");
+    assert!(
+        timed
+            .time_lock(&blocked, 64)
+            .expect("a decided time lock")
+            .is_some(),
+        "the block state is time-locked"
+    );
+    let wrapped = UndefinedAt {
         inner: &letters,
+        system: &system,
+        at: state_key(&system, blocked.discrete()),
         seen: Cell::new(false),
     };
     let outcome = check_digital(
