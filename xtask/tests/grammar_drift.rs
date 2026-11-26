@@ -656,11 +656,6 @@ const PARSER_ONLY: &[(&str, &str, &str)] = &[
         "FR-318-AC-1",
     ),
     (
-        "StepArgument",
-        "the standard has no ebnf production for this form (named in prose by FSpec FR-375); QSL-2960; FSpec FR-375-AC-4",
-        "FSpec FR-375-AC-4",
-    ),
-    (
         "StepDeclaration",
         "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define; FR-710-AC-3",
         "FR-710-AC-3",

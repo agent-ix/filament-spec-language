@@ -1771,7 +1771,7 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
             fsl_replay::GraphEvidence::Trap {
                 stem: stem.clone(),
                 closure: fsl_replay::TrapClosure::StateGraph,
-                over: Some(bound),
+                over: vec![bound],
             },
             &["a", "b", "c"],
             Default::default(),
@@ -1807,7 +1807,7 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
             fsl_replay::GraphEvidence::Trap {
                 stem: stem.clone(),
                 closure: fsl_replay::TrapClosure::StateGraph,
-                over: Some(bound),
+                over: vec![bound],
             },
             &["j"],
             Default::default(),
@@ -2138,7 +2138,7 @@ fn settle_undefined(
             GraphEvidence::Undefined {
                 stem: stem.clone(),
                 undefined: undefined.clone(),
-                over: Some(over.clone()),
+                over: vec![over.clone()],
             },
             keys,
             ReplayLimits::default(),
@@ -2388,7 +2388,7 @@ fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
             GraphEvidence::Undefined {
                 stem,
                 undefined: forged,
-                over: Some(bound_to(&world, &["c"], "c")),
+                over: vec![bound_to(&world, &["c"], "c")],
             },
             &["c"],
             ReplayLimits::default(),
@@ -2875,4 +2875,72 @@ fn a_state_graph_claim_is_instanced_over_the_subjects_universe() {
         result.items[0]
     );
     assert_eq!(bound(&result, 1), vec![None]);
+}
+
+/// FSpec FR-331 `State`, FR-393 `ModelPath`, `Where` and `GraphStep`: graph
+/// evidence writes each model state as `{key}`, from a settled run.
+#[trace("FSpec-FR-393")]
+#[test]
+fn graph_evidence_states_match_the_provider_schema() {
+    // The reference receiver form is a separate known gap (QSL-2790).
+    fn null_receivers(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(members) => {
+                if let Some(receiver) = members.get_mut("receiver") {
+                    *receiver = serde_json::Value::Null;
+                }
+                members.values_mut().for_each(null_receivers);
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(null_receivers),
+            _ => {}
+        }
+    }
+    let guard = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
+        quotient(2 - self.versionNumber) >= 1 }\n";
+    let world = config_replayable_kernel_world(guard, REACHES_TWO, &["a"], &[vec![0]]);
+    let over = bound_to(&world, &["a"], "a");
+    let settled = settle_undefined(&world, &["a"], "ReachesTwo", &over);
+    let StateGraphOutcome::Undefined { stem, undefined } = &settled.run.items[0][0].outcome else {
+        panic!("an undefined evaluation");
+    };
+    let claim = world.claim("ReachesTwo");
+    let mut wire = fsl_replay::graph_evidence_wire(
+        &GraphEvidence::Undefined {
+            stem: stem.clone(),
+            undefined: undefined.clone(),
+            over: Vec::new(),
+        },
+        fsl_replay::StateGraphPropertyForm::Possible,
+        None,
+        None,
+        &[],
+        claim.occurrence(),
+    )
+    .expect("the evidence is spelled");
+    null_receivers(&mut wire);
+    let key = |octets: &[u8]| {
+        serde_json::json!({"key": base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD, octets)})
+    };
+    assert_eq!(
+        wire["undefined"]["where"]["state_key"],
+        key(undefined.state_key.as_bytes())
+    );
+    assert_eq!(
+        wire["stem"]["steps"][0]["post_state"],
+        key(stem.steps[0].post_state.as_bytes())
+    );
+    for (definition, instance) in [
+        ("ModelPath", &wire["stem"]),
+        ("Where", &wire["undefined"]["where"]),
+        ("GraphStep", &wire["stem"]["steps"][0]),
+    ] {
+        let schema = crate::provider_schema_support::provider_definition(definition);
+        if let Err(errors) = schema.validate(instance) {
+            let errors: Vec<_> = errors
+                .map(|error| format!("{} at {}", error, error.instance_path))
+                .collect();
+            panic!("{definition}: {errors:?}\n  instance: {instance}");
+        };
+    }
 }

@@ -2,7 +2,6 @@
 //! FSpec FR-323 "Replay result rows" for the replay arms beyond a function
 //! replay: the observed-temporal, model-graph and protocol-analysis rows.
 
-use base64::Engine;
 use fsl_eval::temporal::TemporalOutcome;
 use fsl_package::protocol_view::{Port, PortRef};
 use fsl_semantics::check::PredicateRole;
@@ -293,7 +292,7 @@ pub(super) fn model_graph(
         first_target: result
             .first_target
             .as_ref()
-            .map(|key| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes())),
+            .map(crate::shared_wire::state_key_text),
         disagreement: match &result.settlement {
             GraphReplaySettlement::Inconclusive(cause) => Some(CauseWire::of(cause, None)?),
             GraphReplaySettlement::Reproduced | GraphReplaySettlement::Stopped(_) => None,

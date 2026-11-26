@@ -944,28 +944,27 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
             continue;
         }
         let mut at = after_name;
-        skip_ascii_space(bytes, &mut at);
+        skip_trivia(bytes, &mut at);
         if bytes.get(at) != Some(&b'(') {
             cursor = after_name;
             continue;
         }
         at += 1;
-        skip_ascii_space(bytes, &mut at);
+        skip_trivia(bytes, &mut at);
         let has_bits = bytes.get(at..at + 4) == Some(b"bits");
         if has_bits {
             at += 4;
-            skip_ascii_space(bytes, &mut at);
+            skip_trivia(bytes, &mut at);
         }
         let has_colon = bytes.get(at) == Some(&b':');
         if has_colon {
             at += 1;
-            skip_ascii_space(bytes, &mut at);
+            skip_trivia(bytes, &mut at);
         }
         let payload_start = at;
-        while bytes
-            .get(at)
-            .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b')')
-        {
+        while bytes.get(at).is_some_and(|byte| {
+            !byte.is_ascii_whitespace() && *byte != b')' && !bytes[at..].starts_with(b"//")
+        }) {
             at += 1;
         }
         let payload = &bytes[payload_start..at];
@@ -978,7 +977,7 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
             && payload[2..]
                 .iter()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
-        skip_ascii_space(bytes, &mut at);
+        skip_trivia(bytes, &mut at);
         let has_close = bytes.get(at) == Some(&b')');
         let valid = has_bits && has_colon && valid_payload && has_close;
         if !valid {
@@ -1007,9 +1006,22 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
     diagnostics
 }
 
-fn skip_ascii_space(bytes: &[u8], at: &mut usize) {
-    while bytes.get(*at).is_some_and(u8::is_ascii_whitespace) {
-        *at += 1;
+fn skip_trivia(bytes: &[u8], at: &mut usize) {
+    loop {
+        while bytes.get(*at).is_some_and(u8::is_ascii_whitespace) {
+            *at += 1;
+        }
+        if bytes.get(*at..).is_some_and(|tail| tail.starts_with(b"//")) {
+            *at += 2;
+            while bytes
+                .get(*at)
+                .is_some_and(|byte| *byte != b'\n' && *byte != b'\r')
+            {
+                *at += 1;
+            }
+        } else {
+            break;
+        }
     }
 }
 
