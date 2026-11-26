@@ -8,11 +8,11 @@ use fsl_foundation::diagnostic::Code;
 use fsl_foundation::diagnostic::Locus;
 use fsl_foundation::wire_format::WireFormat;
 use fsl_foundation::LocatedSpan;
-use fsl_source::KindAvailability;
+use fsl_source::{AvailabilityState, KindAvailability};
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
-use serde::{de::Error as _, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use super::call::{CallOutcome, CallRefusal, CallValue};
@@ -1246,7 +1246,7 @@ struct ClauseRead {
 macro_rules! extraction_record_type {
     (
         $name:ident {
-            $($field:ident: $field_type:ty),* $(,)?
+            $($(#[$field_attribute:meta])* $field:ident: $field_type:ty),* $(,)?
             ;
             $($(#[$optional_attribute:meta])* $optional_field:ident: $optional_type:ty),* $(,)?
         }
@@ -1259,7 +1259,7 @@ macro_rules! extraction_record_type {
             reason = "the closed wire shape is validated during deserialization"
         )]
         pub struct $name {
-            $(pub $field: $field_type,)*
+            $($(#[$field_attribute])* pub $field: $field_type,)*
             $($(#[$optional_attribute])* pub $optional_field: $optional_type,)*
         }
 
@@ -1343,12 +1343,26 @@ extraction_record_type! {
 
 extraction_record_type! {
     ExtractionOutcome {
+        #[serde(with = "KindAvailabilityWire")]
         availability: KindAvailability,
         clause_text: std::collections::BTreeMap<String, String>,
         diagnostics: Vec<serde_json::Value>;
         #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
         clauses: Option<Vec<serde_json::Value>>
     }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(remote = "KindAvailability")]
+struct KindAvailabilityWire {
+    state: AvailabilityState,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    reason: Option<String>,
+    lossy: bool,
 }
 
 #[implements("FR-267-AC-17")]
@@ -1361,15 +1375,6 @@ fn validate_extraction(bytes: &[u8]) -> Result<(), NativeRunReadError> {
     let Some(value) = document.get("extraction").filter(|value| !value.is_null()) else {
         return Ok(());
     };
-    if value
-        .pointer("/outcome/availability/reason")
-        .is_some_and(serde_json::Value::is_null)
-    {
-        return Err(NativeRunReadError::MalformedMember {
-            member: "extraction.outcome.availability.reason".to_owned(),
-            source: serde_json::Error::custom("an explicit null is not an omitted reason"),
-        });
-    }
     let extraction: ExtractionRecord =
         serde_path_to_error::deserialize(value.clone()).map_err(|error| {
             let member =
