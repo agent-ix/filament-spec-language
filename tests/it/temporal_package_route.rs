@@ -352,7 +352,11 @@ impl Built {
     /// The retained recursive dependency artifacts in selected-identity order.
     pub(super) fn dependency_artifacts(
         &self,
-    ) -> Vec<(&str, &Emission, &filament_contract_model::CheckedPackageV2)> {
+    ) -> Vec<(
+        &str,
+        std::sync::Arc<Emission>,
+        &filament_contract_model::CheckedPackageV2,
+    )> {
         let mut held = BTreeMap::new();
         let mut pending = vec![self.unit.package()];
         while let Some(package) = pending.pop() {
