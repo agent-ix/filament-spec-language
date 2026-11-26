@@ -184,6 +184,7 @@ pub(crate) fn admit_in_scope<'a>(
     })
 }
 
+#[implements("FR-125-AC-9")]
 fn build_configured(
     request: ProductRequest<'_>,
     work: WorkScope,
@@ -247,7 +248,7 @@ fn build_configured(
                 .into_iter()
                 .map(|instance| {
                     let reference = system
-                        .bound_reference(object.clone(), &instance)
+                        .written_reference(object.clone(), &instance)
                         .map_err(ProductRefusal::Internal)?;
                     Ok((Some(instance), Some(reference)))
                 })
