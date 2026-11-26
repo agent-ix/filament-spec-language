@@ -537,24 +537,36 @@ fn replay_product_trap(
             .get(id)
             .map(|node| node.state.clone())
             .ok_or_else(|| fault("a-product-queue-entry-is-a-node"))?;
-        // A state the body automaton has no run from lies on no accepting
-        // cycle, and nor does any state after it; one whose letter has no
-        // value has no step after it. Neither is expanded, as the engine
-        // counts neither against the part being closed.
-        if matches!(state.property, Property::Dead | Property::Undefined { .. }) {
+        // A state whose letter has no value has no step after it.
+        if matches!(state.property, Property::Undefined { .. }) {
             continue;
         }
         let expansion = match product.successors(&state) {
             Ok(expansion) => expansion,
             Err(_) => return product_halt_result(&product, max_candidates, accounting),
         };
-        if state_has_open_finding(&expansion.findings) {
+        // A state the body automaton has no run from lies on no accepting
+        // cycle, and nor does any state after it, so its successors are not
+        // followed. Its contract conjunctions still need a value, as the
+        // engine requires.
+        let open = if state.property == Property::Dead {
+            expansion
+                .findings
+                .iter()
+                .any(HyperFinding::leaves_successors_unknown)
+        } else {
+            state_has_open_finding(&expansion.findings)
+        };
+        if open {
             return Ok(result(
                 inconclusive(Category::Violation, Category::Success),
                 Vec::new(),
                 Some(nodes.len() as u64),
                 None,
             ));
+        }
+        if state.property == Property::Dead {
+            continue;
         }
         let enabled = expansion
             .findings
