@@ -17,6 +17,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-253
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-416
+    type: depends_on
 ---
 # FR-254: Sample timed runs for statistical checking
 
@@ -122,12 +126,17 @@ server is available. Each estimate comes with its confidence and the grid
   its window, or at an idle tail. The window ends its time horizon after the
   activating position's stamp, and for `elapsed` after the stamp of the first
   position where `A` holds.
-- If a sample reaches a local time-lock before its horizon, where no
+- If a sample reaches a local time-lock before its horizon, where delay is
+  bounded and no identity races (one whose non-empty window holds no mass of
+  its distribution does not race, FSpec FR-420), or where no
   positive delay is admissible and no transition identity is enabled, then
-  EN-4 SHALL settle the item `unsupported`, `TimeLockedSample{state}`,
-  naming the state, and SHALL keep no witness from it: the measure is over
-  time-divergent behaviours only (ADR-026 TD-1), and the time-lock-freedom
-  item reports the time-lock.
+  the sample ends there, and EN-4 SHALL read it as FSpec FR-416 "How claims
+  read a time-lock" states: an event not yet met is not met, an `always` that
+  the positions read satisfy holds, and an uncompleted measure is censored.
+  Only a fraction or long-run claim, whose reading of such a run FSpec FR-420
+  leaves undecided, SHALL settle `unsupported`, `TimeLockedSample{state}`,
+  naming the state, with no witness kept. The time-lock-freedom item reports
+  the time-lock.
 - **Budgets.** If a sample takes more than `max_sample_steps` steps without
   passing its horizon, then EN-4 SHALL stop the run as the statistical
   design's budgets state, naming `max_sample_steps`, its value and the
@@ -145,8 +154,8 @@ server is available. Each estimate comes with its confidence and the grid
   successor selection, resets and time invariants), plus recomputation of each draw from the seed, trace index,
   step, choice index and `q`.
 - **Exact route.** The request writer SHALL route a request for `exact`
-  evidence over a timed subject to EN-5, whose digital route (ADR-028 TA-1,
-  TA-2) decides which constraints and delay distributions it admits.
+  evidence over a timed subject to EN-5, whose route (ADR-038,
+  ADR-028 TA-1, TA-2) decides which constraints and delay distributions it admits.
 - EN-4 SHALL compute the verdict as a function of the claim, the subject,
   the workload, the seed and the settings.
 
@@ -157,7 +166,7 @@ server is available. Each estimate comes with its confidence and the grid
 | FR-254-AC-1 | `RareLate` (`probability <= 0.01 [eventually[0 ms, 3 ms] holds(c.late)]`) over FR-253-AC-1's model, whose exact event probability is `1/20`, settles `measured`, `Rejected`, with `q` 64 in its basis; with `reply` under `uniform` it settles `measured`, `Accepted`. Two runs with one seed give equal verdicts. | Test (TC-709) |
 | FR-254-AC-2 | Every sampled delay is an exact rational; a sampled witness replays through `replay_sampled_witness` (FR-193) with FR-237's timed steps, and its draws recompute from the seed; the same witness with one delay changed fails draw recomputation. With `q` 8, the basis records 8 and each sampled `uniform` or `exponential` delay equals the rounded-up conditioned inverse distribution function at a multiple of `2^-8`. | Test (TC-709) |
 | FR-254-AC-3 | `elapsed from holds(c.phase = Waiting) until holds(c.phase != Waiting) within 3 ms` reads each sample's time-stamp difference; a model that never returns to its initial discrete state with every clock 0 settles `incomplete`, `limit-reached` naming `statistical.max_cycle_steps` under the regenerative method; an `exact` request over the strict-guard `Rpc` variant is decided over clock regions (FR-204), never admitted as untimed. `RareLate` with no `delay` declaration on `timeout` settles `unsupported`, `NotStochastic`, naming the state just after `send` and `timeout`. `RareLate` with `max_sample_steps` 1 stops `Incomplete(LimitReached{limit, value, setting})` naming `max_sample_steps`, 1 and `statistical.max_sample_steps` (FR-255's engine table). | Test (TC-709) |
-| FR-254-AC-4 | A stochastic `Lock` variant (one object `c` with `phase: {A, B}` and a clock `x` never reset; `go` moves `A` to `B`, with `delay Lock::go ~ discrete { 1/2 ms: 1 };`; `time invariant when phase = B { x <= 1 ms }`; no operation enabled in `B`) samples `go` at `1/2`, delays to `(B, x = 1)`, where no positive delay is admissible and no identity is enabled, and settles `unsupported`, `TimeLockedSample` naming that state, with no witness kept. | Test (TC-709) |
+| FR-254-AC-4 | A stochastic `Lock` variant (one object `c` with `phase: {A, B}` and a clock `x` never reset; `go` moves `A` to `B`, with `delay Lock::go ~ discrete { 1/2 ms: 1 };`; `time invariant when phase = B { x <= 1 ms }`; no operation enabled in `B`) samples `go` at `1/2` and delays to `(B, x = 1)`, where no positive delay is admissible and no identity is enabled, and each sample ends there: `probability <= 0.5 [eventually[0 ms, 2 ms] holds(c.phase = B)]` has estimate 1, the position stamped `1/2` ms being in `B`, and settles `Rejected`; `mean of (fraction holds(c.phase = B) over [0 ms, 2 ms]) <= 0.5` settles `unsupported`, `TimeLockedSample` naming that state, with no witness kept. | Test (TC-709) |
 | FR-254-AC-5 | On TC-709's `Send` fixture (`send` at 2 ms, `reply` 10 ms later), `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` reads the positions stamped 0 and 2 ms and settles `Rejected` with estimate `1/2`; with `reward cost` 1 on `send` and 3 on `reply`, the `weighted by cost` form settles `Rejected` with estimate `3/4`, reading the reward of the `reply` step that lands at 12 ms. | Test (TC-709) |
 | FR-254-AC-6 | On TC-709's `Tick` fixture (`time tick`, period 2 ms), `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` reads the positions stamped 0, 0, 2 and 4 ms and settles `Rejected` with estimate `3/4`; `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]` settles `Accepted` with estimate 1, and with `[3 ms, 3 ms]` `Rejected` with estimate 0. No item is `NotStochastic`. | Test (TC-709) |
 | FR-254-AC-7 | On TC-709's `Idle` fixture (`send` at 2 ms, then an idle tail), each is decided, as every completion gives one reading: `probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]` estimate 1, `Accepted`; the same with `<= rational(2, 5)` estimate 0, `Rejected`; `mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25` estimate 1, `Rejected`; `mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25` estimate 0, `Accepted`; with `reward cost` 1 on `send`, `mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25` estimate 0, `Accepted`; `probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]` estimate 0, `Rejected`; `probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]` censored, estimate 0, `Rejected`; `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]` estimate 0, `Rejected`; `probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]` estimate 1, `Accepted`. | Test (TC-709) |
