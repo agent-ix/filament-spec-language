@@ -3750,6 +3750,8 @@ fn undefined_guard(goal: i64) {
     assert_eq!(result.status, PlanStatus::Incomplete);
     assert!(!result.certified);
     assert!(result.certificate.is_none());
+    assert!(result.plan.is_none(), "no plan is reported past the guard");
+    assert!(result.objective.is_none());
     assert!(matches!(
         &result.cause,
         Some(PlanStopCause::ContractUndefined { clause, .. }) if clause == "Gap"

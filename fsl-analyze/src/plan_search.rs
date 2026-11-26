@@ -1594,6 +1594,9 @@ impl<R: PlanRules> Search<'_, '_, R> {
     /// The best plan found so far, replayed, for an `incomplete` result.
     fn stopped(mut self, cause: PlanStopCause) -> Result<PlanResult, PlanSearchError> {
         let best = self.best();
+        // A conjunction with no value on the way refutes (ADR-018 UE-6): no
+        // plan is a claim, so none is reported.
+        let best = best.filter(|_| !matches!(cause, PlanStopCause::ContractUndefined { .. }));
         let (plan, objective) = match best {
             Some(index) => match self.replayed(index) {
                 Ok((plan, value)) => (Some(plan), Some(value)),
