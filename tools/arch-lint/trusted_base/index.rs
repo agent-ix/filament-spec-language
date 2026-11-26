@@ -163,10 +163,13 @@ pub(super) struct Index {
     by_ident: HashMap<String, usize>,
     /// Lookups in progress, so cyclic imports end.
     active: RefCell<HashSet<(usize, String)>>,
-    cache: RefCell<HashMap<(usize, String), Option<(Resolved, Binding)>>>,
+    cache: RefCell<LookupCache>,
 }
 
 const STANDARD_CRATES: [&str; 3] = ["std", "core", "alloc"];
+
+/// What a name looked up in a module stands for.
+type LookupCache = HashMap<(usize, String), Option<(Resolved, Binding)>>;
 
 /// Whether a `cfg` predicate holds only in test builds.
 fn implies_test(meta: &syn::Meta) -> bool {
@@ -441,7 +444,6 @@ impl Index {
         &mut self,
         module: usize,
         path: String,
-        ident: &syn::Ident,
         kind: Kind,
         public: bool,
         signature: Option<syn::Signature>,
@@ -475,7 +477,6 @@ impl Index {
         let id = self.push_value(
             module,
             path,
-            ident,
             kind,
             is_public(visibility),
             signature,
@@ -633,7 +634,6 @@ impl Index {
                         let value = self.push_value(
                             module,
                             path,
-                            ident,
                             kind,
                             is_public(&node.vis),
                             signature,
@@ -765,7 +765,6 @@ impl Index {
                 let value = self.push_value(
                     pending.module,
                     path,
-                    ident,
                     kind,
                     trait_impl || is_public(visibility),
                     signature,

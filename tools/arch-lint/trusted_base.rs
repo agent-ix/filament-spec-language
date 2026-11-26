@@ -561,7 +561,7 @@ impl Check<'_> {
                         self.taken(walk, alias, record.item.module, at);
                     } else if self.item_class(&record.item) == Some(Class::Checker) {
                         for (field, inner) in &record.fields {
-                            let saved = std::mem::replace(&mut walk.self_type, Some(id));
+                            let saved = walk.self_type.replace(id);
                             self.taken(walk, inner, record.item.module, &format!("{at}.{field}"));
                             walk.self_type = saved;
                         }
