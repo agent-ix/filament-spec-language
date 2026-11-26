@@ -1828,7 +1828,7 @@ fn requirement_items(
     fsl_route::request::items_from_requirements(package.graph().requirements(), registry, named)
 }
 
-#[implements("FR-940-AC-10")]
+#[implements("FR-940-AC-10", "FR-896-AC-8", "FR-896-AC-9")]
 fn resolve_one(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -1989,6 +1989,7 @@ fn resolve_one(
         kind,
         Capability::LocalProjection | Capability::Realizability
     );
+    let protocol_global_kind = kind == Capability::GlobalConformance;
     let record = own.iter().find(|record| record.kind() == kind);
     if selection.probabilistic.is_some() && kind != Capability::ProbabilisticSatisfaction {
         return invalid_value(index, name, "probabilistic");
@@ -2162,7 +2163,11 @@ fn resolve_one(
         .subject
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
-    let protocol = if protocol_deadlock || protocol_temporal_deadlock || protocol_analysis_kind {
+    let protocol = if protocol_deadlock
+        || protocol_temporal_deadlock
+        || protocol_analysis_kind
+        || protocol_global_kind
+    {
         let owner = package.graph().protocols().iter().find(|protocol| {
             package
                 .graph()
@@ -2171,7 +2176,9 @@ fn resolve_one(
                 == Some(claim.node())
         });
         match (owner, own_subject.protocol.as_ref()) {
-            (Some(owner), Some(selected)) if selected.protocol == owner.name => {
+            (Some(owner), Some(selected))
+                if selected.protocol == owner.name || protocol_global_kind =>
+            {
                 match selected.binding(package, &own_subject.memory) {
                     Some(binding) => Some(binding),
                     None => return invalid_value(index, name, "capacities"),

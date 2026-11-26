@@ -4,8 +4,8 @@
 
 use filament_exact::Rational;
 use fsl_replay::{
-    Certification, Execution, InconclusiveCause, ProofBasis, ResultLabel, RunStats,
-    SettlementBasis, StateGraphMethod, StateGraphRecord, TerminalValue, Truth, EXPLICIT_STATE,
+    Certification, EXPLICIT_STATE, Execution, InconclusiveCause, ProofBasis, ResultLabel, RunStats,
+    SettlementBasis, StateGraphMethod, StateGraphRecord, TerminalRecord, TerminalValue, Truth,
 };
 use ix_trace_rs::implements;
 
@@ -15,16 +15,38 @@ use super::{EngineReport, GraphReport};
 /// one, else the first not proved, else the proved one with the weakest
 /// support. `records` is in FR-125 canonical instance order.
 #[implements("FR-621-AC-9", "FR-621-AC-23", "FR-621-AC-24")]
-pub(super) fn decisive(records: &[StateGraphRecord]) -> usize {
+pub(super) trait InstanceDecision {
+    fn terminal_value(&self) -> &TerminalValue;
+}
+
+impl InstanceDecision for StateGraphRecord {
+    fn terminal_value(&self) -> &TerminalValue {
+        &self.value
+    }
+}
+
+impl InstanceDecision for TerminalRecord {
+    fn terminal_value(&self) -> &TerminalValue {
+        self.value()
+    }
+}
+
+impl<T: InstanceDecision + ?Sized> InstanceDecision for &T {
+    fn terminal_value(&self) -> &TerminalValue {
+        (*self).terminal_value()
+    }
+}
+
+pub(super) fn decisive<T: InstanceDecision>(records: &[T]) -> usize {
     if let Some(refuted) = records
         .iter()
-        .position(|record| matches!(record.value, TerminalValue::Refuted))
+        .position(|record| matches!(record.terminal_value(), TerminalValue::Refuted))
     {
         return refuted;
     }
     let mut proofs = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
-        match &record.value {
+        match record.terminal_value() {
             TerminalValue::Proved {
                 basis,
                 certification,
@@ -191,10 +213,10 @@ fn weakest(proofs: &[InstanceProof<'_>]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Certification::{Certified, Trusted, Uncertified};
     use fsl_replay::{SolverHorizon, SolverMethod, WitnessSource};
     use ix_trace_rs::trace;
     use std::collections::BTreeSet;
-    use Certification::{Certified, Trusted, Uncertified};
 
     fn bounded(depth: u64) -> ProofBasis {
         ProofBasis::BoundedComplete { depth }

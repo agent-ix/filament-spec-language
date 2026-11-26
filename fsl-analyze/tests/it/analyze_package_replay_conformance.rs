@@ -6,11 +6,11 @@
 
 use fsl_eval::simulation::protocol::StepKind;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, label, litmus_request, order_protocol, package_selection, request_over, Run,
-    Workspace, HANDOFF,
+    HANDOFF, Run, Workspace, analyze, label, litmus_request, order_protocol, package_selection,
+    request_over,
 };
 use crate::protocol_composition::{order_steps, trace_document};
 
@@ -82,6 +82,7 @@ fn both_routes_with_snapshots(
     let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
     let source = analyze(&path);
+    assert_eq!(source.exit, 0, "{}", source.document());
     let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
     let sources = ws.path(&format!("{HANDOFF}/sources"));
@@ -89,6 +90,68 @@ fn both_routes_with_snapshots(
     assert!(!sources.exists(), "the handoff sources are gone");
     let document = json!({"format": "native-analyze/1", "request": members});
     let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
+    (source, package)
+}
+
+fn keyed_core_snapshots(q_r1: &str) -> Vec<Vec<u8>> {
+    crate::litmus::Documents::new()
+        .snapshots
+        .into_values()
+        .map(|bytes| {
+            let mut snapshot: Value = serde_json::from_slice(&bytes).expect("snapshot JSON");
+            for population in snapshot["populations"]
+                .as_array_mut()
+                .expect("snapshot populations")
+            {
+                if population["population"].to_string().contains("cores") {
+                    let core = |key: &str, r1: &str| {
+                        json!({"key": key, "type": "ix://test/litmus/Core", "fields": {
+                            "r1": {"integer": r1}, "r2": {"integer": "0"},
+                            "r3": {"integer": "0"}, "r4": {"integer": "0"}}})
+                    };
+                    population["objects"] = json!([core("p", "0"), core("q", q_r1)]);
+                }
+            }
+            serde_json::to_vec(&snapshot).expect("snapshot JSON")
+        })
+        .collect()
+}
+
+fn both_routes_for_unit_with_snapshots(
+    name: &str,
+    unit: &str,
+    items: Value,
+    snapshots: &[Vec<u8>],
+    subject: Option<Value>,
+) -> (Run, Run) {
+    let ws = Workspace::new(name);
+    let extra = match subject {
+        Some(subject) => json!({"items": items, "subject": subject}),
+        None => json!({"items": items}),
+    };
+    let path = request_over(
+        &ws,
+        &crate::litmus::unit_text(unit),
+        &crate::litmus::resulting_document(),
+        snapshots,
+        extra,
+    );
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("request JSON");
+    let source = analyze(&path);
+    assert_eq!(source.exit, 0, "{}", source.document());
+    let (members, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("authored unit is removed");
+    let sources = ws.path(&format!("{HANDOFF}/sources"));
+    std::fs::remove_dir_all(&sources).expect("handoff sources are removed");
+    let package = analyze(
+        &ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
     (source, package)
 }
 
@@ -157,7 +220,9 @@ fn assert_recording_charge_parity(ws: &Workspace, bytes: &[u8], document: &Value
         (Some(ExactValue::Boolean(actual)), Some(ExactValue::Boolean(expected))) => {
             assert_eq!(actual, expected);
         }
-        _ => panic!("recording predicate must evaluate to Boolean on both routes: package={package:?}, source={source:?}"),
+        _ => panic!(
+            "recording predicate must evaluate to Boolean on both routes: package={package:?}, source={source:?}"
+        ),
     }
     assert!(
         !source_meter.admitted_charges().is_empty(),
@@ -303,19 +368,167 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
     }
     assert_equal(&source, &package);
 
-    let ws = Workspace::new("package-no-instance-control");
-    let request = litmus_request(
-        &ws,
-        &order_protocol(true),
-        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+    let (source, package) = both_routes(
+        "package-admitted-control",
+        json!([{"claim": "Flow", "kind": "global-conformance"}]),
+        &[],
     );
-    let admitted = analyze(&request);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    assert_eq!(label(&package.item(0)), "proved", "{}", package.document());
+    assert_equal(&source, &package);
+}
+
+fn bound_protocol_subject(key: &str) -> Value {
+    let model = json!({"type": "model-binding", "selection": "test/litmus"});
+    json!({"protocol": {"protocol": "Flow",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": key}},
+        "roles": {"Buyer": model, "Seller": model}}})
+}
+
+/// FR-896-AC-7/8: the unbound claim checks every admitted key, and a bound
+/// claim checks the selected key. p satisfies `Ready`; q does not.
+#[trace("TC-2410", "FR-896-AC-7", "FR-896-AC-8", "FR-850-AC-2")]
+#[test]
+fn source_and_package_global_conformance_check_the_expected_instances() {
+    let protocol = order_protocol(true).replace(
+        "run sequence Main {",
+        "run sequence Main {\ncheck Ready using pp { k.r1 = 0 };",
+    );
+    let snapshots = keyed_core_snapshots("1");
+    let items = json!([{"claim": "Flow", "kind": "global-conformance"}]);
+    let (source, package) = both_routes_for_unit_with_snapshots(
+        "package-every-key",
+        &protocol,
+        items.clone(),
+        &snapshots,
+        None,
+    );
+    assert_eq!(label(&source.item(0)), "refuted", "q violates Ready");
+    assert_eq!(label(&package.item(0)), "refuted", "q violates Ready");
+    assert_equal(&source, &package);
+
+    for (key, expected) in [("p", "proved"), ("q", "refuted")] {
+        let (source, package) = both_routes_for_unit_with_snapshots(
+            &format!("package-bound-{key}"),
+            &protocol,
+            items.clone(),
+            &snapshots,
+            Some(bound_protocol_subject(key)),
+        );
+        assert_eq!(label(&source.item(0)), expected, "bound to {key}");
+        assert_eq!(label(&package.item(0)), expected, "bound to {key}");
+        assert_equal(&source, &package);
+    }
+}
+
+/// FR-125-AC-13: an empty initial list settles NoInitialState on both routes.
+#[trace("TC-2410", "FR-125-AC-13", "FR-990-AC-11", "FR-850-AC-2")]
+#[test]
+fn no_initial_protocol_over_settles_on_source_and_package_routes() {
+    let (source, package) = both_routes_with_snapshots(
+        "package-no-initial",
+        json!([{"claim": "Flow", "kind": "global-conformance"}]),
+        &[],
+        json!({"initial_states": [], "universes": []}),
+    );
+    for run in [&source, &package] {
+        let item = run.item(0);
+        assert_eq!(
+            item["record"]["result"],
+            "inconclusive",
+            "{}",
+            run.document()
+        );
+        assert_eq!(
+            item["record"]["cause"]["kind"], "no-initial-state",
+            "{item}"
+        );
+    }
+    assert_equal(&source, &package);
+}
+
+/// FR-896 scalar `over` ranges over Boolean values, including on the package route.
+#[trace("TC-2410", "FR-896-AC-7", "FR-850-AC-2")]
+#[test]
+fn scalar_protocol_over_is_checked_on_source_and_package_routes() {
+    let protocol = order_protocol(true).replace("over (k: M::Core)", "over (n: Boolean)");
+    let (source, package) = both_routes_for_unit_with_snapshots(
+        "package-scalar-over",
+        &protocol,
+        json!([{"claim": "Flow", "kind": "global-conformance"}]),
+        &[],
+        None,
+    );
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    assert_eq!(label(&package.item(0)), "proved", "{}", package.document());
+    assert_equal(&source, &package);
+}
+
+/// FR-896-AC-7 and FR-101: the max-state budget is shared by all object keys.
+/// One run fits in 20 product states; two such runs do not.
+#[trace("TC-2410", "FR-896-AC-7", "FR-101-AC-15", "FR-850-AC-2")]
+#[test]
+fn global_conformance_shares_limits_across_object_keys() {
+    let snapshots = keyed_core_snapshots("0");
+    let mut one_key = snapshots.clone();
+    for bytes in &mut one_key {
+        let mut snapshot: Value = serde_json::from_slice(bytes).expect("snapshot JSON");
+        for population in snapshot["populations"]
+            .as_array_mut()
+            .expect("snapshot populations")
+        {
+            if population["population"].to_string().contains("cores") {
+                population["objects"]
+                    .as_array_mut()
+                    .expect("core objects")
+                    .truncate(1);
+            }
+        }
+        *bytes = serde_json::to_vec(&snapshot).expect("snapshot JSON");
+    }
+    let item = json!([{"claim": "Flow", "kind": "global-conformance",
+        "temporal": {"limits": {"max_states": 20}}}]);
+    let (source_one, package_one) = both_routes_for_unit_with_snapshots(
+        "package-one-key-budget",
+        &order_protocol(true),
+        item.clone(),
+        &one_key,
+        None,
+    );
     assert_eq!(
-        label(&admitted.item(0)),
+        label(&source_one.item(0)),
         "proved",
         "{}",
-        admitted.document()
+        source_one.document()
     );
+    assert_eq!(
+        label(&package_one.item(0)),
+        "proved",
+        "{}",
+        package_one.document()
+    );
+    assert_equal(&source_one, &package_one);
+
+    let (source_two, package_two) = both_routes_for_unit_with_snapshots(
+        "package-two-key-budget",
+        &order_protocol(true),
+        item,
+        &snapshots,
+        None,
+    );
+    assert_eq!(
+        label(&source_two.item(0)),
+        "incomplete",
+        "{}",
+        source_two.document()
+    );
+    assert_eq!(
+        label(&package_two.item(0)),
+        "incomplete",
+        "{}",
+        package_two.document()
+    );
+    assert_equal(&source_two, &package_two);
 }
 
 fn recording_document(protocol: &str) -> Value {
