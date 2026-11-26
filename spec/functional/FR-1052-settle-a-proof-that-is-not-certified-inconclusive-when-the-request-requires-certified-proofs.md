@@ -63,7 +63,8 @@ pub enum CertificationPolicy {
 ```
 
 It is the `certification` member of FR-281's `AnalyzeRequest`, of the document
-route's `AnalyzeRun` and the argument of `provider::run`. A
+route's `AnalyzeRun` and of `PackageRun` (FR-850), and the argument of
+`provider::run`. A
 `native-analyze/1` request (FR-620) selects it with the request member
 `require_certified`, a JSON boolean, absent meaning `false`; the driver's
 commands that send that request select it with the flag
@@ -137,7 +138,11 @@ Each item's terminal record, changed only as "Behavior" states.
   A rejected certificate already settles `inconclusive`,
   `CertificateRejected{rule, at}` (ADR-018 PC-2, FR-751), and a closed
   search whose certificate no core check read already settles `incomplete`,
-  `CertificateUnchecked` (FR-182, FR-204), with or without the policy.
+  `CertificateUnchecked` (FR-182), with or without the policy.
+- This requirement covers the `analyze` entries named in "Description". The
+  `refinement_transfer` request (FR-1031), the claim items of a `run` call
+  (FR-960) and the verification planner's results take no such member and
+  settle as under `AdmitAny`.
 - A global-conformance item the policy settles `inconclusive` SHALL write its
   FR-990 `global` member with label `inconclusive`, basis `unsettled`,
   `complete` `false` and cause `proof-not-certified`, and each `prefixes` and
@@ -156,13 +161,14 @@ Each item's terminal record, changed only as "Behavior" states.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1052-AC-1 | Over FR-751-AC-1's `Braking` without `t`, the `inductive-solver` entry with no certificate settles `proved`, `Uncertified` with `require_certified` absent and with it `false`; with `require_certified` `true` it settles `inconclusive`, basis `unsettled`, with `proof-not-certified` recording a basis of type `inductive-solver` and certification `uncertified`, and the record carries no `certification` member. The same entry with FR-751-AC-1's accepted certificate settles `proved`, `Certified` with the member absent and with it `true`. | Test (TC-3240) |
-| FR-1052-AC-2 | FR-314-AC-3's bounded certificate whose proof uses `:rule hole` and is not shown wrong settles `proved`, `BoundedComplete`, `Uncertified` by default and `inconclusive` with `proof-not-certified` under `require_certified` `true`; FR-314-AC-11's `CasRefinesCounter` records with no `Base` record settle `Proved{Inductive{depth: 1}, Uncertified}` by default and `inconclusive` with `proof-not-certified` under the policy. | Test (TC-3240) |
-| FR-1052-AC-3 | FR-160-AC-1's symmetry-reduced `fair weak each` instance and FR-160-AC-2's `Wide` constrained proof settle `proved`, `Uncertified` by default and `inconclusive` with `proof-not-certified` under `require_certified` `true`, each cause recording its `reduced` or `exhaustive` basis. | Test (TC-3240) |
+| FR-1052-AC-2 | A linked provider's `proved` for a routed value-validity item settles `proved`, `Uncertified` by default and `inconclusive` with `proof-not-certified` recording the same basis and certification `uncertified` under `RequireCertified`. | Test (TC-3240) |
+| FR-1052-AC-3 | A `native-analyze/1` item that proves FR-620's Counter claim under a state constraint every state satisfies settles `proved`, `uncertified` by default and `inconclusive` with `proof-not-certified` recording its `basis` and `uncertified` with `require_certified` `true`. | Test (TC-3240) |
 | FR-1052-AC-4 | FR-290-AC-1's process-provider `proved` result settles `proved`, `trusted` by default and `inconclusive` with `proof-not-certified` recording certification `trusted` under `require_certified` `true`. | Test (TC-3240) |
 | FR-1052-AC-5 | Under `require_certified` `true`, FR-620's Counter `Bounded` item, whose EN-1 closure certificate the core checks, settles `proved`, `Certified`, as without the member; an item that settles `refuted`, one that settles `incomplete` `LimitReached{max_states}` (FR-620-AC-7) and one that settles `invalid-request` (FR-620-AC-4) settle identically with and without the policy. | Test (TC-3240) |
 | FR-1052-AC-6 | A `native-analyze/1` request whose only required item is AC-1's uncertified entry has `aggregate` `{"status": "complete", "gaps": []}` by default and, under `require_certified` `true`, `{"status": "incomplete", "gaps": [{"request_index": 0, "reason": "not-proved", "result": "inconclusive"}]}`. | Test (TC-3240) |
 | FR-1052-AC-7 | A `native-analyze/1` request with `"require_certified": "yes"`, and one with `"require_certified": 1`, each refuse the whole request at the request stage with `invalid-request`, exit 20, naming `require_certified`, and run no item. | Test (TC-3240) |
-| FR-1052-AC-8 | `analyze` over AC-1's `AnalyzeRequest`, and `provider::run` over the same items, settle the item as AC-1 does under `CertificationPolicy::RequireCertified`, and under `AdmitAny` settle it `proved`, `Uncertified`. | Test (TC-3240) |
+| FR-1052-AC-8 | `analyze` and `provider::run` over AC-2's request and AC-4's request settle the item under `CertificationPolicy::RequireCertified` as AC-2 and AC-4 state, and under `AdmitAny` settle it `proved`. | Test (TC-3240) |
+| FR-1052-AC-9 | A global-conformance item whose `global` member is `proved` by default writes it, under `RequireCertified`, with label `inconclusive`, basis `unsettled`, `complete` `false` and cause `proof-not-certified`, with the same closure record and obligation verdicts. | Test (TC-3240) |
 
 ## Dependencies
 

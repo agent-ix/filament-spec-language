@@ -364,6 +364,7 @@ fn package_release_backing_admits_task_product_candidates() {
             engines: &engines,
             limits: fsl_analyze::analyze::AnalyzeLimits::unbounded(),
             budget,
+            certification: Default::default(),
         },
         &capture,
         &filament_exact::Cancel::new(),

@@ -823,6 +823,7 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
             items,
             engines: &engines,
             limits,
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),

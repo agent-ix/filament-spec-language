@@ -587,6 +587,7 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
             }))],
             engines: &engines,
             limits: AnalyzeLimits::unbounded(),
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),

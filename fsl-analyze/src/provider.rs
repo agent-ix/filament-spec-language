@@ -2,8 +2,8 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
-    SubjectBinding, analyze_bound,
+    AnalyzeLimits, AnalyzeRefusal, CertificationPolicy, Engines, ItemCounterexample,
+    NegotiatedItem, SourceProvision, SubjectBinding, analyze_bound,
 };
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
@@ -71,6 +71,7 @@ pub fn run(
     engines: &Engines,
     limits: &AnalyzeLimits,
     cancel: &Cancel,
+    certification: CertificationPolicy,
 ) -> ProviderResults {
     let run = crate::analyze::RunInput::source(package);
     match analyze_bound(
@@ -83,6 +84,7 @@ pub fn run(
             engines,
             limits,
             cancel,
+            certification,
         },
     ) {
         Ok(staged) => {

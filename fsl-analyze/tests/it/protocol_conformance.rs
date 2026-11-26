@@ -494,6 +494,7 @@ fn a_compiled_handoff_publishes_its_source_provision() {
         binding: binding.clone(),
         items: Vec::new(),
         provision: handoff.sources().clone(),
+        certification: Default::default(),
     };
     assert!(
         analyze(handoff.checked(), &complete, &engines, &limits, &cancel).is_ok(),
@@ -511,6 +512,7 @@ fn a_compiled_handoff_publishes_its_source_provision() {
         binding,
         items: Vec::new(),
         provision: without_unit,
+        certification: Default::default(),
     };
     let refusal = analyze(handoff.checked(), &incomplete, &engines, &limits, &cancel)
         .expect_err("analyze refuses a provision without the unit source")

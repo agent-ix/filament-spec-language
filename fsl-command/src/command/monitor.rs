@@ -577,6 +577,7 @@ fn read_routed(
     let documents = super::analyze::read_documents(intake, &request.documents, Some(&items))?;
     let subject = super::analyze::read_subject(request.subject.take(), &documents)?;
     Ok(Some(super::analyze::RoutedItems {
+        certification: fsl_analyze::analyze::CertificationPolicy::AdmitAny,
         documents,
         subject,
         memory: Vec::new(),

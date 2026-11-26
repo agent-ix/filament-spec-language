@@ -395,6 +395,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
             items,
             engines: &engines,
             limits,
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),

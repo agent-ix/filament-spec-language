@@ -15,10 +15,10 @@ use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    check_probability_certificate_document, Certification, CertificateRule, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, IncompleteCause, InconclusiveCause, ModelCheckLimit,
-    ProbabilityCertificateLocus, ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis,
-    TerminalValue,
+    check_probability_certificate_document, CertificateRule, Certification,
+    ExactProbabilityCertificate, ExactProbabilityCertificateCheck, IncompleteCause,
+    InconclusiveCause, ModelCheckLimit, ProbabilityCertificateLocus, ProbabilityCertificateRule,
+    ProbabilityDocumentError, ProofBasis, TerminalValue,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -650,12 +650,10 @@ fn every_scheduler_infinite_mean_time_is_certified() {
             .expect("base64url"),
     );
     let tampered = settle_tampered(&world, "MeanTime", move |certificate| {
-        certificate
-            .values
-            .push(fsl_replay::ExactProbabilityValue {
-                state: key.clone(),
-                value: ratio(3, 1),
-            });
+        certificate.values.push(fsl_replay::ExactProbabilityValue {
+            state: key.clone(),
+            value: ratio(3, 1),
+        });
     });
     assert_eq!(rejected_item_rule(&tampered), CertificateRule::Malformed);
 }

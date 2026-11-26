@@ -768,6 +768,7 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
         binding,
         provision: world.source_provision(),
         items,
+        certification: Default::default(),
     };
     let outcome = analyze(
         package,

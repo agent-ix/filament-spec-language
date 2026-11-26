@@ -34,6 +34,7 @@ fn a_package_the_reader_refuses_settles_the_model_check_route_as_its_own_refusal
         },
         provision: SourceProvision::default(),
         items: Vec::new(),
+        certification: Default::default(),
     };
     let failure = analyze(
         &checked,

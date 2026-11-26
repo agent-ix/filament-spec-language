@@ -15,13 +15,13 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::BTreeSet;
 
+use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::hybrid_replay::{
     check_certificate, exact_replay, static_replay, Acceptance, CertificateOutcome, Decisive,
     ExactReal, ExactRecord, ExactReplay, HybridCertificate, HybridCertificateRule,
     HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal,
     HybridTrace, ProofCoverage, ReplayRecord,
 };
-use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::{
     Certification, IncompleteCause, InconclusiveCause, ProofBasis, SettlementBasis, TerminalValue,

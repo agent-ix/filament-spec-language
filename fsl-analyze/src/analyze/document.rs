@@ -3841,6 +3841,8 @@ pub struct AnalyzeRun<'a> {
     pub engines: &'a Engines,
     /// The shared limits.
     pub limits: AnalyzeLimits,
+    /// Which proofs settle `proved`.
+    pub certification: super::CertificationPolicy,
 }
 
 /// Why no FR-621 document could be written.
@@ -3972,6 +3974,7 @@ pub fn settle_run_with_smt_proofs(
         items,
         engines,
         limits,
+        certification,
     } = run;
     let source_input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let Negotiation {
@@ -4018,6 +4021,7 @@ pub fn settle_run_with_smt_proofs(
             engines,
             limits: &limits,
             cancel,
+            certification,
         },
     )
     .map_err(|failure| match failure {

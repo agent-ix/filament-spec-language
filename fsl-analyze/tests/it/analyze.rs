@@ -265,6 +265,7 @@ fn analyze_refuses_an_undeclared_population_before_running_items() {
             source.as_bytes(),
         ),
         items,
+        certification: Default::default(),
     };
 
     let result = analyze_request(
@@ -750,6 +751,7 @@ fn run_provider(
         &Engines::fsl().expect("they register"),
         limits,
         cancel,
+        Default::default(),
     )
     .records
 }
@@ -830,6 +832,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
             binding: world.binding(),
             provision: world.provision.clone(),
             items: vec![routed_service_item(&world)],
+            certification: Default::default(),
         },
         &engines,
         &limits,
@@ -847,6 +850,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
         &engines,
         &limits,
         &Cancel::new(),
+        Default::default(),
     )
     .records
     .remove(0);
@@ -897,6 +901,7 @@ fn provider_entry_settles_an_incomplete_binding_per_item() {
         &Engines::fsl().expect("they register"),
         &limits,
         &Cancel::new(),
+        Default::default(),
     )
     .records;
 
@@ -962,6 +967,7 @@ fn provider_entry_refuses_undeclared_population_before_running_items_in_input_or
             ..AnalyzeLimits::unbounded()
         },
         &cancel,
+        Default::default(),
     )
     .records;
 
@@ -1016,6 +1022,7 @@ fn provider_entry_settles_a_zero_millisecond_deadline_as_incomplete() {
             ..AnalyzeLimits::unbounded()
         },
         &cancel,
+        Default::default(),
     )
     .records;
 
@@ -1251,6 +1258,7 @@ fn analyze_joins_required_items_to_the_aggregate() {
                 binding: world.binding(),
                 provision: world.provision.clone(),
                 items,
+                certification: Default::default(),
             },
             engines,
             &limits,

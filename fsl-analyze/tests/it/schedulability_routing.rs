@@ -228,6 +228,7 @@ impl World {
                 },
                 provision: self.provision.clone(),
                 items,
+                certification: Default::default(),
             },
             engines,
             &AnalyzeLimits::unbounded(),

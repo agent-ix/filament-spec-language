@@ -1634,3 +1634,80 @@ fn exact_replay_settles_before_any_witness_and_a_bad_witness_refuses() {
     assert!(certificate.contains_key("identity"), "{item}");
     assert!(!certificate.contains_key("accepted"), "{item}");
 }
+
+/// The run and first item of FR-751-AC-1's `Braking` claim proved by `entry`,
+/// under the extra request members `extra`.
+fn braking_run(name: &str, entry: &Value, extra: Value) -> (Run, Value) {
+    let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
+    first_item(
+        name,
+        &unit,
+        named("Bounded", "hybrid-fixture"),
+        extra,
+        vec![hybrid_fixture("hybrid-fixture", entry)],
+    )
+}
+
+fn bare_inductive_entry() -> Value {
+    let mut entry = inductive_entry("20");
+    entry.as_object_mut().expect("object").remove("certificate");
+    entry
+}
+
+#[test]
+#[trace("TC-3240", "FR-1052-AC-1")]
+fn an_uncertified_hybrid_proof_is_inconclusive_only_when_certification_is_required() {
+    for (name, extra) in [
+        ("require-1052-1-absent", json!({})),
+        ("require-1052-1-false", json!({"require_certified": false})),
+    ] {
+        let (_, item) = braking_run(name, &bare_inductive_entry(), extra);
+        assert_eq!(item["record"]["result"], "proved", "{item}");
+        assert_eq!(item["record"]["certification"], "uncertified", "{item}");
+    }
+    let required = json!({"require_certified": true});
+    let (_, item) = braking_run(
+        "require-1052-1-true",
+        &bare_inductive_entry(),
+        required.clone(),
+    );
+    assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+    assert_eq!(item["category"], "inconclusive", "{item}");
+    assert!(item["record"].get("certification").is_none(), "{item}");
+    assert_eq!(
+        item["record"]["cause"],
+        json!({"kind": "proof-not-certified",
+            "basis": {"type": "inductive-solver", "method": "inductive-enclosure"},
+            "certification": "uncertified"}),
+        "{item}"
+    );
+    for (name, extra) in [
+        ("require-1052-1-certified-default", json!({})),
+        ("require-1052-1-certified-required", required),
+    ] {
+        let (_, item) = braking_run(name, &inductive_entry("20"), extra);
+        assert_eq!(item["record"]["result"], "proved", "{item}");
+        assert_eq!(item["record"]["certification"], "certified", "{item}");
+    }
+}
+
+#[test]
+#[trace("TC-3240", "FR-1052-AC-6")]
+fn a_required_item_without_a_certified_proof_is_a_not_proved_gap() {
+    let entry = bare_inductive_entry();
+    let (default, _) = braking_run("require-1052-6-default", &entry, json!({}));
+    assert_eq!(
+        default.document()["aggregate"],
+        json!({"status": "complete", "gaps": []})
+    );
+    let (required, _) = braking_run(
+        "require-1052-6-required",
+        &entry,
+        json!({"require_certified": true}),
+    );
+    assert_eq!(
+        required.document()["aggregate"],
+        json!({"status": "incomplete",
+            "gaps": [{"request_index": 0, "reason": "not-proved", "result": "inconclusive"}]})
+    );
+}

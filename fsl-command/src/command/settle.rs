@@ -93,6 +93,7 @@ pub(super) fn settle_call(
         items: resolved,
         engines: settle.engines,
         limits: AnalyzeLimits::unbounded(),
+        certification: fsl_analyze::analyze::CertificationPolicy::AdmitAny,
     };
     settle_run(run, settle.negotiate, settle.cancel).map_err(|error| match error {
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),

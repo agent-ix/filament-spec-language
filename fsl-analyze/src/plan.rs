@@ -803,6 +803,7 @@ impl Execution<'_> {
                 disposition,
                 diagnostic,
             }],
+            certification: Default::default(),
         };
         let outcome = match analyze(package, &request, engines, limits, cancel) {
             Ok(staged) => staged.into_value(),

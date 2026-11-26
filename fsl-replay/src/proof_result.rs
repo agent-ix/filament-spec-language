@@ -64,6 +64,8 @@ pub(crate) const REPLAY_REFUSED_KIND: &str = "replay-refused";
 pub(crate) const PREMISE_UNPROVED_KIND: &str = "premise-unproved";
 /// The wire spelling of `provider-answer-unconfirmed`, a producer-only cause.
 pub(crate) const PROVIDER_ANSWER_UNCONFIRMED_KIND: &str = "provider-answer-unconfirmed";
+/// The wire spelling of `proof-not-certified`, a producer-only cause.
+pub(crate) const PROOF_NOT_CERTIFIED_KIND: &str = "proof-not-certified";
 /// The wire spelling of `transfer-not-preserving`, a planner-only cause.
 pub(crate) const TRANSFER_NOT_PRESERVING_KIND: &str = "transfer-not-preserving";
 /// The wire spelling of `kani-vacuous-proof`.
@@ -1135,6 +1137,16 @@ pub enum InconclusiveCause {
         /// request does not hold or does not settle `proved`.
         premise: u64,
     },
+    /// FSpec FR-331 `proof-not-certified{basis, certification}`: the request
+    /// requires certified proofs and no core check stands behind this one.
+    /// Only [`TerminalRecord::require_certified`] constructs it (FSL
+    /// FR-1052).
+    ProofNotCertified {
+        /// The basis of the proof.
+        basis: Box<ProofBasis>,
+        /// Who stands behind the proof.
+        certification: Certification,
+    },
     /// ADR-036 PA-20 (FSL FR-573): a protocol analysis that settled
     /// `inconclusive` for a cause other than its horizon, which settles
     /// `bound-reached`.
@@ -1300,6 +1312,7 @@ impl InconclusiveCause {
             Self::PremiseUnproved { .. } => PREMISE_UNPROVED_KIND,
             Self::TransferNotPreserving { .. } => TRANSFER_NOT_PRESERVING_KIND,
             Self::ProviderAnswerUnconfirmed { .. } => PROVIDER_ANSWER_UNCONFIRMED_KIND,
+            Self::ProofNotCertified { .. } => PROOF_NOT_CERTIFIED_KIND,
             Self::ProtocolAnalysis(cause) => cause.as_str(),
         }
     }
@@ -1340,6 +1353,7 @@ impl InconclusiveCause {
             | Self::PremiseUnproved { .. }
             | Self::TransferNotPreserving { .. }
             | Self::ProviderAnswerUnconfirmed { .. }
+            | Self::ProofNotCertified { .. }
             | Self::ProtocolAnalysis(_) => 0,
             Self::SymmetryBroken { population, cause } => {
                 let SymmetryBrokenCause::InitialStatesNotClosed { generator, .. } = cause;
@@ -2107,6 +2121,35 @@ impl TerminalRecord {
         record.protocol_analysis_key = key;
         record.protocol_analysis_root = root;
         record
+    }
+
+    /// Settle a proof that is not `certified` `inconclusive`,
+    /// `proof-not-certified`, for a request that requires certified proofs.
+    /// Every other record is unchanged.
+    #[implements(
+        "FR-1052-AC-1",
+        "FR-1052-AC-2",
+        "FR-1052-AC-3",
+        "FR-1052-AC-4",
+        "FR-1052-AC-5"
+    )]
+    pub fn require_certified(&mut self) {
+        let TerminalValue::Proved {
+            basis,
+            certification,
+        } = &self.value
+        else {
+            return;
+        };
+        match certification {
+            Certification::Certified => {}
+            Certification::Uncertified | Certification::Trusted => {
+                self.value = TerminalValue::Inconclusive(InconclusiveCause::ProofNotCertified {
+                    basis: Box::new(basis.clone()),
+                    certification: *certification,
+                });
+            }
+        }
     }
 
     /// Build a tested record with the producing backend identity.

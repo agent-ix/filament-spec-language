@@ -1337,6 +1337,7 @@ fn settle_value_call(
             engines: settle.engines,
             limits: fsl_analyze::analyze::AnalyzeLimits::unbounded(),
             budget,
+            certification: fsl_analyze::analyze::CertificationPolicy::AdmitAny,
         },
         function,
         &items,

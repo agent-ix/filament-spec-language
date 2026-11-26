@@ -713,6 +713,10 @@ pub(super) struct AnalyzeRequest {
     pub refinement_internals: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present_json_value")]
     pub integer_division: Option<serde_json::Value>,
+    /// FR-1052: a JSON boolean, absent meaning `false`. Read as any value so
+    /// that a non-boolean is refused naming the member.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub require_certified: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub documents: Vec<DocumentFileSelection>,
     #[serde(default)]

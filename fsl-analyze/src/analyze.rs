@@ -87,6 +87,7 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
     AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits,
 };
+use ix_trace_rs::implements;
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
@@ -877,6 +878,32 @@ impl AnalyzeLimits {
     }
 }
 
+/// Which proofs a request admits as `proved` (FSL FR-1052).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CertificationPolicy {
+    /// Every certification settles `proved` (ADR-018 PC-1).
+    #[default]
+    AdmitAny,
+    /// Only a `certified` proof settles `proved`.
+    RequireCertified,
+}
+
+impl CertificationPolicy {
+    /// Settle `records` under this policy, after every item's own
+    /// settlement.
+    #[implements("FR-1052-AC-8")]
+    pub(crate) fn apply(self, records: &mut [AnalyzeRecord]) {
+        match self {
+            Self::AdmitAny => {}
+            Self::RequireCertified => {
+                records
+                    .iter_mut()
+                    .for_each(AnalyzeRecord::require_certified);
+            }
+        }
+    }
+}
+
 /// An admitted-for-execution request: one subject binding and its negotiated
 /// items. Each item is already typed by its layer-A adapter and carries the
 /// disposition established by the caller's negotiation.
@@ -890,6 +917,8 @@ pub struct AnalyzeRequest<'a> {
     pub items: Vec<NegotiatedItem>,
     /// Source bytes under every label the checked package names.
     pub provision: SourceProvision,
+    /// Which proofs settle `proved`.
+    pub certification: CertificationPolicy,
 }
 
 /// The outcome of analyzing a request, preserving the typed result for each
@@ -2525,6 +2554,18 @@ impl AnalyzeRecord {
             finite_hyper_counterexample: None,
             state_graph: None,
             unusable_counterexample: None,
+        }
+    }
+
+    /// Apply [`CertificationPolicy::RequireCertified`] to the settled item:
+    /// its terminal record and the conformance labels it writes beside it.
+    fn require_certified(&mut self) {
+        match &mut self.settlement {
+            Settlement::Terminal(record) => record.require_certified(),
+            Settlement::Disposed(_) => {}
+        }
+        if let Some(output) = &mut self.protocol_conformance {
+            output.withhold_proofs();
         }
     }
 

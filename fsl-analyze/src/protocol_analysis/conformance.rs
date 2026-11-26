@@ -561,13 +561,7 @@ fn behavior_report(
     let label = if matches!(&record.value, fsl_replay::TerminalValue::Incomplete(_)) {
         "incomplete"
     } else {
-        match record.label {
-            fsl_replay::ResultLabel::Proved => "proved",
-            fsl_replay::ResultLabel::Refuted => "refuted",
-            fsl_replay::ResultLabel::Inconclusive => "inconclusive",
-            fsl_replay::ResultLabel::Unsupported => "unsupported",
-            fsl_replay::ResultLabel::Failed => "failed",
-        }
+        record.label.as_str()
     };
     let closed = label == "proved";
     let refuted = label == "refuted";

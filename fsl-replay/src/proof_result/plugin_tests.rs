@@ -432,6 +432,7 @@ fn tc_774_cause_reader_refuses_in_order() {
             "provider-answer-unconfirmed",
             FslOnlyCause::ProviderAnswerUnconfirmed,
         ),
+        ("proof-not-certified", FslOnlyCause::ProofNotCertified),
     ] {
         for body in [
             json!({"type": spelling}),

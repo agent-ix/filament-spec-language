@@ -77,6 +77,17 @@ pub enum ResultLabel {
 }
 
 impl ResultLabel {
+    /// The result's FSpec FR-360 spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Proved => "proved",
+            Self::Refuted => "refuted",
+            Self::Inconclusive => "inconclusive",
+            Self::Unsupported => "unsupported",
+            Self::Failed => "failed",
+        }
+    }
+
     /// The ADR-013 O-16 category a backend's result settles in (FR-332,
     /// ADR-014 A-5): `proved` is success, `refuted` violation, `inconclusive`
     /// inconclusive, `unsupported` unsupported, `failed` with execution

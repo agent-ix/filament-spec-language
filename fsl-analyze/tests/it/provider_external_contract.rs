@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Integer, Value};
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample, Engine,
-    Engines, ItemCounterexample, NegotiatedItem, SourceProvision, SubjectBinding,
+    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, CertificationPolicy, ClaimItem,
+    Counterexample, Engine, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
+    SubjectBinding,
 };
 use fsl_analyze::provider::{self, ProviderResults};
 use fsl_analyze::provider::{ExternalProvider, ProviderLimit, ProviderRequest, ProviderVerdict};
@@ -177,6 +178,22 @@ fn both_entries(
     extent: ExtentClassification,
     pre_cancelled: bool,
 ) -> (AnalyzeOutcome, ProviderResults) {
+    both_entries_under(
+        fixture,
+        engines,
+        extent,
+        pre_cancelled,
+        CertificationPolicy::AdmitAny,
+    )
+}
+
+fn both_entries_under(
+    fixture: &Fixture,
+    engines: &Engines,
+    extent: ExtentClassification,
+    pre_cancelled: bool,
+    certification: CertificationPolicy,
+) -> (AnalyzeOutcome, ProviderResults) {
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no domain packages are required");
     let snapshots = fsl_semantics::model::observation::DocumentProvision::default();
@@ -189,6 +206,7 @@ fn both_entries(
         },
         provision: SourceProvision::single(fixture.package.graph().source(), &fixture.source),
         items: vec![fixture.item(engines, extent)],
+        certification,
     };
     let limits = AnalyzeLimits::unbounded();
     let analyze_cancel = Cancel::new();
@@ -214,6 +232,7 @@ fn both_entries(
         engines,
         &limits,
         &provider_cancel,
+        certification,
     );
     assert_eq!(analyzed.records.len(), 1);
     assert_eq!(analyzed.records, served.records);
@@ -631,5 +650,33 @@ fn process_failure_verdicts_reject_nonprocess_and_mismatched_causes() {
     ] {
         let (analyzed, _) = process_failure_result(verdict);
         assert_eq!(analyzed.records[0].value(), &TerminalValue::Failed);
+    }
+}
+
+/// FR-1052: the policy withholds a linked provider's `uncertified` proof and
+/// a process provider's `trusted` one at both library entries.
+#[trace("TC-3240", "FR-1052-AC-2", "FR-1052-AC-4", "FR-1052-AC-8")]
+#[test]
+fn a_required_certification_withholds_provider_proofs_at_both_entries() {
+    let fixture = Fixture::new(FINITE_HOLDING);
+    for (origin, certification) in [
+        (ProviderOrigin::Linked, Certification::Uncertified),
+        (ProviderOrigin::Process, Certification::Trusted),
+    ] {
+        let (engines, _) = engines(ProviderVerdict::Proved, true, origin, false);
+        let (analyzed, _) = both_entries_under(
+            &fixture,
+            &engines,
+            ExtentClassification::Bounded,
+            false,
+            CertificationPolicy::RequireCertified,
+        );
+        assert_eq!(
+            analyzed.records[0].value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::ProofNotCertified {
+                basis: Box::new(ProofBasis::Inductive { depth: 0 }),
+                certification,
+            })
+        );
     }
 }

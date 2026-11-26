@@ -74,6 +74,7 @@ fn direct(world: &World, items: Vec<NegotiatedItem>, cancel: &Cancel) -> Analyze
             binding: world.binding(),
             provision: world.provision.clone(),
             items,
+            certification: Default::default(),
         },
         &Engines::fsl().expect("the engines register"),
         &AnalyzeLimits::unbounded(),
@@ -92,6 +93,7 @@ fn served(world: &World, items: &[NegotiatedItem], cancel: &Cancel) -> Vec<Termi
         &Engines::fsl().expect("the engines register"),
         &AnalyzeLimits::unbounded(),
         cancel,
+        Default::default(),
     )
     .records
 }
@@ -246,6 +248,7 @@ fn mixed_clause_and_exact_members_keep_input_order() {
         &Engines::fsl().expect("the engines register"),
         &AnalyzeLimits::unbounded(),
         &Cancel::new(),
+        Default::default(),
     )
     .records;
     assert_eq!(records, analyzed.records);
@@ -283,6 +286,7 @@ fn missing_snapshot_declines_each_exact_item_without_a_backend() {
         &Engines::fsl().expect("the engines register"),
         &AnalyzeLimits::unbounded(),
         &Cancel::new(),
+        Default::default(),
     )
     .records;
     assert_eq!(records.len(), 2);

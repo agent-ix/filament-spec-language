@@ -686,6 +686,7 @@ impl Transfer<'_> {
                 items,
                 engines: self.settle.engines,
                 limits,
+                certification: fsl_analyze::analyze::CertificationPolicy::AdmitAny,
             },
             self.settle.negotiate,
             self.settle.cancel,

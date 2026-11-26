@@ -87,6 +87,7 @@ fn through_analyze_with_counterexamples(
             binding,
             provision: world.provision.clone(),
             items: vec![item],
+            certification: Default::default(),
         },
         &Engines::fsl().expect("the layer-A manifests register"),
         &AnalyzeLimits::unbounded(),
@@ -115,6 +116,7 @@ fn through_run_with_counterexamples(
         &Engines::fsl().expect("the layer-A manifests register"),
         &AnalyzeLimits::unbounded(),
         &Cancel::new(),
+        Default::default(),
     );
     let mut records = results.records;
     assert_eq!(records.len(), 1);

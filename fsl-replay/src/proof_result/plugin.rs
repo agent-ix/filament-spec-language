@@ -8,8 +8,8 @@
 
 use super::{
     Certification, InconclusiveCause, ProofBasis, TerminalRecord, TerminalValue,
-    PREMISE_UNPROVED_KIND, PROVIDER_ANSWER_UNCONFIRMED_KIND, REPLAY_PARITY_KIND,
-    REPLAY_REFUSED_KIND, TRANSFER_NOT_PRESERVING_KIND,
+    PREMISE_UNPROVED_KIND, PROOF_NOT_CERTIFIED_KIND, PROVIDER_ANSWER_UNCONFIRMED_KIND,
+    REPLAY_PARITY_KIND, REPLAY_REFUSED_KIND, TRANSFER_NOT_PRESERVING_KIND,
 };
 use crate::execute::ReplayRefusal;
 use crate::hybrid::{ClaimHorizon, SolverCoverage};
@@ -38,6 +38,9 @@ pub enum FslOnlyCause {
     /// `provider-answer-unconfirmed`: only the producer's proof guard settles
     /// it (FSpec FR-331 "Result entries").
     ProviderAnswerUnconfirmed,
+    /// `proof-not-certified`: only the producer settles it, for a request
+    /// that requires certified proofs (FSpec FR-331 "Certification").
+    ProofNotCertified,
 }
 
 /// The plugin wire's spelling of the vacuity cause. FSpec FR-331 keeps the
@@ -58,6 +61,7 @@ impl FslOnlyCause {
             Self::PremiseUnproved => PREMISE_UNPROVED_KIND,
             Self::TransferNotPreserving => TRANSFER_NOT_PRESERVING_KIND,
             Self::ProviderAnswerUnconfirmed => PROVIDER_ANSWER_UNCONFIRMED_KIND,
+            Self::ProofNotCertified => PROOF_NOT_CERTIFIED_KIND,
         }
     }
 }
@@ -248,6 +252,7 @@ pub fn read_plugin_cause_kind(kind: &str) -> Result<(), PluginResultRefusal> {
         PREMISE_UNPROVED_KIND => FslOnlyCause::PremiseUnproved,
         TRANSFER_NOT_PRESERVING_KIND => FslOnlyCause::TransferNotPreserving,
         PROVIDER_ANSWER_UNCONFIRMED_KIND => FslOnlyCause::ProviderAnswerUnconfirmed,
+        PROOF_NOT_CERTIFIED_KIND => FslOnlyCause::ProofNotCertified,
         _ => return Ok(()),
     };
     Err(PluginResultRefusal::FslOnlyCause(claimed))
@@ -417,6 +422,9 @@ impl TerminalRecord {
             InconclusiveCause::ProviderAnswerUnconfirmed { .. } => Err(
                 PluginResultRefusal::FslOnlyCause(FslOnlyCause::ProviderAnswerUnconfirmed),
             ),
+            InconclusiveCause::ProofNotCertified { .. } => Err(PluginResultRefusal::FslOnlyCause(
+                FslOnlyCause::ProofNotCertified,
+            )),
             other => Ok(Self::with_backend(
                 request_index,
                 plugin,

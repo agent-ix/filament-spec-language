@@ -564,6 +564,7 @@ pub fn analyze(
             engines,
             limits,
             cancel,
+            certification: request.certification,
         },
     )
 }
@@ -586,6 +587,7 @@ pub(crate) fn analyze_bound<'a>(
         engines,
         limits,
         cancel,
+        certification,
     } = execution;
     let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
@@ -690,7 +692,8 @@ pub(crate) fn analyze_bound<'a>(
         .iter()
         .map(super::AnalyzeItem::requirement)
         .collect::<Vec<_>>();
-    let settled = super::analyze_items(engines, items, cancel);
+    let mut settled = super::analyze_items(engines, items, cancel);
+    certification.apply(&mut settled);
     let aggregate = super::aggregate(&requirements, &settled);
     let details = settled.iter().map(super::ItemDetail::of).collect();
     let protocol_conformance = settled
@@ -730,6 +733,7 @@ pub(crate) struct AnalyzeExecution<'a> {
     pub(crate) engines: &'a super::Engines,
     pub(crate) limits: &'a super::AnalyzeLimits,
     pub(crate) cancel: &'a filament_exact::Cancel,
+    pub(crate) certification: super::CertificationPolicy,
 }
 
 fn check_provision(

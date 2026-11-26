@@ -1656,6 +1656,7 @@ fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_jso
             items: resolved,
             engines: &engines,
             limits: AnalyzeLimits::unbounded(),
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),

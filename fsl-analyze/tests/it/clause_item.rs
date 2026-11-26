@@ -841,6 +841,7 @@ fn a_package_over_the_emit_limit_reports_the_typed_cause_not_a_nested_id() {
                 }))],
                 engines: &engines,
                 limits,
+                certification: Default::default(),
             },
             &crate::analyze_cli_support::Fr290,
             &Cancel::new(),

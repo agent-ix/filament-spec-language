@@ -13,7 +13,9 @@ use fsl_analyze::analyze::document::{
     AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
     SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
 };
-use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
+use fsl_analyze::analyze::{
+    AnalyzeLimits, CertificationPolicy, DeadlineSupply, Engine, Engines, SourceProvision,
+};
 use fsl_analyze::provider::ProviderOptions;
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_semantics::model::observation::DocumentProvision;
@@ -315,6 +317,8 @@ pub struct AnalyzeInput {
     pub limits: AnalyzeLimits,
     /// The run's deadline in milliseconds.
     pub deadline_ms: Option<u64>,
+    /// Which proofs settle `proved` (FR-1052).
+    pub certification: CertificationPolicy,
     /// The optional request-supplied integer-division law.
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 }
@@ -373,6 +377,7 @@ struct PackageSelection {
     memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
     items: Option<Vec<ItemSelection>>,
     deadline_ms: Option<u64>,
+    certification: CertificationPolicy,
 }
 
 /// FR-531 "Denial is its own typed refusal": a denied identity join names the
@@ -449,6 +454,7 @@ fn run_package(
         memory,
         items,
         deadline_ms,
+        certification,
     } = selection;
     let AdmittedHandoff {
         package: admitted,
@@ -505,6 +511,7 @@ fn run_package(
         engines: &engines,
         limits,
         budget,
+        certification,
     };
     let mut settled = with_deadline(cancel, deadline_ms, || {
         settle_package_run(run, negotiate, cancel).map_err(Box::new)
@@ -865,6 +872,7 @@ fn read<'d>(
         cause => cause,
     })?;
     validate_items(request.items.as_deref())?;
+    let certification = read_certification(request.require_certified.take())?;
     if let Some(package) = &request.package {
         let (admitted, mut intake) =
             admit_package(directory, dependent_bytes, &request, package, caller)?;
@@ -876,6 +884,7 @@ fn read<'d>(
             memory,
             items: request.items,
             deadline_ms: request.deadline_ms,
+            certification,
         }));
     }
     let integer_division = request_integer_division(request.integer_division.take())?;
@@ -927,10 +936,24 @@ fn read<'d>(
             items: request.items,
             limits,
             deadline_ms: request.deadline_ms,
+            certification,
             integer_division,
         },
         intake,
     ))
+}
+
+/// FR-620 "Reading": `require_certified` selects the certification policy.
+#[implements("FR-1052-AC-7")]
+fn read_certification(member: Option<serde_json::Value>) -> Result<CertificationPolicy> {
+    match member {
+        None | Some(serde_json::Value::Bool(false)) => Ok(CertificationPolicy::AdmitAny),
+        Some(serde_json::Value::Bool(true)) => Ok(CertificationPolicy::RequireCertified),
+        Some(_) => Err(invalid(
+            "require_certified",
+            "require_certified must be a boolean",
+        )),
+    }
 }
 
 /// Read the `native-analyze/1` request at `path`, compile its program,
@@ -1095,6 +1118,7 @@ fn run_input(
         items,
         limits,
         deadline_ms,
+        certification,
         integer_division,
     } = input;
     let routed = RoutedItems {
@@ -1104,6 +1128,7 @@ fn run_input(
         items,
         limits,
         deadline_ms,
+        certification,
     };
     let sources = std::slice::from_ref(&source);
     check_sources(
@@ -1155,6 +1180,8 @@ pub(super) struct RoutedItems {
     pub limits: AnalyzeLimits,
     /// The run's deadline in milliseconds.
     pub deadline_ms: Option<u64>,
+    /// Which proofs settle `proved` (FR-1052).
+    pub certification: CertificationPolicy,
 }
 
 /// The FR-620 settlement of `routed` over the compiled `package`: each item
@@ -1209,6 +1236,7 @@ pub(super) fn settle_items<'u>(
         items: resolved,
         engines: settle.engines,
         limits: routed.limits,
+        certification: routed.certification,
     };
     let mut settled = with_deadline(settle.cancel, routed.deadline_ms, || {
         settle_run(run, settle.negotiate, settle.cancel)

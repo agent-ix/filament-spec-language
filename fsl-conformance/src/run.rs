@@ -748,6 +748,7 @@ fn run_analyze(
                 binding: subject.binding(),
                 items: vec![subject.work(item)?],
                 provision: subject.provision(),
+                certification: Default::default(),
             };
             let limits = AnalyzeLimits {
                 accounting: parameters.accounting,
@@ -844,6 +845,7 @@ fn run_prove(
                 engines,
                 &limits,
                 cancel,
+                Default::default(),
             );
             let [record] = <[TerminalRecord; 1]>::try_from(records.records)
                 .map_err(|_| CaseError::at(CaseStage::Document))?;

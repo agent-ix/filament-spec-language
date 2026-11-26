@@ -65,6 +65,7 @@ mod refinement_proofs;
 mod refinement_protocol_support;
 mod related_by;
 mod related_by_support;
+mod require_certified;
 mod scheduler_fairness;
 mod timed_refinement;
 mod timed_world;
