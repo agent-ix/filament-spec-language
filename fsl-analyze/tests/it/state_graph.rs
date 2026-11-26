@@ -2467,8 +2467,8 @@ fn terminal_alias_world(
         "model N = \"test/terminal\";\n\
          function q using v(x: Integer): Integer pure {{ 6 mod x }}\n\
          {extra_functions}\
-         pre Step using v on M::Vault::step {{ self.l < 1 }}\n\
-         post Step using v on M::Vault::step {{ self.l = pre(self.l) + 1 }}\n\
+         pre CanStep using v on M::Vault::step {{ self.l < 1 }}\n\
+         post Stepped using v on M::Vault::step {{ self.l = pre(self.l) + 1 }}\n\
          {terminals}\n\
          {possible_item}\n"
     );
