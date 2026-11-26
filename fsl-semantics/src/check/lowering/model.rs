@@ -3237,8 +3237,35 @@ impl<'a> Lowering<'a> {
             .types()
             .attributes(effective.clone())
             .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
-        let mut members = Vec::with_capacity(fields.len());
+        // The scope lists an object's own fields before its supertypes'; the
+        // body binds the view order of FR-569 (inherited first).
+        let object_records = |key: &DeclarationKey| match model.records.get(key) {
+            Some(DomainPackageRecord::ObjectType(object)) => Some(object.supertypes.as_slice()),
+            _ => None,
+        };
+        let owner_chain = source_object_owner_chain(object_records, declaration);
+        let place = |attribute: &filament_semantic_value::declaration::EffectiveAttribute<'_>| {
+            let owner = model.type_key(attribute.owner())?;
+            let name = attribute.field().name();
+            let record = model.records.values().find_map(|record| match record {
+                DomainPackageRecord::FieldMember(field)
+                    if &field.owner == owner && field.key.node.rsplit('/').next() == Some(name) =>
+                {
+                    Some(field.position)
+                }
+                _ => None,
+            })?;
+            Some((owner_chain.iter().position(|held| *held == owner)?, record))
+        };
+        let mut ordered = Vec::with_capacity(fields.len());
         for attribute in fields.iter() {
+            let at = place(&attribute)
+                .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
+            ordered.push((at, attribute));
+        }
+        ordered.sort_by_key(|(at, _)| *at);
+        let mut members = Vec::with_capacity(ordered.len());
+        for (_, attribute) in ordered {
             let field = attribute.field();
             let target = self.type_node(field.value_type(), location)?;
             let reference = LeafTerm::reference(target);
@@ -4142,3 +4169,35 @@ pub(super) fn union_payload_form<'p>(
         _ => None,
     }
 }
+
+/// FR-569 "Source-object identity rows": the owners of a source object's
+/// effective view, inherited types first in `extends` order and the type
+/// itself last. A field's place in the view is its owner's index here, then
+/// its declared position; the node body and the identity row both order their
+/// bindings by it.
+#[implements("FR-569-AC-6", "FR-569-AC-8")]
+pub fn source_object_owner_chain<'a>(
+    supertypes_of: impl Fn(&DeclarationKey) -> Option<&'a [DeclarationKey]>,
+    object: &'a DeclarationKey,
+) -> Vec<&'a DeclarationKey> {
+    let mut chain: Vec<&DeclarationKey> = Vec::new();
+    let mut stack = vec![(object, 0_usize)];
+    while let Some((key, next)) = stack.pop() {
+        let supertypes = supertypes_of(key).unwrap_or(&[]);
+        match supertypes.get(next) {
+            Some(parent) => {
+                stack.push((key, next + 1));
+                if !chain.contains(&parent) && !stack.iter().any(|(held, _)| *held == parent) {
+                    stack.push((parent, 0));
+                }
+            }
+            None => {
+                if !chain.contains(&key) {
+                    chain.push(key);
+                }
+            }
+        }
+    }
+    chain
+}
+
