@@ -2356,6 +2356,109 @@ fn package_symbolic_capacity_replay_readmits_the_recorded_binding() {
     });
 }
 
+/// FR-217-AC-10: a protocol replay over a subject with an unbounded root
+/// refuses `requires-bound` before any step, from source and from package
+/// bytes. The payload is the bounded protocol's deadlock, whose steps stop
+/// before the finish binder that the second unit widens to `Integer`.
+#[trace("TC-662", "FR-217-AC-10")]
+#[test]
+fn protocol_replay_over_an_unbounded_root_requires_a_bound_on_both_routes() {
+    use fsl_eval::model_subject::CapacityBinding;
+    use fsl_eval::simulation::NotSimulated;
+    use fsl_replay::{ModelCheckOutcome, ModelTraceRefusal, ReplayRefusal};
+    let binding = vec![CapacityBinding {
+        name: "Bound".to_owned(),
+        value: 1,
+    }];
+    let bounded = Workspace::new("protocol-replay-bounded-root");
+    let path = symbolic_capacity_request(&bounded, Some(1), false);
+    let mut found = None;
+    with_capacity_subjects(&bounded, &path, |mut source, _, _, _| {
+        source.capacities = binding.clone();
+        let ModelCheckOutcome::Violated { counterexample, .. } =
+            capacity_outcome(source).expect("the bounded protocol checks")
+        else {
+            panic!("one-slot queue deadlocks");
+        };
+        found = Some(*counterexample);
+    });
+    let counterexample = found.expect("the bounded deadlock");
+
+    let ws = Workspace::new("protocol-replay-unbounded-root");
+    let path = symbolic_capacity_request(&ws, Some(1), false);
+    let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("source");
+    ws.write(
+        "program.fsl",
+        unit.replace(
+            "(closing: Boolean) { closing }",
+            "(closing: Integer) { closing = 0 }",
+        )
+        .as_bytes(),
+    );
+    with_capacity_subjects(&ws, &path, |source, _, checked, documents| {
+        let mut wire = crate::model_settle_support::request(
+            checked,
+            &[],
+            &std::fs::read(ws.path("model.json")).expect("model"),
+            documents.snapshots.iter(),
+            &std::fs::read(ws.path("program.fsl")).expect("source"),
+        );
+        let (node, occurrence) = crate::model_settle_support::protocol_anchor(checked, "Flow");
+        let envelope = crate::model_settle_support::envelope_at(counterexample, node, occurrence);
+        let subject = fsl_replay::ProtocolTraceSubject {
+            model: fsl_replay::ModelTraceSubject {
+                timed: None,
+                initial: source.model.simulation.initial.clone(),
+                universes: source.model.simulation.universes.clone(),
+                expansion: source.model.simulation.expansion,
+                stutter_closure: false,
+            },
+            protocol: source.protocol.clone(),
+            over: source.over.clone(),
+            roles: source.roles.clone(),
+            capacities: binding.clone(),
+            memory: source.memory.clone(),
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        };
+        let letters = crate::counter::Letters { atom: |_| None };
+        let from_source = fsl_replay::replay_protocol_trace(
+            wire.clone(),
+            &subject,
+            &envelope,
+            &letters,
+            fsl_replay::ReplayLimits::default(),
+        );
+        let directory = ws.path(crate::analyze_cli_support::HANDOFF);
+        let identities = std::fs::read(directory.join("identities.json")).expect("identity rows");
+        let equality = std::fs::read(directory.join("equality.json")).expect("equality rows");
+        wire.byte_provision.clear();
+        let from_package = fsl_replay::replay_protocol_trace_from_package(
+            wire,
+            fsl_replay::HandoffSupply {
+                dependencies: &[],
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &subject,
+            &envelope,
+            &letters,
+            fsl_replay::ReplayLimits::default(),
+        );
+        for (route, replayed) in [("source", from_source), ("package", from_package)] {
+            let Err(ReplayRefusal::ModelTrace(refusal)) = replayed else {
+                panic!("{route}: expected requires-bound, got {replayed:?}");
+            };
+            assert!(
+                matches!(&*refusal, ModelTraceRefusal::NotSimulated(cause)
+                    if matches!(**cause, NotSimulated::RequiresBound(_))),
+                "{route}: {refusal:?}"
+            );
+        }
+    });
+}
+
 /// The complete loss-head example's single constrained send uses model payloads.
 #[trace("TC-2958", "FR-940-AC-6", "FR-383-AC-4", "FR-383-AC-7")]
 #[test]

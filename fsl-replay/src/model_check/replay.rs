@@ -1146,6 +1146,10 @@ pub fn replay_model_trace_from_package(
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
         .map_err(handoff_join_refusal)?;
+    refuse_model_alphabet_for_a_task_item(names_package_task_product_item(
+        &bare,
+        envelope.occurrence_key(),
+    )?)?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
             .map_err(|_| fault("package-route-input"))?;
@@ -1298,12 +1302,10 @@ pub fn replay_model_trace_with_temporal_selections(
         temporal_selections,
         replay_limits,
         |package, simulation, meter| {
-            if names_task_product_item(package.0, envelope.occurrence_key()) {
-                return Err(refused(ModelTraceRefusal::TraceAlphabet {
-                    required: "task",
-                    supplied: "model",
-                }));
-            }
+            refuse_model_alphabet_for_a_task_item(names_task_product_item(
+                package.0,
+                envelope.occurrence_key(),
+            ))?;
             if let Some(clause) = resolve_invariant(envelope, package.0)? {
                 let system =
                     ModelSystem::new(simulation(subject)).map_err(ReplayRefusal::Admission)?;

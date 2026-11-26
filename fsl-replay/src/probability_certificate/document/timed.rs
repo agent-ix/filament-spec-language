@@ -4644,7 +4644,7 @@ fn region_route(
         )
 }
 
-fn clock_constraints<'a>(
+pub(crate) fn clock_constraints<'a>(
     timed: &'a fsl_eval::simulation::model::TimedSystem<'_, '_>,
 ) -> Vec<&'a fsl_semantics::check::ClockConstraint> {
     fn part_constraints<'a>(
@@ -4770,6 +4770,7 @@ fn certificate_scale(
 /// [`ProbabilityWitnessError`] when the claim is not a timed deadline claim,
 /// the product cannot be enumerated within the limits, or the witness names a
 /// state, step or choice the checker's product does not have.
+#[implements("FR-202-AC-47")]
 pub(in crate::probability_certificate) fn replay_timed_witness(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -4812,6 +4813,9 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     let binding = claim_binding(system, claim)
         .map_err(|_| unsupported())?
         .map(|binding| binding.reference);
+    if binding != witness.binding {
+        return Err(Error::Refused);
+    }
     // A bounded monitor keeps the claim's whole horizon, as the certificate
     // check does: a nested window ends past its root operator's upper bound.
     let clock_bound = match &watch {

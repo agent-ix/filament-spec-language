@@ -35,7 +35,7 @@ mod cyclic_state;
 mod state_predicate;
 pub use bounded::probabilistic_formula_monitor_context;
 mod source;
-pub(crate) use document::is_model_state_key;
+pub(crate) use document::{clock_constraints, is_model_state_key};
 pub use document::*;
 pub use source::*;
 mod witness;

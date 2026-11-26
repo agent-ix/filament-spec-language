@@ -367,7 +367,7 @@ fn timed_document_has_no_component_member() {
     // profile; use a deterministic timed package to test that the certificate
     // profile itself is not part of package source.
     let emission_world = timed_world::world(
-        &timed_world::document(&["x"], &[("send", &["late", "x"])]),
+        &timed_world::document(&["x"], &[("send", &["late"])]),
         PROFILES,
         &format!(
             "{}\
@@ -735,19 +735,33 @@ fn altered_timed_witness_is_not_refuted() {
     assert!(record.probabilistic_counterexample.is_none());
 }
 
-/// FR-202: a timed deadline witness names the claim's binding. One that names
-/// no instance, or another instance, is refused by the source replay and by
-/// the package replay.
-#[trace("TC-2492", "FR-202-AC-10")]
+/// FR-202-AC-47: a timed deadline witness names the claim's binding and no
+/// instance. One with no binding, another object or an instance is refused by
+/// the source replay and by the package replay.
+#[trace("TC-637", "FR-202-AC-47")]
 #[test]
 fn a_timed_witness_with_another_binding_is_refused_by_both_replays() {
     use filament_exact::{ObjectId, ObjectReference};
     use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, PackageModelInput};
     use fsl_replay::{ProbabilityWitnessError, ProbabilityWitnessReplay};
 
-    let claim = deadline("Deadline", "under every scheduler", ">= 0.995");
-    let world = retx(GUARD, true, "", &claim);
-    let record = settle(&world, "Deadline");
+    // The package route reads a timed subject only with no random draw, clock
+    // guard, reset or invariant. A scheduler may take `send` at once, so `late`
+    // is reached with maximum probability 1 and `<= 0.9999` is refuted.
+    let body = format!(
+        "{}\
+         pre Send using v on M::Call::send {{ not self.late }}\n\
+         post Sent using v on M::Call::send {{ self.late = true }}\n\
+         {}",
+        timed_world::DENSE,
+        deadline("Max", "under every scheduler", "<= 0.9999"),
+    );
+    let world = timed_world::world(
+        &timed_world::document(&["x"], &[("send", &["late"])]),
+        PROFILES,
+        &body,
+    );
+    let record = settle(&world, "Max");
     let witness = record
         .probabilistic_counterexample
         .as_ref()
@@ -825,9 +839,15 @@ fn a_timed_witness_with_another_binding_is_refused_by_both_replays() {
         let Ok(ProbabilityWitnessReplay::Reproduced(token)) = replayed else {
             panic!("the produced witness reproduces: {replayed:?}");
         };
-        assert_eq!(token.mass(), &ratio(1, 100));
+        assert_eq!(token.mass(), &ratio(1, 1));
     }
-    for (name, altered) in [("unbound", &unbound), ("other instance", &other)] {
+    let mut named = witness.clone();
+    named.instance = named.binding.clone();
+    for (name, altered) in [
+        ("unbound", &unbound),
+        ("other object", &other),
+        ("named instance", &named),
+    ] {
         for (route, replayed) in [
             ("source", from_source(altered)),
             ("package", from_package(altered)),

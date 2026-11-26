@@ -128,6 +128,7 @@ mod timed_hidden_candidates;
 mod timed_product_certificate;
 mod timed_refinement_certificate;
 mod timed_refinement_liveness;
+mod replay_route_rules;
 mod timed_state_graph;
 mod tso_fairness;
 mod universe_obligation;
