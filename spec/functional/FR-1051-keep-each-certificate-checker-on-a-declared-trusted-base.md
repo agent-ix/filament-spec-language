@@ -202,11 +202,14 @@ accessor and need not be listed.
 
 ### Recorded exceptions
 
-The sharing below exists on main and violates the rules above. Each row is
-allowed only until its ticket removes it. The change that removes a sharing
-SHALL delete its row, or the named items of it, in the same change. No other
-exception is allowed. The Matches column is what the arch-lint check matches
-the row by; Paths are as under "Names".
+The sharing below violates the rules above. Rows X-1 to X-40 exist on main;
+each is allowed only until its ticket removes it, and the change that
+removes a sharing SHALL delete its row, or the named items of it, in the same
+change. X-41 is planned and permanent: its items SHALL be data (constants,
+statics and type items, no function or method), and the change that adds
+them SHALL fill its Matches entry. No other exception is allowed. The Matches
+column is what the arch-lint check matches the row by; paths are as under
+"Names".
 
 | ID | Rule broken | Matches | Sharing | Removed by |
 | --- | --- | --- | --- | --- |
@@ -250,6 +253,7 @@ the row by; Paths are as under "Names".
 | X-38 | Producer object | `replay_task_product_trace` (parameter `TaskProductSystem`) | Task-product trace replay checks keys of the producer's own product object | QSL-3501 |
 | X-39 | Producer object | `replay_refinement_trace`, `replay_timed_refinement_trace`, `replay_free_delay_refinement_trace`, `replay_protocol_assumption_witness` (parameter `RefinementSystems`) | Refinement replay steps the systems the producer opened | QSL-3501 |
 | X-40 | Producer object | `check_product_closure`, `check_model_relation_closure`, `check_package_hyper_closure`, `replay_model_relation_input` (fields `evaluator: dyn ModelEvaluator`, `ModelRelationReplayInput::systems: ModelSystem`) | Product closure and model-relation replay evaluate through the producer's evaluator and systems | QSL-3501 |
+| X-41 | Shared semantics (data only) | Planned: the item names QSL-3494 gives the route admission table and the locked-run value mapping in `fsl-eval`; the Matches entry is filled in the change that adds them | The route admission table of ADR-038 (its rows, each row's cited theorem and the conditions it tests) and the FSpec FR-416 "How claims read a time-lock" mapping from a claim monitor's kind and reading to a value, declared once and read as data by EN-5 and its checker (arch ruling, QSL-3490 Q1). Every condition a row tests, the end components and the time-lock detection stay written separately on each side; no function deciding a condition, a route or a value is shared | Not removed (ruled shared data) |
 
 ### Routes
 
@@ -368,8 +372,8 @@ part of the fragment:
 | FR-1051-AC-2 | Over fixture crates, the same check fails when a function or method outside the trusted base is named both by checker code and by producer code, naming the item and one site on each side; with the function named on one side only, it reports nothing for it. | Test |
 | FR-1051-AC-3 | Over fixture crates, the same check fails when producer code names a checker-code function that is neither a check entry nor a codec function nor a codec accessor, naming the function and the site; naming `check_probability_certificate_document`, `write_probability_certificate` or a checker type item passes. A method call `x.m()` is attributed to `T::m` only in a file that names `T`. | Test |
 | FR-1051-AC-4 | Over fixture crates, the same check fails when a check entry has a parameter, or a field of a checker-code request type it takes, of a producer-built type of "No producer objects", naming the entry, the parameter or field and the type. | Test |
-| FR-1051-AC-5 | On the repository, every finding of the check matches an exception row by its Matches column and the rule it breaks, and every exception row matches at least one finding; a finding that matches no row fails, and a row (or a named item of a row) that matches no finding fails as stale, naming its ID and item. | Test |
-| FR-1051-AC-6 | The same check fails as stale, naming the entry, when a check entry, codec function, trusted-base item or exception item of its configuration names no item that exists in the repository, or when a checker-code path names no file. | Test |
+| FR-1051-AC-5 | On the repository, every finding of the check matches an exception row by its Matches column and the rule it breaks, and every exception row with a Matches entry matches at least one finding; a finding that matches no row fails, and a row (or a named item of a row) that matches no finding fails as stale, naming its ID and item. A planned row whose Matches entry is still empty (X-41 before QSL-3494) is not stale. | Test |
+| FR-1051-AC-6 | The same check fails as stale, naming the entry, when a check entry, codec function, trusted-base item or exception item of its configuration names no item that exists in the repository, or when a checker-code path names no file; a planned row with an empty Matches entry names no item and is not checked. It fails, naming the item, when an item matched by X-41 is a function or method. | Test |
 | FR-1051-AC-7 | For every registered fixture of every route, every single mutation that is not on the route's allowed-to-survive list is refused or rejected by the route's check entry; a mutation the entry accepts fails the harness, naming the route, the fixture, the member path and the mutation. Verified by the harness's own tests, including one where a deliberately weakened check closure accepts a changed value, run once over a canonical document and once through a typed adapter. | Test |
 | FR-1051-AC-8 | An allowed-to-survive entry without a reason, or one whose mutation the harness no longer makes or the check entry now rejects, fails the harness as stale, naming the entry. | Test |
 | FR-1051-AC-9 | The harness fails, naming each route, when a route of the Routes table has no registered accepted fixture, or when a registered fixture is not accepted by its check entry. The harness crate's manifest has no `fsl-replay` dependency and it is a dev-dependency only. The first registered routes are the finite-horizon measure profile, the value-bounds profile, the cyclic-MDP fair profile, zone `always possible` and `unique path`, and counterexample replay on the byte route; a typed-only route (`check_state_graph`) registers through a typed adapter. | Test |
@@ -383,7 +387,7 @@ part of the fragment:
 
 PLANNED. No criterion is met on main. The exception rows record the sharing
 on origin/main as of this requirement. The arch-lint check, the restructuring
-that removes X-1 to X-3 and X-5 to X-40 (QSL-3501), the separate timed
+that removes X-1 to X-3 and X-5 to X-40 (QSL-3501), the shared admission data of X-41 (QSL-3494, after FSL PR #4042), the separate timed
 monitor that removes X-4 (QSL-3324), the mutation harness (QSL-3505) and the
 definitional reference with its corpus (QSL-3500) are not yet built.
 
