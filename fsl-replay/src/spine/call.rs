@@ -2221,6 +2221,7 @@ pub(crate) fn argument_value(
 /// a model composite (FSpec FR-154 "Unit bounds"), naming the argument's
 /// position and the path inside its value. `supplied` is the call's wire
 /// arguments and the forms that read them, when it carries any.
+#[implements("FR-650-AC-24")]
 pub(crate) fn admit_unit_bounds<'v>(
     views: impl IntoIterator<Item = &'v EffectiveView>,
     types: &filament_semantic_value::declaration::TypeEnvironment,

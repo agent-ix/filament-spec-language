@@ -4170,6 +4170,7 @@ fn is_state_machine(view: &ModelView, key: &DeclarationKey) -> bool {
 /// document order. Every entry is validated, whichever machine it is of;
 /// those whose machine is `read_machine` or specializes it are the read
 /// contexts the clause evaluates over, and are returned.
+#[implements("FR-106-AC-87")]
 #[implements("FR-106-AC-44")]
 #[implements("FR-663-AC-6")]
 fn admit_contexts<'t>(

@@ -3783,6 +3783,7 @@ fn read_map_bound(
 /// Whether `identity` names an alias, directly or through aliases, of native
 /// `Clock` or of a unit. The chain is walked once on the spot, so a cycle ends
 /// it and reports `false`.
+#[implements("FR-106-AC-88")]
 #[ix_trace_rs::string_edge]
 fn names_bounded_alias(
     types: &[Value],
@@ -3823,6 +3824,7 @@ fn names_bounded_alias(
 /// type or another keyword, at a bound that is no canonical rational
 /// number (or a negative one on clocks), and at the later of a `min` above
 /// a `max` on the same type.
+#[implements("FR-106-AC-88")]
 #[ix_trace_rs::string_edge]
 fn read_value_bounds(
     package: &str,

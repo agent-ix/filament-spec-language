@@ -23,6 +23,7 @@ use fsl_package::{EnumScope, SourceEnumCatalog, SourceEnumCatalogError};
 use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::state::CompositeBounds;
+use ix_trace_rs::implements;
 use serde_json::{Map, Value as Json, json};
 
 #[cfg(test)]
@@ -1538,6 +1539,7 @@ impl Path {
 /// violates (FSpec FR-154 "Unit bounds"), its pointer spelled as `value`'s
 /// run form spells the path. `wire` is the form the caller supplied, whose
 /// positions name the elements of a set, bag or map, and `forms` reads them.
+#[implements("FR-650-AC-24")]
 pub(crate) fn unit_bound_defect(
     bounds: &CompositeBounds,
     types: &TypeEnvironment,

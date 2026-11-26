@@ -21,6 +21,7 @@ use filament_contract_model::{
 use filament_exact::{EffectiveId, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::relationship_extent::RelationshipExtent;
+use ix_trace_rs::implements;
 
 use crate::model::accounting::ModelNormalizationLimits;
 use crate::model::domain_package::{DomainPackageRecord, FieldMemberRecord, ValueTypeRef};
@@ -134,6 +135,7 @@ impl MemberBound {
 }
 
 /// [`MemberBound::violation`] with `rest` of the path still to walk.
+#[implements("FR-106-AC-89")]
 fn violation_at(
     bound: &MemberBound,
     value: &Value,
@@ -201,6 +203,8 @@ fn violation_at(
 /// aliases, as a sequence's items, a map's values or a field of a record or
 /// event it holds, every bound on `u` itself and every bound on an alias the
 /// quantity's type passes. A bound on an alias bounds no other member of `u`.
+#[implements("FR-106-AC-85")]
+#[implements("FR-106-AC-89")]
 pub(crate) fn member_bounds(views: &[ModelView]) -> Vec<MemberBound> {
     let mut bounds = Vec::new();
     for view in views {
@@ -278,6 +282,7 @@ impl CompositeBounds {
     /// violates, with the steps from `value` down to the quantity. `value`
     /// is walked on an explicit stack, in slot order, outermost composite
     /// first.
+    #[implements("FR-650-AC-24")]
     pub fn violation(
         &self,
         value: &Value,
@@ -391,6 +396,7 @@ impl<'r> Walk<'r> {
 
     /// The fields the record or event `key` holds, its own and those it
     /// inherits, each with its declared name.
+    #[implements("FR-106-AC-89")]
     fn record_fields(&self, key: &'r DeclarationKey) -> Vec<(&'r str, &'r FieldMemberRecord)> {
         let mut seen = BTreeSet::new();
         let mut owners = vec![key];
