@@ -734,13 +734,12 @@ impl<'a> SourcePlan<'a> {
         }
         let policy = self.compiled_policy(index)?;
         let node = self.policies[index];
-        let instances = self
+        let policy_instances = self
             .policy_instances
             .as_ref()
             .and_then(|instances| instances.get(index))
-            .and_then(Option::as_ref)
-            .cloned()
             .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
+        let instances = policy_instances.as_deref().unwrap_or(&[]);
         let identity = node.identity();
         let parameter = node.over();
         let mut contexts = Vec::new();
