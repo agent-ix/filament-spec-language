@@ -33,7 +33,7 @@ const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-ed
                      cargo xtask canonical-types [<workspace>]\n       \
                      cargo xtask facade-tests [--tests <dir>] [--inventory <file>]\n       \
                      cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]\n       \
-                     cargo xtask merge-gate-recipe [--workspace <path>] [--preflight] <changed-path>...";
+                     cargo xtask merge-gate-recipe --workspace <path> [--preflight] <changed-path>...";
 
 #[ix_trace_rs::string_edge]
 fn run(arguments: &[OsString]) -> Result<Outcome> {

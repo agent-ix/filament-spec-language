@@ -36,7 +36,16 @@ const ANALYZE_IT_ROOTS: &[(&str, &str)] = &[
     ),
 ];
 const USAGE: &str =
-    "usage: cargo xtask merge-gate-recipe [--workspace <path>] [--preflight] <changed-path>...";
+    "usage: cargo xtask merge-gate-recipe --workspace <path> [--preflight] <changed-path>...";
+const BUILD_INPUT_PATHS: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "xtask/Cargo.toml",
+    "xtask/build.rs",
+    "xtask/src",
+    ".cargo",
+    "rust-toolchain.toml",
+];
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TestTarget {
@@ -1284,15 +1293,18 @@ impl CommandRunner for SystemCommandRunner {
 #[implements("NFR-142-AC-1")]
 pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<String> {
     let (selected_root, selected_operands) = select_workspace(workspace_root, operands)?;
-    ensure_compatible(&selected_root)?;
-    run_with_runner(&selected_root, &selected_operands, &SystemCommandRunner)
+    let (head, main) = ensure_compatible(workspace_root, &selected_root, &SystemCommandRunner)?;
+    run_with_verified_main(
+        &selected_root,
+        &selected_operands,
+        &SystemCommandRunner,
+        head,
+        main,
+    )
 }
 
 #[implements("NFR-142-AC-1")]
-fn select_workspace(
-    default_root: &Path,
-    operands: &[OsString],
-) -> Result<(PathBuf, Vec<OsString>)> {
+fn select_workspace(_tool_root: &Path, operands: &[OsString]) -> Result<(PathBuf, Vec<OsString>)> {
     let mut selected = None;
     let mut remaining = Vec::with_capacity(operands.len());
     let mut iter = operands.iter();
@@ -1306,7 +1318,7 @@ fn select_workspace(
             remaining.push(operand.clone());
         }
     }
-    let selected = selected.unwrap_or_else(|| default_root.to_path_buf());
+    let selected = selected.ok_or(Error::Usage(USAGE))?;
     let selected = selected
         .canonicalize()
         .map_err(|error| Error::MergeGateRecipe(format!("cannot select workspace: {error}")))?;
@@ -1319,17 +1331,157 @@ fn select_workspace(
     Ok((selected, remaining))
 }
 
-#[implements("NFR-142-AC-2")]
-fn ensure_compatible(workspace_root: &Path) -> Result<()> {
-    let actual = crate::recipe_fingerprint::fingerprint(workspace_root).map_err(|error| {
-        Error::MergeGateRecipe(format!("cannot fingerprint selected xtask inputs: {error}"))
-    })?;
-    let expected = env!("XTASK_RECIPE_INPUT_FINGERPRINT");
-    if actual != expected {
+#[implements("NFR-142-AC-2", "NFR-142-AC-4")]
+fn ensure_compatible(
+    tool_root: &Path,
+    target_root: &Path,
+    runner: &dyn CommandRunner,
+) -> Result<(String, String)> {
+    let same_checkout = tool_root
+        .canonicalize()
+        .ok()
+        .zip(target_root.canonicalize().ok())
+        .is_some_and(|(tool, target)| tool == target);
+    if same_checkout {
+        let verified = require_main_merged(target_root, runner)?;
+        let mut arguments = vec![
+            OsString::from("status"),
+            OsString::from("--porcelain"),
+            OsString::from("--"),
+        ];
+        arguments.extend(BUILD_INPUT_PATHS.iter().map(OsString::from));
+        let dirty = runner
+            .run(target_root, OsStr::new("git"), &arguments)
+            .map_err(|error| {
+                Error::MergeGateRecipe(format!("cannot inspect selected workspace: {error}"))
+            })?;
+        if !dirty.success {
+            return Err(Error::MergeGateRecipe(format!(
+                "cannot inspect selected workspace: {}",
+                String::from_utf8_lossy(&dirty.stderr)
+            )));
+        }
+        if !dirty.stdout.is_empty() {
+            return Err(Error::MergeGateRecipe(format!(
+                "selected workspace {} has uncommitted xtask build inputs",
+                target_root.display()
+            )));
+        }
+        return Ok(verified);
+    }
+    require_tool_on_main_history(tool_root, runner)?;
+    let verified = require_main_merged(target_root, runner)?;
+    let dirty = runner
+        .run(
+            tool_root,
+            OsStr::new("git"),
+            &os_args(&["status", "--porcelain"]),
+        )
+        .map_err(|error| {
+            Error::MergeGateRecipe(format!("cannot inspect tool workspace: {error}"))
+        })?;
+    if !dirty.success {
         return Err(Error::MergeGateRecipe(format!(
-            "prebuilt xtask is incompatible with selected workspace {} (built {expected}, found {actual}); rebuild xtask for this workspace",
-            workspace_root.display()
+            "cannot inspect tool workspace: {}",
+            String::from_utf8_lossy(&dirty.stderr)
         )));
+    }
+    if !dirty.stdout.is_empty() {
+        return Err(Error::MergeGateRecipe(format!(
+            "tool workspace {} must be clean before reusing its prebuilt xtask",
+            tool_root.display()
+        )));
+    }
+    let tool_head = git_revision(tool_root, runner, "HEAD")?;
+    let target_head = git_revision(target_root, runner, "HEAD")?;
+    let mut dirty_arguments = vec![
+        OsString::from("status"),
+        OsString::from("--porcelain"),
+        OsString::from("--"),
+    ];
+    dirty_arguments.extend(BUILD_INPUT_PATHS.iter().map(OsString::from));
+    let target_dirty = runner
+        .run(target_root, OsStr::new("git"), &dirty_arguments)
+        .map_err(|error| {
+            Error::MergeGateRecipe(format!("cannot inspect selected workspace: {error}"))
+        })?;
+    if !target_dirty.success {
+        return Err(Error::MergeGateRecipe(format!(
+            "cannot inspect selected workspace: {}",
+            String::from_utf8_lossy(&target_dirty.stderr)
+        )));
+    }
+    if !target_dirty.stdout.is_empty() {
+        return Err(Error::MergeGateRecipe(format!(
+            "selected workspace {} has uncommitted xtask build inputs",
+            target_root.display()
+        )));
+    }
+    let mut arguments = vec![
+        OsString::from("diff"),
+        OsString::from("--name-only"),
+        OsString::from(&tool_head),
+        OsString::from(&target_head),
+        OsString::from("--"),
+    ];
+    arguments.extend(BUILD_INPUT_PATHS.iter().map(OsString::from));
+    let changed = runner
+        .run(target_root, OsStr::new("git"), &arguments)
+        .map_err(|error| {
+            Error::MergeGateRecipe(format!("cannot compare xtask build inputs: {error}"))
+        })?;
+    if !changed.success {
+        return Err(Error::MergeGateRecipe(format!(
+            "cannot compare xtask build inputs: {}",
+            String::from_utf8_lossy(&changed.stderr)
+        )));
+    }
+    if !changed.stdout.is_empty() {
+        return Err(Error::MergeGateRecipe(format!(
+            "prebuilt xtask is incompatible with selected workspace {}; its Git tree changes xtask build inputs relative to tool workspace {}: {}",
+            target_root.display(),
+            tool_root.display(),
+            String::from_utf8_lossy(&changed.stdout).trim()
+        )));
+    }
+    Ok(verified)
+}
+
+#[implements("NFR-142-AC-3")]
+fn require_tool_on_main_history(tool_root: &Path, runner: &dyn CommandRunner) -> Result<()> {
+    let fetch = runner
+        .run(
+            tool_root,
+            OsStr::new("git"),
+            &os_args(&[
+                "fetch",
+                "origin",
+                "+refs/heads/main:refs/remotes/origin/main",
+            ]),
+        )
+        .map_err(|error| Error::MergeGateRecipe(format!("cannot fetch origin/main: {error}")))?;
+    if !fetch.success {
+        return Err(Error::MergeGateRecipe(format!(
+            "cannot fetch origin/main for tool workspace: {}",
+            String::from_utf8_lossy(&fetch.stderr)
+        )));
+    }
+    git_revision(tool_root, runner, "HEAD")?;
+    git_revision(tool_root, runner, "origin/main")?;
+    let ancestor = runner
+        .run(
+            tool_root,
+            OsStr::new("git"),
+            &os_args(&["merge-base", "--is-ancestor", "HEAD", "origin/main"]),
+        )
+        .map_err(|error| {
+            Error::MergeGateRecipe(format!("cannot check tool workspace main history: {error}"))
+        })?;
+    if !ancestor.success {
+        return Err(Error::MergeGateRecipe(
+            "tool workspace HEAD must be on origin/main history before reusing its prebuilt xtask"
+                .to_owned(),
+        ));
     }
     Ok(())
 }
@@ -1338,6 +1490,17 @@ fn run_with_runner(
     workspace_root: &Path,
     operands: &[OsString],
     runner: &dyn CommandRunner,
+) -> Result<String> {
+    let (head, main) = require_main_merged(workspace_root, runner)?;
+    run_with_verified_main(workspace_root, operands, runner, head, main)
+}
+
+fn run_with_verified_main(
+    workspace_root: &Path,
+    operands: &[OsString],
+    runner: &dyn CommandRunner,
+    head: String,
+    main: String,
 ) -> Result<String> {
     let (preflight_requested, operands) = match operands.split_first() {
         Some((flag, paths)) if flag.to_str() == Some("--preflight") => (true, paths),
@@ -1355,7 +1518,6 @@ fn run_with_runner(
                 .ok_or(Error::Usage(USAGE))
         })
         .collect::<Result<Vec<_>>>()?;
-    let (head, main) = require_main_merged(workspace_root, runner)?;
     let mut output = format!("# PR head {head}; origin/main {main}\n");
     if paths.iter().all(|path| path.starts_with("spec/")) {
         output.push_str("NO CARGO: spec-only change.\n");
@@ -2633,12 +2795,21 @@ fn listed_test_names(output: &[u8]) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
     use std::cell::RefCell;
 
     fn workspace_root() -> &'static Path {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")
+    }
+
+    fn tool_workspace() -> &'static Path {
+        Path::new("/stable-tool-workspace")
+    }
+
+    fn pr_workspace() -> &'static Path {
+        Path::new("/selected-pr-workspace")
     }
 
     struct FakeRunner {
@@ -2648,6 +2819,9 @@ mod tests {
         changed_ignore: bool,
         fetch_fails: bool,
         merge_fails: bool,
+        changed_build_inputs: bool,
+        dirty_tool: bool,
+        dirty_target: bool,
     }
 
     impl FakeRunner {
@@ -2659,6 +2833,9 @@ mod tests {
                 changed_ignore: false,
                 fetch_fails: false,
                 merge_fails: false,
+                changed_build_inputs: false,
+                dirty_tool: false,
+                dirty_target: false,
             }
         }
     }
@@ -2683,7 +2860,24 @@ mod tests {
                     || (is_git
                         && args.first().is_some_and(|arg| arg == "merge-base")
                         && self.merge_fails);
-            let text = if is_git && args.first().is_some_and(|arg| arg == "rev-parse") {
+            let text = if is_git
+                && args.first().is_some_and(|arg| arg == "status")
+                && self.dirty_tool
+            {
+                " M xtask/src/main.rs\n"
+            } else if is_git
+                && args.first().is_some_and(|arg| arg == "status")
+                && self.dirty_target
+                && args.contains(&"--".to_owned())
+            {
+                " M xtask/src/main.rs\n"
+            } else if is_git
+                && args.first().is_some_and(|arg| arg == "diff")
+                && args.get(1).is_some_and(|arg| arg == "--name-only")
+                && self.changed_build_inputs
+            {
+                "xtask/src/merge_gate_recipe.rs\n"
+            } else if is_git && args.first().is_some_and(|arg| arg == "rev-parse") {
                 if args.last().is_some_and(|arg| arg == "HEAD") {
                     "head-sha\n"
                 } else {
@@ -3915,7 +4109,7 @@ mod tests {
     }
 
     #[test]
-    #[ix_trace_rs::trace("NFR-142-AC-1")]
+    #[trace("NFR-142-AC-1")]
     fn explicit_workspace_is_selected_and_removed_from_changed_paths() {
         let root = workspace_root();
         let args = [
@@ -3926,6 +4120,7 @@ mod tests {
         ];
         let (selected, remaining) = select_workspace(root, &args).expect("workspace");
         assert_eq!(selected, root.canonicalize().expect("canonical workspace"));
+        assert!(select_workspace(root, &[OsString::from("xtask/src/main.rs")]).is_err());
         assert_eq!(
             remaining,
             [
@@ -3936,15 +4131,106 @@ mod tests {
     }
 
     #[test]
-    #[ix_trace_rs::trace("NFR-142-AC-2")]
-    fn selected_workspace_with_different_recipe_inputs_is_rejected() {
-        let directory = tempfile::tempdir().expect("workspace");
-        std::fs::create_dir_all(directory.path().join("xtask/src")).expect("xtask sources");
-        std::fs::write(directory.path().join("Cargo.toml"), "[workspace]\n").expect("manifest");
-        std::fs::write(directory.path().join("xtask/Cargo.toml"), "[package]\n")
-            .expect("xtask manifest");
-        std::fs::write(directory.path().join("xtask/src/main.rs"), "fn main() {}\n")
-            .expect("source");
-        assert!(ensure_compatible(directory.path()).is_err());
+    #[trace("NFR-142-AC-2")]
+    fn tool_workspace_refuses_different_recipe_inputs_and_dirty_sources() {
+        let runner = FakeRunner {
+            changed_build_inputs: true,
+            ..FakeRunner::new()
+        };
+        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+            .expect_err("different xtask source trees must refuse reuse");
+        assert!(error.to_string().contains("xtask/src/merge_gate_recipe.rs"));
+
+        let runner = FakeRunner {
+            dirty_tool: true,
+            ..FakeRunner::new()
+        };
+        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+            .expect_err("dirty tool sources must refuse reuse");
+        assert!(error.to_string().contains("must be clean"));
+
+        let runner = FakeRunner {
+            dirty_target: true,
+            ..FakeRunner::new()
+        };
+        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+            .expect_err("uncommitted target sources must refuse reuse");
+        assert!(error.to_string().contains("uncommitted xtask build inputs"));
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-2", "NFR-142-AC-3")]
+    fn stable_tool_workspace_accepts_matching_clean_recipe_inputs() {
+        let runner = FakeRunner::new();
+        ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+            .expect("same clean Git tree is compatible");
+        let calls = runner.calls.borrow();
+        assert!(calls.iter().any(|(_, args)| {
+            args.first().is_some_and(|arg| arg == "fetch")
+                && args.get(1).is_some_and(|arg| arg == "origin")
+        }));
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(_, args)| args.first().is_some_and(|arg| arg == "fetch"))
+                .count(),
+            2,
+            "both tool and PR workspaces fetch origin/main"
+        );
+        assert!(calls.iter().any(|(_, args)| {
+            args.first().is_some_and(|arg| arg == "diff")
+                && args.get(1).is_some_and(|arg| arg == "--name-only")
+                && args.iter().any(|arg| arg == "xtask/src")
+        }));
+        assert!(calls.iter().any(|(_, args)| {
+            args.first().is_some_and(|arg| arg == "merge-base")
+                && args.get(2).is_some_and(|arg| arg == "HEAD")
+                && args.get(3).is_some_and(|arg| arg == "origin/main")
+        }));
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-3")]
+    fn tool_or_target_fetch_and_ancestry_failures_refuse_reuse() {
+        let runner = FakeRunner {
+            fetch_fails: true,
+            ..FakeRunner::new()
+        };
+        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+            .expect_err("tool fetch failure must refuse reuse");
+        assert!(error.to_string().contains("cannot fetch origin/main"));
+
+        let runner = FakeRunner {
+            merge_fails: true,
+            ..FakeRunner::new()
+        };
+        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+            .expect_err("ancestry failure must refuse reuse");
+        assert!(error
+            .to_string()
+            .contains("tool workspace HEAD must be on origin/main history"));
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-4")]
+    fn same_workspace_tooling_change_uses_runtime_main_check_without_stable_tree_comparison() {
+        let runner = FakeRunner::new();
+        ensure_compatible(workspace_root(), workspace_root(), &runner)
+            .expect("tooling PR may build and run in its own clean workspace");
+        let calls = runner.calls.borrow();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(_, args)| args.first().is_some_and(|arg| arg == "fetch"))
+                .count(),
+            1,
+            "same workspace only needs the PR's runtime main check"
+        );
+        assert!(!calls.iter().any(|(_, args)| {
+            args.first().is_some_and(|arg| arg == "diff")
+                || (args.first().is_some_and(|arg| arg == "merge-base")
+                    && args.get(2).is_some_and(|arg| arg == "HEAD")
+                    && args.get(3).is_some_and(|arg| arg == "origin/main"))
+        }));
     }
 }

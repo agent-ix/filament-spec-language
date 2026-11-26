@@ -1,34 +1,51 @@
 # Merge gate recipe
 
-Build the recipe executable once from the PR checkout:
+For ordinary PRs, use a clean tool checkout on `origin/main` history, separate
+from the per-PR checkout. It can lag unrelated `origin/main` commits. Run
+Cargo there before invoking the recipe executable:
 
 ```text
 CARGO_INCREMENTAL=0 cargo build --locked -p xtask
 ```
 
-After each update that merges current `origin/main` into the PR head, invoke the
-prebuilt executable directly. From the PR workspace, pass changed paths
-relative to its root:
+Cargo's normal freshness checks reuse the existing build and rebuild only when
+the tool checkout's inputs require it. The tool checkout may lag unrelated
+`origin/main` changes; it must be on the current main history. Invoke its
+executable and explicitly select the PR checkout. Pass changed paths relative
+to the selected workspace root:
 
 ```text
-target/debug/xtask merge-gate-recipe --preflight <changed-path>...
+target/debug/xtask merge-gate-recipe --workspace /path/to/pr-worktree --preflight <changed-path>...
 ```
 
-To use an executable built from a different checkout, explicitly select the PR
-workspace:
+The same explicit workspace selection is required when calling from elsewhere:
 
 ```text
-/path/to/xtask merge-gate-recipe --workspace /path/to/pr-worktree --preflight <changed-path>...
+/path/to/tool-checkout/target/debug/xtask merge-gate-recipe --workspace /path/to/pr-worktree --preflight <changed-path>...
 ```
 
-The executable fingerprints the workspace manifests, lockfile, xtask build
-script, Rust sources, toolchain file, and Cargo configuration used by this
-recipe. It refuses to print a recipe if those inputs in the selected workspace
-differ from its build inputs; rebuild it in that workspace and repeat. Every
-accepted invocation still fetches `origin/main`, checks that the selected
-workspace `HEAD` contains the fetched revision, and prints both commit IDs in
-its header. Thus a retry after main advances only runs the existing executable
-when its recipe implementation is still compatible.
+The command requires a clean tool checkout and clean relevant source paths in
+the selected PR checkout. It fetches current `origin/main` in both checkouts,
+requires the tool checkout `HEAD` to be an ancestor of its fetched main, and
+requires the selected PR `HEAD` to contain its fetched main. It uses Git's
+changed-path output to refuse reuse when `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`,
+`xtask/Cargo.toml`, `xtask/build.rs`, or `xtask/src/**` differ between the tool
+checkout and PR head. It prints the PR head and its verified `origin/main`
+revision in the recipe header. If the xtask build inputs differ, update the
+tool checkout to a revision containing those changes and build there before
+retrying.
+
+For a tooling PR that changes xtask recipe or build inputs, build and invoke
+from the same clean PR checkout instead. Cargo's freshness check builds the
+PR's executable in that checkout, and the command checks the PR's relevant
+build paths are clean and verifies its runtime `origin/main` ancestry. It
+skips the separate stable-tool comparison, which would correctly reject the
+new tooling changes:
+
+```text
+CARGO_INCREMENTAL=0 cargo build --locked -p xtask
+target/debug/xtask merge-gate-recipe --workspace /path/to/this-pr-worktree --preflight <changed-path>...
+```
 
 By default the command only prints the recipe and does not invoke Cargo. Add
 `--preflight` before the paths to check each name filter with normal and
