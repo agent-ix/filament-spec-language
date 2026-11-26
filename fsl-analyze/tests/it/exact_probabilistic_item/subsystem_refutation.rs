@@ -6,12 +6,12 @@
 //! The model is the architecture example's service: `call(ok)` sets `up` to
 //! `ok`; the workload draws `ok` 99:1 and every call costs 1.
 use super::*;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use fsl_replay::{
     ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityWitnessError,
     ProbabilityWitnessReplay, ProductAction, Schedule,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const TRAFFIC: &str = "random Service::call(ok) ~ { true: 99, false: 1 };\n\
                        workload Traffic on M { weight Service::call = 1; }\n";
@@ -387,6 +387,47 @@ fn certificate_rejected(
         })
     );
     assert!(record.probabilistic_counterexample.is_none());
+}
+
+/// Subsystem certificate production refuses on the item's shared allowance.
+#[trace("FR-203-AC-29")]
+#[test]
+fn subsystem_certificate_production_uses_the_shared_work_scope() {
+    let world = World::new(&architecture(
+        false,
+        &format!(
+            "{TRAFFIC}{CALLS}{}",
+            claim(
+                "Fails",
+                "Traffic",
+                "expected accumulate calls until holds(s.up) <= 1"
+            ),
+        ),
+    ));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("Fails")).unwrap();
+    let cancel = Cancel::new();
+    let mut accounting = system.meter_limits();
+    accounting.work_units = 0;
+    let work = filament_exact::WorkScope::new(accounting);
+    let exact = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    let result = fsl_replay::ProbabilitySubsystemCertificate::value_bound_with_work_scope(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &item,
+        fsl_replay::SubsystemBoundKind::Lower,
+        &[],
+        None,
+        fsl_replay::ProbabilityDocumentLimits::for_exact(&exact, accounting),
+        &cancel,
+        &work,
+    );
+    assert!(matches!(
+        result,
+        Err(fsl_replay::ProbabilityDocumentError::Accounting(incomplete))
+            if incomplete.limit_kind == filament_exact::LimitKind::WorkUnits
+    ));
+    assert_eq!(work.consumed_work(), 0);
 }
 
 #[trace("TC-3156", "FR-202-AC-31")]

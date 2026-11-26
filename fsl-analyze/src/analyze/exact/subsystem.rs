@@ -13,6 +13,7 @@ use crate::exact_probabilistic::{
     policy_action,
 };
 use fsl_replay::{ProbabilitySubsystemCertificate, SubsystemBoundKind};
+use ix_trace_rs::implements;
 
 enum Role {
     /// A failing `>=` unwindowed state event: a lower bound on its violation.
@@ -29,6 +30,8 @@ struct Evidence {
     ranks: Option<Vec<(usize, u64)>>,
 }
 
+#[implements("FR-203-AC-31")]
+#[implements("FR-203-AC-32")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn refute(
     system: &ModelSystem<'_>,
@@ -309,7 +312,7 @@ pub(super) fn refute(
         Err(error) => return graph_failure(error, limits, subject),
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let subsystem = match ProbabilitySubsystemCertificate::value_bound(
+    let subsystem = match ProbabilitySubsystemCertificate::value_bound_with_work_scope(
         system,
         system.input().probabilistic.claims(),
         &item,
@@ -322,6 +325,7 @@ pub(super) fn refute(
         ranking.as_deref(),
         document_limits,
         cancel,
+        budget.work_scope(),
     ) {
         Ok(subsystem) => subsystem,
         Err(error) => return document_failure(error, subject),
@@ -348,7 +352,14 @@ pub(super) fn refute(
         tamper(&mut witness);
     }
     finish_replay(
-        replay_witness(system, &item, &witness, limits, cancel),
+        replay_witness_with_work_scope(
+            system,
+            &item,
+            &witness,
+            limits,
+            cancel,
+            budget.work_scope(),
+        ),
         claim,
         system,
         &witness,

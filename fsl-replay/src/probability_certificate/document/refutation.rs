@@ -450,6 +450,7 @@ fn subject(
 
 /// Write a counterexample-role certificate whose base objective is derived
 /// from the checked subject. This grants no acceptance.
+#[implements("FR-203-AC-29")]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn write(
     system: &ModelSystem<'_>,
@@ -460,8 +461,9 @@ pub(in crate::probability_certificate) fn write(
     ranking: Option<&[(ProbabilityProductKey, u64)]>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
-    let mut meter = limits.accounting_meter(cancel);
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let subject = subject(
         system,

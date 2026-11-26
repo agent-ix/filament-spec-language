@@ -128,9 +128,59 @@ impl ProbabilitySubsystemCertificate {
         limits: ProbabilityDocumentLimits,
         cancel: &Cancel,
     ) -> Result<Self, ProbabilityDocumentError> {
+        Self::value_bound_in_scope(
+            system, claims, item, kind, values, ranking, limits, cancel, None,
+        )
+    }
+
+    /// Encode a `lower` or `upper` certificate under the item's shared work
+    /// allowance. The base objective is derived from the checked subject; the
+    /// values and ranks are unchecked evidence.
+    ///
+    /// # Errors
+    /// Subject admission, caller limits, cancellation or the shared allowance.
+    #[implements("FR-203-AC-29")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn value_bound_with_work_scope(
+        system: &ModelSystem<'_>,
+        claims: &[CheckedProbabilisticClaim],
+        item: &ObligationIdentity,
+        kind: SubsystemBoundKind,
+        values: &[ExactProbabilityValue],
+        ranking: Option<&[(ProbabilityProductKey, u64)]>,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+        work: &filament_exact::WorkScope,
+    ) -> Result<Self, ProbabilityDocumentError> {
+        Self::value_bound_in_scope(
+            system,
+            claims,
+            item,
+            kind,
+            values,
+            ranking,
+            limits,
+            cancel,
+            Some(work),
+        )
+    }
+
+    #[implements("FR-203-AC-29")]
+    #[allow(clippy::too_many_arguments)]
+    fn value_bound_in_scope(
+        system: &ModelSystem<'_>,
+        claims: &[CheckedProbabilisticClaim],
+        item: &ObligationIdentity,
+        kind: SubsystemBoundKind,
+        values: &[ExactProbabilityValue],
+        ranking: Option<&[(ProbabilityProductKey, u64)]>,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+        work: Option<&filament_exact::WorkScope>,
+    ) -> Result<Self, ProbabilityDocumentError> {
         Ok(Self {
             bytes: super::document::refutation::write(
-                system, claims, item, kind, values, ranking, limits, cancel,
+                system, claims, item, kind, values, ranking, limits, cancel, work,
             )?
             .into_boxed_slice(),
         })

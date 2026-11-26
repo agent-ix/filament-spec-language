@@ -33,7 +33,6 @@ use fsl_replay::{
     TimedProbabilityObjective, TimedProbabilityRoute,
 };
 use fsl_replay::{
-    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
     replay_probabilistic_witness_from_package_with_work_scope,
     replay_probabilistic_witness_with_work_scope, ProbabilisticCounterexample,
     ProbabilityWitnessError, ProbabilityWitnessPath, ProbabilityWitnessReplay,
@@ -4206,23 +4205,6 @@ fn replay_witness_with_work_scope(
         cancel,
         Some(work),
     )
-}
-
-fn replay_witness(
-    system: &ModelSystem<'_>,
-    item: &fsl_package::ObligationIdentity,
-    witness: &ProbabilisticCounterexample,
-    limits: &crate::exact_probabilistic::ExactProbLimits,
-    cancel: &Cancel,
-) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
-    if let Some(package) = system.source_package() {
-        return replay_probabilistic_witness(package, system, item, witness, limits, cancel);
-    }
-    let owner = system
-        .input()
-        .package_owner()
-        .ok_or(ProbabilityWitnessError::Refused)?;
-    replay_probabilistic_witness_from_package(owner, system, item, witness, limits, cancel)
 }
 
 /// The report a witness replay settles: refuted on a reproduction, otherwise
