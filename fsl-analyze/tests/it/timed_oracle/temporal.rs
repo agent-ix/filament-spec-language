@@ -339,7 +339,6 @@ fn row_3483_stalled_subject_hand() {
 
 #[trace("FR-232-AC-3", "FR-240-AC-4")]
 #[test]
-#[ignore = "QSL-3483: en-1 proves claims over a subject with no time-divergent behaviour"]
 fn row_3483_stalled_subject_routes() {
     let world = stall_claims();
     assert_none(
