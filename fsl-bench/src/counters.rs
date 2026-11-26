@@ -39,6 +39,24 @@ use fsl_eval::simulation::TransitionSystem;
 use crate::mc::{AxisError, Work};
 use crate::world::World;
 
+/// Run one replay request while counting calls to the source parser at the
+/// replay spine boundary.
+///
+/// The counter is owned by this call and passed into the feature-gated replay
+/// entry point. It counts parser invocations, not the benchmark fixture's
+/// setup parses.
+pub fn replay_with_parse_calls(
+    request: fsl_replay::ReplayRequestWire,
+    limits: fsl_replay::ReplayLimits,
+) -> (
+    Result<fsl_replay::ReplayResult, fsl_replay::ReplayRefusal>,
+    u64,
+) {
+    let mut parse_calls = 0;
+    let result = fsl_replay::replay_with_parse_counter(request, limits, &mut parse_calls);
+    (result, parse_calls)
+}
+
 /// The counted workload of one axis input.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Counters {
