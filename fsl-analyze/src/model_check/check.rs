@@ -72,6 +72,8 @@
 //! the clause reads. A clause with no instance is `Undecided(NoInstance)`
 //! before any state is explored (FR-125).
 
+use ix_trace_rs::implements;
+
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -794,6 +796,7 @@ fn restat(
 
 /// One search of a safety item over the first `cap` instances (all when
 /// `None`), within `limits`; `listed` receives the instances it ran over.
+#[implements("FR-126-AC-9")]
 fn check_safety(
     request: &ModelCheckRequest<'_>,
     cancel: &Cancel,
@@ -999,6 +1002,7 @@ pub fn check_protocol(
 ///
 /// As [`check_protocol`], and [`ModelCheckRefusal::UnknownConstraint`] when the
 /// package declares no `at current` state clause named `constraint`.
+#[implements("FR-225-AC-4")]
 pub fn check_protocol_constrained(
     request: ProtocolCheckRequest<'_>,
     constraint: Option<&str>,
@@ -1235,6 +1239,7 @@ fn new_protocol_system<'a, M: MemoryModel>(
 /// `ProtocolSystem<Tso>` bounded by `max_store_buffer` with flush fairness,
 /// or `ProtocolSystem<Ra>` bounded by `max_messages` with visibility fairness
 /// in its fairness set (FR-228).
+#[implements("FR-212-AC-1")]
 fn check_protocol_liveness(
     request: ProtocolCheckRequest<'_>,
     constraint: Option<&str>,
@@ -1610,6 +1615,7 @@ fn sum(left: RunStats, right: RunStats) -> RunStats {
 /// settles the item; otherwise boundary states settle `ConstraintReached`
 /// (before `BoundReached`), a horizon cut `BoundReached`, and a completed
 /// search `HoldsReduced` (ADR-021 RV-1, RV-4, RV-5).
+#[implements("FR-126-AC-26")]
 fn check_reduced(
     request: &ModelCheckRequest<'_>,
     cancel: &Cancel,
@@ -2795,6 +2801,7 @@ where
     }
 
     /// The breadth-first first phase.
+    #[implements("FR-126-AC-26")]
     fn explore(&mut self) -> Step<()> {
         self.poll()?;
         let start = self.monitor.initial().map_err(Self::automaton)?;
