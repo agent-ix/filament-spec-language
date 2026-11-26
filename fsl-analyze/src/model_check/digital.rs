@@ -153,6 +153,7 @@ impl From<DigitalRefusal> for Halt {
 /// [`DigitalRefusal::Strict`] before any search when the subject or the
 /// claim is not closed, [`DigitalRefusal::NotDigitisable`] when its verdict
 /// is not digitisable; the other [`DigitalRefusal`]s as they state.
+#[implements("FR-243-AC-5", "FR-243-AC-7")]
 pub fn check_digital<L: ModelLetters>(
     request: &DigitalRequest<'_, '_, '_, L>,
     cancel: &Cancel,

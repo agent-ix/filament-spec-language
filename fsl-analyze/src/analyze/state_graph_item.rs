@@ -34,6 +34,7 @@ use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
+use ix_trace_rs::implements;
 
 use super::items::{INVALID_VALUE, model_refusal};
 use super::timed_item::subject_refusal;
@@ -259,6 +260,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     }))
 }
 
+#[implements("FR-243-AC-6")]
 fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let Some(model) = read
         .input
