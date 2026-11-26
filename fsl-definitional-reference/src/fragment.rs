@@ -18,7 +18,7 @@ use fsl_semantics::model::domain_package::{
 };
 use ix_trace_rs::implements;
 
-use crate::{scheduler_quantifier, validate_quantile_scheduler, ReferenceRefusal};
+use crate::{ReferenceRefusal, scheduler_quantifier, validate_quantile_scheduler};
 
 /// The reference's state bound.
 const MAX_VALUATIONS: u128 = 1 << 16;

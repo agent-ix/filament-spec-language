@@ -2,9 +2,9 @@
 //! FR-1051 mutation registration for the cyclic-MDP fair route.
 
 use super::*;
-use crate::bounded::{request_with, run, DOMAIN};
+use crate::bounded::{DOMAIN, request_with, run};
 use fsl_certificate_mutation::{
-    check_document, AllowedMutation, Fixture, MutationId, MutationKind, Verdict,
+    AllowedMutation, Fixture, MutationId, MutationKind, Verdict, check_document,
 };
 use ix_trace_rs::trace;
 

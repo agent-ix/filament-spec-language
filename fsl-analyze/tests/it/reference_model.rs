@@ -59,7 +59,7 @@ fn verdict(
 #[trace("FR-1051")]
 #[test]
 fn reference_decides_always_possible_by_the_backward_fixpoint() {
-    use crate::graph_world::{game_world, CAN_STILL_WIN};
+    use crate::graph_world::{CAN_STILL_WIN, game_world};
     let claim = "CanStillWin";
     let play = &["play", "win", "lose"];
     let trapped = game_world(false, false, CAN_STILL_WIN);

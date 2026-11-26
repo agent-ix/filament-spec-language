@@ -46,14 +46,16 @@ fn reference_interprets_a_checked_postcondition_over_pre_and_current_states() {
     )])
     .expect("the current state has one value per field");
 
-    assert!(fsl_definitional_reference::evaluate_boolean(
-        graph,
-        clause.body(),
-        &[receiver],
-        &before,
-        &after,
-    )
-    .expect("the reference evaluates checked equality and conjunction nodes"));
+    assert!(
+        fsl_definitional_reference::evaluate_boolean(
+            graph,
+            clause.body(),
+            &[receiver],
+            &before,
+            &after,
+        )
+        .expect("the reference evaluates checked equality and conjunction nodes")
+    );
 }
 
 #[trace("FR-1051-AC-19")]
@@ -138,17 +140,21 @@ fn qsl_923_reference_refutes_the_never_set_output_lasso() {
     .expect("the seed has the single finite valuation l=0");
     let lasso = fsl_definitional_reference::ReferenceLasso::new(vec![state], 0)
         .expect("step(0) forever is a one-state lasso");
-    assert!(!fsl_definitional_reference::evaluate_boolean(
-        graph,
-        atom.body(),
-        &[receiver.clone()],
-        lasso.initial(),
-        lasso.initial(),
-    )
-    .expect("the checked predicate reads the seed state"));
-    assert!(!lasso
-        .eventually(graph, atom.body(), &[receiver])
-        .expect("the lasso interpreter evaluates every distinct position"));
+    assert!(
+        !fsl_definitional_reference::evaluate_boolean(
+            graph,
+            atom.body(),
+            &[receiver.clone()],
+            lasso.initial(),
+            lasso.initial(),
+        )
+        .expect("the checked predicate reads the seed state")
+    );
+    assert!(
+        !lasso
+            .eventually(graph, atom.body(), &[receiver])
+            .expect("the lasso interpreter evaluates every distinct position")
+    );
     // Hand derivation: P is false initially and forever, hence (not P) is
     // true but eventually P is false; true AND false is false.
 }
@@ -200,16 +206,18 @@ fn qsl_3324_reference_does_not_invent_an_observation_during_a_race_delay() {
         (time(3_i64), after_race),
     ])
     .expect("the race jumps directly from 0 to 3");
-    assert!(!path
-        .eventually_within(
-            graph,
-            predicate.body(),
-            &[receiver],
-            &time(0_i64),
-            &time(2_i64),
-            &time(2_i64),
-        )
-        .expect("the closed singleton time window is interpreted exactly"));
+    assert!(
+        !path
+            .eventually_within(
+                graph,
+                predicate.body(),
+                &[receiver],
+                &time(0_i64),
+                &time(2_i64),
+                &time(2_i64),
+            )
+            .expect("the closed singleton time window is interpreted exactly")
+    );
     // Hand derivation: the only observations are at 0 and 3, neither at 2;
     // the claim's nested event at exactly 2 therefore has value false.
 }
@@ -247,18 +255,22 @@ fn qsl_3444_reference_evaluates_the_strict_two_clock_witness() {
     let at_first = before
         .delay(&rational(1_i64, 2_i64))
         .expect("wait to t=1/2");
-    assert!(at_first
-        .satisfies_guard(timed, 0)
-        .expect("first has a checked strict clock conjunction"));
+    assert!(
+        at_first
+            .satisfies_guard(timed, 0)
+            .expect("first has a checked strict clock conjunction")
+    );
     let after_first = at_first
         .apply_zero_resets(timed, 0)
         .expect("first resets x to zero");
     let at_third = after_first
         .delay(&rational(7_i64, 10_i64))
         .expect("advance from absolute t=1/2 to t=6/5");
-    assert!(at_third
-        .satisfies_guard(timed, 1)
-        .expect("third has a checked strict clock conjunction"));
+    assert!(
+        at_third
+            .satisfies_guard(timed, 1)
+            .expect("third has a checked strict clock conjunction")
+    );
     assert_eq!(at_third.values(), &[rational(7, 10), rational(6, 5)]);
     // Hand derivation: x=7/10<1 and y=6/5>1, so `third` sets late within
     // the [0,4] ms window. The maximizing scheduler therefore has value 1.
@@ -342,9 +354,11 @@ fn qsl_3478_reference_finds_no_path_from_the_trapped_phase() {
         states,
     )
     .expect("the reference interprets the checked next-state clause");
-    assert!(!transition
-        .can_reach(0, &[false, true])
-        .expect("the target set matches the finite state space"));
+    assert!(
+        !transition
+            .can_reach(0, &[false, true])
+            .expect("the target set matches the finite state space")
+    );
     // Hand derivation: Stay preserves phase 1, so the reachable component has
     // no state with phase >= 2; both existential reachability claims are false.
 }
@@ -491,7 +505,7 @@ fn qsl_3414_analysis_does_not_prove_a_bound_above_the_reference_value() {
     use filament_exact::{
         Cancel, Integer, NodeKey, ObjectId, ObjectReference, PathSegment, UniverseId, Value,
     };
-    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
     use fsl_foundation::RequestIndex;
     use fsl_replay::{ModelCheckLimits, TerminalValue};
 
@@ -682,12 +696,16 @@ fn reference_interprets_checked_clock_guards_invariants_and_zero_resets() {
     };
     let state = fsl_definitional_reference::ReferenceClockState::new(timed, vec![clock(3)])
         .expect("one clock at 3/2 ms");
-    assert!(state
-        .satisfies_guard(timed, 0)
-        .expect("the checked guard is a single clock comparison"));
-    assert!(state
-        .satisfies_invariant(timed, 0)
-        .expect("the checked invariant is clock-only with a constant predicate"));
+    assert!(
+        state
+            .satisfies_guard(timed, 0)
+            .expect("the checked guard is a single clock comparison")
+    );
+    assert!(
+        state
+            .satisfies_invariant(timed, 0)
+            .expect("the checked invariant is clock-only with a constant predicate")
+    );
     assert_eq!(
         state
             .apply_zero_resets(timed, 0)
@@ -696,9 +714,11 @@ fn reference_interprets_checked_clock_guards_invariants_and_zero_resets() {
         Rational::from_integer(Integer::zero())
     );
     let delayed = state.delay(&clock(2)).expect("one unit of dense time");
-    assert!(!delayed
-        .satisfies_invariant(timed, 0)
-        .expect("the invariant comparison remains in the checked fragment"));
+    assert!(
+        !delayed
+            .satisfies_invariant(timed, 0)
+            .expect("the invariant comparison remains in the checked fragment")
+    );
 }
 
 fn direct_manifest_dependencies(manifest: &str) -> Vec<(String, String)> {

@@ -2,7 +2,7 @@
 //! FR-1051 mutation registration for value bounds.
 
 use super::*;
-use fsl_certificate_mutation::{check_document, Fixture, Verdict};
+use fsl_certificate_mutation::{Fixture, Verdict, check_document};
 use ix_trace_rs::trace;
 
 /// Trace: FR-1051-AC-11, FR-1051-AC-13.

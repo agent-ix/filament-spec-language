@@ -18,8 +18,8 @@ use fsl_semantics::model::domain_package::{
 };
 use ix_trace_rs::implements;
 
-use crate::interpreter::{evaluate_boolean, ReferenceFiniteState, ReferenceTransitionGraph};
 use crate::ReferenceRefusal;
+use crate::interpreter::{ReferenceFiniteState, ReferenceTransitionGraph, evaluate_boolean};
 
 /// The pairwise relation reads every ordered pair of valuations.
 const MAX_RELATION_STATES: usize = 4096;

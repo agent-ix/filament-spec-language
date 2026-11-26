@@ -5,9 +5,9 @@ use super::*;
 use filament_exact::Cancel;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::analyze::{
-    deadlock_model_item, AnalyzeLimits, PackageDeadlockSubject, RunInput, TemporalItem,
+    AnalyzeLimits, PackageDeadlockSubject, RunInput, TemporalItem, deadlock_model_item,
 };
-use fsl_certificate_mutation::{check_document, Fixture, Verdict};
+use fsl_certificate_mutation::{Fixture, Verdict, check_document};
 use fsl_replay::{CounterexampleKind, ModelCheckOutcome, ModelTraceSettlement, ModelTraceValue};
 use fsl_route::request::{DerivedLimits, ItemKind};
 use ix_trace_rs::trace;
