@@ -1627,6 +1627,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- exploration ---------------------------------------------------------
 
+    #[implements("FR-204-AC-1")]
     fn explore(&mut self) -> Step<Vec<(u32, Option<ModelInstance>, ProbStateId)>> {
         self.poll()?;
         let deadline = if matches!(self.form, Form::Elapsed { .. }) {
@@ -1998,6 +1999,60 @@ impl<'c> Builder<'_, '_, 'c> {
         })
     }
 
+    /// The representative of `state`'s region that the delay walk starts from:
+    /// the same integer parts and the same order of fractions, each nonzero
+    /// fraction moved down to its rank among them (FR-922). A representative
+    /// can leave a fraction one unit below the next integer while another
+    /// clock sits on one, and a single unit step then leaves both at once,
+    /// passing the region between. Packed at their ranks, the fractions leave
+    /// that unit free, since there are fewer of them than subdivisions.
+    ///
+    /// A mean-time claim keys concrete corner values and a nested formula
+    /// keys concrete monitor times, so neither representative is moved.
+    #[implements("FR-922-AC-4")]
+    fn packed_representative(&self, state: &DState) -> Step<DState> {
+        let parts = self.subdivisions;
+        if parts == 1 || matches!(self.form, Form::MeanTime { .. } | Form::NestedDeadline(_)) {
+            return Ok(state.clone());
+        }
+        // The deadline or measure clock has a fraction while it is inside the
+        // range its key ranks.
+        let deadline_end = self.deadline_bound()?.map(|bound| bound + parts);
+        let deadline = state
+            .deadline
+            .filter(|elapsed| deadline_end.is_some_and(|end| *elapsed < end));
+        let fractions: BTreeSet<u64> = state
+            .clocks
+            .iter()
+            .zip(&self.caps)
+            .filter(|(value, cap)| value < cap)
+            .map(|(value, _)| *value)
+            .chain(deadline)
+            .map(|value| value % parts)
+            .filter(|fraction| *fraction > 0)
+            .collect();
+        let pack = |value: u64| match value % parts {
+            0 => value,
+            fraction => value - fraction + fractions.range(..=fraction).count() as u64,
+        };
+        Ok(DState {
+            clocks: state
+                .clocks
+                .iter()
+                .zip(&self.caps)
+                .map(|(value, cap)| if value < cap { pack(*value) } else { *value })
+                .collect(),
+            deadline: state.deadline.map(|elapsed| {
+                if deadline.is_some() {
+                    pack(elapsed)
+                } else {
+                    elapsed
+                }
+            }),
+            ..state.clone()
+        })
+    }
+
     /// The delay and observation moves every running state offers.
     fn running_delays(
         &mut self,
@@ -2006,6 +2061,7 @@ impl<'c> Builder<'_, '_, 'c> {
         local: &Local,
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
+        let state = &self.packed_representative(state)?;
         if let Some(first_delay) = self.unit_delay(local, state)? {
             if self.subdivisions == 1 {
                 let unit = self.delay_move(DelayMove {
@@ -2022,33 +2078,14 @@ impl<'c> Builder<'_, '_, 'c> {
                     planned.push(unit);
                 }
             } else {
-                let current_key = self.nodes[at].key.clone();
-                let mut cursor = state.clone();
-                for elapsed_ticks in 1..=self.subdivisions {
-                    self.poll()?;
-                    let Some(delayed) = self.unit_delay(local, &cursor)? else {
-                        break;
-                    };
-                    let unit = self.delay_move(DelayMove {
-                        at,
-                        state: &cursor,
-                        choice: ProductAction::UnitDelay,
-                        delayed: delayed.clone(),
-                        tail: Tail::Running,
-                        elapsed_ticks,
-                        planned,
-                        omit_unchanged: true,
-                    })?;
-                    if unit.target.key != current_key {
-                        planned.push(unit);
-                        break;
-                    }
-                    if delayed.0 == cursor.clocks && delayed.1 == cursor.deadline {
-                        break;
-                    }
-                    cursor.clocks = delayed.0;
-                    cursor.deadline = delayed.1;
-                }
+                self.successor_delay(
+                    at,
+                    state,
+                    local,
+                    ProductAction::UnitDelay,
+                    Tail::Running,
+                    planned,
+                )?;
             }
             if local.quiescent {
                 planned.push(self.delay_move(DelayMove {
@@ -2066,10 +2103,81 @@ impl<'c> Builder<'_, '_, 'c> {
         Ok(())
     }
 
+    /// The region route's delay, taken to the time successor (FR-922): the
+    /// first region the walk reaches that differs from the one `state` is in,
+    /// both read under the tail `tail`.
+    ///
+    /// Interim: a walk over a finer grid, not the symbolic region MDP of
+    /// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
+    #[implements("FR-922-AC-4")]
+    fn successor_delay(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Local,
+        choice: ProductAction,
+        tail: Tail,
+        planned: &mut Vec<Planned>,
+    ) -> Step<()> {
+        // From a state already under `tail` the region it is in is its own key.
+        let stay = if state.tail == tail {
+            self.nodes[at].key.clone()
+        } else {
+            let binding = self.binding_of(at)?;
+            let monitor = self.nodes[at].key.monitor;
+            let here = DState {
+                tail,
+                ..state.clone()
+            };
+            self.key_of(&here, binding, monitor, None)?
+        };
+        let mut cursor = self.packed_representative(state)?;
+        for elapsed_ticks in 1..=self.subdivisions {
+            self.poll()?;
+            let Some(delayed) = self.unit_delay(local, &cursor)? else {
+                break;
+            };
+            let moved = self.delay_move(DelayMove {
+                at,
+                state: &cursor,
+                choice: choice.clone(),
+                delayed: delayed.clone(),
+                tail,
+                elapsed_ticks,
+                planned,
+                omit_unchanged: true,
+            })?;
+            if moved.target.key != stay {
+                planned.push(moved);
+                break;
+            }
+            if delayed.0 == cursor.clocks && delayed.1 == cursor.deadline {
+                // No later region: waiting stays here, which is still a
+                // move for a state not yet under `tail`.
+                if state.tail != tail {
+                    planned.push(moved);
+                }
+                break;
+            }
+            cursor.clocks = delayed.0;
+            cursor.deadline = delayed.1;
+        }
+        Ok(())
+    }
+
     fn idle_moves(&mut self, at: usize, state: &DState) -> Step<Vec<Planned>> {
         let local = self.local(&state.model)?;
         let mut planned = Vec::new();
-        if let Some(delayed) = self.unit_delay(&local, state)? {
+        if self.subdivisions != 1 {
+            self.successor_delay(
+                at,
+                state,
+                &local,
+                ProductAction::IdleDelay,
+                Tail::IdleDelayed,
+                &mut planned,
+            )?;
+        } else if let Some(delayed) = self.unit_delay(&local, state)? {
             let delay = self.delay_move(DelayMove {
                 at,
                 state,
@@ -2078,11 +2186,9 @@ impl<'c> Builder<'_, '_, 'c> {
                 tail: Tail::IdleDelayed,
                 elapsed_ticks: 1,
                 planned: &planned,
-                omit_unchanged: self.subdivisions != 1,
+                omit_unchanged: false,
             })?;
-            if self.subdivisions == 1 || delay.target.key != self.nodes[at].key {
-                planned.push(delay);
-            }
+            planned.push(delay);
         }
         if state.tail == Tail::IdleDelayed {
             let reached = DState {

@@ -33,6 +33,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
 ---
 # FR-120: Simulate a checked package's state family over its operation frames
 

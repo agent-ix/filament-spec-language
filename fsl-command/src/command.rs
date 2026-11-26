@@ -55,6 +55,7 @@ use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
 use fsl_replay::spine::SpineLimits;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
+use ix_trace_rs::implements;
 use settle::Settle;
 use std::{
     fs::File,
@@ -2711,6 +2712,7 @@ fn inspect_handoff_category(
     }
 }
 
+#[implements("FR-665-AC-5")]
 fn inspect_handoff_position(
     directory: &Path,
     error: &crate::checked_handoff::Error,

@@ -401,7 +401,7 @@ fn witness(
     for (&(from, _, to), &index) in edge_of {
         ends[index] = (from, to);
     }
-    for idle in (0..count).filter(|&v| seen[v] && graph.time.contains(&(v, v))) {
+    for idle in (0..count).filter(|&v| seen[v] && graph.time.binary_search(&(v, v)).is_ok()) {
         let (_, path) = path_to(&parent, idle);
         let candidate = DivergenceWitness {
             start: start_node(idle),

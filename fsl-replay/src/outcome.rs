@@ -433,7 +433,7 @@ pub struct ItemDiagnostic {
 pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<&'static str>,
-    /// A `bounded-search-incomplete` cause's reason.
+    /// A `bounded-search-incomplete` or `idle-tail-undecided` cause's reason.
     #[serde(rename = "reason", skip_serializing_if = "Option::is_none")]
     search_reason: Option<&'static str>,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
@@ -560,6 +560,9 @@ pub struct ItemCause {
     /// The model state named by FR-331's probabilistic refusal causes.
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<TimedStateWire>,
+    /// `true` where `not-stochastic` names an idle tail, in `identity`'s place.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idle_tail: Option<bool>,
     /// The typed transition identity named by `not-stochastic`.
     #[serde(skip_serializing_if = "Option::is_none")]
     identity: Option<TimedTransitionWire>,
@@ -884,6 +887,7 @@ impl ItemCause {
             requested: None,
             recompiled: None,
             state: None,
+            idle_tail: None,
             identity: None,
             transition: None,
             post_state_count: None,
@@ -1445,6 +1449,10 @@ impl OutcomeItem {
                         item.state = Some(state.into());
                         item.identity = Some(identity.into());
                     }
+                    UnavailabilityCause::NotStochasticIdleTail { state } => {
+                        item.state = Some(state.into());
+                        item.idle_tail = Some(true);
+                    }
                     UnavailabilityCause::TimeLockedSample { state } => {
                         item.state = Some(state.into());
                     }
@@ -1464,6 +1472,10 @@ impl OutcomeItem {
                         item.value = Some(*value);
                         item.setting = Some(limit.setting());
                         item.required = required.as_ref().map(ToString::to_string);
+                    }
+                    IncompleteCause::IdleTailUndecided(stop) => {
+                        item.state = Some((&stop.state).into());
+                        item.search_reason = Some(stop.reason.as_str());
                     }
                     IncompleteCause::PrecisionBudget { lower, upper } => {
                         item.lower = Some((**lower).clone());
@@ -5202,6 +5214,52 @@ mod tests {
                 expected,
                 "{value:?}"
             );
+        }
+    }
+
+    #[trace("TC-709", "FR-254-AC-8")]
+    #[test]
+    fn the_idle_tail_not_stochastic_cause_names_no_identity_on_the_wire() {
+        let state = fsl_eval::simulation::StateKey::from_canonical_bytes(b"[0,[]]".to_vec());
+        let cause = |value: TerminalValue| {
+            serde_json::to_value(record(1, value)).expect("serializes")["cause"].clone()
+        };
+        let not_stochastic = cause(TerminalValue::Unsupported(
+            UnavailabilityCause::NotStochasticIdleTail {
+                state: state.clone(),
+            },
+        ));
+        assert_eq!(not_stochastic["kind"], "not-stochastic");
+        assert_eq!(not_stochastic["state"]["key"], "WzAsW11d");
+        assert_eq!(not_stochastic["idle_tail"], true);
+        assert_eq!(not_stochastic.get("identity"), None);
+    }
+
+    #[test]
+    fn the_idle_tail_undecided_cause_keeps_its_detail_on_the_wire() {
+        let state = fsl_eval::simulation::StateKey::from_canonical_bytes(b"[0,[]]".to_vec());
+        let cause = |value: TerminalValue| {
+            serde_json::to_value(record(1, value)).expect("serializes")["cause"].clone()
+        };
+        for (reason, name) in [
+            (
+                crate::statistical::IdleTailReason::TimedFormula,
+                "timed-formula",
+            ),
+            (
+                crate::statistical::IdleTailReason::ClockPredicate,
+                "clock-predicate",
+            ),
+        ] {
+            let undecided = cause(TerminalValue::Incomplete(
+                IncompleteCause::IdleTailUndecided(crate::statistical::IdleTailUndecided {
+                    state: state.clone(),
+                    reason,
+                }),
+            ));
+            assert_eq!(undecided["kind"], "idle-tail-undecided");
+            assert_eq!(undecided["state"]["key"], "WzAsW11d");
+            assert_eq!(undecided["reason"], name);
         }
     }
 

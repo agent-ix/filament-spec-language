@@ -70,7 +70,7 @@ use fsl_eval::simulation::protocol::ProtocolTransition;
 use fsl_foundation::budget::Budget;
 use fsl_foundation::diagnostic::category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::{BackendId, RequestIndex, Setting, SettingLimits};
+use fsl_foundation::{BackendId, RequestIndex, Setting};
 use fsl_package::CheckedPackage;
 use fsl_replay::statistical::StatisticalRecord;
 use fsl_replay::{
@@ -689,10 +689,15 @@ impl SubjectBinding<'_> {
 /// engine reads the caller's bound. `certificate_check.max_rank` is the one
 /// exception: it is accepted and carried in [`EngineBounds`], but no engine
 /// in this repository reads it yet (FR-255 states only that it is carried).
-/// `analysis.retained_bytes` bounds the states an EN-1 run stores.
 /// `plan_search.*` is never listed: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 18] = [
+pub const ENGINE_SETTINGS: [Setting; 23] = [
     Setting::ExpansionMaxCandidates,
+    Setting::ZoneCheckMaxSymbolicStates,
+    Setting::ZoneCheckMaxSymbolicTransitions,
+    Setting::ZoneCheckMaxAutomatonStates,
+    Setting::ZoneCheckMaxZoneBytes,
+    Setting::ZoneCheckMaxCheckWork,
+    Setting::AnalysisRetainedBytes,
     Setting::SimulationMaxSteps,
     Setting::ScheduleMaxDemandPoints,
     Setting::ExactProbMaxStates,
@@ -709,7 +714,6 @@ pub const ENGINE_SETTINGS: [Setting; 18] = [
     Setting::StatisticalMaxCycleSteps,
     Setting::StatisticalMaxSampleSteps,
     Setting::CertificateCheckMaxRank,
-    Setting::AnalysisRetainedBytes,
 ];
 
 /// The engine settings the caller set for one run: a bound is present only
@@ -775,6 +779,17 @@ impl EngineBounds {
     fn stated(&self, item: &document::ItemSelection) -> Vec<Setting> {
         use Setting as S;
         let mut stated = Vec::new();
+        if let Some(limits) = item.temporal.as_ref().and_then(|temporal| temporal.limits) {
+            for (member, setting) in [
+                (limits.max_states, S::ZoneCheckMaxSymbolicStates),
+                (limits.max_transitions, S::ZoneCheckMaxSymbolicTransitions),
+                (limits.max_check_work, S::ZoneCheckMaxCheckWork),
+            ] {
+                if member.is_some() {
+                    stated.push(setting);
+                }
+            }
+        }
         if item
             .simulation
             .as_ref()
@@ -814,19 +829,6 @@ impl EngineBounds {
             }
         }
         stated
-    }
-}
-
-impl SettingLimits for EngineBounds {
-    fn bounds(&self) -> Vec<(Setting, u64)> {
-        ENGINE_SETTINGS
-            .iter()
-            .filter_map(|setting| Some((*setting, self.get(*setting)?)))
-            .collect()
-    }
-
-    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
-        self.set(setting, bound)
     }
 }
 

@@ -3323,6 +3323,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 max_cases: None,
                 max_task_product_work: None,
                 max_check_work: None,
+                max_states: None,
+                max_transitions: None,
                 trace: None,
                 traces: selection
                     .traces
@@ -3561,6 +3563,16 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
             .as_ref()
             .and_then(|temporal| temporal.limits)
             .and_then(|limits| limits.max_check_work),
+        max_states: selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.limits)
+            .and_then(|limits| limits.max_states),
+        max_transitions: selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.limits)
+            .and_then(|limits| limits.max_transitions),
         trace: selection
             .trace
             .as_ref()

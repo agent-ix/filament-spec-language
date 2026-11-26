@@ -17,25 +17,34 @@
 //! may pass, what an edge's identity is) is decided here. The checker then
 //! recomputes all of it; a mistake the two share would have to be in the
 //! lowering itself.
+//!
+//! Every symbolic state, edge, stored zone byte, retained byte and unit of
+//! work is charged to the item's [`Budget`] before it is stored or taken
+//! (FR-239).
 
-use std::cell::Cell;
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, VecDeque};
+use std::mem::size_of;
 
-use filament_exact::{Cancel, CancelCause, Rational};
+use filament_exact::Rational;
 use fsl_eval::simulation::model::{
-    AllowancePhase, CertificationRefusal, ClockAtom, EdgeKind, JobPhase, LocationInfo,
+    AllowancePhase, CertificationRefusal, ClockAtom, EdgeKind, JobPhase, LiveJob, LocationInfo,
     TaskAutomaton, TaskAutomatonRefusal, TaskEdge, TaskLocation, TaskTemplate,
 };
 use fsl_eval::simulation::StateKey;
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::Setting;
 use fsl_replay::{
     TaskArrivalPhase, TaskJobPhase, TaskLiveJob, TaskProductKey, TaskSchedulerControl,
     TaskTransitionTemplate,
 };
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, Zero};
 
 use super::dbm::{Bound, Dbm};
+use super::search::{widen, zone_bytes};
 
 /// A clock bounded below and above and the position of the lower bound's
 /// guard, as a cycle's advance rule reads it.
@@ -133,10 +142,8 @@ pub struct SymbolicGraph {
 /// Why the symbolic pass produced no quotient.
 #[derive(Debug)]
 pub enum SymbolicStop {
-    /// The work limit.
-    WorkLimit(u64),
-    /// A cancel.
-    Cancelled(CancelCause),
+    /// A `zone_check.*` or `analysis.retained_bytes` bound, or a cancel.
+    Budget(BudgetStop),
     /// The lowering cannot certify the set, or an allocation past a task's
     /// slot bound or a subtraction outside its guarded range is reachable.
     Uncertified,
@@ -182,41 +189,19 @@ impl<T: Into<SymbolicStop>> From<T> for Failure {
 
 type Done<T> = Result<T, Failure>;
 
-/// The meter: one unit per elementary step, polling `cancel`.
-struct Work<'c> {
-    used: Cell<u64>,
-    limit: u64,
-    cancel: &'c Cancel,
-}
-
-impl Work<'_> {
-    fn charge(&self) -> Result<(), SymbolicStop> {
-        if self.cancel.poll() {
-            return Err(SymbolicStop::Cancelled(
-                self.cancel.cause().unwrap_or(CancelCause::Requested),
-            ));
-        }
-        let used = self.used.get().saturating_add(1);
-        self.used.set(used);
-        if used > self.limit {
-            return Err(SymbolicStop::WorkLimit(self.limit));
-        }
-        Ok(())
-    }
-}
-
-/// Explores `automaton` into its closed refined-region quotient under the
-/// work limit `max_work`, choosing the least scale that makes every constant
-/// an integer.
+/// Explores `automaton` into its closed refined-region quotient, charging
+/// `budget` and choosing the least scale that makes every constant an
+/// integer. A rescaled attempt starts over; what the dropped attempt charged
+/// stays charged.
 ///
 /// # Errors
 ///
-/// [`SymbolicStop`] when the set is not certifiable, a limit or a cancel
-/// stops the pass, or the lowering refuses.
+/// [`SymbolicStop`] when the set is not certifiable, a bound of `budget` or a
+/// cancel stops the pass, or the lowering refuses.
+#[implements("FR-239-AC-8")]
 pub fn explore(
     automaton: &TaskAutomaton<'_, '_, '_>,
-    max_work: u64,
-    cancel: &Cancel,
+    budget: &Budget,
 ) -> Result<SymbolicGraph, SymbolicStop> {
     match automaton.certification() {
         Ok(()) => {}
@@ -227,14 +212,9 @@ pub fn explore(
             | CertificationRefusal::Jitter,
         ) => return Err(SymbolicStop::Uncertified),
     }
-    let work = Work {
-        used: Cell::new(0),
-        limit: max_work,
-        cancel,
-    };
     let mut scale = BigInt::one();
     loop {
-        match Explorer::run(automaton, &scale, &work) {
+        match Explorer::run(automaton, &scale, budget) {
             Ok(graph) => return Ok(graph),
             Err(Failure::Stop(stop)) => return Err(stop),
             Err(Failure::Rescale(Rescale(denominator))) => {
@@ -285,13 +265,15 @@ fn bound_of(cut: &Cut) -> Bound {
 struct Explorer<'t, 's, 'a, 'c> {
     automaton: &'t TaskAutomaton<'t, 's, 'a>,
     scale: &'c BigInt,
-    work: &'c Work<'c>,
+    budget: &'c Budget,
     dim: usize,
     ceilings: Vec<BigInt>,
     diagonals: Vec<Diagonal>,
     data: BTreeMap<StateKey, std::rc::Rc<LocationData>>,
     locations: Vec<TaskLocation>,
     index: BTreeMap<(StateKey, Fingerprint), usize>,
+    /// The position in `graph.identities` of each identity.
+    identities: BTreeMap<IdentityKey, usize>,
     graph: SymbolicGraph,
 }
 
@@ -299,10 +281,55 @@ struct LocationData {
     info: LocationInfo,
     edges: Option<Vec<TaskEdge>>,
     overflows: Vec<fsl_eval::simulation::model::Overflow>,
+    /// Per edge, its identity's position, filled when first expanded.
+    identities: Vec<OnceCell<usize>>,
+    /// Per edge, whether its subtraction rows are recorded.
+    recorded: Vec<OnceCell<()>>,
+}
+
+/// What makes two edge identities the same: the wire spelling of their
+/// transitions, as `same_identity` and `same_source_transition` compare them.
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+enum IdentityKey {
+    Source(String),
+    Template {
+        action: u8,
+        task_set: String,
+        task: String,
+        job_rank: u64,
+        slot: u64,
+        priority: Option<u64>,
+        release: String,
+        source: Option<String>,
+    },
 }
 
 /// A zone's bounds, row by row, `None` for infinity.
 type Fingerprint = Vec<Option<(BigInt, bool)>>;
+
+/// The retained-byte estimate of one symbolic vertex (FR-255 Behavior 14):
+/// the fixed size of the vertex, its index entry and its location, and the
+/// lengths of the buffers they own.
+#[implements("FR-239-AC-8")]
+fn retained_bytes(location: &TaskLocation, key: &StateKey, zone: &Dbm) -> u64 {
+    let cells = zone.dim() * zone.dim();
+    let limbs: u64 = (0..zone.dim())
+        .flat_map(|i| (0..zone.dim()).map(move |j| (i, j)))
+        .map(|(i, j)| match zone.bound(i, j) {
+            Ok(Bound::Finite { value, .. }) => value.bits().div_ceil(64),
+            _ => 0,
+        })
+        .sum();
+    let control = location.control();
+    let fixed = size_of::<SymbolicVertex>() + size_of::<TaskLocation>() + size_of::<usize>();
+    let buffers = 2 * key.as_bytes().len()
+        + cells * (size_of::<Bound>() + size_of::<Option<(BigInt, bool)>>())
+        + location.source_key().as_bytes().len()
+        + control.arrival_started.len()
+        + control.jobs.len() * size_of::<LiveJob>();
+    // The vertex's zone and its fingerprint each hold the limbs.
+    widen(fixed + buffers).saturating_add(limbs.saturating_mul(16))
+}
 
 fn fingerprint(zone: &Dbm) -> Fingerprint {
     let dim = zone.dim();
@@ -322,7 +349,7 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
     fn run(
         automaton: &'t TaskAutomaton<'t, 's, 'a>,
         scale: &'c BigInt,
-        work: &'c Work<'c>,
+        budget: &'c Budget,
     ) -> Done<SymbolicGraph> {
         let mut ceilings = Vec::new();
         for clock in automaton.clocks() {
@@ -342,13 +369,14 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
         let mut explorer = Explorer {
             automaton,
             scale,
-            work,
+            budget,
             dim: automaton.clocks().len() + 1,
             ceilings: ceilings.clone(),
             diagonals,
             data: BTreeMap::new(),
             locations: Vec::new(),
             index: BTreeMap::new(),
+            identities: BTreeMap::new(),
             graph: SymbolicGraph {
                 scale: scale.clone(),
                 vertices: Vec::new(),
@@ -371,12 +399,19 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
         graph.discrete.dedup();
         graph.time.sort_unstable();
         graph.time.dedup();
-        graph.work = work.used.get();
+        graph.work = budget.consumed(Setting::ZoneCheckMaxCheckWork);
         Ok(graph)
     }
 
+    /// One unit per elementary step.
     fn spend(&self) -> Done<()> {
-        self.work.charge().map_err(Failure::Stop)
+        self.charge(Setting::ZoneCheckMaxCheckWork, 1)
+    }
+
+    fn charge(&self, setting: Setting, amount: u64) -> Done<()> {
+        self.budget
+            .charge(setting, amount)
+            .map_err(|stop| Failure::Stop(SymbolicStop::Budget(stop)))
     }
 
     fn sc(&self, value: &Rational) -> Done<BigInt> {
@@ -577,15 +612,21 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
             let successors = self.automaton.successors(location)?;
             (Some(successors.edges), successors.overflows)
         };
+        let count = edges.as_ref().map_or(0, Vec::len);
         let data = std::rc::Rc::new(LocationData {
             info,
             edges,
             overflows,
+            identities: vec![OnceCell::new(); count],
+            recorded: vec![OnceCell::new(); count],
         });
         self.data.insert(key.clone(), std::rc::Rc::clone(&data));
         Ok((key, data))
     }
 
+    /// The vertex of `zone` at `location`, stored once its state, zone bytes
+    /// and retained bytes are charged.
+    #[implements("FR-239-AC-8")]
     fn vertex(
         &mut self,
         location: &TaskLocation,
@@ -599,6 +640,12 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
         if location.control().missed {
             return Err(Failure::Stop(SymbolicStop::Missed));
         }
+        self.charge(Setting::ZoneCheckMaxSymbolicStates, 1)?;
+        self.charge(Setting::ZoneCheckMaxZoneBytes, zone_bytes(&zone))?;
+        self.charge(
+            Setting::AnalysisRetainedBytes,
+            retained_bytes(location, key, &zone),
+        )?;
         let id = self.graph.vertices.len();
         self.graph.vertices.push(SymbolicVertex {
             key: key.clone(),
@@ -610,21 +657,14 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
         Ok((id, true))
     }
 
-    fn identity(&mut self, wanted: SymbolicIdentity) -> usize {
-        let same = |known: &SymbolicIdentity| match (known, &wanted) {
-            (SymbolicIdentity::Source(left), SymbolicIdentity::Source(right)) => {
-                fsl_replay::same_source_transition(left, right)
-            }
-            (SymbolicIdentity::Template(left), SymbolicIdentity::Template(right)) => {
-                left.same_identity(right)
-            }
-            _ => false,
-        };
-        if let Some(found) = self.graph.identities.iter().position(same) {
-            return found;
+    fn identity(&mut self, wanted: SymbolicIdentity) -> Done<usize> {
+        let key = identity_key(&wanted).ok_or(Failure::Stop(SymbolicStop::Fault("identity")))?;
+        let next = self.graph.identities.len();
+        let found = *self.identities.entry(key).or_insert(next);
+        if found == next {
+            self.graph.identities.push(wanted);
         }
-        self.graph.identities.push(wanted);
-        self.graph.identities.len() - 1
+        Ok(found)
     }
 
     fn pin_dead(&self, zone: &mut Dbm, info: &LocationInfo) -> Done<()> {
@@ -678,8 +718,14 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
             return Ok(());
         };
         self.delays(at, &location, &key, &zone, &data.info, queue)?;
-        for edge in edges {
-            let identity = self.identity(identity_of(edge));
+        for ((edge, identity), recorded) in edges.iter().zip(&data.identities).zip(&data.recorded) {
+            let identity = match identity.get() {
+                Some(&found) => found,
+                None => {
+                    let found = self.identity(identity_of(edge))?;
+                    *identity.get_or_init(|| found)
+                }
+            };
             for alternative in edge.guard.alternatives() {
                 self.spend()?;
                 let mut post = zone.clone();
@@ -704,7 +750,7 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
                 if post.is_empty() {
                     continue;
                 }
-                self.rows(edge)?;
+                self.rows(edge, recorded)?;
                 let carries: Vec<(usize, usize)> =
                     edge.carries.iter().map(|c| (c.to, c.from)).collect();
                 let mut resets = Vec::new();
@@ -721,6 +767,7 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
                     if new {
                         queue.push_back(to);
                     }
+                    self.charge(Setting::ZoneCheckMaxSymbolicTransitions, 1)?;
                     self.graph.discrete.push(SymbolicEdge {
                         from: at,
                         identity,
@@ -767,9 +814,13 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
         Ok(self.graph.effects.len() - 1)
     }
 
-    fn rows(&mut self, edge: &TaskEdge) -> Done<()> {
+    /// Records `edge`'s subtraction rows, once per `recorded`.
+    fn rows(&mut self, edge: &TaskEdge, recorded: &OnceCell<()>) -> Done<()> {
         for subtraction in &edge.subtractions {
             self.spend()?;
+            if recorded.get().is_some() {
+                continue;
+            }
             let row = SymbolicSubtraction {
                 template: template_of(&subtraction.template),
                 clock: self.automaton.clocks()[subtraction.clock - 1].name.clone(),
@@ -784,6 +835,7 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
                 self.graph.subtractions.push(row);
             }
         }
+        recorded.get_or_init(|| ());
         Ok(())
     }
 
@@ -859,6 +911,7 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
                 if new {
                     queue.push_back(to);
                 }
+                self.charge(Setting::ZoneCheckMaxSymbolicTransitions, 1)?;
                 self.graph.time.push((at, to));
             }
         }
@@ -877,6 +930,7 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
             }
         }
         if saturated {
+            self.charge(Setting::ZoneCheckMaxSymbolicTransitions, 1)?;
             self.graph.time.push((at, at));
         }
         Ok(())
@@ -907,6 +961,32 @@ fn identity_of(edge: &TaskEdge) -> SymbolicIdentity {
         },
         EdgeKind::Scheduler(template) => SymbolicIdentity::Template(template_of(template)),
     }
+}
+
+/// The index key of `identity`, or `None` when a transition has no wire
+/// spelling.
+fn identity_key(identity: &SymbolicIdentity) -> Option<IdentityKey> {
+    let spelled = |transition: &filament_semantic_value::model_transition::ModelTransition| {
+        fsl_replay::task_source_transition_wire(transition)
+            .ok()
+            .map(|wire| wire.to_string())
+    };
+    Some(match identity {
+        SymbolicIdentity::Source(transition) => IdentityKey::Source(spelled(transition)?),
+        SymbolicIdentity::Template(template) => IdentityKey::Template {
+            action: template.action as u8,
+            task_set: template.task_set.clone(),
+            task: template.task.clone(),
+            job_rank: template.job_rank,
+            slot: template.slot,
+            priority: template.priority,
+            release: spelled(&template.release)?,
+            source: match &template.source_transition {
+                Some(source) => Some(spelled(source)?),
+                None => None,
+            },
+        },
+    })
 }
 
 /// The complete source-plus-scheduler product key of a location. The queue

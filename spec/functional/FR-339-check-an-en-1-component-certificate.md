@@ -9,6 +9,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-370

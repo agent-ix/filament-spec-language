@@ -1801,6 +1801,8 @@ fn resolve_call_item(
             max_cases: None,
             max_task_product_work: None,
             max_check_work: None,
+            max_states: None,
+            max_transitions: None,
             trace: None,
             traces: None,
             recording: None,
@@ -2278,6 +2280,8 @@ fn resolve_one(
                 .limits
                 .and_then(|limits| limits.max_task_product_work),
             max_check_work: temporal.limits.and_then(|limits| limits.max_check_work),
+            max_states: temporal.limits.and_then(|limits| limits.max_states),
+            max_transitions: temporal.limits.and_then(|limits| limits.max_transitions),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
             traces: selection.traces.as_ref().map(DocumentSelection::reference),
             recording: selection
@@ -2461,6 +2465,8 @@ fn resolve_derived(
         max_cases: None,
         max_task_product_work: None,
         max_check_work: None,
+        max_states: None,
+        max_transitions: None,
         trace: None,
         traces: None,
         recording: None,
@@ -2567,6 +2573,16 @@ fn resolve_schedule_claim(
                     .as_ref()
                     .and_then(|temporal| temporal.limits)
                     .and_then(|limits| limits.max_check_work),
+                max_states: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.limits)
+                    .and_then(|limits| limits.max_states),
+                max_transitions: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.limits)
+                    .and_then(|limits| limits.max_transitions),
                 trace: None,
                 traces: None,
                 recording: None,
@@ -2825,6 +2841,8 @@ fn resolve_protocol_freedom(
                 max_cases: None,
                 max_task_product_work: None,
                 max_check_work: None,
+                max_states: None,
+                max_transitions: None,
                 trace: None,
                 traces: selection.traces.as_ref().map(DocumentSelection::reference),
                 recording: None,
@@ -3447,6 +3465,8 @@ fn derived_claim(
                 max_cases: None,
                 max_task_product_work: None,
                 max_check_work: None,
+                max_states: None,
+                max_transitions: None,
                 trace: None,
                 traces: None,
                 recording: None,
@@ -3729,6 +3749,12 @@ impl ClaimItem {
             }
             if let Some(max_work) = self.options.max_check_work {
                 limits.insert("max_check_work".to_owned(), json!(max_work.get()));
+            }
+            if let Some(max_states) = self.options.max_states {
+                limits.insert("max_states".to_owned(), json!(max_states.get()));
+            }
+            if let Some(max_transitions) = self.options.max_transitions {
+                limits.insert("max_transitions".to_owned(), json!(max_transitions.get()));
             }
             if !limits.is_empty() {
                 item.insert("temporal".to_owned(), json!({"limits": limits}));

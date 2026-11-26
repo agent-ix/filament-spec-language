@@ -743,9 +743,9 @@ these names through the same operand grammar as the stage settings
     per entry kind plus the lengths of the buffers the entry owns (the bytes
     of its keys, 8 bytes for each limb of a big integer, and length times
     element size for a sequence), never an allocator capacity or a resident
-    set size. An EN-1 stored state's fixed overhead is 256 bytes. The retained entries are an EN-6 symbolic vertex, a protocol
-    closure path, an EN-1 stored state and a model-expansion successor. Each
-    entry SHALL be charged before it is stored, the charges of one item SHALL
+    set size. An EN-1 stored state's fixed overhead is 256 bytes. The
+    retained entries are an EN-6 symbolic vertex, a protocol closure path,
+    an EN-1 stored state and a model-expansion successor. Each entry SHALL be charged before it is stored, the charges of one item SHALL
     accumulate and SHALL NOT be refunded, and the item's producer, certificate
     checker and witness replay SHALL charge one shared allowance. A per-engine
     byte setting remains a separate local ceiling.
@@ -807,10 +807,10 @@ The existing setting table, the one-mapping-per-limits-type rule, the
 builders, the settings operation, a request's `stage_limits` and their
 defaults are implemented (TC-720, TC-721). FR-255-AC-15 to FR-255-AC-19 specify native-join
 setting bindings, defaults and refusals; their implementation is not yet complete.
-`analysis.retained_bytes` is charged for the states of EN-1's safety and
-reduced searches (FR-255-AC-34). EN-1's liveness and hyper searches, EN-6
-vertices, protocol closure paths, model-expansion successors, and the
-certificate checker and witness replay do not yet charge it.
+Of the retained entries, the states of EN-1's safety and reduced searches
+(FR-255-AC-34) and EN-6 symbolic vertices charge `analysis.retained_bytes`.
+The states of EN-1's liveness and hyper searches, protocol closure paths and
+model-expansion successors do not yet charge it.
 
 Backing of the criteria:
 

@@ -58,9 +58,9 @@ mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;
 pub use race::{
-    TimedAdvance, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample,
-    TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
-    advance_timed, replay_timed_sample, sample_timed, sample_timed_race,
+    advance_timed, replay_timed_sample, sample_timed, sample_timed_race, TimedAdvance, TimedRace,
+    TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
 };
 
 /// One clock of the subject: a clock field of one object of its universe.
@@ -3061,6 +3061,11 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             Some((tick, period)) if tick == operation => period.clone(),
             _ => zero(),
         }
+    }
+
+    /// The model system the subject is read over.
+    pub(crate) fn model_system(&self) -> &'s ModelSystem<'a> {
+        self.system
     }
 
     /// A tick source's period, the stamp its terminal stutter step adds

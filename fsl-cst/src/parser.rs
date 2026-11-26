@@ -441,7 +441,9 @@ type DeclarationRecovery = (
     "FR-762-AC-6",
     "FR-762-AC-8",
     "FR-762-AC-9",
-    "FR-762-AC-10"
+    "FR-762-AC-10",
+    "FR-002-AC-9",
+    "FR-503-AC-1"
 )]
 fn parse_with_declaration_recovery(
     source: &Source,
@@ -1199,6 +1201,8 @@ fn declaration_starts(grammar: &Grammar) -> BTreeSet<String> {
 /// protocol keyword. Only a delimiter attributable to the preceding
 /// declaration is recoverable; header, selection and EOF errors stay at the
 /// unit boundary.
+#[implements("FR-002-AC-9")]
+#[implements("FR-503-AC-1")]
 fn recover_at_protocol_delimiter(
     grammar: &Grammar,
     reserved_words: &BTreeSet<&'static str>,
