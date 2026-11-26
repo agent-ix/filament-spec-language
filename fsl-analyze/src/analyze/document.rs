@@ -2138,7 +2138,8 @@ fn resolve_one(
         .filter(|_| kind == Capability::TemporalSatisfaction)
     {
         Some(clause)
-            if clause.profile() != fsl_semantics::check::TemporalProfile::InfiniteTrace
+            if clause.profile()
+                == fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
                 && clause.form().is_none() =>
         {
             // FR-173-AC-3 / FR-182 V-8: a profile with no decided form

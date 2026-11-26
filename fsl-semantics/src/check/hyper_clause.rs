@@ -459,6 +459,9 @@ pub struct CheckedHyperClause {
     atoms: BTreeMap<usize, lowering::AtomCondition>,
     /// Package atom identities, with no source-checked expression body.
     package_atoms: BTreeMap<usize, (NodeKey, usize)>,
+    /// Trace components read by each package atom, for closed event-position
+    /// evaluation's false extension.
+    package_component_reads: BTreeMap<usize, Vec<usize>>,
     /// The object type each object parameter declares, in source order.
     parameter_objects: Vec<EffectiveId>,
     /// The span of each quantifier's written constraint that resolved to
@@ -528,6 +531,8 @@ pub struct PackageHyperForm {
     pub formula: Vec<super::PackageFormulaNode>,
     /// Formula arena index, expression node and atom slot count.
     pub atoms: Vec<(usize, NodeKey, usize)>,
+    /// Formula arena index and trace components read by each atom.
+    pub atom_components: Vec<(usize, Vec<usize>)>,
     /// Copy swaps proved by the package normal form.
     pub copy_group: CopyGroup,
     /// The package-normal-form encoding of the body.
@@ -642,13 +647,17 @@ impl CheckedHyperClause {
     /// # Errors
     /// Refuses an unsupported profile, malformed arena, unknown alias or
     /// inconsistent atom slot; it never constructs a partial checked clause.
+    #[implements("FR-173-AC-3", "FR-940-AC-6")]
     pub fn of_package_form(
         form: PackageHyperForm,
         types: &filament_semantic_value::declaration::TypeEnvironment,
         position_limit: u64,
     ) -> Result<Self, super::PackageClauseRefusal> {
         use super::PackageClauseRefusal::{Domains, Shape};
-        if form.profile != TemporalProfile::InfiniteTrace {
+        if !matches!(
+            form.profile,
+            TemporalProfile::InfiniteTrace | TemporalProfile::EventPositionFalseExtension
+        ) {
             return Err(super::PackageClauseRefusal::Profile(form.profile));
         }
         if form.subject_models.len() != form.aliases.len()
@@ -725,15 +734,24 @@ impl CheckedHyperClause {
         }
         let (body, operators) = CheckedFormula::of_package_nodes(&form.formula)?;
         let mut package_atoms = BTreeMap::new();
+        let mut package_component_reads: BTreeMap<usize, Vec<usize>> =
+            form.atom_components.into_iter().collect();
         for (index, node, slots) in form.atoms {
+            let components = package_component_reads.remove(&index).ok_or(Shape)?;
             if !matches!(
                 body.nodes().get(index),
                 Some(super::FormulaNode::Holds { .. })
             ) || slots != form.atom_slots.len()
+                || components.iter().any(|component| *component >= quantifiers.len())
+                || components.windows(2).any(|pair| pair[0] >= pair[1])
                 || package_atoms.insert(index, (node, slots)).is_some()
             {
                 return Err(Shape);
             }
+            package_component_reads.insert(index, components);
+        }
+        if package_component_reads.len() != package_atoms.len() {
+            return Err(Shape);
         }
         if body.nodes().iter().enumerate().any(|(index, node)| {
             matches!(node, super::FormulaNode::Holds { .. }) && !package_atoms.contains_key(&index)
@@ -809,6 +827,7 @@ impl CheckedHyperClause {
             body: form.normal_body,
         };
         let fairness_spans = vec![Vec::new(); quantifiers.len()];
+        let infinite_trace = form.profile == TemporalProfile::InfiniteTrace;
         Ok(Self {
             name: form.name,
             span: form.span,
@@ -825,11 +844,12 @@ impl CheckedHyperClause {
             body,
             form: Some(HyperForm::Universal),
             copy_group: form.copy_group,
-            claim: TemporalClaim::new(domains, true, true),
+            claim: TemporalClaim::new(domains, infinite_trace, true),
             identity,
             atom_slots: form.atom_slots,
             atoms: BTreeMap::new(),
             package_atoms,
+            package_component_reads,
             parameter_objects,
             fairness_spans,
             occurrence: Some(form.occurrence),
@@ -872,8 +892,9 @@ impl CheckedHyperClause {
         self.span
     }
 
-    /// The one temporal profile the clause was checked under. A clause under
-    /// any profile but infinite-trace records it and no form (ADR-023 HS-7).
+    /// The one temporal profile the clause was checked under. Infinite-trace
+    /// and event-position false-extension profiles can have a classified form
+    /// (FR-173).
     pub fn profile(&self) -> TemporalProfile {
         self.profile
     }
@@ -983,6 +1004,16 @@ impl CheckedHyperClause {
     /// mapping for subject-specific created-object lookup (W38).
     pub fn component_reads(&self, atom: FormulaNodeId) -> Option<&BTreeMap<Location, usize>> {
         self.atoms.get(&atom.index()).map(|atom| &atom.components)
+    }
+
+    /// Trace variables read by a source-free package atom, in ascending
+    /// quantifier order. Closed event-position evaluation uses these indices
+    /// to false-extend a component whose trace has ended.
+    #[implements("FR-940-AC-6")]
+    pub fn package_component_reads(&self, atom: FormulaNodeId) -> Option<&[usize]> {
+        self.package_component_reads
+            .get(&atom.index())
+            .map(Vec::as_slice)
     }
 
     /// Both parts' `match` conjuncts in source order, as `(part, index in
@@ -2273,6 +2304,7 @@ fn check_behaviours<'a>(
         atom_slots: slots.slots().to_vec(),
         atoms,
         package_atoms: BTreeMap::new(),
+        package_component_reads: BTreeMap::new(),
         parameter_objects,
         fairness_spans,
         occurrence: None,

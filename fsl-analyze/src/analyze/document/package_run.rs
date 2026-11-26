@@ -2695,7 +2695,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     }
 
     /// Resolve universal hyper analysis from its authenticated package form.
-    #[implements("FR-173-AC-5", "FR-281-AC-3")]
+    #[implements("FR-173-AC-3", "FR-173-AC-5", "FR-281-AC-3", "FR-940-AC-6")]
     fn hyper(
         &self,
         index: RequestIndex,
@@ -2716,7 +2716,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let unsupported_form = package
             .hyper_clause_hp4_reason(&claim)
             .map_err(|_| fault())?;
-        if profile != fsl_semantics::check::TemporalProfile::InfiniteTrace
+        if !matches!(
+            profile,
+            fsl_semantics::check::TemporalProfile::InfiniteTrace
+                | fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+        )
             || unsupported_form.is_some()
         {
             return Ok(Resolution::Settled(ResolvedItem::Settled {
@@ -2755,8 +2759,9 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .map_err(|_| pending("hyper-reference-bindings"))?;
         // Hyper requirements are reconstructed from the authenticated form.
         // requirement_items currently carries HP-1 rows only. Every admitted
-        // object parameter is a Reference (a bounded type position); the
-        // universal infinite-trace clause itself is the unbounded domain.
+        // object parameter is a Reference (a bounded type position). The
+        // clause's checked profile adds an unbounded trace domain only for
+        // infinite-trace; event-position remains bounded, as on the source route.
         let requirements = clause
             .claim()
             .requirements(key, &[], &[], &[])

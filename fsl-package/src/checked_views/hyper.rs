@@ -246,6 +246,7 @@ impl BarePackage<'_> {
     /// # Errors
     /// A missing occurrence or inconsistent slot is `MalformedNode`; a
     /// source-checked feature this form does not read is `Pending`.
+    #[implements("FR-173-AC-3", "FR-940-AC-6")]
     #[ix_trace_rs::string_edge]
     pub fn hyper_clause_form(
         &self,
@@ -280,7 +281,10 @@ impl BarePackage<'_> {
             return Err(malformed(claim));
         };
         let profile = self.hyper_clause_profile(claim)?;
-        if profile != TemporalProfile::InfiniteTrace {
+        if !matches!(
+            profile,
+            TemporalProfile::InfiniteTrace | TemporalProfile::EventPositionFalseExtension
+        ) {
             return Err(pending(&node.node_id, "hyper-profile"));
         }
         let [over, _, _, _, _, formula] = arguments.as_slice() else {
@@ -377,14 +381,37 @@ impl BarePackage<'_> {
             .map_err(|_| malformed(claim))?;
         let mut formula = Vec::with_capacity(uses.len());
         let mut atoms = Vec::new();
+        let mut atom_roots = Vec::new();
         let graph = crate::checked_v2::wire_graph(package).map_err(|_| malformed(claim))?;
         let mut reachable = BTreeSet::new();
         let mut work = vec![reference(over).ok_or_else(|| malformed(claim))?];
         for (index, entry) in uses.iter().enumerate() {
             let kind = entry.kind().ok_or_else(|| malformed(claim))?;
-            if entry.interval.is_some() {
-                return Err(pending(entry.node, "hyper-interval"));
-            }
+            let interval = match &entry.interval {
+                None => None,
+                Some(CheckedOperationInterval::Integer { lower, upper })
+                    if profile == TemporalProfile::EventPositionFalseExtension =>
+                {
+                    use fsl_foundation::bound::{TemporalInterval, TemporalUpper};
+
+                    let upper = match upper {
+                        None => TemporalUpper::Open,
+                        Some(upper) => TemporalUpper::Finite(
+                            upper.to_u64().ok_or_else(|| malformed(claim))?,
+                        ),
+                    };
+                    Some(
+                        fsl_semantics::check::CheckedInterval::Steps(
+                            TemporalInterval::new(
+                                lower.to_u64().ok_or_else(|| malformed(claim))?,
+                                upper,
+                            )
+                            .map_err(|_| malformed(claim))?,
+                        ),
+                    )
+                }
+                Some(_) => return Err(pending(entry.node, "hyper-interval")),
+            };
             let operand = |at| {
                 entry
                     .operands
@@ -406,6 +433,7 @@ impl BarePackage<'_> {
                         })
                         .ok_or_else(|| malformed(claim))?;
                     work.push(expression);
+                    atom_roots.push((index, expression.clone()));
                     atoms.push((
                         index,
                         graph.key(expression).map_err(|_| malformed(claim))?,
@@ -434,7 +462,7 @@ impl BarePackage<'_> {
                         FormulaOperation::Historically => UnaryTemporal::Historically,
                         _ => return Err(malformed(claim)),
                     },
-                    interval: None,
+                    interval: interval.clone(),
                     operand: operand(0)?,
                 },
                 FormulaOperation::Until
@@ -448,7 +476,7 @@ impl BarePackage<'_> {
                         FormulaOperation::Triggered => BinaryTemporal::Triggered,
                         _ => return Err(malformed(claim)),
                     },
-                    interval: None,
+                    interval,
                     left: operand(0)?,
                     right: operand(1)?,
                 },
@@ -504,6 +532,37 @@ impl BarePackage<'_> {
             .collect::<Result<_, _>>()?;
         for (_, _, count) in &mut atoms {
             *count = atom_slots.len();
+        }
+        let mut atom_components = Vec::with_capacity(atom_roots.len());
+        let mut component_work = 0_u64;
+        for (index, root) in atom_roots {
+            let mut visited = BTreeSet::new();
+            let mut atom_work = vec![root];
+            let mut components = BTreeSet::new();
+            while let Some(id) = atom_work.pop() {
+                if !visited.insert(id.clone()) {
+                    continue;
+                }
+                component_work = component_work
+                    .checked_add(1)
+                    .ok_or_else(|| pending(&node.node_id, "hyper-formula-work"))?;
+                if component_work > FORMULA_VISITS {
+                    return Err(pending(&node.node_id, "hyper-formula-work"));
+                }
+                let found = nodes.get(&id).ok_or_else(|| malformed(claim))?;
+                if found.semantic_form.as_ref() == "parameter" {
+                    let name = group_member(&found.body, "name")
+                        .and_then(text)
+                        .ok_or_else(|| malformed(claim))?;
+                    if name.starts_with("slot_") {
+                        let (_, trace) = slots_by_node.get(&id).ok_or_else(|| malformed(claim))?;
+                        components.insert(*trace);
+                        continue;
+                    }
+                }
+                atom_work.extend(found.body.reference_targets().into_iter().cloned());
+            }
+            atom_components.push((index, components.into_iter().collect()));
         }
         let catalog = package
             .selected_model_population_catalog(
@@ -587,6 +646,7 @@ impl BarePackage<'_> {
             atom_slots,
             formula,
             atoms,
+            atom_components,
             copy_group,
             normal_body,
         })

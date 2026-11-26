@@ -125,6 +125,75 @@ fn a_package_hyper_item_does_not_fall_back_to_source() {
     assert_eq!(package.item(0)["certificate"]["accepted"], true);
 }
 
+/// FR-173-AC-3, FR-640-AC-12 and FR-940-AC-6: a supported event-position
+/// Universal clause over two models has equal source and package outcomes.
+#[trace("FR-173-AC-3", "FR-173-AC-6", "FR-640-AC-12", "FR-940-AC-6")]
+#[test]
+fn package_event_position_universal_matches_source() {
+    use crate::analyze_cli_support::{package_selection, HANDOFF};
+
+    let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
+        forall trace a of V forall trace b of N \
+        { always[0,3] holds(v.l @ a = w.l @ b) }";
+    let (unit, model, other, snapshot) =
+        crate::hyper_world::two_model_request_files((1, 0), declaration);
+    let unit = unit.replace(
+        "profile p =",
+        "profile e = \"filament.temporal.event-position.false-extension/v1\";\nprofile p =",
+    );
+    let ws = Workspace::new("hyper-wire-package-event-position");
+    ws.write("other.json", &other);
+    let mut models = crate::analyze_cli_support::request_members(None)["models"].clone();
+    models.as_array_mut().expect("models").push(json!({
+        "format": "semantic-ir/2.0.0",
+        "source": {
+            "file": "other.json",
+            "authority": "test",
+            "identity": "vault-other-model",
+            "document": "VaultOther",
+            "formal_revision": 1
+        }
+    }));
+    let source_path = request_over(
+        &ws,
+        &unit,
+        &model,
+        &[snapshot],
+        json!({"models": models, "items": [{"claim": "Saves"}]}),
+    );
+    let source_request: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&source_path).expect("source request exists"),
+    )
+    .expect("source request is JSON");
+    let source = analyze(&source_path);
+    assert_eq!(source.exit, 10, "{}", source.document());
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(source.item(0)["replay"]["reproduced"], true);
+
+    let (members, _) = package_selection(&ws, &source_request["request"]);
+    ws.write("program.fsl", b"not a native unit");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("remove only the fixture's retained source files");
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let package = analyze(&package_path);
+    let document = package.document();
+    assert_eq!(package.exit, source.exit, "{document}");
+    assert_eq!(label(&package.item(0)), "refuted", "{document}");
+    for member in ["record", "certificate", "counterexample", "replay"] {
+        assert_eq!(
+            package.item(0)[member],
+            source.item(0)[member],
+            "{member}: {document}"
+        );
+    }
+    assert_eq!(package.item(0)["replay"]["reproduced"], true, "{document}");
+}
+
 #[trace("TC-1591", "FR-631-AC-1", "FR-177-AC-1", "FR-163-AC-1")]
 #[test]
 fn analyze_hyper_forall_exists_holds_and_refutes() {

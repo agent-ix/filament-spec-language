@@ -28,6 +28,7 @@ use std::collections::HashMap;
 
 use filament_exact::{Meter, ScalarLimits};
 use fsl_semantics::check::{Activation, CheckedHyperClause, FormulaNodeId, HyperForm};
+use ix_trace_rs::implements;
 
 use super::engine::{self, bad_prefix_bound, Goal, Subject};
 use super::input::TemporalTrace;
@@ -445,13 +446,17 @@ impl<L: TupleLetters> TemporalLetters for ClosedLockstep<'_, L> {
         meter: &mut Meter,
     ) -> Result<AtomReading, LetterStop> {
         let index = position.index();
-        let reads = self
-            .body
-            .component_reads(atom)
-            .ok_or_else(|| LetterStop::Fault(fault("closed-atom-has-component-reads")))?;
-        let past = reads
-            .values()
-            .any(|component| self.lens.get(*component).is_none_or(|len| index >= *len));
+        let past = if let Some(reads) = self.body.component_reads(atom) {
+            reads
+                .values()
+                .any(|component| self.lens.get(*component).is_none_or(|len| index >= *len))
+        } else if let Some(reads) = self.body.package_component_reads(atom) {
+            reads
+                .iter()
+                .any(|component| self.lens.get(*component).is_none_or(|len| index >= *len))
+        } else {
+            return Err(LetterStop::Fault(fault("closed-atom-has-component-reads")));
+        };
         if past {
             return Ok(AtomReading::False);
         }
@@ -492,6 +497,7 @@ impl<L: TupleLetters> TemporalLetters for ClosedLockstep<'_, L> {
 /// position, and the evaluator's refusal for a profile that reads no closed
 /// trace. An `align skip` clause is read over the caller's visible positions:
 /// `lens` are the lengths of the projected traces (ADR-023 PA-2).
+#[implements("FR-173-AC-3")]
 pub fn evaluate_closed_tuple<L: TupleLetters>(
     body: &CheckedHyperClause,
     lens: &[u64],

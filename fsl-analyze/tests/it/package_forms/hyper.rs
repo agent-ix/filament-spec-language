@@ -137,6 +137,52 @@ fn package_hyper_atom_has_source_values_and_complete_charge_logs() {
     }
 }
 
+/// FR-940-AC-6: package facts retain each atom's own trace reads, rather than
+/// treating every atom as reading every quantified trace.
+#[trace("FR-940-AC-6")]
+#[test]
+fn package_atoms_keep_distinct_trace_reads() {
+    let declaration = "hyper Split using t0 over behaviours (c: M::Counter) \
+        forall trace a of M forall trace b of M \
+        { always holds(c.value @ a <= 3) and always holds(c.value @ b <= 2) }";
+    let (_ws, handoff, mut budget) = handoff_of("package-hyper-component-reads", declaration);
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff supply joins");
+    let source_package = handoff.compiled.checked();
+    let source = &source_package.graph().hyper_clauses()[0];
+    let form = bare
+        .hyper_clause_form(source.assembled_occurrence().expect("claim occurrence"))
+        .expect("package form");
+    assert_eq!(
+        form.atom_components,
+        vec![(2, vec![0]), (4, vec![1])],
+        "each package atom retains only its own trace slots"
+    );
+    let rebuilt = CheckedHyperClause::of_package_form(
+        form,
+        bare.world().expect("world").types(),
+        1_000_000,
+    )
+    .expect("the package clause");
+    assert_eq!(
+        rebuilt.package_component_reads(FormulaNodeId::from_arena_index(2)),
+        Some(&[0][..]),
+        "the first atom reads trace a only"
+    );
+    assert_eq!(
+        rebuilt.package_component_reads(FormulaNodeId::from_arena_index(4)),
+        Some(&[1][..]),
+        "the second atom reads trace b only"
+    );
+}
+
 /// An absent slot retains the model evaluator's absent-object outcome and
 /// exact charge sequence independently in either component.
 /// Covers only AC-17's atom outcome/charge portion, not request parity.
