@@ -80,6 +80,7 @@ pub use model_check::digital_state_graph::{
 };
 pub use task_transition::{TaskProductTransition, TaskTransitionAction, TaskTransitionIdentity};
 mod monitor_plan;
+mod not_digitisable;
 mod object_environment;
 pub mod outcome;
 
@@ -476,6 +477,7 @@ pub use outcome::{
     ResultLimit, ResultValue, TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
     TemporalCounterexampleReadRefusal, TraceAlphabet, WitnessOmission, OUTCOME_FORMAT,
 };
+pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,
     PlannerResult, PremiseItem, PremiseResult, ResultEntry, SettlementRequest,

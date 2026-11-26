@@ -652,6 +652,12 @@ pub struct CheckedTemporalClause {
     horizon: Option<u64>,
     claim: TemporalClaim,
     formula: CheckedFormula,
+    /// The source span of each formula node, in arena order, and of the
+    /// first `fair` constraint written; neither is kept by a clause rebuilt
+    /// from a package. The digital-clock route names the part it declines
+    /// with them (FR-243).
+    formula_spans: Vec<Span>,
+    first_fairness_span: Option<Span>,
     activation: Activation,
     /// An `on each` activation's trigger binder: its name and resolved type,
     /// which is the `over` parameter's type (FR-337).
@@ -701,6 +707,10 @@ impl DebugWith for CheckedTemporalClause {
             horizon,
             claim,
             formula,
+            // Source locations, which a package keeps none of: not part of
+            // the form the two routes are compared by.
+            formula_spans: _,
+            first_fairness_span: _,
             activation,
             trigger,
             captures,
@@ -974,6 +984,18 @@ impl CheckedTemporalClause {
     /// `when` guard or the clause declares a capture (FR-337).
     pub fn reads_at_activation(&self) -> bool {
         matches!(self.activation, Activation::Each { guarded: true }) || !self.captures.is_empty()
+    }
+
+    /// The source span of the formula node `id`, `None` for a clause rebuilt
+    /// from a package.
+    pub fn formula_span(&self, id: FormulaNodeId) -> Option<Span> {
+        self.formula_spans.get(id.index()).copied()
+    }
+
+    /// The source span of the first `fair` constraint the clause writes,
+    /// `None` when it writes none or was rebuilt from a package.
+    pub fn first_fairness_span(&self) -> Option<Span> {
+        self.first_fairness_span
     }
 
     /// The clause's fairness set, each constraint once, in source order of
@@ -1832,6 +1854,13 @@ fn check_clause(
             model_subject,
         },
         formula,
+        formula_spans: form
+            .formula
+            .nodes()
+            .iter()
+            .map(TemporalNodeForm::span)
+            .collect(),
+        first_fairness_span: form.fairness.first().map(|constraint| constraint.span),
         activation,
         trigger,
         captures,
@@ -3192,6 +3221,8 @@ impl CheckedTemporalClause {
                 model_subject,
             },
             formula,
+            formula_spans: Vec::new(),
+            first_fairness_span: None,
             activation: form.activation,
             trigger: form.trigger,
             captures: form.captures,
