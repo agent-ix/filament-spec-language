@@ -549,3 +549,112 @@ fn source_enum_package_calls_match_source_canonical_values_without_source() {
         assert!(value.get("source").is_none(), "{value}");
     }
 }
+
+/// FSpec FR-154 "Unit bounds": a call run from a checked package refuses a
+/// record argument beyond the field's bound as the call over the source does.
+#[test]
+#[trace("TC-1702", "FR-650-AC-25")]
+fn a_package_call_refuses_a_record_argument_beyond_its_unit_bound() {
+    let directory = tempfile::tempdir().unwrap();
+    let origin = |identity: &str| {
+        json!({"generated": {"generatorIdentity": identity, "generatorVersion": "1.0.0",
+            "inputIdentities": [identity]}})
+    };
+    let mut model: Value = serde_json::from_slice(include_bytes!(
+        "../../../tests/fixtures/spine-model.semantic-ir.json"
+    ))
+    .unwrap();
+    model["constructs"].as_array_mut().unwrap().push(json!({
+        "kind": {"module": "acme/orders", "name": "value_record"},
+        "moduleVersion": "1.0.0",
+        "construct": {"identity": "none", "shape": "record", "members": {},
+            "meaning": "filament.meaning.model.record-value-type/v1"}
+    }));
+    let delay = "ix://acme/orders/Delay";
+    let maximum = "ix://acme/orders/Delay/max";
+    let span = "ix://acme/orders/Span";
+    let field = "ix://acme/orders/Span/d";
+    let types = model["types"].as_array_mut().unwrap();
+    types.push(
+        json!({"identity": delay, "displayName": "Delay", "kind": "alias",
+        "target": "ix://filament/unit/ms", "roles": [], "origin": origin(delay),
+        "extensions": [], "unknownPolicy": "reject",
+        "constraints": [{"identity": maximum, "keyword": "max", "operands": {"value": "3"},
+            "appliesTo": delay, "diagnosticCode": "bound.max", "origin": origin(maximum)}]}),
+    );
+    types.push(json!({"identity": span, "displayName": "Span",
+        "kind": {"module": "acme/orders", "name": "value_record"},
+        "roles": [], "origin": origin(span), "extensions": [], "unknownPolicy": "reject",
+        "constraints": [], "supertypes": [], "operations": [],
+        "fields": [{"identity": field, "name": "d", "typeRef": delay, "presence": "required",
+            "nullable": false, "defaultKind": "none",
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": false},
+            "origin": origin(field)}]}));
+    std::fs::write(
+        directory.path().join("model.semantic-ir.json"),
+        serde_json::to_vec(&model).unwrap(),
+    )
+    .unwrap();
+    let models = json!([{"format": "semantic-ir/2.0.0", "source": {
+        "file": "model.semantic-ir.json", "authority": "agent-ix",
+        "identity": "acme/orders", "document": "Orders", "formal_revision": 1}}]);
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = \"acme/orders\";\n\
+         dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         function span using v(r: M::Span): Boolean pure { true }\n\
+         \
+         function make using v(): M::Span pure { M::Span { d: 3 ms } }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": models, "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "package-run-unit",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+
+    for (selected, from) in [
+        ("program", json!({"source": source("unit.native")})),
+        ("package", json!({"directory": "handoff"})),
+    ] {
+        let run_call = |call: Value| {
+            let mut request = json!({"models": models, "call": call});
+            request[selected] = from.clone();
+            run(directory.path(), request)
+        };
+        // The value the route's own `make` writes, at the magnitude asked.
+        let (_, made) = run_call(json!({"function": "make", "arguments": []}));
+        let made = made["outcome"]["value"].clone();
+        let call = |magnitude: &str| {
+            let mut value = made.clone();
+            value["fields"][0]["value"]["numerator"] = json!(magnitude);
+            json!({"function": "span", "arguments": [{"parameter": "r", "value": value}]})
+        };
+        let (exit, admitted) = run_call(call("3"));
+        assert_eq!(exit, 0, "{selected} {admitted}");
+        let (exit, refused) = run_call(call("4"));
+        assert_eq!(exit, 20, "{selected} {refused}");
+        assert_eq!(refused["code"], "invalid_runtime_input", "{refused}");
+        assert_eq!(refused["cause"], "invalid-value", "{refused}");
+        assert_eq!(
+            refused["details"],
+            json!({"position": 0, "path": "/fields/0/value", "constraint": maximum,
+                "keyword": "max", "bound": "3"}),
+            "{selected} {refused}"
+        );
+        if selected == "package" {
+            let (exit, value) = run(
+                directory.path(),
+                json!({"models": [], "package": from, "call": call("4")}),
+            );
+            eprintln!("PROBE no models {exit} {value}");
+        }
+    }
+}

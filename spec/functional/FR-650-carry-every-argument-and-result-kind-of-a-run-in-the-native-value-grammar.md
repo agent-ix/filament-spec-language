@@ -488,6 +488,7 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 | FR-650-AC-22 | A checked-package call over a genuine admitted snapshot accepts a canonical reference and returns that same canonical reference; feeding the result into another package call completes unchanged after the original program file is removed. The catalog and writer use the same snapshot admission's retained normalization owners. | Test |
 | FR-650-AC-23 | A call with no models and no snapshot completes with its canonical value when `model.work_units` is zero; canonical output does not introduce model work into that value-only call. | Test |
 | FR-650-AC-24 | A function parameter typed by a model record value type whose field is typed by an alias of `ix://filament/unit/ms` under `max` `3`: an argument holding `3 ms` there completes, and one holding `4 ms` refuses at stage `call` with `invalid_runtime_input`/`invalid-value` and `details` `{"position": 0, "path": "/record/fields/d", "constraint": C, "keyword": "max", "bound": "3"}`, `C` the constraint's identity. | Test (TC-1702) |
+| FR-650-AC-25 | FR-650-AC-24's function run through the command with canonical arguments, over the source and from the compiled package's handoff directory: `3 ms` completes and `4 ms` refuses with `details.path` `/fields/0/value`. A canonical set element, map value, tuple component or variant component beyond the bound refuses at its position in the canonical value the caller wrote. | Test (TC-1702) |
 
 ## Dependencies
 

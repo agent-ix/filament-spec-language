@@ -77,6 +77,10 @@ over the source the package was compiled from, and FR-650's refusals.
   source route; the outcome, the accounting record and every refusal SHALL
   equal the source route's for the same package, except for the request's
   selection member.
+- The checked package carries no unit bound. A call with a container argument
+  SHALL read the selected models' unit bounds (FSpec FR-154 "Unit bounds")
+  from the request's domain packages, or the views its snapshot admission
+  retained, and refuse an argument beyond one as the source route does.
 - FR-531's `CheckedPackageEvaluation` for `BarePackage` SHALL provide the
   function-call entry this requires, and FR-531's capability inventory lists
   `call`, `call_supplied` and `call_observing_applications` as available

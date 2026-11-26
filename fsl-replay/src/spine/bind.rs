@@ -25,6 +25,7 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{checked_occurrence, CheckedPackage};
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use fsl_semantics::model::state::CompositeBounds;
 
 use super::call::{
     admit_model_arguments, admit_unit_bounds, bind_arguments, convert_call_failure, select,
@@ -334,7 +335,7 @@ fn bind(
         objects,
     )?;
     admit_unit_bounds(
-        package.models.models().iter().map(|model| &model.view),
+        &CompositeBounds::of(package.models.models().iter().map(|model| &model.view)),
         types,
         selected.parameters,
         &arguments,

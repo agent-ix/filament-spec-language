@@ -3191,3 +3191,115 @@ fn a_unit_bound_reaches_every_slot_of_a_composite_argument() {
         );
     }
 }
+
+/// FSpec FR-154 "Unit bounds": for a caller that writes canonical forms, the
+/// refusal's path names the position in the canonical value: a record field by
+/// its position, an element of a set and a value of a map by where the caller
+/// wrote it.
+#[test]
+#[trace("TC-1702", "FR-650-AC-25")]
+fn a_unit_bound_path_is_spelled_in_the_canonical_form_the_caller_wrote() {
+    let fixture = bounded_record_fixture(
+        "function give using v(): Quantity<ms> pure { 3 ms }\n\
+         function many using v(r: M::Many): Boolean pure { true }\n\
+         function pair using v(r: M::Pair): Boolean pure { true }\n\
+         function chosen using v(r: M::Choice): Boolean pure { true }",
+    );
+    let invoke = |function: &str, value: Option<serde_json::Value>| {
+        let mut request = call(function, Vec::new());
+        request.canonical_values = true;
+        request.wire_arguments = value
+            .into_iter()
+            .map(|value| crate::spine::call::WireArgument {
+                parameter: "r".to_owned(),
+                value,
+                selected_object: None,
+            })
+            .collect();
+        run(
+            source(),
+            "fixture".to_owned(),
+            "bounded.native",
+            fixture.source.as_bytes(),
+            &fixture.packages,
+            &DependencyInput::default(),
+            SpineLimits::default(),
+            &request,
+            &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+            &Cancel::new(),
+        )
+    };
+    let CallOutcome::Completed(CallValue::Written(given)) =
+        invoke("give", None).expect("give completes")
+    else {
+        panic!("a written quantity");
+    };
+    let unit = given["unit"].clone();
+    let quantity = |magnitude: &str| {
+        serde_json::json!({"type": "rational", "numerator": magnitude, "denominator": "1",
+            "unit": unit})
+    };
+    let name = |declared: &str| {
+        serde_json::json!({"node": format!("ix://acme/orders/{declared}"),
+            "package": "acme/orders"})
+        .to_string()
+    };
+    let many = |optional: &str, set: [&str; 2], mapped: [(&str, &str); 2]| {
+        let entry = |(key, value): (&str, &str)| serde_json::json!({"key": {"type": "string", "value": key}, "value": quantity(value)});
+        serde_json::json!({"type": "record", "name": name("Many"), "fields": [
+            {"name": "o", "value": quantity(optional)},
+            {"name": "s", "value": {"type": "set", "elements": set.map(quantity)}},
+            {"name": "m", "value": {"type": "map", "entries": mapped.map(entry)}},
+        ]})
+    };
+    let pair = |held: &str| {
+        serde_json::json!({"type": "tuple", "name": name("Pair"),
+            "components": [{"type": "integer", "value": "9"}, quantity(held)]})
+    };
+    let choice = |held: &str| {
+        serde_json::json!({"type": "union", "name": name("Choice"), "member": "Held",
+            "components": [{"type": "record", "name": name("Span"),
+                "fields": [{"name": "d", "value": quantity(held)}]}]})
+    };
+    let within = [("a", "1"), ("b", "3")];
+    for (function, value) in [
+        ("many", many("3", ["3", "1"], within)),
+        ("pair", pair("3")),
+        ("chosen", choice("3")),
+    ] {
+        invoke(function, Some(value)).unwrap_or_else(|refusal| panic!("3 ms admits: {refusal:?}"));
+    }
+    for (function, value, path) in [
+        ("many", many("4", ["3", "1"], within), "/fields/0/value"),
+        (
+            "many",
+            many("3", ["4", "1"], within),
+            "/fields/1/value/elements/0",
+        ),
+        (
+            "many",
+            many("3", ["1", "4"], within),
+            "/fields/1/value/elements/1",
+        ),
+        (
+            "many",
+            many("3", ["3", "1"], [("b", "4"), ("a", "1")]),
+            "/fields/2/value/entries/0/value",
+        ),
+        ("pair", pair("4"), "/components/1"),
+        ("chosen", choice("4"), "/components/0/fields/0/value"),
+    ] {
+        let refusal = invoke(function, Some(value)).expect_err("4 ms exceeds the max of 3 ms");
+        let RunRefusal::Argument {
+            position: 0,
+            defect,
+        } = refusal.as_ref()
+        else {
+            panic!("an argument refusal at position 0: {refusal:?}");
+        };
+        assert_eq!(
+            (refusal.code(), defect.cause, defect.path.as_str()),
+            (Code::InvalidRuntimeInput, "invalid-value", path)
+        );
+    }
+}

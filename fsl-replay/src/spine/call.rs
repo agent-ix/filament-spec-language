@@ -35,7 +35,7 @@ use fsl_foundation::diagnostic::{Code, Locus, RefusalRecord};
 use fsl_foundation::source::Source;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::CheckedGraph;
-use fsl_semantics::model::normalize::{EffectiveView, ModelRefusal, ModelRefusalCause};
+use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::refusal::OfferedSelection;
 use fsl_semantics::model::state::CompositeBounds;
@@ -1430,8 +1430,8 @@ pub(crate) fn with_admitted_call<T>(
     )
     .with_canonical_writer(&encode_value)
     .in_world(own_package, world.as_ref());
-    let supplied = admit_wire_arguments(&forms, selected.parameters, call, &supplied_run)?;
-    let arguments = bind_arguments(selected.parameters, &supplied)?;
+    let read = admit_wire_arguments(&forms, selected.parameters, call, &supplied_run)?;
+    let arguments = bind_arguments(selected.parameters, &read.arguments)?;
     admit_model_arguments(
         models.models(),
         package.graph().scope().types(),
@@ -1440,11 +1440,15 @@ pub(crate) fn with_admitted_call<T>(
         objects,
     )?;
     admit_unit_bounds(
-        models.models().iter().map(|model| &model.view),
+        &CompositeBounds::of(models.models().iter().map(|model| &model.view)),
         package.graph().scope().types(),
         selected.parameters,
         &arguments,
-        Some((&forms, &call.wire_arguments)),
+        Some(SuppliedForms {
+            forms: &forms,
+            wire: &call.wire_arguments,
+            canonical: &read.canonical,
+        }),
     )?;
 
     complete(&forms, arguments, objects, &supplied_run)
@@ -1975,9 +1979,12 @@ pub(crate) fn admit_wire_arguments(
     parameters: &[(String, ValueType)],
     call: &Call,
     run: &std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
-) -> Result<Vec<CallArgument>, Box<RunRefusal>> {
+) -> Result<ReadArguments, Box<RunRefusal>> {
     if call.wire_arguments.is_empty() {
-        return Ok(call.arguments.clone());
+        return Ok(ReadArguments {
+            arguments: call.arguments.clone(),
+            canonical: BTreeMap::new(),
+        });
     }
     let mut bound = vec![false; parameters.len()];
     let names = call
@@ -2010,6 +2017,7 @@ pub(crate) fn admit_wire_arguments(
         }));
     }
     let mut supplied = call.arguments.clone();
+    let mut canonical = BTreeMap::new();
     for (position, (name, value_type)) in parameters.iter().enumerate() {
         let Some(wire) = call
             .wire_arguments
@@ -2025,7 +2033,12 @@ pub(crate) fn admit_wire_arguments(
         let read = if let Some(selected) = &wire.selected_object {
             forms.read(&serde_json::json!({"reference": {"population": selected.population, "key": selected.key}}), value_type)
         } else if call.canonical_values {
-            forms.read_canonical(&wire.value, value_type, position, run)
+            forms
+                .read_canonical_with_form(&wire.value, value_type, position, run)
+                .map(|(value, form)| {
+                    canonical.insert(name.clone(), form);
+                    value
+                })
         } else {
             match &wire.value {
                 serde_json::Value::Number(number) => match number.as_i64() {
@@ -2064,7 +2077,10 @@ pub(crate) fn admit_wire_arguments(
             value,
         });
     }
-    Ok(supplied)
+    Ok(ReadArguments {
+        arguments: supplied,
+        canonical,
+    })
 }
 
 /// Join each argument to the parameter of the same declared name (refusing
@@ -2217,26 +2233,44 @@ pub(crate) fn argument_value(
     }
 }
 
+/// A call's arguments as read, with the run form each canonical wire argument
+/// was read as, by parameter name.
+pub(crate) struct ReadArguments {
+    pub(crate) arguments: Vec<CallArgument>,
+    pub(crate) canonical: BTreeMap<String, serde_json::Value>,
+}
+
+/// What a call supplied as wire arguments, and how it was read.
+pub(crate) struct SuppliedForms<'a, 'f> {
+    pub(crate) forms: &'a Forms<'f>,
+    pub(crate) wire: &'a [WireArgument],
+    pub(crate) canonical: &'a BTreeMap<String, serde_json::Value>,
+}
+
 /// Refuse an argument holding a quantity beyond a unit bound on the slot of
 /// a model composite (FSpec FR-154 "Unit bounds"), naming the argument's
-/// position and the path inside its value. `supplied` is the call's wire
-/// arguments and the forms that read them, when it carries any.
+/// position and the path inside its value as the caller wrote it.
 #[implements("FR-650-AC-24")]
-pub(crate) fn admit_unit_bounds<'v>(
-    views: impl IntoIterator<Item = &'v EffectiveView>,
+pub(crate) fn admit_unit_bounds(
+    bounds: &CompositeBounds,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     parameters: &[(String, ValueType)],
     arguments: &[Value],
-    supplied: Option<(&Forms<'_>, &[WireArgument])>,
+    supplied: Option<SuppliedForms<'_, '_>>,
 ) -> Result<(), Box<RunRefusal>> {
-    let bounds = CompositeBounds::of(views);
     for (position, ((parameter, _), argument)) in parameters.iter().zip(arguments).enumerate() {
-        let wire = supplied.and_then(|(forms, wire)| {
-            wire.iter()
-                .find(|wire| wire.parameter == *parameter)
-                .map(|wire| (forms, &wire.value))
+        let wire = supplied.as_ref().and_then(|supplied| {
+            let written = &supplied
+                .wire
+                .iter()
+                .find(|wire| wire.parameter == *parameter)?
+                .value;
+            Some(match supplied.canonical.get(parameter) {
+                Some(read) => (supplied.forms, read, Some(written)),
+                None => (supplied.forms, written, None),
+            })
         });
-        if let Some(defect) = unit_bound_defect(&bounds, types, argument, wire) {
+        if let Some(defect) = unit_bound_defect(bounds, types, argument, wire) {
             return Err(Box::new(RunRefusal::Argument { position, defect }));
         }
     }

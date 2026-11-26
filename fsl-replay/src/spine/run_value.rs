@@ -1537,19 +1537,21 @@ impl Path {
 
 /// The defect of the first unit bound a quantity inside the argument `value`
 /// violates (FSpec FR-154 "Unit bounds"), its pointer spelled as `value`'s
-/// run form spells the path. `wire` is the form the caller supplied, whose
-/// positions name the elements of a set, bag or map, and `forms` reads them.
-#[implements("FR-650-AC-24")]
+/// run form spells the path. `supplied` is the run form the value was read
+/// from and the forms that read it, whose positions name the elements of a
+/// set, bag or map; with the canonical form the caller wrote, the pointer is
+/// spelled in that form instead.
+#[implements("FR-650-AC-24", "FR-650-AC-25")]
 pub(crate) fn unit_bound_defect(
     bounds: &CompositeBounds,
     types: &TypeEnvironment,
     value: &Value,
-    supplied: Option<(&Forms<'_>, &Json)>,
+    supplied: Option<(&Forms<'_>, &Json, Option<&Json>)>,
 ) -> Option<ArgumentDefect> {
     let (bound, steps) = bounds.violation(value, types)?;
     let mut path = Path::new();
     let mut held = Some(value);
-    let mut wire = supplied.map(|(_, wire)| wire);
+    let mut wire = supplied.map(|(_, wire, _)| wire);
     // The position, among the `items` the caller supplied, of the first that
     // `matches` reads as the element the value holds at `index`; `index`
     // when no supplied form is at hand.
@@ -1560,7 +1562,7 @@ pub(crate) fn unit_bound_defect(
             .unwrap_or(index)
     };
     let reads = |item: &Json, value_type: &ValueType, element: &Value| {
-        supplied.is_some_and(|(forms, _)| {
+        supplied.is_some_and(|(forms, _, _)| {
             forms.read(item, value_type).is_ok_and(|read| {
                 let mut meter = Meter::new(unbounded());
                 matches!(
@@ -1648,10 +1650,16 @@ pub(crate) fn unit_bound_defect(
         }
         held = next;
     }
+    let path = match supplied {
+        Some((_, read, Some(written))) => {
+            canonical::canonical_pointer(written, read, &path.pointer())
+        }
+        _ => path.pointer(),
+    };
     Some(ArgumentDefect {
         code: Code::InvalidRuntimeInput,
         cause: "invalid-value",
-        path: path.pointer(),
+        path,
         unit_bound: Some(Box::new(UnitBoundDefect {
             constraint: bound.constraint.node.clone(),
             keyword: bound.keyword(),

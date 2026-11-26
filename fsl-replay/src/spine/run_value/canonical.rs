@@ -117,6 +117,7 @@ impl Position<'_> {
 }
 
 impl Forms<'_> {
+    #[cfg(test)]
     pub(crate) fn read_canonical(
         &self,
         form: &Json,
@@ -124,6 +125,19 @@ impl Forms<'_> {
         argument: usize,
         run: &std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
     ) -> Result<Value, ReadStop> {
+        self.read_canonical_with_form(form, declared, argument, run)
+            .map(|(value, _)| value)
+    }
+
+    /// The value a canonical `form` spells, with the native form it was read
+    /// as, which a later check of the value locates its pointer through.
+    pub(crate) fn read_canonical_with_form(
+        &self,
+        form: &Json,
+        declared: &ValueType,
+        argument: usize,
+        run: &std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
+    ) -> Result<(Value, Json), ReadStop> {
         let normalized = self.canonical_input(
             form,
             declared,
@@ -134,14 +148,17 @@ impl Forms<'_> {
                 run,
             },
         )?;
-        self.read(&normalized, declared).map_err(|stop| match stop {
-            ReadStop::Defect(mut defect) => {
-                defect.path = canonical_pointer(form, &normalized, &defect.path);
-                ReadStop::Defect(defect)
-            }
-            fault @ ReadStop::Fault(_) => fault,
-            refusal @ ReadStop::Refusal(_) => refusal,
-        })
+        let value = self
+            .read(&normalized, declared)
+            .map_err(|stop| match stop {
+                ReadStop::Defect(mut defect) => {
+                    defect.path = canonical_pointer(form, &normalized, &defect.path);
+                    ReadStop::Defect(defect)
+                }
+                fault @ ReadStop::Fault(_) => fault,
+                refusal @ ReadStop::Refusal(_) => refusal,
+            })?;
+        Ok((value, normalized))
     }
 
     fn canonical_input(
@@ -691,7 +708,7 @@ fn declaration_form(key: &NodeKey) -> Result<Json, ReadStop> {
 
 /// Preserve the typed reader's refusal while locating it in the caller's
 /// canonical tree, including record slots and native optional-field wrappers.
-fn canonical_pointer(mut canonical: &Json, mut native: &Json, pointer: &str) -> String {
+pub(super) fn canonical_pointer(mut canonical: &Json, mut native: &Json, pointer: &str) -> String {
     let mut path = Path::new();
     let mut segments = pointer
         .strip_prefix('/')

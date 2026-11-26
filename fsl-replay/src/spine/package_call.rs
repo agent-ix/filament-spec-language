@@ -18,13 +18,28 @@ use filament_semantic_value::supplied_stop::SuppliedRun;
 use fsl_eval::execution::SuppliedBackends;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::{BarePackage, BareSelectionFailure};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use fsl_semantics::model::observation::{AdmissionFailure, composite_bounds};
+use fsl_semantics::model::state::CompositeBounds;
+use ix_trace_rs::implements;
 
 use super::call::{
-    Call, CallOutcome, CallValue, RunRefusal, admit_wire_arguments, bind_arguments,
+    Call, CallOutcome, CallValue, RunRefusal, SuppliedForms, admit_wire_arguments, bind_arguments,
     convert_call_failure, convert_outcome_resolving, is_identifier,
 };
 use super::run_value::{Forms, WriteStop};
+
+/// The caller's domain packages and the limits they normalize under, from which
+/// a call that supplies no snapshot views reads the selected models' unit bounds.
+#[derive(Clone, Copy)]
+pub struct DomainPackages<'a> {
+    /// The domain packages the package's model selections are read from.
+    pub packages: &'a PackageInput,
+    /// The limits those packages normalize under.
+    pub limits: ModelNormalizationLimits,
+}
 
 /// Call `call`'s named function of the admitted `package` with its
 /// arguments, under `call`'s accounting and supplied-value limits (FR-945).
@@ -45,9 +60,10 @@ pub fn run_package(
     package: &BarePackage<'_>,
     call: &Call,
     objects: &ObjectEnvironment,
+    models: DomainPackages<'_>,
     cancel: &Cancel,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
-    run_package_with_sources(package, call, objects, &[], cancel).outcome
+    run_package_with_sources(package, call, objects, models, &[], cancel).outcome
 }
 
 /// A package call's original result beside any unavailable source attribution.
@@ -77,6 +93,7 @@ pub fn run_package_with_sources(
     package: &BarePackage<'_>,
     call: &Call,
     objects: &ObjectEnvironment,
+    models: DomainPackages<'_>,
     sources: &[fsl_foundation::Source],
     cancel: &Cancel,
 ) -> PackageCallResult {
@@ -85,7 +102,7 @@ pub fn run_package_with_sources(
         package,
         call,
         objects,
-        (None, None),
+        (ViewSource::Domain(models), None),
         sources,
         cancel,
         &attribution,
@@ -102,6 +119,7 @@ pub fn run_package_with_sources_and_budget(
     package: &BarePackage<'_>,
     call: &Call,
     objects: &ObjectEnvironment,
+    models: DomainPackages<'_>,
     joins: &mut filament_contract_model::NativeJoinBudget,
     sources: &[fsl_foundation::Source],
     cancel: &Cancel,
@@ -111,7 +129,7 @@ pub fn run_package_with_sources_and_budget(
         package,
         call,
         objects,
-        (None, Some(joins)),
+        (ViewSource::Domain(models), Some(joins)),
         sources,
         cancel,
         &attribution,
@@ -139,7 +157,7 @@ pub fn run_package_with_snapshot_views(
         package,
         call,
         objects,
-        (Some(views), Some(joins)),
+        (ViewSource::Snapshot(views), Some(joins)),
         sources,
         cancel,
         &attribution,
@@ -154,14 +172,18 @@ fn run_package_resolving(
     package: &BarePackage<'_>,
     call: &Call,
     objects: &ObjectEnvironment,
-    (views, mut joins): (
-        Option<&[fsl_semantics::model::intake::NormalizedModel]>,
+    (source, mut joins): (
+        ViewSource<'_>,
         Option<&mut filament_contract_model::NativeJoinBudget>,
     ),
     sources: &[fsl_foundation::Source],
     cancel: &Cancel,
     attribution: &std::cell::RefCell<Option<PackageSourceAttributionFailure>>,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
+    let views = match source {
+        ViewSource::Snapshot(views) => Some(views),
+        ViewSource::Domain(_) => None,
+    };
     // FR-296: a backend the caller did not supply refuses before any stage.
     SuppliedBackends::default()
         .member(call.backend)
@@ -312,15 +334,33 @@ fn run_package_resolving(
         forms.has_form_scoped(value_type)?;
     }
     forms.has_form_scoped(selected.result_type)?;
-    let supplied = admit_wire_arguments(&forms, &parameters, call, &supplied_run)?;
-    let arguments = bind_arguments(&parameters, &supplied)?;
-    super::call::admit_unit_bounds(
-        views.into_iter().flatten().map(|model| model.view()),
-        world.types(),
-        &parameters,
-        &arguments,
-        Some((&forms, &call.wire_arguments)),
-    )?;
+    let read = admit_wire_arguments(&forms, &parameters, call, &supplied_run)?;
+    let arguments = bind_arguments(&parameters, &read.arguments)?;
+    // A unit bound sits on a slot of a model composite, so only an argument
+    // that holds a container reads the models.
+    let holds_container = arguments.iter().any(|argument| {
+        matches!(
+            argument,
+            Value::Composite(_)
+                | Value::Union(_)
+                | Value::Option(_)
+                | Value::Collection(_)
+                | Value::Map(_)
+        )
+    });
+    if holds_container {
+        super::call::admit_unit_bounds(
+            &unit_bounds(package, source)?,
+            world.types(),
+            &parameters,
+            &arguments,
+            Some(SuppliedForms {
+                forms: &forms,
+                wire: &call.wire_arguments,
+                canonical: &read.canonical,
+            }),
+        )?;
+    }
     let mut meter = Meter::new(call.accounting).with_cancel(cancel.clone());
     // One run for the whole invocation: both helper budgets and the caller's
     // original handle (FR-277).
@@ -398,5 +438,39 @@ fn call_failure(
             "FR-945",
             "a-refused-projection-refuses-the-call",
         ))),
+    }
+}
+
+/// Where a package call reads its selected models from.
+#[derive(Clone, Copy)]
+enum ViewSource<'a> {
+    /// The effective views the call's snapshot admission retained.
+    Snapshot(&'a [fsl_semantics::model::intake::NormalizedModel]),
+    /// The caller's domain packages, normalized when a bound has to be read.
+    Domain(DomainPackages<'a>),
+}
+
+/// The unit bounds of the models `package` selects (FSpec FR-154 "Unit
+/// bounds"), which the checked package does not itself carry.
+#[implements("FR-650-AC-25")]
+fn unit_bounds(
+    package: &BarePackage<'_>,
+    source: ViewSource<'_>,
+) -> Result<CompositeBounds, Box<RunRefusal>> {
+    match source {
+        ViewSource::Snapshot(views) => Ok(CompositeBounds::of(views.iter().map(|m| m.view()))),
+        ViewSource::Domain(models) => composite_bounds(
+            package.model_selections().as_slice(),
+            models.packages,
+            models.limits,
+        )
+        .map_err(|failure| {
+            Box::new(match failure {
+                AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
+                    RunRefusal::ObjectEnvironment(record)
+                }
+                AdmissionFailure::Fault(fault) => RunRefusal::Fault(fault),
+            })
+        }),
     }
 }

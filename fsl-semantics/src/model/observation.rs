@@ -1939,6 +1939,21 @@ pub(crate) fn model_views<'a>(
     model_views_retaining(model_selections, packages, limits, SnapshotProvenance::Omit)
 }
 
+/// The unit bounds on the slots of the composites the selected models
+/// declare (FSpec FR-154 "Unit bounds"), for a caller that holds the domain
+/// packages and has admitted no observation over them.
+#[implements("FR-650-AC-25")]
+pub fn composite_bounds<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    packages: &PackageInput,
+    limits: ModelNormalizationLimits,
+) -> Result<crate::model::state::CompositeBounds, AdmissionFailure> {
+    let views = model_views(model_selections, packages, limits)?;
+    Ok(crate::model::state::CompositeBounds::of(
+        views.iter().map(|view| &view.view),
+    ))
+}
+
 #[derive(Clone, Copy)]
 enum SnapshotProvenance {
     Omit,
@@ -3450,6 +3465,7 @@ fn wrong_self_kind() -> AdmissionFailure {
 /// operation `source` names, on `context_view`'s type `context_name`.
 /// `self` is required in the post snapshot only when `post_self` (a
 /// postcondition, SR-750 FND-006).
+#[implements("FR-106-AC-85", "FR-106-AC-86")]
 #[allow(clippy::too_many_arguments)]
 fn admit_invocation_documents(
     views: &[ModelView],
@@ -3465,7 +3481,6 @@ fn admit_invocation_documents(
     preloaded: Option<InvocationDocuments>,
     limits: ObservationLimits,
     ancestor_steps: u64,
-#[implements("FR-106-AC-85", "FR-106-AC-86")]
 ) -> Result<InvocationAdmission, AdmissionFailure> {
     // Check 1: read every selected document -- the invocation, then its
     // pre and post snapshots, in that order -- before any of checks 2 to 5
@@ -3952,6 +3967,7 @@ fn admit_pre_call_invocation(
 /// invocation its own model (check 4) and operation (check 5). Check 11
 /// compares a pre and a post snapshot; a pre-call observation has no post
 /// side, so it does not run.
+#[implements("FR-106-AC-85")]
 fn admit_pre_call(
     context: &PreCallContext<'_>,
     input: PreCallInput<'_>,
@@ -3967,7 +3983,6 @@ fn admit_pre_call(
     if snapshot.observation != document::ObservationRole::Pre {
         return Err(refuse(admission_record(
             Code::WrongSnapshot,
-#[implements("FR-106-AC-85")]
             "wrong-observation",
         )));
     }
