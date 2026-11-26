@@ -1300,6 +1300,7 @@ mod tests {
                 r#"{"node":"ix://test/counters/Counter/increment","package":"test/counters"}"#,
             ),
             (r#""{}""#, r#""{}""#),
+            ("tick", r#""tick""#),
             ("Cell::set", r#""Cell::set""#),
             (
                 "ix://test/counters/Counter/increment",

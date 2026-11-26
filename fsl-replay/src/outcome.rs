@@ -563,10 +563,10 @@ pub struct ItemCause {
     state: Option<TimedStateWire>,
     /// The typed transition identity named by `not-stochastic`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    identity: Option<TimedTransitionWire>,
+    identity: Option<WrittenTransition>,
     /// The complete drawn identity of a `not-markov` refusal.
     #[serde(skip_serializing_if = "Option::is_none")]
-    transition: Option<TaskSourceTransitionWire>,
+    transition: Option<WrittenTransition>,
     /// The actual count of a `not-markov` draw's model post-states.
     #[serde(skip_serializing_if = "Option::is_none")]
     post_state_count: Option<u64>,
@@ -598,8 +598,10 @@ pub(crate) struct TimedStateWire {
     key: String,
 }
 
+/// A written source or model transition `{type, operation, receiver,
+/// arguments}`: the one type every writer of one fills.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct TimedTransitionWire {
+pub(crate) struct WrittenTransition {
     #[serde(rename = "type")]
     kind: &'static str,
     operation: WrittenOperation,
@@ -607,33 +609,31 @@ pub(crate) struct TimedTransitionWire {
     arguments: Vec<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(super) struct TaskSourceTransitionWire {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    operation: WrittenOperation,
-    receiver: Option<serde_json::Value>,
-    arguments: Vec<serde_json::Value>,
-}
-
-impl From<&filament_semantic_value::model_transition::ModelTransition>
-    for TaskSourceTransitionWire
-{
-    fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
-        let operation: serde_json::Value = serde_json::from_str(identity.operation())
-            .expect("canonical source operation identity");
-        let operation = WrittenOperation::task_source(&operation, identity.operation());
-        let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
-        Self {
+impl WrittenTransition {
+    /// The written form of `identity`.
+    ///
+    /// # Errors
+    /// The JSON reader's, for a receiver or argument text it cannot read.
+    #[implements("FR-120-AC-40")]
+    fn read(
+        identity: &filament_semantic_value::model_transition::ModelTransition,
+    ) -> serde_json::Result<Self> {
+        Ok(Self {
             kind: "transition",
-            operation,
-            receiver: identity.receiver().map(value),
+            operation: WrittenOperation::of(identity.operation()),
+            receiver: identity.receiver().map(serde_json::from_str).transpose()?,
             arguments: identity
                 .arguments()
                 .iter()
-                .map(|text| value(text))
-                .collect(),
-        }
+                .map(|text| serde_json::from_str(text))
+                .collect::<serde_json::Result<_>>()?,
+        })
+    }
+}
+
+impl From<&filament_semantic_value::model_transition::ModelTransition> for WrittenTransition {
+    fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
+        Self::read(identity).expect("canonical typed value")
     }
 }
 
@@ -647,8 +647,8 @@ struct TaskTransitionWire {
     job: u64,
     slot: u64,
     generation: u64,
-    release: TaskSourceTransitionWire,
-    source_transition: Option<TaskSourceTransitionWire>,
+    release: WrittenTransition,
+    source_transition: Option<WrittenTransition>,
     demand: serde_json::Value,
     jitter: serde_json::Value,
     deadline: serde_json::Value,
@@ -686,11 +686,11 @@ impl From<&crate::TaskTransitionIdentity> for TaskTransitionWire {
             job: identity.job,
             slot: identity.slot,
             generation: identity.generation,
-            release: TaskSourceTransitionWire::from(&identity.release),
+            release: WrittenTransition::from(&identity.release),
             source_transition: identity
                 .source_transition
                 .as_ref()
-                .map(TaskSourceTransitionWire::from),
+                .map(WrittenTransition::from),
             demand: task_rational(&identity.demand),
             jitter: task_rational(&identity.jitter),
             deadline: task_rational(&identity.deadline),
@@ -705,24 +705,6 @@ impl From<&fsl_eval::simulation::StateKey> for TimedStateWire {
         use base64::Engine;
         Self {
             key: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes()),
-        }
-    }
-}
-
-impl From<&filament_semantic_value::model_transition::ModelTransition> for TimedTransitionWire {
-    fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
-        let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
-        Self {
-            kind: "transition",
-            // FSpec FR-181 writes the operation as one string: the identity
-            // text itself (FR-120), as the canonical identity bytes do.
-            operation: WrittenOperation::identity(identity.operation()),
-            receiver: identity.receiver().map(value),
-            arguments: identity
-                .arguments()
-                .iter()
-                .map(|text| value(text))
-                .collect(),
         }
     }
 }
@@ -3904,6 +3886,7 @@ mod tests {
                 r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#,
             ),
             (r#"{"name":"send"}"#, r#"{"name":"send"}"#),
+            (r#""tick""#, "tick"),
             (r#""Call::send""#, "Call::send"),
             (r#""{}""#, r#""{}""#),
         ] {
@@ -4040,6 +4023,27 @@ mod tests {
         assert_eq!(value["identity"]["operation"], r#"{"name":"timeout"}"#);
         assert_eq!(value["identity"]["receiver"], serde_json::Value::Null);
         assert_eq!(value["identity"]["arguments"][0]["value"], "1");
+    }
+
+    /// FR-120-AC-40 (TC-471): a cause's `identity` and drawn `transition`
+    /// write a name identity as the bare name.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_cause_writes_a_name_identity_as_the_name() {
+        let transition = filament_semantic_value::model_transition::ModelTransition::new(
+            r#""tick""#.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("canonical transition values");
+        let mut item = ItemCause::kind("not-markov");
+        item.identity = Some((&transition).into());
+        item.transition = Some((&transition).into());
+
+        let value = serde_json::to_value(item).expect("wire cause serializes");
+        assert_eq!(value["identity"]["operation"], "tick");
+        assert_eq!(value["transition"]["operation"], "tick");
     }
 
     #[trace("TC-639", "FR-204-AC-2", "FR-204-AC-3", "FR-204-AC-4")]

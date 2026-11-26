@@ -431,15 +431,24 @@ record, tuple or union argument has an identity (ADR-016 ID-9). A model applicat
 `None` only for an operation FR-181 admits with none, and `Some("null")` is
 refused.
 
-A written transition's `operation` is the identity text itself, as one string.
-The task-source writers (a temporal counterexample's source steps, a task
-transition's `release` and `source_transition`, certificate edges and
-templates, and the reference codec's task arm) have one exception: an identity
-text that is the JSON text of a string whose content is a name, by the rule
-below, is written as that name, so a name read from a published certificate
-writes back unchanged (FSpec FR-418 "Canonical bytes"). A scheduled identity of
-a probabilistic witness scheduler is a written transition and follows the first
-sentence.
+Every writer of a written transition (a `type: "transition"` value) SHALL write
+`operation` as one string, by one rule:
+
+- a name identity, an identity text that is the JSON text of a string whose
+  content is a name by the reader rule below, is written as that name: the
+  identity text `"tick"`, quotes included, is written `tick`;
+- every other identity text, a declaration identity text among them, is written
+  as itself.
+
+The rule covers temporal counterexample steps and identities, a task
+transition's `release` and `source_transition`, certificate edges, templates and
+verdicts, cause identities, the reference codec's transition encoder, the
+scheduled identities of a probabilistic witness scheduler and the trace steps of
+a simulation item. A name read from a published certificate therefore writes
+back unchanged (FSpec FR-418 "Canonical bytes"). Where the transition identity
+is used as bytes, in keys, orderings and certificate policy choices, those bytes
+are the FR-181 identity above and carry the identity text itself.
+
 The observed model step of a clause request, the reference codec's transition
 restore, the temporal counterexample reader and the certificate
 source-transition reader (certificate edges and templates, and a source step of
@@ -988,8 +997,8 @@ identity text of operation `op`.
 | FR-120-AC-37 | For package `test/no-initial`, whose successful `NoInitial` model declares only population `cells` of record value type `ix://test/no-initial/Cell` with `value: Int[0,1]`, the Cell declaration's model node key is `{package:"test/no-initial",path:["model","record_value_type","ix://test/no-initial/Cell"],ordinal:0}` by FR-322. A current `universe_snapshot` with `cells` complete and keys `{c1,c2}`, and an empty initial-snapshot list, defines exactly the four complete initial states `((c1,0),(c2,0))`, `((c1,0),(c2,1))`, `((c1,1),(c2,0))` and `((c1,1),(c2,1))`; it creates no other key or population. | Test (TC-3018) |
 | FR-120-AC-38 | In a separate `test/no-initial` refusal fixture whose model declares `cells` followed by `unbounded_cells`, both of record value type `ix://test/no-initial/Cell`, a current snapshot with `cells` complete for `{c1,c2}` and `unbounded_cells` `complete: false` leaves only the latter root as `Population(None)`. Its declaration node id is `{package:"test/no-initial",path:["NoInitial","unbounded_cells"],ordinal:0}` and its `DomainKey::Population` is `{member_type:{package:"test/no-initial",path:["model","record_value_type","ix://test/no-initial/Cell"],ordinal:0},ordinal:1}`. `explore_model` and `sample_model` return `NotSimulated::RequiresBound` naming that key before any state is expanded. | Test (TC-3018) |
 | FR-120-AC-39 | The observed model step of a clause request, the reference codec's transition restore and the temporal counterexample reader each read an `operation` string spelled `true`, `false`, `null`, `1` or `[1]` as a name, with that string's JCS text as the identity text, and an object `{"name":"tick"}` as its canonical text; each refuses a boolean, number or array member. | Test (TC-471) |
-| FR-120-AC-40 | A source transition whose operation is the declaration identity text of `test/counters/Counter/increment` is written by the task-source writers (temporal counterexample, certificate and task transitions, codec task arm) with that text as `operation`, and the certificate source-transition reader and the temporal counterexample reader read it back as the same text. The name identity `"Cell::set"` is written `Cell::set` and reads back as itself; the certificate source-transition reader reads `true`, `false`, `null`, `1`, `[1]` and `ix://test/counters/Counter/increment` as names and refuses an object, boolean, number or array member. | Test (TC-471) |
-| FR-120-AC-41 | Each scheduled identity in a probabilistic counterexample's witness scheduler writes `operation` as its declaration identity text, one string. | Test (TC-471) |
+| FR-120-AC-40 | The declaration identity text of `test/counters/Counter/increment` is written as `operation` unchanged, and the name identity `"tick"` (quotes included) is written `tick`, by every writer of a written transition: temporal counterexample steps, task transitions, certificate edges and verdicts, cause identities, the reference codec's transition encoder and a simulation item's trace steps. The certificate source-transition reader, the temporal counterexample reader and the codec's transition restore read each back as the same identity text; `tick` reads back as `"tick"` with its quotes. The name identity `"Cell::set"` is written `Cell::set` and reads back as itself, and a name identity whose content is itself an identity text, `"{}"`, is written as the identity text. The certificate source-transition reader reads `true`, `false`, `null`, `1`, `[1]` and `ix://test/counters/Counter/increment` as names and refuses an object, boolean, number or array member. | Test (TC-471) |
+| FR-120-AC-41 | Each scheduled identity in a probabilistic counterexample's witness scheduler writes `operation` as one string by the same rule: its declaration identity text as itself, and the name identity `"tick"` as `tick`. | Test (TC-471) |
 
 ## Dependencies
 

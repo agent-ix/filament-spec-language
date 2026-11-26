@@ -189,21 +189,23 @@ mod tests {
     }
 
     /// FR-267-AC-30, FR-120-AC-40: the model arm reads a source step's
-    /// declaration identity text as that identity.
+    /// declaration identity text as that identity, and a written name as
+    /// its JSON string.
     #[test]
     #[trace("TC-1160", "FR-267-AC-30", "TC-471", "FR-120-AC-40")]
     fn a_source_step_reads_back_its_declaration_identity() {
-        let identity =
-            r#"{"node":"ix://test/counters/Counter/increment","package":"test/counters"}"#;
-        let mut value = model();
-        value["prefix"][0]["transition"] = json!({"type": "transition", "operation": identity,
-            "receiver": null, "arguments": []});
-        let read = read(&value, 1, None).expect("a structurally valid model counterexample");
-        let step = read.model_prefix().next().expect("the prefix step");
-        let ModelTransitionRead::Transition(transition) = &step.transition else {
-            panic!("a transition");
-        };
-        assert_eq!(transition.operation(), identity);
+        let object = r#"{"node":"ix://test/counters/Counter/increment","package":"test/counters"}"#;
+        for (written, identity) in [(object, object), ("tick", r#""tick""#)] {
+            let mut value = model();
+            value["prefix"][0]["transition"] = json!({"type": "transition", "operation": written,
+                "receiver": null, "arguments": []});
+            let read = read(&value, 1, None).expect("a structurally valid model counterexample");
+            let step = read.model_prefix().next().expect("the prefix step");
+            let ModelTransitionRead::Transition(transition) = &step.transition else {
+                panic!("a transition");
+            };
+            assert_eq!(transition.operation(), identity, "{written}");
+        }
     }
 
     #[test]

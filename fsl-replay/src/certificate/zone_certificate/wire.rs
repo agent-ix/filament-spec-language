@@ -263,7 +263,7 @@ impl<O> ZoneCertificate<O> {
             .transpose()?;
         self.write_wire(identity, names.as_deref(), task_product, |edge| {
             match (&edge.transition, &edge.task_transition) {
-                (Some(transition), None) => Ok(references.encode_task_transition(transition)?),
+                (Some(transition), None) => Ok(references.encode_transition(transition)?),
                 (None, Some(template)) => Ok(references.encode_task_template(template)?),
                 (None, None) if source.is_some() && edge.part.is_none() => Ok(Value::Null),
                 _ => Err(ZoneCertificateWireError::Unsupported("edges").into()),

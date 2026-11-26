@@ -2153,7 +2153,7 @@ mod tests {
             super::model_step(&step, "trace.steps[0]")
                 .map(|step| step.expect("not the terminal stutter").transition)
         };
-        for name in ["true", "false", "null", "1", "[1]"] {
+        for name in ["tick", "true", "false", "null", "1", "[1]"] {
             let transition = read(serde_json::json!(name)).expect("a name");
             assert_eq!(transition.operation(), format!("\"{name}\""));
         }
