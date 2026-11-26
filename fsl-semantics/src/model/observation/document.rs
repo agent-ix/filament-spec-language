@@ -4207,6 +4207,12 @@ fn admit_contexts<'t>(
         }
         RawContexts::Entries(entries) => entries,
     };
+    // A unit bound on a context field is checked as on an object field; a post
+    // value under `PostStateRange::Witness` is the successor's.
+    let bounds = match range {
+        PostStateRange::Refuse => crate::model::state::member_bounds(views),
+        PostStateRange::Witness => Vec::new(),
+    };
     let mut machines: Vec<&str> = Vec::new();
     let mut read = Vec::new();
     for (entry, raw) in entries.iter().enumerate() {
@@ -4320,6 +4326,18 @@ fn admit_contexts<'t>(
                         entry,
                     )
                 })?;
+            if let (false, FieldValue::Present(value)) = (bounds.is_empty(), &value) {
+                let key = super::initial::field_key(views, attribute)?;
+                if let Some(record) = unit_bound_refusal(&bounds, &key, value, types) {
+                    return Err(named(
+                        record
+                            .with("machine", machine.to_owned())
+                            .with("field", name.to_owned())
+                            .with("path", context_field_path(entry, name)),
+                        entry,
+                    ));
+                }
+            }
             let origins = references.take_origins();
             if !origins.is_empty() {
                 field_origins.push((attribute.identity(), origins));

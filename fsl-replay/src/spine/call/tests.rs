@@ -2890,3 +2890,304 @@ fn tc_792_reference_completions_serialize_the_returned_reference() {
     ));
     document_of(&returned, &other);
 }
+
+/// The lookup driver model with a unit alias `Delay` of `ms` bounded `max` `3`
+/// and, over it, a record `Span { d: Delay }`, a record `Many` with an optional
+/// field, a set and a map, a tuple `Pair` and a variant `Choice`.
+fn bounded_record_fixture(functions: &str) -> LookupDriverFixture {
+    let sourced = |line: u64| {
+        serde_json::json!({"source": {"sourceIdentity": "ix://acme/orders/spec",
+            "path": "spec.fspec", "startLine": line, "startColumn": 3}})
+    };
+    let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../tests/fixtures/spine-model.semantic-ir.json"
+    ))
+    .expect("the model fixture is JSON");
+    let origin = |identity: &str| {
+        serde_json::json!({"generated": {"generatorIdentity": identity,
+            "generatorVersion": "1.0.0", "inputIdentities": [identity]}})
+    };
+    document["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(serde_json::json!({
+            "kind": {"module": "acme/orders", "name": "value_record"},
+            "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "record", "members": {},
+                "meaning": "filament.meaning.model.record-value-type/v1"}
+        }));
+    let delay = "ix://acme/orders/Delay";
+    let maximum = "ix://acme/orders/Delay/max";
+    let span = "ix://acme/orders/Span";
+    let field = "ix://acme/orders/Span/d";
+    let types = document["types"].as_array_mut().expect("types");
+    types.push(serde_json::json!({
+        "identity": delay, "displayName": "Delay", "kind": "alias",
+        "target": "ix://filament/unit/ms",
+        "roles": [], "origin": origin(delay), "extensions": [], "unknownPolicy": "reject",
+        "constraints": [{"identity": maximum, "keyword": "max", "operands": {"value": "3"},
+            "appliesTo": delay, "diagnosticCode": "bound.max", "origin": origin(maximum)}],
+
+    }));
+    types.push(serde_json::json!({
+        "identity": span, "displayName": "Span",
+        "kind": {"module": "acme/orders", "name": "value_record"},
+        "roles": [], "origin": origin(span), "extensions": [], "unknownPolicy": "reject",
+        "constraints": [], "supertypes": [], "operations": [],
+        "fields": [{"identity": field, "name": "d", "typeRef": delay, "presence": "required",
+            "nullable": false, "defaultKind": "none",
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": false},
+            "origin": origin(field)}]
+    }));
+    let node = |identity: &str, kind: serde_json::Value, extra: serde_json::Value| {
+        let mut node = serde_json::json!({
+            "identity": identity, "displayName": identity.rsplit('/').next(), "kind": kind,
+            "roles": [], "origin": origin(identity), "constraints": [], "extensions": [],
+            "unknownPolicy": "reject",
+        });
+        for (key, value) in extra.as_object().expect("members") {
+            node[key] = value.clone();
+        }
+        node
+    };
+    let member = |identity: &str, name: &str, type_ref: &str, presence: &str, upper: u64| {
+        serde_json::json!({"identity": identity, "name": name, "typeRef": type_ref,
+            "presence": presence, "nullable": false, "defaultKind": "none",
+            "multiplicity": {"lower": upper.min(1), "upper": upper, "ordered": false,
+                "unique": upper > 1},
+            "origin": origin(identity)})
+    };
+    let many = "ix://acme/orders/Many";
+    let delays = "ix://acme/orders/Delays";
+    let pair = "ix://acme/orders/Pair";
+    let choice = "ix://acme/orders/Choice";
+    let mut set = member("ix://acme/orders/Many/s", "s", delay, "required", 3);
+    set["multiplicity"]["lower"] = serde_json::json!(0);
+    types.push(node(
+        delays,
+        serde_json::json!("map"),
+        serde_json::json!({"keys": "ix://filament/native/Text", "values": delay,
+            "bound": {"lower": 0}}),
+    ));
+    types.push(node(
+        many,
+        serde_json::json!({"module": "acme/orders", "name": "value_record"}),
+        serde_json::json!({"supertypes": [], "operations": [], "fields": [
+            member("ix://acme/orders/Many/o", "o", delay, "optional", 1),
+            set,
+            member("ix://acme/orders/Many/m", "m", delays, "required", 1),
+        ]}),
+    ));
+    types.push(node(
+        pair,
+        serde_json::json!({"module": "acme/orders", "name": "tuple_type"}),
+        serde_json::json!({"positions": [
+            {"identity": "ix://acme/orders/Pair/p0", "typeRef": "ix://filament/native/Integer",
+             "origin": origin(pair)},
+            {"identity": "ix://acme/orders/Pair/p1", "typeRef": delay, "origin": origin(pair)},
+        ]}),
+    ));
+    types.push(node(
+        choice,
+        serde_json::json!({"module": "acme/orders", "name": "variant_type"}),
+        serde_json::json!({"variants": [
+            {"identity": "ix://acme/orders/variant/Choice-Held", "name": "Held",
+             "payloadType": span, "origin": sourced(1)},
+            {"identity": "ix://acme/orders/variant/Choice-Empty", "name": "Empty",
+             "origin": sourced(2)},
+        ]}),
+    ));
+    for (name, shape, members, meaning) in [
+        ("tuple_type", "tuple", "positions", "tuple-value-type"),
+        ("variant_type", "enumeration", "variants", "variant-type"),
+    ] {
+        document["constructs"]
+            .as_array_mut()
+            .expect("constructs")
+            .push(serde_json::json!({
+                "kind": {"module": "acme/orders", "name": name},
+                "moduleVersion": "1.0.0",
+                "construct": {"identity": "none", "shape": shape,
+                    "members": {members: "required"},
+                    "meaning": format!("filament.meaning.model.{meaning}/v1")}
+            }));
+    }
+    let bytes = serde_json::to_vec(&document).expect("the model serializes");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = \"acme/orders\";\n\
+         dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n{functions}\n"
+    );
+    let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
+    LookupDriverFixture { source, packages }
+}
+
+/// FSpec FR-154 "Unit bounds": a record value type's field is a member of
+/// the package, so an argument whose record holds a quantity beyond the
+/// field's bound refuses at that field; the bound itself admits.
+#[test]
+#[trace("TC-1702", "FR-650-AC-24")]
+fn a_record_argument_beyond_a_unit_bound_refuses_at_its_field() {
+    let fixture =
+        bounded_record_fixture("function span using v(r: M::Span): Boolean pure { true }");
+    let invoke = |magnitude: &str| {
+        let mut request = call("span", Vec::new());
+        request.wire_arguments = vec![crate::spine::call::WireArgument {
+            parameter: "r".to_owned(),
+            value: serde_json::json!({"record": {"type": "ix://acme/orders/Span", "fields": {
+                "d": {"kind": "quantity", "unit": "ms",
+                    "magnitude": {"kind": "rational", "numerator": magnitude, "denominator": "1"}}
+            }}}),
+            selected_object: None,
+        }];
+        run(
+            source(),
+            "fixture".to_owned(),
+            "bounded.native",
+            fixture.source.as_bytes(),
+            &fixture.packages,
+            &DependencyInput::default(),
+            SpineLimits::default(),
+            &request,
+            &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+            &Cancel::new(),
+        )
+    };
+
+    assert!(matches!(
+        invoke("3").expect("3 ms admits"),
+        CallOutcome::Completed(CallValue::Boolean(true))
+    ));
+    let refusal = invoke("4").expect_err("4 ms exceeds the max of 3 ms");
+    assert_eq!(refusal.code(), Code::InvalidRuntimeInput);
+    let RunRefusal::Argument {
+        position: 0,
+        defect,
+    } = refusal.as_ref()
+    else {
+        panic!("an argument refusal at position 0: {refusal:?}");
+    };
+    assert_eq!(defect.cause, "invalid-value");
+    assert_eq!(
+        refusal.details().map(serde_json::Value::Object),
+        Some(serde_json::json!({
+            "position": 0,
+            "path": "/record/fields/d",
+            "constraint": "ix://acme/orders/Delay/max",
+            "keyword": "max",
+            "bound": "3",
+        }))
+    );
+}
+
+/// FSpec FR-154 "Unit bounds": an optional field, each element of a set,
+/// each value of a map, a tuple position and a record a variant's payload holds
+/// are bounded, and the refusal's path names the position in the supplied value,
+/// whatever order the admitted set or map holds it in.
+#[test]
+#[trace("TC-1702", "FR-650-AC-24")]
+fn a_unit_bound_reaches_every_slot_of_a_composite_argument() {
+    let fixture = bounded_record_fixture(
+        "function many using v(r: M::Many): Boolean pure { true }\n\
+         function pair using v(r: M::Pair): Boolean pure { true }\n\
+         function chosen using v(r: M::Choice): Boolean pure { true }",
+    );
+    let quantity = |magnitude: &str| {
+        serde_json::json!({"kind": "quantity", "unit": "ms",
+            "magnitude": {"kind": "rational", "numerator": magnitude, "denominator": "1"}})
+    };
+    let invoke = |function: &str, value: serde_json::Value| {
+        let mut request = call(function, Vec::new());
+        request.wire_arguments = vec![crate::spine::call::WireArgument {
+            parameter: "r".to_owned(),
+            value,
+            selected_object: None,
+        }];
+        run(
+            source(),
+            "fixture".to_owned(),
+            "bounded.native",
+            fixture.source.as_bytes(),
+            &fixture.packages,
+            &DependencyInput::default(),
+            SpineLimits::default(),
+            &request,
+            &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+            &Cancel::new(),
+        )
+    };
+    let many = |optional: &str, set: [&str; 2], mapped: [(&str, &str); 2]| {
+        let entry = |(key, value): (&str, &str)| serde_json::json!({"key": {"kind": "string", "text": key}, "value": quantity(value)});
+        serde_json::json!({"record": {"type": "ix://acme/orders/Many", "fields": {
+            "o": {"present": quantity(optional)},
+            "s": {"set": set.map(quantity)},
+            "m": {"map": mapped.map(entry)},
+        }}})
+    };
+    let pair = |held: &str| {
+        serde_json::json!({"tuple": {"type": "ix://acme/orders/Pair",
+            "components": [{"integer": "9"}, quantity(held)]}})
+    };
+    let choice = |held: &str| {
+        serde_json::json!({"variant": {"type": "ix://acme/orders/Choice", "case": "Held",
+            "components": [{"record": {"type": "ix://acme/orders/Span",
+                "fields": {"d": quantity(held)}}}]}})
+    };
+    let within = [("a", "1"), ("b", "3")];
+
+    for (function, value) in [
+        ("many", many("3", ["3", "1"], within)),
+        ("pair", pair("3")),
+        ("chosen", choice("3")),
+    ] {
+        invoke(function, value).unwrap_or_else(|refusal| panic!("3 ms admits: {refusal:?}"));
+    }
+    for (function, value, path) in [
+        (
+            "many",
+            many("4", ["3", "1"], within),
+            "/record/fields/o/present",
+        ),
+        (
+            "many",
+            many("3", ["4", "1"], within),
+            "/record/fields/s/set/0",
+        ),
+        (
+            "many",
+            many("3", ["1", "4"], within),
+            "/record/fields/s/set/1",
+        ),
+        (
+            "many",
+            many("3", ["3", "1"], [("b", "4"), ("a", "1")]),
+            "/record/fields/m/map/0/value",
+        ),
+        (
+            "many",
+            many("3", ["3", "1"], [("b", "1"), ("a", "4")]),
+            "/record/fields/m/map/1/value",
+        ),
+        ("pair", pair("4"), "/tuple/components/1"),
+        (
+            "chosen",
+            choice("4"),
+            "/variant/components/0/record/fields/d",
+        ),
+    ] {
+        let refusal = invoke(function, value).expect_err("4 ms exceeds the max of 3 ms");
+        let RunRefusal::Argument {
+            position: 0,
+            defect,
+        } = refusal.as_ref()
+        else {
+            panic!("an argument refusal at position 0: {refusal:?}");
+        };
+        assert_eq!(
+            (refusal.code(), defect.cause, defect.path.as_str()),
+            (Code::InvalidRuntimeInput, "invalid-value", path)
+        );
+    }
+}

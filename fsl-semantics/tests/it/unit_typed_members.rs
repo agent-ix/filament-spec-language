@@ -838,3 +838,247 @@ fn unit_bounds_reach_records_aliases_of_aliases_and_every_node() {
         "{refusal}"
     );
 }
+
+/// The member bounds of [`document`] after `edit` over its type nodes, a
+/// value record construct added.
+fn bounds_after(
+    edit: impl FnOnce(&mut Vec<Value>),
+) -> (
+    fsl_semantics::check::CheckedGraph,
+    Vec<fsl_semantics::model::state::MemberBound>,
+) {
+    use fsl_semantics::model::state::StateModel;
+
+    let mut document: Value = serde_json::from_slice(&document()).expect("JSON");
+    edit(document["types"].as_array_mut().expect("types"));
+    // A document declares a construct only when a type is of it.
+    let records = document["types"]
+        .as_array()
+        .expect("types")
+        .iter()
+        .any(|declared| declared["kind"]["name"] == "value_record");
+    if records {
+        document["constructs"]
+            .as_array_mut()
+            .expect("constructs")
+            .push(crate::model_operations::wire_construct(
+                "value_record",
+                fsl_semantics::model::intake::meaning::RECORD_VALUE_TYPE,
+                json!({}),
+            ));
+    }
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let graph = admit_and_assemble_with_body(&document, UNITS)
+        .expect("assembles")
+        .check(
+            CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("checks");
+    let (_, packages) = config_unit(&document);
+    let model = StateModel::new(
+        graph.model_selections(),
+        graph.scope().types(),
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("model views");
+    let bounds = model.member_bounds();
+    (graph, bounds)
+}
+
+/// Appends `fields` to the type node `ConfigVersion`.
+fn config_fields(types: &mut [Value], fields: Vec<Value>) {
+    types
+        .iter_mut()
+        .find(|definition| definition["identity"] == node("ConfigVersion"))
+        .expect("ConfigVersion")["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .extend(fields);
+}
+
+fn optional_field(owner: &str, name: &str, type_ref: &str) -> Value {
+    crate::model_operations::wire_field(
+        &node(&format!("{owner}/{name}")),
+        name,
+        type_ref,
+        "optional",
+        0,
+    )
+}
+
+/// The `(member, constraint)` names of `bounds` on the members of
+/// `ConfigVersion`.
+fn config_bounds(bounds: &[fsl_semantics::model::state::MemberBound]) -> Vec<(String, String)> {
+    let mut read: Vec<(String, String)> = bounds
+        .iter()
+        .filter_map(|bound| {
+            let member = bound.member.node.strip_prefix(&node("ConfigVersion/"))?;
+            Some((member.to_owned(), bound.constraint.node.clone()))
+        })
+        .collect();
+    read.sort();
+    read
+}
+
+/// FR-106-AC-88 (TC-465): a unit bound carried by a type node that is no
+/// object type bounds the members of its unit, and one whose `appliesTo`
+/// names an alias bounds that alias's members wherever it is carried.
+#[trace("TC-465", "FR-106-AC-88")]
+#[test]
+fn a_unit_bound_is_read_from_whichever_type_node_carries_it() {
+    use crate::model_operations::wire_type;
+    let ms = "ix://filament/unit/ms";
+
+    let (_, bounds) = bounds_after(|types| {
+        types.push(wire_type(
+            &node("Carrier"),
+            "value_record",
+            json!({"fields": [], "constraints": [bound("Carrier", "max", "3", ms)]}),
+        ));
+        config_fields(types, vec![optional_field("ConfigVersion", "a", ms)]);
+    });
+    assert_eq!(
+        config_bounds(&bounds),
+        ["a", "measure", "measure/d"].map(|member| (member.to_owned(), node("Carrier/max")))
+    );
+
+    let (_, bounds) = bounds_after(|types| {
+        let mut alias = wire_type(
+            &node("D"),
+            "unused",
+            json!({"target": ms, "constraints": []}),
+        );
+        alias["kind"] = json!("alias");
+        types.push(alias);
+        types.push(wire_type(
+            &node("Carrier"),
+            "value_record",
+            json!({"fields": [], "constraints": [bound("Carrier", "max", "3", &node("D"))]}),
+        ));
+        config_fields(
+            types,
+            vec![
+                optional_field("ConfigVersion", "a", ms),
+                optional_field("ConfigVersion", "d", &node("D")),
+            ],
+        );
+    });
+    assert_eq!(
+        config_bounds(&bounds),
+        [("d".to_owned(), node("Carrier/max"))]
+    );
+
+    let (_, bounds) = bounds_after(|types| {
+        types.push(wire_type(
+            &node("Count"),
+            "value_type",
+            json!({"scalar": "integer", "constraints": [bound("Count", "max", "3", ms)]}),
+        ));
+        config_fields(types, vec![optional_field("ConfigVersion", "a", ms)]);
+    });
+    assert_eq!(
+        config_bounds(&bounds),
+        ["a", "measure", "measure/d"].map(|member| (member.to_owned(), node("Count/max")))
+    );
+}
+
+/// FR-106-AC-89 (TC-465): a bound reaches a quantity a record inherits from
+/// the record it specializes and each value of a map.
+#[trace("TC-465", "FR-106-AC-89")]
+#[test]
+fn a_unit_bound_reaches_inherited_record_fields_and_map_values() {
+    use crate::model_operations::{wire_field, wire_type};
+    use fsl_semantics::model::observation::PathStep;
+    let ms = "ix://filament/unit/ms";
+
+    let (graph, bounds) = bounds_after(|types| {
+        let d = wire_field(&node("Base/d"), "d", ms, "required", 1);
+        types.push(wire_type(
+            &node("Base"),
+            "value_record",
+            json!({"fields": [d], "constraints": [bound("Base", "max", "3", ms)]}),
+        ));
+        types.push(wire_type(
+            &node("Span"),
+            "value_record",
+            json!({"supertypes": [node("Base")], "fields": []}),
+        ));
+        let mut delays = wire_type(
+            &node("Delays"),
+            "unused",
+            json!({"keys": "ix://filament/native/Text", "values": ms, "bound": {"lower": 0}}),
+        );
+        delays["kind"] = json!("map");
+        types.push(delays);
+        config_fields(
+            types,
+            vec![
+                optional_field("ConfigVersion", "sp", &node("Span")),
+                optional_field("ConfigVersion", "m", &node("Delays")),
+            ],
+        );
+    });
+    let paths: Vec<(String, Vec<String>)> = {
+        let mut paths: Vec<_> = bounds
+            .iter()
+            .filter_map(|bound| {
+                let member = bound.member.node.strip_prefix(&node("ConfigVersion/"))?;
+                Some((member.to_owned(), bound.path.clone()))
+            })
+            .collect();
+        paths.sort();
+        paths
+    };
+    assert_eq!(
+        paths,
+        [
+            ("m".to_owned(), Vec::new()),
+            ("measure".to_owned(), Vec::new()),
+            ("measure/d".to_owned(), Vec::new()),
+            ("sp".to_owned(), vec!["d".to_owned()]),
+        ]
+    );
+
+    let on_map = bounds
+        .iter()
+        .find(|bound| bound.member.node == node("ConfigVersion/m"))
+        .expect("the bound on m");
+    let unit = filament_exact::UnitId::declared(fixture_key(9));
+    let quantity = |magnitude: i64| {
+        filament_exact::Value::Quantity(filament_exact::Quantity::new(
+            filament_exact::Rational::new(
+                filament_exact::Integer::from(magnitude),
+                filament_exact::Integer::from(1_i64),
+            )
+            .expect("a rational"),
+            unit.clone(),
+        ))
+    };
+    let map = |second: i64| {
+        filament_exact::from_admitted_map(
+            filament_exact::MapType::new(
+                ValueType::String,
+                ValueType::Quantity(unit.clone()),
+                None,
+            )
+            .expect("a scalar key"),
+            vec![
+                (filament_exact::Value::String("a".to_owned()), quantity(1)),
+                (
+                    filament_exact::Value::String("b".to_owned()),
+                    quantity(second),
+                ),
+            ],
+        )
+        .expect("a map")
+    };
+    let types = graph.scope().types();
+    assert_eq!(
+        on_map.violation(&map(4), types),
+        Some(vec![PathStep::Index(1)])
+    );
+    assert_eq!(on_map.violation(&map(3), types), None);
+}

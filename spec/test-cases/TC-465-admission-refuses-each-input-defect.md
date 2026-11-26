@@ -15,7 +15,7 @@ and input path, that completeness precedes closure, that the frame compares
 scalar as well as reference fields, and that a document with several defects
 reports the first by FR-106's order.
 
-Scope: FR-106-AC-3, FR-106-AC-4, FR-106-AC-5, FR-106-AC-7, FR-106-AC-11, FR-106-AC-12, FR-106-AC-13, FR-106-AC-85.
+Scope: FR-106-AC-3, FR-106-AC-4, FR-106-AC-5, FR-106-AC-7, FR-106-AC-11, FR-106-AC-12, FR-106-AC-13, FR-106-AC-85, FR-106-AC-88, FR-106-AC-89.
 
 ## Test Procedure
 
@@ -109,7 +109,14 @@ selection of `attemptUpdate`.
 FR-106-AC-85: over a package variant in which `Item` carries `max` `3` on
 `ms` and declares `meter(q: ms): ms`, admit `q` `3 ms` and then `4 ms` as a
 `PreCall` argument, and as the argument of an `Invocation` selected for a
-precondition and for a postcondition, and in a `Frame` run.
+precondition and for a postcondition, in a `Frame` run, and in a
+value-invariant selection.
+FR-106-AC-88: over the unit-member fixture, carry `max` `3` on `ms` on a record
+value type that declares no field, then carry it there with `appliesTo` an alias
+`D` of `ms`, with object fields typed `ms` and `D`.
+FR-106-AC-89: over a record `Span` specializing `Base { d: ms }` and a field
+typed `Map<Text, ms>`, read the bounds and check a map holding `1 ms` and
+`4 ms`, then `1 ms` and `3 ms`.
 
 ## Expected Results
 
@@ -125,3 +132,7 @@ FR-106-AC-13: each of the three refuses `invalid_runtime_input`/
 `invalid-value` naming `child` and `versionNumber`.
 FR-106-AC-85: each `3 ms` admits; each `4 ms` refuses `invalid_runtime_input`/
 `invalid-value` naming `q`, the constraint, `max` and `3`, at `/parameters/q`.
+FR-106-AC-88: the record value type's bound is on the `ms` field; naming `D`, it
+is on the `D` field only.
+FR-106-AC-89: the bound is on `Span` at `d` and on the map; the map holding
+`4 ms` violates it at its second entry and the other satisfies it.

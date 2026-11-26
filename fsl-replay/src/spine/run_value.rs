@@ -16,11 +16,13 @@ use filament_exact::{
     IeeeWidth, Integer, JsonObject, MapType, Meter, NodeKey, ObjectId, ObjectReference,
     OptionValue, Presence, Quantity, Rational, TextPayload, UnitId, UniverseId, Value, ValueType,
 };
+use filament_semantic_value::admission::PathStep;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_foundation::diagnostic::Code;
 use fsl_package::{EnumScope, SourceEnumCatalog, SourceEnumCatalogError};
 use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use fsl_semantics::model::state::CompositeBounds;
 use serde_json::{Map, Value as Json, json};
 
 #[cfg(test)]
@@ -36,6 +38,18 @@ pub(crate) use references::{
     reference_refusal, take_normalization_refusal, write_run_value,
 };
 
+/// The unit bound an argument's quantity violates (FSpec FR-154 "Unit
+/// bounds").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnitBoundDefect {
+    /// The constraint's identity.
+    pub constraint: String,
+    /// `max` or `min`.
+    pub keyword: &'static str,
+    /// The bound, spelled canonically.
+    pub bound: String,
+}
+
 /// One argument defect: the catalog code and cause FR-650's table names, and
 /// the JSON pointer of the defect inside the argument's `value`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +61,8 @@ pub struct ArgumentDefect {
     /// The JSON pointer inside the argument's `value`; empty for the value
     /// itself.
     pub path: String,
+    /// The unit bound violated, when the defect is one.
+    pub unit_bound: Option<Box<UnitBoundDefect>>,
 }
 
 /// Why a read stopped.
@@ -1518,11 +1534,136 @@ impl Path {
     }
 }
 
+/// The defect of the first unit bound a quantity inside the argument `value`
+/// violates (FSpec FR-154 "Unit bounds"), its pointer spelled as `value`'s
+/// run form spells the path. `wire` is the form the caller supplied, whose
+/// positions name the elements of a set, bag or map, and `forms` reads them.
+pub(crate) fn unit_bound_defect(
+    bounds: &CompositeBounds,
+    types: &TypeEnvironment,
+    value: &Value,
+    supplied: Option<(&Forms<'_>, &Json)>,
+) -> Option<ArgumentDefect> {
+    let (bound, steps) = bounds.violation(value, types)?;
+    let mut path = Path::new();
+    let mut held = Some(value);
+    let mut wire = supplied.map(|(_, wire)| wire);
+    // The position, among the `items` the caller supplied, of the first that
+    // `matches` reads as the element the value holds at `index`; `index`
+    // when no supplied form is at hand.
+    let position = |items: Option<&Json>, index: usize, matches: &dyn Fn(&Json) -> bool| {
+        items
+            .and_then(Json::as_array)
+            .and_then(|items| items.iter().position(matches))
+            .unwrap_or(index)
+    };
+    let reads = |item: &Json, value_type: &ValueType, element: &Value| {
+        supplied.is_some_and(|(forms, _)| {
+            forms.read(item, value_type).is_ok_and(|read| {
+                let mut meter = Meter::new(unbounded());
+                matches!(
+                    filament_exact::member_equal(&read, element, &mut meter),
+                    filament_exact::Outcome::Completed(true)
+                )
+            })
+        })
+    };
+    for step in &steps {
+        let mut optional = false;
+        let (segments, next): (Vec<String>, Option<&Value>) = match (held?, step) {
+            (Value::Composite(composite), step) => {
+                let shape = types.composite(composite.declaration().clone())?.shape();
+                let (segments, slot) = match (shape, step) {
+                    (CompositeShape::Record(fields), PathStep::Field(name)) => {
+                        let slot = fields.iter().position(|field| field.name() == name)?;
+                        optional = fields[slot].presence() != Presence::Required;
+                        (["record", "fields", name.as_str()].map(str::to_owned), slot)
+                    }
+                    (_, PathStep::Index(index)) => (
+                        [
+                            "tuple".to_owned(),
+                            "components".to_owned(),
+                            index.to_string(),
+                        ],
+                        *index,
+                    ),
+                    _ => return None,
+                };
+                let next = match composite.slots().get(slot)? {
+                    FieldValue::Present(inner) => Some(inner),
+                    _ => None,
+                };
+                (segments.to_vec(), next)
+            }
+            (Value::Union(union), PathStep::Index(index)) => (
+                vec![
+                    "variant".to_owned(),
+                    "components".to_owned(),
+                    index.to_string(),
+                ],
+                union.payload().get(*index),
+            ),
+            (Value::Option(option), PathStep::OptionValue) => {
+                (vec!["present".to_owned()], option.payload())
+            }
+            (Value::Collection(collection), PathStep::Index(index)) => {
+                let kind = collection.collection_type().kind();
+                let element = collection.elements().get(*index)?;
+                let tag = collection_tag(kind);
+                let at = if matches!(kind, CollectionKind::Set | CollectionKind::Bag) {
+                    position(wire.and_then(|wire| wire.get(tag)), *index, &|item| {
+                        reads(item, collection.collection_type().element(), element)
+                    })
+                } else {
+                    *index
+                };
+                (vec![tag.to_owned(), at.to_string()], Some(element))
+            }
+            (Value::Map(map), PathStep::Index(index)) => {
+                let (key, element) = map.entries().get(*index)?;
+                let at = position(wire.and_then(|wire| wire.get("map")), *index, &|entry| {
+                    entry
+                        .get("key")
+                        .is_some_and(|item| reads(item, map.map_type().key(), key))
+                });
+                (
+                    vec!["map".to_owned(), at.to_string(), "value".to_owned()],
+                    Some(element),
+                )
+            }
+            _ => return None,
+        };
+        for segment in &segments {
+            path.push(segment);
+            wire = wire.and_then(|wire| match segment.parse::<usize>() {
+                Ok(index) if wire.is_array() => wire.get(index),
+                _ => wire.get(segment.as_str()),
+            });
+        }
+        if optional {
+            path.push("present");
+            wire = wire.and_then(|wire| wire.get("present"));
+        }
+        held = next;
+    }
+    Some(ArgumentDefect {
+        code: Code::InvalidRuntimeInput,
+        cause: "invalid-value",
+        path: path.pointer(),
+        unit_bound: Some(Box::new(UnitBoundDefect {
+            constraint: bound.constraint.node.clone(),
+            keyword: bound.keyword(),
+            bound: bound.canonical_bound(),
+        })),
+    })
+}
+
 pub(crate) fn defect(code: Code, cause: &'static str, path: &Path) -> ReadStop {
     ReadStop::Defect(ArgumentDefect {
         code,
         cause,
         path: path.pointer(),
+        unit_bound: None,
     })
 }
 
@@ -1536,6 +1677,7 @@ pub(crate) fn defect_below(
         code,
         cause,
         path: path.pointer_with(below),
+        unit_bound: None,
     })
 }
 
@@ -1713,6 +1855,7 @@ fn no_snapshot() -> ReadStop {
         code: Code::InvalidRuntimeInput,
         cause: "missing-member",
         path: "/call/snapshot".to_owned(),
+        unit_bound: None,
     })
 }
 

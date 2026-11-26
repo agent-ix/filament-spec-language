@@ -1859,3 +1859,147 @@ fn a_specialized_machine_operation_refuses_beyond_its_unit_bound() {
         );
     }
 }
+
+const TIME_UNITS: &str = "dimension Time;\nunit s : Time = rational(1, 1);\n\
+     unit ms : Time = rational(1, 1000) * s;\n";
+
+/// A `max` `3` on `ms` carried by the type node `owner`.
+fn max_three_ms(owner: &str) -> Json {
+    json!([{
+        "identity": id(&format!("{owner}/max")), "keyword": "max",
+        "operands": {"value": "3"}, "appliesTo": "ix://filament/unit/ms",
+        "diagnosticCode": "bound.max", "origin": origin(&format!("{owner}/max")),
+    }])
+}
+
+fn milliseconds(magnitude: &str) -> Json {
+    json!({"kind": "quantity", "unit": "ms",
+        "magnitude": {"kind": "rational", "numerator": magnitude, "denominator": "1"}})
+}
+
+/// FR-106-AC-87 (TC-1045 step 9): with `Pump` carrying `max` `3` on `ms` and
+/// `ExpressLifecycle` a context field `delay: ms`, a context holding `3 ms`
+/// admits and one holding `4 ms` refuses on the `pre` and the `post` side,
+/// naming the machine, the field, the constraint, its keyword and bound, at
+/// the entry's field.
+#[trace("TC-1045", "FR-106-AC-87", "FR-663-AC-6")]
+#[test]
+fn a_context_field_beyond_a_unit_bound_refuses_on_both_sides() {
+    let orders = Orders::build(false, TIME_UNITS, |document| {
+        type_named_mut(document, "Pump")["constraints"] = max_three_ms("Pump");
+        type_named_mut(document, "ExpressLifecycle")["fields"]
+            .as_array_mut()
+            .unwrap()
+            .push(field("ExpressLifecycle", "delay", "ix://filament/unit/ms"));
+    });
+    let context = |placed: bool, delay: &str| {
+        let mut entry = express(placed, false, 0);
+        entry["fields"]["delay"] = milliseconds(delay);
+        entry
+    };
+    let admit = |pre_delay: &str, post_delay: &str, side| {
+        let mut docs = Docs::default();
+        let pre =
+            docs.snapshot(&orders.snapshot_of("i2", "e1", "pre", vec![context(false, pre_delay)]));
+        let post =
+            docs.snapshot(&orders.snapshot_of("i2", "e2", "post", vec![context(true, post_delay)]));
+        let invocation = orders.invocation(
+            "i2",
+            "ExpressLifecycle",
+            "expedite",
+            Json::Null,
+            &pre,
+            &post,
+            json!({}),
+        );
+        let i2 = docs.invocation(&invocation);
+        orders.context(&docs, "Bounded", &i2, side)
+    };
+
+    for side in [ContextSide::Pre, ContextSide::Post] {
+        admit("3", "3", side).unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+    }
+    for (outcome, snapshot) in [
+        (admit("4", "3", ContextSide::Pre), "e1"),
+        (admit("3", "4", ContextSide::Post), "e2"),
+    ] {
+        let record = refused(outcome);
+        assert_refusal(
+            &record,
+            Code::InvalidRuntimeInput,
+            "invalid-value",
+            &[
+                ("machine", &id("ExpressLifecycle")),
+                ("field", "delay"),
+                ("constraint", &id("Pump/max")),
+                ("keyword", "max"),
+                ("bound", "3"),
+                ("entry", "0"),
+                ("path", "/contexts/0/fields/delay"),
+            ],
+        );
+        assert_eq!(record.fields["document"], labelled(snapshot).identity);
+    }
+}
+
+/// FR-106-AC-88 (TC-1045 step 10): a `max` `3` on `ms` carried by the state
+/// machine `ExpressLifecycle` itself bounds `expedite(q: ms): ms`.
+#[trace("TC-1045", "FR-106-AC-88")]
+#[test]
+fn a_unit_bound_a_state_machine_carries_bounds_its_operation() {
+    let ms_type = "ix://filament/unit/ms";
+    let multiplicity = || json!({"lower": 1, "upper": 1, "ordered": false, "unique": true});
+    let orders = Orders::build(false, TIME_UNITS, |document| {
+        let express = type_named_mut(document, "ExpressLifecycle");
+        express["constraints"] = max_three_ms("ExpressLifecycle");
+        let expedite = &mut express["operations"][0];
+        expedite["params"] = json!([{
+            "identity": id("ExpressLifecycle/expedite/q"),
+            "origin": origin("ExpressLifecycle/expedite/q"),
+            "name": "q", "typeRef": ms_type, "presence": "required",
+            "nullable": false, "defaultKind": "none", "multiplicity": multiplicity(),
+        }]);
+        expedite["returns"] = json!({
+            "typeRef": ms_type, "nullable": false, "multiplicity": multiplicity(),
+        });
+    });
+    let admit = |argument: &str, result: &str| {
+        let mut docs = Docs::default();
+        let pre =
+            docs.snapshot(&orders.snapshot_of("i2", "e1", "pre", vec![express(false, false, 0)]));
+        let post =
+            docs.snapshot(&orders.snapshot_of("i2", "e2", "post", vec![express(true, false, 0)]));
+        let mut invocation = orders.invocation(
+            "i2",
+            "ExpressLifecycle",
+            "expedite",
+            Json::Null,
+            &pre,
+            &post,
+            json!({"q": milliseconds(argument)}),
+        );
+        invocation["result"] = milliseconds(result);
+        let i2 = docs.invocation(&invocation);
+        orders.context(&docs, "Consistent", &i2, ContextSide::Post)
+    };
+
+    admit("3", "3").unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+    for (outcome, named, path) in [
+        (admit("4", "3"), ("parameter", "q"), "/parameters/q"),
+        (admit("3", "4"), ("result", "expedite"), "/result"),
+    ] {
+        let record = refused(outcome);
+        assert_refusal(
+            &record,
+            Code::InvalidRuntimeInput,
+            "invalid-value",
+            &[
+                named,
+                ("constraint", &id("ExpressLifecycle/max")),
+                ("keyword", "max"),
+                ("bound", "3"),
+                ("path", path),
+            ],
+        );
+    }
+}

@@ -19,11 +19,11 @@ use filament_contract_model::{
 };
 
 use filament_exact::{EffectiveId, ObjectReference, Value, ValueType};
-use filament_semantic_value::declaration::TypeEnvironment;
+use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::relationship_extent::RelationshipExtent;
 
 use crate::model::accounting::ModelNormalizationLimits;
-use crate::model::domain_package::DomainPackageRecord;
+use crate::model::domain_package::{DomainPackageRecord, FieldMemberRecord, ValueTypeRef};
 use crate::model::index::ModelIndex;
 use crate::model::intake::{NormalizedModel, PackageInput};
 use crate::model::normalize::EffectiveView;
@@ -163,45 +163,52 @@ fn violation_at(
             PathStep::OptionValue,
             violation_at(bound, option.payload()?, rest, types),
         ),
+        Value::Map(map) => map
+            .entries()
+            .iter()
+            .enumerate()
+            .find_map(|(index, (_, held))| {
+                below(
+                    PathStep::Index(index),
+                    violation_at(bound, held, rest, types),
+                )
+            }),
         Value::Composite(composite) => {
             let (name, rest) = rest.split_first()?;
-            let filament_semantic_value::declaration::CompositeShape::Record(fields) =
-                types.composite(composite.declaration().clone())?.shape()
-            else {
-                return None;
+            let (slot, step) = match types.composite(composite.declaration().clone())?.shape() {
+                CompositeShape::Record(fields) => (
+                    fields.iter().position(|field| field.name() == name)?,
+                    PathStep::Field(name.clone()),
+                ),
+                CompositeShape::Tuple(_) => {
+                    let slot = name.parse().ok()?;
+                    (slot, PathStep::Index(slot))
+                }
+                CompositeShape::Union(_) => return None,
             };
-            let slot = fields.iter().position(|field| field.name() == name)?;
             let filament_exact::FieldValue::Present(inner) = composite.slots().get(slot)? else {
                 return None;
             };
-            below(
-                PathStep::Field(name.clone()),
-                violation_at(bound, inner, rest, types),
-            )
+            below(step, violation_at(bound, inner, rest, types))
         }
         value => (rest.is_empty() && !bound.admits(value)).then(Vec::new),
     }
 }
 
 /// The bounds of every member of `views`' packages (FSpec FR-154 "Unit
-/// bounds"): for a quantity of the unit `u` an object field, an operation
-/// parameter or result holds, directly, through aliases, as a sequence's
-/// items or as a field of a record it holds, every bound on `u` itself and
-/// every bound on an alias the quantity's type passes. A bound on an alias
-/// bounds no other member of `u`.
+/// bounds"): for a quantity of the unit `u` an object or state-machine
+/// context field, an operation parameter or result holds, directly, through
+/// aliases, as a sequence's items, a map's values or a field of a record or
+/// event it holds, every bound on `u` itself and every bound on an alias the
+/// quantity's type passes. A bound on an alias bounds no other member of `u`.
 pub(crate) fn member_bounds(views: &[ModelView]) -> Vec<MemberBound> {
     let mut bounds = Vec::new();
     for view in views {
         let records = &view.view.domain_package().records;
-        let walk = Walk { records };
+        let walk = Walk::new(records, true);
         for record in records {
             match record {
-                DomainPackageRecord::FieldMember(field)
-                    if matches!(
-                        walk.record(&field.owner),
-                        Some(DomainPackageRecord::ObjectType(_))
-                    ) =>
-                {
+                DomainPackageRecord::FieldMember(field) => {
                     walk.member(&field.key, &field.value_type, &mut Vec::new(), &mut bounds);
                 }
                 DomainPackageRecord::OperationMember(operation) => {
@@ -229,14 +236,231 @@ pub(crate) fn member_bounds(views: &[ModelView]) -> Vec<MemberBound> {
     bounds
 }
 
-/// The walk of one package's records for [`member_bounds`].
-struct Walk<'r> {
-    records: &'r [DomainPackageRecord],
+/// The unit bounds on the slots of each model composite of some packages: a
+/// record's or event's fields and a tuple's positions, by the composite's node
+/// key. A bound's path is its one slot (the field name or the position's data
+/// slot); a composite the slot holds, as a variant's payload does, is bounded
+/// by its own entry, so a recursive type has a finite one.
+#[derive(Clone, Debug, Default)]
+pub struct CompositeBounds {
+    slots: BTreeMap<filament_exact::NodeKey, Vec<MemberBound>>,
 }
 
-impl Walk<'_> {
-    fn record(&self, key: &DeclarationKey) -> Option<&DomainPackageRecord> {
-        self.records.iter().find(|record| record.key() == key)
+impl CompositeBounds {
+    /// The slot bounds of every composite the packages of `views` declare.
+    pub fn of<'v>(views: impl IntoIterator<Item = &'v EffectiveView>) -> Self {
+        let mut slots = BTreeMap::new();
+        for view in views {
+            let records = &view.domain_package().records;
+            if !records
+                .iter()
+                .any(|record| matches!(record, DomainPackageRecord::ValueBound(_)))
+            {
+                continue;
+            }
+            let walk = Walk::new(records, false);
+            for record in records {
+                let bounds = walk.slots(record);
+                if bounds.is_empty() {
+                    continue;
+                }
+                // A key that cannot be formed declares no composite a value
+                // could name.
+                if let Ok(Some(node)) = crate::check::record_node_key(record) {
+                    slots.insert(node, bounds);
+                }
+            }
+        }
+        Self { slots }
+    }
+
+    /// The first bound a quantity held by a composite inside `value`
+    /// violates, with the steps from `value` down to the quantity. `value`
+    /// is walked on an explicit stack, in slot order, outermost composite
+    /// first.
+    pub fn violation(
+        &self,
+        value: &Value,
+        types: &TypeEnvironment,
+    ) -> Option<(&MemberBound, Vec<PathStep>)> {
+        if self.slots.is_empty() {
+            return None;
+        }
+        // Each visited value with the step that reached it and the visit that
+        // holds it, so a path is built only for a violation.
+        let mut visits: Vec<(&Value, Option<(usize, PathStep)>)> = vec![(value, None)];
+        let mut pending = vec![0_usize];
+        while let Some(current) = pending.pop() {
+            let value = visits[current].0;
+            let declared = match value {
+                Value::Composite(composite) => self.slots.get(composite.declaration()),
+                _ => None,
+            };
+            for bound in declared.into_iter().flatten() {
+                if let Some(below) = bound.violation(value, types) {
+                    let mut steps = Vec::new();
+                    let mut at = current;
+                    while let Some((holder, step)) = &visits[at].1 {
+                        steps.push(step.clone());
+                        at = *holder;
+                    }
+                    steps.reverse();
+                    steps.extend(below);
+                    return Some((bound, steps));
+                }
+            }
+            let first = visits.len();
+            let mut held = |step: PathStep, value| visits.push((value, Some((current, step))));
+            match value {
+                Value::Collection(collection) => {
+                    for (index, element) in collection.elements().iter().enumerate() {
+                        held(PathStep::Index(index), element);
+                    }
+                }
+                Value::Map(map) => {
+                    for (index, (_, value)) in map.entries().iter().enumerate() {
+                        held(PathStep::Index(index), value);
+                    }
+                }
+                Value::Option(option) => {
+                    if let Some(payload) = option.payload() {
+                        held(PathStep::OptionValue, payload);
+                    }
+                }
+                Value::Union(union) => {
+                    for (index, payload) in union.payload().iter().enumerate() {
+                        held(PathStep::Index(index), payload);
+                    }
+                }
+                Value::Composite(composite) => {
+                    let shape = types
+                        .composite(composite.declaration().clone())
+                        .map(filament_semantic_value::declaration::CompositeDeclaration::shape);
+                    for (slot, field) in composite.slots().iter().enumerate() {
+                        let filament_exact::FieldValue::Present(inner) = field else {
+                            continue;
+                        };
+                        let step = match shape {
+                            Some(CompositeShape::Record(fields)) => fields
+                                .get(slot)
+                                .map(|field| PathStep::Field(field.name().to_owned())),
+                            _ => Some(PathStep::Index(slot)),
+                        };
+                        if let Some(step) = step {
+                            held(step, inner);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            pending.extend((first..visits.len()).rev());
+        }
+        None
+    }
+}
+
+/// The walk of one package's records for [`member_bounds`] and
+/// [`CompositeBounds`].
+struct Walk<'r> {
+    records: &'r [DomainPackageRecord],
+    by_key: BTreeMap<&'r DeclarationKey, &'r DomainPackageRecord>,
+    fields: BTreeMap<&'r DeclarationKey, Vec<&'r FieldMemberRecord>>,
+    /// Whether a member's bounds reach into the records it holds.
+    into_records: bool,
+}
+
+impl<'r> Walk<'r> {
+    fn new(records: &'r [DomainPackageRecord], into_records: bool) -> Self {
+        let by_key = records
+            .iter()
+            .map(|record| (record.key(), record))
+            .collect();
+        let mut fields: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for record in records {
+            if let DomainPackageRecord::FieldMember(field) = record {
+                fields.entry(&field.owner).or_default().push(field);
+            }
+        }
+        Self {
+            records,
+            by_key,
+            fields,
+            into_records,
+        }
+    }
+
+    /// The fields the record or event `key` holds, its own and those it
+    /// inherits, each with its declared name.
+    fn record_fields(&self, key: &'r DeclarationKey) -> Vec<(&'r str, &'r FieldMemberRecord)> {
+        let mut seen = BTreeSet::new();
+        let mut owners = vec![key];
+        let mut held = Vec::new();
+        while let Some(owner) = owners.pop() {
+            if !seen.insert(owner) {
+                continue;
+            }
+            match self.by_key.get(owner) {
+                Some(DomainPackageRecord::RecordValueType(record)) => {
+                    owners.extend(&record.supertypes);
+                }
+                Some(DomainPackageRecord::EventType(event)) => owners.extend(&event.supertypes),
+                _ => continue,
+            }
+            held.extend(
+                self.fields
+                    .get(owner)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|field| {
+                        crate::model::intake::member_identity_name(
+                            &field.owner.node,
+                            &field.key.node,
+                        )
+                        .map(|name| (name, *field))
+                    }),
+            );
+        }
+        held
+    }
+
+    /// The bounds on the quantities the slots of the composite `record`
+    /// declares; empty for a record that declares no composite.
+    fn slots(&self, record: &'r DomainPackageRecord) -> Vec<MemberBound> {
+        let mut bounds = Vec::new();
+        let mut slot = |member: &DeclarationKey, value_type: &ValueTypeRef, name: String| {
+            self.member(member, value_type, &mut vec![name], &mut bounds);
+        };
+        match record {
+            DomainPackageRecord::RecordValueType(_) | DomainPackageRecord::EventType(_) => {
+                for (name, field) in self.record_fields(record.key()) {
+                    slot(&field.key, &field.value_type, name.to_owned());
+                }
+            }
+            DomainPackageRecord::TupleValueType(tuple) => {
+                let mut positions: Vec<_> = self
+                    .records
+                    .iter()
+                    .filter_map(|record| match record {
+                        DomainPackageRecord::TuplePosition(position)
+                            if position.owner == tuple.key =>
+                        {
+                            Some(position)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                positions.sort_by_key(|position| position.ordinal);
+                let slots =
+                    crate::model::domain_package::tuple_data_projection(self.records, &tuple.key);
+                for (position, data) in positions.into_iter().zip(slots) {
+                    if let Some(data) = data {
+                        slot(&position.key, &position.value_type, data.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+        bounds
     }
 
     /// The bounds on the quantities a value of `value_type` holds at
@@ -244,11 +468,10 @@ impl Walk<'_> {
     fn member(
         &self,
         member: &DeclarationKey,
-        value_type: &crate::model::domain_package::ValueTypeRef,
+        value_type: &ValueTypeRef,
         path: &mut Vec<String>,
         bounds: &mut Vec<MemberBound>,
     ) {
-        use crate::model::domain_package::ValueTypeRef;
         let mut aliases = Vec::new();
         let mut value_type = value_type;
         let mut steps = 0_usize;
@@ -257,29 +480,21 @@ impl Walk<'_> {
             if steps > self.records.len() {
                 return;
             }
-            value_type = match self.record(key) {
-                Some(DomainPackageRecord::AliasType(alias)) => {
+            let Some((&key, &record)) = self.by_key.get_key_value(key) else {
+                return;
+            };
+            value_type = match record {
+                DomainPackageRecord::AliasType(alias) => {
                     aliases.push(key);
                     &alias.target
                 }
-                Some(DomainPackageRecord::SequenceType(sequence)) => &sequence.items,
-                Some(DomainPackageRecord::OptionType(option)) => &option.inner,
-                Some(DomainPackageRecord::MapType(map)) => &map.values,
-                Some(DomainPackageRecord::RecordValueType(_))
-                    if path.len() < self.records.len() =>
+                DomainPackageRecord::SequenceType(sequence) => &sequence.items,
+                DomainPackageRecord::OptionType(option) => &option.inner,
+                DomainPackageRecord::MapType(map) => &map.values,
+                DomainPackageRecord::RecordValueType(_) | DomainPackageRecord::EventType(_)
+                    if self.into_records && path.len() < self.records.len() =>
                 {
-                    for field in self.records.iter().filter_map(|record| match record {
-                        DomainPackageRecord::FieldMember(field) if &field.owner == key => {
-                            Some(field)
-                        }
-                        _ => None,
-                    }) {
-                        let Some(name) = crate::model::intake::member_identity_name(
-                            &field.owner.node,
-                            &field.key.node,
-                        ) else {
-                            continue;
-                        };
+                    for (name, field) in self.record_fields(key) {
                         path.push(name.to_owned());
                         self.member(member, &field.value_type, path, bounds);
                         path.pop();
@@ -544,7 +759,12 @@ impl StateModel {
         budget: &mut NativeJoinBudget,
     ) -> Result<Self, RetainedModelFailure> {
         Self::reserve_retained_wrapper(budget)?;
-        Self::from_retained_parts(selections, StateTypes::Owned(Box::new(types)), owners, budget)
+        Self::from_retained_parts(
+            selections,
+            StateTypes::Owned(Box::new(types)),
+            owners,
+            budget,
+        )
     }
 
     /// Construct a retained model sharing the immutable genuine type environment

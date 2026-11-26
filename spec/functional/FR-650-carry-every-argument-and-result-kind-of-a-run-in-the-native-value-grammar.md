@@ -329,6 +329,7 @@ argument's `value` (the empty pointer for the value itself):
 | A required member missing | `invalid_runtime_input`/`missing-member` |
 | A member the form does not define | `invalid_runtime_input`/`unknown-member` |
 | A noncanonical payload text, a zero denominator, an undeclared case, a wrong component count, a value of the right kind outside the declared domain | `invalid_runtime_input`/`invalid-value` |
+| A quantity, held by a record field or tuple position the argument holds, beyond a unit bound on that member (FSpec FR-154 "Unit bounds"); `details` also holds `constraint`, `keyword` and `bound` | `invalid_runtime_input`/`invalid-value` |
 | A repeated member of a set or ordered set | `invalid_runtime_input`/`duplicate-member` |
 | A collection length outside its declared bound | `cardinality_out_of_bound`/`below-minimum` or `above-maximum` |
 | A Reference or Population argument in a call with no `snapshot` | `invalid_runtime_input`/`missing-member`, `details.path` the request pointer of the absent `snapshot` member (below) |
@@ -486,6 +487,7 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 | FR-650-AC-21 | A genuine checked-call reference catalog exhausts its original normalization owner's remaining work allowance and returns `NormalizationIncomplete` at `reference.catalog`, retaining the configured limit, prior consumption and denied charge. | Test |
 | FR-650-AC-22 | A checked-package call over a genuine admitted snapshot accepts a canonical reference and returns that same canonical reference; feeding the result into another package call completes unchanged after the original program file is removed. The catalog and writer use the same snapshot admission's retained normalization owners. | Test |
 | FR-650-AC-23 | A call with no models and no snapshot completes with its canonical value when `model.work_units` is zero; canonical output does not introduce model work into that value-only call. | Test |
+| FR-650-AC-24 | A function parameter typed by a model record value type whose field is typed by an alias of `ix://filament/unit/ms` under `max` `3`: an argument holding `3 ms` there completes, and one holding `4 ms` refuses at stage `call` with `invalid_runtime_input`/`invalid-value` and `details` `{"position": 0, "path": "/record/fields/d", "constraint": C, "keyword": "max", "bound": "3"}`, `C` the constraint's identity. | Test (TC-1702) |
 
 ## Dependencies
 

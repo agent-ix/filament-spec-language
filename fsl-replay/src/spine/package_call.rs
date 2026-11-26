@@ -314,6 +314,13 @@ fn run_package_resolving(
     forms.has_form_scoped(selected.result_type)?;
     let supplied = admit_wire_arguments(&forms, &parameters, call, &supplied_run)?;
     let arguments = bind_arguments(&parameters, &supplied)?;
+    super::call::admit_unit_bounds(
+        views.into_iter().flatten().map(|model| model.view()),
+        world.types(),
+        &parameters,
+        &arguments,
+        Some((&forms, &call.wire_arguments)),
+    )?;
     let mut meter = Meter::new(call.accounting).with_cancel(cancel.clone());
     // One run for the whole invocation: both helper budgets and the caller's
     // original handle (FR-277).

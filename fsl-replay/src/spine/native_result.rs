@@ -3699,10 +3699,16 @@ impl Disposition {
                         record = record.fields(BTreeMap::from([("parameter", parameter.clone())]));
                     }
                     super::RunRefusal::Argument { position, defect } => {
-                        record = record.fields(BTreeMap::from([
+                        let mut fields = BTreeMap::from([
                             ("position", position.to_string()),
                             ("path", defect.path.clone()),
-                        ]));
+                        ]);
+                        if let Some(violated) = &defect.unit_bound {
+                            fields.insert("constraint", violated.constraint.clone());
+                            fields.insert("keyword", violated.keyword.to_owned());
+                            fields.insert("bound", violated.bound.clone());
+                        }
+                        record = record.fields(fields);
                     }
                     super::RunRefusal::WrongValueKind { position }
                     | super::RunRefusal::UnsupportedParameter { position } => {

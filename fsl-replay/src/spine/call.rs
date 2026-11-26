@@ -35,14 +35,15 @@ use fsl_foundation::diagnostic::{Code, Locus, RefusalRecord};
 use fsl_foundation::source::Source;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::CheckedGraph;
-use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
+use fsl_semantics::model::normalize::{EffectiveView, ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::refusal::OfferedSelection;
+use fsl_semantics::model::state::CompositeBounds;
 use fsl_semantics::value::environment_stage::membership_failure_code;
 use ix_trace_rs::implements;
 
 use super::lifecycle as front_end;
-use super::run_value::{ArgumentDefect, Forms, ReadStop};
+use super::run_value::{ArgumentDefect, Forms, ReadStop, unit_bound_defect};
 use super::{
     AdmittedModels, CheckedUnit, CompileRefusal, DependencyInput, EmittedUnit, ProfileCatalogInput,
     SpineLimits,
@@ -716,7 +717,13 @@ impl RunRefusal {
             | Self::DuplicateArgument { parameter }
             | Self::UnboundParameter { parameter } => object(json!({"parameter": parameter})),
             Self::Argument { position, defect } => {
-                object(json!({"position": position, "path": defect.path}))
+                let mut details = json!({"position": position, "path": defect.path});
+                if let Some(violated) = &defect.unit_bound {
+                    details["constraint"] = json!(violated.constraint);
+                    details["keyword"] = json!(violated.keyword);
+                    details["bound"] = json!(violated.bound);
+                }
+                object(details)
             }
             Self::UnsupportedParameter { position }
             | Self::WrongValueKind { position }
@@ -1432,6 +1439,13 @@ pub(crate) fn with_admitted_call<T>(
         &arguments,
         objects,
     )?;
+    admit_unit_bounds(
+        models.models().iter().map(|model| &model.view),
+        package.graph().scope().types(),
+        selected.parameters,
+        &arguments,
+        Some((&forms, &call.wire_arguments)),
+    )?;
 
     complete(&forms, arguments, objects, &supplied_run)
 }
@@ -2020,6 +2034,7 @@ pub(crate) fn admit_wire_arguments(
                         code: Code::InvalidRuntimeInput,
                         cause: "wrong-value-kind",
                         path: String::new(),
+                        unit_bound: None,
                     })),
                 },
                 form => forms.read(form, value_type),
@@ -2200,6 +2215,31 @@ pub(crate) fn argument_value(
             _ => Err(wrong()),
         },
     }
+}
+
+/// Refuse an argument holding a quantity beyond a unit bound on the slot of
+/// a model composite (FSpec FR-154 "Unit bounds"), naming the argument's
+/// position and the path inside its value. `supplied` is the call's wire
+/// arguments and the forms that read them, when it carries any.
+pub(crate) fn admit_unit_bounds<'v>(
+    views: impl IntoIterator<Item = &'v EffectiveView>,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    parameters: &[(String, ValueType)],
+    arguments: &[Value],
+    supplied: Option<(&Forms<'_>, &[WireArgument])>,
+) -> Result<(), Box<RunRefusal>> {
+    let bounds = CompositeBounds::of(views);
+    for (position, ((parameter, _), argument)) in parameters.iter().zip(arguments).enumerate() {
+        let wire = supplied.and_then(|(forms, wire)| {
+            wire.iter()
+                .find(|wire| wire.parameter == *parameter)
+                .map(|wire| (forms, &wire.value))
+        });
+        if let Some(defect) = unit_bound_defect(&bounds, types, argument, wire) {
+            return Err(Box::new(RunRefusal::Argument { position, defect }));
+        }
+    }
+    Ok(())
 }
 
 /// Check the parts of model-reference admission that the public call facade

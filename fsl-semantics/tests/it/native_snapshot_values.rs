@@ -3743,3 +3743,40 @@ fn typed_nested_steps_are_identical_under_a_field_and_a_parameter() {
         );
     }
 }
+
+/// FSpec FR-154 "Unit bounds" (TC-465): a value-invariant selection, which
+/// admits its invocation without naming a clause, refuses an argument that
+/// violates the bound; the bound itself admits.
+#[trace("TC-465", "FR-106-AC-85")]
+#[test]
+fn a_value_invariant_selection_argument_beyond_its_unit_bound_refuses() {
+    let replay = bounded_quantity_replay();
+    let admit = |argument: &str| {
+        let (current, current_bytes) = snapshot(&replay, "current", "current", &replay.base);
+        let mut invoked = replay.invocation_over(
+            "meter",
+            &snapshot_text(&replay, "pre", "pre", &replay.base),
+            &snapshot_text(&replay, "post", "post", &replay.base),
+            json!({"q": ms(ratio(argument, "1"))}),
+            ms(ratio("3", "1")),
+        );
+        invoked.snapshots.insert(current.clone(), current_bytes);
+        fsl_semantics::model::observation::admit_value_invariant_selection(
+            replay.graph.model_selections(),
+            replay.graph.scope().types(),
+            replay.graph.scope().operations(),
+            &replay.packages,
+            ModelNormalizationLimits::default(),
+            &Provisions {
+                snapshots: &invoked.snapshots,
+                invocations: &invoked.invocations,
+            },
+            &current,
+            Some(&invoked.call),
+            ObservationLimits::default(),
+        )
+        .map(|_admitted| ())
+    };
+    admit("3").unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+    assert_argument_beyond_bound(&record_of(admit("4")));
+}

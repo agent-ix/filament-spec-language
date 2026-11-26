@@ -26,7 +26,9 @@ use fsl_package::{checked_occurrence, CheckedPackage};
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
-use super::call::{admit_model_arguments, bind_arguments, convert_call_failure, select};
+use super::call::{
+    admit_model_arguments, admit_unit_bounds, bind_arguments, convert_call_failure, select,
+};
 use super::{AdmittedModels, Call, CheckedUnit, EmittedUnit, RunRefusal};
 use crate::execute::callable_parameter_keys;
 use crate::execute::scalar_site::{applies, in_body};
@@ -330,6 +332,13 @@ fn bind(
         selected.parameters,
         &arguments,
         objects,
+    )?;
+    admit_unit_bounds(
+        package.models.models().iter().map(|model| &model.view),
+        types,
+        selected.parameters,
+        &arguments,
+        None,
     )?;
     admit_values(
         selected.parameters,

@@ -245,7 +245,7 @@ pub use package_call::{
     run_package, run_package_with_snapshot_views, run_package_with_sources,
     run_package_with_sources_and_budget, PackageCallResult, PackageSourceAttributionFailure,
 };
-pub use run_value::ArgumentDefect;
+pub use run_value::{ArgumentDefect, UnitBoundDefect};
 
 pub(crate) mod clause;
 pub use clause::{

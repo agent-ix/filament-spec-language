@@ -1439,6 +1439,15 @@ completeness.
     parameters and result are those the type the operation is invoked on and
     its supertypes declare; for a state machine that type is the one the
     invocation's `context` names.
+    A state-machine context field is bounded as an object field is: a context
+    entry whose field holds a quantity beyond a unit bound SHALL refuse
+    `invalid_runtime_input`/`invalid-value`, naming the snapshot, the entry, the
+    machine, the field, the constraint, its keyword and its bound, at
+    `/contexts/N/fields/NAME`, on the `pre` and the `post` side; a post value
+    admitted under `PostStateRange::Witness` is the successor's and is not refused
+    here. A unit bound applies whichever type node of the package carries it
+    (FSpec FR-154 "Unit bounds"), and reaches the fields a record inherits and each
+    value of a map.
 11. Frame and delta check. For an invocation selected for a postcondition or
     by `Context` with `side` `post`, admission SHALL run the frame
     check (`enforce_frame` through `admit_invocation`, with the operation's
@@ -1643,6 +1652,9 @@ completeness.
 | FR-106-AC-84 | Over TC-464 step 11's `Box`, `Pair` and `Holder` fields, admit a record using the existing `record`/`fields` carrier, a nominal tuple using `{"tuple":{"type":"<Pair declaration identity>","components":[<Reference<Ring> value>,{"boolean":true}]}}`, and the `Holder::Has` union case using `{"variant":{"type":"<Holder declaration identity>","case":"Has","components":[<Reference<Ring> value>]}}`; retain the selected declaration identities and component order, and recursively admit each nested reference as the same checked reference value. The `Holder::Empty` nullary case is `{"variant":{"type":"<Holder declaration identity>","case":"Empty"}}`. An extra record, tuple or variant payload member refuses `invalid_runtime_input`/`unknown-member`; a tuple component count other than two, a `Has` component count other than one, and an unknown case each refuse `invalid_runtime_input`/`invalid-value`; each refusal occurs before an observation is produced. | Test (TC-464) |
 | FR-106-AC-85 | With `Item` carrying `max` `3` on `ix://filament/unit/ms` and an operation `meter(q: ms): ms` (FSpec FR-154 "Unit bounds"), an argument `4 ms` refuses `invalid_runtime_input`/`invalid-value` naming parameter `q`, the constraint, keyword `max` and bound `3`, with `field` `q` and `path` `/parameters/q`, under a `PreCall` selection, under an `Invocation` selected for a precondition or a postcondition and under a `Frame` run; `3 ms` admits under each. | Test (TC-465) |
 | FR-106-AC-86 | With TC-1045's `Pump` carrying `max` `3` on `ix://filament/unit/ms` and an operation `expedite(q: ms): ms` of `ExpressLifecycle`, which `OrderLifecycle` does not declare, `Consistent` of `OrderLifecycle` selected by `Context` with `side` `post` over an invocation of `expedite` refuses `invalid_runtime_input`/`invalid-value`, keyword `max` and bound `3`, for the argument `4 ms` at `/parameters/q` and for the result `4 ms` at `/result`; `3 ms` for both admits. | Test (TC-1045) |
+| FR-106-AC-87 | With TC-1045's `Pump` carrying `max` `3` on `ix://filament/unit/ms` and `ExpressLifecycle` declaring the context field `delay: ms`, `Bounded` selected by `Context` over `expedite` admits `3 ms` on both sides and refuses `4 ms` with `invalid_runtime_input`/`invalid-value`, naming the snapshot, entry `0`, the machine, the field `delay`, the constraint, `max` and `3`, at `/contexts/0/fields/delay`, in the pre snapshot on side `pre` and in the post snapshot on side `post`. | Test (TC-1045) |
+| FR-106-AC-88 | A unit bound is read from the type node that carries it, whichever kind it is: carried by a state machine it bounds that machine's operation's parameter and result as FR-106-AC-86 states; carried by a record value type it bounds an object field of its unit; and one whose `appliesTo` names an alias bounds the members typed by that alias and no other member of the unit. | Test (TC-465, TC-1045) |
+| FR-106-AC-89 | A unit bound reaches a quantity held by a field a record inherits from the record it specializes, and each value of a map: over `Span` specializing `Base { d: ms }` the bound applies at `d`, and over `Map<Text, ms>` holding `1 ms` and `4 ms` under `max` `3` the second entry violates it. | Test (TC-465) |
 
 ## Dependencies
 

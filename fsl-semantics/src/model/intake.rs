@@ -3780,12 +3780,42 @@ fn read_map_bound(
     Ok((lower, upper))
 }
 
+/// Whether `identity` names an alias, directly or through aliases, of native
+/// `Clock` or of a unit. The chain is walked once on the spot, so a cycle ends
+/// it and reports `false`.
+#[ix_trace_rs::string_edge]
+fn names_bounded_alias(
+    types: &[Value],
+    type_positions: &HashMap<String, usize>,
+    identity: &str,
+) -> bool {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut current = identity;
+    while seen.insert(current) {
+        let Some(node) = type_positions
+            .get(current)
+            .and_then(|position| types.get(*position))
+        else {
+            return false;
+        };
+        let alias = node.get("kind").and_then(Value::as_str) == Some("alias");
+        match node.get("target").and_then(Value::as_str) {
+            Some("ix://filament/native/Clock") => return alias,
+            Some(target) if alias && target.starts_with("ix://filament/unit/") => return true,
+            Some(target) if alias => current = target,
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// The `min`/`max` constraints of type node `ctx` on clocks and units
 /// (FCD #315, FR-230 "Clock constraints on a type", FSpec FR-154 "Unit
 /// bounds"): on the alias `alias` of `Clock` or of a unit when it is one,
-/// which every constraint must name, or else each constraint of an object
-/// type whose `appliesTo` is `ix://filament/native/Clock` or a unit, the other
-/// constraints of an object type being outside this reading.
+/// which every constraint must name, or else each constraint of the node,
+/// whatever its kind, whose `appliesTo` is `ix://filament/native/Clock`, a
+/// unit, or a type `bounded_alias` reports as an alias of either; the other
+/// constraints of such a node are outside this reading.
 ///
 /// # Errors
 ///
@@ -3800,22 +3830,28 @@ fn read_value_bounds(
     at: &str,
     node: &str,
     alias: Option<(&DeclarationKey, &ValueTypeRef)>,
+    bounded_alias: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<DomainPackageRecord>, ModelRefusal> {
     let mut bounds: Vec<ValueBoundRecord> = Vec::new();
     for (position, constraint) in ctx.array_field("constraints")?.iter().enumerate() {
         let constraint_ctx = NodeCtx::new(constraint, format!("{at}.constraints[{position}]"));
         let applies = constraint_ctx.str_field("appliesTo")?;
-        let target = match alias {
+        let (named_alias, target) = match alias {
             Some((alias, target)) => {
                 if declaration_key(package, applies) != *alias {
                     return Err(constraint_ctx
                         .malformed_in("appliesTo", "an alias's constraint names the alias"));
                 }
-                target.clone()
+                (Some(alias.clone()), target.clone())
             }
-            None if applies == "ix://filament/native/Clock" => ValueTypeRef::Clock,
-            None if applies.starts_with("ix://filament/unit/") => {
-                read_value_type_ref(package, &constraint_ctx, applies, false)?
+            None if applies == "ix://filament/native/Clock" => (None, ValueTypeRef::Clock),
+            None if applies.starts_with("ix://filament/unit/") => (
+                None,
+                read_value_type_ref(package, &constraint_ctx, applies, false)?,
+            ),
+            None if bounded_alias(applies) => {
+                let key = declaration_key(package, applies);
+                (Some(key.clone()), ValueTypeRef::Package(key))
             }
             None => continue,
         };
@@ -3844,7 +3880,7 @@ fn read_value_bounds(
         // FSpec FR-154-AC-29: a `min` above a `max` on the same type.
         let crossed = bounds.iter().any(|earlier| {
             earlier.target == target
-                && earlier.alias.as_ref() == alias.map(|(alias, _)| alias)
+                && earlier.alias == named_alias
                 && earlier.upper != upper
                 && if upper {
                     earlier.value > value
@@ -3861,7 +3897,7 @@ fn read_value_bounds(
         bounds.push(ValueBoundRecord {
             key: declaration_key(package, constraint_ctx.str_field("identity")?),
             owner: declaration_key(package, node),
-            alias: alias.map(|(alias, _)| alias.clone()),
+            alias: named_alias,
             target,
             upper,
             value,
@@ -4200,9 +4236,6 @@ pub(super) fn read_object_type(
             position,
         )?));
     }
-    // A `max` constraint on `ix://filament/native/Clock` bounds every clock
-    // place of the model (FR-230 "Clock constraints on a type").
-    records.extend(read_value_bounds(package, &ctx, at, node, None)?);
     Ok(())
 }
 
@@ -6111,7 +6144,7 @@ fn read_type_node(
         // An alias's `min`/`max` constraints bound the clocks or the
         // quantities it types (FR-230 "Clock constraints on a type", FSpec
         // FR-154 "Unit bounds").
-        let bounds = read_value_bounds(package, &ctx, at, node, Some((&key, &target)))?;
+        let bounds = read_value_bounds(package, &ctx, at, node, Some((&key, &target)), &|_| false)?;
         let mut records = vec![DomainPackageRecord::AliasType(AliasTypeRecord {
             key,
             target,
@@ -6257,6 +6290,15 @@ fn read_type_node(
         return Err(unsupported_at(type_value, at, meaning::VALUE_TYPE).into());
     }
     let mut records = Vec::new();
+    // A `min` or `max` on native `Clock`, a unit or an alias of either bounds
+    // the package's members whichever node carries it (FR-230 "Clock
+    // constraints on a type", FSpec FR-154 "Unit bounds"). A value type reads
+    // its own, and a population entry in `types[]` is refused below.
+    let carried = || -> Result<Vec<DomainPackageRecord>, ModelRefusal> {
+        read_value_bounds(package, &ctx, at, node, None, &|identity| {
+            names_bounded_alias(raw_types, type_positions, identity)
+        })
+    };
     let binding_result = {
         let mut context = super::meaning_dispatch::MeaningBindingContext {
             package,
@@ -6275,6 +6317,7 @@ fn read_type_node(
     };
     if let Some(result) = binding_result {
         result?;
+        records.extend(carried()?);
         return Ok(records);
     }
     match construct_meaning.as_str() {
@@ -6319,7 +6362,8 @@ fn read_type_node(
                     }
                 }
                 let target = ValueTypeRef::Clock;
-                let bounds = read_value_bounds(package, &ctx, at, node, Some((&key, &target)))?;
+                let bounds =
+                    read_value_bounds(package, &ctx, at, node, Some((&key, &target)), &|_| false)?;
                 records.push(DomainPackageRecord::AliasType(AliasTypeRecord {
                     key,
                     target,
@@ -6327,8 +6371,32 @@ fn read_type_node(
                 records.extend(bounds);
                 return Ok(records);
             }
+            // A bound on native `Clock`, a unit or an alias of either is not the
+            // scalar's own constraint: it is read as carried, and the scalar is
+            // read without it.
+            let carried_here = |constraint: &Value| {
+                constraint
+                    .get("appliesTo")
+                    .and_then(Value::as_str)
+                    .is_some_and(|applies| {
+                        applies == "ix://filament/native/Clock"
+                            || applies.starts_with("ix://filament/unit/")
+                            || names_bounded_alias(raw_types, type_positions, applies)
+                    })
+            };
+            let mut own = std::borrow::Cow::Borrowed(type_value);
+            if ctx.array_field("constraints")?.iter().any(carried_here) {
+                records.extend(carried()?);
+                if let Some(constraints) = own
+                    .to_mut()
+                    .get_mut("constraints")
+                    .and_then(Value::as_array_mut)
+                {
+                    constraints.retain(|constraint| !carried_here(constraint));
+                }
+            }
             records.push(DomainPackageRecord::ScalarType(read_value_type(
-                package, type_value, node, at,
+                package, &own, node, at,
             )?));
         }
         meaning::SYSTEMS_PART => {
@@ -6370,6 +6438,9 @@ fn read_type_node(
                 )
                 .into());
         }
+    }
+    if construct_meaning.as_str() != meaning::VALUE_TYPE {
+        records.extend(carried()?);
     }
     Ok(records)
 }
