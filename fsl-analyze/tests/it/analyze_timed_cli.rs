@@ -809,3 +809,109 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
         run.item(0)
     );
 }
+
+/// One `Call` object whose `ping` changes no data field, under
+/// `time invariant x <= 1 ms`, with the temporal clauses `Safe`, `Live` and
+/// `Wrong`; `resets` makes `ping` reset `x`. The items are the three claims
+/// on EN-6, then on EN-1 `digital-clocks`; each result is backend, value and
+/// cause kind.
+fn stalling(name: &str, resets: bool) -> Vec<(String, String, String)> {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    let (post, writes): (&str, &[&str]) = if resets {
+        (
+            "post Pinged using v on M::Call::ping { self.x = 0 ms }\n",
+            &["x"],
+        )
+    } else {
+        ("", &[])
+    };
+    let claims: String = [
+        ("Safe", "always holds(true)"),
+        ("Live", "always eventually holds(true)"),
+        ("Wrong", "always holds(false)"),
+    ]
+    .iter()
+    .map(|(claim, body)| {
+        format!(
+            "temporal {claim} using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ {body} }}\n"
+        )
+    })
+    .collect();
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}{post}time invariant Stall when {{ true }} {{ self.x <= 1 ms }}\n{claims}"
+        ),
+    );
+    let digital = json!({"method": "digital-clocks"});
+    let ws = Workspace::new(name);
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[("ping", writes)]),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Safe"}, {"claim": "Live"}, {"claim": "Wrong"},
+            {"claim": "Safe", "options": digital.clone()},
+            {"claim": "Live", "options": digital.clone()},
+            {"claim": "Wrong", "options": digital}]}),
+    ));
+    (0..6)
+        .map(|n| {
+            let item = run.item(n);
+            (
+                item["record"]["backend"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                label(&item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn expected_on_both_routes(per_claim: [(&str, &str); 3]) -> Vec<(String, String, String)> {
+    ["en-6", "en-1"]
+        .iter()
+        .flat_map(|backend| {
+            per_claim.iter().map(|(value, cause)| {
+                (
+                    (*backend).to_owned(),
+                    (*value).to_owned(),
+                    (*cause).to_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// FR-232 "Vacuity", FR-240 "Vacuity": FR-232-AC-3's `Stall` is closed and has
+/// no time-divergent behaviour, so every claim over it, the false one
+/// included, is `inconclusive` `no-admitted-behaviour` on both routes, with
+/// no fairness declared.
+#[trace("FR-232-AC-3", "FR-240-AC-4")]
+#[test]
+fn digital_clocks_prove_nothing_over_a_stalled_subject() {
+    assert_eq!(
+        stalling("timed-digital-stall", false),
+        expected_on_both_routes([("inconclusive", "no-admitted-behaviour"); 3])
+    );
+}
+
+/// The same model with `ping` resetting `x`: time diverges, so the true claims
+/// are proved and the false one refuted on both routes. The first result,
+/// EN-6 on `always holds(true)`, is not asserted: EN-6 rejects its own
+/// certificate there (QSL-3486). A control for the stall test above; no
+/// criterion states these verdicts, so it carries no trace tag.
+#[test]
+fn digital_clocks_decide_claims_once_time_can_diverge() {
+    assert_eq!(
+        stalling("timed-digital-stall-reset", true)[1..],
+        expected_on_both_routes([("proved", ""), ("proved", ""), ("refuted", "")])[1..]
+    );
+}
