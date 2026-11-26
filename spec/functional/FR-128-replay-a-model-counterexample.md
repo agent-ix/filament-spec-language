@@ -151,6 +151,9 @@ member of its own.
   byte provision and the request's universes, and refuse with FR-106's
   record when admission fails. An `initial_state` outside the subject's
   initial states SHALL refuse `invalid_runtime_input`/`invalid-value`.
+- A payload whose `over_binding` is no instance of the clause (FR-125
+  Instancing), a universe key no initial state admits included, SHALL refuse
+  `invalid_runtime_input`/`invalid-value` before any step is re-executed.
 - When the request selects a task-derived timed subject from a recompiled
   package with FR-249 task releases, the executor SHALL rebuild that product
   and use FR-237 for timed source and derived-step replay while preserving the
@@ -389,6 +392,7 @@ member of its own.
 | FR-128-AC-14 | At the writer and reader (`fsl-replay/src/outcome/counterexample.rs`): a closure-only engine lasso with an empty prefix and one with a prefix of one `inc` each write the sole closure loop step with the entry key, and the reader reads each back to the same lasso for the model alphabet only. Over a constructed engine lasso with a closure stutter at product position 1 and a position 3, the writer drops the stutter and writes position 2 (re-indexed by the one dropped stutter that precedes it). The observed `ModelStepWire` refuses a `closure-stutter` step as a user-supplied trace. | Test (TC-523) |
 | FR-128-AC-15 | Positive closure replay on both routes of a bounded ordinary untimed model clause, over the Counter world of `fsl-analyze/tests/it/clause_item.rs` and the lasso of AC-10's empty-stem case, with an item whose `temporal.stutter_closure` is true: the source route (`ClauseSubject`, replay through `ReplayInputs`) and the package route (`PackageClauseSubject::new` over `over_package_route`'s emitted package, as the existing both-routes parity test does) each settle `reproduced-with-evaluated-witness` with `Truth(false)` and `trace_position` 0, and equal results. For the same item without the flag, both routes refuse the closure step at `/loop/0/transition/type`. The package case is a required positive case and is not satisfied by a refusal. | Test (TC-523) |
 | FR-128-AC-16 | Over FR-205-AC-10's `Echo` with `scheduling adversarial`, the clause `on each (q: M::Cell)` with `holds(k.v = 0) implies eventually[1,2] holds(k.v = 0)` is false only from the activation after the counted `send`, since the `send` discharges the origin's debt. The engine's lasso, prefix `send` and loop `duplicate`, `lose`, replays to `reproduced-with-evaluated-witness` with `Truth(false)` and `trace_position` 1, not 0. The counterexample record of that lasso keeps `trace_position` 0. | Test (TC-523) |
+| FR-128-AC-17 | Over FR-125-AC-14's subject, a lasso envelope for `always holds(x.value = 0)` whose `over_binding` names `z`, a universe key no initial state admits, refuses `invalid_runtime_input`/`invalid-value` before any step is re-executed; the same envelope naming `c` is not refused for its binding. | Test (TC-3219) |
 
 ## Dependencies
 
