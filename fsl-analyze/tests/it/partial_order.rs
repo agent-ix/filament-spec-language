@@ -1528,3 +1528,46 @@ fn a_guards_footprint_makes_the_transitions_it_reads_visible() {
         (false, false, false)
     );
 }
+
+/// QSL-3482: a partial-order reduced liveness run must decide every
+/// instance of `over`, as the unreduced run does (FR-160-AC-6). From
+/// `(0,1,1)`, `eventually holds(x.v = 0)` holds for `a` at position 0 and is
+/// violated for `b` and `c`, whose `v` never decreases: every behaviour ends
+/// in the terminal stutter at `(2,2,2)` with `b.v = 2`. The first refuted
+/// instance is `b`, so both runs settle `Violated` over `b`.
+#[trace("TC-886", "FR-160-AC-6")]
+#[test]
+fn partial_order_liveness_decides_every_instance() {
+    let shape = Shape {
+        symmetric: false,
+        max: 2,
+        link: false,
+    };
+    let world = World::new(
+        shape,
+        BUMPS,
+        &[Clause {
+            profile: INFINITE,
+            formula: "eventually holds(x.v = 0)",
+        }],
+        &[start([0, 1, 1])],
+        &KEYS,
+    );
+    let over = |reductions: Reductions| match world
+        .run(
+            Some(0),
+            vec![atom(|v| Some(v == 0))],
+            reductions,
+            None,
+            ModelCheckLimits::default(),
+        )
+        .expect("checks")
+    {
+        ModelCheckOutcome::Violated { counterexample, .. } => {
+            counterexample.over_binding.map(|binding| binding.key)
+        }
+        other => panic!("expected a violation over `b`, got {other:?}"),
+    };
+    assert_eq!(over(Reductions::default()), Some("b".to_owned()));
+    assert_eq!(over(reduced()), Some("b".to_owned()));
+}
