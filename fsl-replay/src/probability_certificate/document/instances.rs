@@ -69,23 +69,17 @@ struct Root {
     walk: Walk,
 }
 
-fn exact_binding(instance: &ModelInstance) -> crate::ExactBinding {
-    crate::ExactBinding {
-        population: instance.population.node.clone(),
-        key: instance.key.clone(),
-    }
-}
-
 /// The entry's `binding` and `instance` members (FR-741 "Binding"): the
 /// `over` object, null when the claim has no `over` parameter, and the
-/// `on each` object.
+/// `on each` object, each as its written reference.
+#[implements("FR-125-AC-9")]
 fn entry_binding(
     over: Option<&(ModelInstance, ObjectReference)>,
-    instance: &ModelInstance,
-) -> (Option<crate::ExactBinding>, crate::ExactBinding) {
+    instance: &ObjectReference,
+) -> (Option<ObjectReference>, ObjectReference) {
     (
-        over.map(|(over, _)| exact_binding(over)),
-        exact_binding(instance),
+        over.map(|(_, reference)| reference.clone()),
+        instance.clone(),
     )
 }
 
@@ -204,6 +198,7 @@ fn admit<'a>(
     })
 }
 
+#[implements("FR-125-AC-9")]
 fn instances_of(
     system: &ModelSystem<'_>,
     value_type: &filament_exact::ValueType,
@@ -225,7 +220,7 @@ fn instances_of(
         .into_iter()
         .map(|instance| {
             let reference = system
-                .bound_reference(object.clone(), &instance)
+                .written_reference(object.clone(), &instance)
                 .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
             Ok((instance, reference))
         })
@@ -1499,8 +1494,8 @@ mod rebuilt {
     pub(super) struct RootRef {
         pub(super) initial: u32,
         pub(super) key: Key,
-        pub(super) binding: Option<crate::ExactBinding>,
-        pub(super) instance: Option<crate::ExactBinding>,
+        pub(super) binding: Option<ObjectReference>,
+        pub(super) instance: Option<ObjectReference>,
     }
 
     pub(super) struct Graph {
@@ -1533,7 +1528,7 @@ mod rebuilt {
                 u32::try_from(position).map_err(|_| ProbabilityDocumentError::Malformed)?;
             for over in &overs {
                 let over_ref = over.as_ref().map(|(_, reference)| reference);
-                for (instance, reference) in &instances {
+                for (_, reference) in &instances {
                     let key = explore(
                         system,
                         subject,
@@ -1545,7 +1540,7 @@ mod rebuilt {
                         &mut graph.nodes,
                         cancel,
                     )?;
-                    let (binding, bound_instance) = entry_binding(over.as_ref(), instance);
+                    let (binding, bound_instance) = entry_binding(over.as_ref(), reference);
                     graph.roots.push(RootRef {
                         initial,
                         key,

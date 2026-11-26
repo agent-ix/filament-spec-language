@@ -22,15 +22,18 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::{ClaimForm, SubjectLimits};
 use fsl_replay::{
+    check_probability_certificate_document,
     check_probability_certificate_document_as_with_work_scope, claim_binding,
-    partial_lower_probability_proof_document_with_work_scope,
+    partial_lower_probability_proof_document,
+    partial_lower_probability_proof_document_with_work_scope, probability_proof_document,
     probability_proof_document_with_work_scope, write_probability_certificate,
-    write_probability_proof_document_with_work_scope, ExactBinding, ExactProbBuildIssue,
-    ExactProbBuildRecord, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
-    ExactProbabilityGraphError, ExactProbabilityValue, Extremum, ModelCheckLimit,
-    ProbabilityBoundSide, ProbabilityCertificateDocument, ProbabilityDocumentError,
-    ProbabilityDocumentLimits, ProbabilityObjective, ProbabilityProductKey, TerminalRecord,
-    TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,
+    write_probability_proof_document, write_probability_proof_document_with_work_scope,
+    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
+    ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
+    ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
+    ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
+    ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
+    TimedProbabilityRoute,
 };
 use fsl_replay::{
     replay_probabilistic_witness, replay_probabilistic_witness_from_package,
@@ -185,7 +188,7 @@ pub(crate) enum ExactReport {
         /// The scheduler extremum the value is, absent for a workload.
         extremum: Option<Extremum>,
         /// The claim's one `over` instance, absent without `over`.
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
         /// The certificate the record carries.
         evidence: Option<Box<ExactProbabilityEvidence>>,
     },
@@ -201,7 +204,7 @@ pub(crate) enum ExactReport {
         /// The scheduler extremum the interval bounds, absent for a workload.
         extremum: Option<Extremum>,
         /// The claim's one `over` instance, absent without `over`.
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
         /// The claim side's certificate the record carries.
         evidence: Box<ExactProbabilityEvidence>,
     },
@@ -216,7 +219,7 @@ pub(crate) enum ExactReport {
         /// The scheduler extremum, absent for a workload.
         extremum: Option<Extremum>,
         /// The claim's selected binding, absent without `over`.
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
         /// The accepted lower certificate.
         evidence: Box<ExactProbabilityEvidence>,
     },
@@ -1602,7 +1605,7 @@ fn run(
     record_work_checkpoint(ExactWorkPhase::Product, &work, false);
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            BudgetedProductError, build_retaining_monitor_with_budget_in_scope,
+            build_retaining_monitor_with_budget_in_scope, BudgetedProductError,
         };
         record_work_checkpoint(ExactWorkPhase::ProofOnlyBuild, &work, false);
         let identity = budget.identity;
@@ -2291,10 +2294,7 @@ fn run(
             value: accepted.value().clone(),
             side: accepted.side(),
         });
-        let binding = binding.map(|bound| ExactBinding {
-            population: bound.instance.population.node,
-            key: bound.instance.key,
-        });
+        let binding = binding.map(|bound| bound.reference);
         let method = interval.as_ref().map_or(
             fsl_replay::BoundsMethod::IntervalIteration {
                 precision_bits: limits.max_precision_bits,
@@ -2619,10 +2619,7 @@ fn checked_report(
                     value: accepted.value().clone(),
                     side: accepted.side(),
                 });
-                let binding = binding.map(|bound| ExactBinding {
-                    population: bound.instance.population.node,
-                    key: bound.instance.key,
-                });
+                let binding = binding.map(|bound| bound.reference);
                 EngineReport::Exact(Box::new(ExactReport::Proved {
                     check,
                     extremum,
@@ -3054,10 +3051,7 @@ fn finish_interval(
         value: accepted_claim.value().clone(),
         side: accepted_claim.side(),
     });
-    let binding = binding.map(|bound| ExactBinding {
-        population: bound.instance.population.node.clone(),
-        key: bound.instance.key.clone(),
-    });
+    let binding = binding.map(|bound| bound.reference.clone());
     Ok(EngineReport::Exact(Box::new(ExactReport::ProvedBounds {
         claim: claim_check,
         counterpart: Box::new(counterpart_check),

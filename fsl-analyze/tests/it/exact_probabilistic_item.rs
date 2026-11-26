@@ -133,11 +133,9 @@ fn assert_phase_starts_without_completing(
     assert!(checkpoints.iter().any(|checkpoint| {
         checkpoint.phase == phase && !checkpoint.completed && checkpoint.consumed == expected_start
     }));
-    assert!(
-        !checkpoints
-            .iter()
-            .any(|checkpoint| checkpoint.phase == phase && checkpoint.completed)
-    );
+    assert!(!checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.phase == phase && checkpoint.completed));
 }
 
 #[cfg(feature = "test-support")]
@@ -219,11 +217,9 @@ fn product_and_certificate_production_share_the_item_remainder() {
         ExactWorkPhase::CertificateProduction,
         COIN_PRODUCT_WORK,
     );
-    assert!(
-        !short_checkpoints
-            .iter()
-            .any(|checkpoint| checkpoint.phase == ExactWorkPhase::CertificateCheck)
-    );
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.phase == ExactWorkPhase::CertificateCheck));
 
     let (production_complete, production_checkpoints) =
         settle_with_work_and_checkpoints(&world, "WorkProof", combined);
@@ -331,11 +327,9 @@ fn witness_production_spends_the_remainder_after_product_work() {
         ExactWorkPhase::WitnessProduction,
         product,
     );
-    assert!(
-        !short_checkpoints
-            .iter()
-            .any(|checkpoint| checkpoint.phase == ExactWorkPhase::WitnessReplay)
-    );
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.phase == ExactWorkPhase::WitnessReplay));
 
     let (production_complete, production_checkpoints) =
         settle_with_work_and_checkpoints(&world, "WorkRefutation", product + production);
@@ -560,11 +554,9 @@ fn undefined_reexploration_spends_the_remaining_item_work() {
         ExactWorkPhase::UndefinedReexploration,
         proof_only,
     );
-    assert!(
-        !short_checkpoints
-            .iter()
-            .any(|checkpoint| { checkpoint.phase == ExactWorkPhase::UndefinedMaterialization })
-    );
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| { checkpoint.phase == ExactWorkPhase::UndefinedMaterialization }));
 
     let (reexplored, reexplored_checkpoints) =
         settle_with_work_and_checkpoints(&world, "Dropped", reexplore_bound);
@@ -671,8 +663,7 @@ fn a_reachability_bound_that_holds_settles_proved_with_the_checked_certificate()
     };
     assert_eq!(entry.extremum, Some(Extremum::Min));
     let binding = entry.binding.as_ref().expect("the claim's one instance");
-    assert_eq!(binding.key, "m");
-    assert!(binding.population.ends_with("/msgs"), "{binding:?}");
+    assert_eq!(binding.object().as_str(), "m");
     assert!(
         matches!(&entry.value, ExactOrBounds::Exact { value } if value.value() == &ratio(24, 25))
     );

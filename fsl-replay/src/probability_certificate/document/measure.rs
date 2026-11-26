@@ -2695,10 +2695,7 @@ pub(super) fn check(
             bytes,
         );
         if let ExactProbabilityCertificateCheck::Accepted(token) = &mut accepted {
-            let binding = claim_binding(system, claim)?.map(|binding| crate::ExactBinding {
-                population: binding.instance.population.node,
-                key: binding.instance.key,
-            });
+            let binding = claim_binding(system, claim)?.map(|binding| binding.reference);
             token.initial_values = Some(CheckedInitialValues {
                 bindings: vec![binding; coverage.len()],
                 instances: vec![None; coverage.len()],
