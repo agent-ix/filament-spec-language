@@ -13,6 +13,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-142
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-101
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-137
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-145
@@ -266,6 +268,7 @@ Fixtures: `Twice` and `CasTwice` (FR-147).
 | FR-148-AC-12 | When an identified concrete or protocol fairness class has `ContractUndetermined` enabledness at a reachable paired state and no violating paired lasso exists, the product returns `ProtocolAssumptionNotEstablished{reason: relation-undetermined}` with the exact checked identities and both finite prefixes to the undecided state; FR-145 replay reproduces the same undecided predicate and the item settles `inconclusive`, `unsettled`, never `refuted` or `proved`. This is distinct from product-limit `incomplete`. | Test (TC-553) |
 | FR-148-AC-13 | An undeclared or alias-only `requires temporal` name refuses at S3 per FR-218-AC-16; a bound requirement `NodeKey` with no emitted temporal node refuses at S4 per FR-383-AC-17. Each refusal occurs before product evaluation and produces no `ProtocolAssumptionNotEstablished` result. The product uses only admitted clause `NodeKey`s, never a clause or target name. A uniquely resolved required clause with no fairness rows contributes no authored constraint. | Test (TC-553) |
 | FR-148-AC-14 | When a required temporal clause contributes `fair weak whole inc` to authored `S`, a separate `ensure fair weak whole inc` guarantee is satisfied by the checked lasso. The `ensure` row is absent from both `I` and `S`; the same assumption relation, source identities and result occur with the guarantee row present or removed. | Test (TC-553) |
+| FR-148-AC-15 | Every abstract protocol successor examined while constructing the initial or step internal closure counts toward the same request `max_transitions` budget. With a budget of 1, the first computed internal successor is charged and attempting a second stops with `MaxTransitions=1`; the result is incomplete, never a protocol decision. | Test (TC-553) |
 
 ## Dependencies
 
