@@ -18,7 +18,8 @@
 //!
 //! [`evaluate_timed_at`] reads a clause under the timed profile at one
 //! position of a [`TimedTrace`], whose positions carry exact rational time
-//! stamps (FR-234).
+//! stamps (FR-234), and [`timed_elapsed`], [`timed_steps`] and
+//! [`timed_fraction`] read FR-407's measures on one.
 //!
 //! [`evaluate_tuple`] evaluates a hyper body over a tuple of behaviours in
 //! lockstep (FR-175) by reading the tuple as one lasso;
@@ -100,7 +101,9 @@ pub use tick_monitor::{
     TickStepError, definitely_before, within_bound,
 };
 pub use tick_shape::{NodeShape, TickShape, operator_parts, temporal_leaves};
-pub use timed::{TimedTrace, evaluate_timed_at};
+pub use timed::{
+    TimedMeasureReading, TimedTrace, evaluate_timed_at, timed_elapsed, timed_fraction, timed_steps,
+};
 pub use tuple::{
     ComponentPosition, ComponentTrace, TupleLetters, evaluate_closed_tuple,
     evaluate_projected_prefix, evaluate_tuple,

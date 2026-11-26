@@ -3,13 +3,19 @@
 
 use filament_exact::{Integer, Meter, Rational};
 use fsl_eval::temporal::{
-    evaluate_timed_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome,
-    TemporalPosition, TimedTrace,
+    evaluate_timed_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
+    TimedTrace,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
 use crate::timed_world::{self, World};
+
+mod falsifier;
+mod models;
+mod probability;
+mod routes;
+mod temporal;
 
 const TIMED: &str = "profile tt = \"filament.temporal.timed/v1\";\n";
 const CLAIM: &str = "temporal Dense using tt over (c: M::Call) clock \"model-time\" on origin {\n\
@@ -78,14 +84,15 @@ fn evaluate(world: &World, stamps: Vec<Rational>, late: Vec<bool>) -> TemporalOu
 fn bounded_eventually_matches_hand_values_on_multiple_rational_grids() {
     let world = world();
     for divisions in [2_i64, 3, 4, 5, 8] {
-        let stamps: Vec<_> = (0..=4 * divisions)
-            .map(|at| exact(at, divisions))
-            .collect();
+        let stamps: Vec<_> = (0..=4 * divisions).map(|at| exact(at, divisions)).collect();
         let late = vec![false; stamps.len()];
-        assert!(matches!(
-            evaluate(&world, stamps.clone(), late),
-            TemporalOutcome::Violated { at } if at == TemporalPosition::new(0)
-        ), "an all-false trace must falsify eventually on a {divisions}-part grid");
+        assert!(
+            matches!(
+                evaluate(&world, stamps.clone(), late),
+                TemporalOutcome::Violated { at } if at == TemporalPosition::new(0)
+            ),
+            "an all-false trace must falsify eventually on a {divisions}-part grid"
+        );
 
         let mut late = vec![false; stamps.len()];
         late[usize::try_from(divisions).expect("positive grid")] = true;

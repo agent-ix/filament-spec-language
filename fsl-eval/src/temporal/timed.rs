@@ -51,6 +51,9 @@ use super::position::{PositionRefusal, TemporalPosition};
 /// `temporal.visit`.
 const VISIT: ChargePoint = ChargePoint::TemporalVisit;
 
+mod measure;
+pub use measure::{TimedMeasureReading, timed_elapsed, timed_fraction, timed_steps};
+
 /// A finite timed trace (FR-231 "Inputs"): the time stamp of each position,
 /// in the clause binding's unit, non-negative and non-decreasing. It is a
 /// prefix of a time-divergent behaviour whose continuation is unknown.
