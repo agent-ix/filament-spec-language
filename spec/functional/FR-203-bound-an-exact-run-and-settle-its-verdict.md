@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-201
@@ -28,6 +30,10 @@ relationships:
   - target: ix://agent-ix/filament-specification/FR-412
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-1042
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-875
     type: references
 ---
 # FR-203: Bound an exact run and settle its verdict
@@ -128,6 +134,28 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
   is the configured bound; it SHALL emit no proof, refutation, accepted
   certificate, or replayed witness for that item.
 
+### Initial states and instances
+
+- Before it admits the claim's form, builds a product, writes a certificate
+  or reads one, EN-5 SHALL decide FR-125's instancing outcomes in FR-125's
+  order: `RequiresBound`, `NoInitialState`, `conflicting-identity`,
+  `NoInstance`. This holds for every claim form and activation.
+- When the subject's `initial` list is empty and no universe is missing,
+  EN-5 SHALL report `NoInitialState`, whatever the universes hold.
+- When the `initial` list is non-empty and the claim has no instance, since
+  its `over` parameter or its `on each` activation type has no admitted key
+  (FR-875 "Instances"), EN-5 SHALL report `NoInstance`.
+- Neither outcome is a fault (FR-621). EN-5 SHALL settle each as the
+  settlement table states, with no runtime diagnostic, verdict, certificate,
+  counterexample or numeric entry, and SHALL NOT read the empty set as
+  probability zero or as vacuous truth. These are the causes every other
+  route reports for the same subject.
+- FR-201's certificate checker SHALL derive the same two outcomes, in the
+  same order, from the checked subject by its own code, never from an engine
+  result. For a subject with either outcome it SHALL return that typed
+  cause for whatever document is offered, and neither accept the document
+  nor report it rejected, malformed or unsupported.
+
 ### Product admission before materialization
 
 - EN-5 SHALL check the remaining `exact_prob.max_transitions` capacity
@@ -204,6 +232,8 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | Cancelled through the `Cancel` handle | `incomplete`, `cancelled{source}` | `unavailable` | `Incomplete(Cancelled{source})` (ADR-018 V-7) | incomplete |
 | Certificate rejected; replay disagrees or refuses | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected{rule, at})`, `Inconclusive(ReplayParity)`, `Inconclusive(ReplayRefused)` | inconclusive |
 | `NotMarkov`, `DelayDistribution` (FR-204) | `unsupported` | `unavailable` | `Unsupported(cause)` | unsupported |
+| `NoInitialState` (FR-125) | `inconclusive`, cause `no-initial-state` | `unsettled` | `Inconclusive(NoInitialState)` | inconclusive |
+| `NoInstance` (FR-125) | `inconclusive`, cause `no-instance` | `unsettled` | `Inconclusive(NoInstance)` | inconclusive |
 
 - A `proved` record SHALL carry its accepted certificate (FR-201) and a
   `refuted` record its replayed witness (FR-202) as members of the item's
@@ -226,6 +256,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | `Expansion(stop)` naming no limit, not an internal failure | `failed`, the stop's own `ExpansionStop.cause` as the one diagnostic | `Failed` carrying that diagnostic | FR-192 |
 | `Internal(fault)` | `failed`, diagnostic `runtime_invariant`/`established-invariant-broken` | `Failed` | FR-127 |
 | `NotMarkov` | `unsupported` | `Unsupported(NotMarkov)` | the `NotMarkov` row above |
+| `NotSimulated(EmptyInitial)` | `inconclusive`, cause `no-initial-state` | `Inconclusive(NoInitialState)` | FR-125 |
 | `Expansion(stop)` naming `MaxCandidates` | `incomplete`, execution `resource-incomplete` | `Incomplete(LimitReached{limit, value, setting})` with `limit` written `max_candidates` (the `expansion.max_candidates` row's limit name, FR-255), `value` the request's `max_candidates` and `setting` `expansion.max_candidates` | FR-192, FR-255 |
 | `Expansion(stop)` naming `EvaluationMeter` | `incomplete`, execution `resource-incomplete` | `Incomplete(LimitReached{limit, value, setting})` for the typed `ClauseMeter`, naming the exhausted accounting counter by FR-255 Behavior 9's rule (its `limit` and `setting` the counter's name) and `value` that counter's configured bound | FR-192, FR-255 Behavior 9 |
 | `PredicateRefused(KernelRefused(r))`, `r` not `CheckedInvariant`, or `PredicateRefused(FamilyRefused(code))` | `failed`, the refusal's catalog code and cause as the one diagnostic | `Failed` carrying that diagnostic | FR-100's refusal table |
@@ -297,8 +328,8 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | FR-203-AC-17 | When exact EN-5 encounters a digital timed state whose free delay is not stochastic, the item settles `unsupported` with the existing `not-stochastic` cause carrying that state's canonical product key and the typed transition identity (QSL-3143). This is one refusal family and does not turn a supported time-divergent zero-delay component into a refusal. | Test |
 | FR-203-AC-18 | When the exact certificate/claim graph check returns `ExactProbabilityGraphError::Cycle` (outside FR-204's timed-product builder), the item settles `unsupported` with the existing `unsupported_construct/not-yet-implemented` cause, identifies the selected claim and cycle product form at the claim/form locus (QSL-3143), and emits no proof, counterexample, or numeric entry. FR-202-AC-42 and AC-46's initial-decided cyclic claims remain refuted through subsystem replay and do not take this graph-check refusal path. | Test |
 | FR-203-AC-19 | When exact EN-5 cannot represent a required draw, the item settles `unsupported` with `unsupported_construct/not-yet-implemented` at the selected claim's draw-form locus and names the unsupported draw form (QSL-3143); no proof, counterexample, or numeric entry is emitted. | Test |
-| FR-203-AC-20 | When exact EN-5's simulation input has an empty initial-state vector and returns `NotSimulated::EmptyInitial`, the item settles `failed` with diagnostic `invalid_runtime_input/invalid-value` and no verdict, certificate, counterexample, or numeric entry. This diagnostic is item-level and carries no finer field locus. If an initial-state value is rejected earlier by model admission or reading, the item retains that existing typed cause and its actual locus; EN-5 does not rewrite every unreadable initial state to `invalid_runtime_input/invalid-value`. An absent initial vector is never treated as probability zero or as an empty universal set. | Test |
-| FR-203-AC-21 | When exact EN-5 cannot build a selected claim binding, the item settles `unsupported` with `unsupported_construct/not-yet-implemented` at that claim's binding-form locus and names the unsupported binding form (QSL-3143); no proof, counterexample, or numeric entry is emitted. | Test |
+| FR-203-AC-20 | An exact item whose subject has an empty `initial` list and bounded universes settles `inconclusive` with cause `no-initial-state`, `Inconclusive(NoInitialState)`, for an `on origin` claim, a claim with an `over` parameter and an `on each` claim, and when those universes hold no key. It has no runtime diagnostic (never `failed` or `invalid_runtime_input/invalid-value`), verdict, certificate, counterexample or numeric entry. With a universe missing as well, the item is `RequiresBound` instead. An initial-state value rejected earlier by model admission or reading keeps that typed cause and locus. | Test (TC-3241) |
+| FR-203-AC-21 | When exact EN-5 cannot build a selected claim binding, other than for lack of any admitted key (AC-34), the item settles `unsupported` with `unsupported_construct/not-yet-implemented` at that claim's binding-form locus and names the unsupported binding form (QSL-3143); no proof, counterexample, or numeric entry is emitted. | Test |
 | FR-203-AC-22 | When exact EN-5 cannot translate the selected claim form to a product monitor, the item settles `unsupported` with `unsupported_construct/not-yet-implemented` at that claim's form locus and names the unsupported claim form (QSL-3143); no proof, counterexample, or numeric entry is emitted. | Test |
 | FR-203-AC-23 | For an unconditional reachability claim, EN-5 computes exact value `v_i` separately from every admitted initial product state `i`, and emits an entry for each `i` with its initial-state identity and value. The aggregate exact claim value is `min_i(v_i)` for `>=` and `max_i(v_i)` for `<=` (QSL-3142); with one initial state the aggregate equals that state's value. | Test |
 | FR-203-AC-24 | For an unconditional expected-reward claim, EN-5 evaluates every admitted initial product state and settles the claim-side objective using the minimum across initial states for `>=` and the maximum for `<=`; entries retain every initial-state identity and its value (QSL-3142). An infinite extremum retains FR-203-AC-15's replay requirement for a refutation. | Test |
@@ -311,6 +342,8 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | FR-203-AC-31 | With `accounting.work_units = B`, an exact item whose product construction consumes `P` units and whose counterexample witness production requires `W` units, where `P <= B`, `W <= B` and `P + W > B`, stops at the first unpaid witness-production charge with `incomplete`, `Incomplete(LimitReached{work_units, B, accounting.work_units})`; it emits no witness and has no truth value. The same subject and claim with a bound of `P + W` completes witness production as before. | Test |
 | FR-203-AC-32 | With `accounting.work_units = B`, an exact item whose product construction and witness production consume `P` units and whose witness replay requires `W` units, where `P <= B`, `W <= B` and `P + W > B`, stops at the first unpaid replay charge with `incomplete`, `Incomplete(LimitReached{work_units, B, accounting.work_units})`; it does not settle `refuted` or emit a replayed witness. The same subject and claim with a bound of `P + W` completes replay as before. | Test |
 | FR-203-AC-33 | For FR-196-AC-5's `Coin` model and `probability >= 0.5 [ always[0,3] holds(c.v = 0) ]` claim over `(c: M::Coin)` under workload `Even`, evidence `exact`, an instrumented run records the `work_units` charges of the first proof-only build (`P`), undefined-path re-exploration (`R`), and all later certificate or witness work (`W`). With `accounting.work_units = P + R - 1`, where `P <= P + R - 1` and `R <= P + R - 1`, the first unpaid re-exploration charge settles `incomplete`, `Incomplete(LimitReached{work_units, P + R - 1, accounting.work_units})` with no truth value. With a bound of `P + R`, the re-exploration completes, even if a later certificate or witness charge then stops the item. With a bound equal to the recorded full-run total `P + R + W`, the item settles as FR-196-AC-5 specifies, with `UndefinedEvaluation{where: 1, cause: absent-key}`; a separate item starts with a fresh allowance. | Test |
+| FR-203-AC-34 | An exact item whose subject has a non-empty `initial` list and no admitted key for the claim's `over` parameter, or none for its `on each` activation type, settles `inconclusive` with cause `no-instance`, `Inconclusive(NoInstance)`, never `proved`, `unsupported` or `failed`, with no certificate, counterexample or numeric entry. This holds also when the claim's form is outside what EN-5 admits. | Test (TC-3241) |
+| FR-203-AC-35 | FR-201's certificate checker, called directly with a well-formed document of the claim's identity, returns `NoInitialState` for AC-20's subjects and `NoInstance` for AC-34's, for an `on each` claim and for a claim that is not, and neither accepts the document nor reports it rejected, malformed or unsupported. The test states each expected cause itself and takes none from an engine result. | Test (TC-3241) |
 
 ## Dependencies
 
