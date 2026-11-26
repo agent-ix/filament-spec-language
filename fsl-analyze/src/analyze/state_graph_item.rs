@@ -34,6 +34,7 @@ use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
+use ix_trace_rs::implements;
 
 use super::instance_records::{decisive, undecided};
 use super::items::{INVALID_VALUE, model_refusal};
@@ -58,6 +59,27 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
         StateGraphFormKind::AlwaysPossible => StateGraphPropertyForm::AlwaysPossible,
         StateGraphFormKind::UniquePath => StateGraphPropertyForm::UniquePath,
     }
+}
+
+/// The item-level binding that identifies a refuting or first non-proved
+/// state-graph instance (FR-621, FSpec FR-390).
+#[implements("FR-628-AC-4")]
+fn item_instance(
+    record: &StateGraphRecord,
+    claim: &CheckedStateGraphClaim,
+    instance: Option<&ModelInstance>,
+) -> Option<serde_json::Value> {
+    if matches!(&record.value, TerminalValue::Proved { .. }) {
+        return None;
+    }
+    let (Some(parameter), Some(instance)) = (claim.over(), instance) else {
+        return None;
+    };
+    Some(serde_json::json!({
+        "type": "instance",
+        "parameter": parameter.name,
+        "key": instance.key,
+    }))
 }
 
 /// The EN-1 item that decides the state-graph claim at `key` over the
@@ -266,15 +288,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     EngineReport::StateGraph(Box::new(GraphReport {
         record: record.clone(),
-        instance: instance.over.as_ref().and_then(|instance| {
-            parameter.map(|parameter| {
-                serde_json::json!({
-                    "type": "instance",
-                    "parameter": parameter,
-                    "key": instance.key,
-                })
-            })
-        }),
+        instance: item_instance(record, claim, instance.over.as_ref()),
         exploration,
         counterexample,
         evidence,
@@ -544,15 +558,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         };
         let report = GraphReport {
             record,
-            instance: instance.as_ref().and_then(|instance| {
-                read.claim.over().map(|parameter| {
-                    serde_json::json!({
-                        "type": "instance",
-                        "parameter": parameter.name,
-                        "key": instance.key,
-                    })
-                })
-            }),
+            instance: item_instance(&record, read.claim, instance.as_ref()),
             exploration: fsl_replay::RunStats {
                 product_states: u64::try_from(graph.nodes.len()).unwrap_or(u64::MAX),
                 product_edges: u64::try_from(graph.edges.len()).unwrap_or(u64::MAX),
@@ -1276,15 +1282,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         });
         let report = GraphReport {
             record,
-            instance: instance.over.as_ref().and_then(|instance| {
-                read.claim.over().map(|parameter| {
-                    serde_json::json!({
-                        "type": "instance",
-                        "parameter": parameter.name,
-                        "key": instance.key,
-                    })
-                })
-            }),
+            instance: item_instance(&record, read.claim, instance.over.as_ref()),
             exploration: fsl_replay::RunStats {
                 product_states: graph.stats.symbolic_states,
                 product_edges: graph.stats.retained_edges,

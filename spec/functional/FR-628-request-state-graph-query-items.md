@@ -50,11 +50,11 @@ item carry its verdict, witness or counterexample and certificate.
 
 - `record`: `proved` or `refuted` with FR-169's settlement method; a proof
   carries the state-graph certificate. The claim-level record also carries
-  `instance` when the claim has an `over` parameter: the selected binding is
-  the first refuting instance, otherwise the first non-proved instance,
-  otherwise the first instance. Its `key` is the bound object's canonical
-  universe key. The binding is present even when the selected non-proved
-  result has no evidence, and is omitted for claims without `over`.
+  `instance` when the selected record is refuted or is the first non-proved
+  record and the claim has an `over` parameter. Its `key` is the bound
+  object's canonical universe key. The binding is present even when the
+  selected non-proved result has no evidence, and is omitted for proved
+  records and claims without `over`.
 - `counterexample` for a refuted `always possible` claim: a path to a state
   from which no goal state is reachable; for a refuted `unique path` claim:
   two distinct paths. A `possible` proof carries its witness path and the

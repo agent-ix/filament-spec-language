@@ -4361,6 +4361,20 @@ mod tests {
                 "category": "inconclusive",
             })
         );
+
+        let proved = record(
+            0,
+            TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                certification: Certification::Uncertified,
+            },
+        )
+        .with_state_graph_instance(None);
+        assert!(!serde_json::to_value(proved)
+            .expect("serializes")
+            .as_object()
+            .expect("item is an object")
+            .contains_key("instance"));
     }
 
     /// FR-990 writes the structured result members on the settled item while
