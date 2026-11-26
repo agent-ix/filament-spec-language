@@ -22,6 +22,7 @@ use fsl_semantics::model::observation::{
     DocumentRef, FrameChange, FrameWitness, LinkDifference, SelectedObject,
 };
 use fsl_semantics::value::environment_stage::membership_failure_cause;
+use ix_trace_rs::implements;
 
 mod protocol;
 pub use protocol::{
@@ -1349,6 +1350,40 @@ struct ExtractionPositionRead {
     byte: u64,
     line: u64,
     column: u64,
+}
+
+fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadError> {
+    let encoded = serde_json::to_vec(value).map_err(NativeRunReadError::Malformed)?;
+    let extraction: ExtractionRead = read_typed(&encoded).map_err(|error| match error {
+        NativeRunReadError::MalformedMember { member, source } => {
+            NativeRunReadError::MalformedMember {
+                member: if member.is_empty() {
+                    "extraction".to_owned()
+                } else {
+                    format!("extraction.{member}")
+                },
+                source,
+            }
+        }
+        other => other,
+    })?;
+    if extraction.map.segments.is_empty() {
+        return Err(NativeRunReadError::Invalid {
+            member: "extraction.map.segments",
+            reason: "a non-empty segment array",
+        });
+    }
+    if extraction
+        .original_regions
+        .as_ref()
+        .is_some_and(Vec::is_empty)
+    {
+        return Err(NativeRunReadError::Invalid {
+            member: "extraction.original_regions",
+            reason: "a non-empty region array",
+        });
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -2741,6 +2776,7 @@ pub fn read_outcome_diagnostics(
 /// working-byte bounds. An over-long input is refused before it is decoded;
 /// a growth past the working bound is refused before it happens, with no
 /// partial result.
+#[implements("FR-267-AC-17")]
 #[ix_trace_rs::string_edge]
 pub fn read_native_run_result_bounded(
     bytes: &[u8],
@@ -2811,12 +2847,7 @@ pub fn read_native_run_result_bounded(
             }
         }
         if let Some(extraction) = &document.extraction {
-            let _: ExtractionRead = serde_json::from_value(extraction.clone()).map_err(|_| {
-                NativeRunReadError::Invalid {
-                    member: "extraction",
-                    reason: "a closed native extraction record",
-                }
-            })?;
+            validate_extraction(extraction)?;
         }
         let deciding_element = splice
             .element
@@ -4357,5 +4388,92 @@ fn run_limits(
             max_candidates.to_string(),
         )])),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod qsl_3117_deciding_run {
+    use super::{read_native_run_result, NativeRunReadError};
+    use ix_trace_rs::trace;
+    use serde_json::{json, Value};
+
+    /// The strict-reader decision case from QSL-3117: an empty map must be
+    /// refused with its member path, rather than admitted as a valid extraction.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_rejects_empty_map_segments() {
+        let mut result: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native-run-result-decisive.json"
+        ))
+        .unwrap();
+        result["extraction"] = json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": {},
+            "map": {"region": {"start": 0, "end": 0}, "segments": []}
+        });
+
+        let encoded = serde_json::to_vec(&result).unwrap();
+        let read = read_native_run_result(&encoded);
+        let observed = match &read {
+            Ok(_) => "reader accepted map.segments: []",
+            Err(_) => "reader refused but did not report the required member path",
+        };
+        assert!(
+            match &read {
+                Err(NativeRunReadError::Invalid { member, .. })
+                    if *member == "extraction.map.segments" =>
+                    true,
+                Err(NativeRunReadError::MalformedMember { member, .. })
+                    if member == "extraction.map.segments" =>
+                    true,
+                _ => false,
+            },
+            "strict extraction reader must refuse `map.segments: []` and name `extraction.map.segments`; {observed}"
+        );
+    }
+
+    /// FR-267-AC-17: malformed extraction members report the first exact path.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_malformed_extraction_members() {
+        let cases = [
+            ("extraction.source", json!({"source": null})),
+            ("extraction.map", json!({"map": null})),
+            ("extraction.binding", json!({"binding": null})),
+            ("extraction.body.identity", json!({"body": {"identity": 1}})),
+            (
+                "extraction.map.segments",
+                json!({"map": {"region": {"start": 0, "end": 0}, "segments": []}}),
+            ),
+        ];
+        for (expected, malformed) in cases {
+            let mut document: Value = serde_json::from_str(include_str!(
+                "../../../tests/fixtures/native-run-result-decisive.json"
+            ))
+            .unwrap();
+            let mut extraction = json!({
+                "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+                "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+                "binding": {"clause": "check", "package": "fixture/package"},
+                "outcome": {},
+                "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+            });
+            if malformed.get("source").is_some() {
+                extraction["source"] = malformed["source"].clone();
+            } else {
+                for (key, value) in malformed.as_object().unwrap() {
+                    extraction[key] = value.clone();
+                }
+            }
+            document["extraction"] = extraction;
+            let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+            assert!(
+                matches!(result, Err(NativeRunReadError::Invalid { member, .. }) if member == expected)
+                    || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
+                "expected refusal naming {expected}, got {result:?}"
+            );
+        }
     }
 }
