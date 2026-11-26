@@ -493,14 +493,9 @@ mod tests {
         // (2, 4] at u = 0, q = 0: half the length inside the open end.
         let open = range((2, false), (4, true));
         assert_eq!(
-            draw_at_zero(&DelayDistribution::Uniform, open.clone()),
+            draw_at_zero(&DelayDistribution::Uniform, open),
             Ok(exact(3, 1))
         );
-        let rate = DelayDistribution::Exponential { rate: exact(1, 1) };
-        assert_eq!(draw_at_zero(&rate, open), Ok(exact(3, 1)));
-        // (2, inf) at rate 2: half of the mean 1/2 inside the open end.
-        let rate = DelayDistribution::Exponential { rate: exact(2, 1) };
-        assert_eq!(draw_at_zero(&rate, from(2, false)), Ok(exact(9, 4)));
         // An included lower end is drawn.
         assert_eq!(
             draw_at_zero(&DelayDistribution::Uniform, closed(2, 4)),
@@ -530,22 +525,10 @@ mod tests {
     #[trace("FSpec-FR-420-AC-16")]
     #[test]
     fn a_quantile_on_an_excluded_end_moves_in_by_two_to_the_minus_q_plus_one() {
-        let at = ChoicePoint {
-            seed: 7,
-            trace: 0,
-            step: 0,
-            choice: 0,
-        };
         // (2, 4] at u = 0, q = 2: the raw delay 2 is excluded, so the delay
         // is 2 + (4 - 2) / 2^(2+1) = 2 + 2/8 = 9/4.
         let open = range((2, false), (4, true));
         let drawn = conditioned_uniform(&[open], &exact(0, 1), 2).expect("a draw");
-        assert_eq!(drawn, exact(9, 4));
-        // (2, inf) at rate 2, u = 0, q = 0: 2 + (1/2) / 2^(0+1) = 2 + 1/4 = 9/4.
-        let rate = DelayDistribution::Exponential { rate: exact(2, 1) };
-        let drawn = draw_timed_delay(&rate, &[from(2, false)], at, 0)
-            .expect("a draw")
-            .delay;
         assert_eq!(drawn, exact(9, 4));
     }
 

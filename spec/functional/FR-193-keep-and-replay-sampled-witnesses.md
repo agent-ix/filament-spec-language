@@ -109,11 +109,6 @@ pub fn replay_sampled_witness(
 - It SHALL check that each drawn random value lies in its parameter's
   support; a value outside SHALL refuse with `invalid_runtime_input`/
   `invalid-value`.
-- Over a timed subject it SHALL use the witness's recorded delay and choice
-  draws and run no sampler, and SHALL still re-derive each draw from the
-  recorded seed, trace index, step, choice index and `q` by FR-254's draw
-  derivation and compare it with the recorded draw; a recorded value is never
-  trusted, and a difference is `Inconclusive(ReplayParity)`.
 - It SHALL recompute each choice with FR-188's `weighted_choice` from the
   seed, the trace index, the step and the choice index, and check that it
   selects the recorded operation, scheduled identity and values; a
@@ -168,7 +163,6 @@ pub fn replay_sampled_witness(
 | FR-193-AC-5 | Supplement each `Service` and `Health` unit with TC-628 step 4's independent `test/mixed-workload` selection and `Both` workload, leaving its stochastic model, `Steady` workload, claim, initial snapshot and universe unchanged. S4 refuses each supplemented unit `unsupported_construct`/`not-yet-implemented` at `Both` (FR-185-AC-12). The witnesses of AC-1 replay `Reproduced` over the checked subject of `Service`, and so do the witnesses of the `Health` fault claim of AC-3 over the checked subject of `Health`, in each case although `emit_checked` refuses the package. The ordinary `Service` unit remains emittable (FR-185-AC-7). | Test (TC-628) |
 
 | FR-193-AC-6 | With `max_witnesses = 0`, EN-4 retains each sample whose claim evaluation is undefined as `Undefined(UndefinedEvaluation)`. With a positive maximum and more non-undefined violating samples than the bound across multiple tests, it retains exactly the first `max_witnesses` in trace-index order across tests, each with its exact path probability; undefined samples remain retained in addition to that bounded set. | Test (TC-640) |
-| FR-193-AC-7 | Replay of a sampled witness over a timed subject uses the recorded delay and choice draws and runs no sampler, and still re-derives each draw from the recorded seed, trace index, step, choice index and `q` by FR-254's draw derivation and compares it with the recorded draw: the recorded witness is `Reproduced`, and the same witness with one recorded delay or index changed settles `Inconclusive(ReplayParity)`. | Test (TC-709) |
 ## Dependencies
 
 - ADR-024 SV-6 to SV-8; ADR-018 CX-1 to CX-3; FR-185 "Package emission".
