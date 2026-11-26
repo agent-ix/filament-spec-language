@@ -15,7 +15,7 @@ use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
+    check_probability_certificate_document, Certification, CertificateRule, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, IncompleteCause, InconclusiveCause, ModelCheckLimit,
     ProbabilityCertificateLocus, ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis,
     TerminalValue,
@@ -577,11 +577,11 @@ fn fair_expected_elapsed_certifies_both_extrema() {
     }
 }
 
-/// FR-204-AC-24: an unreachable target has infinite elapsed time, so every
-/// threshold is proved without manufacturing a finite exact value.
+/// FR-204-AC-24: workload expected elapsed time is not decided, an infinite
+/// one included.
 #[trace("TC-639", "FR-204-AC-24")]
 #[test]
-fn workload_mean_time_proves_infinite_lower_bound_without_exact_value() {
+fn workload_mean_time_is_not_proved_when_infinite() {
     let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under One on origin { expected elapsed until holds(false) >= 3 ms }\n";
     let world = retx(
         GUARD,
@@ -590,37 +590,107 @@ fn workload_mean_time_proves_infinite_lower_bound_without_exact_value() {
         claims,
     );
     let record = settle(&world, "MeanTime");
+    let terminal = record.terminal().expect("a terminal record");
     assert!(
-        matches!(
-            record.terminal().map(|terminal| terminal.value()),
-            Some(TerminalValue::Proved {
-                basis: ProofBasis::Exhaustive,
-                ..
-            })
-        ),
+        matches!(terminal.value(), TerminalValue::Unsupported(_)),
         "{record:#?}"
     );
-    assert!(record.exact_probabilistic.is_none());
+    let code = terminal.diagnostic().expect("a diagnostic");
+    assert_eq!(code.code(), "unsupported_construct");
+    assert_eq!(code.cause(), "not-yet-implemented");
 }
 
-/// FR-204-AC-25: every admitted scheduler has the same unreachable target.
+const NEVER: &str = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
+
+/// FR-204-AC-25, FR-920-AC-5: every scheduler misses `false`, so the least
+/// expected time is infinite; the proof is certified by a document with no
+/// value and no rank, and a row added to it is rejected.
 #[trace("TC-639", "FR-204-AC-25")]
+#[trace("TC-2489", "FR-920-AC-5")]
 #[test]
-fn every_scheduler_mean_time_proves_infinite_lower_bound_without_exact_value() {
-    let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
-    let world = retx(GUARD, true, "", claims);
+fn every_scheduler_infinite_mean_time_is_certified() {
+    let world = retx(GUARD, true, "", NEVER);
     let record = settle(&world, "MeanTime");
     assert!(
         matches!(
             record.terminal().map(|terminal| terminal.value()),
             Some(TerminalValue::Proved {
                 basis: ProofBasis::Exhaustive,
-                ..
+                certification: Certification::Certified,
             })
         ),
         "{record:#?}"
     );
     assert!(record.exact_probabilistic.is_none());
+    let doc = document(&record);
+    assert_eq!(doc["objective"]["timed"]["form"], "expected-elapsed");
+    assert_eq!(doc["objective"]["optimization"], "minimum");
+    assert_eq!(doc["objective"]["targets"], json!([]));
+    assert_eq!(doc["values"], json!([]));
+    assert_eq!(doc["ranking"], json!([]));
+    assert!(matches!(
+        check(&world, "MeanTime", &doc),
+        Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))
+    ));
+
+    // A key of the product, taken from a finite proof over the same model.
+    let finite = retx(
+        GUARD,
+        true,
+        "",
+        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(c.late) >= 1 ms }\n",
+    );
+    let key = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
+        URL_SAFE_NO_PAD
+            .decode(
+                document(&settle(&finite, "MeanTime"))["values"][0]["state"]
+                    .as_str()
+                    .expect("a key"),
+            )
+            .expect("base64url"),
+    );
+    let tampered = settle_tampered(&world, "MeanTime", move |certificate| {
+        certificate
+            .values
+            .push(fsl_replay::ExactProbabilityValue {
+                state: key.clone(),
+                value: ratio(3, 1),
+            });
+    });
+    assert_eq!(rejected_item_rule(&tampered), CertificateRule::Malformed);
+}
+
+/// FR-921-AC-5: a row in an infinite document is rejected, and a document with
+/// no row does not make a finite expected time infinite.
+#[trace("TC-2490", "FR-921-AC-5")]
+#[test]
+fn an_infinite_expected_time_is_rederived_not_claimed() {
+    let world = retx(GUARD, true, "", NEVER);
+    let infinite = document(&settle(&world, "MeanTime"));
+    let finite = retx(
+        GUARD,
+        true,
+        "",
+        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(c.late) >= 1 ms }\n",
+    );
+    let proof = document(&settle(&finite, "MeanTime"));
+    for member in ["values", "ranking"] {
+        let mut altered = infinite.clone();
+        altered[member] = json!([proof[member][0].clone()]);
+        assert_eq!(
+            rejected_rule(&world, "MeanTime", &altered),
+            ProbabilityCertificateRule::Malformed,
+            "{member}"
+        );
+    }
+    assert!(accepted(&finite, "MeanTime", &proof));
+    let mut emptied = proof;
+    emptied["values"] = json!([]);
+    emptied["ranking"] = json!([]);
+    assert_eq!(
+        rejected_rule(&finite, "MeanTime", &emptied),
+        ProbabilityCertificateRule::Malformed
+    );
 }
 
 // --- FR-923 (TC-2492) -------------------------------------------------------

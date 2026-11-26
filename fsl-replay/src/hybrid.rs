@@ -10,6 +10,7 @@
 //! soundness is never read: [`SolverMethod`] has no such field.
 
 use filament_exact::{Integer, NonZeroInteger, Rational};
+use ix_trace_rs::implements;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::BTreeSet;
@@ -20,6 +21,7 @@ use crate::hybrid_replay::{
     HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal,
     HybridTrace, ProofCoverage, ReplayRecord,
 };
+use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::{
     Certification, IncompleteCause, InconclusiveCause, ProofBasis, SettlementBasis, TerminalValue,
@@ -391,17 +393,8 @@ impl SolverResult {
             settled.certificate = certificate.map(CertificateRecord::unchecked);
             return Ok(settled);
         }
-        let exhausted = |meter: &HybridReplayMeter| {
-            HybridSettlement::without_counterexample(TerminalValue::Incomplete(
-                IncompleteCause::LimitReached {
-                    limit: ModelCheckLimit::EvaluationMeter {
-                        counter: LimitKind::WorkUnits,
-                    },
-                    value: meter.work_units,
-                    required: None,
-                },
-            ))
-        };
+        let exhausted =
+            |meter: &HybridReplayMeter| HybridSettlement::without_counterexample(work_stop(meter));
         let static_outcome = match static_replay(graph, claim, trace, meter) {
             Ok(outcome) => outcome,
             Err(HybridReplayRefusal::ResourceExhausted { .. }) => return Ok(exhausted(meter)),
@@ -462,9 +455,11 @@ impl SolverResult {
     }
 
     /// Check the certificate of a proof that settled `proved` (FR-750
-    /// "Dispatch"): accepted, the record is `certified`; rejected, it stays
-    /// as FR-250 settled it. A proof settled any other way records its
-    /// certificate unchecked.
+    /// "Dispatch"): accepted, the item is `certified`; rejected, it settles
+    /// `inconclusive`, `certificate-rejected`, and a check the work meter
+    /// stops settles `incomplete`, whoever proved it. An item settled any
+    /// other way records its certificate unchecked.
+    #[implements("FR-751-AC-1", "FR-751-AC-2", "FR-751-AC-8")]
     fn certify_proof(
         &self,
         graph: &CheckedGraph,
@@ -495,6 +490,14 @@ impl SolverResult {
                 settled.certificate = Some(CertificateRecord::accepted(certificate));
             }
             CertificateOutcome::Rejected(rejection) => {
+                settled.value = if rejection.rule == HybridCertificateRule::WorkLimit {
+                    work_stop(meter)
+                } else {
+                    TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                        rule: CertificateRule::Hybrid(rejection.rule),
+                        at: CertificateLocus::CertificatePointer(rejection.at.clone()),
+                    })
+                };
                 settled.certificate = Some(CertificateRecord::rejected(
                     certificate,
                     rejection.rule,
@@ -650,6 +653,18 @@ fn run_witness(
     )
 }
 
+/// The value of an item whose work meter stopped a replay or a certificate
+/// check.
+fn work_stop(meter: &HybridReplayMeter) -> TerminalValue {
+    TerminalValue::Incomplete(IncompleteCause::LimitReached {
+        limit: ModelCheckLimit::EvaluationMeter {
+            counter: LimitKind::WorkUnits,
+        },
+        value: meter.work_units,
+        required: None,
+    })
+}
+
 impl HybridSettlement {
     fn without_counterexample(value: TerminalValue) -> Self {
         Self {
@@ -686,15 +701,7 @@ impl HybridSettlement {
         certificate: Option<&HybridCertificate>,
         meter: &mut HybridReplayMeter,
     ) -> Result<Self, HybridReplayRefusal> {
-        let exhausted = |meter: &HybridReplayMeter| {
-            Self::without_counterexample(TerminalValue::Incomplete(IncompleteCause::LimitReached {
-                limit: ModelCheckLimit::EvaluationMeter {
-                    counter: LimitKind::WorkUnits,
-                },
-                value: meter.work_units,
-                required: None,
-            }))
-        };
+        let exhausted = |meter: &HybridReplayMeter| Self::without_counterexample(work_stop(meter));
         let unchecked = certificate.map(CertificateRecord::unchecked);
         let settle = |value, certificate| Self {
             value,

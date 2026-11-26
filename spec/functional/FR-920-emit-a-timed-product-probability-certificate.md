@@ -79,6 +79,10 @@ would have refused the certificate before reading a value.
 - The document SHALL carry no component, exit, time-lock, race, region
   successor, activation or transition member. A list of these would be a
   second, unchecked statement of what the checker computes.
+- For `expected-elapsed` under every scheduler whose least expected time is
+  `+infinity`, `optimization` SHALL be `minimum`, `targets` the complete
+  target set, which MAY be empty, and `values` and `ranking` SHALL be empty
+  arrays: no finite value or rank exists, and FR-921 rederives the infinity.
 
 ### Keys
 
@@ -144,6 +148,7 @@ would have refused the certificate before reading a value.
 | FR-920-AC-2 | With the guard `self.x > 1 ms`, the proof of `Deadline` retains a document with `route: "region"` and region keys; two of its keys that differ only in the `fraction` of `x` and of the deadline clock survive a write and read as distinct keys. | Test (TC-2489) |
 | FR-920-AC-3 | AC-1's document with an added `components` member is rejected `Malformed` at `components`; the package S4 emits for AC-1's unit contains no certificate node. | Test (TC-2489) |
 | FR-920-AC-4 | Over a workload whose product has a delay choice (a free `tick` guarded `self.x >= 1 ms` racing `send` given 1 or 2 ms under a workload weighing both 1), the proof of a `>=` bound retains `workload-minimum` and of a `<=` bound `workload-maximum`, each with the value of that extremum; a bound strictly between the extrema is refuted with the checker's recomputed mass of the witness scheduler; a document that states `workload` or the other extremum's spelling is rejected. A workload whose product has one choice at every state retains `workload`, and a residual spelling is rejected there. | Test (TC-2489) |
+| FR-920-AC-5 | Over `Retx` with the guard `self.x >= 1 ms`, the proof of `expected elapsed until holds(false) >= 3 ms` under every scheduler retains a `timed-product/v1` document whose `objective.timed.form` is `expected-elapsed`, whose `optimization` is `minimum` and whose `targets`, `values` and `ranking` are empty; `check_probability_certificate_document` returns `AcceptedInfinite`. | Test (TC-2489) |
 
 ## Dependencies
 

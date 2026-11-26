@@ -94,9 +94,6 @@ pub(crate) type SpelledWitness = (Box<ReproducedProbabilityWitness>, Probability
 pub(crate) enum ExactReport {
     /// Only independently reproduced path evidence can settle refuted.
     Refuted(Box<ReproducedProbabilityWitness>, Box<ProbabilityWire>),
-    /// A closed finite product establishes an unbounded expected-time bound
-    /// without a finite exact value or a checker certificate.
-    ProvedExhaustively,
     /// The `on each` claim has no instance to read (FR-875).
     NoInstance,
     /// A semantic replay disagreed with the produced path evidence.
@@ -169,10 +166,6 @@ impl ExactReport {
         Option<SpelledWitness>,
     ) {
         let (record, evidence) = match self {
-            Self::ProvedExhaustively => (
-                TerminalRecord::proved_by_exhaustive_engine(index, backend),
-                None,
-            ),
             Self::Refuted(reproduced, wire) => {
                 return (
                     TerminalRecord::refuted_by_probability_witness(
@@ -1070,6 +1063,7 @@ fn same_mean_time_choice(
     }
 }
 
+#[implements("FR-204-AC-24", "FR-204-AC-25")]
 fn run_timed_mean(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -1187,24 +1181,20 @@ fn run_timed_mean(
             return broken();
         }
     };
-    if matches!(
-        solved.values.get(start.index()),
-        Some(ExtRational::PlusInfinity)
-    ) {
-        if matches!(bound, Bound::AtLeast(_)) {
-            return EngineReport::Exact(Box::new(ExactReport::ProvedExhaustively));
-        }
-        return not_yet();
-    }
     if matches!(claim.scheduler, ProbScheduler::Workload(_)) {
         return not_yet();
     }
-    let Some(ExtRational::Finite(value)) = solved.values.get(start.index()) else {
-        return not_yet();
-    };
-    let holds = match bound {
-        Bound::AtLeast(threshold) => value >= threshold,
-        Bound::AtMost(threshold) => value <= threshold,
+    // An infinite least time holds any `>=` bound; its certificate carries no
+    // value or rank, and the checker rederives it from its own graph.
+    let infinite = matches!(
+        solved.values.get(start.index()),
+        Some(ExtRational::PlusInfinity)
+    );
+    let holds = match (solved.values.get(start.index()), bound) {
+        (Some(ExtRational::PlusInfinity), Bound::AtLeast(_)) => true,
+        (Some(ExtRational::Finite(value)), Bound::AtLeast(threshold)) => value >= threshold,
+        (Some(ExtRational::Finite(value)), Bound::AtMost(threshold)) => value <= threshold,
+        _ => false,
     };
     if !holds {
         return not_yet();
@@ -1213,20 +1203,23 @@ fn run_timed_mean(
         Ok(identity) => identity,
         Err(error) => return graph_failure(error, &limits, subject),
     };
-    let values = solved.values;
-    let mut certificate = match certificate_of(
-        &product,
-        None,
-        &values,
-        fsl_replay::ProbabilityDocumentIoLimits {
-            bytes: document_limits.bytes,
-            storage_bytes: document_limits.storage_bytes,
-        },
-        cancel,
-    ) {
-        Ok(certificate) => certificate,
-        Err(error) => {
-            return document_failure(error, subject);
+    let mut certificate = if infinite {
+        ExactProbabilityCertificate { values: Vec::new() }
+    } else {
+        match certificate_of(
+            &product,
+            None,
+            &solved.values,
+            fsl_replay::ProbabilityDocumentIoLimits {
+                bytes: document_limits.bytes,
+                storage_bytes: document_limits.storage_bytes,
+            },
+            cancel,
+        ) {
+            Ok(certificate) => certificate,
+            Err(error) => {
+                return document_failure(error, subject);
+            }
         }
     };
     let included = match mean_time_reachable_before_target(&product, &target) {
@@ -1255,9 +1248,13 @@ fn run_timed_mean(
         .collect::<Vec<_>>();
     targets.sort();
     targets.dedup();
-    let ranking = match mean_time_ranking(&product, &target, &included, &solved.policy) {
-        Some(ranking) => ranking,
-        None => return not_yet(),
+    let ranking = if infinite {
+        Vec::new()
+    } else {
+        match mean_time_ranking(&product, &target, &included, &solved.policy) {
+            Some(ranking) => ranking,
+            None => return not_yet(),
+        }
     };
     let optimization = match objective {
         UnboundedObjective::Min => ProbabilityObjective::Minimum,
@@ -2494,7 +2491,8 @@ fn checked_report(
                     evidence: Some(evidence),
                 }))
             }
-            ExactProbabilityCertificateCheck::AcceptedVacuous(_) => {
+            ExactProbabilityCertificateCheck::AcceptedVacuous(_)
+            | ExactProbabilityCertificateCheck::AcceptedInfinite(_) => {
                 EngineReport::Exact(Box::new(ExactReport::Proved {
                     check,
                     extremum: None,

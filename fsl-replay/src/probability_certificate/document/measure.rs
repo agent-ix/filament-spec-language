@@ -2448,7 +2448,7 @@ pub(super) fn check(
             }
             poll(cancel)?;
             return Ok(ExactProbabilityCertificateCheck::AcceptedVacuous(
-                ProbabilityVacuityAcceptance {
+                ProbabilityValueFreeAcceptance {
                     document: bytes.to_vec().into_boxed_slice(),
                     side: if plan.strict {
                         ProbabilityBoundSide::AtLeast

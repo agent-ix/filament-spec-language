@@ -295,13 +295,12 @@ unsupported cause `DelayDistribution{operation}`.
   minimum at the initial state is `+infinity` SHALL settle `proved` only
   after FR-921's checker rederives that infinity from the item's certificate
   (ADR-028 SP-5, SP-6, CE-5; FR-920: no timed proof is emitted
-  `uncertified`). Until FR-920's document and FR-921's checker carry an
-  infinite expected-elapsed value, such an item over every scheduler SHALL
-  settle `incomplete`, `Incomplete(CertificateUnchecked)`, written as FSpec
-  FR-331's `bounded-search-incomplete{reason: certificate-unchecked}`, as
-  FR-182 settles a closed search whose certificate no core check read. It
-  carries no `proved` result, no `certification`, no infinite `ExactValue`
-  and no fabricated finite exact value.
+  `uncertified`). EN-5 SHALL retain FR-920's `timed-product/v1` document of an
+  infinite expected time, and the accepted record is
+  `Proved{basis: Exhaustive, certification: Certified}` carrying that
+  document, with no infinite `ExactValue` and no fabricated finite exact
+  value. A document the checker rejects settles `inconclusive`,
+  `CertificateRejected{rule, at}`.
 - While EN-5 does not decide `expected elapsed until` under a workload on a
   timed subject, such an item SHALL settle `unsupported` with
   `unsupported_construct`/`not-yet-implemented`, as FR-203-AC-22 settles a
@@ -338,7 +337,7 @@ unsupported cause `DelayDistribution{operation}`.
 | FR-204-AC-22 | For FR-196's cap-2 no-operation oracle from AC-2, the every-scheduler claim `expected elapsed until holds(B) <= 3 ms` is `refuted` only after FR-202 replays FR-201-AC-81's finite Lower document (initial bound 5 ms, the same exact initial value as AC-2); the result carries the replayed witness and no infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
 | FR-204-AC-23 | For AC-22's claim, a supplied finite Lower document with `ranking` omitted settles `inconclusive` with cause `CertificateRejected{Malformed, CertificateMember("ranking")}`; the infinite engine start value alone does not settle `refuted` and emits no `ExactValue`. | Test (TC-639) |
 | FR-204-AC-24 | On a timed `Retx` subject with an admitted workload `One` and claim `expected elapsed until holds(false) >= 3 ms`, whose exact minimum is `+infinity`, the item settles `unsupported` with `unsupported_construct`/`not-yet-implemented` ("Evidence": workload expected elapsed time is not yet decided), never `proved`, and carries no `certification`, no infinite `ExactValue` and no fabricated finite exact value. | Test (TC-639) |
-| FR-204-AC-25 | On timed `Retx` with claim `expected elapsed until holds(false) >= 3 ms` under every scheduler, where every admitted scheduler has nonreachability value `+infinity`, no certificate is checked by FR-921, so the item settles `incomplete`, `Incomplete(CertificateUnchecked)`, written `{"type": "bounded-search-incomplete", "reason": "certificate-unchecked"}`, never `proved` (`uncertified` or otherwise), and carries no infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
+| FR-204-AC-25 | On timed `Retx` with claim `expected elapsed until holds(false) >= 3 ms` under every scheduler, whose least expected time is `+infinity`, the item settles `proved`, basis `exhaustive`, certification `certified`, retaining FR-920-AC-5's document, which FR-921's checker accepts by rederiving the infinity from its own graph; it carries no infinite `ExactValue` or fabricated finite exact value, and with one value row added to the document the item settles `inconclusive`, `CertificateRejected{rule: malformed}`. | Test (TC-639) |
 | FR-204-AC-26 | A bounded-window form other than a deadline event is decided over the region MDP even when every constraint is closed, with dense values derived in "Worked example: pointwise values" (items 6 and 7). Over the closed model `Gap` of that example, over every scheduler, `always[1 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`: `probability <= 0.5` settles `refuted` on the maximum `ExactValue{1}` and `probability >= 0.5` settles `refuted` on the minimum `ExactValue{0}`, never `proved` on the digital MDP's maximum `0`, and the item's certificate document has `route: "region"`. Over `Retx` of AC-1, `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`, so `probability <= 0.95` does not settle `proved`, which the digital MDP's maximum `9/10` would give: it settles `refuted` on the maximum `ExactValue{1}`. | Test (TC-639) |
 
 The Chain check also asserts that the six firing orders listed in the worked

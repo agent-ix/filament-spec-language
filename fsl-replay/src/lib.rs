@@ -528,7 +528,7 @@ pub use probability_certificate::{
     ProbabilityProductKey, ProbabilityProofDocument, ProbabilityRewardObjective,
     ProbabilitySourceError, ProbabilitySourceLimits, ProbabilitySourceRequest,
     ProbabilityStateEvent, ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness,
-    ProbabilityVacuityAcceptance, ProbabilityWitnessError, ProbabilityWitnessPath,
+    ProbabilityValueFreeAcceptance, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey,
     RegionKeyKind, RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind,
     TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,

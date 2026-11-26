@@ -42,8 +42,8 @@ certificate `InequalityFails` at the first such state; the item settles
 
 ## Outputs
 
-- `ExactProbabilityCertificateCheck` (`Accepted` or `Rejected`) or a
-  `ProbabilityDocumentError` refusal.
+- `ExactProbabilityCertificateCheck` (`Accepted`, `AcceptedInfinite` or
+  `Rejected`) or a `ProbabilityDocumentError` refusal.
 
 ## Behavior
 
@@ -90,12 +90,28 @@ share:
    rejects the document;
 8. FR-201's targets, decided states, `Prob0`, `Prob1` and tight actions.
 
+### Infinite expected time
+
+For an `expected-elapsed` document the checker SHALL compute, on its own
+rebuilt product and with its own graph code, the states from which some policy
+reaches a target with probability one: the greatest set whose members reach a
+target through choices that never leave the set. A quiescent state that is not
+a target has no move, so no target is reached from it. When the initial state
+is outside that set, the least expected time is `+infinity` (ADR-028 CE-3).
+The checker SHALL then accept the document as `AcceptedInfinite` only for a
+`>=` bound with no `values` row and no `ranking` row, rejecting it
+`ThresholdMissed` for a `<=` bound and `Malformed` when it has a row. When the
+initial state is in the set the expected time is finite and the conditions
+above apply, so a document without rows is rejected `Malformed`; a rebuilt
+product that then holds a quiescent state is refused as unsupported.
+
 ### Not trusted
 
 The stated `route`, `unit`, `scale` and `form` SHALL only be compared; a
 difference refuses `ObjectiveMismatch` before any value is read. Every
 reachable state of the rebuilt product SHALL have a row in an `exact` or
-`upper` document; a missing row, or a row for a key the rebuilt product does
+`upper` document, except a document of an infinite expected time ("Infinite
+expected time"), which has none; a missing row, or a row for a key the rebuilt product does
 not reach, rejects `Malformed` at `values`. A key with a wrong cap, clock
 set, unit or scale rejects `Malformed` at `values`. No transition, race,
 component, time-lock or phase is read from the document, because it has none
@@ -115,6 +131,7 @@ the result.
 | FR-921-AC-2 | The same document with `route` set to `"region"`, or `scale` set to `"2"`, is refused `ObjectiveMismatch`; with the cap of `x` in one key changed from 3 to 2 it is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-3 | The same document with one reachable row removed, or with one added row for a key the product does not reach, is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-4 | `fsl-probability-check`, a separate process with no `fsl-analyze` linkage, accepts the documents of FR-922-AC-1, FR-923-AC-1, FR-924-AC-1 and FR-877-AC-1 from their bytes and the byte provision, and rejects each with one value altered. | Test (TC-2495) |
+| FR-921-AC-5 | FR-920-AC-5's document with one value row added, or with one ranking row added, is rejected `Malformed`; the document of the proved claim `expected elapsed until holds(c.late) >= 1 ms`, whose least expected time is `10/9 ms`, with its `values` and `ranking` emptied is rejected `Malformed`. | Test (TC-2490) |
 
 ## Dependencies
 

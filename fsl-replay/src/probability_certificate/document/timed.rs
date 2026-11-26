@@ -259,7 +259,11 @@ fn check_expected_elapsed(
     let binding = claim_binding(system, claim)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?
         .map(|binding| binding.reference);
-    let (graph, costs) = enumerate_region_mean_time(
+    let MeanTimeGraph {
+        graph,
+        costs,
+        quiescent,
+    } = enumerate_region_mean_time(
         system,
         timed,
         claim,
@@ -274,6 +278,14 @@ fn check_expected_elapsed(
     )?;
     if target_keys(&graph) != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    if !some_policy_reaches_almost_surely(&graph, cancel, meter)?.contains(&graph.initial) {
+        return check_infinite_mean_time(graph.initial, bytes, &document, &bound);
+    }
+    // A finite expectation reads every state's delay and steps, which a
+    // quiescent state does not have.
+    if quiescent {
+        return Err(ProbabilityDocumentError::Unsupported);
     }
     let checked = check_mean_time_values(
         &graph,
@@ -292,6 +304,84 @@ fn check_expected_elapsed(
         }
         rejected => Ok(rejected),
     }
+}
+
+/// The checker's expected-elapsed graph.
+struct MeanTimeGraph {
+    graph: CheckerGraph,
+    costs: RegionPolicyWeights,
+    /// Whether a reached non-target state is quiescent, listed with no choice.
+    quiescent: bool,
+}
+
+/// The states from which some policy reaches a target with probability one,
+/// by the nested attractor over the checker's own graph: the greatest set `s`
+/// whose members reach a target through choices that never leave `s`.
+fn some_policy_reaches_almost_surely<'g>(
+    graph: &'g CheckerGraph,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+) -> Result<BTreeSet<&'g ProbabilityProductKey>, ProbabilityDocumentError> {
+    let mut surviving: BTreeSet<_> = graph.states.keys().collect();
+    loop {
+        let mut reaching: BTreeSet<_> = graph
+            .states
+            .iter()
+            .filter(|(_, state)| state.terminal == Some(true))
+            .map(|(key, _)| key)
+            .collect();
+        loop {
+            let mut grew = false;
+            for (key, state) in &graph.states {
+                charge_work(meter, cancel, 1)?;
+                poll(cancel)?;
+                if reaching.contains(key) {
+                    continue;
+                }
+                let progresses = state.choices.iter().any(|choice| {
+                    choice.iter().all(|edge| surviving.contains(&edge.target))
+                        && choice.iter().any(|edge| reaching.contains(&edge.target))
+                });
+                if progresses {
+                    reaching.insert(key);
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        if reaching.len() == surviving.len() {
+            return Ok(reaching);
+        }
+        surviving = reaching;
+    }
+}
+
+/// Admit the certificate of an infinite least expected time: it holds an `>=`
+/// bound and carries no value or rank, there being no finite one.
+#[implements("FR-204-AC-25", "FR-921-AC-5")]
+fn check_infinite_mean_time(
+    initial: ProbabilityProductKey,
+    bytes: &[u8],
+    document: &ProbabilityCertificateDocument,
+    bound: &Bound,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    if !matches!(bound, Bound::AtLeast(_)) {
+        return Ok(rejected(
+            ProbabilityCertificateRule::ThresholdMissed,
+            initial,
+        ));
+    }
+    if !document.values.is_empty() || !document.ranking.is_empty() {
+        return Ok(rejected(ProbabilityCertificateRule::Malformed, initial));
+    }
+    Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(
+        ProbabilityValueFreeAcceptance {
+            document: bytes.into(),
+            side: super::super::ProbabilityBoundSide::AtLeast,
+        },
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -847,7 +937,7 @@ fn enumerate_region_mean_time(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
-) -> Result<(CheckerGraph, RegionPolicyWeights), ProbabilityDocumentError> {
+) -> Result<MeanTimeGraph, ProbabilityDocumentError> {
     let (base_scale, subdivisions) = match route {
         TimedProbabilityRoute::Region => region_scale_parts(timed, claim, scale)?,
         TimedProbabilityRoute::Digital => (scale, 1),
@@ -903,6 +993,7 @@ fn enumerate_region_mean_time(
     let mut states = BTreeMap::new();
     let mut costs = BTreeMap::new();
     let mut edges = 0_u64;
+    let mut quiescent = false;
     while let Some(key) = pending.pop_front() {
         charge_work(meter, cancel, 1)?;
         poll(cancel)?;
@@ -924,11 +1015,25 @@ fn enumerate_region_mean_time(
             )?;
             continue;
         }
+        // A quiescent state changes no discrete state again, so a target it
+        // does not satisfy is never reached from it.
         if timed
             .is_quiescent(current.timed.discrete())
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
         {
-            return Err(ProbabilityDocumentError::Unsupported);
+            quiescent = true;
+            costs.insert(key.clone(), Vec::new());
+            insert_checker_state(
+                key,
+                CheckerState {
+                    terminal: Some(false),
+                    choices: Vec::new(),
+                },
+                &mut states,
+                storage,
+                limits,
+            )?;
+            continue;
         }
         let mut choices = Vec::new();
         let mut choice_costs = Vec::new();
@@ -1058,15 +1163,16 @@ fn enumerate_region_mean_time(
         )?;
         costs.insert(key, choice_costs);
     }
-    Ok((
-        CheckerGraph {
+    Ok(MeanTimeGraph {
+        graph: CheckerGraph {
             initial: first_key,
             states,
             scheduler_actions: Default::default(),
             actions_by_state: None,
         },
         costs,
-    ))
+        quiescent,
+    })
 }
 
 fn mean_target(

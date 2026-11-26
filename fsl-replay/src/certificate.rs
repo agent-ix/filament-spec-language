@@ -120,6 +120,10 @@ pub enum CertificateRule {
     /// A task-product certificate edge the checker's recomputation does not
     /// produce (FSpec FR-418).
     ExtraEdge,
+    /// A rule of a hybrid solver's certificate (FSpec FR-652 "Rule
+    /// names"), written with that spelling.
+    #[serde(untagged)]
+    Hybrid(crate::hybrid_replay::HybridCertificateRule),
 }
 
 /// FR-338 and FR-314: where a certificate rejection occurred.
@@ -208,6 +212,9 @@ pub enum CertificateLocus {
         /// The component's index.
         component: u64,
     },
+    /// A hybrid certificate member, by its RFC 6901 pointer rooted at
+    /// `/certificate` (FR-751), written as that string.
+    CertificatePointer(String),
 }
 
 /// Writes each state key in `tuple`'s `states` as FSpec FR-331's State locus,
@@ -289,6 +296,7 @@ impl Serialize for CertificateLocus {
                 object.end()
             }
             Self::Query { part } => part.serialize(serializer),
+            Self::CertificatePointer(pointer) => serializer.serialize_str(pointer),
             Self::CertificateMember(member) => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
                 object.serialize_field("member", member.as_str())?;
