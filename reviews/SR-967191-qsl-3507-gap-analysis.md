@@ -34,6 +34,10 @@ Ticket: QSL-3507. quire matrix on head, read against the criteria FR-896, FR-990
 
 **FND-004.** quire matrix reports FR-896-AC-10 untagged. The PR does not change the deadlock-item path; recorded because it is in the same requirement section.
 
+## Dispositions on `ab1075e479`
+
+FND-001 fixed: FR-896-AC-8 has hand-valued source and package tests for bound objects. FND-002 fixed: FR-896-AC-9 has a hand-valued decline test for another protocol binding. FND-003 fixed: AC-7 is asserted by the keyed p/q behavior tests, and implementation tags are on the behavior code. FND-004 fixed: AC-10 now has an implementation tag and a test for a missing protocol subject. Focused verification is pending on the final head; see the PR update for gate results.
+
 ## Coverage
 
 Plan completion: not assessed

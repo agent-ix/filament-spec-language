@@ -55,6 +55,12 @@ Ticket: QSL-3507. Reviewed PR 4062 against its stacked base. The empty-set cause
 
 **FND-011.** ClaimInstances and NoClaimInstances are declared in the middle of the module's use block; claim_instances ends with no blank line before the next doc comment; `ClaimInstances::first` is public with no caller in the workspace.
 
+## Dispositions on `ab1075e479`
+
+FND-001 fixed: global conformance now resolves `subject.protocol`, uses its bound object, and declines a binding to another protocol. FND-002 fixed: one run budget is consumed across keys, cancellation/limits terminate the run, and no later key replaces a refutation. FND-003 fixed: scalar `over` types enumerate finite values. FND-004 fixed: checked-package global conformance uses the package-native protocol program and certificate/replay path. FND-005 fixed: package route now applies the same missing-role refusal. FND-006 fixed: typed terminal values select the result. FND-007 fixed: shared `decisive` selection and a single instance listing are used. FND-008 fixed with paired hand-valued route tests for admitted keys, later refutation, no instance, no initial state, scalar values, missing roles, and shared limits. FND-009: edited Rust files were formatted with rustfmt; workspace-wide `cargo fmt --check` remains unsuitable because unrelated baseline hunks fail. FND-010 fixed: both routes assert the source exit code. FND-011 fixed: declarations moved below imports and `ClaimInstances::first` is used.
+
+Focused verification is pending on the final head; see the PR update for the gate results.
+
 ## Gates
 
 Gates, base f8bb04f501 against head cd923f76fb:
