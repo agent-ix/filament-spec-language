@@ -17,7 +17,7 @@ use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::PackageModelInput;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PendingClauseForm,
-    TimedState, TimedSystem,
+    TimedState, TimedSubjectRefusal, TimedSystem, TimedVacuity, claim_start,
 };
 use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -34,6 +34,7 @@ use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
+use ix_trace_rs::implements;
 
 use super::instance_records::{decisive, undecided};
 use super::items::{INVALID_VALUE, model_refusal};
@@ -47,8 +48,8 @@ use crate::model_check::{
     StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest, check_and_settle_state_graph,
 };
 use crate::zone_check::{
-    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, certificate_item,
-    decide_timed_state_graph, explore_timed_state_graph,
+    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, ZoneUndecided,
+    certificate_item, decide_timed_state_graph, explore_timed_state_graph, undecided_cause,
 };
 
 /// The property form of a checked claim.
@@ -298,22 +299,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if let Some(refusal) = digital_closed_refusal(&timed) {
         return EngineReport::Refused(refusal);
     }
-    let instances = match read.claim.over() {
-        Some(parameter) => {
-            match system.instances(&ValueType::Reference(parameter.object.clone())) {
-                Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            }
-        }
-        None => vec![None],
+    let instances = match timed_instances(read, &system, timed.initial().len()) {
+        Ok(instances) => instances,
+        Err(settled) => return settled,
     };
-    // FR-125 Instancing: no initial state settles before no instance.
-    if timed.initial().is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
-    }
-    if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
-    }
     let graph = match fsl_replay::explore_digital_state_graph(
         &timed,
         u64::try_from(read.form.limits.limits.max_states).unwrap_or(u64::MAX),
@@ -1006,6 +995,35 @@ fn digital_closed_refusal(timed: &TimedSystem<'_, '_>) -> Option<Refusal> {
     ))
 }
 
+/// The instances a timed state-graph item runs over, `None` alone for a claim
+/// with no `over` parameter, or the report that settles the item before any
+/// run (FR-125 "Instancing", by the timed outcome layer).
+#[implements("FR-125-AC-7", "FR-125-AC-13")]
+fn timed_instances(
+    read: &Run<'_, '_>,
+    system: &ModelSystem<'_>,
+    initial_states: usize,
+) -> Result<Vec<Option<ModelInstance>>, EngineReport> {
+    let vacuous = |vacuity: TimedVacuity| {
+        no_timed_graph_decision(read, undecided_cause(&ZoneUndecided::from(vacuity)))
+    };
+    let Some(parameter) = read.claim.over() else {
+        return if initial_states == 0 {
+            Err(vacuous(TimedVacuity::NoInitialState))
+        } else {
+            Ok(vec![None])
+        };
+    };
+    let over = system.claim_instances(&ValueType::Reference(parameter.object.clone()));
+    match claim_start(initial_states, over) {
+        Ok(Ok(instances)) => Ok(instances.as_slice().iter().cloned().map(Some).collect()),
+        Ok(Err(vacuity)) => Err(vacuous(vacuity)),
+        Err(refusal) => Err(EngineReport::Refused(subject_refusal(
+            &TimedSubjectRefusal::NotSimulated(refusal),
+        ))),
+    }
+}
+
 fn no_timed_graph_decision(
     read: &Run<'_, '_>,
     cause: fsl_replay::InconclusiveCause,
@@ -1033,7 +1051,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let simulation = read.simulation();
     let system = match ModelSystem::new(simulation.clone()) {
         Ok(system) => system,
-        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        Err(failure) => return EngineReport::Refused(super::items::admission(&failure)),
     };
     let max_clocks = read
         .form
@@ -1041,24 +1059,12 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         .unwrap_or(fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS);
     let timed = match TimedSystem::with_max_clocks(&system, &model, max_clocks) {
         Ok(timed) => timed,
-        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        Err(refusal) => return EngineReport::Refused(subject_refusal(&refusal)),
     };
-    let instances = match read.claim.over() {
-        Some(parameter) => {
-            match system.instances(&ValueType::Reference(parameter.object.clone())) {
-                Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            }
-        }
-        None => vec![None],
+    let instances = match timed_instances(read, &system, timed.initial().len()) {
+        Ok(instances) => instances,
+        Err(settled) => return settled,
     };
-    // FR-125 Instancing: no initial state settles before no instance.
-    if timed.initial().is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
-    }
-    if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
-    }
     let graph = match explore_timed_state_graph(
         &timed,
         super::timed_item::zone_limits(read.form),

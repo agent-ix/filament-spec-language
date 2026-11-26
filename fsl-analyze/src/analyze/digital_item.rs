@@ -10,7 +10,9 @@
 
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{DEFAULT_MAX_CLOCKS, ModelSystem, TimedSystem};
+use fsl_eval::simulation::model::{
+    DEFAULT_MAX_CLOCKS, ModelSystem, TimedSubjectRefusal, TimedSystem,
+};
 use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
@@ -190,6 +192,9 @@ fn digital_refusal(refusal: &DigitalRefusal) -> Refusal {
             )
         }
         DigitalRefusal::UnsupportedForm => Refusal::Unsupported(NOT_YET),
+        DigitalRefusal::Instances(refusal) => {
+            subject_refusal(&TimedSubjectRefusal::NotSimulated(refusal.clone()))
+        }
         DigitalRefusal::Atom(_) | DigitalRefusal::Fault(_) => Refusal::Failed(BROKEN),
     }
 }

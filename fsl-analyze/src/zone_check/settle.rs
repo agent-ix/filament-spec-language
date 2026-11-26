@@ -278,7 +278,7 @@ pub fn settle_zone_check<S>(
 }
 
 /// The V-6 cause of an undecided EN-6 run.
-fn undecided_cause(cause: &ZoneUndecided) -> InconclusiveCause {
+pub(crate) fn undecided_cause(cause: &ZoneUndecided) -> InconclusiveCause {
     match cause {
         // FR-127's V-6 rows, which FR-235 extends.
         ZoneUndecided::NoInitialState => InconclusiveCause::NoInitialState,

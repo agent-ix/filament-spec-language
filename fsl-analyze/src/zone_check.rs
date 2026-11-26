@@ -14,7 +14,7 @@
 
 mod certificate;
 pub(crate) use certificate::state_graph_certificate;
-pub(crate) use settle::stop_cause;
+pub(crate) use settle::{stop_cause, undecided_cause};
 mod concretise;
 mod dbm;
 mod divergence;

@@ -57,6 +57,7 @@ use fsl_eval::simulation::model::{
     admitted_refutation, admitted_start, claim_start, ClockValuation, GuardedStep, ModelSimState,
     TimedState, TimedStop, TimedSystem, TimedVacuity,
 };
+use fsl_eval::simulation::NotSimulated;
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::source::Span;
 use fsl_replay::{
@@ -126,6 +127,9 @@ pub enum DigitalRefusal {
     /// interval started at many positions, or more automaton clocks than the
     /// construction builds (as EN-6 reads them, `UnsupportedForm`).
     UnsupportedForm,
+    /// The claim's instance set is refused before any run is read (FR-125
+    /// "Instancing"): a population needs a bound, or the extent check failed.
+    Instances(NotSimulated),
     /// A `holds` atom stopped with no reading.
     Atom(String),
     /// A broken invariant of the route.
@@ -1005,12 +1009,11 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         let system = self.timed().system();
         let initial_states = self.timed().initial().len();
         let over = system.claim_instances(&self.request.clause.over().1);
-        let instances = match claim_start(initial_states, over)
-            .map_err(|_| DigitalRefusal::Fault("instances"))?
-        {
-            Ok(instances) => instances,
-            Err(vacuity) => return Ok(self.vacuous(vacuity)),
-        };
+        let instances =
+            match claim_start(initial_states, over).map_err(DigitalRefusal::Instances)? {
+                Ok(instances) => instances,
+                Err(vacuity) => return Ok(self.vacuous(vacuity)),
+            };
         let start = admitted_start(initial_states, || {
             let admitted = self.admits_behaviour(automaton, instances.first())?;
             Ok::<_, Halt>(admitted.then_some(()))
