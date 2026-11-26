@@ -265,9 +265,10 @@ pub enum SampleHalt {
     },
     /// FR-254: the completions of a dense idle tail are not decided.
     IdleTailUndecided(IdleTailUndecided),
-    /// FR-254: a local time-lock was reached before the horizon.
+    /// FR-254: a fraction or long-run sample reached a time-lock, whose
+    /// reading of such a run is not decided.
     TimeLockedSample {
-        /// The state that locally time-locked.
+        /// The time-locked state.
         state: fsl_eval::simulation::StateKey,
     },
     /// FR-254's per-sample step budget was reached.
@@ -631,7 +632,7 @@ fn halted(halt: SampleHalt) -> Result<TestEnd, StatisticalRefusal> {
             TestEnd::Stopped(StatisticalStop::AutomatonStates { value })
         }
         SampleHalt::PredicateRefused(outcome) => {
-            return Err(StatisticalRefusal::PredicateRefused(outcome))
+            return Err(StatisticalRefusal::PredicateRefused(outcome));
         }
         SampleHalt::NotStochastic { state, identity } => {
             TestEnd::Unsupported(StatisticalUnsupported::NotStochastic { state, identity })
@@ -650,7 +651,7 @@ fn halted(halt: SampleHalt) -> Result<TestEnd, StatisticalRefusal> {
             value,
         }),
         SampleHalt::GeneratorMismatch { supplied } => {
-            return Err(StatisticalRefusal::GeneratorMismatch { supplied })
+            return Err(StatisticalRefusal::GeneratorMismatch { supplied });
         }
     })
 }
@@ -1386,13 +1387,13 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
                     stop,
                     partial: Box::new(plan.basis(samples, draws)),
                     provenance: plan.provenance(provenance),
-                })
+                });
             }
             TestEnd::Unsupported(cause) => {
                 return Ok(StatisticalOutcome::Unsupported {
                     cause,
                     provenance: plan.provenance(provenance),
-                })
+                });
             }
         }
     }

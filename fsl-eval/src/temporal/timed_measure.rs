@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The reference readings of FR-407's measures on one timed behaviour:
-//! `elapsed`, and `steps` and an unweighted `fraction` within a time
+//! `elapsed`, and `steps`, `accumulate` and a `fraction` within a time
 //! horizon (FSpec FR-407 "Bounded measures" and "Time windows").
 //!
 //! The behaviour is a [`TimedTrace`] and each predicate its truth at each
@@ -29,6 +29,9 @@ pub enum MeasureReading {
     Censored,
     /// The measure's value.
     Value(Rational),
+    /// The positions of a weighted fraction's window weigh nothing, so it
+    /// has no value.
+    NoWeight,
     /// The recorded prefix does not decide the measure.
     Pending,
     /// The meter stopped the reading.
@@ -205,6 +208,30 @@ pub fn timed_elapsed(
     })())
 }
 
+/// The positions a `steps` or `accumulate` measure runs between: the first
+/// position of the window where `from` holds and the first position of the
+/// window at or after it where `until` holds, or the reading where there are
+/// not both.
+fn between(
+    reader: &mut Reader<'_>,
+    activation: TemporalPosition,
+    from: &[bool],
+    until: &[bool],
+    horizon: &Rational,
+) -> Result<Result<(usize, usize), MeasureReading>, Stop> {
+    let (start, origin) = reader.represented(activation)?;
+    let first = match reader.first(start, &origin, horizon, from)? {
+        Ok((first, _)) => first,
+        Err(Missed::Closed) => return Ok(Err(MeasureReading::NotActivated)),
+        Err(Missed::Open) => return Ok(Err(MeasureReading::Pending)),
+    };
+    Ok(match reader.first(first, &origin, horizon, until)? {
+        Ok((last, _)) => Ok((first, last)),
+        Err(Missed::Closed) => Err(MeasureReading::Censored),
+        Err(Missed::Open) => Err(MeasureReading::Pending),
+    })
+}
+
 /// `steps from holds(A) until holds(B) within horizon` with a time horizon,
 /// read from the activating position `activation`: the steps from the first
 /// position of the window where `from` holds to the first position of the
@@ -224,17 +251,118 @@ pub fn timed_steps(
 ) -> Result<MeasureReading, TemporalRefusal> {
     let mut reader = Reader { trace, meter };
     settled((|| {
-        let (start, origin) = reader.represented(activation)?;
-        let first = match reader.first(start, &origin, horizon, from)? {
-            Ok((first, _)) => first,
-            Err(Missed::Closed) => return Ok(MeasureReading::NotActivated),
-            Err(Missed::Open) => return Ok(MeasureReading::Pending),
+        Ok(
+            match between(&mut reader, activation, from, until, horizon)? {
+                Ok((first, last)) => MeasureReading::Value(count(last - first)),
+                Err(reading) => reading,
+            },
+        )
+    })())
+}
+
+/// `accumulate R from holds(A) until holds(B) within horizon` with a time
+/// horizon over a finite trace, between the positions [`timed_steps`] reads:
+/// the sum of `rewards[k]`, `R` of the step into position `k`, over the
+/// positions after the first up to the second.
+///
+/// # Errors
+///
+/// As [`timed_elapsed`], and a position `rewards` has no entry for.
+#[implements("FSpec-FR-407-AC-23")]
+pub fn timed_accumulate(
+    trace: &TimedTrace,
+    activation: TemporalPosition,
+    from: &[bool],
+    until: &[bool],
+    rewards: &[Rational],
+    horizon: &Rational,
+    meter: &mut Meter,
+) -> Result<MeasureReading, TemporalRefusal> {
+    let mut reader = Reader { trace, meter };
+    settled((|| {
+        let (first, last) = match between(&mut reader, activation, from, until, horizon)? {
+            Ok(positions) => positions,
+            Err(reading) => return Ok(reading),
         };
-        Ok(match reader.first(first, &origin, horizon, until)? {
-            Ok((last, _)) => MeasureReading::Value(count(last - first)),
-            Err(Missed::Closed) => MeasureReading::Censored,
-            Err(Missed::Open) => MeasureReading::Pending,
-        })
+        let mut sum = Rational::from_integer(Integer::zero());
+        for k in first + 1..=last {
+            sum = sum.add(entry(rewards, k)?);
+        }
+        Ok(MeasureReading::Value(sum))
+    })())
+}
+
+fn entry(values: &[Rational], k: usize) -> Result<&Rational, Stop> {
+    values
+        .get(k)
+        .ok_or_else(|| outside(TemporalPosition::new(u64::try_from(k).unwrap_or(u64::MAX))))
+}
+
+/// How a fraction weighs the positions of its window.
+#[derive(Clone, Copy)]
+enum Weigh<'w> {
+    /// Every position 1.
+    Positions,
+    /// Position `k` by the `k`th entry.
+    Given(&'w [Rational]),
+    /// Each position by the time the trace spends there within the window.
+    Delay,
+}
+
+fn fraction(
+    trace: &TimedTrace,
+    activation: TemporalPosition,
+    holds: &[bool],
+    horizon: &Rational,
+    weigh: Weigh<'_>,
+    meter: &mut Meter,
+) -> Result<MeasureReading, TemporalRefusal> {
+    let mut reader = Reader { trace, meter };
+    settled((|| {
+        let (start, origin) = reader.represented(activation)?;
+        let close = origin.add(horizon);
+        let zero = Rational::from_integer(Integer::zero());
+        let one = Rational::from_integer(Integer::one());
+        let (mut held, mut total) = (zero.clone(), zero);
+        let mut read = false;
+        let mut k = start;
+        loop {
+            let Some((image, stamp)) = reader.at(k)? else {
+                if matches!(reader.end_of_prefix(&origin, horizon), Missed::Open) {
+                    return Ok(MeasureReading::Pending);
+                }
+                break;
+            };
+            if stamp > close {
+                break;
+            }
+            read = true;
+            let weight = match weigh {
+                Weigh::Positions => one.clone(),
+                Weigh::Given(weights) => entry(weights, k)?.clone(),
+                // The step that leaves the position lands at the next stamp;
+                // one past the window, and an idle tail, give `close`.
+                Weigh::Delay => reader
+                    .at(k + 1)?
+                    .map(|(_, next)| next)
+                    .filter(|next| *next < close)
+                    .unwrap_or_else(|| close.clone())
+                    .sub(&stamp),
+            };
+            if truth(holds, image)? {
+                held = held.add(&weight);
+            }
+            total = total.add(&weight);
+            k += 1;
+        }
+        // The activating position is in its own window, so only a negative
+        // horizon leaves the window empty.
+        if !read {
+            return Ok(MeasureReading::NotActivated);
+        }
+        Ok(held
+            .div(&total)
+            .map_or(MeasureReading::NoWeight, MeasureReading::Value))
     })())
 }
 
@@ -253,29 +381,48 @@ pub fn timed_fraction(
     horizon: &Rational,
     meter: &mut Meter,
 ) -> Result<MeasureReading, TemporalRefusal> {
-    let mut reader = Reader { trace, meter };
-    settled((|| {
-        let (start, origin) = reader.represented(activation)?;
-        let (mut read, mut held) = (0_usize, 0_usize);
-        let mut k = start;
-        loop {
-            let Some((image, stamp)) = reader.at(k)? else {
-                if matches!(reader.end_of_prefix(&origin, horizon), Missed::Open) {
-                    return Ok(MeasureReading::Pending);
-                }
-                break;
-            };
-            if &stamp.sub(&origin) > horizon {
-                break;
-            }
-            read += 1;
-            held += usize::from(truth(holds, image)?);
-            k += 1;
-        }
-        // The activating position is in its own window, so only a negative
-        // horizon leaves the window empty.
-        Ok(count(held)
-            .div(&count(read))
-            .map_or(MeasureReading::NotActivated, MeasureReading::Value))
-    })())
+    fraction(trace, activation, holds, horizon, Weigh::Positions, meter)
+}
+
+/// [`timed_fraction`] `weighted by R` over a finite trace: `weights[k]` is
+/// `R` of the step that leaves position `k`, 0 where none does.
+///
+/// # Errors
+///
+/// As [`timed_elapsed`], and a position `weights` has no entry for.
+#[implements("FSpec-FR-407-AC-22")]
+pub fn timed_weighted_fraction(
+    trace: &TimedTrace,
+    activation: TemporalPosition,
+    holds: &[bool],
+    weights: &[Rational],
+    horizon: &Rational,
+    meter: &mut Meter,
+) -> Result<MeasureReading, TemporalRefusal> {
+    fraction(
+        trace,
+        activation,
+        holds,
+        horizon,
+        Weigh::Given(weights),
+        meter,
+    )
+}
+
+/// [`timed_fraction`] `weighted by delay`: each position of the window
+/// weighs the time to the next position, clipped to the window; the last
+/// position of a complete trace weighs the time to the window's end.
+///
+/// # Errors
+///
+/// As [`timed_elapsed`].
+#[implements("FSpec-FR-407-AC-20")]
+pub fn timed_delay_fraction(
+    trace: &TimedTrace,
+    activation: TemporalPosition,
+    holds: &[bool],
+    horizon: &Rational,
+    meter: &mut Meter,
+) -> Result<MeasureReading, TemporalRefusal> {
+    fraction(trace, activation, holds, horizon, Weigh::Delay, meter)
 }

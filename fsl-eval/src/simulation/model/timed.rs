@@ -58,9 +58,10 @@ mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;
 pub use race::{
-    advance_timed, replay_timed_sample, sample_timed, sample_timed_race, TimedAdvance, TimedRace,
-    TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
+    advance_timed, replay_timed_sample, sample_timed, sample_timed_from, sample_timed_race,
+    TimedAdvance, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample,
+    TimedSampleDisagreement, TimedSampleEnd, TimedSampleReplay, TimedSampleStop,
+    TimedSchedulerChoice,
 };
 
 /// One clock of the subject: a clock field of one object of its universe.

@@ -164,7 +164,11 @@ enum Tri {
 
 impl Tri {
     fn of(value: bool) -> Self {
-        if value { Self::True } else { Self::False }
+        if value {
+            Self::True
+        } else {
+            Self::False
+        }
     }
 
     fn negate(self) -> Self {
@@ -176,7 +180,11 @@ impl Tri {
     }
 
     fn flip(self, dual: bool) -> Self {
-        if dual { self.negate() } else { self }
+        if dual {
+            self.negate()
+        } else {
+            self
+        }
     }
 }
 
@@ -583,7 +591,23 @@ pub fn evaluate_timed_at<L: TemporalLetters>(
             profile: clause.profile(),
         });
     }
-    let formula = clause.formula();
+    evaluate_timed_formula_at(clause.formula(), trace, position, letters, meter)
+}
+
+/// [`evaluate_timed_at`] over a formula checked under the timed profile
+/// that no clause carries, such as a probabilistic claim's event.
+///
+/// # Errors
+///
+/// A position the trace does not represent, and a formula the timed profile
+/// does not admit.
+pub fn evaluate_timed_formula_at<L: TemporalLetters>(
+    formula: &CheckedFormula,
+    trace: &TimedTrace,
+    position: TemporalPosition,
+    letters: &mut L,
+    meter: &mut Meter,
+) -> Result<TemporalOutcome, TemporalRefusal> {
     let represented = trace.stamps.len();
     let (stamps, tail, loop_start) = match &trace.looping {
         None => (trace.stamps.clone(), None, 0),

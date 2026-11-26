@@ -768,7 +768,6 @@ fn row_3447_mean_fraction_hand() {
 
 #[trace("FR-254-AC-5")]
 #[test]
-#[ignore = "QSL-3447: en-4 accepts with estimate 0 where the fraction is 1/2"]
 fn row_3447_mean_fraction_routes() {
     assert_routes(&mean_fraction());
 }
@@ -802,7 +801,6 @@ fn row_3447_steps_hand() {
 
 #[trace("FSpec-FR-407-AC-23")]
 #[test]
-#[ignore = "QSL-3447: en-4 accepts with estimate 1 where the probability is 0"]
 fn row_3447_steps_routes() {
     assert_routes(&two_steps());
 }
@@ -888,7 +886,6 @@ fn row_254_elapsed_from_the_first_a_hand() {
 
 #[trace("FR-254-AC-9")]
 #[test]
-#[ignore = "QSL-3463: en-4 rejects with estimate 0 where the elapsed time is 10 ms"]
 fn row_254_elapsed_within_ten_routes() {
     assert_routes(&elapsed_ten());
 }
@@ -901,7 +898,6 @@ fn row_254_elapsed_within_nine_routes() {
 
 #[trace("FR-254-AC-9")]
 #[test]
-#[ignore = "QSL-3463: en-4 rejects with estimate 0 where the elapsed time is 1 ms"]
 fn row_254_elapsed_reply_one_routes() {
     assert_routes(&elapsed_one());
 }
@@ -953,21 +949,18 @@ fn row_3463_elapsed_past_the_horizon_of_position_zero_hand() {
 
 #[trace("FR-254-AC-3")]
 #[test]
-#[ignore = "QSL-3463: en-4 accepts with estimate 1 where the elapsed time is 3 ms"]
 fn row_3463_at_least_four_after_three_routes() {
     assert_routes(&four_after_three());
 }
 
 #[trace("FR-254-AC-3")]
 #[test]
-#[ignore = "QSL-3463: en-4 rejects with estimate 0 where the elapsed time is 3 ms"]
 fn row_3463_quantile_routes() {
     assert_routes(&quantile_three());
 }
 
 #[trace("FR-254-AC-3")]
 #[test]
-#[ignore = "QSL-3463: en-4 rejects with estimate 1 where the probability is 0"]
 fn row_3463_at_most_after_five_routes() {
     assert_routes(&four_after_five());
 }
@@ -1146,7 +1139,6 @@ fn row_burst_stutter_fraction_hand() {
 
 #[trace("FSpec-FR-421-AC-9", "FR-254-AC-8")]
 #[test]
-#[ignore = "QSL-3447: en-4 accepts with estimate 0 a fraction that is at least 1/2"]
 fn row_burst_stutter_fraction_routes() {
     assert_routes(&burst());
 }
@@ -1185,7 +1177,6 @@ fn row_sampled_time_lock_hand() {
 /// An unsettled answer is not enough here: the sample is decided.
 #[trace("FR-254-AC-4")]
 #[test]
-#[ignore = "QSL-3493: en-4 does not decide a sample that ends time-locked after its event (FR-254-AC-4)"]
 fn row_sampled_time_lock_routes() {
     let row = sampled_lock();
     let answer = routes::sampled(&row.world, "LockS");

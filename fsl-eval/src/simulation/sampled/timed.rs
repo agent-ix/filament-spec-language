@@ -13,6 +13,10 @@ pub enum TimedDelayRefusal {
     /// No support point or positive probability mass intersects the window.
     #[error("the delay distribution has no mass in its window")]
     NoMass,
+    /// An exponential delay over a bounded or split window of positive
+    /// length has mass there, which this sampler does not condition on.
+    #[error("an exponential delay over this window is not sampled")]
+    UnsampledWindow,
     /// A uniform distribution over an unbounded window has no finite law.
     #[error("a uniform delay has an unbounded window")]
     UnboundedUniform,
@@ -60,8 +64,15 @@ pub fn draw_timed_delay(
         }
         DelayDistribution::Exponential { rate } => {
             let ranges = ranges(windows, None)?;
-            if ranges.len() != 1 || ranges[0].1.is_some() {
+            // A continuous law has no mass on points alone.
+            if ranges
+                .iter()
+                .all(|(lower, upper)| upper.as_ref() == Some(lower))
+            {
                 return Err(TimedDelayRefusal::NoMass);
+            }
+            if ranges.len() != 1 || ranges[0].1.is_some() {
+                return Err(TimedDelayRefusal::UnsampledWindow);
             }
             let lower = ranges[0].0.clone();
             let u = grid(at, q)?;

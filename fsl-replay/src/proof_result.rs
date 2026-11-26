@@ -704,7 +704,7 @@ pub enum UnavailabilityCause {
         /// The canonical timed-state key at the idle tail's first position.
         state: fsl_eval::simulation::StateKey,
     },
-    /// A timed statistical sample reached a local time-lock (FR-254).
+    /// A timed fraction or long-run sample reached a time-lock (FR-254).
     TimeLockedSample {
         /// The canonical timed-state key.
         state: fsl_eval::simulation::StateKey,

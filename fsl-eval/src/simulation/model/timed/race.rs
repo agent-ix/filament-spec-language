@@ -6,12 +6,13 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::{DelayDistribution, Workload};
 use ix_trace_rs::implements;
 
-use super::{GuardedStep, TimeLock, TimedState, TimedStop, TimedSystem, DEFAULT_MAX_CLOCKS};
+use super::{GuardedStep, TimedState, TimedStop, TimedSystem};
 use crate::simulation::choice::{weighted_choice_counted, ChoicePoint};
 use crate::simulation::model::TransitionId;
 use crate::simulation::sampled::{draw_timed_delay, take_enabled_step, TimedDelayRefusal};
 use crate::simulation::sampled::{SampleStop, SampledBehaviour, SampledStep, StepAt};
 use crate::simulation::StateKey;
+use crate::temporal::{TemporalRefusal, TimedTrace};
 
 /// One transition taken by a timed race. The first transition has the
 /// minimum sampled delay; later transitions in the same tie have delay 0.
@@ -102,7 +103,8 @@ pub enum TimedRaceStop {
     TieDisabled,
 }
 
-/// A sampled timed prefix, with the delay carried on each transition step.
+/// A sampled timed run: its positions up to the end of its window, with the
+/// delay carried on each transition step.
 #[derive(Clone, Debug)]
 pub struct TimedSample {
     /// The seed-derived trace index.
@@ -111,20 +113,42 @@ pub struct TimedSample {
     pub start: StateKey,
     /// The sampled steps, including each exact delay.
     pub steps: Vec<SampledStep>,
-    /// Timed positions, initial position first, aligned with `stamps`.
+    /// Timed positions, initial position first, aligned with `stamps`: the
+    /// post-state of each step, then a tick source's stutter positions
+    /// stamped within the window. A delay is not a position.
     pub states: Vec<TimedState>,
     /// Exact absolute time stamp of each state.
     pub stamps: Vec<Rational>,
-    /// The reached timed state.
+    /// The last position's timed state.
     pub state: TimedState,
-    /// The final time stamp.
+    /// The last position's time stamp.
     pub stamp: Rational,
-    /// Whether the prefix ended at an idle tail.
-    pub idle: bool,
-    /// The step that leaves the last position and lands after the horizon.
-    /// It is drawn for its rewards (FSpec FR-420 "Sampling timed runs") and
-    /// adds no position.
-    pub crossing: Option<SampledStep>,
+    /// The last time stamp the window admits, or `None` where no position
+    /// started it.
+    pub window_end: Option<Rational>,
+    /// How the run ends after its last position.
+    pub end: TimedSampleEnd,
+}
+
+/// How a sampled timed run ends after its last position (FSpec FR-420
+/// "Sampling timed runs").
+#[derive(Clone, Debug, PartialEq)]
+pub enum TimedSampleEnd {
+    /// The step that leaves the last position and lands after the window. It
+    /// is drawn for its rewards and adds no position.
+    Crossing(Box<SampledStep>),
+    /// A dense idle tail enters the window before its end: any number
+    /// `m >= 0` of stutter positions of the last position follow it.
+    DenseIdleTail,
+    /// No further position lies in the window, which is read in full.
+    Complete,
+    /// The run reached a time-lock before the window's end. It ends there
+    /// with the positions it has (FSpec FR-416 "How claims read a
+    /// time-lock").
+    TimeLock {
+        /// The key of the time-locked timed state.
+        state: StateKey,
+    },
 }
 
 /// A timed sampling request refused before a sample can be completed.
@@ -139,10 +163,11 @@ pub enum TimedSampleStop {
     /// A tick subject's untimed step (FSpec FR-420 "Tick subjects") stopped.
     #[error("the tick subject's step stopped: {0:?}")]
     Step(Box<SampleStop>),
-    /// The sample reached a local time-lock before its horizon.
-    #[error("the timed sample reached a local time-lock at {state:?}")]
+    /// An unbounded walk reached a time-lock, which no long-run fraction
+    /// reads.
+    #[error("the timed walk reached a time-lock at {state:?}")]
     TimeLockedSample {
-        /// The key of the locally time-locked state.
+        /// The key of the time-locked state.
         state: StateKey,
     },
 }
@@ -155,7 +180,7 @@ pub enum TimedSampleDisagreement {
         /// The first differing step index.
         step: u64,
     },
-    /// All recorded steps agree but the final time or idle disposition does not.
+    /// All recorded steps agree but the final time or end does not.
     EndPosition,
 }
 
@@ -168,14 +193,12 @@ pub enum TimedSampleReplay {
     Disagrees(TimedSampleDisagreement),
 }
 
-/// Sample one timed prefix through `horizon`, repeating FR-253's race.
+/// Sample one timed run whose window `[0, horizon]` starts at its first
+/// position. See [`sample_timed_from`].
 ///
-/// The first position is at time zero. The sample stops when a race has no
-/// scheduled identity, or when the next position would pass the horizon; the
-/// step that would pass it is kept as the crossing step. Tied transitions are
-/// retained in their race order; only the first has a positive delay and
-/// every later tied transition has delay zero. A tick subject runs no race:
-/// each step is FR-408's untimed step and stamps move by the tick period.
+/// # Errors
+///
+/// As [`sample_timed_from`].
 pub fn sample_timed(
     system: &TimedSystem<'_, '_>,
     initial: &TimedState,
@@ -185,53 +208,91 @@ pub fn sample_timed(
     horizon: &Rational,
     max_sample_steps: u64,
 ) -> Result<TimedSample, TimedSampleStop> {
+    sample_timed_from(
+        system,
+        initial,
+        workload,
+        at,
+        q,
+        horizon,
+        &mut |_| true,
+        max_sample_steps,
+    )
+}
+
+/// Sample one timed run, repeating FR-253's race, through the window of
+/// length `within` that starts at the first position for whose state `starts`
+/// answers true. `starts` is asked at each position until then, and no
+/// horizon ends the run before it.
+///
+/// The first position is at time zero. The run ends when the next position
+/// would pass the window's end, keeping that step as the crossing step; at an
+/// idle tail; or at a time-lock, where delay is bounded and no identity
+/// races. Tied transitions are retained in their race order; only the first
+/// has a positive delay and every later tied transition has delay zero. A
+/// tick subject runs no race: each step is FR-408's untimed step, stamps move
+/// by the tick period and a terminal state's stutter positions are read up
+/// to the window's end.
+///
+/// # Errors
+///
+/// [`TimedSampleStop`] when a race has no sampled successor, the run needs
+/// more than `max_sample_steps` positions, or a tick step stops.
+#[implements("FR-254-AC-3")]
+#[implements("FR-254-AC-4")]
+#[implements("FR-254-AC-9")]
+#[implements("FSpec-FR-420-AC-4")]
+#[allow(clippy::too_many_arguments)]
+pub fn sample_timed_from(
+    system: &TimedSystem<'_, '_>,
+    initial: &TimedState,
+    workload: &Workload,
+    at: ChoicePoint,
+    q: u32,
+    within: &Rational,
+    starts: &mut dyn FnMut(&TimedState) -> bool,
+    max_sample_steps: u64,
+) -> Result<TimedSample, TimedSampleStop> {
     let start = system
         .state_key(initial)
         .map_err(|_| TimedRaceStop::StateKey)?;
     let mut state = initial.clone();
-    let mut stamp = Rational::from_integer(Integer::zero());
+    let mut stamp = zero();
     let mut steps = Vec::new();
     let mut states = vec![state.clone()];
     let mut stamps = vec![stamp.clone()];
-    let mut idle = false;
-    let mut crossing = None;
-    let ticking = system.tick_period().is_some();
-    while stamp <= *horizon {
-        // A tick subject admits no delay of its own: its terminal states
-        // stutter (FSpec FR-420 "Tick subjects") and are no time-lock.
-        let time_lock = if ticking {
-            None
-        } else {
-            system
-                .time_lock(
-                    &state,
-                    usize::try_from(DEFAULT_MAX_CLOCKS.get()).unwrap_or(usize::MAX),
-                )
-                .map_err(TimedRaceStop::Timed)?
-        };
-        if time_lock == Some(TimeLock::Local) {
-            return Err(TimedSampleStop::TimeLockedSample {
-                state: system
-                    .state_key(&state)
-                    .map_err(|_| TimedRaceStop::StateKey)?,
-            });
-        }
-        if ticking {
-            let at = StepAt {
+    let mut window_end = starts(&state).then(|| within.clone());
+    let ticking = system.tick_period();
+    let positions = |steps: &Vec<SampledStep>| u64::try_from(steps.len()).unwrap_or(u64::MAX);
+    let end = 'run: loop {
+        if ticking.is_some() {
+            let step_at = StepAt {
                 seed: at.seed,
                 trace: at.trace,
-                step: u64::try_from(steps.len()).unwrap_or(u64::MAX),
+                step: positions(&steps),
             };
-            let Some((step, next, advance)) = tick_step(system, &state, workload, at)? else {
-                idle = true;
-                break;
+            // A tick subject admits no delay of its own: its terminal states
+            // stutter (FSpec FR-420 "Tick subjects") and are no time-lock.
+            let Some((step, next, advance)) = tick_step(system, &state, workload, step_at)? else {
+                if let (Some(period), Some(end)) = (ticking, &window_end) {
+                    let mut stutter = stamp.add(period);
+                    while stutter <= *end {
+                        if u64::try_from(states.len()).unwrap_or(u64::MAX) > max_sample_steps {
+                            return Err(TimedSampleStop::MaxSampleSteps);
+                        }
+                        states.push(state.clone());
+                        stamps.push(stutter.clone());
+                        stamp = stutter.clone();
+                        stutter = stutter.add(period);
+                    }
+                }
+                break TimedSampleEnd::Complete;
             };
             let next_stamp = stamp.add(&advance);
-            if next_stamp > *horizon {
-                crossing = Some(step);
-                break;
+            if window_end.as_ref().is_some_and(|end| next_stamp > *end) {
+                break TimedSampleEnd::Crossing(Box::new(step));
             }
-            if u64::try_from(steps.len()).unwrap_or(u64::MAX) >= max_sample_steps {
+            if positions(&steps) >= max_sample_steps {
                 return Err(TimedSampleStop::MaxSampleSteps);
             }
             steps.push(step);
@@ -239,56 +300,26 @@ pub fn sample_timed(
             stamp = next_stamp;
             states.push(state.clone());
             stamps.push(stamp.clone());
+            if window_end.is_none() && starts(&state) {
+                window_end = Some(stamp.add(within));
+            }
             continue;
         }
         let point = ChoicePoint {
-            step: u64::try_from(steps.len()).unwrap_or(u64::MAX),
+            step: positions(&steps),
             choice: 0,
             ..at
         };
         let race = sample_timed_race(system, &state, workload, point, q)?;
         if let Some(choice) = &race.scheduler_choice {
-            let identity = choice
-                .free_delays
-                .first()
-                .ok_or(TimedRaceStop::StateKey)?
-                .transition
-                .transition()
-                .clone();
-            return Err(TimedRaceStop::NotStochastic {
-                state: choice.state.clone(),
-                identity,
-            }
-            .into());
-        }
-        if race.idle || race.steps.is_empty() {
-            let remaining = horizon.sub(&stamp);
-            if let Some((upper, true)) = system
-                .admissible_delays(&state)
-                .map_err(TimedRaceStop::Timed)?
-                .upper()
-                .filter(|(upper, _)| *upper < &remaining)
-            {
-                // An idle state with a closed finite invariant can still
-                // reach a local time-lock before the sample horizon. Advance
-                // the clock without adding a sampled transition, then let the
-                // next loop iteration classify the boundary state.
-                state = system
-                    .delay(&state, upper)
-                    .map_err(TimedRaceStop::Timed)?
-                    .ok_or(TimedRaceStop::StateKey)?;
-                stamp = stamp.add(upper);
-                continue;
-            }
-            idle = true;
-            break;
+            return Err(free_delay(choice)?.into());
         }
         let mut advanced = false;
         for race_step in race.steps {
             let next_stamp = stamp.add(&race_step.delay);
             let rewards = step_rewards(system, &state, &race_step.transition)?;
-            let passes = next_stamp > *horizon;
-            if !passes && u64::try_from(steps.len()).unwrap_or(u64::MAX) >= max_sample_steps {
+            let passes = window_end.as_ref().is_some_and(|end| next_stamp > *end);
+            if !passes && positions(&steps) >= max_sample_steps {
                 return Err(TimedSampleStop::MaxSampleSteps);
             }
             let post_state = system
@@ -304,30 +335,38 @@ pub fn sample_timed(
                 rewards,
             };
             if passes {
-                return Ok(TimedSample {
-                    trace: at.trace,
-                    start,
-                    steps,
-                    states,
-                    stamps,
-                    state,
-                    stamp,
-                    idle: false,
-                    crossing: Some(step),
-                });
+                break 'run TimedSampleEnd::Crossing(Box::new(step));
             }
             steps.push(step);
             state = race_step.state;
             stamp = next_stamp;
             states.push(state.clone());
             stamps.push(stamp.clone());
+            if window_end.is_none() && starts(&state) {
+                window_end = Some(stamp.add(within));
+            }
             advanced = true;
         }
         if !advanced {
-            idle = true;
-            break;
+            let remaining = window_end.as_ref().map(|end| end.sub(&stamp));
+            if let Some(locked) = time_locked(system, &state, remaining.as_ref())? {
+                break TimedSampleEnd::TimeLock {
+                    state: system
+                        .state_key(&locked)
+                        .map_err(|_| TimedRaceStop::StateKey)?,
+                };
+            }
+            let open = window_end.as_ref().is_some_and(|end| stamp < *end);
+            if open
+                && system
+                    .is_quiescent(state.discrete())
+                    .map_err(TimedRaceStop::Timed)?
+            {
+                break TimedSampleEnd::DenseIdleTail;
+            }
+            break TimedSampleEnd::Complete;
         }
-    }
+    };
     Ok(TimedSample {
         trace: at.trace,
         start,
@@ -336,9 +375,56 @@ pub fn sample_timed(
         stamps,
         state,
         stamp,
-        idle,
-        crossing,
+        window_end,
+        end,
     })
+}
+
+/// The refusal of a race with a scheduler-owned free delay.
+fn free_delay(choice: &TimedSchedulerChoice) -> Result<TimedRaceStop, TimedRaceStop> {
+    let identity = choice
+        .free_delays
+        .first()
+        .ok_or(TimedRaceStop::StateKey)?
+        .transition
+        .transition()
+        .clone();
+    Ok(TimedRaceStop::NotStochastic {
+        state: choice.state.clone(),
+        identity,
+    })
+}
+
+/// The time-locked state a run reaches from `state`, where no identity races:
+/// delay is bounded, whether every window is empty or a non-empty one holds
+/// no mass (FSpec FR-420 "The race"). The state is the one after the greatest
+/// delay, or `state` itself where the bound is excluded. `None` where delay is
+/// unbounded, or the bound is not before the window's end, `remaining` time
+/// from here (`None`: the walk has no window).
+#[implements("FSpec-FR-420-AC-4")]
+#[implements("FSpec-FR-420-AC-7")]
+fn time_locked(
+    system: &TimedSystem<'_, '_>,
+    state: &TimedState,
+    remaining: Option<&Rational>,
+) -> Result<Option<TimedState>, TimedRaceStop> {
+    let delays = system
+        .admissible_delays(state)
+        .map_err(TimedRaceStop::Timed)?;
+    let Some((upper, closed)) = delays.upper() else {
+        return Ok(None);
+    };
+    if remaining.is_some_and(|remaining| upper > remaining || (closed && upper == remaining)) {
+        return Ok(None);
+    }
+    if !closed {
+        return Ok(Some(state.clone()));
+    }
+    system
+        .delay(state, upper)
+        .map_err(TimedRaceStop::Timed)?
+        .ok_or(TimedRaceStop::StateKey)
+        .map(Some)
 }
 
 /// What one more race of an unbounded timed walk yields (FR-420 "Delay-weighted
@@ -348,19 +434,19 @@ pub enum TimedAdvance {
     /// No identity races and delay is unbounded: the idle tail of a terminal
     /// state, whose weight is unbounded.
     Terminal,
-    /// The race's ordered steps, the first after `elapsed` more delay spent
-    /// reaching a closed invariant boundary with no race (zero when none).
-    Race {
-        /// The delay the walk advanced before the race.
-        elapsed: Rational,
-        /// The ordered operation steps taken at the least sampled delay.
-        steps: Vec<TimedRaceStep>,
-    },
+    /// The race's ordered steps, taken at the least sampled delay.
+    Race(Vec<TimedRaceStep>),
 }
 
 /// Race once at `state` with no horizon: the next step of a walk that runs
 /// until a terminal state, a time-lock or the caller stops it. The race and
-/// its time-lock and free-delay refusals are those of [`sample_timed`].
+/// its free-delay refusals are those of [`sample_timed_from`].
+///
+/// # Errors
+///
+/// [`TimedSampleStop::TimeLockedSample`] where no identity races and delay is
+/// bounded, and a race with no sampled successor.
+#[implements("FSpec-FR-420-AC-11")]
 pub fn advance_timed(
     system: &TimedSystem<'_, '_>,
     state: &TimedState,
@@ -368,55 +454,20 @@ pub fn advance_timed(
     at: ChoicePoint,
     q: u32,
 ) -> Result<TimedAdvance, TimedSampleStop> {
-    let mut state = state.clone();
-    let mut elapsed = zero();
-    loop {
-        let time_lock = system
-            .time_lock(
-                &state,
-                usize::try_from(DEFAULT_MAX_CLOCKS.get()).unwrap_or(usize::MAX),
-            )
-            .map_err(TimedRaceStop::Timed)?;
-        if time_lock == Some(TimeLock::Local) {
-            return Err(TimedSampleStop::TimeLockedSample {
-                state: system
-                    .state_key(&state)
-                    .map_err(|_| TimedRaceStop::StateKey)?,
-            });
-        }
-        let race = sample_timed_race(system, &state, workload, at, q)?;
-        if let Some(choice) = &race.scheduler_choice {
-            let identity = choice
-                .free_delays
-                .first()
-                .ok_or(TimedRaceStop::StateKey)?
-                .transition
-                .transition()
-                .clone();
-            return Err(TimedRaceStop::NotStochastic {
-                state: choice.state.clone(),
-                identity,
-            }
-            .into());
-        }
-        if !race.idle && !race.steps.is_empty() {
-            return Ok(TimedAdvance::Race {
-                elapsed,
-                steps: race.steps,
-            });
-        }
-        let delays = system
-            .admissible_delays(&state)
-            .map_err(TimedRaceStop::Timed)?;
-        let Some((upper, true)) = delays.upper() else {
-            return Ok(TimedAdvance::Terminal);
-        };
-        let upper = upper.clone();
-        state = system
-            .delay(&state, &upper)
-            .map_err(TimedRaceStop::Timed)?
-            .ok_or(TimedRaceStop::StateKey)?;
-        elapsed = elapsed.add(&upper);
+    let race = sample_timed_race(system, state, workload, at, q)?;
+    if let Some(choice) = &race.scheduler_choice {
+        return Err(free_delay(choice)?.into());
+    }
+    if !race.steps.is_empty() {
+        return Ok(TimedAdvance::Race(race.steps));
+    }
+    match time_locked(system, state, None)? {
+        Some(locked) => Err(TimedSampleStop::TimeLockedSample {
+            state: system
+                .state_key(&locked)
+                .map_err(|_| TimedRaceStop::StateKey)?,
+        }),
+        None => Ok(TimedAdvance::Terminal),
     }
 }
 
@@ -453,8 +504,8 @@ pub fn replay_timed_sample(
         || replayed.trace != record.trace
         || !same_start
         || replayed.stamp != record.stamp
-        || replayed.idle != record.idle
-        || replayed.crossing != record.crossing
+        || replayed.window_end != record.window_end
+        || replayed.end != record.end
         || !same_state
     {
         return Ok(TimedSampleReplay::Disagrees(
@@ -465,6 +516,20 @@ pub fn replay_timed_sample(
 }
 
 impl TimedSample {
+    /// The run's positions as the reference evaluator reads them: complete
+    /// through the window's end, since no further position can lie in the
+    /// window. A dense idle tail's stutter positions are not among them.
+    ///
+    /// # Errors
+    ///
+    /// As [`TimedTrace::through`], for a run whose stamps are not a trace.
+    pub fn timed_trace(&self) -> Result<TimedTrace, TemporalRefusal> {
+        match &self.window_end {
+            Some(end) => TimedTrace::through(self.stamps.clone(), end.clone()),
+            None => TimedTrace::new(self.stamps.clone()),
+        }
+    }
+
     /// The portion usable by FR-193 witness storage.
     pub fn behaviour(&self) -> SampledBehaviour {
         SampledBehaviour {
@@ -614,11 +679,15 @@ pub fn sample_timed_race(
         let delay = match draw_timed_delay(distribution, &window.intervals, point, q) {
             Ok(delay) => delay,
             Err(TimedDelayRefusal::NoMass) => continue,
-            Err(TimedDelayRefusal::UnboundedUniform | TimedDelayRefusal::GridExponent { .. }) => {
+            Err(
+                TimedDelayRefusal::UnboundedUniform
+                | TimedDelayRefusal::GridExponent { .. }
+                | TimedDelayRefusal::UnsampledWindow,
+            ) => {
                 return Err(TimedRaceStop::NotStochastic {
                     state: key,
                     identity: window.transition.transition().clone(),
-                })
+                });
             }
         };
         let probability = delay_probability(distribution, &window.intervals, &delay, q);

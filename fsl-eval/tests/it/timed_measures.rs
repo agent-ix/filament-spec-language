@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FSpec FR-407 "Bounded measures" and "Time windows" on one timed trace:
-//! the reference readings of `elapsed`, `steps` and an unweighted
+//! the reference readings of `elapsed`, `steps`, `accumulate` and a
 //! `fraction`. Every expected value is the one the criterion states.
 
 use ix_trace_rs::trace;
 
 use filament_exact::{Integer, Meter, Rational, ScalarLimits};
 use fsl_eval::temporal::{
-    timed_elapsed, timed_fraction, timed_steps, MeasureReading, TemporalPosition, TimedTrace,
+    timed_accumulate, timed_delay_fraction, timed_elapsed, timed_fraction, timed_steps,
+    timed_weighted_fraction, MeasureReading, TemporalPosition, TimedTrace,
 };
 
-use MeasureReading::{Censored, NotActivated, Pending, Value};
+use MeasureReading::{Censored, NoWeight, NotActivated, Pending, Value};
 
 fn number(value: u64) -> Rational {
     Rational::from_integer(Integer::from(value))
@@ -153,4 +154,62 @@ fn a_lasso_extends_a_window_and_an_open_prefix_leaves_it_pending() {
     assert_eq!(fraction(&open, 0, &only(2, &[1]), 5), Pending);
     assert_eq!(steps(&open, &only(2, &[0]), &only(2, &[]), 5), Pending);
     assert_eq!(elapsed(&open, &only(2, &[0]), &only(2, &[]), 5), Pending);
+}
+
+#[trace("FSpec-FR-407-AC-23")]
+#[test]
+fn accumulate_sums_the_rewards_of_the_steps_between_the_two_positions() {
+    let trace = complete(&[0, 2, 2, 7], 9);
+    // The rewards of the steps into positions 1, 2 and 3 are 1, 3 and 2.
+    let rewards = stamps(&[0, 1, 3, 2]);
+    let accumulate = |from: &[bool], until: &[bool]| {
+        timed_accumulate(
+            &trace,
+            TemporalPosition::new(0),
+            from,
+            until,
+            &rewards,
+            &number(5),
+            &mut meter(),
+        )
+        .expect("a represented position")
+    };
+    assert_eq!(accumulate(&only(4, &[0]), &only(4, &[2])), Value(number(4)));
+    assert_eq!(accumulate(&only(4, &[0]), &only(4, &[3])), Censored);
+    assert_eq!(accumulate(&only(4, &[3]), &only(4, &[3])), NotActivated);
+}
+
+#[trace("FSpec-FR-407-AC-20", "FSpec-FR-407-AC-22")]
+#[test]
+fn a_weighted_fraction_weighs_the_step_or_the_delay_that_leaves_a_position() {
+    let value = |n: u64, d: u64| Value(number(n).div(&number(d)).expect("a non-zero divisor"));
+    let weighted = |trace: &TimedTrace, holds: &[bool], weights: &[u64]| {
+        timed_weighted_fraction(
+            trace,
+            TemporalPosition::new(0),
+            holds,
+            &stamps(weights),
+            &number(5),
+            &mut meter(),
+        )
+        .expect("a represented position")
+    };
+    // The step leaving position 1 lands at 7, past the window, and weighs it.
+    let trace = complete(&[0, 2], 3);
+    assert_eq!(weighted(&trace, &only(2, &[1]), &[1, 3]), value(3, 4));
+    assert_eq!(weighted(&trace, &only(2, &[1]), &[1, 0]), value(0, 1));
+    assert_eq!(weighted(&trace, &only(2, &[1]), &[0, 0]), NoWeight);
+    // Stamps 0 and 1, then idle: weights 1 and 4 - 1 = 3 within [0, 4].
+    let trace = complete(&[0, 1], 3);
+    assert_eq!(
+        timed_delay_fraction(
+            &trace,
+            TemporalPosition::new(0),
+            &only(2, &[0]),
+            &number(4),
+            &mut meter(),
+        )
+        .expect("a represented position"),
+        value(1, 4)
+    );
 }

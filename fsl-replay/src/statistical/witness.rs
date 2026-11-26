@@ -25,7 +25,7 @@ use fsl_eval::simulation::{
 };
 use fsl_semantics::check::{NegotiationOutcome, Workload};
 
-use super::{SampledWitness, StatisticalProvenance, TestProvenance, WitnessValue};
+use super::{SampledWitness, StatisticalProvenance, TestProvenance, TimedSampling, WitnessValue};
 use crate::model_check::counterexample::{CounterexampleKind, ModelStep, TemporalCounterexample};
 
 /// FR-254/FR-193: recompute a timed statistical witness's ordered timed
@@ -86,6 +86,9 @@ pub enum WitnessReadStop {
     },
     /// A claim predicate's read was refused with no value undefined.
     PredicateRefused(Box<ClauseOutcome>),
+    /// The timed sample cannot be drawn again: a race has no law, or the run
+    /// passes its step budget.
+    TimedNotRegenerated,
     /// The witness reader does not implement timed claim readings.
     TimedUnsupported,
 }
@@ -109,14 +112,16 @@ pub trait WitnessReader {
         steps: u64,
     ) -> Result<WitnessReading, WitnessReadStop>;
 
-    /// Read a timed sample after its delay draws have replayed (FR-254).
-    /// Implementations that do not read timed claims keep the default refusal.
+    /// Draw the timed sample of `test` at `trace` again under `seed` and
+    /// `sampling`, with the window rule of the claim, and read the claim on
+    /// it (FR-254). Implementations that do not read timed claims keep the
+    /// default refusal.
     fn read_timed(
         &mut self,
         _test: &TestProvenance,
         _seed: u64,
         _trace: u64,
-        _sample: &TimedSample,
+        _sampling: TimedSampling,
     ) -> Result<WitnessReading, WitnessReadStop> {
         Err(WitnessReadStop::TimedUnsupported)
     }
@@ -193,9 +198,6 @@ pub enum SampledWitnessRefusal {
     /// stopped.
     #[error(transparent)]
     Draw(#[from] SampledReplayRefusal),
-    /// A timed sample could not be reproduced from its seed.
-    #[error("timed witness replay stopped: {0}")]
-    TimedSample(#[from] TimedSampleStop),
     /// The claim could not be read on the recomputed sample.
     #[error("the claim could not be read on the recomputed sample: {0:?}")]
     Read(WitnessReadStop),
@@ -235,9 +237,9 @@ impl SampledWitnessRefusal {
     /// invariant.
     pub fn catalog_code(&self) -> CatalogCode {
         match self {
-            Self::UnknownTest { .. } | Self::UnknownInitial { .. } | Self::TimedSample(_) => {
-                INVALID_VALUE
-            }
+            Self::UnknownTest { .. }
+            | Self::UnknownInitial { .. }
+            | Self::Read(WitnessReadStop::TimedNotRegenerated) => INVALID_VALUE,
             Self::Draw(refusal) => refusal.catalog_code().unwrap_or_else(|| match refusal {
                 SampledReplayRefusal::Sample(stop) => stop_code(stop),
                 SampledReplayRefusal::OutsideSupport { .. } => INVALID_VALUE,
@@ -279,18 +281,22 @@ pub fn replay_sampled_witness(
     reader: &mut dyn WitnessReader,
 ) -> Result<SampledWitnessReplay, SampledWitnessRefusal> {
     let test = test_of(replay.provenance, witness)?;
-    if let Some(horizon) = &replay.provenance.timed_horizon {
+    // A timed claim's reader owns the rule that ends a sample's window (an
+    // `elapsed` window starts at the first `A`), so the sample is drawn
+    // again through the reader alone and compared step by step.
+    if replay.provenance.timed_horizon.is_some() {
         let timed = replay.timed.ok_or(SampledWitnessRefusal::Read(
             WitnessReadStop::TimedUnsupported,
         ))?;
-        let initial = timed
-            .initial()
-            .into_iter()
-            .nth(usize::try_from(test.initial).unwrap_or(usize::MAX))
-            .ok_or(SampledWitnessRefusal::UnknownInitial {
+        if usize::try_from(test.initial)
+            .ok()
+            .is_none_or(|initial| initial >= timed.initial().len())
+        {
+            return Err(SampledWitnessRefusal::UnknownInitial {
                 test: test.index,
                 initial: test.initial,
-            })?;
+            });
+        }
         let q = replay
             .provenance
             .delay_grid_bits
@@ -299,40 +305,30 @@ pub fn replay_sampled_witness(
             .provenance
             .max_sample_steps
             .ok_or_else(|| SampledWitnessRefusal::Read(WitnessReadStop::TimedUnsupported))?;
-        let at = fsl_eval::simulation::ChoicePoint {
-            seed: replay.provenance.seed,
-            trace: witness.trace,
-            step: 0,
-            choice: 0,
-        };
-        let mut record = fsl_eval::simulation::model::sample_timed(
-            timed,
-            &initial,
-            replay.workload,
-            at,
-            q,
-            horizon,
-            max_sample_steps,
-        )?;
-        record.steps.clone_from(&witness.steps);
-        if let TimedSampleReplay::Disagrees(disagreement) = replay_timed_sample(
-            timed,
-            &initial,
-            replay.workload,
-            at,
-            q,
-            horizon,
-            max_sample_steps,
-            &record,
-        )? {
+        let reading = reader
+            .read_timed(
+                test,
+                replay.provenance.seed,
+                witness.trace,
+                TimedSampling {
+                    q,
+                    max_sample_steps,
+                },
+            )
+            .map_err(SampledWitnessRefusal::Read)?;
+        if let Some(step) = reading
+            .steps
+            .iter()
+            .zip(&witness.steps)
+            .position(|(drawn, recorded)| drawn != recorded)
+        {
             return Ok(SampledWitnessReplay::Inconclusive(
-                SampledParity::TimedDraw(disagreement),
+                SampledParity::TimedDraw(TimedSampleDisagreement::Step {
+                    step: u64::try_from(step).unwrap_or(u64::MAX),
+                }),
             ));
         }
-        let reading = reader
-            .read_timed(test, replay.provenance.seed, witness.trace, &record)
-            .map_err(SampledWitnessRefusal::Read)?;
-        if reading.steps != witness.steps {
+        if reading.steps.len() != witness.steps.len() {
             return Ok(SampledWitnessReplay::Inconclusive(
                 SampledParity::TimedDraw(TimedSampleDisagreement::EndPosition),
             ));
@@ -513,7 +509,7 @@ mod tests {
         assert_eq!(code(SampleStop::NotMarkov(not_markov)), NOT_MARKOV);
         assert_eq!(code(SampleStop::UndecidedSuccessor), BROKEN);
         assert_eq!(
-            SampledWitnessRefusal::TimedSample(TimedSampleStop::MaxSampleSteps).catalog_code(),
+            SampledWitnessRefusal::Read(WitnessReadStop::TimedNotRegenerated).catalog_code(),
             INVALID_VALUE
         );
         assert_eq!(
