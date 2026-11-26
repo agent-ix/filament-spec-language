@@ -19,6 +19,7 @@ use fsl_eval::simulation::{
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::{RequestIndex, Setting};
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -241,13 +242,12 @@ fn state_value(key: &StateKey) -> Result<Value, SimulationFault> {
     serde_json::from_slice(key.as_bytes()).map_err(|_| SimulationFault::Fault)
 }
 
-/// A transition identity's typed canonical form.
+/// A trace step's written transition, spelled as FR-120 writes every one.
+#[implements("FR-120-AC-40")]
 fn transition_value(
     transition: &filament_semantic_value::model_transition::ModelTransition,
 ) -> Result<Value, SimulationFault> {
-    let bytes = quire_canonical::to_vec(transition, quire_canonical::Limits::new(u64::MAX))
-        .map_err(|_| SimulationFault::Fault)?;
-    serde_json::from_slice(&bytes).map_err(|_| SimulationFault::Fault)
+    fsl_replay::task_source_transition_wire(transition).map_err(|_| SimulationFault::Fault)
 }
 
 fn coverage_value(coverage: &Coverage) -> Value {
@@ -694,3 +694,32 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod written_step_tests {
+    use super::transition_value;
+    use filament_semantic_value::model_transition::ModelTransition;
+    use ix_trace_rs::trace;
+
+    /// FR-120-AC-40: a simulation item's trace step writes its `operation` as
+    /// every writer does.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_trace_step_writes_a_name_identity_as_the_name() {
+        let object = r#"{"node":"ix://a/b/C/d","package":"a/b"}"#;
+        for (identity, written) in [(r#""tick""#, "tick"), (object, object)] {
+            let transition = ModelTransition::new(
+                identity.to_owned(),
+                None,
+                Vec::new(),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .expect("a canonical transition");
+            let Ok(wire) = transition_value(&transition) else {
+                panic!("a step spells: {identity}");
+            };
+            assert_eq!(wire["operation"], written, "{identity}");
+            assert_eq!(wire["type"], "transition");
+        }
+    }
+}

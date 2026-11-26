@@ -1771,7 +1771,7 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
             fsl_replay::GraphEvidence::Trap {
                 stem: stem.clone(),
                 closure: fsl_replay::TrapClosure::StateGraph,
-                over: Some(bound),
+                over: vec![bound],
             },
             &["a", "b", "c"],
             Default::default(),
@@ -1807,7 +1807,7 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
             fsl_replay::GraphEvidence::Trap {
                 stem: stem.clone(),
                 closure: fsl_replay::TrapClosure::StateGraph,
-                over: Some(bound),
+                over: vec![bound],
             },
             &["j"],
             Default::default(),
@@ -2138,7 +2138,7 @@ fn settle_undefined(
             GraphEvidence::Undefined {
                 stem: stem.clone(),
                 undefined: undefined.clone(),
-                over: Some(over.clone()),
+                over: vec![over.clone()],
             },
             keys,
             ReplayLimits::default(),
@@ -2388,7 +2388,7 @@ fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
             GraphEvidence::Undefined {
                 stem,
                 undefined: forged,
-                over: Some(bound_to(&world, &["c"], "c")),
+                over: vec![bound_to(&world, &["c"], "c")],
             },
             &["c"],
             ReplayLimits::default(),

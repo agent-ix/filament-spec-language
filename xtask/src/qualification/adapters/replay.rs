@@ -5,6 +5,7 @@
 
 use std::path::{Component, Path};
 
+use fsl_command::unique_json::{self, Deep};
 use fsl_foundation::{SettingLimits, SettingName};
 use fsl_replay::{OutcomeDiagnostic, OutcomeLocus, ReplayRefusal};
 use serde_json::Value;
@@ -25,7 +26,7 @@ pub(super) fn execute(
     schema: &jsonschema::JSONSchema,
 ) -> Result<Execution, Failure> {
     let (request_file, bytes) = inputs.one(InputKind::ReplayRequest)?;
-    drop(super::super::DeepValue::new(document(bytes, schema)?));
+    drop(document(bytes, schema)?);
     let documents = inputs
         .files
         .iter()
@@ -93,10 +94,10 @@ pub(super) fn execute(
                 locus,
                 refusal.to_string(),
             );
-            Some(
+            Some(Deep::new(
                 serde_json::to_value(diagnostic)
                     .map_err(|error| Failure::decode("", error.to_string()))?,
-            )
+            ))
         }
         Err(_) => None,
     };
@@ -151,13 +152,16 @@ fn corpus_bytes(
     Ok(bytes)
 }
 
-fn replay_value(result: &fsl_replay::ReplayResult) -> Result<Value, Failure> {
+fn replay_value(result: &fsl_replay::ReplayResult) -> Result<Deep, Failure> {
     let row = result
         .to_function_json()
         .map_err(|error| Failure::decode("", error.to_string()))?;
-    let row = super::super::parse_unique_json(row.as_bytes())
-        .map_err(|error| Failure::decode("", error))?;
-    Ok(serde_json::json!({ "results": [row] }))
+    let row = unique_json::read(row.as_bytes()).map_err(|error| Failure::decode("", error))?;
+    // Moved, not written through `json!`, which would walk the row again.
+    let results = Value::Array(vec![row.into_inner()]);
+    Ok(Deep::new(Value::Object(
+        std::iter::once(("results".to_owned(), results)).collect(),
+    )))
 }
 
 #[cfg(test)]
@@ -192,13 +196,13 @@ mod depth_tests {
         valid.extend_from_slice(&b"]}".repeat(192));
         let admitted = super::super::document(&valid, &schema)
             .unwrap_or_else(|_| panic!("a schema-valid deep witness remains admitted"));
-        drop(super::super::super::DeepValue::new(admitted));
+        drop(admitted);
         let mut bytes = br#"{"kind":"sequence","elements":["#.repeat(192);
         bytes.extend_from_slice(br#"{"kind":"boolean","value":"not-a-boolean"}"#);
         bytes.extend_from_slice(&b"]}".repeat(192));
         let failure = match super::super::document(&bytes, &schema) {
             Ok(value) => {
-                drop(super::super::super::DeepValue::new(value));
+                drop(value);
                 panic!("a mistyped witness leaf must refuse after deep JSON admission");
             }
             Err(failure) => failure,

@@ -83,6 +83,7 @@ mod error_producer_inputs;
 mod evaluate_reads_no_display_strings;
 mod evidence_ledger_file;
 mod exact_decimals;
+mod export_deep_nesting;
 mod export_rulings;
 mod export_state_lowering;
 mod export_surface;
