@@ -556,9 +556,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             end: None,
             undefined: None,
         };
+        let selected_instance = item_instance(&record, read.claim, instance.as_ref());
         let report = GraphReport {
             record,
-            instance: item_instance(&record, read.claim, instance.as_ref()),
+            instance: selected_instance,
             exploration: fsl_replay::RunStats {
                 product_states: u64::try_from(graph.nodes.len()).unwrap_or(u64::MAX),
                 product_edges: u64::try_from(graph.edges.len()).unwrap_or(u64::MAX),
@@ -1272,6 +1273,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             end: None,
             undefined: None,
         };
+        let selected_instance = item_instance(&record, read.claim, instance.over.as_ref());
         let certificate_document = (accepted || refuted).then(|| {
             serde_json::json!({
                 "state_graph": {
@@ -1282,7 +1284,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         });
         let report = GraphReport {
             record,
-            instance: item_instance(&record, read.claim, instance.over.as_ref()),
+            instance: selected_instance,
             exploration: fsl_replay::RunStats {
                 product_states: graph.stats.symbolic_states,
                 product_edges: graph.stats.retained_edges,
