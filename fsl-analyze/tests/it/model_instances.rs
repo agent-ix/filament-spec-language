@@ -27,7 +27,7 @@ use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::{
     ClauseOutcome, ExpansionLimits, LettersRefusal, ModelSimState, ModelSimulationRequest,
-    ModelSystem, NoClaimInstances, PopulationUniverse,
+    ModelSystem, PopulationUniverse,
 };
 use fsl_eval::simulation::{NotSimulated, RequiresBound};
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
@@ -41,7 +41,9 @@ use fsl_replay::{
     ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ResultLabel,
     StateGraphMethod, settle_existential,
 };
-use fsl_semantics::check::{CheckedTemporalClause, FormulaNode, FormulaNodeId};
+use fsl_semantics::check::{
+    CheckCause, CheckedTemporalClause, FormulaNode, FormulaNodeId, HyperCause,
+};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
@@ -122,7 +124,7 @@ fn level(upper: u64) -> Json {
 }
 
 /// The domain package with `populations`, each `(name, member types)`.
-fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
+pub(crate) fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
     let constructs: Vec<Json> = [
         ("object_type", meaning::OBJECT_TYPE),
         ("population", meaning::POPULATION),
@@ -179,7 +181,7 @@ pub(crate) type Held<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 pub(crate) struct World {
     pub(crate) document: Vec<u8>,
     pub(crate) package: CheckedPackage,
-    packages: fsl_semantics::model::intake::PackageInput,
+    pub(crate) packages: fsl_semantics::model::intake::PackageInput,
     pub(crate) snapshots: fsl_semantics::model::observation::DocumentProvision,
     pub(crate) initial: Vec<DocumentRef>,
 }
@@ -736,21 +738,26 @@ fn hyper_parameters_read_the_held_most_specific_type_or_absent_key() {
         "{absent:?}"
     );
 
-    // FR-172 "Object parameters": an object type no population overlaps
-    // checks, and its parameter holds no population.
     let unrelated = "hyper HUnrelated using t0 over behaviours (v: M::Other) \
-        forall trace a of M { always holds((v = v) @ a) }\n";
-    let graph = declarations_in(PACKAGE, &world.document, unrelated)
+        forall trace a of M { always holds(v = v) }\n";
+    let refusal = declarations_in(PACKAGE, &world.document, unrelated)
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
         )
-        .unwrap_or_else(|refusals| panic!("the unrelated parameter checks: {refusals:?}"));
-    let [unrelated] = graph.hyper_clauses() else {
-        panic!("one hyper clause");
-    };
-    assert!(unrelated.parameters()[0].populations.is_empty());
+        .expect_err("an unrelated type has no overlapping population");
+    assert!(
+        refusal
+            .iter()
+            .any(|refusal| matches!(
+                refusal.cause.as_ref(),
+                CheckCause::Hyper(cause)
+                    if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
+                        if parameter == "v")
+            )),
+        "the unrelated parameter keeps its typed unresolved-population refusal: {refusal:?}"
+    );
 }
 
 /// FR-125-AC-8: a population that admits `T` and has no universe is
@@ -841,31 +848,9 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         matches!(refusal, ModelCheckRefusal::RequiresBound(_)),
         "{refusal:?}"
     );
-    let (package, clause) = unbounded.clause("Animal");
-    let selector = ModelSystem::new(
-        unbounded
-            .subject(&package, Vec::new())
-            .simulation,
-    )
-    .expect("system construction leaves extent classification to the selector");
-    assert!(matches!(
-        selector.claim_instances(&clause.over().1),
-        Err(NoClaimInstances::NotSimulated(NotSimulated::RequiresBound(_)))
-    ));
 
     let mut empty = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
     empty.initial.clear();
-    let (package, clause) = empty.clause("Animal");
-    let selector = ModelSystem::new(
-        empty
-            .subject(&package, universes(&[("animals", &["c"])]))
-            .simulation,
-    )
-    .expect("bounded system construction");
-    assert!(matches!(
-        selector.claim_instances(&clause.over().1),
-        Err(NoClaimInstances::NoInitialState)
-    ));
     assert!(matches!(
         empty.run("Animal", universes(&[("animals", &["c"])]), true),
         Ok(ModelCheckOutcome::Undecided {
@@ -1049,17 +1034,6 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         Ok(vec![instance("animals", "c")])
     );
     let no_key = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
-    let (package, clause) = no_key.clause("Animal");
-    let selector = ModelSystem::new(
-        no_key
-            .subject(&package, universes(&[("animals", &["c"])]))
-            .simulation,
-    )
-    .expect("bounded system construction");
-    assert!(matches!(
-        selector.claim_instances(&clause.over().1),
-        Err(NoClaimInstances::NoInstance)
-    ));
     let no_key_result = no_key.run("Animal", universes(&[("animals", &["c"])]), true);
     assert!(
         matches!(
@@ -2369,15 +2343,13 @@ fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
     assert_eq!(generated_initial_states() - generated_before, 0);
 }
 
-/// FR-125 "Instancing": the instances of `v: M::Thing` are the admitted keys
-/// of the populations that overlap `Thing`. `P1` (through `Lamp`) overlaps
-/// it; `spare`, in `P1`'s universe, is admitted by no initial state and is
-/// excluded. `Q`, a population of `Dog`'s supertype `Animal`, does not overlap
-/// `Thing`: it contributes no instance, and settlement refuses its key as it
-/// refuses `spare`.
-#[trace("TC-3219", "FR-181-AC-8")]
+/// FR-172 Object parameters and FR-125 Instancing: `v: M::Thing` resolves to
+/// `P1`, the one population that overlaps `Thing` (through `Lamp`), so its
+/// instances are the keys of `P1`'s universe, held or not. `P1`'s other member
+/// type is `Dog`. `Q`, a population of `Dog`'s supertype `Animal`, does not
+/// overlap `Thing`: it contributes no instance, and replay refuses its key.
 #[test]
-fn hyper_instances_are_the_admitted_keys_of_the_overlapping_populations() {
+fn hyper_instances_are_the_keys_of_the_resolved_population_alone() {
     let world = world(
         &[("P1", &["Dog", "Lamp"]), ("Q", &["Animal"])],
         &[("P1", &[("l", "Lamp")]), ("Q", &[("a", "Animal")])],
@@ -2420,7 +2392,7 @@ fn hyper_instances_are_the_admitted_keys_of_the_overlapping_populations() {
         .iter()
         .map(|decided| decided.instance.clone())
         .collect();
-    assert_eq!(listed, [bound("l")]);
+    assert_eq!(listed, [bound("l"), bound("spare")]);
 
     let subjects = [world.subject(&package, both())];
     let request = ProductClosureRequest {
@@ -2437,17 +2409,12 @@ fn hyper_instances_are_the_admitted_keys_of_the_overlapping_populations() {
     let held = settle_existential(&request, &run.instances[0], &method, &Cancel::new())
         .expect("replay binds the key the engine listed");
     assert_eq!(held.record.label, ResultLabel::Proved);
-    for key in ["a", "spare"] {
-        let mut foreign = run.instances[0].clone();
-        foreign.instance = bound(key);
-        assert!(
-            matches!(
-                settle_existential(&request, &foreign, &method, &Cancel::new()),
-                Err(ProductClosureRefusal::Input("HP-5-instance"))
-            ),
-            "{key}"
-        );
-    }
+    let mut foreign = run.instances[0].clone();
+    foreign.instance = bound("a");
+    assert!(matches!(
+        settle_existential(&request, &foreign, &method, &Cancel::new()),
+        Err(ProductClosureRefusal::Input("HP-5-instance"))
+    ));
 }
 
 /// The `native-analyze/1` run of the claim `body` declares over the
@@ -2468,7 +2435,7 @@ fn analyze_over_pets(name: &str, body: &str, item: Json) -> crate::analyze_cli_s
 
 /// FR-125 "Instancing"'s written binding of the key `l`: `Thing`'s universe,
 /// the admitted type `Lamp` and the key.
-pub(crate) fn the_admitted_lamp() -> Json {
+fn the_admitted_lamp() -> Json {
     json!({
         "identity": "l",
         "object_type": {
@@ -2545,43 +2512,58 @@ fn a_refuted_over_binding_names_the_admitted_member_type() {
     );
 }
 
-/// FR-125 "Instancing": a system whose initial states are given to it, as a
-/// refinement's mapped abstract system is (FSL FR-630), writes the admitted
-/// member type of those states, not the declared `over` type.
-#[trace("TC-520", "FR-125-AC-9")]
+/// A key of the resolved population's universe that no initial state admits
+/// is still an HP-5 instance, and its written binding carries the parameter's
+/// declared type `Thing`. The item reports its last instance, `m`; the initial
+/// state holds only `l`.
+#[trace("TC-520")]
 #[test]
-fn given_initial_states_write_the_admitted_member_type() {
-    let world = world(&[("P1", &["Dog", "Lamp"])], &[("P1", &[("l", "Lamp")])]);
-    let (package, clause) = world.clause("Thing");
-    let held = || universes(&[("P1", &["l"])]);
-    let read =
-        ModelSystem::new(world.subject(&package, held()).simulation).expect("the subject admits");
-    let states: Vec<_> = read
-        .initial_states()
-        .iter()
-        .map(|state| {
-            let anchor = state.required_anchor().expect("a snapshot state").clone();
-            (state.state().clone(), anchor)
-        })
-        .collect();
-    let mut request = world.subject(&package, held()).simulation;
-    request.initial = Vec::new();
-    let given = ModelSystem::new(request)
-        .expect("a subject with no initial snapshot admits")
-        .with_initial_states(states)
-        .expect("the given states admit");
-    let over = clause.over().1.clone();
-    let filament_exact::ValueType::Reference(thing) = &over else {
-        panic!("a reference `over` type");
-    };
-    let instances = given.instances(&over).expect("the instances");
-    let [instance] = instances.as_slice() else {
-        panic!("one admitted key: {instances:?}");
-    };
-    let written = given
-        .written_reference(thing.clone(), instance)
-        .expect("the binding is written");
-    assert_eq!(written.object().as_str(), "l");
-    let admitted_type = format!("{:?}", written.object_type());
-    assert!(admitted_type.contains("Lamp"), "{admitted_type}");
+fn an_hp5_witness_of_an_unadmitted_key_binds_the_declared_type() {
+    let initial = world(&[("pets", &["Dog", "Lamp"])], &[("pets", &[("l", "Lamp")])]);
+    let later = world(
+        &[("pets", &["Dog", "Lamp"])],
+        &[("pets", &[("l", "Lamp"), ("m", "Lamp")])],
+    );
+    let workspace = Workspace::new("instances-hp5-unadmitted-key");
+    // The universe snapshot is a second document, distinct from `s0`.
+    let universe = String::from_utf8(
+        later
+            .snapshots
+            .values()
+            .next()
+            .expect("one snapshot")
+            .clone(),
+    )
+    .expect("snapshot text")
+    .replace("\"identity\":\"s0\"", "\"identity\":\"u0\"")
+    .into_bytes();
+    let held = initial.snapshots.values().next().expect("one snapshot");
+    let run = analyze(&request_over(
+        &workspace,
+        &unit_text_in(
+            PACKAGE,
+            "hyper H using t0 over behaviours (v: M::Thing) \
+                exists trace a of M { eventually always holds(true) }\n",
+        ),
+        &initial.document,
+        &[held.clone(), universe],
+        json!({
+            "items": [{"claim": "H", "temporal": {"witness_samples": 0}}],
+            "subject": {
+                "initial_states": [{"authority": "test", "identity": "s0"}],
+                "universes": [{"authority": "test", "identity": "u0"}],
+                "proof_bounds": []
+            }
+        }),
+    ));
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    let mut declared = the_admitted_lamp();
+    declared["identity"] = json!("m");
+    declared["object_type"]["original"]["node"] = json!("ix://test/things/Thing");
+    assert_eq!(
+        run.item(0)["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "v", "key": declared}),
+        "{}",
+        run.document()
+    );
 }
