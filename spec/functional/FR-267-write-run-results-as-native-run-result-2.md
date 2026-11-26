@@ -20,7 +20,7 @@ relationships:
   - target: ix://agent-ix/filament-specification/FR-352
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-109
-    type: depends_on
+    type: references
   - target: ix://agent-ix/filament-contract-codegen/FR-004
     type: traces_to
   - target: ix://agent-ix/filament-spec-language/FR-330
@@ -40,7 +40,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-645
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-663
-    type: depends_on
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-868
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-095

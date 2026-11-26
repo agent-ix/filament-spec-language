@@ -20,7 +20,7 @@ relationships:
   - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-267
-    type: traces_to
+    type: depends_on
 ---
 # FR-109: Run a selected state clause through the spine and report a typed disposition
 
