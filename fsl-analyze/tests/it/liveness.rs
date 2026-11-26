@@ -19,11 +19,7 @@ use crate::liveness_support::{
     lasso_of, violated, Fixture,
 };
 use filament_exact::{Cancel, CancelCause, Meter};
-use fsl_analyze::model_check::{
-    check_model, ModelCheckRequest, Product, ProductTransition, PropertyComponent,
-};
-use fsl_eval::model_subject::{ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::ModelSimState;
+use fsl_analyze::model_check::{Product, ProductTransition, PropertyComponent};
 use fsl_eval::simulation::{ExpansionStop, TransitionSystem};
 use fsl_eval::temporal::{
     evaluate, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
@@ -31,16 +27,14 @@ use fsl_eval::temporal::{
 };
 use fsl_replay::{
     check_components_over_stutter_closure, ComponentWitness, CounterexampleKind, IncompleteCause,
-    Lasso, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit,
+    Lasso, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit,
     TemporalCertificateCheck, UndefinedLocus,
 };
 use fsl_semantics::check::FormulaNodeId;
 use fsl_semantics::model::observation::AnchorKind;
 use ix_trace_rs::trace;
 
-use crate::counter::{
-    document, document_with_ranged_parameter, subject, value, CONTRACT, UNLIMITED, ZERO,
-};
+use crate::counter::{document, document_with_ranged_parameter, value, CONTRACT, UNLIMITED, ZERO};
 
 /// FR-126-AC-3's last sentence, with the deadlock half in
 /// `model_check::deadlock_freedom_is_violated_at_the_unintended_terminal_state`:
@@ -519,39 +513,16 @@ fn two_liveness_runs_give_equal_outcomes() {
     assert_eq!(once(), once());
 }
 
-/// Letters that read the counter an instance binds by its key.
-struct ByKey(fn(&str, i64) -> bool);
-
-impl ModelLetters for ByKey {
-    crate::units::unguarded!();
-
-    fn reads(&self, _atom: fsl_semantics::check::FormulaNodeId) -> crate::units::Reads {
-        crate::units::unread()
-    }
-
-    fn atom(
-        &self,
-        _atom: fsl_semantics::check::FormulaNodeId,
-        instance: &ModelInstance,
-        state: &ModelSimState,
-        _meter: &mut filament_exact::Meter,
-    ) -> Result<fsl_eval::temporal::AtomReading, fsl_eval::model_subject::AtomStop> {
-        Ok(if (self.0)(&instance.key, value(state, &instance.key)) {
-            fsl_eval::temporal::AtomReading::True
-        } else {
-            fsl_eval::temporal::AtomReading::False
-        })
-    }
-}
-
-/// FR-126 "Explicit-state limits": the model-only pass's states are charged
-/// to the run's `max_states`, across instances. Over two counters, `eventually
-/// holds(c.value = 1)` is read as `value = 1` for `a` and as always true for
-/// `b`. For `b` the negation has no move at the first position, so `b` has no
-/// product state and its model-only pass reads all 16 model states. The least
-/// `max_states` that lets a run finish is then more than `a`'s product plus
-/// those 16: `a`'s own model-only pass has been charged too, so the budget
-/// `b` gets is what `a`'s product and pass left.
+/// FR-126 "Bindings and ranking (TP-4)" and "Model-only pass (TP-4)": the
+/// run's `max_states` is shared by every binding, and each state a model-only
+/// pass creates is charged to it and counted in no product total. Over two
+/// counters, `eventually holds(c.value = 1)` is read as always true, so
+/// neither `a` nor `b` is refuted and both are decided. The negation then has
+/// no move at the first position: no binding has a product state, and each
+/// binding's pass reads the whole model from the initial state. The frame
+/// lets `inc` on one counter give the other any value, so all 4 x 4 states
+/// are reached. Two passes of 16 states need `max_states` 32; 31 runs out in
+/// `b`'s pass, on what `a`'s pass left.
 #[trace("TC-1085")]
 #[test]
 fn the_model_only_pass_spends_the_budget_the_next_instance_gets() {
@@ -562,45 +533,40 @@ fn the_model_only_pass_spends_the_budget_the_next_instance_gets() {
         "eventually holds(c.value = 1)",
         &[("a", 0), ("b", 0)],
     );
-    let letters = ByKey(|object, value| object == "b" || value == 1);
-    let run = |budget: usize| {
-        let mut limits = ModelCheckLimits::default();
-        limits.limits.max_states = budget;
-        check_model(
-            ModelCheckRequest {
-                workers: 1,
-                temporal_clock_selections: &fixture.temporal_clock_selections,
-                subject: subject(
-                    &fixture.package,
-                    &fixture.documents,
-                    fixture.initial.clone(),
-                    &fixture.keys,
-                    UNLIMITED,
-                ),
-                item: ModelCheckItem::Clause {
-                    clause: &fixture.clauses[0],
-                    letters: &letters,
-                },
-                max_depth: None,
-                limits,
-                smt_encoding: Default::default(),
-                smt_run: Default::default(),
-                reductions: Default::default(),
-            },
-            &Cancel::new(),
-        )
-        .expect("checked")
+    let run = |limits| {
+        fixture
+            .run(|_| Some(true), None, limits, UNLIMITED, &Cancel::new())
+            .expect("checked")
     };
-    let least = (1..=200)
-        .find(|budget| !matches!(run(*budget), ModelCheckOutcome::Stopped { .. }))
-        .expect("a budget finishes the run");
-    let counted = run(least).stats().product_states;
-    let counted = usize::try_from(counted).expect("small");
-    // `b` has no product state, so the product states are `a`'s alone.
-    assert!(
-        least > counted + 16,
-        "a's model-only pass is charged before b's: {least} against {counted} + 16"
+    let budget = |max_states| {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = max_states;
+        run(limits)
+    };
+    for outcome in [budget(32), run(ModelCheckLimits::default())] {
+        let ModelCheckOutcome::Holds { stats, .. } = outcome else {
+            panic!("expected a proof: {outcome:?}");
+        };
+        assert_eq!((stats.product_states, stats.product_edges), (0, 0));
+    }
+    let ModelCheckOutcome::Stopped {
+        cause,
+        limit,
+        stats,
+        ..
+    } = budget(31)
+    else {
+        panic!("31 states do not cover both passes");
+    };
+    assert_eq!(cause, IncompleteCause::ResourceExhausted);
+    assert_eq!(
+        limit,
+        Some(ReachedLimit {
+            limit: ModelCheckLimit::MaxStates,
+            value: 31
+        })
     );
+    assert_eq!((stats.product_states, stats.product_edges), (0, 0));
 }
 
 fn is_at_most_three(value: i64) -> Option<bool> {
