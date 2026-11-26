@@ -5,6 +5,7 @@ use filament_checked::node::NodeKind;
 use filament_exact::{IllTypedCause, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::location::ExpressionLocation as Location;
+use ix_trace_rs::implements;
 
 use super::check::NamedScope;
 use super::ir::CheckedBody;
@@ -156,6 +157,9 @@ pub(crate) struct SynthesisCheckContext<'a> {
     pub(crate) models: &'a [super::lowering::AdmittedModel],
     pub(crate) dispatch_tables: &'a [super::DispatchTable],
     pub(crate) sealing_meter: &'a mut filament_exact::Meter,
+    /// The check's own `s3.*` limits, which each synthesis body is typed
+    /// under (FR-255 "Behavior" 13).
+    pub(crate) limits: super::CheckingLimits,
 }
 
 pub(crate) fn check_forms(
@@ -172,6 +176,7 @@ pub(crate) fn check_forms(
         models,
         dispatch_tables,
         sealing_meter,
+        limits,
     } = context;
     let mut checked = Vec::with_capacity(forms.len());
     for (index, form) in forms.iter().enumerate() {
@@ -289,6 +294,7 @@ pub(crate) fn check_forms(
             &parameters,
             Some(&ValueType::Boolean),
             &satisfies_location,
+            limits,
         )
         .map_err(|refusal| vec![refusal])?;
         let (objective, objective_slot_names) = if let Some(objective) = &form.objective {
@@ -299,6 +305,7 @@ pub(crate) fn check_forms(
                 &parameters,
                 None,
                 &objective_location,
+                limits,
             )
             .map_err(|refusal| vec![refusal])?;
             if !is_numeric(body.root().value_type()) {
@@ -347,6 +354,7 @@ fn is_numeric(value_type: &ValueType) -> bool {
     )
 }
 
+#[implements("FR-255-AC-31")]
 fn check_expression(
     scope: &Scope,
     signatures: &Signatures,
@@ -354,8 +362,8 @@ fn check_expression(
     parameters: &[(String, ValueType)],
     expected: Option<&ValueType>,
     location: &Location,
+    limits: super::CheckingLimits,
 ) -> Result<(CheckedBody, Vec<String>), CheckRefusal> {
-    let limits = super::CheckingLimits::default();
     let mut nodes = 0;
     let typer = Typer::new(
         scope,

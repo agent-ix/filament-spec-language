@@ -66,6 +66,24 @@ fn check_model_with_types(
     goal: &str,
     types: &str,
 ) -> Result<CheckedSynthesis, String> {
+    check_under(
+        model_text,
+        lengths,
+        objective,
+        goal,
+        types,
+        CheckingLimits::default(),
+    )
+}
+
+fn check_under(
+    model_text: &str,
+    lengths: &str,
+    objective: &str,
+    goal: &str,
+    types: &str,
+    limits: CheckingLimits,
+) -> Result<CheckedSynthesis, String> {
     let model = fsl_cst::diagnostic::read_source(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
         "shop.fsl",
@@ -113,7 +131,7 @@ fn check_model_with_types(
     let graph = declarations
         .check(
             CheckMode::Linked,
-            CheckingLimits::default(),
+            limits,
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .map_err(|refusals| format!("{refusals:?}"))?;
@@ -564,4 +582,30 @@ fn a_step_sum_whose_term_is_not_numeric_is_ill_typed() {
         .expect_err(term);
         assert!(refusals.contains("TypeMismatch"), "{term}: {refusals}");
     }
+}
+
+/// A synthesis goal is typed under the check's own `s3.*` limits: the goal
+/// `true and true and true` holds five expression nodes (three literals under
+/// two conjunctions), so `s3.nodes` 4 refuses at the fifth and 5 admits it.
+#[trace("FR-255-AC-31")]
+#[test]
+fn a_synthesis_goal_is_typed_under_the_callers_node_limit() {
+    let at = |nodes: u64| {
+        check_under(
+            SHOP,
+            "Int[0, 3]",
+            "",
+            "true and true and true",
+            "",
+            CheckingLimits::default().with_nodes(nodes),
+        )
+    };
+    at(5).expect("five nodes fit a limit of five");
+    let refused = at(4).expect_err("five nodes pass a limit of four");
+    assert!(
+        refused.contains("S3Nodes")
+            && refused.contains("bound: 4")
+            && refused.contains("actual: 5"),
+        "{refused}"
+    );
 }
