@@ -99,6 +99,11 @@ fn fair_loop(claims: &str) -> World {
     )
 }
 
+/// An unbounded claim, which the infinite-trace profile reads.
+fn unbounded(name: &str, scheduler: &str, form: &str) -> String {
+    format!("probabilistic {name} using inf on M over (c: M::Call) {scheduler} on origin {{ {form} }}\n")
+}
+
 fn settle(world: &World, claim: &str) -> AnalyzeRecord {
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let request = ProductRequest {
@@ -163,6 +168,18 @@ fn assert_region_not_built(world: &World, claim: &str, cause: RegionCause) {
 
 /// EN-5 reads the claim over digital clocks and proves it, and the checker
 /// gives the digital route.
+/// EN-5 does not leave digital clocks for the claim, and the checker gives the
+/// digital route.
+fn assert_digital(world: &World, claim: &str) {
+    let record = settle(world, claim);
+    assert_eq!(record.region_cause, None, "{claim}: {record:#?}");
+    let found = checker(world, claim);
+    assert!(
+        matches!(found, Ok(TimedProbabilityRoute::Digital)),
+        "{claim}: {found:?}"
+    );
+}
+
 fn assert_digital_proof(world: &World, claim: &str) {
     let record = settle(world, claim);
     assert!(
@@ -183,9 +200,9 @@ fn assert_digital_proof(world: &World, claim: &str) {
 #[trace("FSpec-TC-374", "FSpec-FR-421-AC-10")]
 #[test]
 fn overtake_mixed_delays_are_not_read_at_integer_times() {
-    let world = overtake(&under(
-        "W",
+    let world = overtake(&unbounded(
         "Overtake",
+        "under W",
         "probability <= 0.6 [ eventually holds(c.late) ]",
     ));
     assert_region_not_built(&world, "Overtake", RegionCause::MixedDelays);
@@ -205,7 +222,7 @@ fn pinch_expected_elapsed_under_a_time_lock_is_not_read_at_integer_times() {
 #[test]
 fn fair_loop_is_not_read_at_integer_times() {
     let world = fair_loop(
-        "probabilistic FairLoop using ev on M over (c: M::Call) under every scheduler \
+        "probabilistic FairLoop using inf on M over (c: M::Call) under every scheduler \
          fair strong Call::leave on origin { probability >= 0.9 [ eventually holds(c.late) ] }\n",
     );
     assert_region_not_built(&world, "FairLoop", RegionCause::Fairness);
@@ -219,24 +236,27 @@ fn admitted_rows_are_digital_for_the_engine_and_the_checker() {
     let given = models::send_reply(
         3,
         None,
-        &under(
-            "Even",
+        &unbounded(
             "Given",
-            "probability >= 1 [ eventually holds(c.phase = 1) ]",
+            "under Even",
+            "probability >= 0.9 [ eventually holds(c.phase = 1) ]",
         ),
     );
-    assert_digital_proof(&given, "Given");
+    assert_digital(&given, "Given");
     let free = models::retx(
-        &(every("Reach", "probability >= 1 [ eventually holds(c.late) ]")
-            + &every("Mean", "expected elapsed until holds(c.late) <= 3 ms")
+        &(unbounded(
+            "Reach",
+            "under every scheduler",
+            "probability >= 0.9 [ eventually holds(c.late) ]",
+        ) + &every("Mean", "expected elapsed until holds(c.late) <= 3 ms")
             + &every(
                 "Deadline",
                 "probability >= 0.99 [ eventually[0 ms, 4 ms] holds(c.late) ]",
             )),
     );
-    for claim in ["Reach", "Mean", "Deadline"] {
-        assert_digital_proof(&free, claim);
-    }
+    assert_digital(&free, "Reach");
+    assert_digital_proof(&free, "Mean");
+    assert_digital_proof(&free, "Deadline");
 }
 
 /// A reachable time-lock admits only the maximum of a reach or
@@ -257,19 +277,29 @@ fn a_time_lock_admits_the_maximum_only() {
 
 #[trace("TC-2490", "FR-921-AC-5")]
 #[test]
-fn rows_off_digital_clocks_name_their_cause() {
-    let skew = models::skew(
-        &(every(
-            "Later",
-            "quantile 0.4 of (elapsed from holds(c.inflight) until holds(c.late) within 4 ms) <= 1 ms",
-        ) + &every(
-            "Nested",
-            "probability >= 0.4 [ eventually[0 ms, 4 ms] (holds(c.inflight and not c.late) and eventually[0 ms, 1 ms] holds(c.late)) ]",
-        )),
-    );
-    assert_region_not_built(&skew, "Later", RegionCause::LaterPosition);
-    assert_region_not_built(&skew, "Nested", RegionCause::OtherFormula);
-    let burst = models::send_reply(
+fn a_free_subject_read_from_a_later_position_needs_regions() {
+    let world = models::skew(&every(
+        "Later",
+        "quantile 0.4 of (elapsed from holds(c.inflight) until holds(c.late) within 4 ms) <= 1 ms",
+    ));
+    assert_region_not_built(&world, "Later", RegionCause::LaterPosition);
+}
+
+#[trace("TC-2490", "FR-921-AC-5")]
+#[test]
+fn a_nested_window_over_free_delays_needs_regions() {
+    let world = models::skew(&every(
+        "Nested",
+        "probability >= 0.4 [ eventually[0 ms, 4 ms] \
+         (holds(c.inflight and not c.late) and eventually[0 ms, 1 ms] holds(c.late)) ]",
+    ));
+    assert_region_not_built(&world, "Nested", RegionCause::OtherFormula);
+}
+
+#[trace("TC-2490", "FR-921-AC-5")]
+#[test]
+fn an_unweighted_time_fraction_needs_regions() {
+    let world = models::send_reply(
         0,
         None,
         &under(
@@ -278,12 +308,19 @@ fn rows_off_digital_clocks_name_their_cause() {
             "mean of (fraction holds(c.phase = 1) over [0, 1 ms]) <= 0.7",
         ),
     );
-    assert_region_not_built(&burst, "Burst", RegionCause::UnweightedTimeFraction);
-    let weighted = models::skew(&every(
+    assert_region_not_built(&world, "Burst", RegionCause::UnweightedTimeFraction);
+}
+
+/// TC-374's `Skew` reading: a delay-weighted fraction over free delays.
+#[trace("TC-2490", "FR-921-AC-5")]
+#[trace("FSpec-TC-374", "FSpec-FR-421-AC-11")]
+#[test]
+fn a_delay_weighted_fraction_over_free_delays_needs_regions() {
+    let world = models::skew(&every(
         "Weighted",
-        "probability <= 0.6 [ fraction holds(c.inflight and not c.late) over [0 ms, 2 ms] weighted by delay >= rational(1, 4) ]",
+        "probability <= 0.6 [ fraction holds(c.inflight and not c.late) over [0, 2 ms] weighted by delay >= rational(1, 4) ]",
     ));
-    assert_region_not_built(&weighted, "Weighted", RegionCause::DelayWeightedFraction);
+    assert_region_not_built(&world, "Weighted", RegionCause::DelayWeightedFraction);
 }
 
 /// A strict subject takes the region route on both sides.
@@ -292,7 +329,10 @@ fn rows_off_digital_clocks_name_their_cause() {
 fn a_strict_subject_takes_the_region_route() {
     let world = models::two_clocks(
         true,
-        &every("Strict", "probability <= 1 [ eventually holds(c.late) ]"),
+        &every(
+            "Strict",
+            "probability <= 0.5 [ eventually[0 ms, 4 ms] holds(c.late) ]",
+        ),
     );
     let record = settle(&world, "Strict");
     assert_eq!(record.region_cause, None);
