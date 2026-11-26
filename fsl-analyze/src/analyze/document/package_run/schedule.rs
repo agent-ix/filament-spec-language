@@ -167,7 +167,7 @@ fn unit_name(package: &BarePackage<'_>, unit: &CheckedNodeId) -> String {
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     /// A `schedulability` item over the claim at `declaration` and
     /// `ordinal`, as the source route's `resolve_schedule_claim` resolves it.
-    #[implements("FR-940-AC-39")]
+    #[implements("FR-246-AC-4")]
     pub(super) fn schedule(
         &self,
         index: RequestIndex,
