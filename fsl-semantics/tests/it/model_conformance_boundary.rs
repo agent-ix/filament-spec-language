@@ -15,7 +15,8 @@ use fsl_semantics::model::accounting::{
     NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
 };
 use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
-use fsl_semantics::model::normalize::ModelRefusalCause;
+use fsl_semantics::model::domain_package::ValueTypeRef;
+use fsl_semantics::model::normalize::{EffectiveParameterType, ModelRefusalCause};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -1929,7 +1930,8 @@ fn optional_parameter_pair(base: (&str, &str), child: (&str, &str)) -> Vec<u8> {
     };
     document(|_| {
         vec![
-            object("Staff", &[], vec![], vec![]),
+            object("Person", &[], vec![], vec![]),
+            object("Staff", &["Person"], vec![], vec![]),
             json!({"identity": identity("OptStaff"), "displayName": "OptStaff",
                 "kind": "option", "inner": identity("Staff"), "roles": [],
                 "origin": origin("OptStaff"), "constraints": [], "extensions": [],
@@ -1948,7 +1950,9 @@ fn optional_parameter_pair(base: (&str, &str), child: (&str, &str)) -> Vec<u8> {
 /// FSpec TC-2054 step 5: the parameter type axis compares the types presence
 /// gives, so `optional Staff` and `required OptStaff` are one type, while an
 /// optional and a required `Staff` differ in either direction. Presence adds
-/// no axis: the two-parameter operation costs ten units whatever it states.
+/// no axis, and a parameter type axis costs the facts of the type walked: two
+/// for `Staff` (it has a supertype) under either spelling of the option, so
+/// the two-parameter operation costs twelve units.
 #[trace("FSpec-TC-2054", "FSpec-FR-151-AC-21")]
 #[test]
 fn optional_parameter_presence_is_compared_by_the_parameter_type_axis() {
@@ -1962,13 +1966,17 @@ fn optional_parameter_presence_is_compared_by_the_parameter_type_axis() {
     ] {
         let bytes = optional_parameter_pair(base, child);
         assert_eq!(check(&bytes, NOOP), Ok(()), "{base:?} then {child:?}");
-        assert_eq!(stage_total(&bytes, NOOP), 10, "{base:?} then {child:?}");
+        assert_eq!(stage_total(&bytes, NOOP), 12, "{base:?} then {child:?}");
     }
-    for (base, child) in [
-        (required, optional),
-        (optional, required),
-        (required, option_type),
-        (option_type, required),
+    let staff = |optional| EffectiveParameterType {
+        optional,
+        value_type: ValueTypeRef::Package(key("Staff")),
+    };
+    for (base, child, expected, actual) in [
+        (required, optional, false, true),
+        (optional, required, true, false),
+        (required, option_type, false, true),
+        (option_type, required, true, false),
     ] {
         let bytes = optional_parameter_pair(base, child);
         let refusals = run(&bytes, NOOP, None)
@@ -1984,13 +1992,14 @@ fn optional_parameter_presence_is_compared_by_the_parameter_type_axis() {
         assert_eq!(failure.member, key("Rush/set"));
         assert_eq!(failure.parent, key("Order/set"));
         // The receiver is parameter 0, so `secondApprover` is parameter 2.
-        assert!(
-            matches!(
-                failure.cause,
-                ModelRefusalCause::VarianceParameter { index: 2, .. }
-            ),
-            "{base:?} then {child:?}: {:?}",
-            failure.cause
+        assert_eq!(
+            failure.cause,
+            ModelRefusalCause::VarianceParameter {
+                index: 2,
+                declared: staff(expected),
+                redefined: staff(actual),
+            },
+            "{base:?} then {child:?}"
         );
     }
 }

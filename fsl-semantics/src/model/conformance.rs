@@ -37,7 +37,7 @@ use crate::model::domain_package::{
     unaliased, DomainPackageRecord, Multiplicity, OperationParameterRecord, ValueTypeRef,
 };
 use crate::model::index::ModelIndex;
-use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
+use crate::model::normalize::{EffectiveParameterType, ModelRefusal, ModelRefusalCause};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Presence;
 use fsl_foundation::diagnostic::Code;
@@ -429,30 +429,41 @@ pub fn check_operation_redefinition(
                     code: Code::IllTyped,
                     cause: ModelRefusalCause::VarianceParameter {
                         index: display_index,
-                        declared: dp.value_type.clone(),
-                        redefined: rp.value_type.clone(),
+                        declared: EffectiveParameterType {
+                            optional: declared_optional,
+                            value_type: declared_inner.clone(),
+                        },
+                        redefined: EffectiveParameterType {
+                            optional: redefining_optional,
+                            value_type: redefining_inner.clone(),
+                        },
                     },
-                    detail: if declared_optional != redefining_optional {
-                        format!(
-                            "parameter {display_index}: a redefinition keeps whether the parameter is optional"
-                        )
-                    } else {
+                    detail: {
+                        let effective = |optional: bool, spelling: String| {
+                            if optional {
+                                format!("Option<{spelling}>")
+                            } else {
+                                spelling
+                            }
+                        };
+                        let expected = index.spelling(
+                            declared_inner,
+                            &super::spelling::MemberSlot::Parameter {
+                                operation: redefined_key.clone(),
+                                position: i,
+                            },
+                        );
+                        let actual = index.spelling(
+                            redefining_inner,
+                            &super::spelling::MemberSlot::Parameter {
+                                operation: redefining_key.clone(),
+                                position: i,
+                            },
+                        );
                         format!(
                             "parameter {display_index}: expected {} to conform to {}",
-                            index.spelling(
-                                &dp.value_type,
-                                &super::spelling::MemberSlot::Parameter {
-                                    operation: redefined_key.clone(),
-                                    position: i
-                                }
-                            ),
-                            index.spelling(
-                                &rp.value_type,
-                                &super::spelling::MemberSlot::Parameter {
-                                    operation: redefining_key.clone(),
-                                    position: i
-                                }
-                            )
+                            effective(declared_optional, expected),
+                            effective(redefining_optional, actual)
                         )
                     },
                 }),

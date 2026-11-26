@@ -20,7 +20,8 @@ use fsl_semantics::model::domain_package::{
 use fsl_semantics::model::index::ModelIndex;
 use fsl_semantics::model::key::{EffectiveId, RULE_REDEFINE};
 use fsl_semantics::model::normalize::{
-    normalize, EffectiveView, ModelRefusalCause, NormalizeOutcome, ViewEntry,
+    normalize, EffectiveParameterType, EffectiveView, ModelRefusalCause, NormalizeOutcome,
+    ViewEntry,
 };
 use ix_trace_rs::trace;
 
@@ -462,7 +463,6 @@ fn set_operation_parameter_presence(
     operation.expect("operation exists").parameters[0].presence = presence;
 }
 
-#[trace("FSpec-FR-151-AC-21")]
 #[test]
 fn operation_parameter_presence_is_kept_under_redefinition() {
     let redefining = operation_redefining(
@@ -769,8 +769,14 @@ fn r03_an_incompatible_operation_redefinition_reports_every_failing_axis() {
                 causes[0],
                 ModelRefusalCause::VarianceParameter {
                     index: 1,
-                    declared: ValueTypeRef::Package(DeclarationKey::fixture("model.A")),
-                    redefined: ValueTypeRef::Package(DeclarationKey::fixture("model.B")),
+                    declared: EffectiveParameterType {
+                        optional: false,
+                        value_type: ValueTypeRef::Package(DeclarationKey::fixture("model.A")),
+                    },
+                    redefined: EffectiveParameterType {
+                        optional: false,
+                        value_type: ValueTypeRef::Package(DeclarationKey::fixture("model.B")),
+                    },
                 }
             );
             assert_eq!(

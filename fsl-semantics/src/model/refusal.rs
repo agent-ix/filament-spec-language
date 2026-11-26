@@ -23,6 +23,18 @@ use filament_semantic_value::catalog::{render_identity, CatalogCode};
 use fsl_foundation::diagnostic::{JsonPointer, ALLOCATION_FAILED};
 use fsl_foundation::source::LocatedSpan;
 
+/// A parameter's type as the parameter type axis compares it (FSpec FR-322
+/// step 4, less the multiplicity its own axis judges): `Option<value_type>`
+/// when `optional`, from presence or from an option value type, and
+/// `value_type` otherwise.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectiveParameterType {
+    /// Whether the type is `Option<value_type>`.
+    pub optional: bool,
+    /// The type, or the option's inner type.
+    pub value_type: ValueTypeRef,
+}
+
 /// The offered model selection at a `foreign-model-selection` refusal's
 /// two sites (#163 review finding: each offered value stays distinguishable
 /// in the typed cause, not just in `detail`'s text).
@@ -492,10 +504,10 @@ pub enum ModelRefusalCause {
     VarianceParameter {
         /// The parameter's position.
         index: usize,
-        /// The redefining (declared) parameter's value type.
-        declared: ValueTypeRef,
-        /// The redefined parameter's value type.
-        redefined: ValueTypeRef,
+        /// The redefined operation's parameter type: the expected one.
+        declared: EffectiveParameterType,
+        /// The redefining operation's parameter type: the actual one.
+        redefined: EffectiveParameterType,
     },
     /// A redefining operation's effect writes a field the redefined
     /// operation's effect does not cover.
@@ -1651,8 +1663,14 @@ pub mod fixtures {
         TypeMismatch => ModelRefusalCause::TypeMismatch,
         VarianceParameter => ModelRefusalCause::VarianceParameter {
             index: 0,
-            declared: ValueTypeRef::Package(key("p")),
-            redefined: ValueTypeRef::Package(key("p")),
+            declared: EffectiveParameterType {
+                optional: false,
+                value_type: ValueTypeRef::Package(key("p")),
+            },
+            redefined: EffectiveParameterType {
+                optional: false,
+                value_type: ValueTypeRef::Package(key("p")),
+            },
         },
         EffectEscape => ModelRefusalCause::EffectEscape { field: key("p") },
         UnprovedRefinement => ModelRefusalCause::UnprovedRefinement,
