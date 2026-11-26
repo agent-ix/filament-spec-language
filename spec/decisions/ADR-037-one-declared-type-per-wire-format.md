@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-413
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-412
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-418
     type: depends_on
   - target: ix://agent-ix/filament-contract-ir/FR-070
@@ -91,6 +93,7 @@ hand-written table when the owner schema or shared type already defines it.
 | State locus `{key}` | FSpec FR-331 | `filament-contract-model` | FR-145, FR-149, FR-169, FR-244, FR-245 |
 | `TransitionIdentity` and its typed value | FSpec FR-181; schema form in FR-331 | `filament-contract-model` | FR-120, FR-331, FR-128, FR-237, and the task-product certificate requirement |
 | `ProbabilisticBound` | FSpec FR-413 | `filament-contract-model` | FSL requirements that write or strictly read the probability certificate, including FR-201 |
+| Certificate identity `CertificateNodeId` and `CertificatePathSegment` | FSpec FR-412-AC-34 | `filament-contract-model` | FR-201 |
 | `native-run-result/2` | FSpec FR-352, with witness members from FR-351 | FSL `fsl-replay` wire module | FR-267 and every FSL requirement that writes or reads the document |
 
 For each listed format, a requirement whose implementation writes, strictly
@@ -114,11 +117,15 @@ wire shape.
 Each shared type SHALL have a schema-conformance test that exercises the real
 writer, validates the emitted value against the owner's schema, strictly
 reads it through the same type, and checks typed equality and canonical-byte
-equality. Its vector test SHALL strictly read the owner's positive vectors
-and write each value back with the same canonical bytes. The test SHALL not
-replace a production writer or reader with a stand-in before schema
-validation. The tests provide the acceptance net for each migration; they do
-not replace the schema or the implementation tags required by ADR-032.
+equality. Where the owner publishes positive vectors, the test SHALL strictly
+read every such vector and write it back with the same canonical bytes. Where
+the owner publishes no positive vectors, the test SHALL use explicit valid
+values from the owner's acceptance criteria and mutations of those values
+derived from the owner's schema and refusal criteria; it SHALL not invent a
+parallel wire form or claim a vector round trip. The test SHALL not replace a
+production writer or reader with a stand-in before schema validation. These
+tests provide the acceptance net for each migration; they do not replace the
+schema or the implementation tags required by ADR-032.
 
 ## Consequences
 
