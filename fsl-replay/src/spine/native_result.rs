@@ -1354,6 +1354,15 @@ struct ExtractionPositionRead {
 
 #[implements("FR-267-AC-17")]
 fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadError> {
+    if value
+        .as_object()
+        .is_some_and(|members| !members.contains_key("map"))
+    {
+        return Err(NativeRunReadError::Invalid {
+            member: "extraction.map",
+            reason: "a map record is required",
+        });
+    }
     let extraction: ExtractionRead =
         serde_path_to_error::deserialize(value.clone()).map_err(|error| {
             let member = error.path().to_string();
@@ -4480,5 +4489,56 @@ mod qsl_3117_deciding_run {
                 "expected refusal naming {expected}, got {observed}"
             );
         }
+    }
+
+    /// FR-267-AC-17: a missing required map names `extraction.map`.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_missing_extraction_map() {
+        let mut document: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native-run-result-decisive.json"
+        ))
+        .unwrap();
+        let mut extraction = json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": {},
+            "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+        });
+        extraction.as_object_mut().unwrap().remove("map");
+        document["extraction"] = extraction;
+
+        let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+        assert!(
+            matches!(result, Err(NativeRunReadError::Invalid { member: "extraction.map", .. }))
+                || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.map"),
+            "missing extraction.map must be reported at that member"
+        );
+    }
+
+    /// FR-267-AC-17: an empty original-regions array is refused at its path.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_rejects_empty_extraction_original_regions() {
+        let mut document: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native-run-result-decisive.json"
+        ))
+        .unwrap();
+        document["extraction"] = json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": {},
+            "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]},
+            "original_regions": []
+        });
+
+        let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+        assert!(
+            matches!(result, Err(NativeRunReadError::Invalid { member: "extraction.original_regions", .. }))
+                || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.original_regions"),
+            "empty extraction.original_regions must be reported at that member"
+        );
     }
 }
