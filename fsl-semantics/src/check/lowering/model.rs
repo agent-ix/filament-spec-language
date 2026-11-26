@@ -510,6 +510,9 @@ pub struct AdmittedModel {
     places: Vec<PackagePlace>,
     source_places: BTreeMap<NodeKey, SourceClockLayout>,
     source_field_spans: BTreeMap<DeclarationKey, fsl_foundation::Span>,
+    /// Each field's declared position, by `(owner, field name)`, built once
+    /// from `records` on first use.
+    field_positions: std::sync::OnceLock<BTreeMap<(DeclarationKey, String), usize>>,
     /// Every required single-valued field whose type is a package object
     /// type, `(owner, field name, target)`: [`Self::referenced_object`],
     /// found once from `records`.
@@ -1234,6 +1237,7 @@ impl AdmittedModel {
             places: Vec::new(),
             source_places: BTreeMap::new(),
             source_field_spans: BTreeMap::new(),
+            field_positions: std::sync::OnceLock::new(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -1287,6 +1291,7 @@ impl AdmittedModel {
             places: Vec::new(),
             source_places: BTreeMap::new(),
             source_field_spans: BTreeMap::new(),
+            field_positions: std::sync::OnceLock::new(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -1490,6 +1495,24 @@ impl AdmittedModel {
     /// bounds it (FR-380).
     pub(crate) fn population_bound(&self, population: &DeclarationKey) -> Option<&AuthoredBound> {
         self.population_bounds.get(population)
+    }
+
+    /// The declared position of the field `name` of `owner`, from an index
+    /// of every field record built once per model.
+    pub(crate) fn field_position(&self, owner: &DeclarationKey, name: &str) -> Option<usize> {
+        let positions = self.field_positions.get_or_init(|| {
+            self.records
+                .values()
+                .filter_map(|record| match record {
+                    DomainPackageRecord::FieldMember(field) => Some((
+                        (field.owner.clone(), field.key.node.rsplit('/').next()?.to_owned()),
+                        field.position,
+                    )),
+                    _ => None,
+                })
+                .collect()
+        });
+        positions.get(&(owner.clone(), name.to_owned())).copied()
     }
 
     /// The effective identity of `key` when it declares an object type.
@@ -3244,18 +3267,9 @@ impl<'a> Lowering<'a> {
             _ => None,
         };
         let owner_chain = source_object_owner_chain(object_records, declaration);
-        // Each owner's declared positions, indexed once for this object.
-        let mut positions: BTreeMap<(&DeclarationKey, &str), usize> = BTreeMap::new();
-        for record in model.records.values() {
-            if let DomainPackageRecord::FieldMember(field) = record {
-                if let Some(name) = field.key.node.rsplit('/').next() {
-                    positions.insert((&field.owner, name), field.position);
-                }
-            }
-        }
         let place = |attribute: &filament_semantic_value::declaration::EffectiveAttribute<'_>| {
             let owner = model.type_key(attribute.owner())?;
-            let position = *positions.get(&(owner, attribute.field().name()))?;
+            let position = model.field_position(owner, attribute.field().name())?;
             Some((
                 owner_chain.iter().position(|held| *held == owner)?,
                 position,
