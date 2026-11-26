@@ -892,8 +892,7 @@ mod tests {
     fn unknown_envelope_member_refuses_before_export_selection() {
         let cause =
             admitted_document(br#"{"format":"native-run/1","request":{"export":{}},"extra":true}"#)
-                .err()
-                .expect("closed envelope");
+                .expect_err("closed envelope");
         assert_eq!(cause.code(), Code::InvalidRequest);
         assert!(cause.to_string().contains("extra"), "{cause}");
     }

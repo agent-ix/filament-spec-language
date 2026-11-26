@@ -4,8 +4,7 @@
 use std::path::Path;
 
 use fsl_command::command::{
-    export_with_limits_and_overrides, run_with_limits, CommandLimits, ExportSelection,
-    RequestOverrides, RunLimits,
+    export_with_limits_and_overrides, run_with_limits, ExportSelection, RequestOverrides, RunLimits,
 };
 use fsl_replay::Operation;
 use ix_trace_rs::trace;
@@ -224,8 +223,7 @@ fn deeply_nested_requests_refuse_at_every_entry_on_a_small_stack() {
                 let path = Path::new(&input);
                 let export = run(path, ExportSelection::Ordinary, RunLimits::default());
                 let error = run_with_limits(path, RunLimits::default(), &crate::negotiation::Fr290)
-                    .err()
-                    .expect("run refuses");
+                    .expect_err("run refuses");
                 let observed = json!({
                     "export": export,
                     "run": {"exit": error.category().exit_code(), "cause": error.cause.to_string()},
@@ -270,7 +268,7 @@ fn deeply_nested_requests_refuse_at_every_entry_on_a_small_stack() {
         assert!(
             observed["run"]["cause"]
                 .as_str()
-                .is_some_and(|cause| cause.contains("unknown field `z`")),
+                .is_some_and(|cause| cause.contains("recursion limit exceeded")),
             "depth {depth}: {observed}"
         );
     }

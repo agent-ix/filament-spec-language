@@ -1243,7 +1243,7 @@ mod tests {
                         "results":[],
                         "coverage":{"primary":[{"capability_id":"V1-TOOL-004", "applicability":{"consumer_types":["tool"], "semantic_profiles":["filament.value.complete/v1"]}}], "criteria_rollups":[], "consumer_rollups":[]}
                     }));
-                    let expected = &mut corpus.0["vectors"][0]["expected"];
+                    let expected = &mut corpus["vectors"][0]["expected"];
                     if refusal {
                         expected["details"]["deep"] = oracle.clone().into_inner();
                     } else {
@@ -1273,7 +1273,7 @@ mod tests {
                     // An invalid disposition retains the same deep payload.
                     // Schema diagnostics must identify the obligation's
                     // location without recursively printing that payload.
-                    corpus.0["vectors"][0]["expected"]["disposition"] =
+                    corpus["vectors"][0]["expected"]["disposition"] =
                         serde_json::json!("not-a-disposition");
                     std::fs::write(
                         corpus_root.join("complete-v1.json"),

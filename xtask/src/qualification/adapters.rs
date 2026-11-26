@@ -406,7 +406,9 @@ pub(super) fn execute(
 
 fn diagnostic(diagnostic: &fsl_cst::diagnostic::CompleteDiagnostic) -> Result<Execution, Failure> {
     Ok(Execution {
-        actual: Deep::new(json!({"code": diagnostic.code.as_str(), "cause": diagnostic.cause.as_str(), "locus": diagnostic.region.as_ref().map(|region| fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(region.clone()))), "message": diagnostic.message})),
+        actual: Deep::new(
+            json!({"code": diagnostic.code.as_str(), "cause": diagnostic.cause.as_str(), "locus": diagnostic.region.as_ref().map(|region| fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(region.clone()))), "message": diagnostic.message}),
+        ),
         bytes: None,
         partition: partition(diagnostic.code.category()),
     })
@@ -560,8 +562,7 @@ fn run(
             Err(failure) => return admission_failure(failure),
         };
         snapshot = Some(
-            unique_json::read(bytes)
-                .map_err(|message| Failure::decode("/input/files", message))?,
+            unique_json::read(bytes).map_err(|message| Failure::decode("/input/files", message))?,
         );
     }
     let signature = checked.package().graph().callable(function);
@@ -622,7 +623,9 @@ fn run(
                     AdmissionOutcome::Refused(refusal)
                     | AdmissionOutcome::UnknownClosure(refusal) => {
                         return Ok(Execution {
-                            actual: Deep::new(json!({"code":refusal.code.as_str(), "cause":refusal.catalog_code().cause(), "fields":refusal.cause.catalog_fields()})),
+                            actual: Deep::new(
+                                json!({"code":refusal.code.as_str(), "cause":refusal.catalog_code().cause(), "fields":refusal.cause.catalog_fields()}),
+                            ),
                             bytes: None,
                             partition: if refusal.code
                                 == fsl_foundation::diagnostic::Code::IncompletePopulation
@@ -635,7 +638,9 @@ fn run(
                     }
                     AdmissionOutcome::Incomplete(incomplete) => {
                         return Ok(Execution {
-                            actual: Deep::new(json!({"code":"resource_exhausted", "cause":"insufficient-next-charge", "fields":incomplete.denial().catalog_fields()})),
+                            actual: Deep::new(
+                                json!({"code":"resource_exhausted", "cause":"insufficient-next-charge", "fields":incomplete.denial().catalog_fields()}),
+                            ),
                             bytes: None,
                             partition: Partition::Incomplete,
                         })
@@ -717,12 +722,16 @@ fn admission_failure(failure: observation::AdmissionFailure) -> Result<Execution
     match failure {
         observation::AdmissionFailure::Refused(record)
         | observation::AdmissionFailure::Incomplete(record) => Ok(Execution {
-            actual: Deep::new(json!({"code": record.catalog.code(), "cause": record.catalog.cause(), "fields": record.fields, "path": record.path.iter().map(|step| match step { observation::PathStep::Field(name) => json!({"kind":"field", "name":name}), observation::PathStep::OptionValue => json!({"kind":"option-value"}), observation::PathStep::Index(index) => json!({"kind":"index", "index":index}) }).collect::<Vec<_>>()})),
+            actual: Deep::new(
+                json!({"code": record.catalog.code(), "cause": record.catalog.cause(), "fields": record.fields, "path": record.path.iter().map(|step| match step { observation::PathStep::Field(name) => json!({"kind":"field", "name":name}), observation::PathStep::OptionValue => json!({"kind":"option-value"}), observation::PathStep::Index(index) => json!({"kind":"index", "index":index}) }).collect::<Vec<_>>()}),
+            ),
             bytes: None,
             partition,
         }),
         observation::AdmissionFailure::Fault(fault) => Ok(Execution {
-            actual: Deep::new(json!({"code": fault.catalog_code().code(), "cause": fault.catalog_code().cause()})),
+            actual: Deep::new(
+                json!({"code": fault.catalog_code().code(), "cause": fault.catalog_code().cause()}),
+            ),
             bytes: None,
             partition: Partition::ToolFailure,
         }),

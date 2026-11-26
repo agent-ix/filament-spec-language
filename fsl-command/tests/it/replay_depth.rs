@@ -209,8 +209,7 @@ fn answered_as_child() -> bool {
                 RunLimits::default(),
                 &CommandLimits::replay(),
             )
-            .err()
-            .expect("the request refuses");
+            .expect_err("the request refuses");
             let pointer = match &error.cause {
                 RunCause::ReplayRequest(defect) => defect.pointer().to_owned(),
                 other => format!("{other}"),
