@@ -3,17 +3,18 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 
+use super::fair::maximal_fair_end_components_within;
 use super::{
-    decide_until_threshold, maximal_fair_end_components, Dyadic, ExactProbLimits, ProbProduct,
-    UnboundedError, UnboundedObjective, UnboundedOutcome,
+    decide_until_threshold, Dyadic, ExactProbLimits, ProbProduct, UnboundedError,
+    UnboundedObjective, UnboundedOutcome,
 };
 
 /// Bound a fair-minimum eventual probability through the complement event.
 ///
 /// The complement of the minimum probability is the maximum probability of
-/// reaching a fair end component outside the target set. Fair components are
-/// derived with the product's complete enabled-action graph; the numeric
-/// reachability interval is then produced by FR-198's outward-rounded solver.
+/// reaching a fair end component of the product restricted to non-target
+/// states (FR-200); the numeric reachability interval is then produced by
+/// FR-198's outward-rounded solver.
 pub fn decide_fair_reachability_threshold(
     product: &ProbProduct,
     target: &[bool],
@@ -24,23 +25,21 @@ pub fn decide_fair_reachability_threshold(
     if target.len() != product.states.len() {
         return Err(UnboundedError::InvalidState);
     }
+    let domain = target
+        .iter()
+        .map(|is_target| !is_target)
+        .collect::<Vec<_>>();
     let mut fair_targets = vec![false; target.len()];
     for component in
-        maximal_fair_end_components(product, &product.fairness).map_err(|error| match error {
+        maximal_fair_end_components_within(product, &domain).map_err(|error| match error {
             super::FairProductError::Product(error) => error,
             _ => UnboundedError::InvalidState,
         })?
     {
         for state in component.states {
-            if !target[state.index()] {
-                fair_targets[state.index()] = true;
-            }
+            fair_targets[state.index()] = true;
         }
     }
-    let domain = target
-        .iter()
-        .map(|is_target| !is_target)
-        .collect::<Vec<_>>();
     let avoidance_threshold = Rational::from_integer(Integer::from(1_i64)).sub(threshold);
     match decide_until_threshold(
         product,
@@ -95,6 +94,7 @@ use num_bigint::BigInt;
 mod tests {
     use super::*;
     use crate::exact_probabilistic::{ProbEdge, ProbKey, ProbStateId, ProductAction, ProductKind};
+    use ix_trace_rs::trace;
 
     fn rational(numerator: i64, denominator: i64) -> Rational {
         Rational::new(Integer::from(numerator), Integer::from(denominator)).unwrap()
@@ -174,31 +174,22 @@ mod tests {
         assert!(lower[0].rational() <= rational(1, 2));
         assert!(upper[0].rational() >= rational(1, 2));
     }
-}
 
-#[cfg(test)]
-mod probe {
-    use super::*;
-    use crate::exact_probabilistic::{
-        decide_fair_expected_reward, decide_fair_reachability, ProbEdge, ProbKey, ProbStateId,
-        ProductAction, ProductKind,
-    };
-
+    /// `0 <-> 1` with target `1`: every path from `0` reaches the target on its
+    /// first step, so the fair infimum is 1. The component `{0, 1}` holds the
+    /// target, so it is none of the product restricted to non-target states.
+    #[trace("TC-635")]
     #[test]
-    fn probe_target_component() {
-        let one = Rational::from_integer(Integer::from(1_i64));
-        let edge = |from, to, reward: i64| ProbEdge {
+    fn fair_minimum_bounds_ignore_a_component_that_holds_the_target() {
+        let edge = |from, to| ProbEdge {
             from: ProbStateId(from),
             choice: ProductAction::TerminalStutter,
             action: None,
             draw: None,
             to: ProbStateId(to),
-            probability: one.clone(),
-            elapsed: Rational::from_integer(Integer::from(0_i64)),
-            rewards: vec![(
-                filament_exact::Identifier::new("cost").unwrap(),
-                filament_exact::Value::Integer(Integer::from(reward)),
-            )],
+            probability: rational(1, 1),
+            elapsed: rational(0, 1),
+            rewards: Vec::new(),
         };
         let product = ProbProduct {
             states: (0..2)
@@ -212,33 +203,35 @@ mod probe {
                 })
                 .collect(),
             kind: ProductKind::Mdp,
-            edges: vec![edge(0, 1, 1), edge(1, 0, 0)],
+            edges: vec![edge(0, 1), edge(1, 0)],
             initial: vec![(0, None, ProbStateId(0))],
             decided: Vec::new(),
             labels: Vec::new(),
             fairness_operations: Vec::new(),
             fairness: Vec::new(),
         };
-        let limits = ExactProbLimits::default();
-        let target = [false, true];
-        println!(
-            "fair reach {:?}",
-            decide_fair_reachability(&product, None, &target, UnboundedObjective::Min, &limits, &Cancel::new())
-                .map(|r| r.values)
-        );
-        println!(
-            "interval {:?}",
-            decide_fair_reachability_threshold(&product, &target, &Rational::new(Integer::from(2_i64), Integer::from(5_i64)).unwrap(), &limits, &Cancel::new())
-        );
-        println!(
-            "reward max {:?}",
-            decide_fair_expected_reward(&product, &target, "cost", UnboundedObjective::Max, &limits, &Cancel::new())
-                .map(|r| r.values)
-        );
-        println!(
-            "reward plain max {:?}",
-            crate::exact_probabilistic::decide_expected_reward(&product, &target, "cost", UnboundedObjective::Max, &limits, &Cancel::new())
-                .map(|r| r.values)
-        );
+        let outcome = decide_fair_reachability_threshold(
+            &product,
+            &[false, true],
+            &rational(2, 5),
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+        .unwrap();
+        let value = match outcome {
+            UnboundedOutcome::Exact(result) => match &result.values[0] {
+                crate::exact_probabilistic::ExtRational::Finite(value) => {
+                    (value.clone(), value.clone())
+                }
+                crate::exact_probabilistic::ExtRational::PlusInfinity => {
+                    panic!("a probability is finite")
+                }
+            },
+            UnboundedOutcome::Bounds { lower, upper, .. } => {
+                (lower[0].rational(), upper[0].rational())
+            }
+            other => panic!("the fair value should be decided: {other:?}"),
+        };
+        assert_eq!(value, (rational(1, 1), rational(1, 1)));
     }
 }

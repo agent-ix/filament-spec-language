@@ -168,7 +168,7 @@ pub(crate) fn deterministic_scheduler_rows(
             ProbabilisticSchedulerChoice::Deterministic(action) => {
                 Ok((key.clone(), action.clone()))
             }
-            ProbabilisticSchedulerChoice::Randomized(_) => Err(dbg_refused(line!())),
+            ProbabilisticSchedulerChoice::Randomized(_) => Err(ProbabilityWitnessError::Refused),
         })
         .collect()
 }
@@ -257,14 +257,14 @@ fn validate_randomized_entry(
 ) -> Result<(), ProbabilityWitnessError> {
     // One encoding per choice: a single certain choice is a deterministic entry.
     if distribution.len() < 2 {
-        return Err(dbg_refused(line!()));
+        return Err(ProbabilityWitnessError::Refused);
     }
     let mut total = rational(0);
     let mut seen = Vec::new();
     for (action, weight) in distribution {
         check_bits(weight, max_rational_bits)?;
         if weight <= &rational(0) || seen.contains(&action) || !enabled.contains(action) {
-            return Err(dbg_refused(line!()));
+            return Err(ProbabilityWitnessError::Refused);
         }
         seen.push(action);
         total = bounded::arithmetic(
@@ -275,7 +275,7 @@ fn validate_randomized_entry(
         check_bits(&total, max_rational_bits)?;
     }
     if total != rational(1) {
-        return Err(dbg_refused(line!()));
+        return Err(ProbabilityWitnessError::Refused);
     }
     Ok(())
 }
@@ -304,7 +304,7 @@ mod randomized_entry_tests {
     }
 
     fn refused(result: Result<(), ProbabilityWitnessError>) -> bool {
-        matches!(result, Err(dbg_refused(line!())))
+        matches!(result, Err(ProbabilityWitnessError::Refused))
     }
 
     #[test]
@@ -519,7 +519,7 @@ fn authenticate_source(
         .source_package()
         .is_some_and(|own| std::ptr::eq(package, own))
     {
-        return Err(dbg_refused(line!()));
+        return Err(ProbabilityWitnessError::Refused);
     }
     Ok(())
 }
@@ -547,7 +547,7 @@ pub fn replay_probabilistic_witness_from_package(
         .package_owner()
         .is_some_and(|actual| std::ptr::eq(owner, actual))
     {
-        return Err(dbg_refused(line!()));
+        return Err(ProbabilityWitnessError::Refused);
     }
     replay_probabilistic_witness_impl(
         system.input().probabilistic,
@@ -573,7 +573,7 @@ fn replay_probabilistic_witness_impl(
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
     if item != &witness.item {
-        return Err(dbg_refused(line!()));
+        return Err(ProbabilityWitnessError::Refused);
     }
     let claim = bind_claim(probabilistic.claims(), item, cancel).map_err(|error| match error {
         ExactProbabilityGraphError::ClaimNotBound => ProbabilityWitnessError::Refused,
@@ -623,7 +623,7 @@ fn replay_probabilistic_witness_impl(
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|binding| &binding.reference);
     if reference != witness.binding.as_ref() {
-        return Err(dbg_refused(line!()));
+        return Err(ProbabilityWitnessError::Refused);
     }
     let mut model_states = BTreeMap::new();
     let graph_storage = std::cell::RefCell::new(0u64);
@@ -709,7 +709,7 @@ fn replay_probabilistic_witness_impl(
         || initial.anchor() != witness.initial.anchor()
         || initial.reached_by() != witness.initial.reached_by()
     {
-        return Err(dbg_refused(line!()));
+        return Err(ProbabilityWitnessError::Refused);
     }
     if u64::try_from(witness.paths.len()).unwrap_or(u64::MAX) > limits.max_witness_paths {
         return Err(ProbabilityWitnessError::Limit {
@@ -725,23 +725,23 @@ fn replay_probabilistic_witness_impl(
         ProbScheduler::Workload(name) => Some(
             probabilistic
                 .workload(name)
-                .ok_or(dbg_refused(line!()))?,
+                .ok_or(ProbabilityWitnessError::Refused)?,
         ),
     };
     if workload.is_some() && !witness.scheduler.is_empty() {
-        return Err(dbg_refused(line!()));
+        return Err(ProbabilityWitnessError::Refused);
     }
     let mut scheduler = BTreeMap::new();
     let mut previous = None;
     for (key, entry) in &witness.scheduler {
         poll_cancel(cancel)?;
         if previous.is_some_and(|previous| previous >= key) || !graph.states.contains_key(key) {
-            return Err(dbg_refused(line!()));
+            return Err(ProbabilityWitnessError::Refused);
         }
         previous = Some(key);
         let state = model_states
             .get(key)
-            .ok_or(dbg_refused(line!()))?;
+            .ok_or(ProbabilityWitnessError::Refused)?;
         let enabled = system
             .actions_with_cancel(state, cancel)
             .map_err(|stop| cancelled_expansion(stop, cancel))?
@@ -755,11 +755,11 @@ fn replay_probabilistic_witness_impl(
         match entry {
             ProbabilisticSchedulerChoice::Deterministic(action) => {
                 if !enabled_actions.contains(action) {
-                    return Err(dbg_refused(line!()));
+                    return Err(ProbabilityWitnessError::Refused);
                 }
                 let bytes = action
                     .to_bytes()
-                    .map_err(|_| dbg_refused(line!()))?;
+                    .map_err(|_| ProbabilityWitnessError::Refused)?;
                 bounded::retain(
                     key.as_bytes().len().saturating_add(bytes.len()),
                     &mut storage,
@@ -769,7 +769,7 @@ fn replay_probabilistic_witness_impl(
             ProbabilisticSchedulerChoice::Randomized(distribution) => {
                 // Randomized policies belong to claims with a fairness set (FR-202).
                 if claim.fairness.is_empty() {
-                    return Err(dbg_refused(line!()));
+                    return Err(ProbabilityWitnessError::Refused);
                 }
                 validate_randomized_entry(
                     distribution,
@@ -781,7 +781,7 @@ fn replay_probabilistic_witness_impl(
                 for (action, _) in distribution {
                     let bytes = action
                         .to_bytes()
-                        .map_err(|_| dbg_refused(line!()))?;
+                        .map_err(|_| ProbabilityWitnessError::Refused)?;
                     bounded::retain(
                         key.as_bytes().len().saturating_add(bytes.len()),
                         &mut storage,
@@ -831,7 +831,7 @@ fn replay_probabilistic_witness_impl(
             let terminal = graph
                 .states
                 .get(&key)
-                .ok_or(dbg_refused(line!()))?
+                .ok_or(ProbabilityWitnessError::Refused)?
                 .choices
                 .is_empty();
             if outcome(
@@ -849,12 +849,12 @@ fn replay_probabilistic_witness_impl(
                 return Ok(ProbabilityWitnessReplay::Parity);
             }
             let ProductAction::Identity(schedule) = &step.choice else {
-                return Err(dbg_refused(line!()));
+                return Err(ProbabilityWitnessError::Refused);
             };
             let (Some(step_action), Some(step_transition), Some(step_draw)) =
                 (&step.action, &step.transition, &step.draw)
             else {
-                return Err(dbg_refused(line!()));
+                return Err(ProbabilityWitnessError::Refused);
             };
             let scheduler_weight = match scheduler.get(&key) {
                 Some(ProbabilisticSchedulerChoice::Deterministic(action))
@@ -874,7 +874,7 @@ fn replay_probabilistic_witness_impl(
                 || crate::Schedule::of(system, step_action).as_ref() != Ok(schedule)
                 || scheduler_weight.is_none()
             {
-                return Err(dbg_refused(line!()));
+                return Err(ProbabilityWitnessError::Refused);
             }
             let mut found = None;
             if let Some(workload) = workload {
@@ -936,20 +936,20 @@ fn replay_probabilistic_witness_impl(
                 }
             }
             let Some((step_mass, post)) = found else {
-                return Err(dbg_refused(line!()));
+                return Err(ProbabilityWitnessError::Refused);
             };
             if step_mass <= rational(0)
                 || key_of(system, reference, &step.post, limits, cancel)? != step.post_key
                 || post.anchor() != step.post.anchor()
                 || post.reached_by() != step.post.reached_by()
             {
-                return Err(dbg_refused(line!()));
+                return Err(ProbabilityWitnessError::Refused);
             }
             check_bits(&step_mass, limits.max_rational_bits)?;
             {
                 let weight = scheduler_weight
                     .as_ref()
-                    .ok_or(dbg_refused(line!()))?;
+                    .ok_or(ProbabilityWitnessError::Refused)?;
                 probability = bounded::arithmetic(
                     filament_exact::RationalArithmetic::Multiply(&probability, weight),
                     &mut meter,
@@ -970,7 +970,7 @@ fn replay_probabilistic_witness_impl(
         let terminal = graph
             .states
             .get(&key)
-            .ok_or(dbg_refused(line!()))?
+            .ok_or(ProbabilityWitnessError::Refused)?
             .choices
             .is_empty();
         let accepting = matches!(
@@ -1228,12 +1228,12 @@ fn witness_is_fair(
         let terminal = graph
             .states
             .get(key)
-            .ok_or(dbg_refused(line!()))?
+            .ok_or(ProbabilityWitnessError::Refused)?
             .choices
             .is_empty();
         let state = model_states
             .get(key)
-            .ok_or(dbg_refused(line!()))?;
+            .ok_or(ProbabilityWitnessError::Refused)?;
         Ok(outcome(
             system,
             target,
@@ -1269,7 +1269,7 @@ fn witness_is_fair(
         };
         let state = model_states
             .get(&key)
-            .ok_or(dbg_refused(line!()))?;
+            .ok_or(ProbabilityWitnessError::Refused)?;
         let actions = system
             .actions_with_cancel(state, cancel)
             .map_err(|stop| cancelled_expansion(stop, cancel))?
@@ -1344,7 +1344,7 @@ fn witness_is_fair(
                 constraint.operation().declaring_type(),
                 constraint.operation().name(),
             )
-            .ok_or(dbg_refused(line!()))?;
+            .ok_or(ProbabilityWitnessError::Refused)?;
         constraints.push((constraint.kind(), constraint.granularity(), text.to_owned()));
     }
     bottom_components_are_fair(&nodes, &constraints, &mut || {
@@ -1384,7 +1384,7 @@ fn bottom_components_are_fair<S: PartialEq>(
     if let Some(error) = stopped {
         return Err(error);
     }
-    let (_, components, closed) = bottom.map_err(|_| dbg_refused(line!()))?;
+    let (_, components, closed) = bottom.map_err(|_| ProbabilityWitnessError::Refused)?;
     for (component, members) in components.iter().enumerate() {
         tick()?;
         if !closed[component] || members.iter().any(|member| nodes[*member].escapes) {
@@ -1557,8 +1557,4 @@ impl From<ProbabilityDocumentError> for ProbabilityWitnessError {
             _ => Self::Refused,
         }
     }
-}
-fn dbg_refused(line: u32) -> ProbabilityWitnessError {
-    eprintln!("DBG refused at {line}");
-    ProbabilityWitnessError::Refused
 }

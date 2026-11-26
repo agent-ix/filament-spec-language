@@ -3997,7 +3997,7 @@ fn replay_produced_witness(
         tamper(&mut witness);
     }
     finish_replay(
-        replay_witness(system, &item, &witness, limits, cancel).inspect(|r| eprintln!("DBG ok {}", matches!(r, ProbabilityWitnessReplay::Parity))).inspect_err(|e| eprintln!("DBG err {e:?} sched={:?} paths={:?}", witness.scheduler.iter().map(|(_, c)| c).collect::<Vec<_>>(), witness.paths.iter().map(|p| p.steps.iter().map(|s| &s.choice).collect::<Vec<_>>()).collect::<Vec<_>>())),
+        replay_witness(system, &item, &witness, limits, cancel),
         claim,
         system,
         &witness,
@@ -4442,7 +4442,7 @@ fn replay_timed_paths(
         tamper(&mut witness);
     }
     finish_replay(
-        replay_witness(system, &item, &witness, limits, cancel).inspect(|r| eprintln!("DBG ok {}", matches!(r, ProbabilityWitnessReplay::Parity))).inspect_err(|e| eprintln!("DBG err {e:?} sched={:?} paths={:?}", witness.scheduler.iter().map(|(_, c)| c).collect::<Vec<_>>(), witness.paths.iter().map(|p| p.steps.iter().map(|s| &s.choice).collect::<Vec<_>>()).collect::<Vec<_>>())),
+        replay_witness(system, &item, &witness, limits, cancel),
         claim,
         system,
         &witness,

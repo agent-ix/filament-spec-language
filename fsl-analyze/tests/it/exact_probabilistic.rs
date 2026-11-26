@@ -1140,6 +1140,55 @@ fn fair_max_expected_reward_preserves_zero_reward_mec_exits() {
     assert!(operations[action].operation.contains("exit"));
 }
 
+/// `zero_reward_exit` with a `back` from `done` to the live state, so the
+/// target lies in one end component with the live state's zero-reward `wait`.
+/// By hand: reward stops at the first target visit, and strong fairness to
+/// `exit` forces that visit, so the fair maximum is the one `exit`, 5, at the
+/// live state and 0 at the target.
+#[trace("TC-635")]
+#[test]
+fn fair_max_expected_reward_stops_at_a_target_that_leads_back() {
+    const CLAIM: &str = "probabilistic CostBack using inf on M over (p: M::Proc) \
+         under every scheduler fair strong Proc::exit on origin \
+         { expected accumulate cost until holds(p.done) <= 5 }";
+    let mut model = prob_world::zero_reward_exit(CLAIM);
+    model.operations.push(prob_world::Operation {
+        name: "back",
+        parameters: vec![],
+        modifies: vec!["done"],
+        deletes: false,
+    });
+    model.body = model.body.replace(
+        "terminal Done using v on M when { self.done };\n",
+        "pre Done_back using v on M::Proc::back { self.done }\n\
+         post Back using v on M::Proc::back { self.done = false }\n",
+    );
+    let world = World::new(&model);
+    let product = built(&world, "CostBack");
+    let target = product
+        .labels
+        .iter()
+        .map(|labels| labels[0])
+        .collect::<Vec<_>>();
+    let result = fsl_analyze::exact_probabilistic::decide_fair_expected_reward(
+        &product,
+        &target,
+        "cost",
+        UnboundedObjective::Max,
+        &ExactProbLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the strong-fair expected maximum is finite");
+    let finite = |value| fsl_analyze::exact_probabilistic::ExtRational::Finite(ratio(value, 1));
+    assert!(target.contains(&true));
+    assert_eq!(result.values[start(&product).index()], finite(5));
+    for (state, is_target) in target.iter().enumerate() {
+        if *is_target {
+            assert_eq!(result.values[state], finite(0));
+        }
+    }
+}
+
 /// FR-200 FS-8: an unfair wait MEC collapses to a proper route into the fair
 /// recurrent component instead of becoming a closed policy class.
 #[trace("TC-635")]
@@ -4413,6 +4462,188 @@ fn an_mdp_undefined_path_names_the_post_state_taken_at_each_draw() {
     assert_eq!(step.target, *resolved);
 }
 
+/// FR-200 fair minimum over `{s, u}`: strong fairness to `z_go` leaves the
+/// fair non-target end component `{u}`, which `drift` reaches from `s` with
+/// probability 1. By hand the infimum is `1 - 1 = 0`, below `2/5`.
+#[trace("TC-635")]
+#[test]
+fn fair_minimum_over_a_component_with_an_exit_back_into_its_scc_is_refuted() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_replay::TerminalValue;
+
+    const CLAIM: &str = "probabilistic FairGo using inf on M over (w: M::W) \
+         under every scheduler fair strong W::z_go on origin \
+         { probability >= rational(2,5) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_mec_refinement(CLAIM));
+    let record = analyze_items(
+        &Engines::fsl().expect("FSL engines"),
+        vec![exact_probabilistic_item(
+            fsl_foundation::RequestIndex::new(0),
+            world.request("FairGo", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert_eq!(
+        record.terminal().map(|terminal| terminal.value()),
+        Some(&TerminalValue::Refuted),
+        "{record:#?}"
+    );
+}
+
+/// EN-5 extrema over an end component that holds the solve's target, on
+/// `fair_mec_refinement` entered from a new state `i` whose `begin` reaches
+/// `s` or a terminal dead state, `1/2` each. By hand: from `s`, `drift` takes
+/// `u` with probability 1 and retrying `z_go` through `return` takes `g` with
+/// probability 1, while `a_wait` forever takes neither. So at `i` the maxima
+/// of eventual `g` and of `not g until u` are `1/2`, the minimum of `always
+/// not u` is `1 - 1/2`, and the minimum of eventual `g` is 0.
+#[trace("TC-633", "TC-635")]
+#[test]
+fn extrema_over_a_component_holding_the_target_are_decided_and_certified() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{ProofBasis, TerminalValue};
+
+    // (name, fairness, bound, formula, whether the bound holds at `1/2`)
+    let cases: [(&str, &str, &str, &str, bool); 10] = [
+        (
+            "UntilAbove",
+            "",
+            "<= rational(2,5)",
+            "holds(not w.g) until holds(w.u)",
+            false,
+        ),
+        (
+            "UntilHalf",
+            "",
+            "<= rational(1,2)",
+            "holds(not w.g) until holds(w.u)",
+            true,
+        ),
+        (
+            "AlwaysBelow",
+            "",
+            ">= rational(3,5)",
+            "always holds(not w.u)",
+            false,
+        ),
+        (
+            "AlwaysHalf",
+            "",
+            ">= rational(1,2)",
+            "always holds(not w.u)",
+            true,
+        ),
+        (
+            "MaxAbove",
+            "",
+            "<= rational(2,5)",
+            "eventually holds(w.g)",
+            false,
+        ),
+        (
+            "MaxHalf",
+            "",
+            "<= rational(1,2)",
+            "eventually holds(w.g)",
+            true,
+        ),
+        (
+            "MinBelow",
+            "",
+            ">= rational(2,5)",
+            "eventually holds(w.g)",
+            false,
+        ),
+        (
+            "FairMaxAbove",
+            "fair strong W::z_go",
+            "<= rational(2,5)",
+            "eventually holds(w.g)",
+            false,
+        ),
+        (
+            "FairMaxHalf",
+            "fair strong W::z_go",
+            "<= rational(1,2)",
+            "eventually holds(w.g)",
+            true,
+        ),
+        (
+            "FairMinBelow",
+            "fair strong W::z_go",
+            ">= rational(2,5)",
+            "eventually holds(w.g)",
+            false,
+        ),
+    ];
+    let claims = cases
+        .map(|(name, fairness, bound, formula, _)| {
+            format!(
+                "probabilistic {name} using inf on M over (w: M::W) under every scheduler \
+                 {fairness} on origin {{ probability {bound} [ {formula} ] }}"
+            )
+        })
+        .join("\n");
+    let mut model = prob_world::fair_mec_refinement(&claims);
+    model
+        .fields
+        .push(("i", model.fields.first().expect("a field").1.clone()));
+    model.operations.push(prob_world::Operation {
+        name: "begin",
+        parameters: vec![("success", model.fields.first().expect("a field").1.clone())],
+        modifies: vec!["i", "s"],
+        deletes: false,
+    });
+    model.body = model
+        .body
+        .replace(
+            "when { self.g };",
+            "when { self.g or not (self.i or self.s or self.u) };",
+        )
+        .replace(
+            "weight W::return = 1; }",
+            "weight W::return = 1; weight W::begin = 1; }",
+        );
+    model.body.push_str(
+        "\npre BeginAtI using v on M::W::begin { self.i }\n\
+         post Begun using v on M::W::begin { self.i = false and self.s = success }\n\
+         random W::begin(success) ~ { true: 1, false: 1 };\n",
+    );
+    model.initial = serde_json::json!({
+        "s": {"boolean": false}, "u": {"boolean": false},
+        "g": {"boolean": false}, "i": {"boolean": true}
+    });
+    let world = World::new(&model);
+    let engines = Engines::fsl().expect("FSL engines");
+    let mut wrong = Vec::new();
+    for (index, (name, .., holds)) in cases.into_iter().enumerate() {
+        let record = analyze_items(
+            &engines,
+            vec![exact_probabilistic_item(
+                RequestIndex::new(index),
+                world.request(name, ModelCheckLimits::default()),
+            )],
+            &Cancel::new(),
+        )
+        .remove(0);
+        let settled = record.terminal().map(|terminal| terminal.value());
+        let matches = match settled {
+            Some(TerminalValue::Refuted) => !holds,
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::ExactValue { value, .. },
+                ..
+            }) => holds && value.value() == &ratio(1, 2),
+            _ => false,
+        };
+        if !matches {
+            wrong.push(format!("{name}: {settled:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 #[trace("TC-633", "FR-201-AC-15")]
 #[test]
 fn until_minimum_retains_absorbing_failure_in_qualitative_analysis() {
@@ -4505,129 +4736,4 @@ fn until_avoidance_cannot_cross_an_already_reached_target() {
             ExtRational::Finite(ratio(0, 1))
         ]
     );
-}
-
-/// FR-200 fair minimum over `{s, u}`: strong fairness to `z_go` leaves the
-/// fair non-target end component `{u}`, which `drift` reaches from `s` with
-/// probability 1. By hand the infimum is `1 - 1 = 0`, below `2/5`.
-#[trace("TC-635")]
-#[test]
-fn fair_minimum_over_a_component_with_an_exit_back_into_its_scc_is_refuted() {
-    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
-    use fsl_replay::TerminalValue;
-
-    const CLAIM: &str = "probabilistic FairGo using inf on M over (w: M::W) \
-         under every scheduler fair strong W::z_go on origin \
-         { probability >= rational(2,5) [ eventually holds(w.g) ] }";
-    let world = World::new(&prob_world::fair_mec_refinement(CLAIM));
-    let record = analyze_items(
-        &Engines::fsl().expect("FSL engines"),
-        vec![exact_probabilistic_item(
-            fsl_foundation::RequestIndex::new(0),
-            world.request("FairGo", ModelCheckLimits::default()),
-        )],
-        &Cancel::new(),
-    )
-    .remove(0);
-    assert_eq!(
-        record.terminal().map(|terminal| terminal.value()),
-        Some(&TerminalValue::Refuted),
-        "{record:#?}"
-    );
-}
-
-/// EN-5 extrema over an end component that holds the solve's target, on
-/// `fair_mec_refinement` entered from a new state `i` whose `begin` reaches
-/// `s` or a terminal dead state, `1/2` each. By hand: from `s`, `drift` takes
-/// `u` with probability 1 and retrying `z_go` through `return` takes `g` with
-/// probability 1, while `a_wait` forever takes neither. So at `i` the maxima
-/// of eventual `g` and of `not g until u` are `1/2`, the minimum of `always
-/// not u` is `1 - 1/2`, and the minimum of eventual `g` is 0.
-#[trace("TC-635", "FR-198-AC-5", "FR-201-AC-15", "FR-201-AC-16")]
-#[test]
-fn extrema_over_a_component_holding_the_target_are_decided_and_certified() {
-    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
-    use fsl_foundation::RequestIndex;
-    use fsl_replay::{ProofBasis, TerminalValue};
-
-    // (name, fairness, bound, formula, whether the bound holds at `1/2`)
-    let cases: [(&str, &str, &str, &str, bool); 10] = [
-        ("UntilAbove", "", "<= rational(2,5)", "holds(not w.g) until holds(w.u)", false),
-        ("UntilHalf", "", "<= rational(1,2)", "holds(not w.g) until holds(w.u)", true),
-        ("AlwaysBelow", "", ">= rational(3,5)", "always holds(not w.u)", false),
-        ("AlwaysHalf", "", ">= rational(1,2)", "always holds(not w.u)", true),
-        ("MaxAbove", "", "<= rational(2,5)", "eventually holds(w.g)", false),
-        ("MaxHalf", "", "<= rational(1,2)", "eventually holds(w.g)", true),
-        ("MinBelow", "", ">= rational(2,5)", "eventually holds(w.g)", false),
-        ("FairMaxAbove", "fair strong W::z_go", "<= rational(2,5)", "eventually holds(w.g)", false),
-        ("FairMaxHalf", "fair strong W::z_go", "<= rational(1,2)", "eventually holds(w.g)", true),
-        ("FairMinBelow", "fair strong W::z_go", ">= rational(2,5)", "eventually holds(w.g)", false),
-    ];
-    let claims = cases
-        .map(|(name, fairness, bound, formula, _)| {
-            format!(
-                "probabilistic {name} using inf on M over (w: M::W) under every scheduler \
-                 {fairness} on origin {{ probability {bound} [ {formula} ] }}"
-            )
-        })
-        .join("\n");
-    let mut model = prob_world::fair_mec_refinement(&claims);
-    model
-        .fields
-        .push(("i", model.fields.first().expect("a field").1.clone()));
-    model.operations.push(prob_world::Operation {
-        name: "begin",
-        parameters: vec![(
-            "success",
-            model.fields.first().expect("a field").1.clone(),
-        )],
-        modifies: vec!["i", "s"],
-        deletes: false,
-    });
-    model.body = model
-        .body
-        .replace(
-            "when { self.g };",
-            "when { self.g or not (self.i or self.s or self.u) };",
-        )
-        .replace(
-            "weight W::return = 1; }",
-            "weight W::return = 1; weight W::begin = 1; }",
-        );
-    model.body.push_str(
-        "\npre BeginAtI using v on M::W::begin { self.i }\n\
-         post Begun using v on M::W::begin { self.i = false and self.s = success }\n\
-         random W::begin(success) ~ { true: 1, false: 1 };\n",
-    );
-    model.initial = serde_json::json!({
-        "s": {"boolean": false}, "u": {"boolean": false},
-        "g": {"boolean": false}, "i": {"boolean": true}
-    });
-    let world = World::new(&model);
-    let engines = Engines::fsl().expect("FSL engines");
-    let mut wrong = Vec::new();
-    for (index, (name, .., holds)) in cases.into_iter().enumerate() {
-        let record = analyze_items(
-            &engines,
-            vec![exact_probabilistic_item(
-                RequestIndex::new(index),
-                world.request(name, ModelCheckLimits::default()),
-            )],
-            &Cancel::new(),
-        )
-        .remove(0);
-        let settled = record.terminal().map(|terminal| terminal.value());
-        let matches = match settled {
-            Some(TerminalValue::Refuted) => !holds,
-            Some(TerminalValue::Proved {
-                basis: ProofBasis::ExactValue { value, .. },
-                ..
-            }) => holds && value.value() == &ratio(1, 2),
-            _ => false,
-        };
-        if !matches {
-            wrong.push(format!("{name}: {settled:?}"));
-        }
-    }
-    assert!(wrong.is_empty(), "{wrong:#?}");
 }

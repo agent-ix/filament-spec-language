@@ -348,7 +348,7 @@ pub(super) fn refute(
         tamper(&mut witness);
     }
     finish_replay(
-        replay_witness(system, &item, &witness, limits, cancel).inspect_err(|e| eprintln!("DBG subsystem err {e:?} spelled={:?} sched={:?}", spelled, witness.scheduler.len())),
+        replay_witness(system, &item, &witness, limits, cancel),
         claim,
         system,
         &witness,
