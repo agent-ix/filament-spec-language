@@ -186,13 +186,12 @@ impl<'a> SourcePlan<'a> {
                 });
             }
         }
-        let positive_policies =
+        let positive_length =
             !matches!(synthesis.domain(), ValueType::Int(domain) if domain.upper().is_zero());
-        if positive_policies
-            && policies
-                .iter()
-                .any(|node| !Self::supports_positive_policy(node))
-        {
+        let positive_policies = policies
+            .iter()
+            .all(|node| Self::supports_positive_policy(node));
+        if positive_length && !positive_policies {
             return Err(PlanSourceError::UnsupportedForm {
                 form: "positive-length source policy outside capture-free origin safety and bounded F/G[0,k]"
                     .to_owned(),
