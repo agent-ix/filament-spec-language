@@ -54,9 +54,9 @@ use serde_json::{Value as Json, json};
 use crate::analyze_cli_support::{Workspace, analyze, label, request_over};
 use crate::counter::{UNLIMITED, declarations_in, declarations_with_model_profile, unit_text_in};
 
-const PACKAGE: &str = "test/things";
+pub(crate) const PACKAGE: &str = "test/things";
 
-fn ident(suffix: &str) -> String {
+pub(crate) fn ident(suffix: &str) -> String {
     format!("ix://{PACKAGE}/{suffix}")
 }
 
@@ -124,7 +124,7 @@ fn level(upper: u64) -> Json {
 }
 
 /// The domain package with `populations`, each `(name, member types)`.
-fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
+pub(crate) fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
     let constructs: Vec<Json> = [
         ("object_type", meaning::OBJECT_TYPE),
         ("population", meaning::POPULATION),
@@ -175,18 +175,18 @@ fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
 
 /// One population of a snapshot: its name and its objects, each `(key,
 /// type)`.
-type Held<'a> = (&'a str, &'a [(&'a str, &'a str)]);
+pub(crate) type Held<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 
 /// The model, its checked package, and one initial snapshot.
-struct World {
-    document: Vec<u8>,
-    package: CheckedPackage,
-    packages: fsl_semantics::model::intake::PackageInput,
-    snapshots: fsl_semantics::model::observation::DocumentProvision,
-    initial: Vec<DocumentRef>,
+pub(crate) struct World {
+    pub(crate) document: Vec<u8>,
+    pub(crate) package: CheckedPackage,
+    pub(crate) packages: fsl_semantics::model::intake::PackageInput,
+    pub(crate) snapshots: fsl_semantics::model::observation::DocumentProvision,
+    pub(crate) initial: Vec<DocumentRef>,
 }
 
-fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
+pub(crate) fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
     let document = document(populations);
     let graph = declarations_in(PACKAGE, &document, "")
         .check(
@@ -243,7 +243,7 @@ fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
 }
 
 /// The universes, each `(population, keys)`.
-fn universes(universes: &[(&str, &[&str])]) -> Vec<PopulationUniverse> {
+pub(crate) fn universes(universes: &[(&str, &[&str])]) -> Vec<PopulationUniverse> {
     universes
         .iter()
         .map(|(population, keys)| PopulationUniverse {
@@ -254,7 +254,7 @@ fn universes(universes: &[(&str, &[&str])]) -> Vec<PopulationUniverse> {
 }
 
 impl World {
-    fn subject<'w>(
+    pub(crate) fn subject<'w>(
         &'w self,
         package: &'w CheckedPackage,
         universes: Vec<PopulationUniverse>,
