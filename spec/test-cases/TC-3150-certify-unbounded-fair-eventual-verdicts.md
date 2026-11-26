@@ -15,7 +15,7 @@ Verify that an unbounded eventual claim under a fairness set is proved with a
 recomputing the fair end components, and that the documents a `wait` loop
 would otherwise admit are rejected.
 
-Scope: FR-1041-AC-1 to FR-1041-AC-4, FR-1041-AC-6.
+Scope: FR-1041-AC-1 to FR-1041-AC-4, FR-1041-AC-6, FR-1041-AC-7.
 
 ## Test Procedure
 
@@ -34,6 +34,9 @@ to `u`, whose only action loops at `u`.
    under `fair strong go`.
 5. Run AC-1 pre-cancelled and with each caller limit exhausted during
    refinement; add a constraint on an operation that is never enabled.
+6. Offer AC-7's two maximum documents: value 1 on the fair end component of
+   the `return` model, and the forged `1/3` document with its partial
+   `policy`, with the fairness constraint on `begin` and on `fail`.
 
 Tag the tests `#[trace("TC-3150", "FR-1041-AC-n")]`.
 
@@ -47,3 +50,5 @@ Tag the tests `#[trace("TC-3150", "FR-1041-AC-n")]`.
 - Step 4: `proved`, `ExactValue{1/2}`; `refuted`.
 - Step 5: `incomplete` with the actual limit and no truth value; the unused
   constraint is retained and changes no value.
+- Step 6: the value-1 document misses only its threshold, and with `u` at 0
+  is `InequalityFails`; the forged document is `RankBroken` at `s` both times.

@@ -14,38 +14,56 @@ use fsl_replay::{
 };
 
 use super::{
-    exhausted, fault, tree_path, widen, ModelCheckRefusal, Positions, ProductStateId, RetainedEdge,
-    Run, Totals,
+    exhausted, fault, tree_path, widen, InstanceRun, ModelCheckRefusal, Positions, ProductStateId,
+    RetainedEdge, Run, Totals,
 };
 
-impl Run<'_, '_> {
-    /// Decide an HP-6 item (FR-178): for each instance, the first phase's
-    /// rejecting monitor states, undefined evaluations and refused `match`es,
-    /// ranked across instances as FR-126 ranks bindings. A run that finds none
-    /// holds, or reaches its search horizon with no counterexample of at most
-    /// `max_depth` moves.
+impl<'a> Run<'_, 'a> {
+    /// Decide an HP-6 item (FR-178), one instance at a time: its first
+    /// phase's rejecting monitor states, undefined evaluations and refused
+    /// `match`es. A run in which no instance finds one holds, or reaches its
+    /// search horizon with no counterexample of at most `max_depth` moves.
     pub(super) fn decide_projected(
         &self,
         instances: &[Vec<ParameterBinding>],
-        mut totals: Totals,
+        totals: Totals,
     ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        self.each_instance(
+            instances,
+            totals,
+            |instance, totals| self.projected_instance(instance, totals),
+            |explored, totals| {
+                Ok(HyperOutcome::Holds {
+                    certificates: self.certificates(explored)?,
+                    stats: totals.stats(),
+                })
+            },
+        )
+    }
+
+    /// One instance of an HP-6 item.
+    fn projected_instance<'x>(
+        &'x self,
+        instance: &'x [ParameterBinding],
+        totals: &mut Totals,
+    ) -> Result<InstanceRun<'x, 'a>, ModelCheckRefusal> {
         let horizon = self.request.max_depth;
-        let ranked = match self.rank_instances(instances, horizon, &mut totals)? {
-            Ok(ranked) => ranked,
-            Err(outcome) => return Ok(outcome),
+        let run = match self.explore(instance, horizon, totals)? {
+            Ok(run) => run,
+            Err(outcome) => return Ok((None, Some(outcome))),
         };
-        match (ranked.best, ranked.bounded, horizon) {
-            (Some((_, hit)), _, _) => Self::finding(hit, &totals),
-            (None, true, Some(depth)) => Ok(HyperOutcome::BoundReached {
-                depth: widen(depth),
-                covers: BoundCovers::Moves,
-                stats: totals.stats(),
-            }),
-            (None, _, _) => Ok(HyperOutcome::Holds {
-                certificates: self.certificates(&ranked.explored)?,
-                stats: totals.stats(),
-            }),
-        }
+        let outcome = match self.first_phase(&run, totals)? {
+            Some((_, hit)) => Some(Self::finding(hit, totals)?),
+            None => match horizon {
+                Some(depth) if run.bounded => Some(HyperOutcome::BoundReached {
+                    depth: widen(depth),
+                    covers: BoundCovers::Moves,
+                    stats: totals.stats(),
+                }),
+                _ => None,
+            },
+        };
+        Ok((Some(run), outcome))
     }
 
     /// Whether `transition` is a skip move: a component takes a skipped step.

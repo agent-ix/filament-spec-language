@@ -71,6 +71,7 @@ mod reference_literal_binding;
 mod related_by_support;
 mod relation_claims;
 mod relation_claims_support;
+mod shared_wire_conformance;
 mod statistical_witness_replay;
 mod statistical_witness_support;
 mod timed_oracle;

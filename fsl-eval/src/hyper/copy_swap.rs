@@ -230,7 +230,8 @@ impl HyperProduct<'_, '_> {
             .collect::<Result<Vec<_>, _>>()?;
         let property_key = self.property_key(&member.state.property);
         let state = HyperState::new(components, member.state.property.clone())
-            .with_property_key(property_key);
+            .with_property_key(property_key)
+            .with_reading_of(&member.state);
         let key = self.key_bytes(&state)?;
         Ok(member.after_renaming(generator, state, key))
     }
@@ -265,7 +266,9 @@ impl HyperProduct<'_, '_> {
             }
         };
         let property_key = self.property_key(&property);
-        let state = HyperState::new(components, property).with_property_key(property_key);
+        let state = HyperState::new(components, property)
+            .with_property_key(property_key)
+            .with_reading_of(&member.state);
         let key = self.key_bytes(&state)?;
         Ok(member.after_exchange(generator, state, key))
     }

@@ -382,7 +382,7 @@ fn dense_replay_rejects_incomplete_certificate_coverage() {
                     steps: Vec::new(),
                 },
                 closure: TrapClosure::StateGraph,
-                over: Some(instance.clone()),
+                over: vec![instance.clone()],
             },
         )
         .with_zone_certificate(certificate);

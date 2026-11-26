@@ -9,9 +9,10 @@ use fsl_cst::{
 use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
-// Independently transcribed from the accepted complete-V1 EBNF. This must not
-// be generated from the implementation grammar: an omitted implementation
-// variant must make this test fail to compile or compare unequal.
+// Independently transcribed from the accepted complete-V1 grammar, including
+// FSL-local forms with owning criteria. This must not be generated from the
+// implementation grammar: an omitted implementation variant must make this
+// test fail to compile or compare unequal.
 const ACCEPTED_PRODUCTIONS: &[Production] = &[
     Production::CompleteUnit,
     Production::ModelUnit,
@@ -68,6 +69,7 @@ const ACCEPTED_PRODUCTIONS: &[Production] = &[
     Production::FunctionDeclaration,
     Production::Predicate,
     Production::Parameter,
+    Production::OperationParameter,
     Production::StateClause,
     Production::OperationBody,
     Production::PopulationBound,
@@ -385,6 +387,10 @@ fn corpus() -> Vec<(&'static str, String)> {
         ("guarantee", source("guarantee G of P using A { initial to \"f\"; progress M::T::o decreases \"m\"; progress M::T::p bound 3; environment E by \"s\" fair weak each M::T::o; environment N by \"n\" assumes Pred; }")),
         ("composition", source("compose Sys rule assume-guarantee { component A from P using M; component B from Q using M; guarantee A::G; guarantee B::H; rely B::H on A::G; depends B::H on A::G; supplies fair weak each M::T::o; environment E by \"s\" assumes Pred; }")),
         ("object", source("object Counter extends Base identity (n) { n: Integer; symmetric population counters; operation bump(delta: Integer): Integer redefines Base::bump modifies self.n, Counter.n creates Counter deletes self, delta; }")),
+        (
+            "object_operation_by_parameter",
+            source("object Meter { operation adjust(by: P, step: P, steps: Sequence<P>[0, 3]); }"),
+        ),
         ("sum-case", source("union Shape { Empty, Circle(Integer), Rect(Integer, Integer), } function area using Complete(s: Shape): Integer pure { case s { Circle(r): r; Shape::Rect(w, h): w * h; Empty: 0; } }")),
         (
             "values",
@@ -572,7 +578,13 @@ fn corpus() -> Vec<(&'static str, String)> {
     ]
 }
 
-#[trace("FSpec-TC-180", "FSpec-FR-339-AC-2", "FR-003-AC-14")]
+#[trace(
+    "FSpec-TC-180",
+    "FSpec-FR-339-AC-2",
+    "FR-003-AC-14",
+    "FR-600-AC-1",
+    "FR-569-AC-1"
+)]
 #[test]
 fn every_named_production_has_positive_vectors_and_exact_boundaries() {
     assert_eq!(Production::all(), ACCEPTED_PRODUCTIONS);
@@ -630,7 +642,13 @@ fn every_named_production_has_positive_vectors_and_exact_boundaries() {
     assert!(missing.is_empty(), "uncovered productions: {missing:?}");
 }
 
-#[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
+#[trace(
+    "FSpec-TC-180",
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FR-091-AC-49",
+    "FR-569-AC-1"
+)]
 #[test]
 fn grammar_combinators_enforce_authored_boundaries_at_the_failing_token() {
     struct Vector {
@@ -679,29 +697,36 @@ fn grammar_combinators_enforce_authored_boundaries_at_the_failing_token() {
             name: "hex32-one-short",
             valid: "function F32 using Complete (): Float32[exact] pure { float32(bits: 0x12345678) }",
             invalid: "function F32 using Complete (): Float32[exact] pure { float32(bits: 0x1234567) }",
-            failure_prefix: "float32(bits: 0x1234567",
-            failure_token: ")",
+            failure_prefix: "function F32 using Complete (): Float32[exact] pure { ",
+            failure_token: "float32(bits: 0x1234567)",
         },
         Vector {
             name: "hex32-one-long",
             valid: "function F32 using Complete (): Float32[exact] pure { float32(bits: 0x12345678) }",
             invalid: "function F32 using Complete (): Float32[exact] pure { float32(bits: 0x123456789) }",
-            failure_prefix: "float32(bits: 0x12345678",
-            failure_token: "9",
+            failure_prefix: "function F32 using Complete (): Float32[exact] pure { ",
+            failure_token: "float32(bits: 0x123456789)",
         },
         Vector {
             name: "hex64-one-short",
             valid: "function F64 using Complete (): Float64[exact] pure { float64(bits: 0x123456789abcdef0) }",
             invalid: "function F64 using Complete (): Float64[exact] pure { float64(bits: 0x123456789abcdef) }",
-            failure_prefix: "float64(bits: 0x123456789abcdef",
-            failure_token: ")",
+            failure_prefix: "function F64 using Complete (): Float64[exact] pure { ",
+            failure_token: "float64(bits: 0x123456789abcdef)",
+        },
+        Vector {
+            name: "hex64-uppercase",
+            valid: "function F64 using Complete (): Float64[exact] pure { float64(bits: 0x3ff0000000000000) }",
+            invalid: "function F64 using Complete (): Float64[exact] pure { float64(bits: 0x3FF0000000000000) }",
+            failure_prefix: "function F64 using Complete (): Float64[exact] pure { ",
+            failure_token: "float64(bits: 0x3FF0000000000000)",
         },
         Vector {
             name: "hex64-one-long",
             valid: "function F64 using Complete (): Float64[exact] pure { float64(bits: 0x123456789abcdef0) }",
             invalid: "function F64 using Complete (): Float64[exact] pure { float64(bits: 0x123456789abcdef01) }",
-            failure_prefix: "float64(bits: 0x123456789abcdef0",
-            failure_token: "1",
+            failure_prefix: "function F64 using Complete (): Float64[exact] pure { ",
+            failure_token: "float64(bits: 0x123456789abcdef01)",
         },
         Vector {
             name: "required-colon",
@@ -716,6 +741,13 @@ fn grammar_combinators_enforce_authored_boundaries_at_the_failing_token() {
             invalid: "record Required { datum: Integer }",
             failure_prefix: "record Required { datum: Integer ",
             failure_token: "}",
+        },
+        Vector {
+            name: "operation-parameter-reserved-word",
+            valid: "object Meter { operation adjust(by: P, step: P, steps: Sequence<P>[0, 3]); }",
+            invalid: "object Meter { operation adjust(using: P, step: P, steps: Sequence<P>[0, 3]); }",
+            failure_prefix: "object Meter { operation adjust(",
+            failure_token: "using",
         },
     ];
 
