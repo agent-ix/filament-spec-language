@@ -857,7 +857,7 @@ mod extraction_tests {
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
     use ix_trace_rs::trace;
-    use serde_json::{json, Value};
+    use serde_json::json;
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";
