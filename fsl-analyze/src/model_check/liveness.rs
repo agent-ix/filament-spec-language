@@ -24,8 +24,15 @@
 //! binding, the first phase and model-only pass settle its canonical
 //! breadth-first finding; if neither finds a violation, the second phase
 //! settles that binding's canonical lasso. The engine proceeds to the next
-//! binding only after the current one is `Holds{Exhaustive}`. Findings and
-//! lassos from different bindings are never ranked against one another.
+//! binding only after the current one is decided to hold, over its full or
+//! reduced product, and so decides every binding before any proof. Findings
+//! and lassos from different bindings are never ranked against one another.
+//!
+//! Known deviation from FR-126 (QSL-3472): a horizon, a bound, a state
+//! constraint or an ignored fairness constraint ends the loop early. FR-126
+//! requires the next binding to be decided after one ends undecided, at a
+//! bound or at a constraint; until it is, a later binding's refutation can be
+//! missed and the run settles as a non-proof.
 //!
 //! Each binding's second phase decomposes its retained graph into strongly
 //! connected components in
@@ -121,6 +128,7 @@ use fsl_replay::{
     UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Sink, Writer};
 use quire_canonical_api as canonical_api;
 
@@ -2357,6 +2365,8 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         self.diagnostic_fairness.unwrap_or(self.fairness)
     }
 
+    /// Decide the bindings in canonical order and settle the run.
+    #[implements("FR-126-AC-14", "FR-126-AC-15", "FR-156-AC-1", "FR-160-AC-6")]
     fn decide(&self, mut totals: Totals) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         let mut explored = Vec::with_capacity(self.bindings.len());
         let mut cut = false;
@@ -2441,9 +2451,10 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
                 Second::NoneFair => {}
             }
-            let settled_exhaustively = !run.dead_cut
-                && run.binding.applied.is_none()
-                && !self.request.partial_order
+            // A reduction never ends the loop: each binding, or each orbit
+            // under symmetry, is its own product and must be decided. The
+            // other stops below are a known deviation from FR-126 (QSL-3472).
+            let binding_decided = !run.dead_cut
                 && !run.graph.states().iter().any(|state| {
                     state.findings.iter().any(|finding| {
                         matches!(
@@ -2462,7 +2473,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 && totals.instance_limited.is_empty()
                 && !ignored_fairness_lasso;
             explored.push(run);
-            if !settled_exhaustively {
+            if !binding_decided {
                 break;
             }
         }
