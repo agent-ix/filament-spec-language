@@ -689,8 +689,14 @@ impl SubjectBinding<'_> {
 /// exception: it is accepted and carried in [`EngineBounds`], but no engine
 /// in this repository reads it yet (FR-255 states only that it is carried).
 /// `plan_search.*` is never listed: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 17] = [
+pub const ENGINE_SETTINGS: [Setting; 23] = [
     Setting::ExpansionMaxCandidates,
+    Setting::ZoneCheckMaxSymbolicStates,
+    Setting::ZoneCheckMaxSymbolicTransitions,
+    Setting::ZoneCheckMaxAutomatonStates,
+    Setting::ZoneCheckMaxZoneBytes,
+    Setting::ZoneCheckMaxCheckWork,
+    Setting::AnalysisRetainedBytes,
     Setting::SimulationMaxSteps,
     Setting::ScheduleMaxDemandPoints,
     Setting::ExactProbMaxStates,
@@ -772,6 +778,17 @@ impl EngineBounds {
     fn stated(&self, item: &document::ItemSelection) -> Vec<Setting> {
         use Setting as S;
         let mut stated = Vec::new();
+        if let Some(limits) = item.temporal.as_ref().and_then(|temporal| temporal.limits) {
+            for (member, setting) in [
+                (limits.max_states, S::ZoneCheckMaxSymbolicStates),
+                (limits.max_transitions, S::ZoneCheckMaxSymbolicTransitions),
+                (limits.max_check_work, S::ZoneCheckMaxCheckWork),
+            ] {
+                if member.is_some() {
+                    stated.push(setting);
+                }
+            }
+        }
         if item
             .simulation
             .as_ref()

@@ -9,10 +9,11 @@
 use fsl_eval::simulation::model::{
     TaskProductState, TaskProductSystem, TaskTransitionAction, TimedSystem,
 };
+use fsl_foundation::Setting;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
+use crate::analyze_cli_support::{analyze, analyze_under, label, request_over, Run, Workspace};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit};
 
 /// One always-enabled operation per task, each releasing that task of `set`.
@@ -29,6 +30,10 @@ fn sources(set: &str, tasks: &[&str]) -> String {
 }
 
 fn run(name: &str, tasks: &[&str], declarations: &str, items: Value) -> Run {
+    analyze(&request_for(name, tasks, declarations, items))
+}
+
+fn request_for(name: &str, tasks: &[&str], declarations: &str, items: Value) -> std::path::PathBuf {
     let ws = Workspace::new(name);
     let operations: Vec<(String, &[&str])> = tasks
         .iter()
@@ -38,13 +43,13 @@ fn run(name: &str, tasks: &[&str], declarations: &str, items: Value) -> Run {
         .iter()
         .map(|(name, fields)| (name.as_str(), *fields))
         .collect();
-    analyze(&request_over(
+    request_over(
         &ws,
         &rpc_unit(4, declarations),
         &crate::zone_search::rpc_document_with(&extra),
         &[rpc_snapshot()],
         json!({"items": items}),
-    ))
+    )
 }
 
 /// `Pair`: `a` periodic 4 ms, deadline 3 ms; `b` sporadic 6 ms, deadline
@@ -1200,4 +1205,85 @@ fn a_refutable_set_refutes_before_the_symbolic_pass() {
     let item = run.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// One task of period 2, worst-case execution time 1 and deadline 2, with its
+/// release, so EN-6 runs the task-product pass.
+fn one_task(name: &str, items: Value) -> std::path::PathBuf {
+    let declarations = format!(
+        "taskset One {{ task t periodic 2 ms deadline 2 ms bcet 1 ms wcet 1 ms priority 1 lo; }}\n\
+         schedulable OneFp on One under fixed_priority;\n{}",
+        sources("One", &["t"])
+    );
+    request_for(name, &["t"], &declarations, items)
+}
+
+fn assert_symbolic_stop(item: &Value, limit: &str, value: u64) {
+    assert_eq!(label(item), "incomplete", "{item}");
+    let cause = &item["record"]["cause"];
+    assert_eq!(cause["kind"], "limit-reached", "{item}");
+    assert_eq!(cause["limit"], limit, "{item}");
+    assert_eq!(cause["value"], json!(value), "{item}");
+    assert_eq!(cause["setting"], format!("zone_check.{limit}"), "{item}");
+    assert!(item.get("certificate").is_none(), "{item}");
+}
+
+/// FR-239-AC-9: `analyze` accepts `--limit zone_check.max_symbolic_states=2`
+/// and the bound stops the task product, whose quotient holds more than two
+/// symbolic states: no job, a released job and a running job differ.
+#[trace("FR-239-AC-9")]
+#[test]
+fn a_caller_symbolic_state_bound_stops_the_task_product() {
+    let request = one_task(
+        "task-product-caller-states",
+        json!([{"claim": "OneFp", "backend": "en-6"}]),
+    );
+    let run = analyze_under(&request, &[(Setting::ZoneCheckMaxSymbolicStates, 2)]);
+    assert_symbolic_stop(&run.item(0), "max_symbolic_states", 2);
+    assert_eq!(run.exit, 22);
+}
+
+/// FR-239 "Budget sources": an item's own `max_states` and `max_transitions`
+/// bound the task product's symbolic states and edges, named as those bounds.
+#[trace("FR-239-AC-9")]
+#[test]
+fn an_item_states_the_task_product_symbolic_bounds() {
+    for (member, limit) in [
+        ("max_states", "max_symbolic_states"),
+        ("max_transitions", "max_symbolic_transitions"),
+    ] {
+        let request = one_task(
+            &format!("task-product-item-{member}"),
+            json!([{"claim": "OneFp", "backend": "en-6", "temporal": {"limits": {member: 1}}}]),
+        );
+        let run = analyze(&request);
+        assert_symbolic_stop(&run.item(0), limit, 1);
+    }
+}
+
+/// FR-255 "Two sources of one bound": an item member and the caller's setting
+/// for the same bound are refused before any item runs.
+#[trace("FR-239-AC-9")]
+#[test]
+fn a_symbolic_bound_stated_twice_is_refused() {
+    let request = one_task(
+        "task-product-twice",
+        json!([{"claim": "OneFp", "backend": "en-6", "temporal": {"limits": {"max_states": 5}}}]),
+    );
+    let run = analyze_under(&request, &[(Setting::ZoneCheckMaxSymbolicStates, 2)]);
+    assert_eq!(run.exit, 20);
+}
+
+/// FR-239 "Budget sources": the caller's `zone_check.max_check_work` bounds
+/// the task product's pass.
+#[trace("FR-239-AC-9")]
+#[test]
+fn a_caller_work_bound_stops_the_task_product() {
+    let request = one_task(
+        "task-product-caller-work",
+        json!([{"claim": "OneFp", "backend": "en-6"}]),
+    );
+    let run = analyze_under(&request, &[(Setting::ZoneCheckMaxCheckWork, 2)]);
+    assert_symbolic_stop(&run.item(0), "max_check_work", 2);
+    assert_eq!(run.exit, 22);
 }

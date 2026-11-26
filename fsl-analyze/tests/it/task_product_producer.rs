@@ -13,7 +13,9 @@ use fsl_analyze::zone_check::{
     task_product_certificate, SymbolicGraph, SymbolicStop, ZoneCheckLimits,
 };
 use fsl_eval::simulation::model::{TaskAutomaton, TaskProductSystem, TimedSystem};
+use fsl_foundation::budget::{Budget, BudgetStop};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::{Setting, SettingLimits};
 use fsl_replay::{
     CertificateCheckLimits, CertificateRule, DivergentTarget, QuotientIdentity, Zone,
     ZoneCertificate, ZoneCertificateVerdict,
@@ -23,10 +25,63 @@ use serde_json::{json, Value};
 
 use crate::task_product_certificate::{
     claim_of, no_release, over_utilised, preempting, rejected, releasable, solo, tied, verdict,
-    Certificate,
+    world_for, Certificate,
 };
-use crate::timed_world::{document, world, World, DENSE};
+use crate::timed_world::{document, world, World, DENSE, METER};
 use crate::zone_search::TIMED;
+
+/// Fixed bounds a test states; every other row keeps its default.
+struct Stated(Vec<(Setting, u64)>);
+
+impl SettingLimits for Stated {
+    fn bounds(&self) -> Vec<(Setting, u64)> {
+        self.0.clone()
+    }
+
+    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
+        self.0.push((setting, bound));
+        true
+    }
+}
+
+fn budget(bounds: &[(Setting, u64)], cancel: &Cancel) -> Budget {
+    Budget::from_settings(&Stated(bounds.to_vec()), METER, cancel)
+}
+
+/// FR-239 "Task-product symbolic pass": the pass charges each symbolic state
+/// before storing it, so a bound of one state keeps the initial one and stops
+/// at the second.
+#[trace("FR-239-AC-8")]
+#[test]
+fn the_symbolic_pass_charges_each_state_before_storing_it() {
+    let world = world_for(
+        "H",
+        &["a"],
+        "taskset H {\n\
+         task a periodic 2 ms deadline 2 ms bcet 1 ms wcet 1 ms priority 1 lo;\n\
+         }\n\
+         schedulable HFp on H under fixed_priority;\n",
+    );
+    let model = world.system();
+    let timed = TimedSystem::new(&model, "M").expect("dense timed model");
+    let product = TaskProductSystem::new(timed, "HFp").expect("checked task product");
+    let automaton = TaskAutomaton::new(&product);
+    let budget = budget(&[(Setting::ZoneCheckMaxSymbolicStates, 1)], &Cancel::new());
+
+    let stop = explore_task_symbolic(&automaton, &budget).err();
+
+    assert!(
+        matches!(
+            &stop,
+            Some(SymbolicStop::Budget(BudgetStop::Limit(limit)))
+                if limit.setting() == Setting::ZoneCheckMaxSymbolicStates
+                    && limit.configured_bound() == 1
+                    && limit.actual() == 2
+        ),
+        "{stop:?}"
+    );
+    assert_eq!(budget.consumed(Setting::ZoneCheckMaxSymbolicStates), 1);
+}
 
 fn no_release_emitted(
     world: &World,
@@ -354,7 +409,7 @@ fn engine_graph(world: &World, claim: &str) -> (SymbolicGraph, Certificate) {
     let timed = TimedSystem::new(&model, "M").expect("dense timed model");
     let product = TaskProductSystem::new(timed, claim).expect("checked task product");
     let automaton = TaskAutomaton::new(&product);
-    let graph = explore_task_symbolic(&automaton, 100_000_000, &Cancel::new())
+    let graph = explore_task_symbolic(&automaton, &budget(&[], &Cancel::new()))
         .expect("the engine closes the product");
     let occurrence = claim_of(world, claim).occurrence().expect("an occurrence");
     let certificate =
@@ -655,7 +710,7 @@ fn no_certificate_is_built_for_a_reachable_miss() {
     // The pass stops at the first reachable miss, so the whole quotient is
     // never explored and the concrete search refutes promptly.
     assert!(matches!(
-        explore_task_symbolic(&automaton, 100_000_000, &Cancel::new()),
+        explore_task_symbolic(&automaton, &budget(&[], &Cancel::new())),
         Err(SymbolicStop::Missed)
     ));
 }
@@ -671,14 +726,19 @@ fn the_symbolic_pass_stops_at_its_work_limit_and_on_cancel() {
     let product = TaskProductSystem::new(timed, "QFp").expect("checked task product");
     let automaton = TaskAutomaton::new(&product);
     assert!(matches!(
-        explore_task_symbolic(&automaton, 10, &Cancel::new()),
-        Err(SymbolicStop::WorkLimit(10))
+        explore_task_symbolic(
+            &automaton,
+            &budget(&[(Setting::ZoneCheckMaxCheckWork, 10)], &Cancel::new())
+        ),
+        Err(SymbolicStop::Budget(BudgetStop::Limit(limit)))
+            if limit.setting() == Setting::ZoneCheckMaxCheckWork
+                && limit.configured_bound() == 10
     ));
     let cancel = Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
     assert!(matches!(
-        explore_task_symbolic(&automaton, 100_000_000, &cancel),
-        Err(SymbolicStop::Cancelled(_))
+        explore_task_symbolic(&automaton, &budget(&[], &cancel)),
+        Err(SymbolicStop::Budget(BudgetStop::Cancelled(_)))
     ));
 }
 

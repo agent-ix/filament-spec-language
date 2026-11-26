@@ -23,12 +23,11 @@ use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
-    GraphEvidenceEnvelope, GraphReplayResult, GraphReplaySettlement, ModelTraceSubject,
-    ProfileSelection, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
-    RequestTargetWire, StateGraphCertificateForm, StateGraphInstanceOutcome, StateGraphOutcome,
-    StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence, GraphEvidenceEnvelope,
+    GraphReplayResult, GraphReplaySettlement, ModelTraceSubject, ProfileSelection, ReplayRefusal,
+    ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire, StateGraphCertificateForm,
+    StateGraphInstanceOutcome, StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord,
+    TerminalValue, TrapClosure, WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
@@ -1061,16 +1060,24 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if instances.is_empty() {
         return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
     }
-    let graph = match explore_timed_state_graph(
-        &timed,
-        super::timed_item::zone_limits(read.form),
-        cancel,
-    ) {
+    let bounds = super::timed_item::zone_bounds(read.form, read.limits.engines);
+    let limits = super::timed_item::zone_limits(&bounds);
+    let graph = match explore_timed_state_graph(&timed, limits, cancel) {
         Ok(graph) => graph,
         Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(limit))) => {
             let (limit, value) = match limit {
+                // FR-852: the item's own `max_states` keeps its name.
                 ZoneCheckLimit::MaxSymbolicStates(value) => {
-                    (fsl_replay::ModelCheckLimit::MaxStates, value)
+                    let stated = read
+                        .form
+                        .requested_limits
+                        .contains(&fsl_replay::ModelCheckLimit::MaxStates);
+                    let limit = if stated {
+                        fsl_replay::ModelCheckLimit::MaxStates
+                    } else {
+                        fsl_replay::ModelCheckLimit::ZoneMaxSymbolicStates
+                    };
+                    (limit, value)
                 }
                 ZoneCheckLimit::MaxSymbolicTransitions(value) => (
                     fsl_replay::ModelCheckLimit::ZoneMaxSymbolicTransitions,
@@ -1157,7 +1164,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             &obligation,
             certificate_item,
             &certificate,
-            CertificateCheckLimits::default(),
+            super::timed_item::certificate_limits(&bounds),
             cancel,
         );
         let accepted = matches!(check, Ok(ZoneCertificateVerdict::Accepted));
