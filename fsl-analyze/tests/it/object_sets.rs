@@ -8,8 +8,6 @@
 //! of the expected list is given `age` `i + 1`, and the claim `x.age <= i`
 //! is refuted at the `i`-th instance for each `i < n` and proved at `i = n`.
 //! An excluded key holds no object, so an extra instance changes a verdict.
-//! Liveness is probed with the refuted claims only: it reads the instances in
-//! order and does not show that no further one follows.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,10 +27,11 @@ use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     check_closure, check_components, check_product_closure, encode_hyper_query,
-    encode_temporal_smt_query, CertificateRequest, ClosureCertificate, HyperQueryRequest,
-    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure, ProductClosureCertificate,
-    ProductClosureClause, ProductClosureRequest, ProofCertificate, SmtEncodingLimits, SmtQueryKind,
-    StateGraphCertificateRequest, StateGraphOutcome,
+    encode_temporal_smt_query, CertificateRequest, ClosureCertificate, ComponentCertificate,
+    HyperQueryRequest, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure,
+    ProductClosureCertificate, ProductClosureClause, ProductClosureRequest, ProofCertificate,
+    SmtEncodingLimits, SmtQueryKind, StateGraphCertificate, StateGraphCertificateRequest,
+    StateGraphOutcome,
 };
 use fsl_semantics::check::HyperForm;
 use fsl_semantics::model::intake::package_input;
@@ -140,6 +139,19 @@ const CONFLICT: Case = Case {
     listed: &[("P1", &["c"]), ("P2", &["c"])],
     expect: Expect::Conflict,
     ..BASE
+};
+/// `CONFLICT` with a third overlapping population that has no universe: the
+/// missing universe is reported before the conflicting records.
+const CONFLICT_NO_UNIVERSE: Case = Case {
+    name: "missing-universe-before-conflict",
+    populations: &[("P1", &["Animal"]), ("P2", &["Dog"]), ("P3", &["Animal"])],
+    held: &[
+        ("P1", &[("c", "Cat")]),
+        ("P2", &[("c", "Dog")]),
+        ("P3", &[]),
+    ],
+    expect: Expect::RequiresBound,
+    ..CONFLICT
 };
 const UNADMITTED_KEY: Case = Case {
     name: "unadmitted-key",
@@ -377,6 +389,8 @@ impl Case {
 enum Route {
     Temporal,
     Liveness,
+    /// Liveness probed with the refuted claims only.
+    LivenessOrder,
     StateGraph,
     SingleExistential,
     ForallForall,
@@ -392,7 +406,7 @@ impl Route {
             Self::Temporal => format!(
                 "temporal {name} using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ always holds({p}) }}\n"
             ),
-            Self::Liveness => format!(
+            Self::Liveness | Self::LivenessOrder => format!(
                 "temporal {name} using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ eventually holds({p}) }}\n"
             ),
             Self::StateGraph | Self::TimedStateGraph => {
@@ -505,28 +519,6 @@ fn judge(case: &Case, i: usize, document: &Json, at: usize) -> Option<String> {
     ))
 }
 
-/// The exact route over no instance: unsupported, with no verdict,
-/// certificate or counterexample (FR-201).
-fn check_exact_unsupported(cases: &[Case]) {
-    let mut wrong = Vec::new();
-    for case in cases {
-        let over = case.over;
-        let unit = untimed_unit(
-            "",
-            &format!(
-                "terminal Done using v on M when {{ true }};\nprobabilistic C0 using t0 on M over (x: M::{over}) under every scheduler on origin {{ probability >= 0.5 [ eventually holds(true) ] }}\n"
-            ),
-        );
-        let item = json!({"claim": "C0", "probabilistic": {"evidence": "exact"}});
-        let document = case.analyze(&unit, vec![item]).document();
-        let item = &document["items"][0];
-        if item["record"]["result"] != "unsupported" || !item["counterexample"].is_null() {
-            wrong.push(format!("{}: {}", case.name, short(item)));
-        }
-    }
-    assert_clean(wrong);
-}
-
 fn assert_clean(wrong: Vec<String>) {
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
 }
@@ -543,8 +535,8 @@ fn check_route(route: Route, cases: &[Case]) {
             ) {
                 probes = vec![(0, "x = x".to_owned())];
             }
-        } else if matches!(route, Route::Liveness) {
-            // Only the refuted probes: see the module note on liveness.
+        } else if matches!(route, Route::LivenessOrder) {
+            // The proved probe is `liveness_ranges_over_the_admitted_keys`.
             probes.pop();
         }
         let claims: String = probes
@@ -783,88 +775,162 @@ fn spells(expect: Expect, seen: &str) -> bool {
     }
 }
 
-/// EN-1 as a library, and the core's closure or component check of the
-/// certificate it writes.
-fn check_certificates(formula: &str, cases: &[Case]) {
+/// The records of the conflicting cases with `c` typed once, so that the
+/// subject admits and the letters a checker request carries can be built.
+const ONE_TYPE_HELD: &[Held<'static>] = &[("P1", &[("c", "Dog")]), ("P2", &[("c", "Dog")])];
+
+impl Case {
+    fn admitting(&self) -> Case {
+        let mut admitting = *self;
+        if matches!(self.expect, Expect::Conflict) {
+            admitting.held = ONE_TYPE_HELD;
+        }
+        if self.name == CONFLICT_NO_UNIVERSE.name {
+            admitting.held = &[
+                ("P1", &[("c", "Dog")]),
+                ("P2", &[("c", "Dog")]),
+                ("P3", &[]),
+            ];
+            admitting.listed = &[("P1", &["c"]), ("P2", &["c"]), ("P3", &[])];
+        }
+        if self.listed.is_empty() {
+            admitting.listed = BASE.listed;
+        }
+        admitting
+    }
+
+    /// The temporal clause `formula holds(p)` over this case, as a library.
+    fn clause(&self, formula: &str, p: &str) -> Library {
+        let over = self.over;
+        self.library(&format!(
+            "temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ {formula} holds({p}) }}\n"
+        ))
+    }
+}
+
+/// EN-1 over `subject`, and the core's check of `offered`: of the component
+/// checker for a liveness formula, of the closure checker otherwise. With
+/// nothing offered the checker gets the empty certificate of its kind.
+fn prove_and_check(
+    subject: &Library,
+    letters_from: &Library,
+    liveness: bool,
+    offered: Option<&ProofCertificate>,
+) -> (Result<ModelCheckOutcome, ModelCheckRefusal>, String) {
+    let node = &letters_from.package.graph().temporal_clauses()[0];
+    let system = ModelSystem::new(letters_from.subject().simulation).expect("the letters admit");
+    let letters = system.clause_letters(node).expect("an unguarded clause");
+    let item = || ModelCheckItem::Clause {
+        clause: node.clause(),
+        letters: &letters,
+    };
+    let limits = ModelCheckLimits::default();
+    let outcome = check_model(
+        ModelCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &[],
+            subject: subject.subject(),
+            item: item(),
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
+            reductions: Default::default(),
+        },
+        &Cancel::new(),
+    );
+    let request = CertificateRequest {
+        temporal_clock_selections: &[],
+        subject: subject.subject(),
+        item: item(),
+        smt_encoding: Default::default(),
+    };
+    let checked = match offered {
+        Some(ProofCertificate::Component(proof)) => {
+            check_components(&request, proof, &limits, &Cancel::new())
+        }
+        Some(ProofCertificate::Closure(proof)) => {
+            check_closure(&request, proof, &limits, &Cancel::new())
+        }
+        None if liveness => check_components(
+            &request,
+            &ComponentCertificate {
+                closure: ClosureCertificate { states: Vec::new() },
+                components: Vec::new(),
+            },
+            &limits,
+            &Cancel::new(),
+        ),
+        None => check_closure(
+            &request,
+            &ClosureCertificate { states: Vec::new() },
+            &limits,
+            &Cancel::new(),
+        ),
+    };
+    (outcome, format!("{checked:?}"))
+}
+
+/// Over a case with no instance, both the engine and the checker spell why.
+fn check_certificate_causes(formula: &str, cases: &[Case]) {
+    let liveness = formula != "always";
     let mut wrong = Vec::new();
     for case in cases {
-        let n = case.instances().len();
-        let over = case.over;
-        let p = if n == 0 {
-            "true".to_owned()
-        } else {
-            format!("x.age <= {n}")
-        };
-        let library = case.library(&format!(
-            "temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ {formula} holds({p}) }}\n"
-        ));
-        let node = &library.package.graph().temporal_clauses()[0];
-        let system = match ModelSystem::new(library.subject().simulation) {
-            Ok(system) => system,
-            Err(failure) => {
-                let seen = format!("{failure:?}");
-                if !spells(case.expect, &seen) {
-                    wrong.push(format!("{} admission: {seen}", case.name));
-                }
-                continue;
-            }
-        };
-        let letters = system.clause_letters(node).expect("an unguarded clause");
-        let item = || ModelCheckItem::Clause {
-            clause: node.clause(),
-            letters: &letters,
-        };
-        let outcome: Result<ModelCheckOutcome, ModelCheckRefusal> = check_model(
-            ModelCheckRequest {
-                workers: 1,
-                temporal_clock_selections: &[],
-                subject: library.subject(),
-                item: item(),
-                max_depth: None,
-                limits: ModelCheckLimits::default(),
-                smt_encoding: Default::default(),
-                smt_run: Default::default(),
-                reductions: Default::default(),
-            },
-            &Cancel::new(),
-        );
-        let request = CertificateRequest {
-            temporal_clock_selections: &[],
-            subject: library.subject(),
-            item: item(),
-            smt_encoding: Default::default(),
-        };
-        let limits = ModelCheckLimits::default();
-        let (certificate, engine) = match outcome {
-            Ok(ModelCheckOutcome::Holds { certificate, .. }) => (Some(certificate), String::new()),
-            other => (None, format!("{other:?}")),
-        };
-        let checked = match &certificate {
-            Some(ProofCertificate::Component(proof)) => {
-                check_components(&request, proof, &limits, &Cancel::new())
-            }
-            Some(ProofCertificate::Closure(proof)) => {
-                check_closure(&request, proof, &limits, &Cancel::new())
-            }
-            None => check_closure(
-                &request,
-                &ClosureCertificate { states: Vec::new() },
-                &limits,
-                &Cancel::new(),
-            ),
-        };
-        let checked = format!("{checked:?}");
-        let right = match case.expect {
-            Expect::Instances(_) => certificate.is_some() && checked == "Ok(Accepted)",
-            _ => spells(case.expect, &engine) && spells(case.expect, &checked),
-        };
-        if !right {
+        let subject = case.clause(formula, "true");
+        let control = case.admitting().clause(formula, "true");
+        let (engine, checked) = prove_and_check(&subject, &control, liveness, None);
+        let engine = format!("{engine:?}");
+        if !(spells(case.expect, &engine) && spells(case.expect, &checked)) {
             wrong.push(format!(
                 "{}: engine {} checker {}",
                 case.name,
                 engine.chars().take(200).collect::<String>(),
                 checked.chars().take(200).collect::<String>()
             ));
+        }
+    }
+    assert_clean(wrong);
+}
+
+/// Over a case with instances: the claim every instance meets is proved with
+/// a certificate the checker accepts; each claim the `i`-th instance is the
+/// first to break is refuted at it, and the checker does not accept that
+/// certificate for a claim the `i`-th instance alone breaks.
+fn check_certificate_instances(formula: &str, cases: &[Case]) {
+    let liveness = formula != "always";
+    let mut wrong = Vec::new();
+    for case in cases {
+        let instances = case.instances();
+        let all = case.clause(formula, &format!("x.age <= {}", instances.len()));
+        let (outcome, _) = prove_and_check(&all, &all, liveness, None);
+        let Ok(ModelCheckOutcome::Holds { certificate, .. }) = outcome else {
+            wrong.push(format!("{}: not proved: {outcome:?}", case.name));
+            continue;
+        };
+        let (_, checked) = prove_and_check(&all, &all, liveness, Some(&certificate));
+        if checked != "Ok(Accepted)" {
+            wrong.push(format!("{}: checker {checked}", case.name));
+        }
+        for (i, key) in instances.iter().enumerate() {
+            let ordered = case.clause(formula, &format!("x.age <= {i}"));
+            let (outcome, _) = prove_and_check(&ordered, &ordered, liveness, None);
+            // A claim only the `i`-th instance breaks, so a checker that does
+            // not read it accepts.
+            let only = case.clause(formula, &format!("x.age != {}", i + 1));
+            let (_, checked) = prove_and_check(&only, &only, liveness, Some(&certificate));
+            let bound = match &outcome {
+                Ok(ModelCheckOutcome::Violated { counterexample, .. }) => counterexample
+                    .over_binding
+                    .as_ref()
+                    .map(|binding| binding.key.as_str()),
+                _ => None,
+            };
+            if bound != Some(*key) {
+                wrong.push(format!("{} probe {i}: bound {bound:?}", case.name));
+            }
+            if checked == "Ok(Accepted)" {
+                wrong.push(format!("{} probe {i}: the checker accepted", case.name));
+            }
         }
     }
     assert_clean(wrong);
@@ -899,6 +965,26 @@ fn check_state_graph_library(cases: &[Case]) {
             },
             &Cancel::new(),
         );
+        if !matches!(case.expect, Expect::Instances(_)) {
+            let checked = fsl_replay::check_state_graph(
+                &StateGraphCertificateRequest {
+                    subject: library.subject(),
+                    claim,
+                    over: None,
+                },
+                &StateGraphCertificate {
+                    closure: Vec::new(),
+                    ranks: Vec::new(),
+                    counts: Vec::new(),
+                },
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            );
+            let checked = format!("{checked:?}");
+            if !spells(case.expect, &checked) {
+                wrong.push(format!("{} checker: {checked}", case.name));
+            }
+        }
         let run = match run {
             Ok(run) => run,
             Err(refusal) => {
@@ -953,12 +1039,20 @@ fn check_state_graph_library(cases: &[Case]) {
 }
 
 /// FR-1012 plan policies: one monitor per admitted key, and a plan keeps the
-/// policy only when every monitor accepts it.
+/// policy only when every monitor accepts it. Probe `i` is broken by the
+/// `i`-th instance alone, so a monitor missing for it leaves the search
+/// optimal; the last probe is broken by no instance.
 fn check_plan_policies(cases: &[Case]) {
     let mut wrong = Vec::new();
     for case in cases {
-        let over = case.over;
-        for (i, p) in case.probes() {
+        let n = case.instances().len();
+        for i in 0..=n {
+            let (p, wanted) = if i < n {
+                (format!("x.age != {}", i + 1), PlanStatus::Infeasible)
+            } else {
+                ("x.age != 0".to_owned(), PlanStatus::Optimal)
+            };
+            let over = case.over;
             let library = case.library(&format!(
                 "type Lengths = Int[0,1];\n\
                  synthesis Reach using t0 grammar M::Animal domain Lengths satisfies {{ true }};\n\
@@ -985,11 +1079,6 @@ fn check_plan_policies(cases: &[Case]) {
                 .map(|result| result.status)
                 .map_err(|error| format!("{error:?}"))
             })();
-            let wanted = if i < case.instances().len() {
-                PlanStatus::Infeasible
-            } else {
-                PlanStatus::Optimal
-            };
             if seen != Ok(wanted) {
                 wrong.push(format!(
                     "{} probe {i}: expected {wanted:?}, got {seen:?}",
@@ -1076,7 +1165,8 @@ impl Library {
 
 /// The SMT hyper encoder takes each admitted key as an instance. FR-315's
 /// `object-lifecycle` row then refuses a universe holding an object that no
-/// initial state holds.
+/// initial state holds, and the `constant-name` row two objects under one
+/// key.
 fn check_hyper_admitted_keys(cases: &[Case]) {
     let mut wrong = Vec::new();
     for case in cases {
@@ -1084,7 +1174,10 @@ fn check_hyper_admitted_keys(cases: &[Case]) {
         let all_held = keys.iter().all(|key| case.instances().contains(key));
         for &key in case.instances() {
             let seen = library.encode_hyper(key);
-            let right = if all_held {
+            let right = if case.name == "two-populations" {
+                // `c` is held by both populations (the `constant-name` row).
+                seen.contains("ConstantName")
+            } else if all_held {
                 seen.starts_with("Ok(")
             } else {
                 seen.contains("ObjectLifecycle")
@@ -1116,32 +1209,64 @@ fn check_hyper_excluded_keys(cases: &[Case]) {
     assert_clean(wrong);
 }
 
-/// The product-closure checker accepts no certificate over an empty set.
-fn check_product_checker(cases: &[Case]) {
-    let mut wrong = Vec::new();
-    for case in cases {
-        let (library, _) = case.hyper();
-        let subjects = vec![library.subject()];
+impl Library {
+    /// The product-closure checker's answer to an empty closure certificate
+    /// that names the instance `key`.
+    fn check_product(&self, key: &str) -> String {
+        let subjects = vec![self.subject()];
         let checked = check_product_closure(
             &ProductClosureRequest {
-                package: &library.package,
-                clause: ProductClosureClause::Hyper(&library.package.graph().hyper_clauses()[0]),
+                package: &self.package,
+                clause: ProductClosureClause::Hyper(&self.package.graph().hyper_clauses()[0]),
                 subjects: &subjects,
                 meter: UNLIMITED,
             },
             &ProductClosureCertificate {
                 form: HyperForm::Universal,
-                instance: Vec::new(),
+                instance: vec![("x".to_owned(), key.to_owned())],
                 reduction: None,
                 closure: ProductClosure::Product(Vec::new()),
-                components: None,
+                components: Some(Vec::new()),
             },
             &ModelCheckLimits::default(),
             &Cancel::new(),
         );
-        let seen = format!("{checked:?}");
-        if seen.starts_with("Ok(Accepted") {
-            wrong.push(format!("{} product checker: {seen}", case.name));
+        format!("{checked:?}")
+    }
+}
+
+/// A certificate naming a key that is not an instance is refused for the key
+/// (FR-125 "Instancing"). A case that lists no key is offered `a`.
+fn check_product_refuses_non_instances(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let (library, mut keys) = case.hyper();
+        if keys.is_empty() {
+            keys.push("a");
+        }
+        for key in keys
+            .into_iter()
+            .filter(|key| !case.instances().contains(key))
+        {
+            let seen = library.check_product(key);
+            if !seen.contains("Input(\"instance-key\")") {
+                wrong.push(format!("{} product key {key}: {seen}", case.name));
+            }
+        }
+    }
+    assert_clean(wrong);
+}
+
+/// A certificate naming an instance gets past the checker's instance checks.
+fn check_product_takes_instances(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let (library, _) = case.hyper();
+        for &key in case.instances() {
+            let seen = library.check_product(key);
+            if seen.starts_with("Err(Input(") {
+                wrong.push(format!("{} product key {key}: {seen}", case.name));
+            }
         }
     }
     assert_clean(wrong);
@@ -1160,9 +1285,24 @@ fn temporal_names_why_there_is_no_instance() {
     check_route(Route::Temporal, CAUSES);
 }
 
-#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn temporal_names_a_missing_universe_before_a_conflict() {
+    check_route(Route::Temporal, &[CONFLICT_NO_UNIVERSE]);
+}
+
+// The refuted probes only. No criterion is tagged: that no further instance
+// follows is not shown here, but in the row below.
+#[trace("TC-520")]
 #[test]
 fn liveness_binds_the_instances_in_order() {
+    check_route(Route::LivenessOrder, INSTANCES);
+}
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
+#[test]
+#[ignore = "QSL-3529: a liveness claim every instance meets fails instead of being proved (FR-125-AC-8)"]
+fn liveness_ranges_over_the_admitted_keys() {
     check_route(Route::Liveness, INSTANCES);
 }
 
@@ -1170,7 +1310,13 @@ fn liveness_binds_the_instances_in_order() {
 #[trace("TC-520", "FSpec-FR-361-AC-14", "FSpec-FR-361-AC-16")]
 #[test]
 fn liveness_names_why_there_is_no_instance() {
-    check_route(Route::Liveness, CAUSES);
+    check_route(Route::LivenessOrder, CAUSES);
+}
+
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn liveness_names_a_missing_universe_before_a_conflict() {
+    check_route(Route::LivenessOrder, &[CONFLICT_NO_UNIVERSE]);
 }
 
 #[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
@@ -1186,6 +1332,12 @@ fn state_graph_names_why_there_is_no_instance() {
     check_route(Route::StateGraph, CAUSES);
 }
 
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn state_graph_names_a_missing_universe_before_a_conflict() {
+    check_route(Route::StateGraph, &[CONFLICT_NO_UNIVERSE]);
+}
+
 #[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
 #[test]
 fn state_graph_library_lists_the_instances_its_checker_accepts() {
@@ -1198,22 +1350,47 @@ fn state_graph_library_names_why_there_is_no_instance() {
     check_state_graph_library(CAUSES);
 }
 
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn state_graph_library_names_a_missing_universe_before_a_conflict() {
+    check_state_graph_library(&[CONFLICT_NO_UNIVERSE]);
+}
+
 #[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
 #[test]
-fn closure_checker_accepts_the_certificate_over_the_instances() {
-    check_certificates("always", INSTANCES);
+fn closure_checker_reads_every_instance() {
+    check_certificate_instances("always", INSTANCES);
 }
 
 #[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13")]
 #[test]
 fn closure_checker_names_why_there_is_no_instance() {
-    check_certificates("always", CAUSES);
+    check_certificate_causes("always", CAUSES);
+}
+
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn closure_checker_names_a_missing_universe_before_a_conflict() {
+    check_certificate_causes("always", &[CONFLICT_NO_UNIVERSE]);
+}
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
+#[test]
+#[ignore = "QSL-3529: an eventually claim every instance meets is not proved with a component certificate (FR-125-AC-8)"]
+fn component_checker_reads_every_instance() {
+    check_certificate_instances("eventually", INSTANCES);
 }
 
 #[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13")]
 #[test]
 fn component_checker_names_why_there_is_no_instance() {
-    check_certificates("eventually", CAUSES);
+    check_certificate_causes("eventually", CAUSES);
+}
+
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn component_checker_names_a_missing_universe_before_a_conflict() {
+    check_certificate_causes("eventually", &[CONFLICT_NO_UNIVERSE]);
 }
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
@@ -1274,6 +1451,15 @@ fn hp5_checks_a_type_no_population_overlaps() {
 #[ignore = "QSL-3408: conflicting member records are refused ambiguous before conflicting-identity (FR-125-AC-21)"]
 fn hp5_refuses_conflicting_identity() {
     check_route(Route::SingleExistential, &[CONFLICT]);
+}
+
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+#[ignore = "QSL-3408: overlapping hyper populations are refused ambiguous before the missing universe (FR-125-AC-13)"]
+fn hyper_names_a_missing_universe_before_a_conflict() {
+    check_route(Route::SingleExistential, &[CONFLICT_NO_UNIVERSE]);
+    check_route(Route::ForallForall, &[CONFLICT_NO_UNIVERSE]);
+    check_route(Route::ForallExists, &[CONFLICT_NO_UNIVERSE]);
 }
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
@@ -1359,14 +1545,28 @@ fn hyper_smt_takes_only_instances_of_several_populations() {
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-fn hyper_product_checker_accepts_nothing_over_no_instance() {
-    check_product_checker(&[
-        EMPTY_UNIVERSE,
-        ONLY_UNADMITTED,
-        NO_INITIAL,
-        EMPTY_UNIVERSE_NO_INITIAL,
-        NO_UNIVERSE,
-    ]);
+fn hyper_product_checker_refuses_a_key_where_there_is_no_instance() {
+    check_product_refuses_non_instances(&[EMPTY_UNIVERSE, NO_INITIAL, EMPTY_UNIVERSE_NO_INITIAL]);
+}
+
+#[trace("TC-3219", "FR-125-AC-21")]
+#[test]
+#[ignore = "QSL-3408: the product checker takes a universe key no initial state admits (FR-125-AC-21)"]
+fn hyper_product_checker_refuses_excluded_keys() {
+    check_product_refuses_non_instances(&[ONLY_UNADMITTED, UNADMITTED_KEY, CREATED]);
+}
+
+#[trace("TC-3219", "FR-125-AC-19")]
+#[test]
+fn hyper_product_checker_takes_instances() {
+    check_product_takes_instances(&[SUBTYPE_ONLY]);
+}
+
+#[trace("TC-3219", "FR-125-AC-19")]
+#[test]
+#[ignore = "QSL-3408: the product checker refuses an instance of a parameter over several populations (FR-125-AC-19)"]
+fn hyper_product_checker_takes_instances_of_several_populations() {
+    check_product_takes_instances(&[UNADMITTED_ACROSS, TWO_POPULATIONS]);
 }
 
 #[trace("TC-520", "FR-125-AC-8", "FR-125-AC-14")]
@@ -1406,6 +1606,13 @@ fn digital_names_no_initial_state() {
     );
 }
 
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+#[ignore = "QSL-3492: en-1 digital clocks fails established-invariant-broken for a missing universe (FR-125-AC-13)"]
+fn digital_names_a_missing_universe() {
+    check_route(Route::Digital, &[single(NO_UNIVERSE)]);
+}
+
 #[trace("TC-520", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
 #[test]
 #[ignore = "QSL-3484: en-1 digital clocks proves a claim over no instance (FR-125-AC-7)"]
@@ -1419,6 +1626,12 @@ fn timed_state_graph_ranges_over_the_admitted_keys() {
     check_route(Route::TimedStateGraph, TIMED_INSTANCES);
 }
 
+#[trace("TC-520", "FR-125-AC-8")]
+#[test]
+fn timed_state_graph_ranges_over_two_populations() {
+    check_route(Route::TimedStateGraph, &[TIMED_TWO_POPULATIONS]);
+}
+
 #[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13", "FSpec-FR-361-AC-8")]
 #[trace("TC-520", "FSpec-FR-361-AC-16")]
 #[test]
@@ -1430,22 +1643,48 @@ fn timed_state_graph_names_why_there_is_no_instance() {
     );
 }
 
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+#[ignore = "QSL-3492: the timed state graph fails established-invariant-broken for a missing universe (FR-125-AC-13)"]
+fn timed_state_graph_names_a_missing_universe() {
+    check_route(Route::TimedStateGraph, &[single(NO_UNIVERSE)]);
+}
+
 #[trace("TC-520", "FR-125-AC-8")]
 #[test]
 fn exact_binds_the_one_admitted_key() {
     check_probabilistic(Probabilistic::Exact, &[UNADMITTED_KEY]);
 }
 
-#[trace("TC-636", "FR-201-AC-30")]
+#[trace("TC-3241", "FR-203-AC-34")]
 #[test]
-fn exact_is_unsupported_over_no_instance() {
-    check_exact_unsupported(&[EMPTY_UNIVERSE, ONLY_UNADMITTED, ORPHAN]);
+#[ignore = "QSL-3514: exact settles unsupported over no instance instead of no-instance (FR-203-AC-34)"]
+fn exact_reports_no_instance() {
+    check_probabilistic(
+        Probabilistic::Exact,
+        &[EMPTY_UNIVERSE, ONLY_UNADMITTED, ORPHAN],
+    );
 }
 
-#[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-14")]
+#[trace("TC-3241", "FR-203-AC-20")]
+#[test]
+fn exact_names_no_initial_state() {
+    check_probabilistic(
+        Probabilistic::Exact,
+        &[NO_INITIAL, EMPTY_UNIVERSE_NO_INITIAL, ORPHAN_NO_INITIAL],
+    );
+}
+
+#[trace("TC-3241", "FR-203-AC-36")]
 #[test]
 fn exact_refuses_before_instancing() {
     check_probabilistic(Probabilistic::Exact, &[NO_UNIVERSE, CONFLICT]);
+}
+
+#[trace("TC-3241", "FR-203-AC-36")]
+#[test]
+fn exact_names_a_missing_universe_before_a_conflict() {
+    check_probabilistic(Probabilistic::Exact, &[CONFLICT_NO_UNIVERSE]);
 }
 
 #[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
@@ -1469,16 +1708,45 @@ fn statistical_names_the_causes_before_instancing() {
     );
 }
 
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn statistical_names_a_missing_universe_before_a_conflict() {
+    check_probabilistic(Probabilistic::Statistical, &[CONFLICT_NO_UNIVERSE]);
+}
+
+#[trace("TC-520", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
+#[test]
+#[ignore = "QSL-3514: statistical reports no-initial-state over an initial state with no instance (FR-125-AC-7)"]
+fn statistical_reports_no_instance() {
+    check_probabilistic(
+        Probabilistic::Statistical,
+        &[EMPTY_UNIVERSE, ONLY_UNADMITTED, ORPHAN],
+    );
+}
+
 #[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-14")]
 #[test]
 fn conformance_refuses_conflicting_identity() {
     check_conformance(&[CONFLICT]);
 }
 
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn conformance_names_a_missing_universe_before_a_conflict() {
+    check_conformance(&[CONFLICT_NO_UNIVERSE]);
+}
+
 #[trace("TC-520", "FR-125-AC-8")]
 #[test]
 fn conformance_checks_the_one_admitted_key() {
     check_conformance(&[UNADMITTED_KEY]);
+}
+
+#[trace("TC-2532", "FR-896-AC-7")]
+#[test]
+#[ignore = "QSL-3507: global conformance checks only the first admitted key (FR-896-AC-7)"]
+fn conformance_checks_every_admitted_key() {
+    check_conformance(&[SUBTYPE_ONLY, CREATED, UNADMITTED_ACROSS, TWO_POPULATIONS]);
 }
 
 #[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13", "FSpec-FR-361-AC-8")]
@@ -1510,17 +1778,15 @@ fn plan_policy_monitors_no_excluded_key() {
     check_plan_policies(&[UNADMITTED_KEY, UNADMITTED_ACROSS]);
 }
 
-#[trace("TC-900", "FR-315-AC-21")]
+#[trace("TC-900", "FR-315-AC-21", "FR-315-AC-62")]
 #[test]
 fn smt_temporal_refuses_in_its_table_order() {
     check_smt_temporal(&[
         (EMPTY_UNIVERSE, Some("NoInstance")),
         (ORPHAN, Some("NoInstance")),
-        (ONLY_UNADMITTED, Some("ObjectLifecycle")),
         (NO_INITIAL, Some("NoInitialState")),
         (EMPTY_UNIVERSE_NO_INITIAL, Some("NoInitialState")),
         (ORPHAN_NO_INITIAL, Some("NoInitialState")),
-        (NO_UNIVERSE, Some("NoInitialState")),
         (CONFLICT, Some("conflicting-identity")),
         (UNADMITTED_KEY, Some("ObjectLifecycle")),
         (SUBTYPE_ONLY, None),
@@ -1528,4 +1794,24 @@ fn smt_temporal_refuses_in_its_table_order() {
         (UNADMITTED_ACROSS, Some("ObjectLifecycle")),
         (TWO_POPULATIONS, Some("ConstantName")),
     ]);
+}
+
+#[trace("TC-900", "FR-315-AC-62")]
+#[test]
+#[ignore = "QSL-3514: SMT refuses object-lifecycle before no-instance (FR-315-AC-62)"]
+fn smt_temporal_refuses_no_instance_before_object_lifecycle() {
+    check_smt_temporal(&[(ONLY_UNADMITTED, Some("NoInstance"))]);
+}
+
+#[trace("TC-900", "FR-315-AC-62")]
+#[test]
+#[ignore = "QSL-3514: SMT refuses no-initial-state before requires-bound (FR-315-AC-62)"]
+fn smt_temporal_refuses_requires_bound_before_no_initial_state() {
+    check_smt_temporal(&[(NO_UNIVERSE, Some("RequiresBound"))]);
+}
+
+#[trace("TC-900", "FR-315-AC-62")]
+#[test]
+fn smt_temporal_names_a_missing_universe_before_a_conflict() {
+    check_smt_temporal(&[(CONFLICT_NO_UNIVERSE, Some("RequiresBound"))]);
 }
