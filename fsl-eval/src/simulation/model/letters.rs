@@ -29,6 +29,7 @@ use fsl_semantics::check::{
     CheckedNode, CheckedTemporalClause, FormulaNodeId, StatePredicate, TemporalClauseNode,
 };
 use fsl_semantics::model::observation::Observation;
+use ix_trace_rs::implements;
 
 use super::contracts::{Verdict, verdict};
 use super::reference_bindings::ReferenceBinding;
@@ -581,18 +582,21 @@ impl ClauseLetters<'_, '_> {
             .map_err(|_| fault("instance-key-names-a-reference"))
     }
 
-    /// The reference the clause's `over` parameter reads as under
-    /// `instance`'s key (FSpec FR-364's `over_binding`), or `None` when the
-    /// model refuses a reference under the key.
+    /// The written binding of the clause's `over` parameter to `instance`
+    /// (FSpec FR-364's `over_binding`; [`ModelSystem::written_reference`]), or
+    /// `None` when the model refuses a reference under the key.
+    #[implements("FR-125-AC-9")]
     pub fn instance_reference(&self, instance: &ModelInstance) -> Option<ObjectReference> {
-        self.key_reference(instance).ok()
+        self.system
+            .written_reference(self.parameter.clone(), instance)
+            .ok()
     }
 
     /// FR-330 "The decisive atom" over a model state: the observation the
     /// letters read at `state`, the environment the atom is evaluated over,
     /// with the reference the `over` parameter reads as under `instance`'s
     /// key in it. `None` when the state holds no conforming object under
-    /// the key, so no atom of it reads `false`.
+    /// the key.
     ///
     /// # Errors
     ///
@@ -610,17 +614,6 @@ impl ClauseLetters<'_, '_> {
                 environment: observed.observation.environment.clone(),
                 identity: observed.observation.identity.clone(),
             }))
-    }
-
-    /// The actual typed object reference bound to this clause instance in
-    /// an admitted state, without copying its observation environment.
-    pub fn over_reference(
-        &self,
-        instance: &ModelInstance,
-        state: &ModelSimState,
-    ) -> Result<Option<ObjectReference>, AtomStop> {
-        let observed = self.observe(state)?;
-        Ok(self.bound(&observed.rows, instance))
     }
 
     /// How many states these letters have observed: a state read again, by

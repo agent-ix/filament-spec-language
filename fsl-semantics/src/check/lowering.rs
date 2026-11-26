@@ -1317,6 +1317,7 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 /// The original identity of a model variant whose owner path is
 /// `model/variant_type/<identity>`, `None` for any other owner path.
 #[ix_trace_rs::string_edge]
+#[implements("FR-531-AC-42")]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
         [
@@ -4645,6 +4646,7 @@ impl<'a> Lowering<'a> {
 
     /// Key an application node for checked `node` and return a reference to
     /// it.
+    #[implements("FR-495-AC-25")]
     fn application(
         &mut self,
         node: CheckedNode<'_>,
@@ -4895,6 +4897,7 @@ impl<'a> Lowering<'a> {
     /// operand in its place; any other node builds its own type and member
     /// nodes, pushes its frame and descends into its first operand.
     #[deny(clippy::wildcard_enum_match_arm)]
+    #[implements("FR-093-AC-78")]
     fn lower_node<'n>(
         &mut self,
         node: CheckedNode<'n>,
@@ -6587,6 +6590,7 @@ impl<'a> Lowering<'a> {
         .map(LowerStep::Lowered)
     }
 
+    #[implements("FR-495-AC-24", "FR-495-AC-26")]
     fn equality_identity(
         &mut self,
         node: CheckedNode<'_>,
@@ -8360,6 +8364,7 @@ fn exact_decimal_or_ratio(value: &filament_exact::Rational) -> String {
 }
 
 /// The body-walk operands of [`derived_operands`].
+#[implements("FR-093-AC-78")]
 fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     struct Walk {

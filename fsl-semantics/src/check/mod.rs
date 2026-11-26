@@ -69,6 +69,7 @@
 // resolution and typing) -- the inception is the spec's own naming, not an
 // accidental collision this file introduced.
 use filament_checked::node::NodeKind;
+use ix_trace_rs::implements;
 mod abstraction;
 mod assemble;
 mod call_target;
@@ -989,6 +990,9 @@ pub struct CheckedGraph {
     /// FR-096, FR-302: the declaration each function synthesized for
     /// dispatch without form spans was derived from, by function index.
     synthesized_spans: BTreeMap<usize, fsl_foundation::Span>,
+    /// FR-569: the span each source clause function's `declaration`
+    /// occurrence is at, by function index.
+    clause_declaration_spans: BTreeMap<usize, fsl_foundation::Span>,
     /// FR-096-AC-1: the embedding map the spans resolve through, if any.
     embedding: Option<std::sync::Arc<fsl_foundation::source_map::SourceMap>>,
     /// ADR-011 §2.4 `model_selections`: each admitted domain package's
@@ -1244,6 +1248,7 @@ impl DebugWith for CheckedGraph {
             type_spans,
             site_spans,
             synthesized_spans,
+            clause_declaration_spans,
             embedding,
             model_selections,
             selected_views,
@@ -1366,6 +1371,7 @@ impl DebugWith for CheckedGraph {
             .field("type_spans", &type_spans)
             .field("site_spans", &site_spans)
             .field("synthesized_spans", &synthesized_spans)
+            .field("clause_declaration_spans", &clause_declaration_spans)
             .field("embedding", &embedding)
             .field("model_selections", &model_selections)
             .field("selected_views", &selected_views)
@@ -2358,6 +2364,7 @@ impl PackageDeclarations {
     /// charge, inside a declaration as well as between them. The stop is a
     /// refusal list like a reached work budget; a caller that holds the
     /// handle reads [`Cancel::tripped`] to tell the two apart.
+    #[implements("FR-276-AC-2")]
     pub fn check_with_cancel(
         self,
         mode: CheckMode,
@@ -2398,6 +2405,9 @@ impl PackageDeclarations {
 
     /// [`Self::check_with_protocol_results`] under a caller-owned
     /// [`Cancel`] handle.
+    #[implements("FR-503-AC-5")]
+    #[implements("FR-503-AC-6")]
+    #[implements("FR-276-AC-2")]
     pub fn check_with_protocol_results_and_cancel(
         self,
         mode: CheckMode,
@@ -2450,6 +2460,7 @@ impl PackageDeclarations {
         clippy::too_many_arguments,
         reason = "one internal pipeline entry whose callers pass the stage flags; a parameter struct is a separate refactor"
     )]
+    #[implements("FR-503-AC-5", "FR-503-AC-6")]
     fn check_retaining_protocols(
         mut self,
         mode: CheckMode,
@@ -3379,6 +3390,7 @@ impl PackageDeclarations {
         }
         let mut site_spans = self.declared_site_spans;
         let synthesized_spans = self.synthesized_spans;
+        let clause_declaration_spans = self.clause_declaration_spans;
         let embedding = self.embedding;
         let form_spans = self
             .functions
@@ -8719,6 +8731,7 @@ impl PackageDeclarations {
             type_spans,
             site_spans,
             synthesized_spans,
+            clause_declaration_spans,
             embedding,
             model_selections,
             selected_views: self.selected_views,

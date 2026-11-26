@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Original owner refusals from the shared native admission pass.
 
+use fsl_foundation::Code;
+use ix_trace_rs::implements;
+
 /// The owner operation that refused native admission. The original typed cause
 /// is retained; equality exhaustion is never relabelled as a projection error.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -39,6 +42,37 @@ pub enum NativeJoinFailure {
         /// attempted total its `consumed`.
         limit: fsl_foundation::diagnostic::LimitExceeded,
     },
+}
+
+/// Why `BarePackage::with_dependency_artifacts` attached nothing (FR-531
+/// "Dependency artifact names").
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum DependencyJoinRefusal {
+    /// An artifact's package name is the root's or another artifact's. It is
+    /// no resource denial and has no cause.
+    #[error(
+        "invalid_package: the dependency artifact package name `{package}` is the root's or is repeated"
+    )]
+    Name {
+        /// The refused package name, as the artifact's admitted bytes hold it.
+        package: String,
+    },
+    /// The native join of a library's witnesses refused, unchanged.
+    #[error(transparent)]
+    Native(#[from] NativeJoinFailure),
+}
+
+impl DependencyJoinRefusal {
+    /// `invalid_package` for a refused name; `None` for a native join
+    /// refusal, which carries its own stage diagnostic.
+    #[must_use]
+    #[implements("FR-531-AC-61")]
+    pub fn code(&self) -> Option<Code> {
+        match self {
+            Self::Name { .. } => Some(Code::InvalidPackage),
+            Self::Native(_) => None,
+        }
+    }
 }
 
 impl NativeJoinFailure {

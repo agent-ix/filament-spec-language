@@ -46,6 +46,7 @@ use fsl_forms::{
 use fsl_foundation::diagnostic::LimitExceeded;
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_foundation::{Code, IdentityLimits, Setting, SettingLimits, Span};
+use ix_trace_rs::implements;
 
 use super::check::{
     EnumBinding, ModelRecords, PackageDeclarations, ResolvedSignature, VariantTypeDeclaration,
@@ -3509,7 +3510,7 @@ fn resolve_source_object_members(
     object_types: &mut [ObjectTypeDeclaration],
     operations: &mut OperationTable,
     errors: &mut Vec<AssemblyError>,
-) {
+) -> BTreeMap<DeclarationKey, Span> {
     let SourceObjectTypeContext {
         unit,
         names,
@@ -3518,6 +3519,7 @@ fn resolve_source_object_members(
     } = context;
     let mut normalized_fields = BTreeMap::new();
     let mut normalized_operations = BTreeMap::new();
+    let mut operation_spans = BTreeMap::new();
     let reference_models = models
         .iter()
         .filter(|model| !model.alias.is_empty())
@@ -3646,10 +3648,9 @@ fn resolve_source_object_members(
                         .map(|value_type| source_member_type(&value_type)),
                     None => None,
                 };
-                normalized_operations.insert(
-                    source_member_declaration_key(owner, &operation.name.name),
-                    (normalized_parameters, normalized_result),
-                );
+                let member = source_member_declaration_key(owner, &operation.name.name);
+                operation_spans.insert(member.clone(), operation.span);
+                normalized_operations.insert(member, (normalized_parameters, normalized_result));
             }
             let effect = existing_operations
                 .iter()
@@ -3696,10 +3697,12 @@ fn resolve_source_object_members(
             );
         }
     }
+    operation_spans
 }
 
 /// A source member separates exactly one outer collection into multiplicity.
-fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
+#[implements("FR-569-AC-15")]
+pub(super) fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
     let (element, multiplicity) = match value_type {
         ValueType::Collection(collection) => {
             let (ordered, unique) = match collection.kind() {
@@ -4617,6 +4620,8 @@ impl PackageDeclarations {
         )
     }
 
+    #[implements("FR-104-AC-15")]
+    #[implements("FR-276-AC-2")]
     fn assemble_with_execution_points_and_cancel_and_owners(
         package_name: String,
         unit: ParsedUnit,
@@ -5563,8 +5568,9 @@ impl PackageDeclarations {
                 }
             }
         }
+        let mut source_operation_spans = BTreeMap::new();
         if errors.is_empty() {
-            resolve_source_object_members(
+            source_operation_spans = resolve_source_object_members(
                 SourceObjectTypeContext {
                     unit: &unit,
                     names: &names,
@@ -6285,6 +6291,7 @@ impl PackageDeclarations {
             }
         }
         package.declared_site_spans = declared_site_spans;
+        package.source_operation_spans = source_operation_spans;
         // FR-381: a template's operation anchor occurrence is recorded at
         // the template's name.
         declared_type_spans.extend(unit.protocols.iter().flat_map(|protocol| {

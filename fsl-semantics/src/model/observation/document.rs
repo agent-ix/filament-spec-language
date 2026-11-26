@@ -1670,7 +1670,7 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
-        // FR-106-AC-83: a raw Clock-place value is admitted only when the
+        // FR-106-AC-72/73: a raw Clock-place value is admitted only when the
         // selected route supplies the authenticated declaration table that
         // resolves its population, owner and template.
         (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
@@ -1894,6 +1894,13 @@ pub(crate) fn unit_name(types: &TypeEnvironment, unit: filament_exact::UnitId) -
 /// ([`quantity_magnitude`]). A String has every Unicode scalar sequence as a
 /// value, so it has no payload refusal.
 #[ix_trace_rs::string_edge]
+#[implements("FR-106-AC-18")]
+#[implements("FR-106-AC-19")]
+#[implements("FR-106-AC-20")]
+#[implements("FR-106-AC-21")]
+#[implements("FR-106-AC-29")]
+#[implements("FR-106-AC-30")]
+#[implements("FR-106-AC-35")]
 fn admit_native(
     native: RawNative<'_>,
     value_type: &filament_exact::ValueType,
@@ -4147,6 +4154,7 @@ fn is_state_machine(view: &ModelView, key: &DeclarationKey) -> bool {
 /// document order. Every entry is validated, whichever machine it is of;
 /// those whose machine is `read_machine` or specializes it are the read
 /// contexts the clause evaluates over, and are returned.
+#[implements("FR-106-AC-44")]
 fn admit_contexts<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
@@ -4351,6 +4359,9 @@ fn context_field_path(entry: usize, field: Option<&str>) -> String {
 /// absent: a parameter's nested typed steps hang below it exactly as a
 /// snapshot field's do (FR-106-AC-15, FR-106-AC-21), and a missing one is
 /// named as FR-106-AC-71 states.
+#[implements("FR-106-AC-15")]
+#[implements("FR-106-AC-21")]
+#[implements("FR-106-AC-71")]
 fn parameter_path(name: &str) -> String {
     format!("/parameters/{}", json_pointer_segment(name))
 }
@@ -5128,6 +5139,7 @@ pub(super) fn resolve_self(
 /// operation's parameter bindings in declared order. A parameter resolves
 /// against the pre snapshot (`references`): the operation reads its
 /// arguments before it runs.
+#[implements("FR-106-AC-71")]
 pub(super) fn admit_parameters(
     references: &mut References<'_>,
     operation: &OperationDeclaration,
@@ -5355,7 +5367,6 @@ mod tests {
         assert!(found.is_empty());
     }
 
-    #[trace("FSpec-FR-151-AC-21")]
     #[test]
     fn omitted_optional_parameter_is_the_same_value_as_explicit_absent() {
         let operation = OperationDeclaration::new(
@@ -5395,7 +5406,7 @@ mod tests {
         })
     }
 
-    #[trace("FR-106-AC-83", "FR-106", "TC-464")]
+    #[trace("TC-464")]
     #[test]
     fn raw_clock_data_refusal_keeps_its_typed_value_locus() {
         let types = TypeEnvironment::default();

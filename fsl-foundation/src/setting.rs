@@ -14,6 +14,7 @@
 
 use crate::diagnostic::LimitKind;
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
+use ix_trace_rs::implements;
 
 /// Declares [`Setting`] and its table from one list, so a name, its stage and
 /// its limit kind are written once.
@@ -228,6 +229,7 @@ impl Setting {
     /// `expansion.max_candidates`. A replay request refuses it (FR-255 "Lifecycle
     /// caller-limit coverage").
     #[must_use]
+    #[implements("FR-255-AC-24")]
     pub const fn is_item_engine_setting(self) -> bool {
         matches!(
             self,
@@ -239,6 +241,7 @@ impl Setting {
                 | Self::ExactProbMaxPrecisionBits
                 | Self::ExactProbMaxRationalBits
                 | Self::ExactProbMaxPolicyIterations
+                | Self::ExactProbMaxWitnessPaths
                 | Self::StatisticalMaxSamples
                 | Self::StatisticalMaxDraws
                 | Self::StatisticalMaxCycleSteps

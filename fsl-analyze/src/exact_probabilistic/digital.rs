@@ -212,6 +212,7 @@ enum Form<'c> {
 }
 
 impl<'c> Form<'c> {
+    #[implements("FR-204-AC-21")]
     fn of(claim: &'c CheckedProbabilisticClaim) -> Result<Self, ProductRefusal> {
         let shape = || ProductRefusal::TimedFormShape {
             span: claim.span,
@@ -379,6 +380,7 @@ impl<'c> Form<'c> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn reads(&self) -> &[(UndefinedRead, &'c CheckedPredicate)] {
         match self {
             Self::Deadline { reads, .. }
@@ -485,6 +487,7 @@ fn add_rewards(
 
 /// The least common denominator of every time constant of the model and the
 /// claim (ADR-028 TA-3), as one positive integer.
+#[implements("FR-204-AC-1")]
 fn scale_of(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -959,6 +962,7 @@ impl<'c> Builder<'_, '_, 'c> {
         units(bound, self.scale).ok_or_else(|| fault("constant-scales").into())
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_bound(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
@@ -970,6 +974,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_lower(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { lower, .. } => self.bound_units(lower).map(Some),
@@ -1120,6 +1125,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- keys and truths ---------------------------------------------------
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn key_of(
         &self,
         state: &DState,
@@ -1138,6 +1144,7 @@ impl<'c> Builder<'_, '_, 'c> {
         })
     }
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn certificate_key(
         &self,
         state: &DState,
@@ -1453,6 +1460,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_start(&self, truths: &[bool], state: &mut DState) -> Step<Option<MonitorState>> {
         match &self.form {
             Form::Elapsed { .. } => {
@@ -1516,8 +1524,24 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
-    /// The control after the source's delay and the letters of `posts` (the
-    /// discrete steps that follow the delay, none for a pure delay).
+    /// The letters a pure delay adds to a move that took no discrete step.
+    /// A delay is not a predicate position (ADR-026 TS-3), so a single
+    /// operator's event reads none and only its deadline clock moves. The
+    /// nested monitor reads `truths` once at each instant a delay reaches.
+    #[implements("FR-204-AC-21")]
+    fn delay_letters(&self, truths: &[bool]) -> Vec<Vec<bool>> {
+        match self.form {
+            Form::NestedDeadline(_) => vec![truths.to_vec()],
+            Form::Deadline { .. }
+            | Form::Elapsed { .. }
+            | Form::MeanTime { .. }
+            | Form::Labels(_) => Vec::new(),
+        }
+    }
+
+    /// The control after the source's delay and then `letters`: the
+    /// predicate positions that follow the delay.
+    #[implements("FR-204-AC-21")]
     fn control_after(
         &mut self,
         source: Option<MonitorState>,
@@ -1791,6 +1815,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The target reached from node `at` by `reached` after the letters of
     /// the discrete steps listed in `landed` (model states, in order).
+    #[implements("FR-204-AC-21")]
     fn arrive(
         &mut self,
         at: usize,
@@ -1828,7 +1853,7 @@ impl<'c> Builder<'_, '_, 'c> {
             },
         };
         if letters.is_empty() {
-            letters.push(truths.clone());
+            letters = self.delay_letters(&truths);
         }
         let source = self.nodes[at].key.monitor;
         let monitor = self.control_after(source, &mut reached, &letters)?;
@@ -1929,6 +1954,7 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     /// A pure delay move to `clocks`/`deadline` with the tail `tail`.
+    #[implements("FR-204-AC-5")]
     fn delay_move(&mut self, movement: DelayMove<'_>) -> Step<Planned> {
         let DelayMove {
             at,
@@ -2107,6 +2133,7 @@ impl<'c> Builder<'_, '_, 'c> {
     /// scheduler chooses among identities tied at the least sampled delay.
     /// Free-delay identities remain ordinary scheduler choices and are
     /// handled by the running clock moves until a discrete race is admitted.
+    #[implements("FR-204-AC-21")]
     fn every_discrete_moves(
         &mut self,
         at: usize,
@@ -2206,12 +2233,8 @@ impl<'c> Builder<'_, '_, 'c> {
             // Inspect the monitor before allocating a terminal target. A
             // nonterminal delay is only the start of the tied chain.
             let mut probe = start.clone();
-            let source_truths = self.nodes[at].truths.clone();
-            let monitor = self.control_after(
-                self.nodes[at].key.monitor,
-                &mut probe,
-                std::slice::from_ref(&source_truths),
-            )?;
+            let letters = self.delay_letters(&self.nodes[at].truths);
+            let monitor = self.control_after(self.nodes[at].key.monitor, &mut probe, &letters)?;
             if matches!(
                 monitor,
                 Some(
@@ -2271,6 +2294,7 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     /// The edges of one enabled identity at `state`, scaled by `share`.
+    #[implements("FR-204-AC-3", "FR-204-AC-18", "FR-204-AC-19")]
     fn identity_edges(
         &mut self,
         at: usize,
@@ -2774,6 +2798,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The edges of one race outcome: the state after the winning delay, then
     /// each tied identity in order while it is still enabled.
+    #[implements("FR-204-AC-20")]
     fn chain_edges(
         &mut self,
         at: usize,
