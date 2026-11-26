@@ -1212,6 +1212,11 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
             }
             admission(failure)
         }
+        ModelCheckRefusal::ConflictingIdentity => Refusal::Declined(
+            ProofRefusalCause::InvalidInput,
+            DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+            CatalogCode::new("invalid_runtime_input", "conflicting-identity"),
+        ),
         ModelCheckRefusal::RequiresBound(_) | ModelCheckRefusal::UnboundCapacity(_) => {
             Refusal::RequiresBound
         }

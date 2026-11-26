@@ -344,6 +344,7 @@ fn single(
         let proved = matches!(settled.record.value, TerminalValue::Proved { .. });
         let report = super::GraphReport {
             record: settled.record,
+            instance: None,
             exploration: instance.stats,
             counterexample: if refuted { wire.clone() } else { None },
             evidence: if !refuted { wire } else { None },

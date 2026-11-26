@@ -1132,6 +1132,9 @@ pub struct OutcomeItem {
     /// internally to the FR-286 item writer and nested under `certificate`.
     #[serde(skip_serializing_if = "Option::is_none")]
     certificate_document: Option<serde_json::Value>,
+    /// The selected state-graph claim instance, including when no evidence exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance: Option<serde_json::Value>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1566,6 +1569,7 @@ impl OutcomeItem {
             witness: None,
             evidence: None,
             certificate_document: None,
+            instance: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1635,6 +1639,14 @@ impl OutcomeItem {
         item
     }
 
+    /// Attach the selected instance of a claim-level state-graph record.
+    #[implements("FR-628-AC-4")]
+    #[must_use]
+    pub fn with_state_graph_instance(mut self, instance: Option<serde_json::Value>) -> Self {
+        self.instance = instance;
+        self
+    }
+
     /// This state-graph item carrying the FR-393 spelling of its refuting
     /// evidence as `counterexample` and of its witnesses as `evidence`.
     #[must_use]
@@ -1686,6 +1698,7 @@ impl OutcomeItem {
             witness: None,
             evidence: None,
             certificate_document: None,
+            instance: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1745,6 +1758,7 @@ impl OutcomeItem {
             witness: record.witness,
             evidence: None,
             certificate_document: None,
+            instance: None,
             count: record.count,
             min_count: record.min_count,
             basis: None,
@@ -4320,6 +4334,33 @@ mod tests {
 
     fn record(index: usize, value: TerminalValue) -> OutcomeItem {
         OutcomeItem::from_terminal(&TerminalRecord::from_value(RequestIndex::new(index), value))
+    }
+
+    /// FR-628-AC-4: a claim-level state-graph record preserves its selected
+    /// binding even when it has no evidence to carry that binding.
+    #[trace("FR-628-AC-4")]
+    #[test]
+    fn state_graph_item_writes_selected_instance_without_evidence() {
+        let item = record(
+            0,
+            TerminalValue::Inconclusive(InconclusiveCause::BoundReached { depth: 1 }),
+        )
+        .with_state_graph_instance(Some(json!({
+            "type": "instance",
+            "parameter": "c",
+            "key": "a",
+        })));
+
+        assert_eq!(
+            serde_json::to_value(item).expect("serializes"),
+            json!({
+                "request_index": 0,
+                "result": "inconclusive",
+                "cause": {"kind": "bound-reached", "depth": 1},
+                "instance": {"type": "instance", "parameter": "c", "key": "a"},
+                "category": "inconclusive",
+            })
+        );
     }
 
     /// FR-990 writes the structured result members on the settled item while

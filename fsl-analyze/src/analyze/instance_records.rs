@@ -37,6 +37,7 @@ pub(super) fn undecided(
     };
     EngineReport::StateGraph(Box::new(GraphReport {
         record,
+        instance: None,
         exploration: RunStats::default(),
         counterexample: None,
         evidence: None,

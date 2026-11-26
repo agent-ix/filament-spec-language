@@ -453,6 +453,7 @@ impl Route {
 fn binding(item: &Json) -> Option<&str> {
     let cx = &item["counterexample"];
     [
+        &item["instance"]["key"],
         &cx["over_binding"]["identity"],
         &cx["instance"]["key"]["identity"],
         &cx["instance"][0]["key"]["value"],
@@ -1300,7 +1301,6 @@ fn temporal_names_why_there_is_no_instance() {
 
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
-#[ignore = "QSL-3514: admission refuses conflicting-identity before the missing universe (FR-125-AC-23)"]
 fn temporal_names_a_missing_universe_before_a_conflict() {
     check_route(Route::Temporal, &[CONFLICT_NO_UNIVERSE]);
 }
@@ -1328,7 +1328,6 @@ fn liveness_names_why_there_is_no_instance() {
 
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
-#[ignore = "QSL-3514: admission refuses conflicting-identity before the missing universe (FR-125-AC-23)"]
 fn liveness_names_a_missing_universe_before_a_conflict() {
     check_route(Route::LivenessOrder, &[CONFLICT_NO_UNIVERSE]);
 }
@@ -1348,7 +1347,6 @@ fn state_graph_names_why_there_is_no_instance() {
 
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
-#[ignore = "QSL-3514: admission refuses conflicting-identity before the missing universe (FR-125-AC-23)"]
 fn state_graph_names_a_missing_universe_before_a_conflict() {
     check_route(Route::StateGraph, &[CONFLICT_NO_UNIVERSE]);
 }
@@ -1367,7 +1365,6 @@ fn state_graph_library_names_why_there_is_no_instance() {
 
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
-#[ignore = "QSL-3514: admission refuses conflicting-identity before the missing universe (FR-125-AC-23)"]
 fn state_graph_library_names_a_missing_universe_before_a_conflict() {
     check_state_graph_library(&[CONFLICT_NO_UNIVERSE]);
 }
@@ -1386,7 +1383,6 @@ fn closure_checker_names_why_there_is_no_instance() {
 
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
-#[ignore = "QSL-3514: admission refuses conflicting-identity before the missing universe (FR-125-AC-23)"]
 fn closure_checker_names_a_missing_universe_before_a_conflict() {
     check_certificate_causes("always", &[CONFLICT_NO_UNIVERSE]);
 }
@@ -1405,7 +1401,6 @@ fn component_checker_names_why_there_is_no_instance() {
 
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
-#[ignore = "QSL-3514: admission refuses conflicting-identity before the missing universe (FR-125-AC-23)"]
 fn component_checker_names_a_missing_universe_before_a_conflict() {
     check_certificate_causes("eventually", &[CONFLICT_NO_UNIVERSE]);
 }
@@ -1709,7 +1704,6 @@ fn exact_refuses_before_instancing() {
 
 #[trace("TC-3241", "FR-203-AC-36")]
 #[test]
-#[ignore = "QSL-3514: exact refuses conflicting-identity before the missing universe (FR-203-AC-36)"]
 fn exact_names_a_missing_universe_before_a_conflict() {
     check_probabilistic(Probabilistic::Exact, &[CONFLICT_NO_UNIVERSE]);
 }
@@ -1737,7 +1731,6 @@ fn statistical_names_the_causes_before_instancing() {
 
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
-#[ignore = "QSL-3514: admission refuses conflicting-identity before the missing universe (FR-125-AC-23)"]
 fn statistical_names_a_missing_universe_before_a_conflict() {
     check_probabilistic(Probabilistic::Statistical, &[CONFLICT_NO_UNIVERSE]);
 }
@@ -1760,7 +1753,6 @@ fn conformance_refuses_conflicting_identity() {
 
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
-#[ignore = "QSL-3514: admission refuses conflicting-identity before the missing universe (FR-125-AC-23)"]
 fn conformance_names_a_missing_universe_before_a_conflict() {
     check_conformance(&[CONFLICT_NO_UNIVERSE]);
 }
@@ -1838,7 +1830,6 @@ fn smt_temporal_refuses_requires_bound_before_no_initial_state() {
 
 #[trace("TC-900", "FR-315-AC-62")]
 #[test]
-#[ignore = "QSL-3514: SMT refuses conflicting-identity before the missing universe (FR-315-AC-62)"]
 fn smt_temporal_names_a_missing_universe_before_a_conflict() {
     check_smt_temporal(&[(CONFLICT_NO_UNIVERSE, Some("RequiresBound"))]);
 }

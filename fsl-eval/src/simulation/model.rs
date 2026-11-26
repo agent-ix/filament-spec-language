@@ -865,6 +865,9 @@ pub struct ModelSystem<'a> {
     /// FR-125 "Instancing": the type of the member record an initial state
     /// admits for each (universe, key); a key has one type across the subject.
     admitted_types: BTreeMap<(UniverseId, String), DeclarationKey>,
+    /// Conflicting identities are retained until the requested claim has
+    /// passed extent and initial-state checks (FR-125).
+    conflicting_identity: bool,
     clauses: Clauses,
     applications: BTreeMap<EffectiveId, Vec<Application>>,
     fields: BTreeMap<DeclarationKey, Vec<StateField>>,
@@ -1076,15 +1079,16 @@ pub(crate) type ClockCount = (DeclarationKey, StateField, u64, Option<u64>);
 ///
 /// # Errors
 ///
-/// `conflicting-identity` for two records of one universe key with different
-/// types; an admission failure for a record with no reference.
-#[implements("FR-125-AC-9")]
+/// An admission failure for a record with no reference. Conflicting
+/// identities are retained for the later claim-instance decision.
+#[implements("FR-125-AC-9", "FR-125-AC-23")]
 fn admitted_types(
     model: &StateModel,
     universes: &BTreeMap<DeclarationKey, Vec<String>>,
     initial: &[ModelSimState],
-) -> Result<BTreeMap<(UniverseId, String), DeclarationKey>, AdmissionFailure> {
+) -> Result<(BTreeMap<(UniverseId, String), DeclarationKey>, bool), AdmissionFailure> {
     let mut admitted = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
+    let mut conflicting_identity = false;
     for state in initial {
         for (population, objects) in &state.state().populations {
             if !universes.contains_key(population) {
@@ -1098,15 +1102,7 @@ fn admitted_types(
                 let identity = (universe, key.clone());
                 match admitted.get(&identity) {
                     Some(first_type) if first_type != &object.type_identity => {
-                        return Err(refused(
-                            Code::InvalidRuntimeInput,
-                            "conflicting-identity",
-                            &[
-                                ("key", key.clone()),
-                                ("first_type", first_type.node.clone()),
-                                ("second_type", object.type_identity.node.clone()),
-                            ],
-                        ));
+                        conflicting_identity = true;
                     }
                     Some(_) => {}
                     None => {
@@ -1116,7 +1112,7 @@ fn admitted_types(
             }
         }
     }
-    Ok(admitted)
+    Ok((admitted, conflicting_identity))
 }
 
 fn refused(code: Code, cause: &'static str, fields: &[(&'static str, String)]) -> AdmissionFailure {
@@ -1656,9 +1652,11 @@ impl<'a> ModelSystem<'a> {
         // Before reference bindings or any instance is formed: otherwise one
         // reference could denote different objects depending on which
         // population or initial snapshot supplied the row.
-        let admitted_types = admitted_types(&model, &universes, &initial)?;
+        let (admitted_types, conflicting_identity) = admitted_types(&model, &universes, &initial)?;
 
-        let reference_bindings = if let Some(package) = input.source_package() {
+        let reference_bindings = if conflicting_identity {
+            ReferenceBindings::default()
+        } else if let Some(package) = input.source_package() {
             ReferenceBindings::bind(
                 package.graph(),
                 &model,
@@ -1846,6 +1844,7 @@ impl<'a> ModelSystem<'a> {
             initial_all: std::sync::OnceLock::new(),
             reference_bindings,
             admitted_types,
+            conflicting_identity,
             applications,
             fields,
             populations,
@@ -2653,17 +2652,21 @@ impl<'a> ModelSystem<'a> {
 
     /// Return the non-empty admitted instances for a claim's `over` type.
     ///
-    /// The refusal order is FR-125-AC-13: extent/bound failures from
-    /// [`Self::instances`], then no initial state, then no admitted instance.
-    /// Conflicting identities are rejected by [`Self::new`] before a system
-    /// is available.
-    #[implements("FR-125-AC-13", "FR-125-AC-21")]
+    /// FR-125-AC-13's order is extent/bound, no initial state, conflicting
+    /// identity, and no instance. Identity checks are deferred here so the
+    /// claim can report the earlier outcomes first.
+    #[implements("FR-125-AC-13", "FR-125-AC-21", "FR-125-AC-23")]
     pub fn claim_instances(&self, over: &ValueType) -> Result<ClaimInstances, NoClaimInstances> {
         let instances = self
             .instances(over)
             .map_err(NoClaimInstances::NotSimulated)?;
         if self.initial_base.is_empty() {
             return Err(NoClaimInstances::NoInitialState);
+        }
+        if matches!(over, ValueType::Reference(_)) && self.conflicting_identity {
+            return Err(NoClaimInstances::NotSimulated(
+                NotSimulated::ConflictingIdentity,
+            ));
         }
         if instances.is_empty() {
             return Err(NoClaimInstances::NoInstance);

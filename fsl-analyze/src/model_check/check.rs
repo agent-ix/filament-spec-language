@@ -217,6 +217,9 @@ pub enum ModelCheckRefusal {
     /// FR-106's admission of the subject's `ModelSystem` failed.
     #[error("the subject's model system did not admit: {0:?}")]
     Admission(Box<AdmissionFailure>),
+    /// FR-125: a conflicting object identity found while deriving claim instances.
+    #[error("the subject has a conflicting object identity")]
+    ConflictingIdentity,
     /// FR-336: a root of the subject is unbounded under its universes. The
     /// refusal names each unbounded root's `NodeKey` (as the key of
     /// [`RequiresBound::domains`]) and is returned before any state is
@@ -2157,6 +2160,7 @@ pub(super) fn precheck(
 /// universe, is `RequiresBound`; a stopped classification is `Extent`.
 pub(super) fn not_simulated(refusal: NotSimulated) -> ModelCheckRefusal {
     match refusal {
+        NotSimulated::ConflictingIdentity => ModelCheckRefusal::ConflictingIdentity,
         NotSimulated::RequiresBound(roots) => ModelCheckRefusal::RequiresBound(roots),
         NotSimulated::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
         NotSimulated::Extent(failure) => ModelCheckRefusal::Extent(Box::new(failure)),

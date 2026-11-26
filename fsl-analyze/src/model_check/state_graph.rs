@@ -401,6 +401,7 @@ fn common_stabiliser(views: &[Vec<InstanceView<'_>>], declared: &SymmetryGroup) 
 /// The refusal of an unbounded or unclassifiable subject.
 fn bounds_refusal(refusal: NotSimulated) -> ModelCheckRefusal {
     match refusal {
+        NotSimulated::ConflictingIdentity => ModelCheckRefusal::ConflictingIdentity,
         NotSimulated::RequiresBound(roots) => ModelCheckRefusal::RequiresBound(roots),
         NotSimulated::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
         NotSimulated::Extent(failure) => ModelCheckRefusal::Extent(Box::new(failure)),

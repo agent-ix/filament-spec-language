@@ -46,7 +46,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading, TerminalClass};
+use fsl_eval::simulation::model::{
+    ModelSimState, ModelSystem, NoClaimInstances, PredicateReading, TerminalClass,
+};
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole, StateGraphForm};
 
@@ -96,7 +98,7 @@ pub struct StateGraphCertificateRequest<'a> {
 /// the `over` binding is no instance of the subject, the subject has no
 /// initial state, or a state cannot be encoded. A refusal is never an
 /// acceptance.
-#[implements("FR-169-AC-9")]
+#[implements("FR-125-AC-13", "FR-169-AC-9")]
 pub fn check_state_graph(
     request: &StateGraphCertificateRequest<'_>,
     certificate: &StateGraphCertificate,
@@ -110,14 +112,12 @@ pub fn check_state_graph(
     let simulation = request.subject.simulation.clone();
     let budgets = Budgets::of(&simulation);
     let system = admit(simulation)?;
-    // FR-125 Instancing orders the refusals: an unbounded root (`admit`, and
-    // `bound_over`'s instancing), then no initial state, then no instance.
-    let over = match bound_over(request, &system) {
-        Ok(_) | Err(ClosureRefusal::NoInstance) if system.initial().is_empty() => {
-            return Err(ClosureRefusal::NoInitialState);
-        }
-        over => over?,
-    };
+    if request.claim.over().is_none() && system.initial().is_empty() {
+        return Err(ClosureRefusal::NoInitialState);
+    }
+    // FR-125 Instancing orders these refusals through `claim_instances`:
+    // binding, no initial state, conflicting identity, then no instance.
+    let over = bound_over(request, &system)?;
     let predicates = predicates(request.claim.form());
     let check = Check {
         system: &system,
@@ -142,9 +142,15 @@ fn bound_over(
         (None, None) => Ok(None),
         (Some(parameter), Some(reference)) => {
             let instances = system
-                .instances(&ValueType::Reference(parameter.object.clone()))
-                .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
-            for instance in &instances {
+                .claim_instances(&ValueType::Reference(parameter.object.clone()))
+                .map_err(|refusal| match refusal {
+                    NoClaimInstances::NotSimulated(refusal) => {
+                        ClosureRefusal::NotSimulated(Box::new(refusal))
+                    }
+                    NoClaimInstances::NoInitialState => ClosureRefusal::NoInitialState,
+                    NoClaimInstances::NoInstance => ClosureRefusal::NoInstance,
+                })?;
+            for instance in instances.as_slice() {
                 let bound = system
                     .written_reference(parameter.object.clone(), instance)
                     .map_err(ClosureRefusal::Fault)?;

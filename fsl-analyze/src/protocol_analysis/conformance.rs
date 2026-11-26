@@ -813,6 +813,18 @@ fn claim_over_instances(
                 ) => Box::new(crate::analyze::EngineReport::Refused(
                     crate::analyze::Refusal::RequiresBound,
                 )),
+                fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
+                    fsl_eval::simulation::NotSimulated::ConflictingIdentity,
+                ) => Box::new(crate::analyze::EngineReport::Refused(
+                    crate::analyze::Refusal::Declined(
+                        fsl_replay::ProofRefusalCause::InvalidInput,
+                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        fsl_foundation::diagnostic::CatalogCode::new(
+                            "invalid_runtime_input",
+                            "conflicting-identity",
+                        ),
+                    ),
+                )),
                 _ => Box::new(internal_fault()),
             });
     }

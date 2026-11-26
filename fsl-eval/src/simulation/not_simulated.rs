@@ -74,6 +74,9 @@ pub enum NotSimulated {
     /// fault. Neither `RequiresBound` nor an exploration.
     #[error("the request's extent could not be classified: {0:?}")]
     Extent(ClassifyFailure),
+    /// A claim has an object key with conflicting types in its initial states.
+    #[error("an instance key has conflicting object identities")]
+    ConflictingIdentity,
     /// `sampler` names a generator other than
     /// `filament.simulation.sampler/v1`, the only one
     /// `sample_request` runs. Refused before any draw;
@@ -123,6 +126,10 @@ impl NotSimulated {
             Self::ProtocolInitial(refusal) => {
                 Some(CatalogCode::new(refusal.code().as_str(), refusal.cause()))
             }
+            Self::ConflictingIdentity => Some(CatalogCode::new(
+                "invalid_runtime_input",
+                "conflicting-identity",
+            )),
             Self::EmptyInitial
             | Self::KeyEncoding(EncodingRefusal::NoEncoding(_))
             | Self::GeneratorMismatch { .. } => {
@@ -151,6 +158,7 @@ impl NotSimulated {
             | Self::KeyEncoding(EncodingRefusal::Limit(exceeded)) => exceeded.catalog_fields(),
             Self::RequiresBound(_)
             | Self::UnboundCapacity(_)
+            | Self::ConflictingIdentity
             | Self::EmptyInitial
             | Self::ProtocolInitial(_)
             | Self::KeyEncoding(

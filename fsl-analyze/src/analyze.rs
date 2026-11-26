@@ -1283,6 +1283,9 @@ pub enum Counterexample {
 pub struct GraphReport {
     /// The decisive instance's FR-169 record.
     pub record: fsl_replay::StateGraphRecord,
+    /// The selected claim binding, including for a non-proved record without
+    /// evidence.
+    pub instance: Option<serde_json::Value>,
     /// The explored graph's counts (FR-621 `exploration`).
     pub exploration: fsl_replay::RunStats,
     /// A refuted record's evidence in FSpec FR-393's spelling.
@@ -1640,6 +1643,7 @@ pub fn analyze_item(
     if let Some(Counterexample::StateGraph(graph)) = found.map(|found| &found.counterexample) {
         return Ok(
             OutcomeItem::from_state_graph(record.request_index(), &graph.record)
+                .with_state_graph_instance(graph.instance.clone())
                 .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone())
                 .with_graph_certificate_document(graph.certificate_document.clone()),
         );

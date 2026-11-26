@@ -266,6 +266,15 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     EngineReport::StateGraph(Box::new(GraphReport {
         record: record.clone(),
+        instance: instance.over.as_ref().and_then(|instance| {
+            parameter.map(|parameter| {
+                serde_json::json!({
+                    "type": "instance",
+                    "parameter": parameter,
+                    "key": instance.key,
+                })
+            })
+        }),
         exploration,
         counterexample,
         evidence,
@@ -535,6 +544,15 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         };
         let report = GraphReport {
             record,
+            instance: instance.as_ref().and_then(|instance| {
+                read.claim.over().map(|parameter| {
+                    serde_json::json!({
+                        "type": "instance",
+                        "parameter": parameter.name,
+                        "key": instance.key,
+                    })
+                })
+            }),
             exploration: fsl_replay::RunStats {
                 product_states: u64::try_from(graph.nodes.len()).unwrap_or(u64::MAX),
                 product_edges: u64::try_from(graph.edges.len()).unwrap_or(u64::MAX),
@@ -1258,6 +1276,15 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         });
         let report = GraphReport {
             record,
+            instance: instance.over.as_ref().and_then(|instance| {
+                read.claim.over().map(|parameter| {
+                    serde_json::json!({
+                        "type": "instance",
+                        "parameter": parameter.name,
+                        "key": instance.key,
+                    })
+                })
+            }),
             exploration: fsl_replay::RunStats {
                 product_states: graph.stats.symbolic_states,
                 product_edges: graph.stats.retained_edges,
