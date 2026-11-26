@@ -332,6 +332,11 @@ pub fn enumerate_request<S: TransitionSystem<InitialError = std::convert::Infall
                 successors
             }
             Expanded::Stopped(stop) => {
+                // FR-634 "Stopped expansion": the state's invariants are
+                // still read, as a sampled trace's final state's are.
+                if let Some(entry) = store.states.get_mut(position) {
+                    entry.findings = system.findings_at_stop(&state);
+                }
                 frontier.push(position);
                 end = Some(EnumerationEnd::Stopped(stop.cause));
                 break;

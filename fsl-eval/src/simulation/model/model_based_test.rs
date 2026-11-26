@@ -526,8 +526,7 @@ pub fn run_model_based_test(
     let step_cut = request
         .max_trace_length
         .is_some_and(|length| length > request.max_steps)
-        .then_some(request.max_steps)
-        .filter(|_| false);
+        .then_some(request.max_steps);
 
     if is_value {
         if cancel.cause().is_some() {
