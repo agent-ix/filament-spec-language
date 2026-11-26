@@ -138,6 +138,53 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
         Ok(())
     }
 }
+
+/// The keys [`ModelSystem::selects_instance`] has selected, and what its
+/// caller charges for the work.
+trait SelectedKeys<'k> {
+    type Stop;
+    /// Called before each initial state is inspected.
+    fn inspect_state(&mut self) -> Result<(), Self::Stop>;
+    /// Record `key`; `false` when it was already recorded.
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop>;
+}
+
+impl<'k> SelectedKeys<'k> for BTreeSet<&'k str> {
+    type Stop = std::convert::Infallible;
+    fn inspect_state(&mut self) -> Result<(), Self::Stop> {
+        Ok(())
+    }
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop> {
+        Ok(self.insert(key))
+    }
+}
+
+/// The selected keys of a metered listing: each inspection and byte
+/// comparison is charged, and capacity is reserved before it grows.
+struct MeteredKeys<'k, 'b, 'm> {
+    budget: &'b crate::policy_budget::Budget<'m>,
+    keys: Vec<&'k str>,
+}
+
+impl<'k> SelectedKeys<'k> for MeteredKeys<'k, '_, '_> {
+    type Stop = crate::automaton::PolicyStateError;
+    fn inspect_state(&mut self) -> Result<(), Self::Stop> {
+        self.budget.work(1)
+    }
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop> {
+        for seen in &self.keys {
+            if self.budget.compare_bytes(seen.as_bytes(), key.as_bytes())?
+                == std::cmp::Ordering::Equal
+            {
+                return Ok(false);
+            }
+        }
+        self.budget.growth(&mut self.keys, 1)?;
+        self.keys.push(key);
+        Ok(true)
+    }
+}
+
 /// A non-empty, canonically ordered set of admitted claim instances.
 ///
 /// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
@@ -1309,7 +1356,7 @@ impl<'a> ModelSystem<'a> {
     /// The first population overlapping `over` that the initial snapshot did
     /// not list. This is a request refusal check, performed after policy
     /// declaration resolution and before policy instancing.
-    #[implements("FR-391-AC-5")]
+    #[implements("FR-1012-AC-11", "FR-1013-AC-3")]
     pub fn unlisted_population_overlapping(
         &self,
         over: &ValueType,
@@ -2562,12 +2609,11 @@ impl<'a> ModelSystem<'a> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
-        let mut seen_instance_keys = BTreeSet::new();
+        let mut seen = BTreeSet::new();
         let mut instances = Vec::new();
         for (population, key) in self.universe_members(parameter)? {
-            // Generated stages change field values only. The base states
-            // supply every initial object's type identity and population.
-            if self.initially_admitted(population, key) && seen_instance_keys.insert(key) {
+            let Ok(selected) = self.selects_instance(population, key, &mut seen);
+            if selected {
                 instances.push(ModelInstance {
                     population: population.clone(),
                     key: key.to_owned(),
@@ -2577,23 +2623,32 @@ impl<'a> ModelSystem<'a> {
         Ok(instances)
     }
 
-    /// Whether any initial base state holds `key` in `population`.
-    fn initially_admitted(&self, population: &DeclarationKey, key: &str) -> bool {
-        self.initial_base
-            .iter()
-            .any(|state| Self::state_admits_instance(state, population, key))
-    }
-
-    fn state_admits_instance(
-        state: &ModelSimState,
+    /// FR-125 "Instancing", the one admission and de-duplication rule of
+    /// [`Self::instances`] and [`Self::instances_with_meter`]. The caller
+    /// offers each universe key in canonical population and key order; the
+    /// key is an instance when some initial state holds it in `population`
+    /// and it was not already selected from an earlier one.
+    #[implements("FR-125-AC-10")]
+    fn selects_instance<'k, S: SelectedKeys<'k>>(
+        &self,
         population: &DeclarationKey,
-        key: &str,
-    ) -> bool {
-        state
-            .state()
-            .populations
-            .get(population)
-            .is_some_and(|objects| objects.contains_key(key))
+        key: &'k str,
+        selected: &mut S,
+    ) -> Result<bool, S::Stop> {
+        // Generated stages change field values only. The base states
+        // supply every initial object's type identity and population.
+        for state in &self.initial_base {
+            selected.inspect_state()?;
+            if state
+                .state()
+                .populations
+                .get(population)
+                .is_some_and(|objects| objects.contains_key(key))
+            {
+                return selected.select(key);
+            }
+        }
+        Ok(false)
     }
 
     /// Return the non-empty admitted instances for a claim's `over` type.
@@ -2848,7 +2903,10 @@ impl<'a> ModelSystem<'a> {
             }
         }
         let mut instances = Vec::new();
-        let mut seen_instance_keys: Vec<&str> = Vec::new();
+        let mut selected = MeteredKeys {
+            budget: &budget,
+            keys: Vec::new(),
+        };
         for (_, population) in admitting {
             budget.work(1)?;
             for key in self
@@ -2857,31 +2915,9 @@ impl<'a> ModelSystem<'a> {
                 .flatten()
             {
                 budget.work(1)?;
-                let mut admitted = false;
-                for state in &self.initial_base {
-                    budget.work(1)?;
-                    if Self::state_admits_instance(state, population, key) {
-                        admitted = true;
-                        break;
-                    }
-                }
-                if !admitted {
+                if !self.selects_instance(population, key, &mut selected)? {
                     continue;
                 }
-                let mut duplicate = false;
-                for seen in &seen_instance_keys {
-                    if budget.compare_bytes(seen.as_bytes(), key.as_bytes())?
-                        == std::cmp::Ordering::Equal
-                    {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if duplicate {
-                    continue;
-                }
-                budget.growth(&mut seen_instance_keys, 1)?;
-                seen_instance_keys.push(key.as_str());
                 let population = DeclarationKey {
                     package: budget.text(&population.package)?,
                     node: budget.text(&population.node)?,

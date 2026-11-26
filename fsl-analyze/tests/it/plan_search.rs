@@ -3692,12 +3692,8 @@ fn source_policy_instances_exclude_unadmitted_universe_keys() {
     use filament_exact::Meter;
 
     let world = source_policy_world(&[("c", json!({"value": {"integer": "0"}}))]);
-    let system = ModelSystem::new(
-        world
-            .subject(&["c", "created-later"], UNLIMITED)
-            .simulation,
-    )
-    .expect("the population is bounded");
+    let system = ModelSystem::new(world.subject(&["c", "created-later"], UNLIMITED).simulation)
+        .expect("the population is bounded");
     let node = &world.package.graph().temporal_clauses()[0];
     let actual = system
         .instances_with_meter(&node.clause().over().1, &mut Meter::new(UNLIMITED))

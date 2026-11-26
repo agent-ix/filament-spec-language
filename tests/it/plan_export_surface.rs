@@ -3404,7 +3404,14 @@ fn a_plan_without_initial_refuses_its_missing_snapshot() {
 /// FR-1012 policy admission requires each overlapping population's initial
 /// evidence before plan search, preserving the snapshot refusal at `initial`.
 #[test]
-#[trace("TC-2860", "FR-1012-AC-10", "FR-1012-AC-11", "FR-1013-AC-3", "FSpec-FR-806-AC-7", "FSpec-FR-803-AC-11")]
+#[trace(
+    "TC-2860",
+    "FR-1012-AC-10",
+    "FR-1012-AC-11",
+    "FR-1013-AC-3",
+    "FSpec-FR-806-AC-7",
+    "FSpec-FR-803-AC-11"
+)]
 fn a_policy_over_an_omitted_or_incomplete_population_refuses_at_initial() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -3449,7 +3456,10 @@ synthesis Reach"#,
         assert_eq!(exit, 22, "{value}");
         assert_eq!(value["code"], "incomplete_population", "{value}");
         assert_eq!(value["cause"], cause, "{value}");
-        assert_eq!(value["details"]["fields"]["population"], population, "{value}");
+        assert_eq!(
+            value["details"]["fields"]["population"], population,
+            "{value}"
+        );
         names(&value, "/request/synthesis/initial");
         assert!(value.get("synthesis").is_none(), "{value}");
     }
@@ -3465,7 +3475,10 @@ synthesis Reach"#,
     assert_eq!(exit, 22, "{value}");
     assert_eq!(value["code"], "incomplete_population", "{value}");
     assert_eq!(value["cause"], "incomplete-scope", "{value}");
-    assert_eq!(value["details"]["fields"]["population"], population, "{value}");
+    assert_eq!(
+        value["details"]["fields"]["population"], population,
+        "{value}"
+    );
     names(&value, "/request/synthesis/initial");
     assert!(value.get("synthesis").is_none(), "{value}");
 
@@ -3642,6 +3655,32 @@ fn a_plan_policy_with_no_admitted_instance_is_inconclusive() {
     );
 }
 
+/// FR-1012-AC-9: with no requested policy, an empty population is not the
+/// no-instance condition; the goal `true` holds of the empty plan.
+#[test]
+#[trace("TC-2862", "FR-1012-AC-9", "FSpec-FR-803-AC-6")]
+fn an_empty_policy_list_over_an_empty_population_is_not_no_instance() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
+    let path = directory.path().join("spine-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    snapshot["populations"][0]["objects"] = json!([]);
+    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+
+    let (exit, value) = plan_in(
+        directory.path(),
+        &plan_unit("Int[0,0]", "", "true"),
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({"policy":[]}),
+    );
+
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
+    assert_eq!(value["synthesis"]["cause"], Value::Null, "{value}");
+}
+
 /// Resolve every requested policy before deciding that an empty policy
 /// population has no instance.
 #[test]
@@ -3729,14 +3768,23 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
     for (second_value, settings, status, exit_expected, states, work) in [
         (0, json!({"policy":["NeverFour"]}), "optimal", 0, 1, 3),
         (4, json!({"policy":["NeverFour"]}), "infeasible", 10, 1, 1),
-        (0, json!({"policy":["NeverFour"], "limits":{"max_work":1}}), "incomplete", 22, 1, 1),
+        (
+            0,
+            json!({"policy":["NeverFour"], "limits":{"max_work":1}}),
+            "incomplete",
+            22,
+            1,
+            1,
+        ),
     ] {
         let mut current = snapshot.clone();
         let population = current["populations"]
             .as_array_mut()
             .expect("population records")
             .iter_mut()
-            .find(|row| row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY))
+            .find(|row| {
+                row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)
+            })
             .expect("config_history population");
         let mut current_second = second.clone();
         current_second["fields"]["versionNumber"] = json!({"integer":second_value.to_string()});

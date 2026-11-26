@@ -6,11 +6,11 @@
 
 use fsl_eval::simulation::protocol::StepKind;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Run, Workspace, analyze, label, litmus_request, order_protocol, package_selection,
-    request_over,
+    analyze, label, litmus_request, order_protocol, package_selection, request_over, Run,
+    Workspace, HANDOFF,
 };
 use crate::protocol_composition::{order_steps, trace_document};
 

@@ -311,7 +311,8 @@ pub(super) fn run(
         policies.push(node);
     }
     for policy in &policies {
-        if let Some(population) = system.unlisted_population_overlapping(&policy.clause().over().1) {
+        if let Some(population) = system.unlisted_population_overlapping(&policy.clause().over().1)
+        {
             let identity = if population.key.node.starts_with("ix://") {
                 population.key.node.clone()
             } else {
