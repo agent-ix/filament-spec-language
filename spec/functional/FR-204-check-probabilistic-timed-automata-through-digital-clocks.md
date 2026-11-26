@@ -381,7 +381,7 @@ The criteria it changes while it holds, each with its temporary outcome:
   the origin), FR-498-AC-8, FR-877-AC-1 and FR-877-AC-2 (its
   tampered-document clause).
 - **F-4:** AC-5 to AC-12, AC-24, FR-877-AC-5, FR-920-AC-4 and FR-202-AC-8.
-- **F-7:** AC-2 (its strict-guard clause), AC-13, FR-877-AC-3, FR-877-AC-4, FR-920-AC-2,
+- **F-7:** AC-2 (its strict-guard clause), AC-13, FR-196-AC-19, FR-877-AC-3, FR-877-AC-4, FR-920-AC-2,
   FR-922-AC-1 to FR-922-AC-3, and the region-route verdicts of AC-21, AC-26
   and FR-498-AC-3, proofs and refutations alike.
 
