@@ -1534,7 +1534,8 @@ fn a_guards_footprint_makes_the_transitions_it_reads_visible() {
 /// `(0,1,1)`, `eventually holds(x.v = 0)` holds for `a` at position 0 and is
 /// violated for `b` and `c`, whose `v` never decreases: every behaviour ends
 /// in the terminal stutter at `(2,2,2)` with `b.v = 2`. The first refuted
-/// instance is `b`, so both runs settle `Violated` over `b`.
+/// instance is `b`, so both runs settle `Violated` over `b` with a lasso
+/// that replays.
 #[trace("TC-886", "FR-160-AC-6")]
 #[test]
 fn partial_order_liveness_decides_every_instance() {
@@ -1553,23 +1554,47 @@ fn partial_order_liveness_decides_every_instance() {
         &[start([0, 1, 1])],
         &KEYS,
     );
-    let over = |reductions: Reductions| match world
+    for reductions in [Reductions::default(), reduced()] {
+        assert_lasso_over(&world, reductions, "b");
+    }
+}
+
+/// Clause 0 of `world`, whose atom is `v = 0`, is refuted over `over` under
+/// `reductions` by a lasso that replays on the concrete subject.
+fn assert_lasso_over(world: &World, reductions: Reductions, over: &str) {
+    let atoms = || vec![atom(|v| Some(v == 0))];
+    let outcome = world
         .run(
             Some(0),
-            vec![atom(|v| Some(v == 0))],
-            reductions,
+            atoms(),
+            reductions.clone(),
             None,
             ModelCheckLimits::default(),
         )
-        .expect("checks")
-    {
-        ModelCheckOutcome::Violated { counterexample, .. } => {
-            counterexample.over_binding.map(|binding| binding.key)
-        }
-        other => panic!("expected a violation over `b`, got {other:?}"),
+        .expect("checks");
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("expected a violation over `{over}` under {reductions:?}, got {outcome:?}");
     };
-    assert_eq!(over(Reductions::default()), Some("b".to_owned()));
-    assert_eq!(over(reduced()), Some("b".to_owned()));
+    assert_eq!(
+        counterexample
+            .over_binding
+            .as_ref()
+            .map(|binding| binding.key.as_str()),
+        Some(over),
+        "{reductions:?}"
+    );
+    assert!(counterexample.lasso.is_some(), "{reductions:?}");
+    let replayed = world.replay_clause(0, atoms(), *counterexample);
+    assert!(
+        matches!(
+            replayed,
+            ModelTraceSettlement::Reproduced {
+                value: fsl_replay::ModelTraceValue::Truth(false),
+                ..
+            }
+        ),
+        "{reductions:?}: {replayed:?}"
+    );
 }
 
 /// §7.2's three counters declared `symmetric`, from `start_at`, with
@@ -1608,29 +1633,48 @@ fn two_orbits(partial_order: bool) -> Reductions {
 /// QSL-3482: a symmetry-reduced liveness run must decide every orbit. From
 /// `(0,1,1)`, `eventually holds(x.v = 0)` holds for the orbit `{a}` and is
 /// violated for the orbit `{b, c}`, whose `v` never decreases. The unreduced,
-/// the symmetry and the combined run all settle `Violated` over `b`.
+/// the symmetry and the combined run all settle `Violated` over `b`, each
+/// with a lasso that replays.
 #[trace("TC-886", "FR-160-AC-6")]
 #[test]
 fn symmetric_liveness_decides_every_orbit() {
     let world = declared_bumps("eventually holds(x.v = 0)", [0, 1, 1]);
     for reductions in [Reductions::default(), two_orbits(false), two_orbits(true)] {
-        let outcome = world
-            .run(
-                Some(0),
-                vec![atom(|v| Some(v == 0))],
-                reductions.clone(),
-                None,
-                ModelCheckLimits::default(),
-            )
-            .expect("checks");
-        let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
-            panic!("expected a violation over `b` under {reductions:?}, got {outcome:?}");
-        };
-        assert_eq!(
-            counterexample.over_binding.map(|binding| binding.key),
-            Some("b".to_owned()),
-            "{reductions:?}"
-        );
+        assert_lasso_over(&world, reductions, "b");
+    }
+}
+
+/// QSL-3482: the lasso of a later orbit concretises through that orbit's
+/// stabiliser. §7.1's cycling counters from `(0,0,1)`, classes
+/// `[[a, b], [c]]`: `eventually holds(x.v = 0)` holds for the orbit `{a, b}`
+/// at position 0 and is violated for `c`, whose orbit's stabiliser swaps `a`
+/// and `b`, by a loop that never bumps `c`.
+#[trace("TC-886", "FR-160-AC-6")]
+#[test]
+fn a_later_orbit_lasso_concretises_and_replays() {
+    let world = crate::reduction::cycle(
+        true,
+        &[[0, 0, 1]],
+        &[Clause {
+            profile: INFINITE,
+            formula: "eventually holds(x.v = 0)",
+        }],
+    );
+    let orbits = |partial_order: bool| Reductions {
+        symmetry: vec![SymmetryDeclaration {
+            population: counters(),
+            classes: vec![vec!["a".to_owned(), "b".to_owned()], vec!["c".to_owned()]],
+        }],
+        partial_order,
+        ..Reductions::default()
+    };
+    for reductions in [
+        Reductions::default(),
+        reduced(),
+        orbits(false),
+        orbits(true),
+    ] {
+        assert_lasso_over(&world, reductions, "c");
     }
 }
 
