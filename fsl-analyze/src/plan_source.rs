@@ -24,7 +24,8 @@ use filament_semantic_value::stop::Stop as ValueStop;
 use fsl_eval::automaton::{PolicyContext, PolicyState, PolicyStateError, StepPolicy};
 use fsl_eval::model_subject::{AtomStop, ModelLetters};
 use fsl_eval::simulation::model::{read_clause, ClauseReading};
-use fsl_eval::simulation::model::{ModelInstance, ModelSimState, ModelSystem};
+use fsl_eval::model_subject::ModelInstance;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
