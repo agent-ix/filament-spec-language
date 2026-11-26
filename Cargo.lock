@@ -973,7 +973,7 @@ dependencies = [
 [[package]]
 name = "filament-specification-qualification"
 version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-specification?rev=a6968fb8a457feb07208c33e8545c8880a33d095#a6968fb8a457feb07208c33e8545c8880a33d095"
+source = "git+https://github.com/agent-ix/filament-specification?rev=53fe180bdc5b5b1006a197e0f5d3a55de07caba2#53fe180bdc5b5b1006a197e0f5d3a55de07caba2"
 
 [[package]]
 name = "filament-verification-contracts"
@@ -1130,6 +1130,7 @@ dependencies = [
  "filament-mltl",
  "filament-observation",
  "filament-semantic-value",
+ "filament-walk",
  "fsl-analyze",
  "fsl-cst",
  "fsl-eval",

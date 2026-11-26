@@ -495,7 +495,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                     .parameters()
                     .iter()
                     .filter(|parameter| parameter.alias == quantifier.alias)
-                    .map(|parameter| subject_authority(parameter.population.object().original()))
+                    .map(|parameter| subject_authority(parameter.object.original()))
                     .collect::<Vec<_>>();
                 types.sort();
                 types.dedup();
