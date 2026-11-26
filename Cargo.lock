@@ -1251,6 +1251,7 @@ dependencies = [
  "fsl-foundation",
  "fsl-package",
  "fsl-semantics",
+ "ix-trace-rs",
 ]
 
 [[package]]

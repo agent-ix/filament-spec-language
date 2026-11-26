@@ -15,6 +15,7 @@ filament-exact = { workspace = true }
 filament-checked = { workspace = true }
 filament-contract-model = { workspace = true }
 filament-semantic-value = { workspace = true }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 
 [lints.rust]
 unsafe_code = "forbid"
