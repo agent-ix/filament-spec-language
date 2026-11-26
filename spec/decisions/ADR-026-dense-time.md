@@ -71,9 +71,10 @@ length between discrete steps (Alur and Dill). Reachability is decidable and
 PSPACE-complete by the region construction; tools check it with zones held
 as difference-bound matrices and extrapolated by the maximal constants
 (Bengtsson and Yi; UPPAAL). A run is non-Zeno when its time diverges.
-Integer-time verification is exact for automata whose constraints are all
-closed (Henzinger, Manna and Pnueli), and strict constraints lose runs under
-integer time (§9 example).
+Over automata whose constraints are all closed, integer-time verification is
+exact for reachability and for the claims FR-243 calls digitisable, and not
+for every claim or state-graph form (Henzinger, Manna and Pnueli; FR-243).
+Strict constraints lose runs under integer time (§9 example).
 
 **Hybrid models.** FSpec FR-193 analyses continuous and hybrid models under a
 selected sound solver contract and names no solver. Clocks are the hybrid

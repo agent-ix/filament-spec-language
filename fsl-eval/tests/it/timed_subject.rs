@@ -3971,7 +3971,7 @@ fn granted_values(world: &World, operation: &str, field: &str) -> Vec<String> {
 /// is an unbounded root, so the model passes FR-120's requires-bound check.
 /// Not covered: the
 /// tuple `Pr`, which a domain package cannot declare.
-#[trace("TC-1270")]
+#[trace("TC-1270", "FR-120-AC-22", "FR-120-AC-23")]
 #[test]
 fn a_record_of_finite_components_is_a_finite_domain() {
     let int2 = ident("Int2");
@@ -4204,7 +4204,7 @@ fn a_record_with_an_unbounded_component_requires_a_bound() {
 /// the model passes FR-120's requires-bound check, and `work` (no clause,
 /// granting nothing) has one successor for each parameter value, its result
 /// the first of its domain in canonical order.
-#[trace("TC-1270")]
+#[trace("TC-1270", "FR-120-AC-23")]
 #[test]
 fn an_enum_parameter_and_result_are_finite() {
     use fsl_eval::simulation::TransitionSystem;
@@ -5083,7 +5083,7 @@ fn retime_world(granted: &[&str], body: &str) -> World {
 /// under `max_candidates` 431 it stops `resource_exhausted` naming
 /// `max_candidates`. The tuple `Pr` of AC-22 cannot be declared in a domain
 /// package, so `t` stands in for its 4 values.
-#[trace("TC-1270")]
+#[trace("TC-1270", "FR-120-AC-22")]
 #[test]
 fn every_candidate_of_a_record_product_is_charged() {
     use fsl_eval::simulation::TransitionSystem;
@@ -5192,7 +5192,7 @@ fn a_granted_record_keeps_its_clocks_unless_reset() {
 /// case with payload type `Integer` makes its union an unbounded root. The
 /// field is presence-optional and absent initially, as a snapshot has no
 /// union value form, so its domain is absent then those three.
-#[trace("TC-1270")]
+#[trace("TC-1270", "FR-120-AC-25")]
 #[test]
 fn a_model_variant_union_is_finite_by_its_payloads() {
     let mode = |name: &str, payload: &str| {
