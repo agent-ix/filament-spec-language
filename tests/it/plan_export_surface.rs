@@ -3474,9 +3474,9 @@ synthesis Reach"#,
         .expect("the hybrid declaration follows its profile")
         .1;
     let wrong_over_unit = unit.replace(
-        "temporal NeverFour",
+        "type Lengths",
         &format!(
-            "profile p = \"filament.temporal.infinite-trace/v1\";\nhybrid Braking{braking}\ntemporal NeverFour"
+            "profile p = \"filament.temporal.infinite-trace/v1\";\nhybrid Braking{braking}\ntype Lengths"
         ),
     );
     let (exit, value) = plan_in(
@@ -3714,8 +3714,11 @@ population config_history: ConfigVersion;
 
     let unit = r#"language "ix:native" edition "1-draft";
 profile v = "filament.temporal.infinite-trace/v1";
+profile g = "filament.model.complete/v1";
 model Config = "example/config-version";
+post VersionAdvances using g on Config::ConfigVersion::attemptUpdate { result implies self.versionNumber = pre(self.versionNumber) + 1 }
 type Lengths = Int[0,1];
+pre NeverUpdate using v on Config::ConfigVersion::attemptUpdate { false }
 temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber != 4) }
 synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
 "#;
