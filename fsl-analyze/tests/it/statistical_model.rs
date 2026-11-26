@@ -1208,7 +1208,7 @@ fn completed(outcome: Result<StatisticalOutcome, StatisticalRefusal>) -> Statist
     }
 }
 
-fn decided(world: &World, claim: &str, method: StatisticalMethod) -> StatisticalVerdict {
+pub(crate) fn decided(world: &World, claim: &str, method: StatisticalMethod) -> StatisticalVerdict {
     completed(run(
         world,
         claim,
