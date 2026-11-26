@@ -107,12 +107,14 @@ theorem states.
 | EN-1 `digital-clocks` | TT-1 over the discrete state; location reachability (`possible`) | Closed | KNPS 2006 Lemma 17 (checked: `t - t' ~ c` for `~` in `<=`, `=`, `>=` survives rounding with any threshold) and Lemma 20 with the proof of Proposition 23 (a path diverges exactly when its rounding does) |
 | EN-1 `digital-clocks` | Deadlock freedom | Closed | Lemma 17, Lemma 20 with Proposition 23's proof, argument D below |
 | EN-1 `digital-clocks` | The digitisable claims of FR-243 (a) to (f) | Closed | Lemma 17, Lemma 20 with Proposition 23's proof, argument A below |
-| EN-5 digital | Every claim form FSpec FR-421's table admits | Closed, class `given` | Argument G below |
-| EN-5 digital | Reachability and until over state predicates; `expected accumulate ... until` | Closed, class `free`, no time-lock | KNPS 2006 Theorem 24 (locations, minimum and maximum) and Theorem 27 (expected cost), both checked, over adversaries that diverge with probability 1 (Definition 8) |
-| EN-5 digital | `expected elapsed until holds(B)` | Closed, class `free`, no time-lock | KNPS 2006 Theorem 27 (checked) |
-| EN-5 digital | Step-bounded and long-run measures that read only the sequence of discrete steps | Closed, class `free`, no time-lock | Argument S below (argument below) |
-| EN-5 digital | Deadline events; `steps` and `accumulate` within a time horizon; a `weighted by R` fraction over `[0, h]`, `R` reading no clock; each `on origin`; `M <= c` of an elapsed measure that starts at position 0 on every run | Closed, class `free`, no time-lock | KNPS 2006 Proposition 23 (checked) with argument B below (argument below) |
-| EN-5 digital | The maximum, with no fairness set, of the probability of a reachability, until or deadline event over state predicates, which is the minimum of the matching `always` | Closed, class `free`, a time-lock reachable | Argument E below (argument below) |
+| EN-5 digital | Every claim form FSpec FR-421's table admits | Closed, class `given`, no fairness set | Argument G below |
+| EN-5 digital | Reachability and until over state predicates; `expected accumulate ... until` | Closed, class `free`, no time-lock, no fairness set | KNPS 2006 Theorem 24 (locations, minimum and maximum) and Theorem 27 (expected cost), both checked, over adversaries that diverge with probability 1 (Definition 8) |
+| EN-5 digital | `expected elapsed until holds(B)` | Closed, class `free`, no time-lock, no fairness set | KNPS 2006 Theorem 27 (checked) |
+| EN-5 digital | Step-bounded and long-run measures that read only the sequence of discrete steps | Closed, class `free`, no time-lock, no fairness set | Argument S below (argument below) |
+| EN-5 digital | Deadline events; `steps` and `accumulate` within a time horizon; a `weighted by R` fraction over `[0, h]`, `R` reading no clock; each `on origin`; `M <= c` of an elapsed measure that starts at position 0 on every run | Closed, class `free`, no time-lock, no fairness set | KNPS 2006 Proposition 23 (checked) with argument B below (argument below) |
+| EN-5 digital | The maximum of the probability of a reachability or until event over state predicates, or of a deadline event read `on origin`, which is the minimum of the matching `always` | Closed, class `free`, a time-lock reachable, no fairness set | Argument E below (argument below) |
+| EN-5 region | Every exact probabilistic claim that states a fairness set | Any subject, `given` and `free` included | No digital row admits it (the `FairLoop` vector). Region process with enabledness at every instant (FSpec FR-416 "Strong fairness over time"). No statement checked |
+| EN-5 region, **pending** | Every exact probabilistic claim over a subject with some delays given and others not | Neither class | No theorem proves any shape of it safe on integer times (`Overtake`, and the narrower-shape vector). FR-204-AC-6 to AC-12, FR-196-AC-14, FR-202-AC-8, FR-202-AC-11, FR-920-AC-4 and FSpec FR-421-AC-6 are pending this route: their stated results are kept, and until it is built the items settle `Incomplete` |
 | EN-5 region | Every other exact probabilistic timed claim with `discrete` or free delays | Any such subject | Region graph of a probabilistic timed automaton (Kwiatkowska, Norman, Segala and Sproston, 2002). Statement not checked. A claim monitor adds clocks to the region key |
 | EN-4 sampler | Statistical items | Every racing delay given | A measurement, not a proof (ADR-026 SS-2, SS-3) |
 | Replay | A counterexample or witness of any route | Any | Executes the concrete run (RL-1); no abstraction |
@@ -123,7 +125,8 @@ KNPS 2006 is M. Kwiatkowska, G. Norman, D. Parker and J. Sproston,
 Formal Methods in System Design 29.
 
 **Not on digital clocks.** Everything outside the table: a strict constraint
-or interval; any other bounded-window formula; any claim over a subject with
+or interval; any other bounded-window formula; a claim that states a fairness
+set; any claim over a subject with
 some delays given and others not; in class `free`, a form read from a position
 after position 0, a `weighted by delay` fraction or long-run fraction, and,
 where a time-lock is reachable, every quantity but the one argument E covers
@@ -148,6 +151,16 @@ For the mean of a `weighted by delay` fraction and the long-run fraction there
 is no theorem here: KNPS 2006 Theorem 34 covers expected cost to a target with
 location-dependent rates, and was not shown to cover a ratio over a window or a
 long-run ratio.
+
+**Fairness on integer times.** No digital row of EN-5 admits a fairness set.
+KNPS 2006 states nothing about fairness, argument G says nothing about
+enabledness at instants inside a delay, and `FairLoop` is wrong on integer
+times. FR-243 (f) keeps EN-1's temporal claims with a fairness constraint to
+subjects with no clock constraint.
+
+**Left out although it may hold.** The minimum of an expectation over a free
+subject with a reachable time-lock leaves digital clocks. It could return with
+a written argument that rounding keeps it.
 
 ### Arguments
 
@@ -204,7 +217,9 @@ and constants scaled to integers, every time stamp before an idle tail is a
 whole number on every run: the digital process is the dense process. Only the
 idle tail's stutter stamps are chosen freely; a form that reads state
 predicates, or weights the tail by 0 or by the whole rest of its window, reads
-the same on every choice. A count of positions in a time window does not.
+the same on every choice. A count of positions in a time window does not. The
+argument says nothing about which constraints are enabled at instants inside a
+delay, so it covers no claim with a fairness set.
 
 ### Hand vectors for the oracle
 
@@ -233,6 +248,18 @@ Each has a closed, diagonal-free subject.
   free time `t` in `[0, 1]` spends `1 - t` or `t` in the counted states within
   `[0, 2]` ms. Densely both reach 1/4 of the window at `t = 1/2`, probability 1;
   at integer times exactly one does, probability 1/2.
+- **Strong fairness** (FSpec TC-374 `FairLoop`): `loop`, guarded `x <= 1` ms,
+  resets `x`; `t`, guarded `x >= 1` ms, sets `done`; `x <= 1` ms while not
+  `done`. Under `fair strong t` the dense minimum of reaching `done` is 0
+  (`loop` every 1/2 ms never enables `t`), the integer one 1 (time passes only
+  by reaching `x = 1`, where `t` is enabled).
+- **Narrower mixed shape.** `b`, free, at `Init` under `x <= 1` ms, `x` never
+  reset, leads to `S`; `c` at `S` has guard `x >= 1` ms and
+  `delay ~ discrete { 0 ms: 1, 1 ms: 1 }`, and no free identity competes with
+  it. Densely `b` at `t` strictly between 0 and 1 conditions `c` onto delay 1,
+  so `c` fires after 1 ms and `eventually[0 ms, 1 ms]` of its effect has
+  minimum 0; at integer times `t = 0` gives 1 and `t = 1` gives 1/2, minimum
+  1/2.
 - **Count over an idle tail** (FSpec TC-374 `Burst`):
   `fraction holds(phase = 1) over [0, 1 ms]` is `(1 + m)/(2 + m)` for every
   `m >= 0`, supremum 1; whole-unit stutters give at most 2/3.
@@ -250,6 +277,7 @@ This record replaces the statements below; each now points here.
 | ADR-028 SP-2 | EN-5 reuses `model_check`'s product, monitor translations and decomposition for every subject | For a timed subject, RL-1 and RL-2 |
 | ADR-026 SD-4 | A bounded-delay state where no identity races is `NotStochastic` | A time-lock |
 | FSL FR-921 | The checker shares the concrete run and the key type only | RL-7 |
+| ADR-028 FS-1 to FS-9 and §13a, over a timed subject | Fairness sets decided on the integer-time product | The region route |
 | FSL FR-196 Description | EN-5 reuses `model_check`'s product, monitors and decompositions | The concrete run is shared; EN-5's abstraction and products are its own |
 | FSL FR-243 Description | Only a probabilistic claim takes the digital-clock route | A temporal claim takes it on request |
 | FSL FR-204, FR-877, FR-924, FR-254 | Their own route and time-lock statements | FSpec FR-416, FSpec FR-421 and this table |
@@ -261,10 +289,10 @@ This record replaces the statements below; each now points here.
   and others not, forms read from a later position, unweighted fractions over a
   time window, and, in class `free`, claims over subjects with a time-lock
   other than the maximum argument E covers.
-- Behaviour the engine computes today on integer units for a mixed workload
-  race (FR-204-AC-6 to AC-12, FR-196-AC-14, FR-202-AC-8, FR-920-AC-4) is no
-  longer a basis for a verdict. Their stated values are unchanged; they are
-  met on the region route.
+- Capability change: a mixed subject, and any claim with a fairness set over a
+  timed subject, no longer takes a digital-clock verdict. The criteria stated
+  over mixed races are listed in the admission table as pending the region
+  route.
 - Digital admission in class `free` needs a test over the dense runs that no
   reachable state is time-locked, except for the maximum argument E covers.
   Where none is, a scheduler that diverges with probability 1 exists from every

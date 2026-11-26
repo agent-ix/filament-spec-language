@@ -87,7 +87,8 @@ unsupported cause `DelayDistribution{operation}`.
   FSpec FR-421 "Closed and strict conditions" gives, recorded with its
   justification in ADR-038's route admission table. It depends on the
   subject's closedness and delay class (every delay given, or none given), on
-  whether a time-lock is reachable where no delay is given, on the claim form,
+  whether a time-lock is reachable where no delay is given, on whether the claim
+  states a fairness set (none is admitted to the digital MDP), on the claim form,
   and on the position the claim is read from. The digital MDP SHALL decide no
   claim that rule does not admit; every other claim SHALL be decided over the
   region MDP (FR-922), closed or not. The region MDP is symbolic, advancing by
@@ -96,7 +97,8 @@ unsupported cause `DelayDistribution{operation}`.
   `unsupported`. A subject with some delays given and others not is not
   admitted to the digital MDP: its post-draw race is the one stated below, the
   integer-unit rows below are no basis for a verdict, and the item is decided
-  over the region MDP. A workload race among two or more identities with free
+  over the region MDP; AC-6 to AC-12 are pending that route (ADR-038). A
+  workload race among two or more identities with free
   delays only keeps the route this requirement states below, pending the ruling
   on that rule (ADR-038).
 - **Pending target times.** For some admitted forms the number of pending

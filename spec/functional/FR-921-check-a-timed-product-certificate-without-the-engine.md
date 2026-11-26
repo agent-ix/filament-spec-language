@@ -64,7 +64,8 @@ value, ADR-038 RL-7):
 
 1. the route: the checker establishes every condition a row of FSpec FR-421
    "Closed and strict conditions" (ADR-038's route admission table) tests with
-   its own code (the subject's closedness, its delay class, whether a
+   its own code (the subject's closedness, its delay class, whether the claim
+   states a fairness set, whether a
    time-lock is reachable where no delay is given, from the dense subject and
    never from the digital product, the claim form and the position it is read
    from; the transform's `M < c` counts as strict) and then looks the route up

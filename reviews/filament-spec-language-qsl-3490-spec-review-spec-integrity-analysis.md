@@ -47,3 +47,25 @@ CHANGES REQUESTED. Argument M is false (high). ADR-028 13a still excludes schedu
 - FR-924 (examined): Time-lock bullet; ACs 3-5.
 - TC-709 (examined): Step 4 expected values.
 - docs/timed-window-tail-bound.md (examined): Almost-sure divergence now stated by FR-416.
+
+## New findings (disposition pass 1)
+
+Head checked: dfada161883cc6eca32769fe9e69d14f1dbf3828.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | high | The digital rows do not exclude fairness sets; KNPS covers none, and argument G does not cover enabledness inside a race delay; a strong fairness set gives a wrong digital minimum. | spec/decisions/ADR-038-one-timed-run-layer-and-route-admission.md:110-114 |
+| FND-009 | medium | Arch ruling (2): the kept mixed-race criteria must be marked in the admission table as pending the region route; ADR-038 lists them in Consequences only and omits FR-202-AC-11 and FSpec FR-421-AC-6. | spec/decisions/ADR-038-one-timed-run-layer-and-route-admission.md:264-267 |
+| FND-010 | low | Row E's 'deadline event' lacks 'on origin'; argument E rounds with argument B, which keeps deadlines only from position 0. | spec/decisions/ADR-038-one-timed-run-layer-and-route-admission.md:115,182-194 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | fixed | - |
+| FND-007 | fixed | - |
