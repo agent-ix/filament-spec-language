@@ -2,9 +2,9 @@
 //! Clock-reading monitors for FR-813's admitted timed intervals.
 
 use super::Quantity;
-use crate::command::export::lower::temporal::{ClauseLow, Tf, CONSTRUCT};
+use crate::command::export::lower::temporal::{ClauseLow, Formulas, Tf, TfId, CONSTRUCT};
 use crate::command::export::lower::{
-    bullets, defer_at, define, mangle, refusal, Definition, Graph, Lower,
+    bullets, defer_at, define, mangle, refusal, render, Definition, Graph, Lower, Piece,
 };
 use filament_contract_model::{CheckedIntervalEnd, CheckedOperationInterval};
 use fsl_package::checked_views::{FormulaNodeUse, FormulaOperation};
@@ -15,10 +15,9 @@ pub(in crate::command::export::lower) enum Operator {
     Eventually,
 }
 
-#[derive(Clone, PartialEq)]
-pub(in crate::command::export::lower) struct Window {
-    pub(in crate::command::export::lower) operator: Operator,
-    pub(in crate::command::export::lower) predicate: Tf,
+/// A timed window whose operand is not read yet.
+pub(in crate::command::export::lower) struct Pending {
+    operator: Operator,
     at: usize,
     lower: Quantity,
     upper: Option<Quantity>,
@@ -26,14 +25,52 @@ pub(in crate::command::export::lower) struct Window {
     upper_open: bool,
 }
 
+#[derive(Clone)]
+pub(in crate::command::export::lower) struct Window {
+    pub(in crate::command::export::lower) operator: Operator,
+    pub(in crate::command::export::lower) predicate: TfId,
+    at: usize,
+    lower: Quantity,
+    upper: Option<Quantity>,
+    lower_open: bool,
+    upper_open: bool,
+}
+
+impl Pending {
+    /// The window over `predicate`, which reads the state only.
+    pub(in crate::command::export::lower) fn finish(
+        self,
+        graph: &Graph<'_>,
+        formulas: &Formulas,
+        predicate: TfId,
+    ) -> Lower<Window> {
+        if !formulas.facts(predicate).atoms_only {
+            return defer_at(
+                self.at,
+                &graph.construct(self.at),
+                "a timed interval with a nonstate operand",
+            );
+        }
+        Ok(Window {
+            operator: self.operator,
+            predicate,
+            at: self.at,
+            lower: self.lower,
+            upper: self.upper,
+            lower_open: self.lower_open,
+            upper_open: self.upper_open,
+        })
+    }
+}
+
 impl Window {
+    /// The window of a timed operator, and the use its operand is at.
     pub(in crate::command::export::lower) fn read(
         graph: &Graph<'_>,
         kind: FormulaOperation,
         node: &FormulaNodeUse<'_>,
         at: usize,
-        mut operand: impl FnMut(usize) -> Lower<Tf>,
-    ) -> Lower<Self> {
+    ) -> Lower<(Pending, usize)> {
         let operator = match kind {
             FormulaOperation::Always => Operator::Always,
             FormulaOperation::Eventually => Operator::Eventually,
@@ -63,27 +100,21 @@ impl Window {
                 "a unary timed operator without one operand",
             ));
         };
-        let predicate = operand(*child)?;
-        if !state_only(&predicate) {
-            return defer_at(
-                at,
-                &graph.construct(at),
-                "a timed interval with a nonstate operand",
-            );
-        }
         let quantity = |r: &filament_contract_model::CheckedOperationRational| Quantity {
             numerator: r.numerator.to_string(),
             denominator: r.denominator.to_string(),
         };
-        Ok(Self {
-            operator,
-            predicate,
-            at,
-            lower: quantity(lower),
-            upper: upper.as_ref().map(quantity),
-            lower_open: *lower_end == CheckedIntervalEnd::Open,
-            upper_open: *upper_end == CheckedIntervalEnd::Open,
-        })
+        Ok((
+            Pending {
+                operator,
+                at,
+                lower: quantity(lower),
+                upper: upper.as_ref().map(quantity),
+                lower_open: *lower_end == CheckedIntervalEnd::Open,
+                upper_open: *upper_end == CheckedIntervalEnd::Open,
+            },
+            *child,
+        ))
     }
 
     pub(in crate::command::export::lower) fn lean_bounds(&self, elapsed: &str) -> String {
@@ -117,46 +148,38 @@ impl Window {
     }
 }
 
-fn state_only(tf: &Tf) -> bool {
-    match tf {
-        Tf::Const(_) | Tf::Atom(_) => true,
-        Tf::Not(inner) => state_only(inner),
-        Tf::And(left, right) | Tf::Or(left, right) | Tf::Implies(left, right) => {
-            state_only(left) && state_only(right)
+/// The clause's formula `tf` in TLA+, over `[]` and `<>` and the state.
+fn direct(clause: &ClauseLow, tf: TfId, state: &impl Fn(TfId) -> Lower<String>) -> Lower<String> {
+    render(tf, |id, out| {
+        let binary = |out: &mut Vec<Piece<TfId>>, a, symbol: &'static str, b| {
+            out.extend([
+                Piece::text("("),
+                Piece::Node(a),
+                Piece::text(symbol),
+                Piece::Node(b),
+                Piece::text(")"),
+            ]);
+        };
+        let unary = |out: &mut Vec<Piece<TfId>>, open: &'static str, inner| {
+            out.extend([Piece::text(open), Piece::Node(inner), Piece::text(")")]);
+        };
+        match clause.formulas.get(id)? {
+            &Tf::Always(iv, inner) if !iv.is_some() => unary(out, "[](tick \\/ ", inner),
+            &Tf::Eventually(iv, inner) if !iv.is_some() => unary(out, "<>(~tick /\\ ", inner),
+            &Tf::Not(inner) => unary(out, "~(", inner),
+            &Tf::And(a, b) => binary(out, a, " /\\ ", b),
+            &Tf::Or(a, b) => binary(out, a, " \\/ ", b),
+            &Tf::Implies(a, b) => binary(out, a, " => ", b),
+            Tf::Const(_) | Tf::Atom(_) => out.push(Piece::text(state(id)?)),
+            _ => {
+                return defer_at(
+                    clause.refuse_at.unwrap_or(clause.position),
+                    super::super::temporal::CONSTRUCT,
+                    "a timed formula outside the direct always and eventually forms",
+                );
+            }
         }
-        _ => false,
-    }
-}
-
-fn has_window(tf: &Tf) -> bool {
-    match tf {
-        Tf::Timed(_) => true,
-        Tf::And(left, right) => has_window(left) || has_window(right),
-        _ => false,
-    }
-}
-
-fn direct(
-    clause: &ClauseLow,
-    tf: &Tf,
-    state: &impl Fn(&Tf, bool) -> Lower<String>,
-) -> Lower<String> {
-    let child = |tf: &Tf| direct(clause, tf, state);
-    Ok(match tf {
-        Tf::Always(iv, inner) if !iv.is_some() => format!("[](tick \\/ {})", child(inner)?),
-        Tf::Eventually(iv, inner) if !iv.is_some() => format!("<>(~tick /\\ {})", child(inner)?),
-        Tf::Not(inner) => format!("~({})", child(inner)?),
-        Tf::And(a, b) => format!("({} /\\ {})", child(a)?, child(b)?),
-        Tf::Or(a, b) => format!("({} \\/ {})", child(a)?, child(b)?),
-        Tf::Implies(a, b) => format!("({} => {})", child(a)?, child(b)?),
-        Tf::Const(_) | Tf::Atom(_) => state(tf, false)?,
-        _ => {
-            return defer_at(
-                clause.refuse_at.unwrap_or(clause.position),
-                super::super::temporal::CONSTRUCT,
-                "a timed formula outside the direct always and eventually forms",
-            );
-        }
+        Ok(())
     })
 }
 
@@ -176,25 +199,30 @@ struct Clause<'a, ShowState> {
     accept: Option<(String, String, usize)>,
 }
 
-impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
-    fn part(&mut self, tf: &Tf, repeated: bool) -> Lower<()> {
-        match tf {
-            Tf::And(left, right) => {
-                self.part(left, repeated)?;
-                self.part(right, repeated)?;
-            }
-            Tf::Always(iv, inner) if !iv.is_some() && has_window(inner) => {
-                self.part(inner, true)?
-            }
-            Tf::Timed(window) if repeated => self.repeated_monitor(window)?,
-            Tf::Timed(window) => self.monitor(window)?,
-            _ => {
-                let text = direct(self.clause, tf, &self.show_state)?;
-                self.statements.push(if repeated {
-                    format!("[](tick \\/ {text})")
-                } else {
-                    text
-                });
+impl<ShowState: Fn(TfId, bool) -> Lower<String>> Clause<'_, ShowState> {
+    /// Lower the conjuncts of `tf` in written order.
+    fn part(&mut self, tf: TfId) -> Lower<()> {
+        let clause = self.clause;
+        let mut pending = vec![(tf, false)];
+        while let Some((tf, repeated)) = pending.pop() {
+            match clause.formulas.get(tf)? {
+                &Tf::And(left, right) => {
+                    pending.extend([(right, repeated), (left, repeated)]);
+                }
+                &Tf::Always(iv, inner) if !iv.is_some() && clause.formulas.facts(inner).window => {
+                    pending.push((inner, true));
+                }
+                Tf::Timed(window) if repeated => self.repeated_monitor(window)?,
+                Tf::Timed(window) => self.monitor(window)?,
+                _ => {
+                    let show = &self.show_state;
+                    let text = direct(clause, tf, &|state| show(state, false))?;
+                    self.statements.push(if repeated {
+                        format!("[](tick \\/ {text})")
+                    } else {
+                        text
+                    });
+                }
             }
         }
         Ok(())
@@ -203,8 +231,8 @@ impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
     fn monitor(&mut self, window: &Window) -> Lower<()> {
         let node = window.at;
         let key = &self.clause.binder;
-        let current = (self.show_state)(&window.predicate, false)?;
-        let next = (self.show_state)(&window.predicate, true)?;
+        let current = (self.show_state)(window.predicate, false)?;
+        let next = (self.show_state)(window.predicate, true)?;
         let name = mangle("m_", &self.clause.name);
         let accept = mangle("accept_", &self.clause.name);
         let at = |time: &str, predicate: &str| {
@@ -243,8 +271,8 @@ impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
     fn repeated_monitor(&mut self, window: &Window) -> Lower<()> {
         let node = window.at;
         let key = &self.clause.binder;
-        let current = (self.show_state)(&window.predicate, false)?;
-        let next = (self.show_state)(&window.predicate, true)?;
+        let current = (self.show_state)(window.predicate, false)?;
+        let next = (self.show_state)(window.predicate, true)?;
         let base = mangle("m_", &self.clause.name);
         let starts = format!("{base}_s0");
         let reject = format!("{base}_r0");
@@ -300,7 +328,7 @@ pub(in crate::command::export::lower) fn tla_clause(
     clause: &ClauseLow,
     ids: &str,
     ok: &str,
-    show_state: impl Fn(&Tf, bool) -> Lower<String>,
+    show_state: impl Fn(TfId, bool) -> Lower<String>,
     out: &mut Vec<Definition>,
 ) -> Lower<Vec<(String, usize)>> {
     let mut lowering = Clause {
@@ -310,7 +338,7 @@ pub(in crate::command::export::lower) fn tla_clause(
         statements: Vec::new(),
         accept: None,
     };
-    lowering.part(&clause.tf, false)?;
+    lowering.part(clause.tf)?;
     let mut variables = Vec::new();
     let obligation = Some(clause.name.as_str());
     let key = &clause.binder;

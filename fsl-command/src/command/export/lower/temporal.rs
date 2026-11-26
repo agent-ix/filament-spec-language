@@ -10,15 +10,18 @@ mod tla;
 
 pub(super) use self::tla::{tla, Extra};
 use super::{
-    defer_at, define, mangle, parameters, refusal, refuse, Definition, Graph, Input, Lower, Target,
-    E,
+    defer_at, define, mangle, parameters, refusal, refuse, render, Definition, ExprId, Graph,
+    Input, Lower, Piece, Refusal, Target,
 };
 use filament_contract_model::{CheckedOperationInterval, CheckedProtocolActivation};
+use filament_walk::{walk, Arena, Children, Id, Walk};
 use fsl_package::checked_views::{
     temporal_subject, Activation, FormulaNodeUse, FormulaOperation, OperatorDirection,
 };
 use fsl_package::{CheckedTimeSourceKind, CheckedTimedModel};
 use fsl_semantics::check::TemporalProfile;
+use std::ops::ControlFlow;
+use std::rc::Rc;
 
 pub(super) const CONSTRUCT: &str = "temporal/temporal_clause";
 
@@ -47,26 +50,117 @@ impl Iv {
     }
 }
 
-/// A temporal formula over the clause's atoms.
-#[derive(Clone, PartialEq)]
+pub(super) type TfId = Id<Tf>;
+
+/// A temporal formula over the clause's atoms. Its operands are ids of the
+/// [`Formulas`] that holds it.
+#[derive(Clone)]
 pub(super) enum Tf {
     Const(bool),
     Atom(usize),
     /// A history variable that stands for a lowered past operator.
     Hist(usize),
-    Not(Box<Tf>),
-    And(Box<Tf>, Box<Tf>),
-    Or(Box<Tf>, Box<Tf>),
-    Implies(Box<Tf>, Box<Tf>),
-    Always(Iv, Box<Tf>),
-    Eventually(Iv, Box<Tf>),
-    Once(Iv, Box<Tf>),
-    Historically(Iv, Box<Tf>),
-    Until(Iv, Box<Tf>, Box<Tf>),
-    Release(Iv, Box<Tf>, Box<Tf>),
-    Since(Iv, Box<Tf>, Box<Tf>),
-    Triggered(Iv, Box<Tf>, Box<Tf>),
+    Not(TfId),
+    And(TfId, TfId),
+    Or(TfId, TfId),
+    Implies(TfId, TfId),
+    Always(Iv, TfId),
+    Eventually(Iv, TfId),
+    Once(Iv, TfId),
+    Historically(Iv, TfId),
+    Until(Iv, TfId, TfId),
+    Release(Iv, TfId, TfId),
+    Since(Iv, TfId, TfId),
+    Triggered(Iv, TfId, TfId),
     Timed(Box<super::dense::Window>),
+}
+
+/// What a formula node is, computed from its operands when it is added.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Facts {
+    /// No temporal operator.
+    pub(super) state: bool,
+    /// A formula `[]` and `<>` state directly.
+    pub(super) direct: bool,
+    /// Boolean connectives over atoms and constants only.
+    pub(super) atoms_only: bool,
+    /// A timed window reached through conjunctions only.
+    pub(super) window: bool,
+}
+
+/// The formulas of one clause. A formula is as deep as its source, so nodes
+/// live in one arena, each after its operands, and no walk of them recurses
+/// (ADR-030 D-1).
+#[derive(Default)]
+pub(super) struct Formulas {
+    nodes: Arena<Tf>,
+    /// Each node's facts, by its arena position.
+    facts: Vec<Facts>,
+}
+
+impl Formulas {
+    /// Add `tf`, whose operands are already ids of this arena.
+    pub(super) fn add(&mut self, tf: Tf) -> TfId {
+        let of = |id: &TfId| self.facts(*id);
+        let facts = match &tf {
+            Tf::Const(_) | Tf::Atom(_) => Facts {
+                state: true,
+                direct: true,
+                atoms_only: true,
+                window: false,
+            },
+            Tf::Hist(_) => Facts {
+                state: true,
+                direct: true,
+                atoms_only: false,
+                window: false,
+            },
+            Tf::Not(inner) => Facts {
+                window: false,
+                ..of(inner)
+            },
+            Tf::And(left, right) | Tf::Or(left, right) | Tf::Implies(left, right) => {
+                let (left, right) = (of(left), of(right));
+                Facts {
+                    state: left.state && right.state,
+                    direct: left.direct && right.direct,
+                    atoms_only: left.atoms_only && right.atoms_only,
+                    window: matches!(tf, Tf::And(..)) && (left.window || right.window),
+                }
+            }
+            Tf::Always(iv, inner) | Tf::Eventually(iv, inner) => Facts {
+                direct: !iv.is_some() && of(inner).direct,
+                ..Facts::default()
+            },
+            Tf::Timed(_) => Facts {
+                window: true,
+                ..Facts::default()
+            },
+            Tf::Once(..)
+            | Tf::Historically(..)
+            | Tf::Until(..)
+            | Tf::Release(..)
+            | Tf::Since(..)
+            | Tf::Triggered(..) => Facts::default(),
+        };
+        self.facts.push(facts);
+        self.nodes.push(tf)
+    }
+
+    pub(super) fn get(&self, id: TfId) -> Lower<&Tf> {
+        self.nodes
+            .get(id)
+            .ok_or_else(|| refusal(CONSTRUCT, "a formula operand is not in the formula"))
+    }
+
+    /// Every node with its id, operands before the nodes that use them.
+    pub(super) fn iter(&self) -> impl Iterator<Item = (TfId, &Tf)> {
+        self.nodes.iter()
+    }
+
+    pub(super) fn facts(&self, id: TfId) -> Facts {
+        self.facts.get(id.index()).copied().unwrap_or_default()
+    }
 }
 
 /// The checked node and operands corresponding to a use in the original formula.
@@ -97,7 +191,8 @@ pub(super) struct ClauseRead {
     pub(super) binder: String,
     /// The `over` binder node.
     pub(super) over: usize,
-    pub(super) tf: Tf,
+    pub(super) formulas: Formulas,
+    pub(super) tf: TfId,
     pub(super) formula_sites: Vec<FormulaSite>,
     /// The first future operator the clause's TLA+ text has no deterministic
     /// monitor for, when one exists.
@@ -115,16 +210,17 @@ pub(super) struct ClauseLow {
     pub(super) position: usize,
     pub(super) object: usize,
     pub(super) binder: String,
-    pub(super) tf: Tf,
+    pub(super) formulas: Formulas,
+    pub(super) tf: TfId,
     pub(super) formula_sites: Vec<FormulaSite>,
     /// The node a clause without a deterministic monitor is refused at.
     pub(super) refuse_at: Option<usize>,
     /// The FR-812 definedness conditions of the atoms, which `ok_<clause>`
     /// states.
-    pub(super) defs: Vec<E>,
+    pub(super) defs: Vec<ExprId>,
     /// Each atom in the current state and in the next state.
-    pub(super) cur: Vec<E>,
-    pub(super) next: Vec<E>,
+    pub(super) cur: Vec<ExprId>,
+    pub(super) next: Vec<ExprId>,
     pub(super) fairness: Vec<FairLow>,
 }
 
@@ -178,15 +274,14 @@ fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>) -> Lower<Iv> {
     }
 }
 
-fn boxed(items: &[Tf], index: usize) -> Lower<Box<Tf>> {
+fn operand_at(items: &[TfId], index: usize) -> Lower<TfId> {
     items
         .get(index)
-        .cloned()
-        .map(Box::new)
+        .copied()
         .ok_or_else(|| refusal(CONSTRUCT, "a temporal operator is missing an operand"))
 }
 
-/// Where `build` is in the formula.
+/// Where a formula use is in the formula.
 #[derive(Clone, Copy)]
 struct Scope {
     /// Inside a future operator.
@@ -215,102 +310,190 @@ impl WindowScope {
     }
 }
 
-fn build(
-    graph: &Graph<'_>,
-    uses: &[FormulaNodeUse<'_>],
-    at: usize,
-    atom: &mut usize,
-    scope: Scope,
-    refuse_at: &mut Option<usize>,
-) -> Lower<Tf> {
-    let node = uses
-        .get(at)
-        .ok_or_else(|| refusal(CONSTRUCT, "a formula operand is not in the formula"))?;
-    let kind = node
-        .kind()
-        .ok_or_else(|| refusal(CONSTRUCT, "an operation that is no temporal operation"))?;
-    if kind == FormulaOperation::Holds {
-        *atom += 1;
-        return Ok(Tf::Atom(*atom - 1));
+/// What an entered use builds once its operands are built.
+enum Built {
+    /// A leaf, already built.
+    Leaf,
+    Window(super::dense::Pending),
+    Operator {
+        kind: FormulaOperation,
+        interval: Iv,
+        here: usize,
+        arity: usize,
+    },
+}
+
+/// The walk that reads the formula uses into [`Formulas`]; `done` holds the
+/// operands not yet taken.
+struct Build<'a, 'u> {
+    graph: &'a Graph<'a>,
+    uses: &'a [FormulaNodeUse<'u>],
+    formulas: Formulas,
+    done: Vec<TfId>,
+    atom: usize,
+    refuse_at: Option<usize>,
+}
+
+impl Build<'_, '_> {
+    fn leaf(&mut self, tf: Tf) -> Built {
+        let id = self.formulas.add(tf);
+        self.done.push(id);
+        Built::Leaf
     }
-    let here = at_node(graph, node.node)?;
-    let direction = kind.direction();
-    if let Some(CheckedOperationInterval::Timed { .. }) = &node.interval {
-        if matches!(scope.window, WindowScope::Unsupported) {
-            return defer_at(
-                here,
-                &graph.construct(here),
-                "a timed window outside the origin or its unbounded always",
-            );
+
+    fn enter_use(
+        &mut self,
+        (at, scope): (usize, Scope),
+        children: &mut Children<'_, (usize, Scope)>,
+    ) -> Lower<Built> {
+        let node = self
+            .uses
+            .get(at)
+            .ok_or_else(|| refusal(CONSTRUCT, "a formula operand is not in the formula"))?;
+        let kind = node
+            .kind()
+            .ok_or_else(|| refusal(CONSTRUCT, "an operation that is no temporal operation"))?;
+        if kind == FormulaOperation::Holds {
+            self.atom += 1;
+            return Ok(self.leaf(Tf::Atom(self.atom - 1)));
         }
-        return super::dense::Window::read(graph, kind, node, here, |operand| {
-            build(
-                graph,
-                uses,
-                operand,
-                atom,
+        let here = at_node(self.graph, node.node)?;
+        let direction = kind.direction();
+        if let Some(CheckedOperationInterval::Timed { .. }) = &node.interval {
+            if matches!(scope.window, WindowScope::Unsupported) {
+                return defer_at(
+                    here,
+                    &self.graph.construct(here),
+                    "a timed window outside the origin or its unbounded always",
+                );
+            }
+            let (window, child) = super::dense::Window::read(self.graph, kind, node, here)?;
+            children.push((
+                child,
                 Scope {
                     future: true,
                     past: false,
                     conj: false,
                     window: WindowScope::Unsupported,
                 },
-                refuse_at,
-            )
+            ));
+            return Ok(Built::Window(window));
+        }
+        let iv = interval(self.graph, node)?;
+        if direction == Some(OperatorDirection::Future) {
+            if scope.past {
+                return defer_at(
+                    here,
+                    "temporal/future-in-past",
+                    "a future operator inside the operand of a past operator",
+                );
+            }
+            let monitored =
+                matches!(kind, FormulaOperation::Until | FormulaOperation::Release) || iv.is_some();
+            if scope.future || (!scope.conj && monitored) {
+                self.refuse_at.get_or_insert(here);
+            }
+        }
+        let inner = Scope {
+            future: scope.future || direction == Some(OperatorDirection::Future),
+            past: scope.past || direction == Some(OperatorDirection::Past),
+            conj: scope.conj && kind == FormulaOperation::And,
+            window: scope.window.through(kind, iv),
+        };
+        for &operand in &node.operands {
+            children.push((operand, inner));
+        }
+        Ok(Built::Operator {
+            kind,
+            interval: iv,
+            here,
+            arity: node.operands.len(),
         })
-        .map(|window| Tf::Timed(Box::new(window)));
     }
-    let iv = interval(graph, node)?;
-    if direction == Some(OperatorDirection::Future) {
-        if scope.past {
-            return defer_at(
+
+    fn finish(&mut self, built: Built) -> Lower<()> {
+        let tf = match built {
+            Built::Leaf => return Ok(()),
+            Built::Window(window) => {
+                let predicate = self
+                    .done
+                    .pop()
+                    .ok_or_else(|| refusal(CONSTRUCT, "a timed operator lost its operand"))?;
+                Tf::Timed(Box::new(window.finish(
+                    self.graph,
+                    &self.formulas,
+                    predicate,
+                )?))
+            }
+            Built::Operator {
+                kind,
+                interval: iv,
                 here,
-                "temporal/future-in-past",
-                "a future operator inside the operand of a past operator",
-            );
-        }
-        let monitored =
-            matches!(kind, FormulaOperation::Until | FormulaOperation::Release) || iv.is_some();
-        if scope.future || (!scope.conj && monitored) {
-            refuse_at.get_or_insert(here);
+                arity,
+            } => {
+                let first = self
+                    .done
+                    .len()
+                    .checked_sub(arity)
+                    .ok_or_else(|| refusal(CONSTRUCT, "a temporal operator lost an operand"))?;
+                let operands = self.done.split_off(first);
+                let one = || operand_at(&operands, 0);
+                let two = || operand_at(&operands, 1);
+                match kind {
+                    FormulaOperation::True => Tf::Const(true),
+                    FormulaOperation::False => Tf::Const(false),
+                    FormulaOperation::Holds => unreachable!("read above"),
+                    FormulaOperation::Aggregate => {
+                        return defer_at(
+                            here,
+                            "temporal/aggregate",
+                            "an aggregate atom over an accumulation of the trace",
+                        );
+                    }
+                    FormulaOperation::Not => Tf::Not(one()?),
+                    FormulaOperation::And => Tf::And(one()?, two()?),
+                    FormulaOperation::Or => Tf::Or(one()?, two()?),
+                    FormulaOperation::Implies => Tf::Implies(one()?, two()?),
+                    FormulaOperation::Always => Tf::Always(iv, one()?),
+                    FormulaOperation::Eventually => Tf::Eventually(iv, one()?),
+                    FormulaOperation::Once => Tf::Once(iv, one()?),
+                    FormulaOperation::Historically => Tf::Historically(iv, one()?),
+                    FormulaOperation::Until => Tf::Until(iv, one()?, two()?),
+                    FormulaOperation::Release => Tf::Release(iv, one()?, two()?),
+                    FormulaOperation::Since => Tf::Since(iv, one()?, two()?),
+                    FormulaOperation::Triggered => Tf::Triggered(iv, one()?, two()?),
+                }
+            }
+        };
+        let id = self.formulas.add(tf);
+        self.done.push(id);
+        Ok(())
+    }
+}
+
+impl Walk for Build<'_, '_> {
+    /// A use of the formula, by its position in `uses`.
+    type Node = (usize, Scope);
+    type Frame = Built;
+    type Stop = Refusal;
+
+    fn enter(
+        &mut self,
+        node: (usize, Scope),
+        children: &mut Children<'_, (usize, Scope)>,
+    ) -> ControlFlow<Refusal, Built> {
+        match self.enter_use(node, children) {
+            Ok(built) => ControlFlow::Continue(built),
+            Err(refusal) => ControlFlow::Break(refusal),
         }
     }
-    let inner = Scope {
-        future: scope.future || direction == Some(OperatorDirection::Future),
-        past: scope.past || direction == Some(OperatorDirection::Past),
-        conj: scope.conj && kind == FormulaOperation::And,
-        window: scope.window.through(kind, iv),
-    };
-    let mut operands = Vec::new();
-    for &operand in &node.operands {
-        operands.push(build(graph, uses, operand, atom, inner, refuse_at)?);
+
+    fn exit(&mut self, built: Built) -> ControlFlow<Refusal> {
+        match self.finish(built) {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(refusal) => ControlFlow::Break(refusal),
+        }
     }
-    Ok(match kind {
-        FormulaOperation::True => Tf::Const(true),
-        FormulaOperation::False => Tf::Const(false),
-        FormulaOperation::Holds => unreachable!("read above"),
-        FormulaOperation::Aggregate => {
-            return defer_at(
-                here,
-                "temporal/aggregate",
-                "an aggregate atom over an accumulation of the trace",
-            );
-        }
-        FormulaOperation::Not => Tf::Not(boxed(&operands, 0)?),
-        FormulaOperation::And => Tf::And(boxed(&operands, 0)?, boxed(&operands, 1)?),
-        FormulaOperation::Or => Tf::Or(boxed(&operands, 0)?, boxed(&operands, 1)?),
-        FormulaOperation::Implies => Tf::Implies(boxed(&operands, 0)?, boxed(&operands, 1)?),
-        FormulaOperation::Always => Tf::Always(iv, boxed(&operands, 0)?),
-        FormulaOperation::Eventually => Tf::Eventually(iv, boxed(&operands, 0)?),
-        FormulaOperation::Once => Tf::Once(iv, boxed(&operands, 0)?),
-        FormulaOperation::Historically => Tf::Historically(iv, boxed(&operands, 0)?),
-        FormulaOperation::Until => Tf::Until(iv, boxed(&operands, 0)?, boxed(&operands, 1)?),
-        FormulaOperation::Release => Tf::Release(iv, boxed(&operands, 0)?, boxed(&operands, 1)?),
-        FormulaOperation::Since => Tf::Since(iv, boxed(&operands, 0)?, boxed(&operands, 1)?),
-        FormulaOperation::Triggered => {
-            Tf::Triggered(iv, boxed(&operands, 0)?, boxed(&operands, 1)?)
-        }
-    })
 }
 
 /// Read the temporal clause at `position` of the package.
@@ -412,8 +595,6 @@ pub(super) fn read(
     if timed_root.is_some() && target == Target::Tla {
         check_dense_tla_operators(graph, view.formula_graph())?;
     }
-    let mut atom = 0;
-    let mut refuse_at = None;
     let start = Scope {
         future: false,
         past: false,
@@ -424,14 +605,27 @@ pub(super) fn read(
             WindowScope::Unsupported
         },
     };
-    let tf = build(
+    let mut build = Build {
         graph,
-        view.formula_graph(),
-        0,
-        &mut atom,
-        start,
-        &mut refuse_at,
-    )?;
+        uses: view.formula_graph(),
+        formulas: Formulas::default(),
+        done: Vec::new(),
+        atom: 0,
+        refuse_at: None,
+    };
+    if let ControlFlow::Break(refusal) = walk(&mut build, (0, start)) {
+        return Err(refusal);
+    }
+    let Build {
+        formulas,
+        mut done,
+        atom,
+        refuse_at,
+        ..
+    } = build;
+    let tf = done
+        .pop()
+        .ok_or_else(|| refusal(CONSTRUCT, "an empty formula"))?;
     let leaves = view.predicate_leaves();
     if atom != leaves.len() {
         return refuse(CONSTRUCT, "a formula whose atoms the package does not list");
@@ -466,6 +660,7 @@ pub(super) fn read(
         context_node,
         binder: mangle("p_", &binder),
         over,
+        formulas,
         tf,
         formula_sites,
         refuse_at,
@@ -533,6 +728,21 @@ struct LeanClause<'a> {
     next: usize,
 }
 
+/// A formula to write at a position of the behaviour, negated or not.
+struct At {
+    tf: TfId,
+    position: Rc<str>,
+    negated: bool,
+}
+
+fn at(tf: TfId, position: Rc<str>) -> Piece<At> {
+    Piece::Node(At {
+        tf,
+        position,
+        negated: false,
+    })
+}
+
 impl LeanClause<'_> {
     fn atom_name(&self, index: usize) -> String {
         format!("{}_{index}", self.atom)
@@ -560,75 +770,94 @@ impl LeanClause<'_> {
     }
 
     /// `tf` at the position `position` of the behaviour `b`.
-    fn at(&mut self, tf: &Tf, position: &str) -> Lower<String> {
-        Ok(match tf {
-            Tf::Const(true) => "True".to_owned(),
-            Tf::Const(false) => "False".to_owned(),
+    fn at(&mut self, tf: TfId, position: &str) -> Lower<String> {
+        render(
+            At {
+                tf,
+                position: position.into(),
+                negated: false,
+            },
+            |node, out| self.pieces(node, out),
+        )
+    }
+
+    fn pieces(&mut self, node: At, out: &mut Vec<Piece<At>>) -> Lower<()> {
+        let At {
+            tf,
+            position,
+            negated,
+        } = node;
+        if negated {
+            out.extend([Piece::text("Not ("), at(tf, position), Piece::text(")")]);
+            return Ok(());
+        }
+        let clause = self.clause;
+        match clause.formulas.get(tf)? {
+            Tf::Const(true) => out.push(Piece::text("True")),
+            Tf::Const(false) => out.push(Piece::text("False")),
             Tf::Hist(_) => {
                 return refuse(CONSTRUCT, "a TLA+ monitor construct in a Lean definition");
             }
-            Tf::Atom(index) => format!(
+            Tf::Atom(index) => out.push(Piece::text(format!(
                 "(0 <= {position} /\\ {} (b.st (Int.toNat {position})) {})",
                 self.atom_name(*index),
-                self.clause.binder
-            ),
-            Tf::Not(inner) => format!("Not ({})", self.at(inner, position)?),
-            Tf::And(left, right) => {
-                format!(
-                    "({} /\\ {})",
-                    self.at(left, position)?,
-                    self.at(right, position)?
-                )
+                clause.binder
+            ))),
+            &Tf::Not(inner) => {
+                out.extend([Piece::text("Not ("), at(inner, position), Piece::text(")")]);
             }
-            Tf::Or(left, right) => {
-                format!(
-                    "({} \\/ {})",
-                    self.at(left, position)?,
-                    self.at(right, position)?
-                )
-            }
-            Tf::Implies(left, right) => {
-                format!(
-                    "({} -> {})",
-                    self.at(left, position)?,
-                    self.at(right, position)?
-                )
-            }
-            Tf::Always(iv, inner) => {
+            &Tf::And(left, right) => Self::binary(out, left, " /\\ ", right, position),
+            &Tf::Or(left, right) => Self::binary(out, left, " \\/ ", right, position),
+            &Tf::Implies(left, right) => Self::binary(out, left, " -> ", right, position),
+            &Tf::Always(iv, inner) => {
                 let d = self.fresh("d");
-                let next_position = format!("({position} + {d})");
-                let body = self.at(inner, &next_position)?;
-                let window = Self::window(*iv, &d, None).join(" -> ");
-                format!("(forall {d} : Int, {window} -> {body})")
+                let window = Self::window(iv, &d, None).join(" -> ");
+                out.extend([
+                    Piece::text(format!("(forall {d} : Int, {window} -> ")),
+                    at(inner, format!("({position} + {d})").into()),
+                    Piece::text(")"),
+                ]);
             }
-            Tf::Eventually(iv, inner) => {
+            &Tf::Eventually(iv, inner) => {
                 let d = self.fresh("d");
-                let next_position = format!("({position} + {d})");
-                let body = self.at(inner, &next_position)?;
-                let window = Self::window(*iv, &d, None).join(" /\\ ");
-                format!("(exists {d} : Int, {window} /\\ {body})")
+                let window = Self::window(iv, &d, None).join(" /\\ ");
+                out.extend([
+                    Piece::text(format!("(exists {d} : Int, {window} /\\ ")),
+                    at(inner, format!("({position} + {d})").into()),
+                    Piece::text(")"),
+                ]);
             }
-            Tf::Historically(iv, inner) => {
+            &Tf::Historically(iv, inner) => {
                 let d = self.fresh("d");
-                let body = self.at(inner, &format!("({position} - {d})"))?;
-                let window = Self::window(*iv, &d, Some(position)).join(" -> ");
-                format!("(forall {d} : Int, {window} -> {body})")
+                let window = Self::window(iv, &d, Some(&position)).join(" -> ");
+                out.extend([
+                    Piece::text(format!("(forall {d} : Int, {window} -> ")),
+                    at(inner, format!("({position} - {d})").into()),
+                    Piece::text(")"),
+                ]);
             }
-            Tf::Once(iv, inner) => {
+            &Tf::Once(iv, inner) => {
                 let d = self.fresh("d");
-                let body = self.at(inner, &format!("({position} - {d})"))?;
-                let window = Self::window(*iv, &d, Some(position)).join(" /\\ ");
-                format!("(exists {d} : Int, {window} /\\ {body})")
+                let window = Self::window(iv, &d, Some(&position)).join(" /\\ ");
+                out.extend([
+                    Piece::text(format!("(exists {d} : Int, {window} /\\ ")),
+                    at(inner, format!("({position} - {d})").into()),
+                    Piece::text(")"),
+                ]);
             }
-            Tf::Until(iv, left, right) => self.relation(*iv, left, right, position, "+")?,
-            Tf::Since(iv, left, right) => self.relation(*iv, left, right, position, "-")?,
-            Tf::Release(iv, left, right) => {
-                let (left, right) = (negate(left), negate(right));
-                format!("Not {}", self.relation(*iv, &left, &right, position, "+")?)
+            &Tf::Until(iv, left, right) => {
+                self.relation(out, iv, (left, right, false), &position, "+");
             }
-            Tf::Triggered(iv, left, right) => {
-                let (left, right) = (negate(left), negate(right));
-                format!("Not {}", self.relation(*iv, &left, &right, position, "-")?)
+            &Tf::Since(iv, left, right) => {
+                self.relation(out, iv, (left, right, false), &position, "-");
+            }
+            &Tf::Release(iv, left, right) => {
+                out.push(Piece::text("Not "));
+                self.relation(out, iv, (left, right, true), &position, "+");
+            }
+            &Tf::Triggered(iv, left, right) => {
+                out.push(Piece::text("Not "));
+                self.relation(out, iv, (left, right, true), &position, "-");
             }
             Tf::Timed(window) => {
                 let d = self.fresh("d");
@@ -636,52 +865,81 @@ impl LeanClause<'_> {
                 let points =
                     format!("Q_sub (b.ts (Int.toNat {next})) (b.ts (Int.toNat {position}))");
                 let bounds = window.lean_bounds(&format!("({points})"));
-                let inner = match &window.predicate {
-                    Tf::Atom(index) => format!(
+                out.push(Piece::text(match window.operator {
+                    super::dense::Operator::Always => {
+                        format!("(forall {d} : Int, 0 <= {d} -> 0 <= {next} -> ({bounds}) -> ")
+                    }
+                    super::dense::Operator::Eventually => {
+                        format!("(exists {d} : Int, 0 <= {d} /\\ (0 <= {next} /\\ {bounds} /\\ ")
+                    }
+                }));
+                match clause.formulas.get(window.predicate)? {
+                    Tf::Atom(index) => out.push(Piece::text(format!(
                         "{} (b.st (Int.toNat {next})) {}",
                         self.atom_name(*index),
-                        self.clause.binder,
-                    ),
-                    formula => self.at(formula, &next)?,
-                };
-                match window.operator {
-                    super::dense::Operator::Always => format!(
-                        "(forall {d} : Int, 0 <= {d} -> 0 <= {next} -> ({bounds}) -> {inner})"
-                    ),
-                    super::dense::Operator::Eventually => format!(
-                        "(exists {d} : Int, 0 <= {d} /\\ (0 <= {next} /\\ {bounds} /\\ {inner}))"
-                    ),
+                        clause.binder,
+                    ))),
+                    _ => out.push(at(window.predicate, next.into())),
                 }
+                out.push(Piece::text(match window.operator {
+                    super::dense::Operator::Always => ")",
+                    super::dense::Operator::Eventually => "))",
+                }));
             }
-        })
+        }
+        Ok(())
+    }
+
+    fn binary(
+        out: &mut Vec<Piece<At>>,
+        left: TfId,
+        symbol: &'static str,
+        right: TfId,
+        position: Rc<str>,
+    ) {
+        out.extend([
+            Piece::text("("),
+            at(left, Rc::clone(&position)),
+            Piece::text(symbol),
+            at(right, position),
+            Piece::text(")"),
+        ]);
     }
 
     /// `left until right` or, reading backwards, `left since right`:
     /// some offset `d` in the interval makes `right` hold and every offset
     /// `e` from the interval's lower bound up to `d` makes `left` hold.
+    /// `negated` reads both operands negated.
     fn relation(
         &mut self,
+        out: &mut Vec<Piece<At>>,
         iv: Iv,
-        left: &Tf,
-        right: &Tf,
+        (left, right, negated): (TfId, TfId, bool),
         position: &str,
         sign: &str,
-    ) -> Lower<String> {
+    ) {
         let d = self.fresh("d");
         let e = self.fresh("e");
-        let right = self.at(right, &format!("({position} {sign} {d})"))?;
-        let left = self.at(left, &format!("({position} {sign} {e})"))?;
         let past = (sign == "-").then_some(position);
         let window = Self::window(iv, &d, past).join(" /\\ ");
-        Ok(format!(
-            "(exists {d} : Int, {window} /\\ {right} /\\ (forall {e} : Int, {} <= {e} -> {e} < {d} -> {left}))",
-            iv.lower()
-        ))
+        let operand = |tf, offset: &str| {
+            Piece::Node(At {
+                tf,
+                position: format!("({position} {sign} {offset})").into(),
+                negated,
+            })
+        };
+        out.extend([
+            Piece::text(format!("(exists {d} : Int, {window} /\\ ")),
+            operand(right, &d),
+            Piece::text(format!(
+                " /\\ (forall {e} : Int, {} <= {e} -> {e} < {d} -> ",
+                iv.lower()
+            )),
+            operand(left, &e),
+            Piece::text("))"),
+        ]);
     }
-}
-
-fn negate(tf: &Tf) -> Tf {
-    Tf::Not(Box::new(tf.clone()))
 }
 
 /// The Lean text of a fairness premise over the behaviour `b`.
@@ -758,7 +1016,7 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         }
         let ok = mangle("ok_", &clause.name);
         let mut ok_body = vec![format!("{has} {} s.{}", clause.binder, object.variable())];
-        for def in &clause.defs {
+        for &def in &clause.defs {
             ok_body.push(input.show.expr(def)?);
         }
         out.push(define(
@@ -780,7 +1038,7 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             "Behaviour"
         };
         let binder = &clause.binder;
-        for (index, e) in clause.cur.iter().enumerate() {
+        for (index, &e) in clause.cur.iter().enumerate() {
             out.push(define(
                 clause.position,
                 None,
@@ -796,7 +1054,7 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             atom,
             next: 0,
         };
-        let formula = lean.at(&clause.tf, "i")?;
+        let formula = lean.at(clause.tf, "i")?;
         out.push(define(
             clause.position,
             Some(holds.clone()),

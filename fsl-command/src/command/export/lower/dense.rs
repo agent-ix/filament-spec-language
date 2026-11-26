@@ -4,11 +4,11 @@
 mod formula;
 
 pub(super) use self::formula::tla_clause;
-pub(super) use self::formula::{Operator, Window};
+pub(super) use self::formula::{Operator, Pending, Window};
 use super::temporal::ClauseRead;
 use super::{
-    bullets, defer_at, define, mangle, operation_anchor, parameters, refusal, rename_param, str_of,
-    tla_domain, Definition, Input, Low, Lower, Lowerer, E,
+    bullets, defer_at, define, mangle, operation_anchor, parameters, refusal, str_of, tla_domain,
+    Definition, ExprId, Input, Low, Lower, Lowerer, E,
 };
 use filament_contract_model::CheckedNodeId;
 use fsl_package::{
@@ -61,8 +61,24 @@ struct Bound {
 }
 
 struct Restriction {
-    predicate: E,
+    predicate: ExprId,
     bounds: Vec<Bound>,
+}
+
+/// A predicate over `r_self` and the same predicate over a quantified key `k`.
+#[derive(Clone, Copy)]
+struct Keyed {
+    own: ExprId,
+    keyed: ExprId,
+}
+
+impl Keyed {
+    fn new(lowerer: &mut Lowerer<'_>, own: ExprId) -> Self {
+        Self {
+            own,
+            keyed: lowerer.exprs.rename_param(own, "r_self", "k"),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -75,8 +91,8 @@ struct Action {
 pub(super) struct Model {
     pub(super) node: usize,
     clocks: Vec<Clock>,
-    invariants: Vec<Restriction>,
-    urgency: Vec<E>,
+    invariants: Vec<(Keyed, Vec<Bound>)>,
+    urgency: Vec<Keyed>,
     actions: Vec<Action>,
 }
 
@@ -235,7 +251,7 @@ impl Model {
                     || !slots.is_empty()
                     || !binders.is_empty()
                     || !receiver(lowerer, owner)?
-                    || predicate(lowerer, condition)? != E::Bool(true)
+                    || !is_true(lowerer, condition)?
                 {
                     return defer_at(
                         at,
@@ -266,20 +282,27 @@ impl Model {
                         "a time invariant with slot binders",
                     );
                 }
-                invariants.push(restriction(
+                let restriction = restriction(
                     lowerer,
                     model,
                     &places,
                     &invariant.predicate,
                     &invariant.bounds,
-                )?);
+                )?;
+                invariants.push((
+                    Keyed::new(lowerer, restriction.predicate),
+                    restriction.bounds,
+                ));
             }
             let mut urgency = Vec::new();
             for rule in &model.urgencies {
                 match rule {
                     CheckedUrgency::When {
                         predicate: term, ..
-                    } => urgency.push(predicate(lowerer, term)?),
+                    } => {
+                        let term = predicate(lowerer, term)?;
+                        urgency.push(Keyed::new(lowerer, term));
+                    }
                     CheckedUrgency::Operation {
                         operation_name,
                         metadata,
@@ -361,7 +384,7 @@ impl Model {
         if !action.guards.is_empty() {
             let mut guards = Vec::new();
             for guard in &action.guards {
-                let mut terms = vec![input.show.expr(&guard.predicate)?];
+                let mut terms = vec![input.show.expr(guard.predicate)?];
                 terms.extend(
                     guard
                         .bounds
@@ -411,13 +434,9 @@ impl Model {
     ) -> Lower<()> {
         let v = input.objects[0].variable();
         let mut invariants = Vec::new();
-        for invariant in &self.invariants {
-            let predicate =
-                input
-                    .show
-                    .expr(&rename_param(invariant.predicate.clone(), "r_self", "k"))?;
-            let bounds: Vec<_> = invariant
-                .bounds
+        for (term, bounds) in &self.invariants {
+            let predicate = input.show.expr(term.keyed)?;
+            let bounds: Vec<_> = bounds
                 .iter()
                 .map(|bound| self.tla_bound(bound, "k", Some("d")))
                 .collect();
@@ -448,9 +467,8 @@ impl Model {
         };
         let mut urgent = Vec::new();
         for term in &self.urgency {
-            let renamed = rename_param(term.clone(), "r_self", "k");
-            let predicate = input.show.expr(&renamed)?;
-            urgent.push(if renamed == *term {
+            let predicate = input.show.expr(term.keyed)?;
+            urgent.push(if term.keyed == term.own {
                 predicate
             } else {
                 format!("(\\E k \\in DOMAIN {v} : {predicate})")
@@ -480,11 +498,8 @@ impl Model {
             disjunction(&urgent, "FALSE", " \\/ ")
         ));
         let mut applying = Vec::new();
-        for invariant in &self.invariants {
-            let predicate =
-                input
-                    .show
-                    .expr(&rename_param(invariant.predicate.clone(), "r_self", "k"))?;
+        for (term, _) in &self.invariants {
+            let predicate = input.show.expr(term.keyed)?;
             applying.push(format!("\\E k \\in DOMAIN {v} : {predicate}"));
         }
         let applying = match applying.as_slice() {
@@ -611,7 +626,7 @@ impl Model {
         if !action.guards.is_empty() {
             let mut cases = Vec::new();
             for guard in &action.guards {
-                let mut terms = vec![input.show.expr(&guard.predicate)?];
+                let mut terms = vec![input.show.expr(guard.predicate)?];
                 terms.extend(
                     guard
                         .bounds
@@ -660,9 +675,8 @@ impl Model {
         };
         let mut urgent = Vec::new();
         for term in &self.urgency {
-            let renamed = rename_param(term.clone(), "r_self", "k");
-            let predicate = input.show.expr(&renamed)?;
-            urgent.push(if renamed == *term {
+            let predicate = input.show.expr(term.keyed)?;
+            urgent.push(if term.keyed == term.own {
                 predicate
             } else {
                 format!("(exists k, {has} k s.{v} /\\ {predicate})")
@@ -688,14 +702,10 @@ impl Model {
         }
         let mut applying = Vec::new();
         let mut invariants = Vec::new();
-        for invariant in &self.invariants {
-            let predicate =
-                input
-                    .show
-                    .expr(&rename_param(invariant.predicate.clone(), "r_self", "k"))?;
+        for (term, bounds) in &self.invariants {
+            let predicate = input.show.expr(term.keyed)?;
             applying.push(format!("(exists k, {has} k s.{v} /\\ {predicate})"));
-            let bounds: Vec<_> = invariant
-                .bounds
+            let bounds: Vec<_> = bounds
                 .iter()
                 .map(|bound| self.lean_bound(bound, "k", Some("d")))
                 .collect();
@@ -756,13 +766,13 @@ fn unsupported<T>(
     )
 }
 
-fn predicate(lowerer: &mut Lowerer<'_>, term: &CheckedNodeId) -> Lower<E> {
+fn predicate(lowerer: &mut Lowerer<'_>, term: &CheckedNodeId) -> Lower<ExprId> {
     let low = read_term(lowerer, term)?;
     let at = position(lowerer, term)?;
     total_predicate(low, at, &lowerer.graph.construct(at))
 }
 
-fn total_predicate(low: Low, at: usize, construct: &str) -> Lower<E> {
+fn total_predicate(low: Low, at: usize, construct: &str) -> Lower<ExprId> {
     if low.defined.is_empty() {
         return Ok(low.value);
     }
@@ -775,9 +785,15 @@ fn total_predicate(low: Low, at: usize, construct: &str) -> Lower<E> {
     )
 }
 
+fn is_true(lowerer: &mut Lowerer<'_>, term: &CheckedNodeId) -> Lower<bool> {
+    let value = predicate(lowerer, term)?;
+    Ok(*lowerer.exprs.get(value)? == E::Bool(true))
+}
+
 fn receiver(lowerer: &mut Lowerer<'_>, term: &CheckedNodeId) -> Lower<bool> {
     let low = read_term(lowerer, term)?;
-    Ok(low.defined.is_empty() && low.value == E::Param("r_self".to_owned()))
+    Ok(low.defined.is_empty()
+        && matches!(lowerer.exprs.get(low.value)?, E::Param(name) if name == "r_self"))
 }
 
 fn read_term(lowerer: &mut Lowerer<'_>, term: &CheckedNodeId) -> Lower<Low> {
@@ -859,6 +875,7 @@ fn disjunction(terms: &[String], otherwise: &str, separator: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tree::Exprs;
     use super::{total_predicate, Low, E};
     use ix_trace_rs::trace;
 
@@ -866,9 +883,11 @@ mod tests {
     #[trace("FSpec-FR-813-AC-24", "FSpec-TC-1972")]
     fn dense_time_partial_predicate_stops_export_at_its_node() {
         let construct = "expression/application";
+        let mut exprs = Exprs::default();
+        let value = exprs.add(E::Bool(false));
         let partial = Low {
-            value: E::Bool(false),
-            defined: vec![E::Bool(false)],
+            value,
+            defined: vec![value],
         };
         let Err(refusal) = total_predicate(partial, 3, construct) else {
             panic!("a predicate requiring a definedness check must refuse");
@@ -880,12 +899,12 @@ mod tests {
             "a timed predicate with a definedness condition"
         );
         let inactive = Low {
-            value: E::Bool(false),
+            value,
             defined: Vec::new(),
         };
         assert!(matches!(
             total_predicate(inactive, 3, construct),
-            Ok(E::Bool(false))
+            Ok(total) if total == value
         ));
     }
 }

@@ -665,6 +665,41 @@ mod dense_time {
         assert!(value["export"]["target_text"].is_null(), "{value}");
     }
 
+    /// ADR-030 D-1: a 1,000-deep time invariant is renamed to the quantified
+    /// key and written, and 1,001 conjuncts of the temporal clause are each
+    /// stated, on a 2 MiB thread.
+    #[trace("FSpec-FR-813-AC-18", "FSpec-TC-1972")]
+    #[test]
+    fn a_deep_dense_predicate_and_formula_export() {
+        crate::export_deep_nesting::on_a_small_stack(|| {
+            let conjunct = " and always holds(l.on or not l.on)";
+            let body = format!("always holds(l.on or not l.on){}", conjunct.repeat(1_000));
+            let (dir, path) = lamp_request(&body, Target::Tla, true);
+            let unit_path = dir.path().join("unit.native");
+            let unit = std::fs::read_to_string(&unit_path).unwrap().replace(
+                "when { self.on }",
+                &format!("when {{ self.on{} }}", " and self.on".repeat(1_000)),
+            );
+            std::fs::write(unit_path, unit).unwrap();
+            let (exit, value) = run_lamp(&path);
+            assert_eq!(exit, 0, "{}", value["export"]["refusal"]["detail"]);
+            let text = value["export"]["target_text"].as_str().unwrap();
+            let read = "v_Lamp[k].fld_on";
+            let predicate = format!(
+                "{}{read}{}",
+                "(".repeat(1_000),
+                format!(" /\\ {read})").repeat(1_000)
+            );
+            let quiescent =
+                format!("Quiescent == ~Urgent /\\ ~(\\E k \\in DOMAIN v_Lamp : {predicate})");
+            assert!(
+                text.lines().any(|line| line == quiescent),
+                "Quiescent differs"
+            );
+            assert_eq!(text.matches("[](tick \\/ ").count(), 1_001);
+        });
+    }
+
     #[trace("FSpec-FR-813-AC-24", "FSpec-TC-1972")]
     #[test]
     fn dense_tla_refuses_the_root_until_at_its_checked_operator_node() {
@@ -3281,6 +3316,30 @@ fn tableau_aggregate_closure_overflow_names_the_operator_allocated_last() {
     );
     assert_eq!(refusal["node"], node_text(&operator), "{refusal}");
     assert_eq!(refusal["locus"], locus, "{refusal}");
+}
+
+/// ADR-030 D-1: a mixed obligation with 1,000 response conjuncts passes the
+/// closure limit and is refused in TLA+, and Lean states it, on a 2 MiB
+/// thread.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn a_deep_tableau_conjunction_reaches_the_closure_limit_refusal() {
+    crate::export_deep_nesting::on_a_small_stack(|| {
+        let response = " and (always (holds(l.pending) implies eventually[1, 1] holds(l.ready)))";
+        let formula = format!(
+            "(eventually always holds(l.safe)) and (always eventually holds(l.seen)){}",
+            response.repeat(1_000)
+        );
+        let (_dir, path) = tableau_request_with_formula(Target::Tla, &["c"], &formula);
+        let (exit, value) = run_tableau(&path);
+        assert_eq!(exit, 21, "{}", value["export"]["refusal"]["detail"]);
+        let refusal = &value["export"]["refusal"];
+        assert_eq!(refusal["code"], "unimplemented_capability");
+        assert_eq!(refusal["construct"], "temporal/formula");
+        let (_dir, path) = tableau_request_with_formula(Target::Lean, &["c"], &formula);
+        let (exit, value) = run_tableau(&path);
+        assert_eq!(exit, 0, "{}", value["export"]["refusal"]["detail"]);
+    });
 }
 
 /// FSpec FR-813-AC-24: a future operator inside a past operator is refused in

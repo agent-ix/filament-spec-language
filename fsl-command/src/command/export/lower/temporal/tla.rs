@@ -16,12 +16,14 @@
 //! every step of `Next_<clause>`, which includes the terminal step, so both
 //! targets count FSL's terminal stutter positions.
 
-use super::{ClauseLow, Iv, Tf, CONSTRUCT};
+use super::{ClauseLow, Formulas, Iv, Tf, TfId, CONSTRUCT};
 use crate::command::export::lower::{
-    bullets, define, mangle, parameters, refusal, scalars, snapshot_rows, tla_domain, Definition,
-    Input, Lower, Object, Operation, Target,
+    bullets, define, mangle, parameters, refusal, render, scalars, snapshot_rows, tla_domain,
+    Definition, Input, Lower, Object, Operation, Piece, Refusal, Target,
 };
+use filament_walk::{walk, Children, Walk};
 use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
 mod tableau;
 
@@ -51,77 +53,78 @@ pub(in crate::command::export::lower) struct Extra {
 // ---- Normal form -----------------------------------------------------------
 
 /// `historically` and `triggered` over an interval as the duals of `once`
-/// and `since`; the unbounded forms keep their own history.
-fn normalize(tf: &Tf) -> Tf {
-    let go = |inner: &Tf| Box::new(normalize(inner));
-    let not = |inner: Tf| Tf::Not(Box::new(inner));
-    match tf {
-        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) | Tf::Timed(_) => tf.clone(),
-        Tf::Not(inner) => Tf::Not(go(inner)),
-        Tf::And(left, right) => Tf::And(go(left), go(right)),
-        Tf::Or(left, right) => Tf::Or(go(left), go(right)),
-        Tf::Implies(left, right) => Tf::Implies(go(left), go(right)),
-        Tf::Always(iv, inner) => Tf::Always(*iv, go(inner)),
-        Tf::Eventually(iv, inner) => Tf::Eventually(*iv, go(inner)),
-        Tf::Once(iv, inner) => Tf::Once(*iv, go(inner)),
-        Tf::Until(iv, left, right) => Tf::Until(*iv, go(left), go(right)),
-        Tf::Release(iv, left, right) => Tf::Release(*iv, go(left), go(right)),
-        Tf::Since(iv, left, right) => Tf::Since(*iv, go(left), go(right)),
-        Tf::Historically(iv, inner) if !iv.is_some() => Tf::Historically(*iv, go(inner)),
-        Tf::Triggered(iv, left, right) if !iv.is_some() => Tf::Triggered(*iv, go(left), go(right)),
-        Tf::Historically(iv, inner) => not(Tf::Once(*iv, Box::new(not(normalize(inner))))),
-        Tf::Triggered(iv, left, right) => not(Tf::Since(
-            *iv,
-            Box::new(not(normalize(left))),
-            Box::new(not(normalize(right))),
-        )),
+/// and `since`; the unbounded forms keep their own history. The result is a
+/// new arena, built in one pass over the operands-first order of `source`.
+fn normalize(source: &Formulas, root: TfId) -> Lower<(Formulas, TfId)> {
+    let mut formulas = Formulas::default();
+    // The normal form of each source node, by its arena position.
+    let mut done: Vec<TfId> = Vec::new();
+    let of = |done: &[TfId], id: TfId| {
+        done.get(id.index())
+            .copied()
+            .ok_or_else(|| refusal(CONSTRUCT, "a formula operand is not in the formula"))
+    };
+    for (_, tf) in source.iter() {
+        let normal = match tf {
+            Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) => tf.clone(),
+            Tf::Timed(window) => {
+                let mut window = window.clone();
+                window.predicate = of(&done, window.predicate)?;
+                Tf::Timed(window)
+            }
+            &Tf::Not(inner) => Tf::Not(of(&done, inner)?),
+            &Tf::And(left, right) => Tf::And(of(&done, left)?, of(&done, right)?),
+            &Tf::Or(left, right) => Tf::Or(of(&done, left)?, of(&done, right)?),
+            &Tf::Implies(left, right) => Tf::Implies(of(&done, left)?, of(&done, right)?),
+            &Tf::Always(iv, inner) => Tf::Always(iv, of(&done, inner)?),
+            &Tf::Eventually(iv, inner) => Tf::Eventually(iv, of(&done, inner)?),
+            &Tf::Once(iv, inner) => Tf::Once(iv, of(&done, inner)?),
+            &Tf::Until(iv, left, right) => Tf::Until(iv, of(&done, left)?, of(&done, right)?),
+            &Tf::Release(iv, left, right) => Tf::Release(iv, of(&done, left)?, of(&done, right)?),
+            &Tf::Since(iv, left, right) => Tf::Since(iv, of(&done, left)?, of(&done, right)?),
+            &Tf::Historically(iv, inner) if !iv.is_some() => {
+                Tf::Historically(iv, of(&done, inner)?)
+            }
+            &Tf::Triggered(iv, left, right) if !iv.is_some() => {
+                Tf::Triggered(iv, of(&done, left)?, of(&done, right)?)
+            }
+            &Tf::Historically(iv, inner) => {
+                let inner = formulas.add(Tf::Not(of(&done, inner)?));
+                Tf::Not(formulas.add(Tf::Once(iv, inner)))
+            }
+            &Tf::Triggered(iv, left, right) => {
+                let left = formulas.add(Tf::Not(of(&done, left)?));
+                let right = formulas.add(Tf::Not(of(&done, right)?));
+                Tf::Not(formulas.add(Tf::Since(iv, left, right)))
+            }
+        };
+        done.push(formulas.add(normal));
     }
-}
-
-fn is_state(tf: &Tf) -> bool {
-    match tf {
-        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) => true,
-        Tf::Not(inner) => is_state(inner),
-        Tf::And(left, right) | Tf::Or(left, right) | Tf::Implies(left, right) => {
-            is_state(left) && is_state(right)
-        }
-        _ => false,
-    }
-}
-
-/// A formula `[]` and `<>` state directly.
-fn is_direct(tf: &Tf) -> bool {
-    match tf {
-        Tf::Not(inner) => is_direct(inner),
-        Tf::And(left, right) | Tf::Or(left, right) | Tf::Implies(left, right) => {
-            is_direct(left) && is_direct(right)
-        }
-        Tf::Always(iv, inner) | Tf::Eventually(iv, inner) => !iv.is_some() && is_direct(inner),
-        _ => is_state(tf),
-    }
+    let root = of(&done, root)?;
+    Ok((formulas, root))
 }
 
 // ---- Histories -------------------------------------------------------------
 
 enum HKind {
     /// `once p`: a Boolean `h`.
-    Once { p: Tf },
+    Once { p: TfId },
     /// `p since q`: a Boolean `h`.
-    Since { p: Tf, q: Tf },
+    Since { p: TfId, q: TfId },
     /// `historically p`: a Boolean `h` of `p` at every position so far.
-    Historically { p: Tf },
+    Historically { p: TfId },
     /// `p triggered q`: a Boolean `h`.
-    Triggered { p: Tf, q: Tf },
+    Triggered { p: TfId, q: TfId },
     /// `once[a,*] p`: a counter `c` of the steps since `p` first held,
     /// saturating at `a`.
-    OnceFrom { p: Tf, a: u64 },
+    OnceFrom { p: TfId, a: u64 },
     /// `p since[a,*] q`: a register `r` of length `a` over the Boolean of
     /// the unbounded `p since q`.
     SinceFrom { inner: usize, a: u64 },
     /// `once[a,b] p`: a shift register `r` of the last `b` values of `p`.
-    OnceWithin { p: Tf, a: u64, b: u64 },
+    OnceWithin { p: TfId, a: u64, b: u64 },
     /// `p since[a,b] q`: registers `r` over `q` and `r + 1` over `p`.
-    SinceWithin { p: Tf, q: Tf, a: u64, b: u64 },
+    SinceWithin { p: TfId, q: TfId, a: u64, b: u64 },
 }
 
 struct History {
@@ -137,161 +140,274 @@ struct History {
     before_q: bool,
 }
 
-/// The value `tf` has at every position before the origin, where each atom
-/// is false.
-fn before_origin(tf: &Tf, histories: &[History]) -> bool {
-    match tf {
-        Tf::Const(value) => *value,
-        Tf::Hist(index) => histories.get(*index).is_some_and(|history| history.before),
-        Tf::Not(inner) => !before_origin(inner, histories),
-        Tf::And(left, right) => before_origin(left, histories) && before_origin(right, histories),
-        Tf::Or(left, right) => before_origin(left, histories) || before_origin(right, histories),
-        Tf::Implies(left, right) => {
-            !before_origin(left, histories) || before_origin(right, histories)
-        }
-        _ => false,
-    }
+/// An extracted formula and the value it has at every position before the
+/// origin, where each atom is false.
+#[derive(Clone, Copy)]
+struct Extracted {
+    tf: TfId,
+    before: bool,
 }
 
-/// Replace each past operator of `tf` by a history.
-fn extract(tf: &Tf, histories: &mut Vec<History>, ordinal: &mut u64) -> Lower<Tf> {
-    fn go(inner: &Tf, histories: &mut Vec<History>, ordinal: &mut u64) -> Lower<Box<Tf>> {
-        extract(inner, histories, ordinal).map(Box::new)
+/// The walk that replaces each past operator by a history; `done` holds the
+/// operands not yet taken.
+struct Extract<'a> {
+    formulas: &'a mut Formulas,
+    histories: Vec<History>,
+    ordinal: u64,
+    done: Vec<Extracted>,
+}
+
+impl Extract<'_> {
+    fn operand(&mut self) -> Lower<Extracted> {
+        self.done
+            .pop()
+            .ok_or_else(|| refusal(CONSTRUCT, "a temporal operator lost an operand"))
     }
-    Ok(match tf {
-        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) | Tf::Timed(_) => tf.clone(),
-        Tf::Not(inner) => Tf::Not(go(inner, histories, ordinal)?),
-        Tf::And(left, right) => Tf::And(
-            go(left, histories, ordinal)?,
-            go(right, histories, ordinal)?,
-        ),
-        Tf::Or(left, right) => Tf::Or(
-            go(left, histories, ordinal)?,
-            go(right, histories, ordinal)?,
-        ),
-        Tf::Implies(left, right) => Tf::Implies(
-            go(left, histories, ordinal)?,
-            go(right, histories, ordinal)?,
-        ),
-        Tf::Always(iv, inner) => Tf::Always(*iv, go(inner, histories, ordinal)?),
-        Tf::Eventually(iv, inner) => Tf::Eventually(*iv, go(inner, histories, ordinal)?),
-        Tf::Until(iv, left, right) => Tf::Until(
-            *iv,
-            go(left, histories, ordinal)?,
-            go(right, histories, ordinal)?,
-        ),
-        Tf::Release(iv, left, right) => Tf::Release(
-            *iv,
-            go(left, histories, ordinal)?,
-            go(right, histories, ordinal)?,
-        ),
-        Tf::Once(iv, inner) => {
-            let ord = *ordinal;
-            *ordinal += 1;
-            let p = *go(inner, histories, ordinal)?;
-            past_state(&p)?;
-            let before_p = before_origin(&p, histories);
-            let (kind, before) = match iv.bounds() {
-                (0, None) => (HKind::Once { p }, false),
-                (a, None) => (HKind::OnceFrom { p, a }, false),
-                (a, Some(b)) => (HKind::OnceWithin { p, a, b }, before_p),
-            };
-            histories.push(History {
-                kind,
-                ord,
-                before,
-                before_p,
-                before_q: false,
-            });
-            Tf::Hist(histories.len() - 1)
+
+    /// The operands of a binary operator, left first.
+    fn operands(&mut self) -> Lower<(Extracted, Extracted)> {
+        let right = self.operand()?;
+        let left = self.operand()?;
+        Ok((left, right))
+    }
+
+    fn push(&mut self, tf: Tf, before: bool) {
+        let tf = self.formulas.add(tf);
+        self.done.push(Extracted { tf, before });
+    }
+
+    /// Name the history last added as the value of its operator.
+    fn push_history(&mut self) -> Lower<()> {
+        let index = self.histories.len().saturating_sub(1);
+        let before = self
+            .histories
+            .get(index)
+            .ok_or_else(|| refusal(CONSTRUCT, "a history that does not exist"))?
+            .before;
+        self.push(Tf::Hist(index), before);
+        Ok(())
+    }
+
+    /// The operand of a past operator must read no future position.
+    fn past_state(&self, operand: Extracted) -> Lower<TfId> {
+        if self.formulas.facts(operand.tf).state {
+            Ok(operand.tf)
+        } else {
+            refuse_internal("a past operator over a formula that holds a future operator")
         }
-        Tf::Since(iv, left, right) => {
-            let ord = *ordinal;
-            *ordinal += 2;
-            let p = *go(left, histories, ordinal)?;
-            let q = *go(right, histories, ordinal)?;
-            past_state(&p)?;
-            past_state(&q)?;
-            let (before_p, before_q) = (before_origin(&p, histories), before_origin(&q, histories));
-            match iv.bounds() {
-                (a, Some(b)) => histories.push(History {
-                    kind: HKind::SinceWithin { p, q, a, b },
+    }
+
+    fn history(&mut self, tf: &Tf, ord: u64) -> Lower<()> {
+        match tf {
+            &Tf::Once(iv, _) => {
+                let operand = self.operand()?;
+                let p = self.past_state(operand)?;
+                let before_p = operand.before;
+                let (kind, before) = match iv.bounds() {
+                    (0, None) => (HKind::Once { p }, false),
+                    (a, None) => (HKind::OnceFrom { p, a }, false),
+                    (a, Some(b)) => (HKind::OnceWithin { p, a, b }, before_p),
+                };
+                self.histories.push(History {
+                    kind,
                     ord,
-                    before: before_q,
+                    before,
                     before_p,
-                    before_q,
-                }),
-                (a, None) => {
-                    histories.push(History {
-                        kind: HKind::Since { p, q },
+                    before_q: false,
+                });
+            }
+            &Tf::Historically(..) => {
+                let operand = self.operand()?;
+                let p = self.past_state(operand)?;
+                self.histories.push(History {
+                    kind: HKind::Historically { p },
+                    ord,
+                    before: true,
+                    before_p: operand.before,
+                    before_q: false,
+                });
+            }
+            &Tf::Since(iv, ..) => {
+                let (left, right) = self.operands()?;
+                let (p, q) = (self.past_state(left)?, self.past_state(right)?);
+                let (before_p, before_q) = (left.before, right.before);
+                match iv.bounds() {
+                    (a, Some(b)) => self.histories.push(History {
+                        kind: HKind::SinceWithin { p, q, a, b },
                         ord,
-                        before: false,
+                        before: before_q,
                         before_p,
                         before_q,
-                    });
-                    if a > 0 {
-                        let inner = histories.len() - 1;
-                        histories.push(History {
-                            kind: HKind::SinceFrom { inner, a },
+                    }),
+                    (a, None) => {
+                        self.histories.push(History {
+                            kind: HKind::Since { p, q },
                             ord,
                             before: false,
                             before_p,
                             before_q,
                         });
+                        if a > 0 {
+                            let inner = self.histories.len() - 1;
+                            self.histories.push(History {
+                                kind: HKind::SinceFrom { inner, a },
+                                ord,
+                                before: false,
+                                before_p,
+                                before_q,
+                            });
+                        }
                     }
                 }
             }
-            Tf::Hist(histories.len() - 1)
+            &Tf::Triggered(..) => {
+                let (left, right) = self.operands()?;
+                let (p, q) = (self.past_state(left)?, self.past_state(right)?);
+                self.histories.push(History {
+                    kind: HKind::Triggered { p, q },
+                    ord,
+                    before: true,
+                    before_p: left.before,
+                    before_q: right.before,
+                });
+            }
+            _ => return refuse_internal("a history for no past operator"),
         }
-        Tf::Historically(iv, inner) if !iv.is_some() => {
-            let ord = *ordinal;
-            *ordinal += 1;
-            let p = *go(inner, histories, ordinal)?;
-            past_state(&p)?;
-            let before_p = before_origin(&p, histories);
-            histories.push(History {
-                kind: HKind::Historically { p },
-                ord,
-                before: true,
-                before_p,
-                before_q: false,
-            });
-            Tf::Hist(histories.len() - 1)
+        self.push_history()
+    }
+
+    fn rebuild(&mut self, tf: Tf, ord: u64) -> Lower<()> {
+        match tf {
+            Tf::Const(value) => self.push(tf, value),
+            Tf::Hist(index) => {
+                let before = self
+                    .histories
+                    .get(index)
+                    .is_some_and(|history| history.before);
+                self.push(tf, before);
+            }
+            Tf::Atom(_) | Tf::Timed(_) => self.push(tf, false),
+            Tf::Not(_) => {
+                let inner = self.operand()?;
+                self.push(Tf::Not(inner.tf), !inner.before);
+            }
+            Tf::And(..) => {
+                let (left, right) = self.operands()?;
+                self.push(Tf::And(left.tf, right.tf), left.before && right.before);
+            }
+            Tf::Or(..) => {
+                let (left, right) = self.operands()?;
+                self.push(Tf::Or(left.tf, right.tf), left.before || right.before);
+            }
+            Tf::Implies(..) => {
+                let (left, right) = self.operands()?;
+                self.push(Tf::Implies(left.tf, right.tf), !left.before || right.before);
+            }
+            Tf::Always(iv, _) => {
+                let inner = self.operand()?;
+                self.push(Tf::Always(iv, inner.tf), false);
+            }
+            Tf::Eventually(iv, _) => {
+                let inner = self.operand()?;
+                self.push(Tf::Eventually(iv, inner.tf), false);
+            }
+            Tf::Until(iv, ..) => {
+                let (left, right) = self.operands()?;
+                self.push(Tf::Until(iv, left.tf, right.tf), false);
+            }
+            Tf::Release(iv, ..) => {
+                let (left, right) = self.operands()?;
+                self.push(Tf::Release(iv, left.tf, right.tf), false);
+            }
+            Tf::Once(..) | Tf::Since(..) | Tf::Historically(..) | Tf::Triggered(..) => {
+                self.history(&tf, ord)?;
+            }
         }
-        Tf::Triggered(iv, left, right) if !iv.is_some() => {
-            let ord = *ordinal;
-            *ordinal += 2;
-            let p = *go(left, histories, ordinal)?;
-            let q = *go(right, histories, ordinal)?;
-            past_state(&p)?;
-            past_state(&q)?;
-            let (before_p, before_q) = (before_origin(&p, histories), before_origin(&q, histories));
-            histories.push(History {
-                kind: HKind::Triggered { p, q },
-                ord,
-                before: true,
-                before_p,
-                before_q,
-            });
-            Tf::Hist(histories.len() - 1)
+        Ok(())
+    }
+}
+
+impl Walk for Extract<'_> {
+    type Node = TfId;
+    /// The node and, for a past operator, its ordinal.
+    type Frame = (TfId, u64);
+    type Stop = Refusal;
+
+    fn enter(
+        &mut self,
+        id: TfId,
+        children: &mut Children<'_, TfId>,
+    ) -> ControlFlow<Refusal, (TfId, u64)> {
+        let ord = self.ordinal;
+        match self.formulas.get(id) {
+            Err(refusal) => return ControlFlow::Break(refusal),
+            Ok(tf) => match tf {
+                Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) | Tf::Timed(_) => {}
+                &Tf::Not(inner) | &Tf::Always(_, inner) | &Tf::Eventually(_, inner) => {
+                    children.push(inner);
+                }
+                &Tf::And(left, right)
+                | &Tf::Or(left, right)
+                | &Tf::Implies(left, right)
+                | &Tf::Until(_, left, right)
+                | &Tf::Release(_, left, right) => children.extend([left, right]),
+                &Tf::Once(_, inner) => {
+                    self.ordinal += 1;
+                    children.push(inner);
+                }
+                &Tf::Historically(iv, inner) if !iv.is_some() => {
+                    self.ordinal += 1;
+                    children.push(inner);
+                }
+                &Tf::Since(_, left, right) => {
+                    self.ordinal += 2;
+                    children.extend([left, right]);
+                }
+                &Tf::Triggered(iv, left, right) if !iv.is_some() => {
+                    self.ordinal += 2;
+                    children.extend([left, right]);
+                }
+                Tf::Historically(..) | Tf::Triggered(..) => {
+                    return ControlFlow::Break(refusal(
+                        CONSTRUCT,
+                        "a bounded past operator that normalization leaves",
+                    ));
+                }
+            },
         }
-        Tf::Historically(..) | Tf::Triggered(..) => {
-            return refuse_internal("a bounded past operator that normalization leaves");
+        ControlFlow::Continue((id, ord))
+    }
+
+    fn exit(&mut self, (id, ord): (TfId, u64)) -> ControlFlow<Refusal> {
+        let rebuilt = self
+            .formulas
+            .get(id)
+            .cloned()
+            .and_then(|tf| self.rebuild(tf, ord));
+        match rebuilt {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(refusal) => ControlFlow::Break(refusal),
         }
-    })
+    }
+}
+
+/// Replace each past operator under `root` by a history.
+fn extract(formulas: &mut Formulas, root: TfId) -> Lower<(TfId, Vec<History>)> {
+    let mut extract = Extract {
+        formulas,
+        histories: Vec::new(),
+        ordinal: 0,
+        done: Vec::new(),
+    };
+    if let ControlFlow::Break(refusal) = walk(&mut extract, root) {
+        return Err(refusal);
+    }
+    let root = extract.operand()?.tf;
+    Ok((root, extract.histories))
 }
 
 fn refuse_internal<T>(detail: &str) -> Lower<T> {
     Err(refusal(CONSTRUCT, detail))
-}
-
-/// The operand of a past operator must read no future position.
-fn past_state(tf: &Tf) -> Lower<()> {
-    if is_state(tf) {
-        Ok(())
-    } else {
-        refuse_internal("a past operator over a formula that holds a future operator")
-    }
 }
 
 // ---- Shape -----------------------------------------------------------------
@@ -314,14 +430,14 @@ impl MonOp {
 struct Monitor {
     op: MonOp,
     iv: Iv,
-    left: Tf,
-    right: Option<Tf>,
+    left: TfId,
+    right: Option<TfId>,
 }
 
 /// One conjunct of a clause: a formula `[]` and `<>` state directly or a
 /// deterministic monitor.
 enum Part {
-    Direct(Tf),
+    Direct(TfId),
     Mon(Monitor),
 }
 
@@ -331,53 +447,55 @@ enum Shape {
     Tableau,
 }
 
-fn conjuncts<'a>(tf: &'a Tf, out: &mut Vec<&'a Tf>) {
-    match tf {
-        Tf::And(left, right) => {
-            conjuncts(left, out);
-            conjuncts(right, out);
+/// The conjuncts of `root`, left to right.
+fn conjuncts(formulas: &Formulas, root: TfId) -> Lower<Vec<TfId>> {
+    let mut out = Vec::new();
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        match formulas.get(id)? {
+            &Tf::And(left, right) => pending.extend([right, left]),
+            _ => out.push(id),
         }
-        other => out.push(other),
     }
+    Ok(out)
 }
 
 /// The deterministic monitor of `tf`, when it has one.
-fn monitor_of(tf: &Tf) -> Option<Monitor> {
-    let (op, left, right, iv) = match tf {
-        Tf::Until(iv, left, right) => (MonOp::Until, left, Some(right), *iv),
-        Tf::Release(iv, left, right) => (MonOp::Release, left, Some(right), *iv),
-        Tf::Always(iv, inner) if iv.is_some() => (MonOp::Always, inner, None, *iv),
-        Tf::Eventually(iv, inner) if iv.is_some() => (MonOp::Eventually, inner, None, *iv),
-        _ => return None,
+fn monitor_of(formulas: &Formulas, tf: TfId) -> Lower<Option<Monitor>> {
+    let (op, left, right, iv) = match formulas.get(tf)? {
+        &Tf::Until(iv, left, right) => (MonOp::Until, left, Some(right), iv),
+        &Tf::Release(iv, left, right) => (MonOp::Release, left, Some(right), iv),
+        &Tf::Always(iv, inner) if iv.is_some() => (MonOp::Always, inner, None, iv),
+        &Tf::Eventually(iv, inner) if iv.is_some() => (MonOp::Eventually, inner, None, iv),
+        _ => return Ok(None),
     };
-    if !is_state(left) || right.is_some_and(|right| !is_state(right)) {
-        return None;
+    let state = |id| formulas.facts(id).state;
+    if !state(left) || right.is_some_and(|right| !state(right)) {
+        return Ok(None);
     }
-    Some(Monitor {
+    Ok(Some(Monitor {
         op,
         iv,
-        left: (**left).clone(),
-        right: right.map(|right| (**right).clone()),
-    })
+        left,
+        right,
+    }))
 }
 
-fn shape_of(tf: &Tf) -> Shape {
-    if is_direct(tf) {
-        return Shape::Direct;
+fn shape_of(formulas: &Formulas, root: TfId) -> Lower<Shape> {
+    if formulas.facts(root).direct {
+        return Ok(Shape::Direct);
     }
-    let mut leaves = Vec::new();
-    conjuncts(tf, &mut leaves);
     let mut parts = Vec::new();
-    for leaf in leaves {
-        if is_direct(leaf) {
-            parts.push(Part::Direct(leaf.clone()));
-        } else if let Some(monitor) = monitor_of(leaf) {
+    for leaf in conjuncts(formulas, root)? {
+        if formulas.facts(leaf).direct {
+            parts.push(Part::Direct(leaf));
+        } else if let Some(monitor) = monitor_of(formulas, leaf)? {
             parts.push(Part::Mon(monitor));
         } else {
-            return Shape::Tableau;
+            return Ok(Shape::Tableau);
         }
     }
-    Shape::Monitors(parts)
+    Ok(Shape::Monitors(parts))
 }
 
 // ---- Rendering -------------------------------------------------------------
@@ -448,9 +566,22 @@ struct Var {
     update: Option<String>,
 }
 
+/// A text to write for one clause.
+#[derive(Clone, Copy)]
+enum Say {
+    /// A state formula at the current or the next state.
+    State(TfId, bool),
+    /// A formula whose temporal operators are `[]` and `<>`.
+    Direct(TfId),
+    /// The value of a history at the current or the next position.
+    Hist(usize, bool),
+}
+
 struct Ctx<'a> {
     input: &'a Input<'a>,
     clause: &'a ClauseLow,
+    /// The formulas the ids of this lowering name.
+    formulas: &'a Formulas,
     object: &'a Object,
     names: Names,
     histories: Vec<History>,
@@ -486,42 +617,44 @@ impl Ctx<'_> {
         } else {
             &self.clause.cur
         };
-        let e = atoms
+        let &e = atoms
             .get(index)
             .ok_or_else(|| refusal(CONSTRUCT, "an atom with no lowered operand"))?;
         self.input.show.expr(e)
     }
 
     /// A state formula at the current or the next state.
-    fn state(&self, tf: &Tf, primed: bool) -> Lower<String> {
-        Ok(match tf {
-            Tf::Const(true) => "TRUE".to_owned(),
-            Tf::Const(false) => "FALSE".to_owned(),
-            Tf::Atom(index) => self.atom(*index, primed)?,
-            Tf::Hist(index) => self.hist_value(*index, primed)?,
-            Tf::Not(inner) => format!("~({})", self.state(inner, primed)?),
-            Tf::And(left, right) => format!(
-                "({} /\\ {})",
-                self.state(left, primed)?,
-                self.state(right, primed)?
-            ),
-            Tf::Or(left, right) => format!(
-                "({} \\/ {})",
-                self.state(left, primed)?,
-                self.state(right, primed)?
-            ),
-            Tf::Implies(left, right) => format!(
-                "({} => {})",
-                self.state(left, primed)?,
-                self.state(right, primed)?
-            ),
+    fn state(&self, tf: TfId, primed: bool) -> Lower<String> {
+        self.say(Say::State(tf, primed))
+    }
+
+    fn say(&self, root: Say) -> Lower<String> {
+        render(root, |say, out| match say {
+            Say::State(tf, primed) => self.state_pieces(tf, primed, out),
+            Say::Direct(tf) => self.direct_pieces(tf, out),
+            Say::Hist(index, primed) => self.hist_pieces(index, primed, out),
+        })
+    }
+
+    fn state_pieces(&self, tf: TfId, primed: bool, out: &mut Vec<Piece<Say>>) -> Lower<()> {
+        let state = |id| Piece::Node(Say::State(id, primed));
+        match self.formulas.get(tf)? {
+            Tf::Const(true) => out.push(Piece::text("TRUE")),
+            Tf::Const(false) => out.push(Piece::text("FALSE")),
+            &Tf::Atom(index) => out.push(Piece::text(self.atom(index, primed)?)),
+            &Tf::Hist(index) => out.push(Piece::Node(Say::Hist(index, primed))),
+            &Tf::Not(inner) => out.extend([Piece::text("~("), state(inner), Piece::text(")")]),
+            &Tf::And(left, right) => binary(out, state(left), " /\\ ", state(right)),
+            &Tf::Or(left, right) => binary(out, state(left), " \\/ ", state(right)),
+            &Tf::Implies(left, right) => binary(out, state(left), " => ", state(right)),
             _ => {
                 return Err(refusal(
                     CONSTRUCT,
                     "a temporal operator read as a state formula",
                 ));
             }
-        })
+        }
+        Ok(())
     }
 
     /// The variable of a history that holds a Boolean, a counter or a
@@ -540,6 +673,10 @@ impl Ctx<'_> {
 
     /// The value of the history at the current or the next position.
     fn hist_value(&self, index: usize, primed: bool) -> Lower<String> {
+        self.say(Say::Hist(index, primed))
+    }
+
+    fn hist_pieces(&self, index: usize, primed: bool, out: &mut Vec<Piece<Say>>) -> Lower<()> {
         let history = self
             .histories
             .get(index)
@@ -547,37 +684,52 @@ impl Ctx<'_> {
         let name = self.variable(history);
         let tick = if primed { "'" } else { "" };
         let key = self.key();
-        Ok(match &history.kind {
+        let state = |id| Piece::Node(Say::State(id, primed));
+        match history.kind {
             HKind::Once { .. }
             | HKind::Since { .. }
             | HKind::Historically { .. }
-            | HKind::Triggered { .. } => format!("{name}{tick}[{key}]"),
-            HKind::OnceFrom { a, .. } => format!("{name}{tick}[{key}] = {a}"),
-            HKind::SinceFrom { a, .. } => format!("{name}{tick}[{key}][{a}]"),
+            | HKind::Triggered { .. } => out.push(Piece::text(format!("{name}{tick}[{key}]"))),
+            HKind::OnceFrom { a, .. } => {
+                out.push(Piece::text(format!("{name}{tick}[{key}] = {a}")));
+            }
+            HKind::SinceFrom { a, .. } => {
+                out.push(Piece::text(format!("{name}{tick}[{key}][{a}]")));
+            }
             HKind::OnceWithin { p, a, b } => {
-                let mut parts = Vec::new();
-                if *a == 0 {
-                    parts.push(self.state(p, primed)?);
+                out.push(Piece::text("("));
+                if a == 0 {
+                    out.push(state(p));
                 }
-                let lower = (*a).max(1);
-                if lower <= *b {
-                    parts.push(format!(
+                let lower = a.max(1);
+                if lower <= b {
+                    if a == 0 {
+                        out.push(Piece::text(" \\/ "));
+                    }
+                    out.push(Piece::text(format!(
                         "(\\E k \\in {lower}..{b} : {name}{tick}[{key}][k])"
-                    ));
+                    )));
                 }
-                format!("({})", parts.join(" \\/ "))
+                out.push(Piece::text(")"));
             }
             HKind::SinceWithin { p, q, a, b } => {
-                if *b == 0 {
-                    return self.state(q, primed);
+                if b == 0 {
+                    out.push(state(q));
+                    return Ok(());
                 }
-                let (current_p, current_q) = (self.state(p, primed)?, self.state(q, primed)?);
                 let p_name = self.names.variable('r', history.ord + 1);
-                format!(
-                    "(\\E d \\in {a}..{b} : (IF d = 0 THEN {current_q} ELSE {name}{tick}[{key}][d]) /\\ (\\A e \\in {a}..(d - 1) : IF e = 0 THEN {current_p} ELSE {p_name}{tick}[{key}][e]))"
-                )
+                out.extend([
+                    Piece::text(format!("(\\E d \\in {a}..{b} : (IF d = 0 THEN ")),
+                    state(q),
+                    Piece::text(format!(
+                        " ELSE {name}{tick}[{key}][d]) /\\ (\\A e \\in {a}..(d - 1) : IF e = 0 THEN "
+                    )),
+                    state(p),
+                    Piece::text(format!(" ELSE {p_name}{tick}[{key}][e]))")),
+                ]);
             }
-        })
+        }
+        Ok(())
     }
 
     /// The auxiliary variables the histories need.
@@ -591,7 +743,7 @@ impl Ctx<'_> {
         order.sort_by_key(|&index| (std::cmp::Reverse(self.histories[index].ord), index));
         for history in order.into_iter().map(|index| &self.histories[index]) {
             let name = self.variable(history);
-            match &history.kind {
+            match history.kind {
                 HKind::Once { p } => vars.push(Var {
                     ty: function("BOOLEAN"),
                     init: Some(self.per_key(&self.state(p, false)?)),
@@ -643,26 +795,26 @@ impl Ctx<'_> {
                     name,
                 }),
                 HKind::SinceFrom { inner, a } => {
-                    let source = self.hist_value(*inner, false)?;
+                    let source = self.hist_value(inner, false)?;
                     vars.push(Var {
                         ty: function(&format!("[1..{a} -> BOOLEAN]")),
-                        init: Some(self.per_key(&register(*a, "FALSE"))),
+                        init: Some(self.per_key(&register(a, "FALSE"))),
                         update: Some(self.per_key(&register(
-                            *a,
+                            a,
                             &format!("IF k = 1 THEN {source} ELSE {name}[{key}][k - 1]"),
                         ))),
                         name,
                     });
                 }
-                HKind::OnceWithin { p, b, .. } if *b >= 1 => {
-                    vars.push(self.register_var(&name, p, *b, history.before_p)?);
+                HKind::OnceWithin { p, b, .. } if b >= 1 => {
+                    vars.push(self.register_var(&name, p, b, history.before_p)?);
                 }
-                HKind::SinceWithin { p, q, b, .. } if *b >= 1 => {
-                    vars.push(self.register_var(&name, q, *b, history.before_q)?);
+                HKind::SinceWithin { p, q, b, .. } if b >= 1 => {
+                    vars.push(self.register_var(&name, q, b, history.before_q)?);
                     vars.push(self.register_var(
                         &self.names.variable('r', history.ord + 1),
                         p,
-                        *b,
+                        b,
                         history.before_p,
                     )?);
                 }
@@ -673,7 +825,7 @@ impl Ctx<'_> {
     }
 
     /// A shift register of the last `size` values of `operand`.
-    fn register_var(&self, name: &str, operand: &Tf, size: u64, before: bool) -> Lower<Var> {
+    fn register_var(&self, name: &str, operand: TfId, size: u64, before: bool) -> Lower<Var> {
         let key = self.key();
         let value = |value: &str| format!("[k \\in 1..{size} |-> {value}]");
         Ok(Var {
@@ -688,31 +840,46 @@ impl Ctx<'_> {
     }
 
     /// A formula whose temporal operators are `[]` and `<>`.
-    fn direct(&self, tf: &Tf) -> Lower<String> {
-        if is_state(tf) {
-            return self.state(tf, false);
+    fn direct(&self, tf: TfId) -> Lower<String> {
+        self.say(Say::Direct(tf))
+    }
+
+    fn direct_pieces(&self, tf: TfId, out: &mut Vec<Piece<Say>>) -> Lower<()> {
+        if self.formulas.facts(tf).state {
+            out.push(Piece::Node(Say::State(tf, false)));
+            return Ok(());
         }
-        Ok(match tf {
-            Tf::Not(inner) => format!("~({})", self.direct(inner)?),
-            Tf::And(left, right) => {
-                format!("({} /\\ {})", self.direct(left)?, self.direct(right)?)
-            }
-            Tf::Or(left, right) => {
-                format!("({} \\/ {})", self.direct(left)?, self.direct(right)?)
-            }
-            Tf::Implies(left, right) => {
-                format!("({} => {})", self.direct(left)?, self.direct(right)?)
-            }
-            Tf::Always(_, inner) => format!("[]({})", self.direct(inner)?),
-            Tf::Eventually(_, inner) => format!("<>({})", self.direct(inner)?),
+        let direct = |id| Piece::Node(Say::Direct(id));
+        let unary = |out: &mut Vec<Piece<Say>>, open: &'static str, id| {
+            out.extend([Piece::text(open), direct(id), Piece::text(")")]);
+        };
+        match self.formulas.get(tf)? {
+            &Tf::Not(inner) => unary(out, "~(", inner),
+            &Tf::And(left, right) => binary(out, direct(left), " /\\ ", direct(right)),
+            &Tf::Or(left, right) => binary(out, direct(left), " \\/ ", direct(right)),
+            &Tf::Implies(left, right) => binary(out, direct(left), " => ", direct(right)),
+            &Tf::Always(_, inner) => unary(out, "[](", inner),
+            &Tf::Eventually(_, inner) => unary(out, "<>(", inner),
             _ => {
                 return Err(refusal(
                     CONSTRUCT,
                     "a temporal operator read as `[]` or `<>`",
                 ));
             }
-        })
+        }
+        Ok(())
     }
+}
+
+/// `(left symbol right)`.
+fn binary(out: &mut Vec<Piece<Say>>, left: Piece<Say>, symbol: &'static str, right: Piece<Say>) {
+    out.extend([
+        Piece::text("("),
+        left,
+        Piece::text(symbol),
+        right,
+        Piece::text(")"),
+    ]);
 }
 
 fn boolean(value: bool) -> &'static str {
@@ -854,6 +1021,7 @@ pub(in crate::command::export::lower) fn tla(
         let ctx = Ctx {
             input,
             clause,
+            formulas: &clause.formulas,
             object,
             names,
             histories: Vec::new(),
@@ -921,13 +1089,17 @@ fn universe(
     Ok(())
 }
 
-fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) -> Lower<()> {
+fn tla_clause(ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) -> Lower<()> {
     let clause = ctx.clause;
     let obligation = Some(clause.name.as_str());
-    let mut histories = Vec::new();
-    let root = extract(&normalize(&clause.tf), &mut histories, &mut 0)?;
-    ctx.histories = histories;
-    let shape = shape_of(&root);
+    let (mut formulas, normal) = normalize(&clause.formulas, clause.tf)?;
+    let (root, histories) = extract(&mut formulas, normal)?;
+    let shape = shape_of(&formulas, root)?;
+    let ctx = Ctx {
+        formulas: &formulas,
+        histories,
+        ..ctx
+    };
 
     let mut vars = ctx.history_vars()?;
     // The conjuncts of the theorem after `ok_`.
@@ -935,7 +1107,7 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
     let mut accepts: Vec<(String, String)> = Vec::new();
     let key = ctx.key().to_owned();
     match &shape {
-        Shape::Direct => statements.push(ctx.direct(&root)?),
+        Shape::Direct => statements.push(ctx.direct(root)?),
         Shape::Monitors(parts) => {
             let multi = parts
                 .iter()
@@ -946,7 +1118,7 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
             let mut counters = 0;
             for part in parts {
                 match part {
-                    Part::Direct(tf) => statements.push(ctx.direct(tf)?),
+                    &Part::Direct(tf) => statements.push(ctx.direct(tf)?),
                     Part::Mon(monitor) => {
                         let (m, accept) = ctx.names.monitor_names(index, multi);
                         index += 1;
@@ -1105,8 +1277,8 @@ fn monitor_vars(
         "{\"run\", \"rel\", \"rej\"}"
     };
     let pair = |primed: bool| -> Lower<(String, String)> {
-        let left = ctx.state(&monitor.left, primed)?;
-        let right = match &monitor.right {
+        let left = ctx.state(monitor.left, primed)?;
+        let right = match monitor.right {
             Some(right) => ctx.state(right, primed)?,
             None => String::new(),
         };

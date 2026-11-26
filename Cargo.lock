@@ -1130,6 +1130,7 @@ dependencies = [
  "filament-mltl",
  "filament-observation",
  "filament-semantic-value",
+ "filament-walk",
  "fsl-analyze",
  "fsl-cst",
  "fsl-eval",
