@@ -30,7 +30,9 @@ certificate, and the item's work limit.
 ## Outputs
 
 `Accepted` or `Rejected { rule, at }`, and the settlement FSpec FR-652
-"Settlement" gives.
+"Settlement" gives, except for a rejected or stopped proof certificate,
+which settles by "Behavior" below (ADR-026 CF-4, ADR-028 CE-5) and not
+`proved`.
 
 ## Behavior
 
@@ -71,8 +73,17 @@ certificate, and the item's work limit.
   running rule would name for the element being checked, and is never
   `Accepted`.
 - An accepted certificate SHALL set the proof's certification to
-  `Certified`; a rejected one SHALL keep FR-250's certification and record
-  `certificate-rejected`.
+  `Certified`. A proof certificate the checker rejects SHALL settle the item
+  `inconclusive`, basis `unsettled`,
+  `Inconclusive(CertificateRejected{rule, at})` with the rejection's `rule`
+  and `at` (ADR-018 PC-2, ADR-026 CF-4, ADR-028 CE-5): it SHALL NOT stay
+  `proved` under any certification, `uncertified` and a plugin's `trusted`
+  included. A proof certificate check the work meter stops SHALL settle the
+  item `incomplete`,
+  `Incomplete(LimitReached{limit: work_units, value, setting})`, as a
+  witness check the meter stops does (FSpec FR-652 "Settlement"), and never
+  `proved` or `inconclusive`. A `proved` result entry that carries no
+  certificate keeps FR-250's `uncertified` (or the plugin's `trusted`).
 - The checker SHALL accept a `validated-witness` only when it has a decisive box (FSpec
   FR-652 "Readings and the decisive box"): a reading the interval evaluator
   returns as unknown, as over a box that straddles an atom's boundary,
@@ -93,14 +104,14 @@ certificate, and the item's work limit.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-751-AC-1 | FSpec FR-652-AC-1's two `inductive-enclosure` certificates over `Braking` without `t` are accepted, settling `Certified`, and rejected at rule (a) with the `Moving` box pointer, keeping `Uncertified`. | Test (TC-2101) |
-| FR-751-AC-2 | A `flowpipe` step violating the Picard condition is rejected at that step's pointer; FSpec FR-652-AC-3's non-polynomial trace with an accepted witness settles `refuted` and is recorded; with either of its witnesses whose boxes only straddle `v = 30` it stays `inconclusive`, the witness `Rejected { rule: witness-violation }` at its last step. | Test (TC-2101) |
+| FR-751-AC-1 | FSpec FR-652-AC-1's two `inductive-enclosure` certificates over `Braking` without `t` are accepted, settling `proved`, `Certified`, and rejected at rule (a) with the `Moving` box pointer: the certificate with `Moving: v [0, 19]`, whose enclosure excludes the initial value `v = 20`, settles the item `inconclusive`, `CertificateRejected{rule: a, at: /certificate/boxes/Moving}`, with no `proved` result and no `certification` member; the same entry with no certificate settles `proved`, `Uncertified`. | Test (TC-2101) |
+| FR-751-AC-2 | A `flowpipe` step violating the Picard condition is rejected at that step's pointer and settles the item `inconclusive`, `CertificateRejected{rule: picard, at}` with that pointer, never `proved`; FSpec FR-652-AC-3's non-polynomial trace with an accepted witness settles `refuted` and is recorded; with either of its witnesses whose boxes only straddle `v = 30` it stays `inconclusive`, the witness `Rejected { rule: witness-violation }` at its last step. | Test (TC-2101) |
 | FR-751-AC-3 | A check given a work limit of one box evaluation is `Rejected { rule: work-limit }`, never `Accepted`. | Test (TC-2101) |
 | FR-751-AC-4 | The `inductive-enclosure` rules give exactly the outcomes of FSpec FR-652-AC-7 (`Rise`: accepted, `a` and `b` at `/certificate/boxes/Up`) and FSpec FR-652-AC-8 (`c` at `/certificate/boxes/Stopped`, `d` at `/certificate/boxes/Moving` for `h.v < 10` and for the undefined `1 / h.v`, `d` at `/certificate` for the nested `eventually`, and over `Hold` accepted against `always not holds(h.v < 30)` and `d` at `/certificate/boxes/H` against `always not holds(h.v >= 30)`), and FSpec FR-652-AC-21 (`Sw`: `d` at `/certificate` for an `on each` atom reading `q.x`, and accepted when only the activation condition reads `q`). | Test (TC-2101) |
 | FR-751-AC-5 | The `flowpipe` rules give exactly the outcomes of FSpec FR-652-AC-5 and FSpec FR-652-AC-9 to FR-652-AC-14, each with the stated rule and `at`: `initial` for the narrow first box and the missing initial `Stopped` dwell, the contracted Picard inclusion accepted and `picard` and `successor` at the stated steps, `Fork`'s two jump steps accepted and `jump` at `/certificate/steps/4`, `/certificate/steps/6` and `/certificate/steps/10`, the `Tick` self-loop accepted only with `from`, `coverage` at `/certificate/steps/0`, `/certificate/steps/159` and `/certificate/steps/4` with `Drop` accepted, and `claim` at the stated steps for `not`, `implies`, the undefined atom and the `model-steps` reading; `coverage` at `/certificate/steps/0` for a last step of length 0 that does not close its dwell (FSpec FR-652-AC-20) and `jump` at `/certificate/steps/1` for a jump step that omits later jumps of a closing dwell (FSpec FR-652-AC-22); the AC-5 jump step with `time` `[0, 20]` and `step` 10 is accepted, a jump step's width never being compared with its `step`. | Test (TC-2101) |
 | FR-751-AC-6 | The `validated-witness` rules give exactly the outcomes of FSpec FR-652-AC-15 and FR-652-AC-16: `witness-start` at `/certificate/dwells/0/0`, `witness-picard` at `/certificate/dwells/0/3` and, over `GrowLow`, at `/certificate/dwells/0/7`, `witness-violation` at `/certificate/dwells/0/8` for an `end` that differs from the decisive reading, `Shift` accepted and `witness-unique` at `/certificate/dwells/0/0`, `GrowJump` accepted with its decisive reading at position 1, time 4, and `witness-guard` at `/certificate/dwells/0/1` when the trace's jump time `[5, 5]` does not contain the witness's jump instant 4. | Test (TC-2101) |
 | FR-751-AC-7 | Each structural mismatch of FSpec FR-652-AC-17 is a certificate refusal with the stated code and pointer, which `read_entry` refuses `invalid_result` and a replay request refuses `invalid_runtime_input` at `/replay/certificate/...`; none is a rejection, and none settles `failed` `internal_fault`. | Test (TC-2101) |
-| FR-751-AC-8 | FSpec FR-652-AC-1's accepted certificate under a work limit of one evaluation is `Rejected { rule: work-limit, at: /certificate/boxes/Moving }`; FSpec FR-652-AC-3's nine-step witness under a work limit that stops its check is `Rejected { rule: work-limit }` at the step being checked, and its item settles as FR-450-AC-13 states. | Test (TC-2101) |
+| FR-751-AC-8 | FSpec FR-652-AC-1's accepted certificate under a work limit of one evaluation is `Rejected { rule: work-limit, at: /certificate/boxes/Moving }` and its item settles `incomplete`, `LimitReached{limit: work_units}`, never `proved` or `inconclusive`; FSpec FR-652-AC-3's nine-step witness under a work limit that stops its check is `Rejected { rule: work-limit }` at the step being checked, and its item settles as FR-450-AC-13 states. | Test (TC-2101) |
 
 ## Dependencies
 

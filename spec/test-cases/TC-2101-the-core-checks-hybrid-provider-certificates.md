@@ -25,11 +25,11 @@ Verify the exact interval check of hybrid certificates, rule by rule with the ru
 
 ## Expected Results
 
-- Step 1: `Accepted` and `Certified`; `Rejected` at rule (a) and the `Moving` box pointer, `Uncertified`.
-- Step 2: `Rejected` at the step's pointer; `refuted` and recorded; `inconclusive` twice, each rejected `witness-violation`.
+- Step 1: `Accepted` and `proved`, `Certified`; `Rejected` at rule (a) and the `Moving` box pointer, the item `inconclusive`, `CertificateRejected{rule: a, at: /certificate/boxes/Moving}` and not `proved`; with no certificate `proved`, `Uncertified`.
+- Step 2: `Rejected` at the step's pointer and the item `inconclusive`, `CertificateRejected{rule: picard}`; `refuted` and recorded; `inconclusive` twice, each rejected `witness-violation`.
 - Step 3: `Rejected { rule: work-limit }`.
 - Step 4: each outcome, rule and `at` the FSpec criteria state.
 - Step 5: each outcome, rule and `at` the FSpec criteria state; the `[0, 20]` jump step accepted.
 - Step 6: each outcome, rule and `at` the FSpec criteria state; `GrowJump`'s decisive reading at position 1, time 4.
 - Step 7: a certificate refusal with the stated code and pointer, `invalid_result` from `read_entry` and `invalid_runtime_input` at `/replay/certificate/...`; never a rejection or `internal_fault`.
-- Step 8: `Rejected { rule: work-limit, at: /certificate/boxes/Moving }`; the witness `Rejected { rule: work-limit }` and its item `incomplete`.
+- Step 8: `Rejected { rule: work-limit, at: /certificate/boxes/Moving }` and the item `incomplete`, `LimitReached{limit: work_units}`; the witness `Rejected { rule: work-limit }` and its item `incomplete`.
