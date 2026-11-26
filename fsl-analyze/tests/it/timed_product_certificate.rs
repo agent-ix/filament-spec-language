@@ -2284,3 +2284,4 @@ fn a_given_draw_product_over_the_edge_limit_is_refused() {
         other => panic!("expected the edge limit at 4 against 3, got {other:?}"),
     }
 }
+mod region_walks;
