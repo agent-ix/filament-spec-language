@@ -48,6 +48,7 @@ use fsl_replay::{
     CounterexampleKind, FairnessMember, Lasso, ModelStep, TemporalCounterexample, UndefinedLocus,
 };
 use fsl_semantics::check::CaptureSite;
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 
@@ -288,6 +289,31 @@ impl Live<'_> {
     }
 }
 
+/// The view of the subject read by no claim, over `instance`'s cells, for
+/// FR-240's vacuity test and FR-244's `admitted` walk.
+fn subject_view<'p>(
+    instance: &'p ModelInstance,
+    automaton: &'p mut PositionAutomaton,
+    start: StateId,
+    constrained: &BTreeSet<String>,
+    dim: usize,
+    bounds: &[Option<BigInt>],
+) -> Live<'p> {
+    Live {
+        instance,
+        automaton,
+        universal: true,
+        start,
+        capture: CaptureSite::Never,
+        cells: Cells::new(constrained.clone()),
+        readings: BTreeMap::new(),
+        dim,
+        lower: bounds.to_vec(),
+        upper: bounds.to_vec(),
+        product: Product::default(),
+    }
+}
+
 impl Run<'_, '_, '_> {
     /// FR-240 over every instance of the claim, in order: the first
     /// instance's counterexample, `None` when no fair accepting cycle
@@ -307,6 +333,7 @@ impl Run<'_, '_, '_> {
         found
     }
 
+    #[implements("FSpec-FR-161-AC-15")]
     fn each_instance(&mut self, automaton: &mut PositionAutomaton) -> Result<Liveness, Halt> {
         let claim = self
             .claim()
@@ -344,6 +371,17 @@ impl Run<'_, '_, '_> {
             most.push(Some(self.scale.clone()));
         }
         let start = self.automaton(automaton.initial())?;
+        // FR-240 "Vacuity" under fairness: a subject with no fair behaviour
+        // is classified before any claim product, so no position of it,
+        // an undefined one included, refutes (FSpec FR-161 "Vacuity").
+        let mut subject = None;
+        if let (false, Some(instance)) = (constrained.is_empty(), instances.first()) {
+            let mut live = subject_view(instance, &mut *automaton, start, &constrained, dim, &most);
+            if !self.admits_fair(&mut live)? {
+                return Err(self.undecided(ZoneUndecided::NoAdmittedBehaviour));
+            }
+            subject = Some(std::mem::take(&mut live.product));
+        }
         let mut not_concretised = false;
         let mut proofs = Vec::with_capacity(instances.len());
         for instance in &instances {
@@ -382,35 +420,18 @@ impl Run<'_, '_, '_> {
                 .is_none(),
             None => false,
         };
-        // FR-240 "Vacuity": a proof needs a fair time-divergent cycle or a
-        // quiescent state. FR-239's test before the search found a
-        // time-divergent behaviour, which is fair when no constraint
-        // applies.
-        let mut admission = None;
-        if let (true, Some(instance)) = (needed || !constrained.is_empty(), instances.first()) {
-            let mut live = Live {
-                instance,
-                automaton: &mut *automaton,
-                universal: true,
-                start,
-                capture: CaptureSite::Never,
-                cells: Cells::new(constrained.clone()),
-                readings: BTreeMap::new(),
-                dim,
-                lower: most.clone(),
-                upper: most,
-                product: Product::default(),
-            };
-            if !constrained.is_empty() && !self.admits_fair(&mut live)? {
-                return Err(self.undecided(ZoneUndecided::NoAdmittedBehaviour));
+        // With no constraint, FR-239's test before the search found a
+        // time-divergent behaviour, which is fair.
+        let admission = match (needed, subject, instances.first()) {
+            (false, ..) | (true, None, None) => None,
+            (true, Some(product), _) => Some(product),
+            (true, None, Some(instance)) => {
+                let mut live =
+                    subject_view(instance, &mut *automaton, start, &constrained, dim, &most);
+                self.build(&mut live)?;
+                Some(std::mem::take(&mut live.product))
             }
-            if needed {
-                if constrained.is_empty() {
-                    self.build(&mut live)?;
-                }
-                admission = Some(std::mem::take(&mut live.product));
-            }
-        }
+        };
         Ok(Liveness::Proved(proofs, admission))
     }
 

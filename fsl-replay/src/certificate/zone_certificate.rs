@@ -1239,11 +1239,15 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
                 .map_err(ZoneCertificateRefusal::Vacuous)?
                 .as_slice()
                 .to_vec();
-            let atom = fsl_eval::automaton::invariant_atom(clause);
+            // A clause declaring a fairness is read on the liveness
+            // product, which alone reads one (FR-240).
+            let fair = !clause.fairness().is_empty();
+            let atom = fsl_eval::automaton::invariant_atom(clause).filter(|_| !fair);
             // A TT-2 window nesting no interval operator under another has
             // FR-242's horizon automaton; any other clause is read on the
             // liveness product.
             let flat = if atom.is_none()
+                && !fair
                 && matches!(
                     clause.timed_form(),
                     Some(TimedPropertyForm::BoundedWindow { .. })

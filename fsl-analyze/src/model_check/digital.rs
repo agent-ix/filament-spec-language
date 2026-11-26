@@ -1278,7 +1278,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     }
 
     /// Whether `start` has a time-divergent continuation: it reaches a
-    /// quiescent state, or a cycle through a delay. This route's evidence
+    /// quiescent state, or a cycle that takes a delay. This route's evidence
     /// for the time-lock rule, searched once per state.
     fn diverges(&mut self, start: &TimedState) -> Result<bool, Halt> {
         let mut from = self.discrete_key(start.discrete())?;
@@ -1291,6 +1291,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         Ok(found)
     }
 
+    #[implements("FR-239-AC-5")]
     fn search_divergence(&mut self, start: &TimedState) -> Result<bool, Halt> {
         let mut index: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
         let mut states: Vec<TimedState> = Vec::new();
@@ -1336,25 +1337,30 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 edges.push((at, to, delay));
             }
         }
-        // A delay edge inside a strongly connected component.
+        // A delay edge with both ends in one strongly connected component.
+        // Each delay edge passes through a vertex of its own, so a component
+        // holding that vertex holds the whole edge.
         let mut graph = Graph::new();
         let handles: Vec<Vertex> = (0..states.len())
             .map(|_| graph.add_vertex(Vec::new()))
             .collect();
         let fault = |_: FairnessError| Halt::from(DigitalRefusal::Fault("divergence-graph"));
-        for &(from, to, _) in &edges {
+        let mut delays = Vec::new();
+        for &(from, to, delay) in &edges {
+            let mut source = handles[from];
+            if delay {
+                let middle = graph.add_vertex(Vec::new());
+                graph
+                    .add_edge(source, middle, EdgeLabel::Stutter)
+                    .map_err(fault)?;
+                delays.push(middle);
+                source = middle;
+            }
             graph
-                .add_edge(handles[from], handles[to], EdgeLabel::Stutter)
+                .add_edge(source, handles[to], EdgeLabel::Stutter)
                 .map_err(fault)?;
         }
-        graph
-            .add_acceptance_set(
-                edges
-                    .iter()
-                    .filter(|(_, _, delay)| *delay)
-                    .map(|&(_, to, _)| handles[to]),
-            )
-            .map_err(fault)?;
+        graph.add_acceptance_set(delays).map_err(fault)?;
         let all: BTreeSet<Vertex> = graph.vertices().collect();
         let analyses = analyze(&graph, &all, &[], self.cancel).map_err(|error| match error {
             FairnessError::Cancelled => self.cancelled(),

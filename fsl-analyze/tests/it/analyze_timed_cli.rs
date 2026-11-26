@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Meter, Undefined};
 use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
-use fsl_analyze::zone_check::ZoneCheckLimits;
+use fsl_analyze::zone_check::{ZoneCheckLimits, ZoneCheckOutcome, ZoneUndecided};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::TimedVacuity;
 use fsl_eval::simulation::model::{ModelSimState, TimedSystem};
@@ -967,9 +967,6 @@ fn routes_over(
     (0..claims.len() * 2)
         .map(|n| {
             let item = run.item(n);
-            if label(&item) == "failed" {
-                eprintln!("DEBUG {item}\nDEBUG {}", run.document()["diagnostics"]);
-            }
             (
                 item["record"]["backend"]
                     .as_str()
@@ -1014,7 +1011,7 @@ fn snapshot_at(identity: &str, phase: u8) -> Vec<u8> {
 /// FR-239-AC-5's time-lock rule on both routes: `phase != 2` is false only on
 /// the time-locked state, so it is proved, and the search goes on from there
 /// to `go`, where `phase = 0` is false.
-#[trace("FR-239-AC-5", "FR-632-AC-2")]
+#[trace("FR-239-AC-5")]
 #[test]
 fn a_false_reading_on_a_time_locked_branch_refutes_nothing_on_either_route() {
     let expected = expected_on_both_routes([("proved", ""), ("refuted", "")]);
@@ -1035,7 +1032,7 @@ fn a_false_reading_on_a_time_locked_branch_refutes_nothing_on_either_route() {
 /// The same rule over two initial states, one healthy (`phase` 0) and one
 /// time-locked from the start (`phase` 2): `phase != 2` is proved, and
 /// `phase != 1` is refuted after `go`.
-#[trace("FR-239-AC-5", "FR-632-AC-2")]
+#[trace("FR-239-AC-5")]
 #[test]
 fn a_locked_initial_state_beside_a_healthy_one_refutes_nothing() {
     let reference = |identity: &str| json!({"authority": "test", "identity": identity});
@@ -1098,7 +1095,7 @@ const UNLIMITED: DigitalLimits = DigitalLimits {
 /// undefined only on the locked branch hides nothing. By hand `phase = 0` is
 /// false after `go` (so the conjunction refutes there), on both engines, and
 /// both counterexamples replay.
-#[trace("TC-1592", "FR-239-AC-5", "FR-632-AC-2")]
+#[trace("FR-239-AC-5")]
 #[test]
 fn an_undefined_reading_on_a_time_locked_branch_hides_no_violation() {
     let world = partial_world("always holds(mod_defined(c.phase) and c.phase = 0)");
@@ -1118,7 +1115,7 @@ fn an_undefined_reading_on_a_time_locked_branch_hides_no_violation() {
 /// Where the claim holds on every admitted behaviour, the reading undefined
 /// on the locked one leaves it proved: EN-1 holds, and EN-6's certificate
 /// passes the independent checker.
-#[trace("FR-239-AC-5", "FR-632-AC-2")]
+#[trace("FR-239-AC-5")]
 #[test]
 fn an_undefined_reading_only_on_a_time_locked_branch_leaves_the_claim_proved() {
     let world = partial_world("always holds(mod_defined(c.phase) and c.phase <= 1)");
@@ -1274,7 +1271,7 @@ fn digital_over(model: &[u8], body: &str, undefine_first_false: bool) -> (ModelC
 
 /// QSL-3485: `block`, searched first, locks time, and the reading there is
 /// made undefined; `go` still refutes `always holds(c.phase = 0)`.
-#[trace("TC-1592", "FR-239-AC-5", "FR-632-AC-2")]
+#[trace("FR-239-AC-5")]
 #[test]
 fn digital_undefined_at_a_time_lock_does_not_hide_a_violation() {
     let body = "pre Block using v on M::Call::block { self.phase = 0 }\n\
@@ -1376,5 +1373,190 @@ fn a_zone_certificate_over_no_instance_is_refused() {
     assert_eq!(
         checked,
         Err(ZoneCertificateRefusal::Vacuous(TimedVacuity::NoInstance))
+    );
+}
+
+/// The Kernel-checked package of one claim over the operations `operations`
+/// with the clauses `model`, [`MOD_DEFINED`] in scope.
+fn kernel_world(
+    operations: &[(&str, &[&str])],
+    model: &str,
+    formula: &str,
+) -> crate::timed_world::World {
+    crate::timed_world::world_with_mode(
+        &crate::timed_world::document(&["x"], operations),
+        crate::zone_search::TIMED,
+        &format!(
+            "{}{MOD_DEFINED}{model}temporal Partial using tt over (c: M::Call) clock \
+             \"model-time\" on origin {{ {formula} }}\n",
+            crate::timed_world::DENSE
+        ),
+        filament_semantic_value::checking::CheckMode::Kernel,
+    )
+}
+
+/// [`LOCKING`] with `phase` 2 let sit until `x` is 1 and `spin` looping there
+/// in zero time: time never passes 1 ms from it, so it is a time-lock that a
+/// delay enters.
+const ZENO_LOCK: &str = "pre Block using v on M::Call::block { self.phase = 0 }\n\
+     post Blocked using v on M::Call::block { self.phase = 2 }\n\
+     pre Spin using v on M::Call::spin { self.phase = 2 }\n\
+     post Spun using v on M::Call::spin { self.phase = 2 }\n\
+     pre Go using v on M::Call::go { self.phase = 0 }\n\
+     post Gone using v on M::Call::go { self.phase = 1 }\n\
+     time invariant Locked when { self.phase = 2 } { self.x <= 1 ms }\n";
+
+fn zeno_lock_world(formula: &str) -> crate::timed_world::World {
+    kernel_world(
+        &[
+            ("block", &["phase"]),
+            ("spin", &["phase"]),
+            ("go", &["phase"]),
+        ],
+        ZENO_LOCK,
+        formula,
+    )
+}
+
+/// By hand: the reading is undefined only at `phase` 2, which is time-locked,
+/// and `phase` 0 and 1 read true, so both routes prove the claim.
+#[trace("FR-239-AC-5")]
+#[test]
+fn a_zero_time_loop_entered_by_a_delay_is_a_time_lock() {
+    let world = zeno_lock_world("always holds(mod_defined(c.phase) and c.phase <= 1)");
+    let system = world.system();
+    let digital = digital_on(&world, &system);
+    assert!(
+        matches!(digital, ModelCheckOutcome::HoldsReduced { .. }),
+        "{digital:?}"
+    );
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_edges_cover(&world, &certificate);
+}
+
+/// By hand: `go` makes `phase = 0` false, and the undefined reading on the
+/// time-locked `phase` 2, found first, hides nothing.
+#[trace("FR-239-AC-5")]
+#[test]
+fn a_zero_time_loop_entered_by_a_delay_hides_no_violation() {
+    let world = zeno_lock_world("always holds(mod_defined(c.phase) and c.phase = 0)");
+    let system = world.system();
+    let ModelCheckOutcome::Violated { counterexample, .. } = digital_on(&world, &system) else {
+        panic!("en-1: `go` violates the claim");
+    };
+    let zones = violated(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    for counterexample in [*counterexample, zones] {
+        assert_eq!(counterexample.kind, CounterexampleKind::Formula);
+        assert_eq!(operations(&counterexample), ["go"]);
+    }
+}
+
+/// FSpec FR-161 "Vacuity": `go` is enabled at every instant of the one
+/// divergent behaviour (the `idle` loop) and leads to a time-lock, so under
+/// `fair weak go` the subject admits no behaviour: every claim, the false one
+/// included, is `inconclusive` `no-admitted-behaviour` on both routes.
+#[trace("FSpec-FR-161-AC-15")]
+#[test]
+fn a_timed_claim_with_no_fair_behaviour_is_never_proved() {
+    let model = "pre Idle using v on M::Call::idle { self.phase = 0 }\n\
+         post Idled using v on M::Call::idle { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 0 }\n\
+         post Gone using v on M::Call::go { self.phase = 2 and self.x = 0 ms }\n\
+         time invariant Busy when { self.phase = 0 } { self.x <= 1 ms }\n\
+         time invariant Done when { self.phase = 2 } { self.x <= 0 ms }\n";
+    let expected = expected_on_both_routes([("inconclusive", "no-admitted-behaviour"); 3]);
+    let found = routes_over(
+        "timed-no-fair-behaviour",
+        &crate::timed_world::document(&["x"], &[("idle", &["x"]), ("go", &["phase", "x"])]),
+        model,
+        &[
+            ("Invariant", "fair weak M::Call::go; always holds(c.phase != 1)"),
+            (
+                "Window",
+                "fair weak M::Call::go; always[0 ms, 1 ms] holds(c.phase != 1)",
+            ),
+            ("Never", "fair weak M::Call::go; always holds(false)"),
+        ],
+        &[rpc_snapshot()],
+        None,
+    );
+    assert_eq!(found, expected);
+}
+
+/// FSpec FR-161 "Fairness over time": `phase` 3 is left only unfairly (the
+/// `idle` loop, with `go` always enabled) or into a time-lock, so a claim
+/// false only there holds on every fair behaviour; idling in `phase` 0 is one.
+#[trace("FSpec-FR-161-AC-16")]
+#[test]
+fn a_violation_only_on_unfair_behaviours_refutes_nothing() {
+    let model = "pre Bad using v on M::Call::block { self.phase = 0 }\n\
+         post Badly using v on M::Call::block { self.phase = 3 }\n\
+         pre Idle using v on M::Call::idle { self.phase = 3 }\n\
+         post Idled using v on M::Call::idle { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 3 }\n\
+         post Gone using v on M::Call::go { self.phase = 2 and self.x = 0 ms }\n\
+         time invariant Busy when { self.phase = 3 } { self.x <= 1 ms }\n\
+         time invariant Done when { self.phase = 2 } { self.x <= 0 ms }\n";
+    let expected = expected_on_both_routes([("proved", "")]);
+    let found = routes_over(
+        "timed-unfair-violation",
+        &crate::timed_world::document(
+            &["x"],
+            &[("block", &["phase"]), ("idle", &["x"]), ("go", &["phase", "x"])],
+        ),
+        model,
+        &[("Invariant", "fair weak M::Call::go; always holds(c.phase != 3)")],
+        &[rpc_snapshot()],
+        None,
+    );
+    assert_eq!(found, expected);
+}
+
+/// FSpec FR-161 "Vacuity" ahead of an undefined reading: the reading is
+/// undefined at `phase` 2, from which time diverges only on the `spin` loop
+/// that `fair weak go` rejects, and no behaviour at all is fair. Both routes
+/// settle `no-admitted-behaviour`, not `undefined-evaluation`.
+#[trace("FSpec-FR-161-AC-15")]
+#[test]
+fn no_fair_behaviour_comes_before_an_undefined_refutation() {
+    let world = kernel_world(
+        &[
+            ("block", &["phase"]),
+            ("spin", &["x"]),
+            ("go", &["phase", "x"]),
+        ],
+        "pre Block using v on M::Call::block { self.phase = 0 }\n\
+         post Blocked using v on M::Call::block { self.phase = 2 }\n\
+         pre Spin using v on M::Call::spin { self.phase = 2 }\n\
+         post Spun using v on M::Call::spin { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 2 }\n\
+         post Gone using v on M::Call::go { self.phase = 1 and self.x = 0 ms }\n\
+         time invariant Start when { self.phase = 0 } { self.x <= 1 ms }\n\
+         time invariant Busy when { self.phase = 2 } { self.x <= 1 ms }\n\
+         time invariant Done when { self.phase = 1 } { self.x <= 0 ms }\n",
+        "fair weak M::Call::go; always holds(mod_defined(c.phase))",
+    );
+    let system = world.system();
+    let digital = digital_on(&world, &system);
+    assert!(
+        matches!(
+            digital,
+            ModelCheckOutcome::Undecided {
+                cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
+                ..
+            }
+        ),
+        "{digital:?}"
+    );
+    let zones = claim(&world, ZoneCheckLimits::default(), &Cancel::new());
+    assert!(
+        matches!(
+            zones,
+            ZoneCheckOutcome::Undecided {
+                cause: ZoneUndecided::NoAdmittedBehaviour,
+                ..
+            }
+        ),
+        "{zones:?}"
     );
 }

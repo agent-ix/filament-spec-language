@@ -584,7 +584,7 @@ fn a_partial_class_fixes_the_timers_outside_it() {
 
 /// FR-125-AC-7 over EN-6: a claim over an empty universe has no instance, so
 /// under a selected symmetry too it is `NoInstance`, never a proof.
-#[trace("TC-1170", "FR-125-AC-7")]
+#[trace("FR-125-AC-7")]
 #[test]
 fn symmetry_over_no_instance_proves_nothing() {
     let empty = timers_over(false, "always holds(not t.inflight)", &[], &[]);

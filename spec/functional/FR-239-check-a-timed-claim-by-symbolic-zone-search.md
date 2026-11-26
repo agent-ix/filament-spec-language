@@ -156,9 +156,12 @@ edges, automaton states and stored zone bytes.
   covered symbolic state SHALL not be explored, and its covering edge SHALL
   be retained. Retained edges form the symbolic graph that FR-240 and
   FR-244 read.
-- A `TimedInvariant` or `BoundedWindow` item, or a deadlock-freedom item,
-  SHALL be decided by this search, with the admitted-behaviour checks
-  below; a violation SHALL end the search and be concretized by FR-241.
+- A `TimedInvariant` or `BoundedWindow` item whose claim declares no
+  fairness, or a deadlock-freedom item, SHALL be decided by this search,
+  with the admitted-behaviour checks below; a violation SHALL end the search
+  and be concretized by FR-241. A claim that declares a fairness SHALL be
+  decided on FR-240's liveness product, whatever its form, since this search
+  reads no fairness.
 - **Admitted behaviour.** A violating symbolic state SHALL end the search
   only when some point of its violating set has a time-divergent
   continuation, which the engine SHALL check on the forward closure of
@@ -189,9 +192,13 @@ edges, automaton states and stored zone bytes.
 - An unbounded population root SHALL refuse `RequiresBound` before any
   state is explored, as FR-126 states.
 - **Vacuity.** Before returning `Holds`, the engine SHALL check that some
-  initial symbolic state reaches, on the retained graph, a quiescent state
-  or a time-divergent SCC (FR-240's test); when none does, it SHALL return
-  `Undecided(NoAdmittedBehaviour)` (ADR-026 TD-6).
+  initial symbolic state reaches a quiescent state or a fair time-divergent
+  cycle (FR-240 "Vacuity"); when none does, it SHALL return
+  `Undecided(NoAdmittedBehaviour)` (ADR-026 TD-6). With no fairness
+  declared, every time-divergent SCC of the retained graph is fair. With a
+  fairness declared, the check SHALL precede the claim's products, so no
+  position of a subject with no fair behaviour, an undefined one included,
+  refutes.
 - A run that completes with no violation and passes the vacuity check SHALL
   return `Holds` with the certificate FR-244 builds from the retained
   graph, including its `admitted` path.

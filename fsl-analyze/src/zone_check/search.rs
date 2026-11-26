@@ -884,8 +884,9 @@ pub fn check_timed_model<S: Clone>(
 }
 
 /// Whether `request`'s item is decided on a graph EN-6 does not reduce:
-/// the time-lock-freedom item, or a clause with no TT-1 atom and no flat
-/// TT-2 window, which the liveness product decides (FR-240).
+/// the time-lock-freedom item, or a clause the liveness product decides
+/// (FR-240): one declaring a fairness, or with no TT-1 atom and no flat TT-2
+/// window.
 fn reads_unreduced_graph<S>(
     request: &ZoneCheckRequest<'_, '_, '_, S>,
 ) -> Result<bool, ZoneCheckRefusal> {
@@ -893,7 +894,9 @@ fn reads_unreduced_graph<S>(
         ZoneCheckItem::TimeLockFreedom => true,
         ZoneCheckItem::DeadlockFreedom => false,
         ZoneCheckItem::Clause { clause, .. } => {
-            if fsl_eval::automaton::invariant_atom(clause).is_some() {
+            if !clause.fairness().is_empty() {
+                true
+            } else if fsl_eval::automaton::invariant_atom(clause).is_some() {
                 false
             } else {
                 let instances = request
@@ -939,7 +942,10 @@ fn judge_plan<'r, S>(
     let mut live = None;
     let judged = match request.item {
         ZoneCheckItem::Clause { clause, letters } => {
-            if let Some(atom) = fsl_eval::automaton::invariant_atom(clause) {
+            // The search reads no fairness: a clause declaring one is
+            // decided on the liveness product, whatever its form.
+            let fair = !clause.fairness().is_empty();
+            if let Some(atom) = fsl_eval::automaton::invariant_atom(clause).filter(|_| !fair) {
                 if !matches!(
                     clause.profile(),
                     TemporalProfile::InfiniteTrace | TemporalProfile::Timed
@@ -952,12 +958,16 @@ fn judge_plan<'r, S>(
                     letters,
                     instances,
                 })
-            } else if let Some(claim) = flat_window(
-                clause,
-                instances.len(),
-                request.subject.tick_period().cloned(),
-                request.limits.max_automaton_states,
-            )? {
+            } else if let Some(claim) = if fair {
+                None
+            } else {
+                flat_window(
+                    clause,
+                    instances.len(),
+                    request.subject.tick_period().cloned(),
+                    request.limits.max_automaton_states,
+                )?
+            } {
                 window = Some(claim);
                 Judged::Claim(Claim {
                     clause,
