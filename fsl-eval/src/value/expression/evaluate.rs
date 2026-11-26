@@ -2889,6 +2889,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self.apply_as(node, Application::OrderingPart, None)
     }
 
+    #[implements("FR-1040-AC-10")]
     fn eval(&mut self, node: N) -> Result<(), Halt> {
         match node.kind() {
             NodeKind::Coerce(operand, domain)

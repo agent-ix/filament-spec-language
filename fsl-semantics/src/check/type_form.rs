@@ -31,6 +31,7 @@ use filament_exact::{
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{BuiltinType, NameForm, TypeForm, TypeFormHead};
 use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 /// What a qualified type name resolves against.
 pub(crate) trait TypeNames {
@@ -809,6 +810,7 @@ impl<'f, N: TypeNames> filament_walk::Walk for Resolver<'_, 'f, N> {
 
 impl<N: TypeNames> Resolver<'_, '_, N> {
     /// The type `step` names, its argument's type taken from `resolved`.
+    #[implements("FR-1040-AC-11")]
     fn build(&mut self, step: Step<'_>) -> Result<ValueType, TypeFormError> {
         match step {
             Step::Leaf(resolved) => Ok(resolved),
@@ -859,6 +861,7 @@ impl<N: TypeNames> Resolver<'_, '_, N> {
                         | ValueType::String
                         | ValueType::Uuid
                         | ValueType::Timestamp
+                        | ValueType::ClockReference
                         | ValueType::Enum(_)
                 );
                 if !scalar_key {
@@ -1020,6 +1023,23 @@ mod tests {
             "unexpected cause: {:?}",
             refusal.cause
         );
+    }
+
+    /// Native clock-place references are scalar Map keys under FR-1040-AC-11.
+    #[ix_trace_rs::trace("TC-3084", "FR-1040-AC-11")]
+    #[test]
+    fn source_map_type_accepts_clock_reference_keys() {
+        let clock_reference = TypeForm::builtin(BuiltinType::Reference, SPAN)
+            .with_arguments(vec![builtin(BuiltinType::Clock, &[])]);
+        let map = TypeForm::builtin(BuiltinType::Map, SPAN)
+            .with_arguments(vec![clock_reference, builtin(BuiltinType::Boolean, &[])])
+            .with_bounds(vec!["0".to_owned(), "2".to_owned()]);
+
+        let resolved = resolve(&map).expect("Reference<Clock> is a scalar map key");
+        let ValueType::Map(resolved) = &resolved else {
+            panic!("map type, not {resolved:?}");
+        };
+        assert_eq!(resolved.key(), &ValueType::ClockReference);
     }
 
     fn builtin(builtin: BuiltinType, bounds: &[&str]) -> TypeForm {
