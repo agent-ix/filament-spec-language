@@ -451,6 +451,7 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
     use fsl_analyze::analyze::document::{
         analyze_document, resolve_items, AnalyzeRun, ItemSelection, SubjectSelection,
     };
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision, SubjectBinding};
     use fsl_eval::simulation::model::PopulationUniverse;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
@@ -522,7 +523,7 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
         &registry,
         std::slice::from_ref(&source),
         &binding,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
     );
     let (document, _) = analyze_document(
         AnalyzeRun {
@@ -531,7 +532,7 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
             provision: SourceProvision::single(&source, &world.unit),
             items,
             engines: &engines,
-            limits: AnalyzeLimits::unbounded(),
+            limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),

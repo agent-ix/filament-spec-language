@@ -5,7 +5,6 @@
 //! output protection, limit refusals, and odd input.
 
 use fsl_command::command::RequestOverrides;
-use fsl_replay::spine::SpineLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -166,8 +165,7 @@ fn explicit_export_selection_preserves_bounds_and_output_overrides() {
     assert_eq!(limited.category().exit_code(), 22);
     assert!(!target.exists());
 
-    let mut spine = SpineLimits::default();
-    spine.export.output_bytes = Some(1);
+    let spine = std::collections::BTreeMap::from([(fsl_foundation::Setting::ExportOutputBytes, 1)]);
     let exhausted = export_with_limits_and_overrides(
         &path,
         ExportSelection::Ordinary,
@@ -265,8 +263,8 @@ fn an_export_below_its_floor_is_unsupported() {
 fn the_output_byte_limit_is_reached_through_the_override() {
     let (case, path) = braking(COUNTER.as_bytes(), member());
     let target = case.path("limited.tla");
-    let mut limits = SpineLimits::default();
-    limits.export.output_bytes = Some(1);
+    let limits =
+        std::collections::BTreeMap::from([(fsl_foundation::Setting::ExportOutputBytes, 1)]);
     let overrides = RequestOverrides {
         output: Some(&target),
         limits: Some(&limits),

@@ -25,12 +25,18 @@
 //!   completeness loss only, the concrete search then decides.
 //! - `zone_check.max_check_work` (request `temporal.limits.max_check_work`)
 //!   bounds both the pass and the checker.
+//! - The pass charges each symbolic state, edge, stored zone byte and
+//!   retained byte against `zone_check.*` and `analysis.retained_bytes`; the
+//!   item's `max_states` and `max_transitions` bound its states and edges.
 
+use fsl_foundation::budget::{Budget, BudgetStop};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::Setting;
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily, ScheduleClaim};
 
+use super::timed_item::{certificate_limits, with_stated, zone_limits};
 use super::{AnalyzeItem, EngineReport, Refusal};
 /// What the symbolic pass and the checker made of a closed task-product search.
 #[derive(Debug)]
@@ -78,8 +84,7 @@ pub(super) fn item<'a>(
     analysis: &'a super::RunInput<'a>,
     binding: &'a super::SubjectBinding<'a>,
     limits: super::AnalyzeLimits,
-    max_work: Option<std::num::NonZeroU64>,
-    max_check_work: Option<std::num::NonZeroU64>,
+    options: &super::ItemOptions,
     claim: &'a OccurrenceKey,
     index: RequestIndex,
 ) -> Option<AnalyzeItem<'a>> {
@@ -106,6 +111,8 @@ pub(super) fn item<'a>(
     let claim_name = checked_claim.name.clone();
     let checked_claim: &'a fsl_semantics::check::CheckedScheduleClaim = checked_claim;
     let claim = claim.clone();
+    let max_work = options.max_task_product_work;
+    let bounds = bounds(limits.engines, options);
     Some(AnalyzeItem::new(
         index,
         Capability::Schedulability,
@@ -158,7 +165,7 @@ pub(super) fn item<'a>(
                     &model,
                     checked_claim,
                     &claim,
-                    max_check_work,
+                    bounds,
                     cancel,
                 ),
             };
@@ -513,6 +520,37 @@ fn clock_values(
     clocks
 }
 
+/// EN-6's bounds for the task product: the caller's settings, with each
+/// member the item states in place of its setting (FR-239 "Budget sources").
+fn bounds(engines: super::EngineBounds, options: &super::ItemOptions) -> super::EngineBounds {
+    let stated = |member: Option<std::num::NonZeroU64>| member.map(std::num::NonZeroU64::get);
+    let mut bounds = with_stated(
+        engines,
+        stated(options.max_states),
+        stated(options.max_transitions),
+    );
+    if let Some(work) = stated(options.max_check_work) {
+        bounds.set(Setting::ZoneCheckMaxCheckWork, work);
+    }
+    bounds
+}
+
+/// The incomplete cause of a stopped symbolic pass, or `None` for a stop the
+/// pass cannot produce.
+fn stopped(stop: &BudgetStop) -> Option<fsl_replay::IncompleteCause> {
+    match stop {
+        BudgetStop::Limit(limit) => Some(fsl_replay::IncompleteCause::LimitReached {
+            limit: fsl_replay::ModelCheckLimit::from_setting(limit.setting())?,
+            value: limit.configured_bound(),
+            required: None,
+        }),
+        BudgetStop::Cancelled(source) => {
+            Some(fsl_replay::IncompleteCause::Cancelled { source: *source })
+        }
+        BudgetStop::Accounting(_) => None,
+    }
+}
+
 /// Source closure or the symbolic task pass, then FR-418's checker.
 ///
 /// The engine closes its source graph without a reachable release, or explores
@@ -526,7 +564,7 @@ fn prove<'a>(
     model: &str,
     checked_claim: &fsl_semantics::check::CheckedScheduleClaim,
     claim: &OccurrenceKey,
-    max_check_work: Option<std::num::NonZeroU64>,
+    bounds: super::EngineBounds,
     cancel: &filament_exact::Cancel,
 ) -> TaskProof {
     use crate::zone_check::{SymbolicStop, TaskCertificateRefusal};
@@ -534,16 +572,13 @@ fn prove<'a>(
         verdict: ProofVerdict::Fault,
         certificate: None,
     };
-    let defaults = fsl_replay::CertificateCheckLimits::default();
-    let limits = fsl_replay::CertificateCheckLimits {
-        max_check_work: max_check_work.map_or(defaults.max_check_work, std::num::NonZeroU64::get),
-        ..defaults
-    };
+    let limits = certificate_limits(&bounds);
+    let budget = Budget::from_settings(&bounds, simulation.meter, cancel);
     let automaton = fsl_eval::simulation::model::TaskAutomaton::new(product);
     let source = match crate::zone_check::no_release_task_product_certificate(
         product,
         claim.clone(),
-        crate::zone_check::ZoneCheckLimits::default(),
+        zone_limits(&bounds),
         cancel,
     ) {
         Ok(certificate) => certificate,
@@ -559,11 +594,7 @@ fn prove<'a>(
     let built = if let Some(certificate) = source {
         certificate
     } else {
-        let graph = match crate::zone_check::explore_task_symbolic(
-            &automaton,
-            limits.max_check_work,
-            cancel,
-        ) {
+        let graph = match crate::zone_check::explore_task_symbolic(&automaton, &budget) {
             Ok(graph) => graph,
             Err(SymbolicStop::Uncertified | SymbolicStop::Missed) => {
                 return TaskProof {
@@ -571,21 +602,9 @@ fn prove<'a>(
                     certificate: None,
                 }
             }
-            Err(SymbolicStop::WorkLimit(value)) => {
+            Err(SymbolicStop::Budget(stop)) => {
                 return TaskProof {
-                    verdict: ProofVerdict::Stopped(fsl_replay::IncompleteCause::LimitReached {
-                        limit: fsl_replay::ModelCheckLimit::ZoneMaxCheckWork,
-                        value,
-                        required: None,
-                    }),
-                    certificate: None,
-                }
-            }
-            Err(SymbolicStop::Cancelled(source)) => {
-                return TaskProof {
-                    verdict: ProofVerdict::Stopped(fsl_replay::IncompleteCause::Cancelled {
-                        source,
-                    }),
+                    verdict: stopped(&stop).map_or(ProofVerdict::Fault, ProofVerdict::Stopped),
                     certificate: None,
                 }
             }

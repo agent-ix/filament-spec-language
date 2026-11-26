@@ -7998,6 +7998,7 @@ fn a_model_based_parameter_holding_a_clock_reference_is_refused() {
         seed: 7,
         max_cases: 10,
         max_trace_length: None,
+        max_steps: u64::MAX,
         max_value_bits: None,
         subject: None,
         expansion: ExpansionLimits {

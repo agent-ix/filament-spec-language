@@ -1453,6 +1453,7 @@ pub(crate) fn run_package_temporal_over(
         // FR-516: the capacity is the system setting
         // `progress.covered_positions` (FR-255), not a request member.
         progress_capacity: covered_positions,
+        emit: crate::spine::PackageLimits::default().emit(),
     };
     run_temporal(
         &run,
