@@ -2057,6 +2057,7 @@ fn fair_upper_bound_failure(
 /// Observe real MDP action, closure and progress work without replacing cancellation.
 #[cfg(feature = "test-support")]
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-201-AC-3")]
 pub fn check_cyclic_mdp_probability_certificate_observing<'a>(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2072,6 +2073,7 @@ pub fn check_cyclic_mdp_probability_certificate_observing<'a>(
 /// Exercise this profile's real owner identity ceiling, without changing wire limits.
 #[cfg(feature = "test-support")]
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-201-AC-3")]
 pub fn check_cyclic_mdp_probability_certificate_with_identity(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

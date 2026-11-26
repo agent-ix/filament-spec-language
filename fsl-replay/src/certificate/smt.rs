@@ -28,6 +28,7 @@
 
 use std::cell::Cell;
 
+use ix_trace_rs::implements;
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::smt::{
@@ -257,6 +258,7 @@ struct Part<'c> {
 ///
 /// [`CertificateRejection`] naming the first rule that fails and its part,
 /// or the proof command at which it fails.
+#[implements("FR-314-AC-1")]
 pub fn check_refinement_smt_proof(
     request: &RefinementCertificateRequest<'_>,
     certificate: &RefinementSmtCertificate,

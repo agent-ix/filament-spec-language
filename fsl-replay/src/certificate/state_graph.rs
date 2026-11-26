@@ -44,6 +44,7 @@
 use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use ix_trace_rs::implements;
 use filament_exact::{Cancel, ObjectReference, ValueType};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading, TerminalClass};
@@ -96,6 +97,7 @@ pub struct StateGraphCertificateRequest<'a> {
 /// the `over` binding is no instance of the subject, the subject has no
 /// initial state, or a state cannot be encoded. A refusal is never an
 /// acceptance.
+#[implements("FR-169-AC-9")]
 pub fn check_state_graph(
     request: &StateGraphCertificateRequest<'_>,
     certificate: &StateGraphCertificate,

@@ -2,6 +2,7 @@
 //! Independent gain–bias checking of the closed DTMC long-run profiles.
 
 use super::*;
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 use std::cell::RefCell;
 
@@ -1329,6 +1330,7 @@ pub(in crate::probability_certificate) fn admit(
 
 /// Check with a phase observer while retaining the original caller controls.
 #[cfg(feature = "test-support")]
+#[implements("FR-201-AC-2")]
 pub fn check_long_run_probability_certificate_observing(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1345,6 +1347,7 @@ pub fn check_long_run_probability_certificate_observing(
 
 /// Check using an explicit raw/full identity byte ceiling for resource controls.
 #[cfg(feature = "test-support")]
+#[implements("FR-201-AC-2")]
 pub fn check_long_run_probability_certificate_with_identity(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

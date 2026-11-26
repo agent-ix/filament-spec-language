@@ -3,6 +3,7 @@
 
 use super::*;
 use filament_exact::OrderingOperator as Order;
+use ix_trace_rs::implements;
 use fsl_eval::probabilistic::{
     Accumulator, MeasureComparison, MeasurePayoff, MeasurePlan, MonitorState,
 };
@@ -2371,6 +2372,7 @@ fn acceptance(
     })
 }
 
+#[implements("FR-1043-AC-1")]
 #[implements("FR-1042-AC-27")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
