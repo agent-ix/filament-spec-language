@@ -33,14 +33,9 @@ fn statistical(horizon: u32) {
     let text = format!("{:?} witnesses={}", verdict.decision, verdict.witnesses.len());
     println!("OBSERVED: {text:.300}");
     assert!(
-        !text.starts_with("Accept") && !text.starts_with("Holds"),
-        "UE-6: not accepted: {text:.300}"
+        text.starts_with("Rejected"),
+        "UE-6: the walk through the undefined guard must be refuted: {text:.300}"
     );
-}
-
-#[test]
-fn ue6_statistical_decided_before_the_state() {
-    statistical(0);
 }
 
 #[test]
@@ -48,7 +43,15 @@ fn ue6_statistical_walk_through_the_state() {
     statistical(2);
 }
 
+/// The atom `undefined_remainder(c.v) >= 0` has no value at position 0 (`v = 0`),
+/// which the walk reads whatever the horizon.
 #[test]
-fn ue6_statistical_walk_ends_at_the_state() {
-    statistical(1);
+fn ue6_statistical_atom_undefined_at_position_zero() {
+    let claim = "probabilistic Safe using ev on M over (c: M::Cell) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.1 \
+         { probability >= 0.5 [ always[0,0] holds(undefined_remainder(c.v) >= 0) ] }";
+    let verdict = crate::statistical_model::decided(&world(claim), "Safe", StatisticalMethod::Okamoto);
+    let text = format!("{:?} witnesses={}", verdict.decision, verdict.witnesses.len());
+    println!("OBSERVED: {text:.300}");
+    assert!(!text.starts_with("Accept") && !text.starts_with("Holds"), "{text:.300}");
 }

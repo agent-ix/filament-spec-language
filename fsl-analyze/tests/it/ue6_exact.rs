@@ -60,22 +60,24 @@ fn ue6_exact_workload_reach_at_start() {
 }
 
 #[test]
-fn ue6_exact_workload_bounded_before_the_state() {
-    exact(
-        &world(
-            "probabilistic P using ev on M over (c: M::Cell) under Even on origin \
-             { probability >= 0.99 [ always[0,0] holds(c.v >= 0) ] }\n",
-        ),
-        "P",
-    );
-}
-
-#[test]
 fn ue6_exact_workload_reach_at_the_state() {
     exact(
         &world(
             "probabilistic P using inf on M over (c: M::Cell) under Even on origin \
              { probability >= 0.99 [ eventually holds(c.v = 1) ] }\n",
+        ),
+        "P",
+    );
+}
+
+/// The atom `undefined_remainder(c.v) >= 0` has no value at position 0 (`v = 0`),
+/// which `always[0,0]` reads.
+#[test]
+fn ue6_exact_atom_undefined_at_position_zero() {
+    exact(
+        &world(
+            "probabilistic P using ev on M over (c: M::Cell) under Even on origin \
+             { probability >= 0.99 [ always[0,0] holds(undefined_remainder(c.v) >= 0) ] }\n",
         ),
         "P",
     );
