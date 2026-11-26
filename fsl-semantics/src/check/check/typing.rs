@@ -1335,6 +1335,9 @@ impl<'a> Typer<'a> {
                         then, otherwise, ..
                     } => pending.extend([*otherwise, *then]),
                     NodeKind::Let { body, .. } => pending.push(*body),
+                    NodeKind::Case { arms, .. } => {
+                        pending.extend(arms.iter().rev().map(|arm| arm.body));
+                    }
                     _ => {}
                 }
             }

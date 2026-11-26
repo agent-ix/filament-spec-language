@@ -3371,6 +3371,18 @@ fn a_constant_beyond_a_unit_bound_is_refused_where_a_body_writes_it() {
     let some = |written: &str| {
         format!("function f using v(): M::Maybe pure {{ M::Maybe {{ p: Some({written}) }} }}")
     };
+    let arm = |written: &str| {
+        format!(
+            "function f using v(c: M::Choice): M::Span pure {{ \
+             M::Span {{ d: case c {{ Held(s): s.d; Empty: {written}; }} }} }}"
+        )
+    };
+    let inside = |written: &str| {
+        format!(
+            "function f using v(c: Boolean): M::Span pure {{ \
+             if c then M::Span {{ d: 1 ms }} else M::Span {{ d: {written} }} }}"
+        )
+    };
 
     for accepted in [
         span("3 ms"),
@@ -3379,6 +3391,8 @@ fn a_constant_beyond_a_unit_bound_is_refused_where_a_body_writes_it() {
         branch("3 ms"),
         set("3 ms"),
         some("3 ms"),
+        arm("3 ms"),
+        inside("3 ms"),
         "function f using v(x: M::Span): M::Span pure { M::Span { d: x.d } }".to_owned(),
         "function f using v(x: M::Span): M::Span pure { M::Span { d: x.d + 4 ms } }".to_owned(),
     ] {
@@ -3396,6 +3410,8 @@ fn a_constant_beyond_a_unit_bound_is_refused_where_a_body_writes_it() {
         branch("4 ms"),
         set("4 ms"),
         some("4 ms"),
+        arm("4 ms"),
+        inside("4 ms"),
     ] {
         let refusal = check(&refused).expect_err(&refused);
         let RunRefusal::Compile(compile) = *refusal else {
