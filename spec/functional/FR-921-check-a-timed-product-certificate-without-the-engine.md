@@ -54,9 +54,10 @@ certificate `InequalityFails` at the first such state; the item settles
 ### Re-derived by the checker
 
 The checker SHALL compute, with code in the qualified core that EN-5 does not
-share (the one concrete timed run excepted: exact clock values, delay
-admissibility, the discrete step, positions and outcome types, ADR-038 RL-1,
-RL-2):
+share (excepted: the one concrete timed run, which is exact clock values,
+delay admissibility, the discrete step, positions and outcome types, and the
+one type of a product state key with its validator and encoder, ADR-038 RL-1,
+RL-2, RL-5):
 
 1. the route, by FSpec FR-421 "Closed and strict conditions" (ADR-038's route
    admission table), the checker deciding for itself the subject's

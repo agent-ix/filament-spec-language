@@ -86,8 +86,7 @@ value per pair equal to its best exit, and rejects the Zeno certificate.
   enabled discrete move, SHALL be a time-lock: a terminal state, read for the
   objective as FSpec FR-416 "How claims read a time-lock" states: value 0 for
   an event not yet met, value 1 for an `always` that the positions read
-  satisfy, and an uncompleted measure censored, so that an expected
-  accumulation or elapsed time to a target not reached is infinite.
+  satisfy, and no further elapsed reward.
 
 ## Acceptance Criteria
 

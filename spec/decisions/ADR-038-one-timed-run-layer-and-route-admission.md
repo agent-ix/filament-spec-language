@@ -47,11 +47,54 @@ admitted for forms that no cited theorem covers.
 | RL-2 | **Abstractions are written twice.** Zones, integer clocks and regions, their successors, races, claim monitors, progress tests and component decompositions are written separately in the producer and in the checker (FSL FR-921, FSpec FR-751). What RL-1 shares is the concrete run only: a monitor or progression function, such as `advance_nested_timed_deadline`, is not part of it, and neither is a product `TransitionSystem` or an end-component decomposition. |
 | RL-3 | **A region MDP is symbolic.** The region route's state is a symbolic region key (each clock's integer part, whether its fraction is zero, and the order of the fractions) and its delay move is the region's time successor. A walk over a finer grid of clock values is not a region MDP and settles no exact probabilistic timed claim. While the region MDP a claim needs is not built, the item settles a typed `Incomplete`, never a digital-clock value and never `unsupported`. |
 | RL-4 | **A dense-time falsification oracle, in tests only.** Tests hold an oracle that enumerates rational delay schedules over the RL-1 run layer and compares the probability or verdict each gives with the value a route claims. It can only refute a value. No product path calls it and it emits no certificate. |
+| RL-5 | **One type per product state key.** A key of a timed product, the region key included, is one type with one validator and one encoder, used by the certificate writer and the checker. The region time successor, the reading of a guard on a region and the computation of a region's fraction classes are written separately on each side (RL-2). |
+| RL-6 | **Witness replay does not sample.** Replay of a sampled witness re-derives the run from the record on the RL-1 layer, checks every recorded draw against its window, its distribution and its recomputation from the seed (FSpec FR-420, FSL FR-254), and evaluates the claim with the shared evaluator. It does not call the sampler. |
 
 RL-2 does not decide one sharing that exists today: the zone producer and the
 zone checker both translate a clause with `fsl-eval`'s position automaton and
 window claim, a reading of the formula and not of the clocks. The requirement
 that declares each certificate checker's trusted base decides it.
+
+**Wire change RL-6 needs** (not specified here; QSL-3493 specifies it in FSpec
+FR-331, FR-410, FR-420 and FSL FR-193). A sampled-witness step carries
+`scheduled`, `random` and `delay`, and the delay is the winning one. RL-6
+needs, for each step, the identity, drawn delay and choice index of every
+identity that raced, and the step's rewards; and, on the witness, how the run
+ended (the step that crosses the horizon, whose reward a weighted fraction
+reads as in FSL FR-254-AC-5; the idle tail; or a time-lock) with its time
+stamp, a race that advances time and takes no step included.
+
+**Zeno trap.** A Zeno trap with no exit is a time-lock (FSpec FR-416
+"Time-locks"; FSpec FR-421 and FR-753 treat an end component with no exit so).
+On regions a trap can hold delay moves and still not diverge, so each side
+applies the progress condition of FSpec FR-753 and not a zero-delay test
+alone.
+
+### Drafted amendment to FSL FR-921 (for the arch ruling; not applied)
+
+FR-921 item 1 has the checker compute the route with code EN-5 does not share,
+and item 5 the same for the end components and time-locks. One admission table
+read by both (QSL-3494), and one reading of a locked run, contradict that if
+"route" and "time-lock" mean the declaration as well as the facts. The draft
+separates them:
+
+- **Shared declarations.** The route admission table (its rows and the
+  conditions each row tests) and the mapping of FSpec FR-416 "How claims read
+  a time-lock" from a claim monitor's kind and reading to a value are declared
+  once, in the qualified core, and read by EN-5 and its checker. Neither
+  computes a fact about a subject.
+- **Item 1** becomes: every condition a row tests (closedness, delay class,
+  whether a time-lock is reachable, claim form, position read), each
+  established by the checker's own code; and the route the declared table
+  gives those conditions.
+- **Item 5** becomes: the maximal end components, their exits, their progress
+  and the time-locks it finds, by its own code; a locked state's value is the
+  shared mapping.
+
+A wrong row or a wrong mapping is then a defect both sides carry. The theorem
+cited by each row, review, and the RL-4 oracle are what catch it. Without the
+amendment each side writes the table and the mapping itself, and the two can
+drift apart, as the producer's and checker's region scale rules do today.
 
 ### Route admission
 
