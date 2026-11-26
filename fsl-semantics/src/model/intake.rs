@@ -5942,6 +5942,7 @@ fn decimal_type_for_identity(
 }
 
 #[ix_trace_rs::string_edge]
+#[implements("FR-106-AC-88")]
 fn read_type_node(
     reader: &TypeNodeReader<'_>,
     type_value: &Value,

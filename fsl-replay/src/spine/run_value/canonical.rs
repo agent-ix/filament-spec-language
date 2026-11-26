@@ -3,6 +3,7 @@
 //! admissions. Numeric, membership and object-world decisions remain theirs.
 
 use super::*;
+use ix_trace_rs::implements;
 
 struct Position<'a> {
     argument: usize,
@@ -131,6 +132,7 @@ impl Forms<'_> {
 
     /// The value a canonical `form` spells, with the native form it was read
     /// as, which a later check of the value locates its pointer through.
+    #[implements("FR-650-AC-25")]
     pub(crate) fn read_canonical_with_form(
         &self,
         form: &Json,
@@ -708,6 +710,7 @@ fn declaration_form(key: &NodeKey) -> Result<Json, ReadStop> {
 
 /// Preserve the typed reader's refusal while locating it in the caller's
 /// canonical tree, including record slots and native optional-field wrappers.
+#[implements("FR-650-AC-25")]
 pub(super) fn canonical_pointer(mut canonical: &Json, mut native: &Json, pointer: &str) -> String {
     let mut path = Path::new();
     let mut segments = pointer

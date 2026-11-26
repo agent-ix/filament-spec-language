@@ -26,6 +26,7 @@ use fsl_package::{checked_occurrence, CheckedPackage};
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::state::CompositeBounds;
+use ix_trace_rs::implements;
 
 use super::call::{
     admit_model_arguments, admit_unit_bounds, bind_arguments, convert_call_failure, select,
@@ -316,6 +317,7 @@ struct Package<'a> {
     checked: &'a CheckedPackage,
 }
 
+#[implements("FR-650-AC-24")]
 fn bind(
     package: &Package<'_>,
     call: &Call,
