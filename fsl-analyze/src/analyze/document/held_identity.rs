@@ -23,6 +23,7 @@ use fsl_semantics::check::wire_id::{
 };
 use fsl_semantics::check::ComponentPackages;
 use serde_json::Value;
+use ix_trace_rs::implements;
 
 use crate::analyze::GraphUnavailable;
 
@@ -205,6 +206,7 @@ fn component_slots(
 
 /// [`hold`] for a composition item: the ids of a component slot are held in
 /// the component's graph, every other id in `graph`.
+#[implements("FR-621-AC-17")]
 fn hold_composition(
     value: &Value,
     graph: &WireGraph,
