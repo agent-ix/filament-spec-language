@@ -280,3 +280,53 @@ pub(super) fn time_locked(invariant: &str, claims: &str) -> World {
         ),
     )
 }
+
+/// TC-374's `Split` (FSpec#861), closed and diagonal-free: `first` runs at a
+/// time `t` in [0, 1] ms, resets `z` and draws `lost`. Without it, `early`
+/// needs `z >= 1 ms` while `x <= 1 ms`; with it, `tardy` needs `x >= 1 ms`
+/// while `z <= 0 ms`. Each other run is time-locked.
+pub(super) fn split(claims: &str) -> World {
+    let document = with_lost(
+        &timed_world::document(
+            &["x", "z"],
+            &[
+                ("first", &["phase", "inflight", "z"]),
+                ("early", &["phase"]),
+                ("tardy", &["phase"]),
+            ],
+        ),
+        "first",
+    );
+    model(
+        &document,
+        &format!(
+            "pre First using v on M::Call::first {{ self.phase = 0 }}\n\
+             post FirstDone using v on M::Call::first {{ self.phase = 1 and self.inflight = lost and self.z = 0 ms }}\n\
+             random M::Call::first(lost) ~ {{ true: 1, false: 1 }};\n\
+             pre Early using v on M::Call::early {{ self.phase = 1 and not self.inflight and self.z >= 1 ms }}\n\
+             post EarlyDone using v on M::Call::early {{ self.phase = 2 }}\n\
+             pre Tardy using v on M::Call::tardy {{ self.phase = 1 and self.inflight and self.x >= 1 ms }}\n\
+             post TardyDone using v on M::Call::tardy {{ self.phase = 2 }}\n\
+             time invariant Start when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n\
+             time invariant Short when {{ self.phase = 1 and not self.inflight }} {{ self.x <= 1 ms }}\n\
+             time invariant Stopped when {{ self.phase = 1 and self.inflight }} {{ self.z <= 0 ms }}\n\
+             {claims}"
+        ),
+    )
+}
+
+/// FR-254-AC-4's `Lock`: `go` is drawn at 1/2 ms and time stops at 1 ms
+/// after it, with nothing enabled.
+pub(super) fn lock_after_a_step(claims: &str) -> World {
+    model(
+        &timed_world::document(&["x"], &[("go", &["phase"])]),
+        &format!(
+            "pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+             post Went using v on M::Call::go {{ self.phase = 1 }}\n\
+             delay M::Call::go ~ discrete {{ rational(1, 2) ms: 1 }};\n\
+             time invariant Stop when {{ self.phase = 1 }} {{ self.x <= 1 ms }}\n\
+             workload One on M {{ weight Call::go = 1; }}\n\
+             {claims}"
+        ),
+    )
+}
