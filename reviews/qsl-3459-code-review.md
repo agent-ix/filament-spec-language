@@ -25,3 +25,14 @@ The run-result expected values (`incomplete`, `work_units`) are written by hand 
 | FND-002 | medium | The PR adds the author's own SpecReview with a PASS verdict and no findings; it is stale, overstates the comparison and contradicts the PR body | reviews/26-11-25-qsl-3459-code-review.md:1-39 |
 | FND-003 | low | Run-result read-back compares category and limit only; stage, basis and truth are exposed by the reader and not asserted | fsl-analyze/tests/it/model_trace_run.rs:275-286 |
 | FND-004 | low | New run-result read-back assertions are bound only to FR-641-AC-4, which says nothing about reading the written record; the reading-back criterion is FR-267-AC-14 | fsl-analyze/tests/it/model_trace_run.rs:239-240 |
+
+## Dispositions
+
+Disposition pass 1, head 905eae8cac33625a1d22bcef2376db9f201fee8c (fix commit e226f99649). Checked by reading the code against ADR-028 section 15.4 and the `link.native` fixture; the tests were not re-run by the reviewer. No new findings. FND-001 cited the every-scheduler values (24/25, 4/5) from FR-201-AC-1; this claim runs under `Even`, whose values are 391/400 and 17/20.
+
+| FND     | outcome | reason |
+| ------- | ------- | ------ |
+| FND-001 | fixed   | The rewrite must equal the emitted bytes; decoded identity, optimization, values and targets are compared with values that agree with ADR-028 section 15.4 |
+| FND-002 | fixed   | The author's file is removed and the reviewer's file is committed as reviews/qsl-3459-code-review.md |
+| FND-003 | fixed   | Stage, basis and truth are asserted on the read-back record |
+| FND-004 | fixed   | FR-267-AC-14 tag added; the PR body states that only its incomplete row is covered |
