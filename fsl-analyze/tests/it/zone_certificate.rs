@@ -1183,3 +1183,78 @@ fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
         other => panic!("a Zeno loop is not an admitted witness: {other:?}"),
     }
 }
+
+/// `alpha` (every held element's `x` at most 0) and `go` (at least 5 ms)
+/// enter phase 1, which `y <= 1 ms` bounds and `tick` leaves; `work` needs
+/// phase `from` and `x >= 5 ms`. `ts` declares no maximum, so every read of
+/// `x` is in a quantifier family.
+fn family_gate(from: u8) -> World {
+    let mut document: serde_json::Value = serde_json::from_slice(&crate::timed_world::timers_document(
+        1,
+        &[
+            ("alpha", &["phase", "y"]),
+            ("go", &["phase", "y"]),
+            ("tick", &["phase"]),
+            ("work", &["phase"]),
+        ],
+    ))
+    .expect("JSON");
+    let fields = document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields");
+    fields
+        .iter_mut()
+        .find(|field| field["name"] == "ts")
+        .expect("ts")["multiplicity"]
+        .as_object_mut()
+        .expect("a multiplicity")
+        .remove("upper");
+    fields.push(crate::timed_world::wire_field(
+        "y",
+        "ix://filament/native/Clock",
+    ));
+    let timer = serde_json::json!({"record": {
+        "type": crate::timed_world::ident("Timer"), "fields": {"n": {"integer": "0"}}}});
+    crate::timed_world::world_holding(
+        document.to_string().as_bytes(),
+        INFINITE,
+        &format!(
+            "{DENSE}\
+             pre Early using v on M::Call::alpha {{ self.phase = 0 and forall(e in self.ts: e.x <= 0 ms) }}\n\
+             post Earlied using v on M::Call::alpha {{ self.phase = 1 and self.y = 0 ms }}\n\
+             pre Late using v on M::Call::go {{ self.phase = 0 and forall(e in self.ts: e.x >= 5 ms) }}\n\
+             post Lated using v on M::Call::go {{ self.phase = 1 and self.y = 0 ms }}\n\
+             pre Rest using v on M::Call::tick {{ self.phase = 1 }}\n\
+             post Rested using v on M::Call::tick {{ self.phase = 3 }}\n\
+             pre Bad using v on M::Call::work {{ self.phase = {from} and forall(e in self.ts: e.x >= 5 ms) }}\n\
+             post Badded using v on M::Call::work {{ self.phase = 2 }}\n\
+             time invariant Brief when {{ self.phase = 1 }} {{ self.y <= 1 ms }}\n\
+             temporal NoTwo using inf over (c: M::Call) clock \"model-steps\" on origin \
+             {{ always holds(not (c.phase = 2)) }}\n"
+        ),
+        &serde_json::json!({"ts": {"sequence": [timer]}}),
+    )
+}
+
+#[test]
+fn probe_family_lu() {
+    let real = family_gate(1);
+    let sibling = family_gate(2);
+    println!(
+        "real: {}",
+        summary(&claim(&real, ZoneCheckLimits::default(), &Cancel::new()))
+    );
+    let certificate = retarget(
+        proved(claim(&sibling, ZoneCheckLimits::default(), &Cancel::new())),
+        &real,
+    );
+    println!("lu {:?} scale {:?}", certificate.lu_bounds, certificate.scale);
+    for (i, n) in certificate.nodes.iter().enumerate() {
+        println!("node {i} {:?}", n);
+    }
+    for (i, e) in certificate.edges.iter().enumerate() {
+        println!("edge {i} {} -> {} {:?}", e.from, e.to, e.transition.as_ref().map(|t| t.operation().to_owned()));
+    }
+    println!("initials {:?} admitted {:?}", certificate.initials, certificate.admitted);
+    println!("over real: {:?}", verdict(&real, &certificate));
+}
