@@ -1001,6 +1001,14 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         "{object:?}"
     );
     assert!(object.location.path().is_empty());
+    assert_eq!(
+        (object.cause.code(), object.cause.cause()),
+        (
+            fsl_foundation::diagnostic::Code::IllTyped,
+            Some("type-mismatch")
+        ),
+        "an absent model field remains ill_typed/type-mismatch: {object:?}"
+    );
 
     let arithmetic = refusals
         .iter()
