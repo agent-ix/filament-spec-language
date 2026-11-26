@@ -32,6 +32,7 @@
 //! `TransitionSystem` stop carries a catalog code only.
 
 use std::cell::{Cell, Ref, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use filament_exact::{Cancel, CancelCause, ScalarLimits};
@@ -39,6 +40,7 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_foundation::IdentityLimits;
 use fsl_semantics::check::{CheckedFormula, FormulaNodeId, TemporalProfile};
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Sink, Writer};
 
 use crate::automaton::{
@@ -52,7 +54,7 @@ use crate::hyper::witness::{Partner, WitnessSet};
 use crate::simulation::model::{ModelFinding, ModelKey, ModelSimState, ModelSystem};
 use crate::simulation::{
     ConstraintValue, EncodingRefusal, Expansion, ExpansionStop, OfferedReductions, Permutation,
-    SymmetryGroup, TransitionSystem,
+    StateKey, SymmetryGroup, TransitionSystem,
 };
 use crate::temporal::UndefinedCause;
 
@@ -101,6 +103,8 @@ pub struct HyperState {
     /// automaton transition creates it. Hyper-product state-key calls then
     /// need no interior-mutability borrow of the automaton.
     property_key: Option<Rc<PropertyKey>>,
+    /// See [`Self::has_unknown_successors`].
+    unknown_successors: bool,
 }
 
 impl HyperState {
@@ -111,7 +115,26 @@ impl HyperState {
             components,
             property,
             property_key: None,
+            unknown_successors: false,
         }
+    }
+
+    /// Whether this is a state the body automaton has no run from whose model
+    /// state has a contract conjunction with no value, or a refused one, so
+    /// what it enables is unknown. The product reads it when it creates the
+    /// state, so asking expands nothing. Only a product of the body itself
+    /// ([`BodySense::Itself`]) reads it; `false` for every other state.
+    #[must_use]
+    #[implements("FR-181-AC-13")]
+    pub fn has_unknown_successors(&self) -> bool {
+        self.unknown_successors
+    }
+
+    /// `self` with the reading `of` has, for the same joint model state under
+    /// another naming.
+    pub(super) fn with_reading_of(mut self, of: &Self) -> Self {
+        self.unknown_successors = of.unknown_successors;
+        self
     }
 
     pub(super) fn with_property_key(mut self, key: PropertyKey) -> Self {
@@ -545,6 +568,12 @@ pub struct HyperProduct<'r, 's> {
     boundary: Cell<u64>,
     start: StateId,
     initial: Vec<HyperState>,
+    /// [`HyperState::has_unknown_successors`] of each joint model state a
+    /// state with no run was created at.
+    no_run_contracts: RefCell<BTreeMap<Vec<StateKey>, bool>>,
+    /// The body itself is translated, so a state with no run decides whether
+    /// a part is closed and its contracts are read.
+    reads_no_run: bool,
 }
 
 impl<'r, 's> HyperProduct<'r, 's> {
@@ -569,6 +598,7 @@ impl<'r, 's> HyperProduct<'r, 's> {
         let symmetry = inputs.copy_swap.as_ref().map(|_| AtomSymmetry {
             generators: &generators,
         });
+        let reads_no_run = matches!(inputs.sense, BodySense::Itself);
         let mut automaton = match inputs.sense {
             BodySense::Negated => translate_negation(
                 inputs.body,
@@ -606,6 +636,8 @@ impl<'r, 's> HyperProduct<'r, 's> {
             boundary: Cell::new(0),
             start,
             initial: Vec::new(),
+            no_run_contracts: RefCell::new(BTreeMap::new()),
+            reads_no_run,
         })
     }
 
@@ -631,11 +663,7 @@ impl<'r, 's> HyperProduct<'r, 's> {
             }
             let reading = self.joint.reading(&components)?;
             for property in self.step(Before::Start, &reading)? {
-                initial.push(HyperState {
-                    components: components.clone(),
-                    property_key: Some(Rc::new(self.property_key(&property))),
-                    property,
-                });
+                initial.push(self.created(components.clone(), property)?);
             }
         }
         self.initial = initial;
@@ -689,6 +717,49 @@ impl<'r, 's> HyperProduct<'r, 's> {
     /// The `ModelSystem` of each trace variable, in quantifier order.
     pub fn systems(&self) -> &[&'r ModelSystem<'s>] {
         &self.joint.systems
+    }
+
+    /// The product state of `components` at `property`, with its property key
+    /// and, when the body automaton has no run from it, whether its model
+    /// state leaves what it enables unknown.
+    #[implements("FR-181-AC-13")]
+    fn created(
+        &self,
+        components: Vec<ModelSimState>,
+        property: Property,
+    ) -> Result<HyperState, ExpansionStop> {
+        let unknown_successors = self.reads_no_run
+            && matches!(property, Property::Dead)
+            && self.unknown_successors(&components)?;
+        Ok(HyperState {
+            property_key: Some(Rc::new(self.property_key(&property))),
+            components,
+            property,
+            unknown_successors,
+        })
+    }
+
+    /// Whether a contract conjunction of some component of `components` has no
+    /// value or is refused, read once for each joint model state.
+    fn unknown_successors(&self, components: &[ModelSimState]) -> Result<bool, ExpansionStop> {
+        let keys = self.joint.state_keys(components)?;
+        if let Some(known) = self.no_run_contracts.borrow().get(&keys) {
+            return Ok(*known);
+        }
+        let mut unknown = false;
+        for (component, model) in components.iter().enumerate() {
+            self.joint.poll()?;
+            unknown |= self
+                .joint
+                .stepping(component, model)?
+                .contracts
+                .into_iter()
+                .any(|finding| {
+                    HyperFinding::Contract { component, finding }.leaves_successors_unknown()
+                });
+        }
+        self.no_run_contracts.borrow_mut().insert(keys, unknown);
+        Ok(unknown)
     }
 
     /// The property states a joint position reads into, from `before`.
@@ -832,14 +903,7 @@ impl TransitionSystem for HyperProduct<'_, '_> {
             }
             let reading = self.joint.reading(&posts)?;
             for property in self.step(before, &reading)? {
-                successors.push((
-                    step.clone(),
-                    HyperState {
-                        components: posts.clone(),
-                        property_key: Some(Rc::new(self.property_key(&property))),
-                        property,
-                    },
-                ));
+                successors.push((step.clone(), self.created(posts.clone(), property)?));
             }
         }
         if cut {

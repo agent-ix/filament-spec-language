@@ -21,7 +21,7 @@ use filament_exact::{Cancel, CancelCause, Meter, Undefined};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::model_check::{HyperRefusal, ModelCheckRefusal};
-use fsl_eval::hyper::HyperLetters;
+use fsl_eval::hyper::{BodySense, HyperInputs, HyperLetters, HyperProduct, Property};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{StopReason, TransitionSystem};
@@ -1750,4 +1750,99 @@ fn a_trap_before_a_later_undefined_letter_replays() {
         settled_trap(&world, unsampled()),
         (ResultLabel::Refuted, SettlementBasis::ClosedScope)
     );
+}
+
+/// FR-181-AC-13: the product reads a no-run state's contract conjunctions when
+/// it creates the state, so asking whether its part is closed expands nothing:
+/// the answer is there on an initial state and on a successor that no
+/// expansion has visited.
+#[trace("TC-3219", "FR-181-AC-13")]
+#[test]
+fn a_no_run_state_carries_its_contract_reading() {
+    let guarded = |start, body: &str| {
+        World::new_with_kernel_function(
+            GUARDED,
+            false,
+            &[start],
+            &clause("", body),
+            KERNEL_QUOTIENT,
+        )
+    };
+    let secure = World::new(
+        Vault::Secure,
+        false,
+        &[(0, 0)],
+        &clause("", "holds(v.l @ b = 1)"),
+    );
+    // `(h, l) = (0, 1)`: the body `l = 0` is false there and the guard
+    // `1 div 0` has no value.
+    assert_eq!(
+        initial_readings(&guarded((0, 1), "holds(v.l @ b = 0)")),
+        [(true, true)]
+    );
+    // The body `l = 1` is false at `(0, 0)`; the secure `step` has no guard.
+    assert_eq!(initial_readings(&secure), [(true, false)]);
+    // The body `l = 1` is true at `(0, 1)`: the state has a run.
+    assert_eq!(
+        initial_readings(&guarded((0, 1), "holds(v.l @ b = 1)")),
+        [(false, false)]
+    );
+    // From `(0, 0)`, `step(0)` keeps `l = 0` and `step(1)` gives `l = 1`,
+    // where `always l = 0` has no run and the guard has no value.
+    let world = guarded((0, 0), "always holds(v.l @ b = 0)");
+    with_product(&world, |product| {
+        let initial: Vec<_> = product.initial_iter().filter_map(Result::ok).collect();
+        let expansion = product.successors(&initial[0]).expect("the start expands");
+        let mut read: Vec<_> = expansion
+            .successors
+            .iter()
+            .map(|(_, state)| (low(&state.components[0]), state.has_unknown_successors()))
+            .collect();
+        read.sort_unstable();
+        assert_eq!(read, [(0, false), (1, true)]);
+    });
+}
+
+/// For each initial product state of `world`'s clause, whether the body
+/// automaton has no run from it and whether its successors are unknown.
+fn initial_readings(world: &World) -> Vec<(bool, bool)> {
+    with_product(world, |product| {
+        product
+            .initial_iter()
+            .filter_map(Result::ok)
+            .map(|state| {
+                (
+                    state.property == Property::Dead,
+                    state.has_unknown_successors(),
+                )
+            })
+            .collect()
+    })
+}
+
+/// `read` of the product of `world`'s clause body, its initial states read and
+/// none expanded.
+fn with_product<T>(world: &World, read: impl FnOnce(&HyperProduct<'_, '_>) -> T) -> T {
+    let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
+    let seams = world.seams();
+    let cancel = Cancel::new();
+    let instance = instance();
+    let mut product = HyperProduct::new(HyperInputs {
+        systems: vec![&system],
+        instance: &instance,
+        body: world.clause.body(),
+        profile: world.clause.profile(),
+        sense: BodySense::Itself,
+        letters: &seams,
+        matcher: None,
+        max_automaton_states: u64::MAX,
+        meter: UNLIMITED,
+        cancel: &cancel,
+        copy_swap: None,
+        key_generators: Vec::new(),
+        constraint: None,
+    })
+    .expect("the body translates");
+    product.start().expect("the initial states read");
+    read(&product)
 }
