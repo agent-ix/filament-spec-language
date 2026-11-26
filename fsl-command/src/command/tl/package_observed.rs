@@ -277,6 +277,7 @@ fn behaviours(
         observation_limits,
         accounting: fsl_replay::AccountingLimits::default().0,
         max_steps: initial.max_steps,
+        emit: fsl_replay::spine::PackageLimits::default().emit(),
     });
     match valuations {
         Ok(valuations) => Ok(Observation::Valued(Observed {
