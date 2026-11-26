@@ -2455,7 +2455,9 @@ fn a_cancel_in_nested_repeats_cancels_per_iteration_of_each() {
     let placed = |message: &str| looped("send", "Placed", "Buyer", message);
     let got = |message: &str| looped("receive", "Got", "Seller", message);
     let assert_all_satisfied = |item: &Value, count: usize| {
-        let prefixes = item["prefixes"].as_array().expect("prefixes");
+        let prefixes = item["prefixes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("prefixes: {item}"));
         assert_eq!(prefixes.len(), count, "{item}");
         for prefix in prefixes {
             for node in [NESTED_LEFT, NESTED_RIGHT] {
