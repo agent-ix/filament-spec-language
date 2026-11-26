@@ -627,6 +627,7 @@ pub(crate) fn is_identity_text(wire: &str) -> bool {
 /// identity text `text` itself, except that a name (a JSON string whose content
 /// is not itself an identity text) is written as that name, which the reader
 /// rule restores. Neither case copies.
+#[implements("FR-120-AC-40")]
 pub(crate) fn task_source_operation<'a>(
     operation: &'a serde_json::Value,
     text: &'a str,

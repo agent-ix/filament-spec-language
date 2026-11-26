@@ -10,6 +10,7 @@
 
 use filament_exact::{Integer, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
+use ix_trace_rs::implements;
 use quire_canonical::Limits;
 use serde_json::{json, Map, Value};
 
@@ -442,6 +443,7 @@ pub(crate) fn action_name(action: TaskTransitionAction) -> &'static str {
 }
 
 /// A source transition identity `{type, operation, receiver, arguments}`.
+#[implements("FR-120-AC-40")]
 pub(crate) fn source_transition(
     value: &Value,
     pointer: &str,

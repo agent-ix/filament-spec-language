@@ -2080,6 +2080,7 @@ pub fn probabilistic_wire(
     })
 }
 
+#[implements("FR-120-AC-41")]
 fn probabilistic_wire_using(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
