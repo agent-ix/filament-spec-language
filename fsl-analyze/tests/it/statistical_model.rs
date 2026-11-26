@@ -3004,3 +3004,48 @@ fn a_run_of_zero_delay_cycles_takes_the_unweighted_fraction() {
     assert_eq!(verdict.decision, Decision::Accepted);
     assert_eq!(verdict.estimate, Some(ratio(1, 2)));
 }
+
+/// `send` is the only step. At 5 ms it lands after the horizon, so no
+/// position has time stamp 4 ms. At 4 ms it is that position. Under a time
+/// invariant the state after `send` at 2 ms is not quiescent, so it has no
+/// stutter position at 4 ms either.
+#[test]
+fn a_timed_formula_reads_no_position_inside_a_delay() {
+    for (name, send_ms, invariant, phase, holds) in [
+        ("CrossingStep", 5, "", 0, false),
+        ("StepAtHorizon", 4, "", 1, true),
+        (
+            "Invariant",
+            2,
+            "time invariant Held when { self.phase = 1 } { self.x <= 10 ms }\n",
+            1,
+            false,
+        ),
+    ] {
+        let declarations = format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             delay M::Call::send ~ discrete {{ {send_ms} ms: 1 }};\n\
+             {invariant}\
+             workload Even on M {{ weight Call::send = 1; }}\n\
+             probabilistic {name} using ev on M over (c: M::Call) under Even on origin\n\
+                 with alpha 0.4, beta 0.4, indifference 0.05\n\
+                 {{ probability >= 0.5 [ eventually[4 ms, 4 ms] holds(c.phase = {phase}) ] }}\n"
+        );
+        let world = timed_world_with(&[("send", &["phase"])], &declarations);
+        let verdict = completed(run_timed_method(
+            &world,
+            name,
+            StatisticalMethod::Okamoto,
+            7,
+            fsl_replay::statistical::TimedSampling::default(),
+            1,
+        ));
+        let expected = if holds {
+            (Some(ratio(1, 1)), Decision::Accepted)
+        } else {
+            (Some(ratio(0, 1)), Decision::Rejected)
+        };
+        assert_eq!((verdict.estimate, verdict.decision), expected, "{name}");
+    }
+}

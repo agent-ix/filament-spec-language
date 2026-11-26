@@ -1083,26 +1083,30 @@ impl<'c> Shared<'_, '_, 'c> {
             },
             _ => broken(),
         })?;
-        // A sample ends at its last transition at or before the horizon. For
-        // the bounded event reader, extend the constant final state to the
-        // inclusive horizon and add a past-horizon marker so open windows
-        // settle there. These evaluator positions are not sampled witness
-        // steps.
+        // The reader reads the sample's own positions: a delay is not a
+        // position (FSpec FR-421, FR-416), so nothing is read at the horizon
+        // inside a delay. Only the idle tail of a quiescent state has stutter
+        // positions after the last step, and one is read at the horizon. The
+        // past-horizon marker lets open windows settle. Neither added entry
+        // is a sampled witness step.
         let mut formula_states = sample.states.clone();
         let mut formula_stamps = sample.stamps.clone();
-        let state_at_horizon = if sample.stamp < *horizon {
+        let mut marker = sample.state.clone();
+        if sample.idle
+            && sample.stamp < *horizon
+            && timed
+                .is_quiescent(sample.state.discrete())
+                .map_err(|_| broken())?
+        {
             let wait = horizon.sub(&sample.stamp);
-            let state = timed
+            marker = timed
                 .delay(&sample.state, &wait)
                 .map_err(|_| broken())?
                 .ok_or_else(broken)?;
-            formula_states.push(state.clone());
+            formula_states.push(marker.clone());
             formula_stamps.push(horizon.clone());
-            state
-        } else {
-            sample.state.clone()
-        };
-        formula_states.push(state_at_horizon);
+        }
+        formula_states.push(marker);
         formula_stamps.push(horizon.add(&Rational::from_integer(Integer::one())));
         let mut failure = None;
         let mut first_undefined = None;
