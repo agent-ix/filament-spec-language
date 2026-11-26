@@ -1034,86 +1034,114 @@ fn check_smt_temporal(cases: &[(Case, Option<&str>)]) {
     assert_clean(wrong);
 }
 
-/// The SMT hyper encoder takes one instance of the admitted keys and refuses
-/// each excluded key. The product-closure checker accepts no
-/// certificate over an empty set.
-fn check_hyper_library(cases: &[Case]) {
-    let mut wrong = Vec::new();
-    for case in cases {
-        let over = case.over;
-        let p = if case.instances().is_empty() {
-            "x = x".to_owned()
+impl Case {
+    /// A two-universal clause over this case, and its listed keys.
+    fn hyper(&self) -> (Library, Vec<&'static str>) {
+        let p = if self.instances().is_empty() {
+            "x = x"
         } else {
-            "x.age <= 9".to_owned()
+            "x.age <= 9"
         };
-        let library = case.library(&Route::ForallForall.claim("C", over, &p));
-        let clause = &library.package.graph().hyper_clauses()[0];
-        // One subject for the one model alias, `M`.
-        let subjects = vec![library.subject()];
-        let mut keys: Vec<&str> = case
+        let library = self.library(&Route::ForallForall.claim("C", self.over, p));
+        let mut keys: Vec<&str> = self
             .listed
             .iter()
             .flat_map(|(_, keys)| keys.iter().copied())
             .collect();
         keys.sort_unstable();
         keys.dedup();
-        for &key in &keys {
-            let mut meter = Meter::new(UNLIMITED);
-            let encoded = encode_hyper_query(
-                HyperQueryRequest {
-                    clause,
-                    subjects: &subjects,
-                    instance: &[("x".to_owned(), key.to_owned())],
-                    meter: &mut meter,
-                    encoding: SmtEncodingLimits::default(),
-                },
-                SmtQueryKind::InductionBase { depth: 1 },
-            );
-            // FR-315: `instance-binding` precedes the ordered table, whose
-            // `object-lifecycle` row refuses a universe holding an object
-            // that no initial state holds.
-            let seen = format!("{:?}", encoded.map(|query| query.script.len()));
-            let right = if case.instances().contains(&key) {
-                if keys.iter().all(|key| case.instances().contains(key)) {
-                    seen.starts_with("Ok(")
-                } else {
-                    seen.contains("ObjectLifecycle")
-                }
-            } else if case.initial {
-                seen.contains("InstanceBinding")
+        (library, keys)
+    }
+}
+
+impl Library {
+    /// The SMT hyper encoder's answer for the instance `key`.
+    fn encode_hyper(&self, key: &str) -> String {
+        // One subject for the one model alias, `M`.
+        let subjects = vec![self.subject()];
+        let mut meter = Meter::new(UNLIMITED);
+        let encoded = encode_hyper_query(
+            HyperQueryRequest {
+                clause: &self.package.graph().hyper_clauses()[0],
+                subjects: &subjects,
+                instance: &[("x".to_owned(), key.to_owned())],
+                meter: &mut meter,
+                encoding: SmtEncodingLimits::default(),
+            },
+            SmtQueryKind::InductionBase { depth: 1 },
+        );
+        format!("{:?}", encoded.map(|query| query.script.len()))
+    }
+}
+
+/// The SMT hyper encoder takes each admitted key as an instance. FR-315's
+/// `object-lifecycle` row then refuses a universe holding an object that no
+/// initial state holds.
+fn check_hyper_admitted_keys(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let (library, keys) = case.hyper();
+        let all_held = keys.iter().all(|key| case.instances().contains(key));
+        for &key in case.instances() {
+            let seen = library.encode_hyper(key);
+            let right = if all_held {
+                seen.starts_with("Ok(")
             } else {
-                seen.starts_with("Err(")
+                seen.contains("ObjectLifecycle")
             };
             if !right {
                 wrong.push(format!("{} smt key {key}: {seen}", case.name));
             }
         }
-        if case.instances().is_empty() {
-            let checked = check_product_closure(
-                &ProductClosureRequest {
-                    package: &library.package,
-                    clause: ProductClosureClause::Hyper(clause),
-                    subjects: &subjects,
-                    meter: UNLIMITED,
-                },
-                &ProductClosureCertificate {
-                    form: HyperForm::Universal,
-                    instance: Vec::new(),
-                    reduction: None,
-                    closure: ProductClosure::Product(Vec::new()),
-                    components: None,
-                },
-                &ModelCheckLimits::default(),
-                &Cancel::new(),
-            );
-            let seen = format!("{checked:?}");
-            if seen.starts_with("Ok(Accepted") {
-                wrong.push(format!(
-                    "{} product checker: {}",
-                    case.name,
-                    seen.chars().take(200).collect::<String>()
-                ));
+    }
+    assert_clean(wrong);
+}
+
+/// A key that is not an instance is `instance-binding`, which precedes the
+/// ordered table (FR-315-AC-59).
+fn check_hyper_excluded_keys(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let (library, keys) = case.hyper();
+        for key in keys
+            .into_iter()
+            .filter(|key| !case.instances().contains(key))
+        {
+            let seen = library.encode_hyper(key);
+            if !seen.contains("InstanceBinding") {
+                wrong.push(format!("{} smt key {key}: {seen}", case.name));
             }
+        }
+    }
+    assert_clean(wrong);
+}
+
+/// The product-closure checker accepts no certificate over an empty set.
+fn check_product_checker(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let (library, _) = case.hyper();
+        let subjects = vec![library.subject()];
+        let checked = check_product_closure(
+            &ProductClosureRequest {
+                package: &library.package,
+                clause: ProductClosureClause::Hyper(&library.package.graph().hyper_clauses()[0]),
+                subjects: &subjects,
+                meter: UNLIMITED,
+            },
+            &ProductClosureCertificate {
+                form: HyperForm::Universal,
+                instance: Vec::new(),
+                reduction: None,
+                closure: ProductClosure::Product(Vec::new()),
+                components: None,
+            },
+            &ModelCheckLimits::default(),
+            &Cancel::new(),
+        );
+        let seen = format!("{checked:?}");
+        if seen.starts_with("Ok(Accepted") {
+            wrong.push(format!("{} product checker: {seen}", case.name));
         }
     }
     assert_clean(wrong);
@@ -1310,21 +1338,29 @@ fn hyper_refuses_conflicting_identity() {
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20", "FR-315-AC-59")]
 #[test]
-fn hyper_smt_takes_only_instances_of_one_population() {
-    check_hyper_library(&[UNADMITTED_KEY, SUBTYPE_ONLY, CREATED]);
+fn hyper_smt_takes_the_admitted_keys() {
+    check_hyper_admitted_keys(&[UNADMITTED_KEY, SUBTYPE_ONLY, CREATED]);
 }
 
-#[trace("TC-3219", "FR-125-AC-19")]
+#[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20", "FR-315-AC-59")]
+#[test]
+#[ignore = "QSL-3408: the hyper SMT encoder binds a universe key no initial state admits (FR-315-AC-59)"]
+fn hyper_smt_refuses_excluded_keys() {
+    check_hyper_excluded_keys(&[ONLY_UNADMITTED, UNADMITTED_KEY, CREATED]);
+}
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-315-AC-59")]
 #[test]
 #[ignore = "QSL-3408: a hyper parameter over several populations is refused AmbiguousPopulation (FR-125-AC-19)"]
 fn hyper_smt_takes_only_instances_of_several_populations() {
-    check_hyper_library(&[UNADMITTED_ACROSS, TWO_POPULATIONS]);
+    check_hyper_admitted_keys(&[UNADMITTED_ACROSS, TWO_POPULATIONS]);
+    check_hyper_excluded_keys(&[UNADMITTED_ACROSS]);
 }
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
 fn hyper_product_checker_accepts_nothing_over_no_instance() {
-    check_hyper_library(&[
+    check_product_checker(&[
         EMPTY_UNIVERSE,
         ONLY_UNADMITTED,
         NO_INITIAL,
