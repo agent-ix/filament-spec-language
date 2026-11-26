@@ -807,3 +807,32 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
         run.item(0)
     );
 }
+
+/// FR-632-AC-1: `always holds(true)` over one object whose `ping` resets `x`
+/// under `time invariant x <= 1 ms` is true, so EN-6 proves it with an
+/// accepted certificate.
+#[trace("FR-632-AC-1")]
+#[test]
+fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}post Pinged using v on M::Call::ping {{ self.x = 0 ms }}\n\
+             time invariant Stall when {{ true }} {{ self.x <= 1 ms }}\n\
+             temporal Safe using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ always holds(true) }}\n"
+        ),
+    );
+    let ws = Workspace::new("timed-resetting-safety");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[("ping", &["x"])]),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Safe"}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+}
