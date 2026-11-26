@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 
 use crate::task_product_certificate::{
     claim_of, no_release, over_utilised, preempting, rejected, releasable, solo, tied, verdict,
-    Certificate,
+    world_for, Certificate,
 };
 use crate::timed_world::{document, world, World, DENSE, METER};
 use crate::zone_search::TIMED;
@@ -54,10 +54,17 @@ fn budget(bounds: &[(Setting, u64)], cancel: &Cancel) -> Budget {
 #[trace("FR-239-AC-8")]
 #[test]
 fn the_symbolic_pass_charges_each_state_before_storing_it() {
-    let world = solo();
+    let world = world_for(
+        "H",
+        &["a"],
+        "taskset H {\n\
+         task a periodic 2 ms deadline 2 ms bcet 1 ms wcet 1 ms priority 1 lo;\n\
+         }\n\
+         schedulable HFp on H under fixed_priority;\n",
+    );
     let model = world.system();
     let timed = TimedSystem::new(&model, "M").expect("dense timed model");
-    let product = TaskProductSystem::new(timed, "SFp").expect("checked task product");
+    let product = TaskProductSystem::new(timed, "HFp").expect("checked task product");
     let automaton = TaskAutomaton::new(&product);
     let budget = budget(&[(Setting::ZoneCheckMaxSymbolicStates, 1)], &Cancel::new());
 
