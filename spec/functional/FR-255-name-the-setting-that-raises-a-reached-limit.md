@@ -830,7 +830,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-26 | For every setting-table row, setting its value to the maximum representable value of the bound's type is accepted and preserved unchanged by every entry point listed for that row; a setting above that type's maximum cannot be represented and is refused at the entry point's input boundary. No setting applies an additional configured ceiling. | Test (TC-720) |
 | FR-255-AC-27 | Given no setting, the settings operation returns `s1.tokens` 100000, `emit.output_bytes` 16777216, `zone_check.max_symbolic_states` 1048576, `zone_check.max_check_work` 100000000 and `analysis.retained_bytes` 4294967296. Given `analysis.retained_bytes=0` or `zone_check.max_check_work=0`, it returns a usage refusal naming the operand. | Test |
 | FR-255-AC-28 | A setting bound of 3, charged one unit at a time by two parts of one item that share its allowance, admits the first three charges and refuses the fourth with bound 3, count 4 and the setting's name; the step the fourth charge would have paid for does not run. | Test |
-| FR-255-AC-29 | An analyze item over a protocol subject run with `analysis.retained_bytes=1` stops at its first closure path, before that path is stored, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. Two runs give equal outcomes. | Test |
+| FR-255-AC-29 | A refinement check (`check_refinement`) with a protocol binding, run with `analysis.retained_bytes=1`, stops at its first closure path, before that path is stored, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. Two runs give equal outcomes. | Test |
 | FR-255-AC-30 | A replay request whose `stage_limits` holds `model_check.max_transitions` 2, replaying a protocol refinement step whose check needs at least three transitions, stops naming `max_transitions`, value 2 and setting `model_check.max_transitions`, and expands no third transition. | Test |
 | FR-255-AC-31 | A replay of a clause over a model with caller setting `emit.output_bytes` 1 returns `stage_limit_exceeded` with bound 1 and setting `emit.output_bytes`. A hyper clause whose body has five expression nodes (`1 + 1 + 1`), checked with `s3.nodes` 4, returns `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. An 11-byte snapshot read with `observation.input_bytes` 10 refuses with bound 10, count 11 and that setting. | Test |
 | FR-255-AC-32 | A synthesis request whose own accounting gives `work_units` 1000000, run with the caller override `accounting.work_units=0`, settles `incomplete` naming `work_units`, bound 0, count 1 and setting `accounting.work_units`. A `refinement_transfer` request and a monitor request whose checked source holds `1 + 1 + 1`, each run with `s3.nodes` 4, return `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. | Test |
@@ -860,12 +860,14 @@ its state-graph expansion (FR-255-AC-44), the closure paths of a protocol
 refinement (FR-255-AC-29) and EN-6 symbolic vertices charge
 `analysis.retained_bytes`. The model states a liveness search keeps where its
 automaton has no move, and the product states of a refinement search, do not
-yet charge it.
+yet charge it. No analyze item builds a protocol-abstract refinement yet, so
+FR-255-AC-29 is reached through `check_refinement` with a protocol binding.
 FR-255-AC-30 (a replay request's
-`stage_limits` at a protocol refinement step) and FR-255-AC-31 (a replay's
-`emit.output_bytes`, `s3.nodes` and `observation.input_bytes` stops) are
-specified here and not implemented or tested in QSL-3508's limits
-consolidation; each waits on its own ticket.
+`stage_limits` at a protocol refinement step) is specified here and not
+implemented: no replay route takes `stage_limits` into a protocol refinement
+check, whose replay entry points call the unbounded closure checks. The
+`observation.input_bytes` stop of FR-255-AC-31 is tested; its `emit.output_bytes`
+and hyper-clause `s3.nodes` stops are specified here and not yet tested.
 
 Backing of the criteria:
 
