@@ -97,7 +97,15 @@ and `exploration`.
   delays (FR-241), written in FSpec FR-393's timed evidence form, and replayed
   through FSpec FR-393's model-graph arm before it reaches the document; a
   path replay does not reproduce settles `inconclusive` `replay-parity`
-  (FR-281).
+  (FR-281). FSpec FR-393's trap path has no delay after its last step, so it
+  SHALL end at a state that is itself a counterexample, one its last step, or
+  the initial state, lands in. EN-6 SHALL try the violating nodes in the order
+  the zone search discovered them, and each convex piece of a node's violating
+  states, with the search's path to the node; the first that ends in a violating
+  state is the trap. When none does, `unique path` SHALL still search for two
+  sequences. With neither, the instance has no counterexample form: the item
+  SHALL settle `inconclusive` `lasso-not-concretized` (FSpec FR-712-AC-11),
+  never `refuted` with another path, unless another instance is `refuted`.
 - **Certificate.** A proof or refutation SHALL carry EN-6's zone certificate
   (FR-245) over the explored zone graph and, for `always possible`, FSpec
   FR-712's `state_graph` part whose `ef_nodes` list the nodes whose whole zone
@@ -115,7 +123,8 @@ and `exploration`.
   draw on one budget: each zone the decision holds counts against
   `max_states` with the graph's states, and each predecessor or successor it
   computes, each piece a zone subtraction makes and each pair of zones it
-  intersects counts against `max_transitions` with the graph's edges. No
+  reads or intersects, a subtraction's zone against a piece included, counts
+  against `max_transitions` with the graph's edges. No
   subtraction recurses once per zone of a union. The certificate checker
   charges the same work to its `max_certificate_edges`.
 - **Derived items.** A request whose items over the timed subject include a
@@ -140,6 +149,7 @@ invariants `x <= 3 ms` while in flight and `x <= 4 ms` while `phase` is 1.
 | FR-852-AC-7 | Over the Zeno-only variant of AC-1's subject (time invariant `x <= 0 ms` at every state, every infinite path zero-delay), `possible Replied` on `en-6` settles `proved` with a witness and a zone `certificate` that carries no `admitted` member and is accepted (FR-244-AC-7, FR-245-AC-11), and `possible Late` (the item whose predicate is `c.phase = 3`, the `TimedOut` state) settles `refuted`; neither is refused by backend candidate selection as `invalid_capability`/`inconsistent-candidates` or for a missing divergence witness, and a certificate given an `admitted` member settles `inconclusive`, `certificate-rejected`, `malformed`. | Test (TC-3030) |
 | FR-852-AC-32 | EN-6 and its certificate checker decide each form on timed states, not on whole zone nodes. Over TC-2412 step 8's subject, `always possible` of `c.phase >= 2` and `unique path` from `c.phase = 1` to `c.phase >= 2` each settle `refuted`, replayed, with an unaccepted certificate; both do so with `one`'s guard replaced by `false`, and by `y >= 2 ms and x < 2 ms and x > 1 ms`. With `one`'s guard `y >= 2 ms and x < 2 ms` both settle `proved` with an accepted certificate, and with `x <= 2 ms` `unique path` settles `refuted`. With `one` never enabled the checker rejects an `always possible` certificate that lists all of phases 0, 1 and 2 in `ef_nodes` with `rank-broken`. | Test (TC-2412) |
 | FR-852-AC-33 | A `max_states` or `max_transitions` that the explored graph fills exactly lets the exploration finish and stops the decision, and the item settles `incomplete` `LimitReached` naming it. A zone subtraction over a union of more than 10,000 zones completes, or stops at its budget with a typed result, on both the producer and the checker. | Test (TC-2412) |
+| FR-852-AC-34 | With `escape` enabled in phase 1 only at the instant phase 1 is entered, `always possible` and `unique path` to phase 2 from phase 1 settle `inconclusive` `lasso-not-concretized` with no counterexample. When a further step takes some of the later times to a state that is trapped on entry, both settle `refuted` with a two-step path to that state, replayed. With a second way from phase 0 to phase 2, `unique path` from phase 0 or 1 settles `refuted` by the two sequences. | Test (TC-2412) |
 
 ## Dependencies
 

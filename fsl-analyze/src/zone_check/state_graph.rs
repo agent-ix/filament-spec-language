@@ -29,8 +29,8 @@ pub enum TimedStateGraphDecision {
     },
     /// The claim is refuted at one initial or reachable timed state.
     Refuted {
-        /// The path to the deciding timed state, which may be reached from
-        /// the path's end by waiting.
+        /// The path to the deciding timed state. A trap's path ends at it; a
+        /// two-path refutation's may be reached from the end by waiting.
         stem: ModelPath,
         /// The node that holds the deciding timed state.
         node: usize,
@@ -40,6 +40,13 @@ pub enum TimedStateGraphDecision {
         /// Two distinct paths from the stem's end for a `unique path`
         /// refutation; absent when no path reaches the target.
         paths: Option<(Vec<ModelStep>, Vec<ModelStep>)>,
+    },
+    /// The claim is violated at `node` only at states its path reaches by
+    /// waiting after the last step, which no stem names (FR-852
+    /// "Evidence"): neither proved nor refuted.
+    Unwritten {
+        /// The node that holds the violating states.
+        node: usize,
     },
 }
 

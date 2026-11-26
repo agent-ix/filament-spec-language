@@ -34,6 +34,7 @@ use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
 use fsl_route::StateGraphFormKind;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
+use ix_trace_rs::implements;
 
 use super::items::{model_refusal, INVALID_VALUE};
 use super::timed_item::subject_refusal;
@@ -1023,6 +1024,7 @@ fn no_timed_graph_decision(
     }))
 }
 
+#[implements("FR-852-AC-34")]
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let Some(model) = read
         .input
@@ -1071,6 +1073,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
     let mut selected = None;
+    let (mut any_refuted, mut unwritten) = (false, false);
     for instance in instances {
         let over = match (read.claim.over(), instance.as_ref()) {
             (None, None) => None,
@@ -1093,11 +1096,15 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             Ok(decision) => decision,
             Err(refusal) => return stopped(refusal, cancel),
         };
-        let held = matches!(decision, TimedStateGraphDecision::Holds { .. });
         let form = certificate_form(read.claim.form());
-        let ef_nodes = match &decision {
-            TimedStateGraphDecision::Holds { ef_nodes, .. }
-            | TimedStateGraphDecision::Refuted { ef_nodes, .. } => ef_nodes,
+        let (held, ef_nodes) = match &decision {
+            TimedStateGraphDecision::Holds { ef_nodes, .. } => (true, ef_nodes),
+            TimedStateGraphDecision::Refuted { ef_nodes, .. } => (false, ef_nodes),
+            // A later instance may still be refuted with a counterexample.
+            TimedStateGraphDecision::Unwritten { .. } => {
+                unwritten = true;
+                continue;
+            }
         };
         let obligation = ItemObligation {
             subject: (),
@@ -1243,8 +1250,12 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             selected = Some(report);
         }
         if !held {
+            any_refuted = true;
             break;
         }
+    }
+    if unwritten && !any_refuted {
+        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::LassoNotConcretized);
     }
     selected.map_or_else(
         || EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
@@ -1311,7 +1322,7 @@ fn timed_evidence(
                 .collect();
             Some(GraphEvidence::Witness { paths, over })
         }
-        TimedStateGraphDecision::Holds { .. } => None,
+        TimedStateGraphDecision::Holds { .. } | TimedStateGraphDecision::Unwritten { .. } => None,
         TimedStateGraphDecision::Refuted { stem, paths, .. } => Some(match paths {
             Some((first, second)) => GraphEvidence::PathPair {
                 stem,

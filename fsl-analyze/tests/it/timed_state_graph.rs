@@ -872,6 +872,115 @@ fn zones_refute_where_a_covering_edge_leads_further_than_any_run() {
     }
 }
 
+/// `first` enters phase 1 resetting `x`, where `escape` runs only at once.
+/// Every later time in phase 1 is trapped, and only waiting gets there.
+/// The `late` step takes some of those times on to phase 3, a state that is
+/// trapped as soon as it is entered. The `direct` step is a second way from
+/// phase 0 to phase 2.
+fn escape_run(name: &str, extra: Option<&str>, claim: &str) -> Value {
+    let extra_step = match extra {
+        Some("late") => {
+            "pre Late using v on M::Call::late { self.phase = 1 and self.x > 1 ms }\n\
+             post LateDone using v on M::Call::late { self.phase = 3 }\n"
+        }
+        Some("direct") => {
+            "pre Direct using v on M::Call::direct { self.phase = 0 }\n\
+             post DirectDone using v on M::Call::direct { self.phase = 2 }\n"
+        }
+        _ => "",
+    };
+    let body = format!(
+        "{}\
+         pre First using v on M::Call::first {{ self.phase = 0 }}\n\
+         post FirstDone using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Escape using v on M::Call::escape {{ self.phase = 1 and self.x <= 0 ms }}\n\
+         post EscapeDone using v on M::Call::escape {{ self.phase = 2 }}\n\
+         {extra_step}\
+         time invariant Stay when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         {claim}\n",
+        crate::timed_world::DENSE,
+    );
+    let mut ops: Vec<(&str, &[&str])> = vec![("first", &["phase", "x"]), ("escape", &["phase"])];
+    if let Some(extra) = extra {
+        ops.push((extra, &["phase"]));
+    }
+    let run = timed_run(name, &body, &["x"], &ops, json!([{"claim": "Done"}]));
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    item
+}
+
+/// A trap stem ends at a trapped state. Here every trapped state of the one
+/// violating node is reached only by waiting, which the stem cannot say, so
+/// the item is inconclusive: never a counterexample that ends where the
+/// target is still reachable.
+#[trace("TC-2412", "FR-852-AC-34")]
+#[trace("TC-1742", "FSpec-FR-712-AC-11")]
+#[test]
+fn zones_report_no_trap_stem_that_ends_where_the_target_is_reachable() {
+    for (name, claim) in [
+        (
+            "timed-sg-wait-always",
+            "always possible Done using v over (c: M::Call) from (c.phase = 1) { c.phase = 2 }",
+        ),
+        (
+            "timed-sg-wait-unique",
+            "unique path Done using v over (c: M::Call) from (c.phase = 1) to (c.phase = 2);",
+        ),
+    ] {
+        let item = escape_run(name, None, claim);
+        assert_eq!(label(&item), "inconclusive", "{item}");
+        assert_eq!(
+            item["record"]["cause"]["kind"], "lasso-not-concretized",
+            "{item}"
+        );
+        assert!(
+            item.get("counterexample").is_none_or(Value::is_null),
+            "{item}"
+        );
+    }
+}
+
+/// A later violating node whose trapped states a step lands in gives the
+/// stem, although an earlier node's are reached only by waiting.
+#[trace("TC-2412", "FR-852-AC-34")]
+#[trace("TC-1742", "FSpec-FR-712-AC-11")]
+#[test]
+fn zones_take_the_trap_stem_from_a_node_a_step_lands_in() {
+    for (name, claim) in [
+        (
+            "timed-sg-late-always",
+            "always possible Done using v over (c: M::Call) \
+             from (c.phase = 1 or c.phase = 3) { c.phase = 2 }",
+        ),
+        (
+            "timed-sg-late-unique",
+            "unique path Done using v over (c: M::Call) \
+             from (c.phase = 1 or c.phase = 3) to (c.phase = 2);",
+        ),
+    ] {
+        let item = escape_run(name, Some("late"), claim);
+        assert_refuted_and_replayed(&item);
+        let stem = &item["counterexample"]["stem"]["steps"];
+        assert_eq!(stem.as_array().map(Vec::len), Some(2), "{item}");
+    }
+}
+
+/// Phase 1 has a trap no stem reaches, and phase 0 has two sequences to
+/// phase 2: the second violation refutes.
+#[trace("TC-2412", "FR-852-AC-34")]
+#[trace("TC-1742", "FSpec-FR-712-AC-11")]
+#[test]
+fn zones_refute_by_two_sequences_beside_a_trap_with_no_stem() {
+    let item = escape_run(
+        "timed-sg-wait-pair",
+        Some("direct"),
+        "unique path Done using v over (c: M::Call) \
+         from (c.phase = 0 or c.phase = 1) to (c.phase = 2);",
+    );
+    assert_refuted_and_replayed(&item);
+}
+
 /// A certificate over the explored graph of the trap subject, listing
 /// `ef_nodes`, and the checker's verdict on it.
 fn check_listing(
@@ -1087,8 +1196,9 @@ fn the_checker_decides_unique_path_and_possible_on_valuations() {
 }
 
 /// The producer's own result on the trap subject: only the phase-2 node's
-/// whole zone lies in `E(P)`, and the initial node holds a trapped state,
-/// reached by waiting.
+/// whole zone lies in `E(P)`. The initial node's trapped states are reached
+/// by waiting, so the stem is the step that lands in a trapped state of
+/// phase 1.
 #[trace("TC-2412", "FR-852-AC-32")]
 #[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
@@ -1141,8 +1251,16 @@ fn the_decision_lists_whole_nodes_of_e_p_and_a_trapped_node() {
         panic!("refuted: {decision:?}");
     };
     assert_eq!(ef_nodes, [2]);
-    assert_eq!(node, 0);
-    assert!(stem.steps.is_empty(), "{stem:?}");
+    assert_eq!(node, 1);
+    assert_eq!(stem.steps.len(), 1, "{stem:?}");
+    // `first` at time 0 still leads on to phase 2.
+    assert!(
+        stem.steps[0]
+            .delay
+            .as_ref()
+            .is_some_and(|delay| delay != &filament_exact::Rational::from_integer(0_i64.into())),
+        "{stem:?}"
+    );
     assert_eq!(paths, None);
 }
 

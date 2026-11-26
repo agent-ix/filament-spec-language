@@ -32,6 +32,7 @@ engine.
 8. Over a dense subject with clocks `x` and `y`: `first` runs by `y = 1 ms` and resets `x`; from `phase` 1, bounded by `y <= 2 ms`, `zero` needs `y >= 2 ms` and `x >= 2 ms`, and `one` needs `y >= 2 ms` and `x <= 1 ms`. Analyze `always possible` of `c.phase >= 2`, and `unique path` from `c.phase = 1` to `c.phase >= 2`, with `digital-clocks`.
 9. Analyze step 8's two claims without `options.method`, then with `one`'s guard varied as FR-852-AC-32 lists, and check a certificate that lists whole nodes of a partly trapped graph.
 10. Over step 8's subject with `one` never enabled, set `max_states` and `max_transitions` to the explored graph's counts; subtract unions of more than 10,000 zones.
+11. Over a subject whose `escape` runs only at the instant phase 1 is entered, analyze `always possible` and `unique path` to phase 2; then add a step from later times in phase 1 to a phase 3 that is trapped on entry; then, instead, a second step from phase 0 to phase 2.
 
 ## Expected Results
 
@@ -45,5 +46,6 @@ engine.
 - Step 8: each declined the same way, with the cause and `not_digitisable` of step 7, never `proved`. By hand both claims are false: with `first` strictly between 0 and 1, `x` at `y = 2 ms` is strictly between 1 and 2, so neither `zero` nor `one` is ever taken.
 - Step 9: step 8's two claims settle `refuted` on `en-6`, replayed; the variants and the rejected listing as FR-852-AC-32 states them.
 - Step 10: the exploration finishes and the decision stops, `incomplete` `LimitReached`; each subtraction completes or stops at its budget (FR-852-AC-33).
+- Step 11: both claims settle `inconclusive` `lasso-not-concretized` with no counterexample; with the further step both settle `refuted` with a replayed two-step path; with the second way `unique path` settles `refuted` by two sequences (FR-852-AC-34).
 
 Test: `fsl-analyze/tests/it/timed_state_graph.rs`.
