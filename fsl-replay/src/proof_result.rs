@@ -24,7 +24,7 @@ use crate::statistical::{Decision, StatisticalVerdict};
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::Std001Code;
 use filament_exact::NodeKey;
-use filament_exact::{CancelCause, Integer, Rational};
+use filament_exact::{CancelCause, Integer, ObjectReference, Rational};
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use fsl_eval::simulation::{Permutation, SymmetryClass};
@@ -36,6 +36,7 @@ use fsl_foundation::RequestIndex;
 use fsl_semantics::check::HyperUnsupported;
 use fsl_semantics::family::UnsupportedItem;
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -198,13 +199,19 @@ pub enum Extremum {
     Max,
 }
 
-/// A claim's bound object instance in a terminal exact entry.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ExactBinding {
-    /// The population declaration identity.
-    pub population: String,
-    /// The authored object key.
-    pub key: String,
+/// Spell an entry's binding as the FR-181 reference a counterexample's
+/// `binding` is written as (FR-741 "Binding"), or null.
+#[implements("FR-125-AC-9")]
+fn written_binding<S: serde::Serializer>(
+    reference: &Option<ObjectReference>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let Some(reference) = reference else {
+        return serializer.serialize_none();
+    };
+    fsl_eval::simulation::model::value_json(&filament_exact::Value::Reference(reference.clone()))
+        .ok_or_else(|| serde::ser::Error::custom("an object reference has no canonical form"))?
+        .serialize(serializer)
 }
 
 /// One value for an initial state and optional `over` binding.
@@ -212,11 +219,14 @@ pub struct ExactBinding {
 pub struct ExactEntry {
     /// The initial state's index in subject order.
     pub initial: u32,
-    /// The bound instance, absent when the claim has no `over` parameter.
-    pub binding: Option<ExactBinding>,
+    /// The `over` object as its FR-181 reference, absent when the claim has no
+    /// `over` parameter.
+    #[serde(serialize_with = "written_binding")]
+    pub binding: Option<ObjectReference>,
     /// The `on each` object the entry is read for (FR-741 "Binding"), null
     /// for an `on origin` claim.
-    pub instance: Option<ExactBinding>,
+    #[serde(serialize_with = "written_binding")]
+    pub instance: Option<ObjectReference>,
     /// The exact value or its certified interval.
     pub value: ExactOrBounds,
     /// The scheduler extremum, absent for a workload.
@@ -541,6 +551,9 @@ pub enum IncompleteCause {
         /// The upper endpoint.
         upper: Box<ExactRational>,
     },
+    /// A statistical sample's reading over a dense idle tail is not decided
+    /// over every completion (FR-254; FSpec FR-420 "Undecided completions").
+    IdleTailUndecided(crate::statistical::IdleTailUndecided),
 }
 
 impl IncompleteCause {
@@ -551,6 +564,7 @@ impl IncompleteCause {
             Self::Cancelled { .. } => "cancelled",
             Self::ResourceExhausted | Self::LimitReached { .. } => "limit-reached",
             Self::PrecisionBudget { .. } => "precision-budget",
+            Self::IdleTailUndecided(_) => crate::statistical::IdleTailUndecided::CAUSE,
             Self::UnresolvedDynamics | Self::CertificateUnchecked => "bounded-search-incomplete",
         }
     }
@@ -684,6 +698,12 @@ pub enum UnavailabilityCause {
         /// The typed transition identity whose delay is free.
         identity: filament_semantic_value::model_transition::ModelTransition,
     },
+    /// Two completions of a dense idle tail read differently (FR-254).
+    /// Wire cause `not-stochastic` with `idle_tail` and no `identity`.
+    NotStochasticIdleTail {
+        /// The canonical timed-state key at the idle tail's first position.
+        state: fsl_eval::simulation::StateKey,
+    },
     /// A timed statistical sample reached a local time-lock (FR-254).
     TimeLockedSample {
         /// The canonical timed-state key.
@@ -813,7 +833,7 @@ impl UnavailabilityCause {
                 .cause(),
             Self::NotMarkov(_) => "not-markov",
             Self::TotalAboveDrawRange { .. } => "total-above-draw-range",
-            Self::NotStochastic { .. } => "not-stochastic",
+            Self::NotStochastic { .. } | Self::NotStochasticIdleTail { .. } => "not-stochastic",
             Self::TimeLockedSample { .. } => "time-locked-sample",
             Self::ConfidenceBeyondPrecision => "confidence-beyond-precision",
             Self::WeakAccessShape { .. } => "weak-access-shape",
@@ -842,6 +862,7 @@ impl UnavailabilityCause {
             | Self::NotMarkov(_)
             | Self::TotalAboveDrawRange { .. }
             | Self::NotStochastic { .. }
+            | Self::NotStochasticIdleTail { .. }
             | Self::TimeLockedSample { .. }
             | Self::ConfidenceBeyondPrecision
             | Self::WeakAccessShape { .. }
@@ -1796,7 +1817,7 @@ impl TerminalRecord {
         backend: BackendId,
         check: &crate::probability_certificate::ExactProbabilityCertificateCheck,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
         if let crate::ExactProbabilityCertificateCheck::AcceptedVacuous(accepted) = check {
             let mut record = Self::with_backend(
@@ -1898,7 +1919,7 @@ impl TerminalRecord {
         counterpart: &crate::ExactProbabilityCertificateCheck,
         method: BoundsMethod,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
         use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
         let (Accepted(claim), Accepted(counterpart)) = (claim, counterpart) else {
@@ -1961,7 +1982,7 @@ impl TerminalRecord {
         upper: ExactBound,
         method: BoundsMethod,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
         use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
         let Accepted(claim) = claim else {

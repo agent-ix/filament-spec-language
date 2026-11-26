@@ -15,12 +15,13 @@ letters and contracts of the positions past it read, that the read is charged
 to the run's budgets and joins no product total, and that the
 unbuilt-certificate case refuses.
 
-Scope: FR-126-AC-12 to FR-126-AC-15.
+Scope: FR-126-AC-12 to FR-126-AC-15 and FR-126-AC-27 to FR-126-AC-29, and
+FR-126 "Bindings and ranking" and "Model-only pass (TP-4)".
 
 ## Test Procedure
 
-Fixtures: ADR-018 §6's ConfigVersion example unit, universe `{a, b}`, both
-versions 0, the subject's `max_candidates` 1,000,000.
+Fixtures for steps 1 to 5: ADR-018 §6's ConfigVersion example unit, universe
+`{a, b}`, both versions 0, the subject's `max_candidates` 1,000,000.
 
 1. `eventually (holds(c.versionNumber = 0) and
    holds(mod_defined(c.versionNumber)))`, with
@@ -32,6 +33,19 @@ versions 0, the subject's `max_candidates` 1,000,000.
 4. Step 1's claim with initial versions `a` 0 and `b` 1.
 5. Step 4's request with `max_states` 6, with `max_states` 1,000, and with
    `max_states` 1; step 1's request with `max_states` 1,000.
+6. Over the `Counter` subject with counters `a` and `b` both 0,
+   `eventually holds(c.value = 1)` with a letter that reads true at every
+   state, with `max_states` 32, the default limits, and `max_states` 31.
+
+7. With initial versions `a` 0 and `b` 1, `always
+   holds(mod_defined(c.versionNumber))` with `max_depth` 1 and with
+   `max_depth` 2, and `always eventually
+   holds(mod_defined(c.versionNumber))` with `max_depth` 1 and no fairness
+   constraint.
+8. Step 7's safety request with `max_depth` 2 and `max_states` 3.
+9. Step 7's safety claim over a test `TransitionSystem` whose expansion of
+   `(1,1)` records `ContractUndetermined` with one `Refused` evaluation and
+   whose other expansions are the subject's own.
 
 ## Expected Results
 
@@ -47,3 +61,13 @@ versions 0, the subject's `max_candidates` 1,000,000.
 - Step 5: the AC-14 finding for `a` at both `max_states` 6 and 1,000;
   `Stopped{ResourceExhausted, {MaxStates, 1}}` with no counterexample when
   the first binding is incomplete; the step 1 finding for `a`.
+- Step 6: `Holds{Exhaustive}` with 0 product states and edges at 32 and at the
+  default limits; `Stopped{ResourceExhausted, {MaxStates, 31}}` with 0 product
+  states and edges at 31: both bindings' 16-state model-only passes are
+  charged to the one run budget.
+- Step 7: at `max_depth` 1, both claims return `Violated` bound to `b` with
+  the prefix `(0,1) -upd(b)-> (0,2)` and `where: position 1`; at `max_depth`
+  2, `Violated` bound to `a` with the prefix `(0,1) -upd(a)-> (1,1)
+  -upd(a)-> (2,1)` and `where: position 2`.
+- Step 8: `Violated` bound to `b` with step 7's depth-1 prefix.
+- Step 9: `Violated` bound to `b` with step 7's depth-1 prefix.

@@ -128,8 +128,7 @@ fn a_reachability_bound_that_holds_settles_proved_with_the_checked_certificate()
     };
     assert_eq!(entry.extremum, Some(Extremum::Min));
     let binding = entry.binding.as_ref().expect("the claim's one instance");
-    assert_eq!(binding.key, "m");
-    assert!(binding.population.ends_with("/msgs"), "{binding:?}");
+    assert_eq!(binding.object().as_str(), "m");
     assert!(
         matches!(&entry.value, ExactOrBounds::Exact { value } if value.value() == &ratio(24, 25))
     );

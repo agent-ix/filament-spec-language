@@ -184,6 +184,7 @@ pub(crate) fn admit_in_scope<'a>(
     })
 }
 
+#[implements("FR-125-AC-9")]
 fn build_configured(
     request: ProductRequest<'_>,
     work: WorkScope,
@@ -247,7 +248,7 @@ fn build_configured(
                 .into_iter()
                 .map(|instance| {
                     let reference = system
-                        .bound_reference(object.clone(), &instance)
+                        .written_reference(object.clone(), &instance)
                         .map_err(ProductRefusal::Internal)?;
                     Ok((Some(instance), Some(reference)))
                 })
@@ -614,6 +615,7 @@ struct Hit {
 /// omitted edge keeps its original probability and action, so rows are never
 /// renormalized and each omitted successor contributes exactly its original
 /// mass at the least continuation value.
+#[implements("FR-1042-AC-25")]
 fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, OmittedEdge)>) -> ProbProduct {
     let mut completed = product.clone();
     if omitted.is_empty() {
@@ -904,6 +906,7 @@ impl Builder<'_, '_, '_, '_> {
         Ok(Ok(truths))
     }
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn key_of(
         &self,
         state: &ModelSimState,

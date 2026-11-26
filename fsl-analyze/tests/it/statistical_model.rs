@@ -3004,3 +3004,536 @@ fn a_run_of_zero_delay_cycles_takes_the_unweighted_fraction() {
     assert_eq!(verdict.decision, Decision::Accepted);
     assert_eq!(verdict.estimate, Some(ratio(1, 2)));
 }
+
+/// FSpec FR-407 "Time windows": a delay adds no position. The sampled and the
+/// exact route read the same hand-computed value on each one-behaviour model.
+/// `send` is the only step. At 5 ms and 6 ms it lands after the window; at
+/// 4 ms it is the position at 4 ms; under a time invariant the state after
+/// `send` at 2 ms is not quiescent, so it has no stutter position either.
+#[test]
+fn a_timed_formula_reads_no_position_inside_a_delay_on_either_route() {
+    const HELD: &str = "time invariant Held when { self.phase = 1 } { self.x <= 10 ms }\n";
+    let mut sampled = Vec::new();
+    let mut exact = Vec::new();
+    let mut expected = Vec::new();
+    for (name, send_ms, invariant, formula, holds) in [
+        (
+            "Eventually",
+            5,
+            "",
+            "eventually[4 ms, 4 ms] holds(c.phase = 0)",
+            false,
+        ),
+        (
+            "Always",
+            5,
+            "",
+            "always[4 ms, 4 ms] holds(c.phase = 1)",
+            true,
+        ),
+        (
+            "Until",
+            5,
+            "",
+            "holds(c.phase = 0) until[4 ms, 4 ms] holds(c.phase = 0)",
+            false,
+        ),
+        (
+            "Window",
+            6,
+            "",
+            "eventually[3 ms, 5 ms] holds(c.phase = 0)",
+            false,
+        ),
+        (
+            "AtHorizon",
+            4,
+            "",
+            "eventually[4 ms, 4 ms] holds(c.phase = 1)",
+            true,
+        ),
+        (
+            "Invariant",
+            2,
+            HELD,
+            "eventually[4 ms, 4 ms] holds(c.phase = 1)",
+            false,
+        ),
+    ] {
+        let declarations = format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             delay M::Call::send ~ discrete {{ {send_ms} ms: 1 }};\n\
+             {invariant}\
+             workload Even on M {{ weight Call::send = 1; }}\n\
+             probabilistic {name} using ev on M over (c: M::Call) under Even on origin\n\
+                 with alpha 0.4, beta 0.4, indifference 0.05\n\
+                 {{ probability >= 0.5 [ {formula} ] }}\n"
+        );
+        let world = timed_world_with(&[("send", &["phase"])], &declarations);
+        let verdict = completed(run_timed_method(
+            &world,
+            name,
+            StatisticalMethod::Okamoto,
+            7,
+            fsl_replay::statistical::TimedSampling::default(),
+            1,
+        ));
+        sampled.push((
+            name,
+            verdict.estimate,
+            verdict.decision == Decision::Accepted,
+        ));
+        exact.push((name, exact_outcome(&world, name)));
+        expected.push((name, Some(ratio(i64::from(holds), 1)), holds));
+    }
+    assert_eq!(sampled, expected, "sampled route");
+    let exact_expected: Vec<_> = expected
+        .iter()
+        .map(|(name, _, holds)| (*name, if *holds { "proved" } else { "refuted" }.to_owned()))
+        .collect();
+    assert_eq!(exact, exact_expected, "exact route");
+}
+
+/// The exact route's outcome word for the claim `name`.
+fn exact_outcome(world: &crate::timed_world::World, name: &str) -> String {
+    let item = fsl_analyze::analyze::exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim: world
+                .package
+                .graph()
+                .probabilistic_model()
+                .claim(name)
+                .expect("the claim checks"),
+            limits: fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        },
+    );
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the linked engines are admitted");
+    let record =
+        fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let terminal = record.terminal().expect("a terminal record");
+    let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal))
+        .expect("the outcome serializes");
+    outcome["result"]
+        .as_str()
+        .expect("a result word")
+        .to_owned()
+}
+
+/// TC-709 step 5's fixtures: `send` moves `phase` 0 to 1 and, where `reply`
+/// is given, moves it 1 to 2; `rewards` states `reward cost` declarations.
+fn window_world(
+    send_ms: u32,
+    reply_ms: Option<u32>,
+    rewards: &str,
+    claim: &str,
+) -> crate::timed_world::World {
+    let mut operations: Vec<(&str, &[&str])> = vec![("send", &["phase"])];
+    let mut reply = String::new();
+    let mut reply_weight = "";
+    if let Some(delay) = reply_ms {
+        operations.push(("reply", &["phase"]));
+        reply = format!(
+            "pre Reply using v on M::Call::reply {{ self.phase = 1 }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::reply ~ discrete {{ {delay} ms: 1 }};\n"
+        );
+        reply_weight = "weight Call::reply = 1;";
+    }
+    timed_world_with(
+        &operations,
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             delay M::Call::send ~ discrete {{ {send_ms} ms: 1 }};\n\
+             {reply}{rewards}\
+             workload Even on M {{ weight Call::send = 1; {reply_weight} }}\n\
+             {}",
+            window_claim(claim)
+        ),
+    )
+}
+
+/// TC-709's `Tick` fixture: `time tick` with period 2 ms on `tick`, which is
+/// enabled at `phase = 2` only.
+fn tick_world(claim: &str) -> crate::timed_world::World {
+    let body = format!(
+        "dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         time M tick M::Call::tick period 2 ms unit ms;\n\
+         pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+         post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+         pre Tick using v on M::Call::tick {{ self.phase = 2 }}\n\
+         post Ticked using v on M::Call::tick {{ self.phase = 2 }}\n\
+         workload Even on M {{ weight Call::send = 1; weight Call::tick = 1; }}\n\
+         {}",
+        window_claim(claim)
+    );
+    crate::timed_world::world(
+        &crate::timed_world::document(&[], &[("send", &["phase"]), ("tick", &["phase"])]),
+        "profile ev = \"filament.temporal.timed/v1\";\n",
+        &body,
+    )
+}
+
+fn window_claim(claim: &str) -> String {
+    format!(
+        "probabilistic Probe using ev on M over (c: M::Call) under Even on origin\n\
+             with alpha 0.4, beta 0.4, indifference 0.05\n\
+             {{ {claim} }}\n"
+    )
+}
+
+fn probe(world: &crate::timed_world::World) -> StatisticalOutcome {
+    run_timed_method(
+        world,
+        "Probe",
+        StatisticalMethod::Okamoto,
+        7,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    )
+    .expect("the claim runs")
+}
+
+/// The estimate, as a fraction, and whether the claim is accepted.
+fn measured(world: &crate::timed_world::World) -> (Option<Rational>, Decision) {
+    let verdict = completed(Ok(probe(world)));
+    (verdict.estimate, verdict.decision)
+}
+
+const COSTS: &str = "reward cost on M::Call::send = 1;\nreward cost on M::Call::reply = 3;\n";
+const SEND_COST: &str = "reward cost on M::Call::send = 1;\n";
+
+/// FR-254-AC-5: positions stamped 0 and 2 ms lie in `[0, 5 ms]`; the `reply`
+/// step that leaves the second lands at 12 ms and weighs it.
+#[trace("TC-709", "FR-254-AC-5")]
+#[test]
+fn a_time_window_fraction_reads_every_position_and_the_leaving_rewards() {
+    let claim = "mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25";
+    assert_eq!(
+        measured(&window_world(2, Some(10), "", claim)),
+        (Some(ratio(1, 2)), Decision::Rejected)
+    );
+    let weighted = "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25";
+    assert_eq!(
+        measured(&window_world(2, Some(10), COSTS, weighted)),
+        (Some(ratio(3, 4)), Decision::Rejected)
+    );
+}
+
+/// Hand values over `Send` (stamps 0, 2, 12; `cost` 1 then 3): `accumulate`
+/// and `steps` read the positions of a time window.
+#[test]
+fn accumulate_and_steps_within_a_time_horizon_read_the_window_positions() {
+    for (claim, holds) in [
+        (
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 12 ms >= 2]",
+            true,
+        ),
+        (
+            "probability >= 0.5 [accumulate cost from holds(c.phase = 0) until holds(c.phase = 2) within 12 ms >= 4]",
+            true,
+        ),
+        (
+            "probability >= 0.5 [accumulate cost from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]",
+            false,
+        ),
+        (
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]",
+            false,
+        ),
+    ] {
+        let decision = if holds {
+            Decision::Accepted
+        } else {
+            Decision::Rejected
+        };
+        assert_eq!(
+            measured(&window_world(2, Some(10), COSTS, claim)),
+            (Some(ratio(i64::from(holds), 1)), decision),
+            "{claim}"
+        );
+    }
+}
+
+/// FR-254-AC-6: the positions are stamped 0, 0, 2 and 4 ms.
+#[trace("TC-709", "FR-254-AC-6")]
+#[test]
+fn a_tick_subject_is_sampled_without_a_race_and_reads_its_stutter_positions() {
+    for (claim, estimate, decision) in [
+        (
+            "mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25",
+            ratio(3, 4),
+            Decision::Rejected,
+        ),
+        (
+            "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]",
+            ratio(1, 1),
+            Decision::Accepted,
+        ),
+        (
+            "probability >= 0.5 [eventually[3 ms, 3 ms] holds(c.phase = 1)]",
+            ratio(0, 1),
+            Decision::Rejected,
+        ),
+    ] {
+        assert_eq!(
+            measured(&tick_world(claim)),
+            (Some(estimate), decision),
+            "{claim}"
+        );
+    }
+}
+
+/// FR-254-AC-7: on `Idle` every completion of the tail gives one reading.
+#[trace("TC-709", "FR-254-AC-7")]
+#[test]
+fn an_idle_tail_reading_every_completion_agrees_on_is_decided() {
+    for (rewards, claim, holds, decision) in [
+        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]", 1, Decision::Accepted),
+        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(2, 5)]", 0, Decision::Rejected),
+        ("", "mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25", 1, Decision::Rejected),
+        ("", "mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25", 0, Decision::Accepted),
+        (SEND_COST, "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25", 0, Decision::Accepted),
+        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]", 1, Decision::Accepted),
+    ] {
+        assert_eq!(
+            measured(&window_world(2, None, rewards, claim)),
+            (Some(ratio(holds, 1)), decision),
+            "{claim}"
+        );
+    }
+}
+
+/// The timed state just after `send` at 2 ms.
+fn state_after_send(world: &crate::timed_world::World) -> fsl_eval::simulation::StateKey {
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("the subject is timed");
+    let initial = timed.initial().remove(0);
+    let delayed = timed
+        .delay(&initial, &ratio(2, 1))
+        .expect("the delay reads")
+        .expect("the delay is admissible");
+    let (_, after) = timed.steps(&delayed).expect("the steps read").remove(0);
+    timed.state_key(&after).expect("the state encodes")
+}
+
+/// FR-254-AC-8: two completions of the tail give different readings.
+#[trace("TC-709", "FR-254-AC-8")]
+#[test]
+fn an_idle_tail_reading_that_depends_on_the_stutters_is_not_stochastic() {
+    for claim in [
+        "mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25",
+        "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(3, 5)]",
+        "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]",
+    ] {
+        let world = window_world(2, None, "", claim);
+        let expected = state_after_send(&world);
+        match probe(&world) {
+            StatisticalOutcome::Unsupported {
+                cause: StatisticalUnsupported::NotStochasticIdleTail { state },
+                ..
+            } => assert_eq!(state, expected, "{claim}"),
+            other => panic!("{claim}: {other:?}"),
+        }
+    }
+    assert_eq!(
+        measured(&window_world(
+            5,
+            None,
+            "",
+            "mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25"
+        )),
+        (Some(ratio(1, 2)), Decision::Rejected)
+    );
+}
+
+/// A nested timed formula on a dense idle tail is not decided yet: it stops
+/// typed incomplete and gives no reading (FR-254 "Undecided completions").
+#[test]
+fn a_nested_timed_formula_on_a_dense_idle_tail_stops_incomplete() {
+    let world = window_world(
+        2,
+        None,
+        "",
+        "probability >= 0.5 [eventually[0 ms, 5 ms] always[0 ms, 1 ms] holds(c.phase = 1)]",
+    );
+    let expected = state_after_send(&world);
+    match probe(&world) {
+        StatisticalOutcome::Stopped {
+            stop: StatisticalStop::IdleTailUndecided(stopped),
+            ..
+        } => assert_eq!(
+            (stopped.state, stopped.reason),
+            (
+                expected,
+                fsl_replay::statistical::IdleTailReason::TimedFormula
+            )
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// FSpec FR-420 "Windows on an idle tail": `accumulate` and `elapsed` read
+/// the same on every completion. `send` at 2 ms with cost 1, then idle:
+/// the run accumulates 1 and takes 2 ms to `phase = 1`, and never reaches
+/// `phase = 2`.
+#[test]
+fn accumulate_and_elapsed_on_a_dense_idle_tail_are_decided() {
+    for (claim, holds) in [
+        (
+            "accumulate cost from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 1",
+            true,
+        ),
+        (
+            "accumulate cost from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2",
+            false,
+        ),
+        (
+            "accumulate cost from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3",
+            false,
+        ),
+        (
+            "elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms <= 2 ms",
+            true,
+        ),
+        (
+            "elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms <= 1 ms",
+            false,
+        ),
+        (
+            "elapsed from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 5 ms",
+            false,
+        ),
+    ] {
+        let decision = if holds {
+            Decision::Accepted
+        } else {
+            Decision::Rejected
+        };
+        assert_eq!(
+            measured(&window_world(
+                2,
+                None,
+                SEND_COST,
+                &format!("probability >= 0.5 [{claim}]")
+            )),
+            (Some(ratio(i64::from(holds), 1)), decision),
+            "{claim}"
+        );
+    }
+}
+
+/// Whether `claim` on the `Idle` fixture stops `idle-tail-undecided` as a
+/// timed formula, at the state after `send`.
+fn stops_undecided(claim: &str) {
+    let world = window_world(2, None, "", claim);
+    let expected = state_after_send(&world);
+    match probe(&world) {
+        StatisticalOutcome::Stopped {
+            stop: StatisticalStop::IdleTailUndecided(stopped),
+            ..
+        } => assert_eq!(
+            (stopped.state, stopped.reason),
+            (
+                expected,
+                fsl_replay::statistical::IdleTailReason::TimedFormula
+            ),
+            "{claim}"
+        ),
+        other => panic!("{claim}: {other:?}"),
+    }
+}
+
+/// A past operator on a dense idle tail is not decided.
+#[test]
+fn a_past_operator_on_a_dense_idle_tail_stops_incomplete() {
+    for claim in [
+        "probability >= 0.5 [once[0 ms, 5 ms] holds(c.phase = 0)]",
+        "probability >= 0.5 [historically[0 ms, 5 ms] holds(c.phase = 0)]",
+        "probability >= 0.5 [holds(c.phase = 0) since[0 ms, 5 ms] holds(c.phase = 0)]",
+        "probability >= 0.5 [holds(c.phase = 0) triggered[0 ms, 5 ms] holds(c.phase = 0)]",
+    ] {
+        stops_undecided(claim);
+    }
+}
+
+/// A window aggregate atom is not admitted in a probabilistic event, so it
+/// never reaches the idle-tail reading.
+///
+/// The refusal today is an `InternalFault` where a user diagnostic is due
+/// (QSL-3524); that fix tightens these assertions to the diagnostic.
+#[test]
+fn a_window_aggregate_event_does_not_check() {
+    let checked = std::panic::catch_unwind(|| {
+        window_world(
+            2,
+            None,
+            "",
+            "probability >= 0.5 [count where holds(c.phase = 1) over past[0 ms, 5 ms] >= 1]",
+        )
+    });
+    let refusal = checked.err().expect("the unit does not check");
+    let refusal = refusal.downcast_ref::<String>().expect("a message");
+    assert!(refusal.contains("CheckRefusal"), "{refusal}");
+    assert!(refusal.contains("aggregate-term-typed"), "{refusal}");
+}
+
+/// Five distinct interval bounds inside the idle tail are decided and six are
+/// not. No position holds `phase = 0` after 0 ms, so the decided event is
+/// false: the bounds inside `(2, 8)` are 3, 4, 5, 6 and 7; `[3 ms, 9 ms]`
+/// moves the window's end to 9 and puts 8 inside too.
+#[test]
+fn six_interval_bounds_inside_a_dense_idle_tail_stop_incomplete() {
+    let five = "eventually[3 ms, 4 ms] holds(c.phase = 0) \
+                or eventually[5 ms, 6 ms] holds(c.phase = 0) \
+                or eventually[7 ms, 8 ms] holds(c.phase = 0)";
+    assert_eq!(
+        measured(&window_world(
+            2,
+            None,
+            "",
+            &format!("probability >= 0.5 [{five}]")
+        )),
+        (Some(ratio(0, 1)), Decision::Rejected)
+    );
+    stops_undecided(&format!(
+        "probability >= 0.5 [{five} or eventually[3 ms, 9 ms] holds(c.phase = 0)]"
+    ));
+}
+
+/// A falling fraction: `phase = 0` holds at 0 ms and not in the idle state, so
+/// with `m` stutters the value is `1 / (2 + m)`. It is at most `3/5` for every
+/// `m`; it is at least `2/5` at `m = 0` and not for large `m`.
+#[test]
+fn a_falling_fraction_on_a_dense_idle_tail_is_read_over_every_completion() {
+    let below = "probability >= 0.5 [fraction holds(c.phase = 0) over [0, 5 ms] <= rational(3, 5)]";
+    assert_eq!(
+        measured(&window_world(2, None, "", below)),
+        (Some(ratio(1, 1)), Decision::Accepted)
+    );
+    for claim in [
+        "probability >= 0.5 [fraction holds(c.phase = 0) over [0, 5 ms] >= rational(2, 5)]",
+        "mean of (fraction holds(c.phase = 0) over [0, 5 ms]) <= 0.25",
+    ] {
+        assert!(
+            matches!(
+                probe(&window_world(2, None, "", claim)),
+                StatisticalOutcome::Unsupported {
+                    cause: StatisticalUnsupported::NotStochasticIdleTail { .. },
+                    ..
+                }
+            ),
+            "{claim}"
+        );
+    }
+}
