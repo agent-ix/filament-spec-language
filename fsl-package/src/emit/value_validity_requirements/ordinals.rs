@@ -22,10 +22,10 @@ use filament_contract_model::{
 };
 use filament_exact::NodeKey;
 use filament_semantic_value::location::ExpressionOwner;
-use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::check::wire_id::StructuralIds;
+use fsl_semantics::check::CheckedGraph;
 
-use super::{EmitRefusal, Omitted, frames};
+use super::{frames, EmitRefusal, Omitted};
 use crate::emit::location_paths::Paths;
 
 /// What the checker located a use in: the declaration index of the function

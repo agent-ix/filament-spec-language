@@ -10,11 +10,11 @@ use fsl_semantics::check::Bound;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    Choice, ComponentValue, ExtRational, GainBias, Graph, LongRunResult, UnboundedError,
-    UnboundedObjective, decide_expected_reward, decide_reachability, decide_until,
-    maximal_end_components, maximal_end_components_from, optimize_mec_fraction, policy_iteration,
+    decide_expected_reward, decide_reachability, decide_until, maximal_end_components,
+    maximal_end_components_from, optimize_mec_fraction, policy_iteration, Choice, ComponentValue,
+    ExtRational, GainBias, Graph, LongRunResult, UnboundedError, UnboundedObjective,
 };
-use super::{FhError, FhResult, ProbProduct, ProbStateId, ProductKind, decide_bounded_event};
+use super::{decide_bounded_event, FhError, FhResult, ProbProduct, ProbStateId, ProductKind};
 
 /// One maximal fair end component and the scheduled identities that keep it
 /// closed. The action list is empty for a terminal-stutter-only component,
@@ -420,7 +420,14 @@ fn fair_reachability(
                 }
             }
             let transformed = if let Some(from) = from {
-                decide_until(product, from, &fair_states, UnboundedObjective::Max, limits, cancel)?
+                decide_until(
+                    product,
+                    from,
+                    &fair_states,
+                    UnboundedObjective::Max,
+                    limits,
+                    cancel,
+                )?
             } else {
                 decide_until(
                     product,
@@ -492,8 +499,9 @@ pub fn decide_fair_long_run_mdp(
             .iter()
             .map(|state| state.index())
             .collect::<Vec<_>>();
-        let (rho, policy, bias, _) =
-            optimize_mec_fraction(&graph, &states, predicate, weight, objective, limits, cancel)?;
+        let (rho, policy, bias, _) = optimize_mec_fraction(
+            &graph, &states, predicate, weight, objective, limits, cancel,
+        )?;
         for state in &states {
             fixed[*state] = Some(rho.clone());
             selected_policy[*state] = policy[*state];
@@ -538,8 +546,9 @@ pub fn decide_fair_long_run_mdp(
         }) {
             continue;
         }
-        let (rho, policy, bias, _) =
-            optimize_mec_fraction(&graph, component, predicate, weight, objective, limits, cancel)?;
+        let (rho, policy, bias, _) = optimize_mec_fraction(
+            &graph, component, predicate, weight, objective, limits, cancel,
+        )?;
         for state in component {
             fixed[*state] = Some(rho.clone());
             selected_policy[*state] = policy[*state];
@@ -674,8 +683,14 @@ pub fn decide_fair_expected_reward(
     let target = evaluation
         .extend(target)
         .ok_or(FairProductError::InvalidForm)?;
-    let mut result =
-        fair_expected_reward(&evaluation.product, &target, reward, objective, limits, cancel)?;
+    let mut result = fair_expected_reward(
+        &evaluation.product,
+        &target,
+        reward,
+        objective,
+        limits,
+        cancel,
+    )?;
     result.values = evaluation.restrict(result.values);
     Ok(result)
 }

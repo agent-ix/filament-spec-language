@@ -15,11 +15,11 @@
 
 use super::frame::identifier;
 use super::*;
-use crate::FrameOperation;
 use crate::spine::OperationName;
+use crate::FrameOperation;
 use crate::{
-    CallSite, CallSiteRefusal, ClauseName, ClauseSite, NodeKey, OccurrenceKey, OperationSite,
-    Origin, QualifiedName, Role, call_site,
+    call_site, CallSite, CallSiteRefusal, ClauseName, ClauseSite, NodeKey, OccurrenceKey,
+    OperationSite, Origin, QualifiedName, Role,
 };
 
 fn wire(node: NodeKey) -> NodeKey {
@@ -583,7 +583,7 @@ fn call_site_refusal_codes_for_operations_clauses_and_intake() {
         &[],
         crate::ReplayTarget::function(
             crate::QualifiedName::new(vec![
-                filament_exact::Identifier::new("attemptUpdate").unwrap(),
+                filament_exact::Identifier::new("attemptUpdate").unwrap()
             ])
             .unwrap(),
             Some(crate::target::test_key()),

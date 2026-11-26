@@ -3336,10 +3336,7 @@ fn a_model_counterexample_keeps_a_non_conforming_admitted_binding() {
             "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
             "false",
         )
-        .replace(
-            "over (c: Config::ConfigVersion)",
-            "over (c: Config::Draft)",
-        )
+        .replace("over (c: Config::ConfigVersion)", "over (c: Config::Draft)")
         .replace(LOW_BODY, "holds(false)");
     let directory = bump_directory(&unit, &["a"], true);
 
@@ -3371,7 +3368,10 @@ fn a_model_counterexample_keeps_a_non_conforming_admitted_binding() {
     )
     .unwrap();
 
-    let snapshot_identity = snapshot["identity"]["identity"].as_str().unwrap().to_owned();
+    let snapshot_identity = snapshot["identity"]["identity"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let clause = json!({
         "selection": {"temporal": {"name": "Low",
             "trace": {"model": {"initial": snapshot_identity.as_str(),

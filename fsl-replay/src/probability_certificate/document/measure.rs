@@ -1029,14 +1029,10 @@ fn enumerate(
                             }))
                         })?;
                     action_labels.push(None);
-                    vec![
-                        steps
-                            .into_iter()
-                            .map(|step| {
-                                Successor::Position(step.probability, step.post, step.rewards)
-                            })
-                            .collect::<Vec<_>>(),
-                    ]
+                    vec![steps
+                        .into_iter()
+                        .map(|step| Successor::Position(step.probability, step.post, step.rewards))
+                        .collect::<Vec<_>>()]
                 } else {
                     let actions = system
                         .actions_with_budget(

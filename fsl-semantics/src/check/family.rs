@@ -45,7 +45,7 @@
 
 use filament_checked::node::{NodeKind, OrderedKind};
 use filament_semantic_value::checking::CheckMode;
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
@@ -56,10 +56,10 @@ use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprNode, Expression, FieldInitializer,
     FunctionDeclaration,
 };
-use fsl_foundation::Setting;
 #[cfg(test)]
 use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, Staged};
+use fsl_foundation::Setting;
 // The relocated function-application/-declaration checking code
 // below needs `check.rs`'s own `Typer`/`Signature`/`bind_parameters` (the
 // general typer this family delegates to for a body or a call's
@@ -68,12 +68,12 @@ use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, Staged};
 // are sibling submodules of `crate::check`, reached the same way this
 // module's own pre-existing `use crate::check::ValueFunctionFamily` already
 // crosses that boundary.
-use super::AdmittedImport;
-use super::check::{Signature, Signatures, Typer, bind_parameters};
+use super::check::{bind_parameters, Signature, Signatures, Typer};
 use super::facts::{CallSite, Definedness};
 use super::imports::ImportedNames;
 use super::ir::{CheckedBody, Node};
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
+use super::AdmittedImport;
 use super::{DeclarationRegions, DispatchTable, Scope};
 use crate::family::ClassifyFailure;
 use filament_exact::IeeeWidth;
@@ -4198,15 +4198,15 @@ mod locus_tests {
         measure_resolved, root_location,
     };
     use super::*;
-    use crate::check::PackageDeclarations;
     use crate::check::refusal::{CheckingLimitKind, StageLimitCause};
+    use crate::check::PackageDeclarations;
     use crate::family::{CheckContext, DiagnosticSink, FamilyContract, ScopeStack, StageLimits};
     use filament_exact::{Meter, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
     use filament_semantic_value::location::ExpressionOwner as CheckOrigin;
     use fsl_forms::build_unit;
-    use fsl_foundation::SourceIdentity;
     use fsl_foundation::source::provenance::SourceRegion;
+    use fsl_foundation::SourceIdentity;
     use ix_trace_rs::trace;
 
     const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -4391,14 +4391,13 @@ mod locus_tests {
         let end = usize::try_from(region.end()).unwrap();
         assert_eq!(&text[start..end], "1", "the node whose entry failed");
         let (unit, _) = sum_unit();
-        assert!(
-            unit.check(
+        assert!(unit
+            .check(
                 CheckMode::Linked,
                 CheckingLimits::new(5_000),
                 &crate::check::test_support::ZeroRewardEvaluator
             )
-            .is_ok()
-        );
+            .is_ok());
     }
 
     /// TC-727 step 3: the same sum, through package checking, under a work
@@ -4553,8 +4552,8 @@ mod locus_tests {
     /// span.
     #[trace("TC-427", "TC-378", "FR-096-AC-4", "FR-096-AC-5", "FR-096-AC-11")]
     #[test]
-    fn package_checking_locates_a_node_limit_at_its_node_and_a_declaration_limit_at_the_declaration()
-     {
+    fn package_checking_locates_a_node_limit_at_its_node_and_a_declaration_limit_at_the_declaration(
+    ) {
         let declaration = "function f using v(): Boolean pure { not not not true }";
         let (nodes, region) = package_limit(unit(), CheckingLimits::new(3));
         assert_eq!(nodes.kind, CheckingLimitKind::Nodes);

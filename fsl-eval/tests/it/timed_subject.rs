@@ -7915,14 +7915,19 @@ fn clock_record_protocol<'w>(
 #[test]
 fn a_protocol_event_record_ranges_a_clock_reference_over_the_declared_places() {
     use fsl_eval::simulation::protocol::{check_protocol_bounds, Capacities, StepKind};
-    let world = clock_record_world(
-        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
-    );
+    let world =
+        clock_record_world(serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"));
     let model = system(&world);
     let protocol = world.package.graph().protocol("Gate").expect("protocol");
     let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
-    check_protocol_bounds(&model, protocol, &capacities, &world.package, BOUND_POSITIONS)
-        .expect("a bounded universe's Clock-reference record has a finite domain");
+    check_protocol_bounds(
+        &model,
+        protocol,
+        &capacities,
+        &world.package,
+        BOUND_POSITIONS,
+    )
+    .expect("a bounded universe's Clock-reference record has a finite domain");
 
     let system = clock_record_protocol(&world, true).expect("the protocol subject builds");
     let reachable = system
@@ -7943,16 +7948,22 @@ fn a_protocol_event_record_ranges_a_clock_reference_over_the_declared_places() {
     assert!(
         matches!(
             clock_record_protocol(&world, false),
-            Err(fsl_eval::simulation::protocol::ProtocolRefusal::Unsupported(
-                fsl_eval::simulation::protocol::Unsupported::UnenumerableRecord
-            ))
+            Err(
+                fsl_eval::simulation::protocol::ProtocolRefusal::Unsupported(
+                    fsl_eval::simulation::protocol::Unsupported::UnenumerableRecord
+                )
+            )
         ),
         "no declaration authority refuses the record"
     );
 
     let unbounded = clock_record_world(unbounded_clock_reference_document());
     let model = self::system(&unbounded);
-    let protocol = unbounded.package.graph().protocol("Gate").expect("protocol");
+    let protocol = unbounded
+        .package
+        .graph()
+        .protocol("Gate")
+        .expect("protocol");
     let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
     assert!(
         check_protocol_bounds(

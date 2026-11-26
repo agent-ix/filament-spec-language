@@ -186,7 +186,8 @@ pub struct ModelCheckInput<'a> {
     /// The authenticated declaration table of the clock places, which a
     /// `Reference<Clock>` identity is validated and enumerated against;
     /// `None` when the route supplies no table.
-    pub clock_declarations: Option<&'a fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable>,
+    pub clock_declarations:
+        Option<&'a fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable>,
     /// The model time sources (FR-230).
     pub time_sources: &'a [ModelTimeSource],
     /// The `random`, `reward` and `workload` declarations (FR-185).
@@ -1012,22 +1013,27 @@ impl<'p> PackageModelInput<'p> {
             && input.state_clauses == self.state_clauses
             && input.terminals.as_ref().is_ok_and(|terminals| {
                 terminals.len() == self.terminals.len()
-                    && terminals.iter().zip(&self.terminals).all(|(actual, owned)| {
-                        actual.model.identity() == owned.model
-                            && actual.model.ordinal() == owned.ordinal
-                            && actual.node == owned.node
-                            && match (&actual.declaration, &owned.declaration) {
-                                (
-                                    ModelTerminalDeclaration::Any,
-                                    fsl_package::BareTerminalDeclaration::Any,
-                                ) => true,
-                                (
-                                    ModelTerminalDeclaration::When(TerminalWhen::Package(actual)),
-                                    fsl_package::BareTerminalDeclaration::When(owned),
-                                ) => std::ptr::eq(*actual, owned),
-                                _ => false,
-                            }
-                    })
+                    && terminals
+                        .iter()
+                        .zip(&self.terminals)
+                        .all(|(actual, owned)| {
+                            actual.model.identity() == owned.model
+                                && actual.model.ordinal() == owned.ordinal
+                                && actual.node == owned.node
+                                && match (&actual.declaration, &owned.declaration) {
+                                    (
+                                        ModelTerminalDeclaration::Any,
+                                        fsl_package::BareTerminalDeclaration::Any,
+                                    ) => true,
+                                    (
+                                        ModelTerminalDeclaration::When(TerminalWhen::Package(
+                                            actual,
+                                        )),
+                                        fsl_package::BareTerminalDeclaration::When(owned),
+                                    ) => std::ptr::eq(*actual, owned),
+                                    _ => false,
+                                }
+                        })
             })
     }
 

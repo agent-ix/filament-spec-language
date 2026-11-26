@@ -626,12 +626,10 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
             .graph
             .state_clause(name)
             .unwrap_or_else(|| panic!("{name} checks"));
-        assert!(
-            clause
-                .parameters()
-                .iter()
-                .any(|(parameter, value_type)| parameter == "by" && value_type == &p)
-        );
+        assert!(clause
+            .parameters()
+            .iter()
+            .any(|(parameter, value_type)| parameter == "by" && value_type == &p));
         if !name.starts_with("Quantifier") {
             assert!(
                 clause
@@ -762,10 +760,7 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         .body()
         .children();
     let after_let_comparison = after_let[1].children();
-    assert!(matches!(
-        after_let_comparison[0].kind(),
-        NodeKind::Local(2)
-    ));
+    assert!(matches!(after_let_comparison[0].kind(), NodeKind::Local(2)));
     assert_eq!(
         after_let_comparison[0].value_type(),
         &p,

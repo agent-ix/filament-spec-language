@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
@@ -11,46 +11,46 @@ use crate::ExactProbLimits;
 
 pub(super) mod measure;
 pub use measure::{
-    MeasurePayoffKind, MeasureProbabilityDocument, conditional_measure_probability_certificate,
-    measure_probability_certificate_document, measure_probability_objective,
-    measure_probability_product_key, partial_lower_measure_probability_certificate_document,
-    read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
-    write_measure_probability_certificate,
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_objective, measure_probability_product_key,
+    partial_lower_measure_probability_certificate_document, read_measure_probability_certificate,
+    vacuous_measure_probability_certificate_document, write_measure_probability_certificate,
+    MeasurePayoffKind, MeasureProbabilityDocument,
 };
 mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
-pub use instances::{OnEachOutcome, on_each_has_instance, on_each_outcome, replay_on_each_witness};
+pub use instances::{on_each_has_instance, on_each_outcome, replay_on_each_witness, OnEachOutcome};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity,
+    check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
 };
 pub use mdp::{
-    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
+    cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
     read_probability_proof_document, write_probability_proof_document,
-    write_value_bounds_proof_document,
+    write_value_bounds_proof_document, ProbabilityProofDocument,
 };
 pub(super) mod long_run;
 mod partial;
 pub use partial::partial_lower_probability_proof_document;
 pub(super) mod refutation;
+#[cfg(feature = "test-support")]
 pub use long_run::{
-    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
+    check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
+};
+pub use long_run::{
     long_run_probability_certificate_document, read_long_run_probability_certificate,
     read_weighted_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate,
-};
-#[cfg(feature = "test-support")]
-pub use long_run::{
-    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity,
+    write_weighted_long_run_probability_certificate, LongRunOptimization, LongRunPolicyChoice,
+    LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
+    WeightedLongRunProbabilityDocument,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;

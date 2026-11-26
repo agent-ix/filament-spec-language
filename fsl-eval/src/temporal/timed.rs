@@ -164,7 +164,11 @@ enum Tri {
 
 impl Tri {
     fn of(value: bool) -> Self {
-        if value { Self::True } else { Self::False }
+        if value {
+            Self::True
+        } else {
+            Self::False
+        }
     }
 
     fn negate(self) -> Self {
@@ -176,7 +180,11 @@ impl Tri {
     }
 
     fn flip(self, dual: bool) -> Self {
-        if dual { self.negate() } else { self }
+        if dual {
+            self.negate()
+        } else {
+            self
+        }
     }
 }
 

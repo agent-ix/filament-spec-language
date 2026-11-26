@@ -616,8 +616,8 @@ impl FamilyContract for StateModelFamily {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::check::DispatchOperation;
     use crate::check::family::fixtures::{empty_scope, root_location};
+    use crate::check::DispatchOperation;
     use crate::family::{DiagnosticSink, ScopeStack, StageLimits};
     use ix_trace_rs::trace;
 
@@ -740,11 +740,9 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message, "existing diagnostic");
         assert_eq!(entries[1].scope, "enclosing");
-        assert!(
-            entries[1]
-                .message
-                .contains("node limit=37, meter admissions=3")
-        );
+        assert!(entries[1]
+            .message
+            .contains("node limit=37, meter admissions=3"));
         assert_eq!(scopes.path(), "enclosing");
     }
 

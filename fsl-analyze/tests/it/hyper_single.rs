@@ -516,10 +516,19 @@ fn hp5_witnesses_settle_through_the_product_certificate_and_replay() {
         ExistentialOutcome::Witnessed { lassos } => {
             assert_eq!(lassos.len(), 2);
             assert_eq!(lassos[0].lasso.path.initial, 0);
-            assert_eq!(positions(&world, &lassos[0].lasso), [(0, 0), (0, 1), (0, 1)]);
+            assert_eq!(
+                positions(&world, &lassos[0].lasso),
+                [(0, 0), (0, 1), (0, 1)]
+            );
             assert_eq!(lassos[1].lasso.path.initial, 1);
-            assert_eq!(positions(&world, &lassos[1].lasso), [(1, 0), (1, 1), (1, 1)]);
-            lassos.iter().map(|witness| witness.source.clone()).collect::<Vec<_>>()
+            assert_eq!(
+                positions(&world, &lassos[1].lasso),
+                [(1, 0), (1, 1), (1, 1)]
+            );
+            lassos
+                .iter()
+                .map(|witness| witness.source.clone())
+                .collect::<Vec<_>>()
         }
         other => panic!("witnessed: {other:?}"),
     };
@@ -570,12 +579,7 @@ fn hp5_witnesses_settle_through_the_product_certificate_and_replay() {
     let ExistentialOutcome::Witnessed { lassos } = &mut loop_removed.outcome else {
         unreachable!("the engine outcome was witnessed")
     };
-    lassos[0]
-        .lasso
-        .path
-        .steps
-        .pop()
-        .expect("one loop step");
+    lassos[0].lasso.path.steps.pop().expect("one loop step");
     let refused = settle_instance(&world, &loop_removed, limits);
     assert!(matches!(
         refused.record.value,

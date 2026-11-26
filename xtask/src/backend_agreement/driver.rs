@@ -9,7 +9,7 @@ use std::process::Command;
 
 use filament_exact::{Cancel, Value as RuntimeValue};
 use fsl_analyze::analyze::document::{
-    ItemSelection, ResolvedItem, SubjectSelection, resolve_items,
+    resolve_items, ItemSelection, ResolvedItem, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
 use fsl_foundation::{BackendId, SourceIdentity};
@@ -18,12 +18,12 @@ use fsl_replay::value_check::{ValueTarget, Verdict};
 use fsl_route::Registry;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::DocumentProvision;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::super::{self as corpus, ConsumerType, InputKind, Vector};
 use super::{CandidateRecord, Entry, Item, Negotiated, Provider, Recheck, Settlement};
-use crate::Outcome;
 use crate::error::{Error, Result};
+use crate::Outcome;
 
 pub(super) struct Driver {
     executable: PathBuf,
@@ -758,22 +758,18 @@ mod tests {
             let backend = BackendId::new("value-checker");
             let mut refutation = driver.read_response(item, &backend, REFUTED).unwrap();
             assert_eq!(refutation.record.as_ref().unwrap(), &document["items"][0]);
-            assert!(
-                refutation
-                    .record
-                    .as_ref()
-                    .unwrap()
-                    .pointer("/record/category")
-                    .is_none()
-            );
-            assert!(
-                refutation
-                    .record
-                    .as_ref()
-                    .unwrap()
-                    .pointer("/record/request_index")
-                    .is_none()
-            );
+            assert!(refutation
+                .record
+                .as_ref()
+                .unwrap()
+                .pointer("/record/category")
+                .is_none());
+            assert!(refutation
+                .record
+                .as_ref()
+                .unwrap()
+                .pointer("/record/request_index")
+                .is_none());
             refutation.replay = Some(driver.replay(item, &refutation));
             assert_eq!(
                 refutation.replay,

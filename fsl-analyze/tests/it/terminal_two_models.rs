@@ -7,16 +7,16 @@
 use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::analyze::{
-    AnalyzeLimits, Engines, PackageDeadlockSubject, PackageStateGraphSubject, RunInput,
-    SourceProvision, SubjectBinding, TemporalItem, analyze_items, deadlock_model_item,
+    analyze_items, deadlock_model_item, AnalyzeLimits, Engines, PackageDeadlockSubject,
+    PackageStateGraphSubject, RunInput, SourceProvision, SubjectBinding, TemporalItem,
 };
-use fsl_analyze::model_check::{StateGraphItem, StateGraphRequest, check_state_graph};
+use fsl_analyze::model_check::{check_state_graph, StateGraphItem, StateGraphRequest};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
     PopulationUniverse, TerminalClass,
 };
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
 use fsl_replay::ModelCheckLimits;
@@ -28,8 +28,8 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{
-    Vault, declarations, document, key, other_document, other_key, snapshot,
-    unit_text_with_functions,
+    declarations, document, key, other_document, other_key, snapshot, unit_text_with_functions,
+    Vault,
 };
 
 /// Each vault steps once to `l = i` while `l = 0`, so it is terminal at `l = 1`.
@@ -502,12 +502,11 @@ fn assert_terminal_node_is_the_only_open_successor(
         unknown_terminal[0].0.as_slice(),
         "the open node is the terminal state whose predicate refuses"
     );
-    assert!(
-        run.graph
-            .edges
-            .iter()
-            .any(|edge| { edge.source.index() == 0 && edge.target == *open_node })
-    );
+    assert!(run
+        .graph
+        .edges
+        .iter()
+        .any(|edge| { edge.source.index() == 0 && edge.target == *open_node }));
 }
 
 /// FSpec FR-391-AC-13/15/16/17: source hand outcomes and strict package-read

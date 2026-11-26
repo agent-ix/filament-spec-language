@@ -9,12 +9,12 @@ use filament_exact::ValueType;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_foundation::selection::DefinitionRef;
 
-use crate::simulation::choice::{ChoicePoint, Weights, choose};
+use crate::simulation::choice::{choose, ChoicePoint, Weights};
 use crate::simulation::expansion::{ExpansionStop, StateFindings};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::key::{EncodingRefusal, StateKey};
-use crate::simulation::not_simulated::{NotSimulated, Root, check_requires_bound};
-use crate::simulation::order::{Expanded, OrderedSuccessor, expand, sorted_initial};
+use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, Root};
+use crate::simulation::order::{expand, sorted_initial, Expanded, OrderedSuccessor};
 use crate::simulation::trace::{SampleProvenance, Step, StopReason, Trace};
 use fsl_foundation::IdentityLimits;
 

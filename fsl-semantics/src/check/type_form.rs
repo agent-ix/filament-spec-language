@@ -543,7 +543,7 @@ pub(super) fn quantity_unit(
     target: &TypeForm,
 ) -> Result<UnitId, TypeFormError> {
     use filament_semantic_value::quantity::{
-        QuantityOperation, QuantityRefusal, UnitOperation, evaluate_quantity_unit, result_unit,
+        evaluate_quantity_unit, result_unit, QuantityOperation, QuantityRefusal, UnitOperation,
     };
     let resolve = |name: &NameForm| {
         names.unit_named(&name.name).ok_or_else(|| {
@@ -1342,10 +1342,8 @@ mod tests {
     fn an_absent_collection_bound_resolves_to_none() {
         let collection = |kind: CollectionKind, bounds: &[&str]| {
             TypeForm::collection(kind, SPAN)
-                .with_arguments(vec![
-                    TypeForm::builtin(BuiltinType::Int, SPAN)
-                        .with_bounds(vec!["0".to_owned(), "9".to_owned()]),
-                ])
+                .with_arguments(vec![TypeForm::builtin(BuiltinType::Int, SPAN)
+                    .with_bounds(vec!["0".to_owned(), "9".to_owned()])])
                 .with_bounds(bounds.iter().map(|bound| (*bound).to_owned()).collect())
         };
         for kind in [

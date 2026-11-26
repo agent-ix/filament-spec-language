@@ -11,13 +11,13 @@
 
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{
-    Integer, JsonObject, Meter, Outcome, TextPayload, Timestamp, Uuid, Value, ValueType, admit_text,
+    admit_text, Integer, JsonObject, Meter, Outcome, TextPayload, Timestamp, Uuid, Value, ValueType,
 };
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
-use super::{Typer, mismatch, node};
+use super::{mismatch, node, Typer};
 use crate::check::ir::Node;
 use crate::check::refusal::{CheckCause, CheckRefusal};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};

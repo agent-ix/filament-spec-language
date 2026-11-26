@@ -8,7 +8,7 @@ use filament_semantic_value::declaration::{ObjectTypeDeclaration, TypeEnvironmen
 use fsl_forms::ProtocolDeclarationForm;
 use fsl_foundation::Span;
 
-use super::{BoundAttempt, refusal};
+use super::{refusal, BoundAttempt};
 use crate::check::refusal::{CheckRefusal, ProtocolAnchorCause};
 use crate::check::state_clause::{AttemptDeclaration, StateClauseDeclaration};
 

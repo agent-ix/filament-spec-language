@@ -9,20 +9,20 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
     CheckedHyperLetters, ExpansionLimits, ModelSimulationRequest, ModelSystem,
 };
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    BoundCovers, HyperOutcome, HyperReplay, IncompleteCause, RunStats, UndecidedCause,
-    replay_hyper_trace_tuple, settle_hyper_check,
+    replay_hyper_trace_tuple, settle_hyper_check, BoundCovers, HyperOutcome, HyperReplay,
+    IncompleteCause, RunStats, UndecidedCause,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
 
-use super::items::{BROKEN, admission, model_refusal};
+use super::items::{admission, model_refusal, BROKEN};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
 use crate::model_check::{
-    HyperCheckRequest, ModelRelationOutcome, ModelRelationRefusal, ModelRelationStats,
-    alias_provisions, alias_system, check_hyper, manifest,
+    alias_provisions, alias_system, check_hyper, manifest, HyperCheckRequest, ModelRelationOutcome,
+    ModelRelationRefusal, ModelRelationStats,
 };
 
 /// The item that runs the checked hyper clause `key` names, or none when the

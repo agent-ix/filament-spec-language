@@ -17,7 +17,7 @@
 //! Every walk uses an explicit stack, so the depth of an operand chain never
 //! consumes the call stack.
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeList, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeList};
 use std::collections::{BTreeMap, HashMap, TryReserveError};
 use std::convert::Infallible;
 use std::sync::Arc;

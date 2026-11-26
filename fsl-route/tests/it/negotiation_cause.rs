@@ -5,11 +5,11 @@
 use std::collections::BTreeSet;
 
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_foundation::BackendId;
 use fsl_foundation::bound::DomainKind;
+use fsl_foundation::BackendId;
 use fsl_route::{
-    BackendDescriptor, Candidate, EvidenceKind, Mode, NegotiationCause, NegotiationOutcome,
-    NegotiationSettlement, ProviderOrigin, Registry, settle_candidates,
+    settle_candidates, BackendDescriptor, Candidate, EvidenceKind, Mode, NegotiationCause,
+    NegotiationOutcome, NegotiationSettlement, ProviderOrigin, Registry,
 };
 use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;

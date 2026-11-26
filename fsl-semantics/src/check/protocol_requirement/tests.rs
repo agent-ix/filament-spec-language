@@ -9,7 +9,7 @@ use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
-use super::{CheckedRequirement, UnitDeclarations, check};
+use super::{check, CheckedRequirement, UnitDeclarations};
 use crate::check::refusal::ProtocolAnchorCause;
 use crate::check::{CheckCause, CheckRefusal, PackageDeclarations};
 
@@ -17,7 +17,7 @@ mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{HEADER, obligation_model};
+use fixture::{obligation_model, HEADER};
 
 #[trace("TC-1065", "FR-218-AC-31")]
 #[test]

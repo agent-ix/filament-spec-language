@@ -10,15 +10,15 @@
 //! every claim as before; claims written identically are indistinguishable,
 //! so which of them takes which rank is unobservable. The node's body is written by S4 from the nodes the claim reads.
 
-use std::collections::{BTreeMap, hash_map};
+use std::collections::{hash_map, BTreeMap};
 
 use filament_exact::{NodeKey, PathSegment, Rational, ValueType};
 use fsl_forms::DeclaredClauseKind;
 
-use super::temporal::{FormulaCondition, FormulaInput, stage_fault};
+use super::temporal::{stage_fault, FormulaCondition, FormulaInput};
 use super::{
-    Binder, Binders, FUNCTION_BODY, FunctionInput, Lowering, ModelClause, NodeContent, NodeRef,
-    SemanticNode, literal_operand_text,
+    literal_operand_text, Binder, Binders, FunctionInput, Lowering, ModelClause, NodeContent,
+    NodeRef, SemanticNode, FUNCTION_BODY,
 };
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{

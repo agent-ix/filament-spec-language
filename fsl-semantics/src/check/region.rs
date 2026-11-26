@@ -22,9 +22,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fsl_forms::{DeclarationSpans, ExpressionSpans};
-use fsl_foundation::Span;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::source_map::SourceMap;
+use fsl_foundation::Span;
 use ix_trace_rs::implements;
 
 use super::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
@@ -1121,17 +1121,15 @@ mod tests {
         assert_eq!(super::region(&source, Some(&map), whole), None);
         // The single-segment sub-span still resolves to its own document
         // region: only the multi-region span is refused.
-        assert!(
-            super::region(
-                &source,
-                Some(&map),
-                Span {
-                    start: 0,
-                    end: line
-                }
-            )
-            .is_some()
-        );
+        assert!(super::region(
+            &source,
+            Some(&map),
+            Span {
+                start: 0,
+                end: line
+            }
+        )
+        .is_some());
     }
 
     /// FR-096 (SR-745 FND-003): each of node count, input bytes and work

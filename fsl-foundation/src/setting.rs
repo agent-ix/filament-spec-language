@@ -509,7 +509,8 @@ pub fn parse_operands<'a>(
                 .ok()
                 .filter(|bound| match setting {
                     SettingName::Stage(stage) => {
-                        *bound <= stage.greatest_bound() && (*bound != 0 || !stage.is_positive_count())
+                        *bound <= stage.greatest_bound()
+                            && (*bound != 0 || !stage.is_positive_count())
                     }
                     SettingName::Accounting(_) => true,
                 })

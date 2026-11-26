@@ -156,7 +156,7 @@ mod code_generation {
     fn cf_cg_01_01_call_site_returns_the_selected_function_and_package() {
         let source = fsl_replay::SourceIdentity::new("consumer", "call-site");
         let selected = fsl_replay::QualifiedName::new(vec![
-            filament_exact::Identifier::new("f").expect("identifier"),
+            filament_exact::Identifier::new("f").expect("identifier")
         ])
         .expect("qualified name");
         let site = fsl_replay::call_site(
@@ -254,7 +254,7 @@ schedulable CtlFp on Ctl under fixed_priority;\n\
 function f using v(x: Integer): Integer pure { x }\n";
         let source = fsl_replay::SourceIdentity::new("consumer", "closed-form-check");
         let function = fsl_replay::QualifiedName::new(vec![
-            filament_exact::Identifier::new("f").expect("function name"),
+            filament_exact::Identifier::new("f").expect("function name")
         ])
         .expect("qualified function name");
         let site = fsl_replay::call_site(
@@ -338,7 +338,7 @@ function f using v(x: Integer): Integer pure { x }\n";
         let subject = fsl_replay::ScheduleSubject::new(
             fsl_replay::TaskSet::new(
                 fsl_replay::QualifiedName::new(vec![
-                    filament_exact::Identifier::new("Ctl").expect("task-set name"),
+                    filament_exact::Identifier::new("Ctl").expect("task-set name")
                 ])
                 .expect("qualified task-set name"),
                 vec![fsl_replay::Task {

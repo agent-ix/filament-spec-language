@@ -59,8 +59,8 @@
 use filament_eval::FamilyOutcome;
 use filament_exact::{
     admit_text, form_collection, CardinalityBound, CollectionKind, CollectionType, Decimal,
-    FieldValue, Integer, IntegerInterval, Meter, OptionValue, Outcome, Rational, Refusal,
-    RationalDomain, ScalarLimits, TextPayload, TextProfile, TextType, Undefined, Value, ValueType,
+    FieldValue, Integer, IntegerInterval, Meter, OptionValue, Outcome, Rational, RationalDomain,
+    Refusal, ScalarLimits, TextPayload, TextProfile, TextType, Undefined, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -1782,13 +1782,7 @@ fn aggregate_reduce_source(kind: CollKind, aggregate: Aggregate) -> String {
         Aggregate::Max => "reduce<A>(m, x in xs: max(m, x))",
         _ => unreachable!("only min/max have a reduction property"),
     };
-    unit(
-        None,
-        "type A = Int[-9, 9];\n",
-        &parameters,
-        "A",
-        body,
-    )
+    unit(None, "type A = Int[-9, 9];\n", &parameters, "A", body)
 }
 
 /// The fold of `items` (the reference), independent of the order given.
@@ -1825,17 +1819,15 @@ fn aggregate_cases() -> BoxedStrategy<AggregateCase> {
         proptest::collection::vec(-9i64..=9, 1..=6),
         0usize..6,
     )
-        .prop_map(|(kind, aggregate, unique, bag, rotation)| {
-            AggregateCase {
-                kind,
-                aggregate,
-                items: if kind == CollKind::Set {
-                    unique.into_iter().collect()
-                } else {
-                    bag
-                },
-                rotation,
-            }
+        .prop_map(|(kind, aggregate, unique, bag, rotation)| AggregateCase {
+            kind,
+            aggregate,
+            items: if kind == CollKind::Set {
+                unique.into_iter().collect()
+            } else {
+                bag
+            },
+            rotation,
         })
         .boxed()
 }
@@ -2146,7 +2138,6 @@ fn p5_min_max_aggregates_equal_the_reference_fold_in_any_order() {
                         reduce_source
                     );
                 }
-
             }
             Ok(())
         },
@@ -2184,7 +2175,11 @@ fn bounded_rational_bag_min_max_reductions_are_permutation_invariant() {
                 maximum: 3,
                 items: order.clone(),
             }];
-            assert_eq!(evaluate(&package, &args), Ok(expected.to_owned()), "{source}");
+            assert_eq!(
+                evaluate(&package, &args),
+                Ok(expected.to_owned()),
+                "{source}"
+            );
         }
     }
 }

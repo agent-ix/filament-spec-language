@@ -100,19 +100,19 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind, translate,
+    translate, Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind,
 };
 use fsl_eval::fairness::{
-    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
+use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
+use fsl_eval::simulation::protocol::{
+    protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
+    ProtocolTransition,
+};
 use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
-use fsl_eval::simulation::protocol::{
-    FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem, ProtocolTransition,
-    protocol_constraints,
-};
 use fsl_eval::simulation::{
     Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint,
     InitialStateRefusal, Limit, Limits, OfferedReductions, Outcome, Permutation, SubjectSystem,
@@ -121,11 +121,11 @@ use fsl_eval::simulation::{
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
-    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
-    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
-    Proviso, ReachedLimit, ReductionCause, RunStats, StepSite, TemporalCounterexample,
-    UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
+    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
+    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
+    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
+    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
+    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use ix_trace_rs::implements;
@@ -134,11 +134,11 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    Admitted, BOUND_POSITIONS, ModelCheckRefusal, ModelCheckRequest, atom_refusal, not_simulated,
-    precheck, refuse_capture_read,
+    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
+    ModelCheckRequest, BOUND_POSITIONS,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
-use super::fair_walk::{FairModel, fairness_constraints, tree_path};
+use super::fair_walk::{fairness_constraints, tree_path, FairModel};
 use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainConfig,
     RetainHooks, RetainedEdge, RetainedGraph,
@@ -1233,7 +1233,7 @@ mod prefetch_window_tests {
 
 #[cfg(test)]
 mod cache_budget_tests {
-    use super::{ByteCache, PropertyKey, StateKey, cache_product_key, cache_successor_keys};
+    use super::{cache_product_key, cache_successor_keys, ByteCache, PropertyKey, StateKey};
 
     #[test]
     fn byte_cache_evicts_and_releases_charged_bytes() {
@@ -1277,11 +1277,9 @@ mod cache_budget_tests {
         cache_product_key(&mut product_cache, first_key.clone(), first_value);
         cache_product_key(&mut product_cache, second_key.clone(), first_value);
         assert!(product_cache.get(&first_key).is_none());
-        assert!(
-            product_cache
-                .get(&second_key)
-                .is_some_and(|value| value.as_ref() == first_value)
-        );
+        assert!(product_cache
+            .get(&second_key)
+            .is_some_and(|value| value.as_ref() == first_value));
         assert!(product_cache.used_bytes() <= charged);
 
         let root = StateKey::from_canonical_bytes(b"root".to_vec());
@@ -1757,12 +1755,12 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
 #[cfg(test)]
 mod key_encoding_tests {
-    use super::{PropertyKey, canonical_api};
+    use super::{canonical_api, PropertyKey};
     use crate::model_check::product::ProductKey;
     use fsl_eval::automaton::GbaBuilder;
     use fsl_foundation::IdentityLimits;
     use ix_trace_rs::trace;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     #[trace("TC-453", "FR-101-AC-2")]
     #[test]

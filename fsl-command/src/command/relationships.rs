@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fmt;
 
-use super::{Result, RunCause, wire};
+use super::{wire, Result, RunCause};
 
 /// Validates the closed selection before opening any selected file.
 pub(super) fn validate_request(call: Option<&wire::Call>) -> Result<()> {
@@ -265,8 +265,8 @@ pub(super) fn validate_package_mappings(
 mod tests {
     use super::{duplicate_selection_member, snapshot_document};
     use filament_observation::{
-        PRODUCER_INTERFACE_VERSION, ProducerConfiguration, ProducerDigest, Revision,
-        StaticProducerBundle,
+        ProducerConfiguration, ProducerDigest, Revision, StaticProducerBundle,
+        PRODUCER_INTERFACE_VERSION,
     };
     use ix_trace_rs::trace;
     use serde_json::json;
@@ -377,11 +377,9 @@ mod tests {
             snapshot_document(&bytes, Some(&selected)).expect("snapshot prepares");
         let sanitized: serde_json::Value =
             serde_json::from_slice(&sanitized).expect("sanitized snapshot parses");
-        assert!(
-            sanitized["relationships"][0]["instances"][0]
-                .get("identity")
-                .is_none()
-        );
+        assert!(sanitized["relationships"][0]["instances"][0]
+            .get("identity")
+            .is_none());
         assert_eq!(
             extents.expect("extents retained")[0]["instances"][0]["identity"],
             "00ff"
@@ -411,11 +409,9 @@ mod tests {
             snapshot_document(&bytes, Some(&selected)).expect("snapshot prepares");
         let sanitized: serde_json::Value =
             serde_json::from_slice(&sanitized).expect("sanitized snapshot parses");
-        assert!(
-            sanitized["relationships"][0]["instances"][0]
-                .get("identity")
-                .is_none()
-        );
+        assert!(sanitized["relationships"][0]["instances"][0]
+            .get("identity")
+            .is_none());
         assert_eq!(
             extents.expect("original extent retained")[0]["instances"][0]["identity"],
             "00FF"
@@ -438,11 +434,9 @@ mod tests {
             .expect("an unmapped entry contributes no candidate and refuses no identity");
         let sanitized: serde_json::Value =
             serde_json::from_slice(&sanitized).expect("sanitized snapshot parses");
-        assert!(
-            sanitized["relationships"][0]["instances"][0]
-                .get("identity")
-                .is_none()
-        );
+        assert!(sanitized["relationships"][0]["instances"][0]
+            .get("identity")
+            .is_none());
         assert_eq!(extents.expect("extents retained")[0]["complete"], false);
     }
 

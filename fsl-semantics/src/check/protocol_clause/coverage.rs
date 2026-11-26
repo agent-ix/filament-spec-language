@@ -9,10 +9,10 @@ use fsl_forms::{ProtocolConstructKind, ProtocolDeclarationForm, ProtocolNodeKind
 use fsl_foundation::Span;
 
 use super::refusal;
-use crate::check::Scope;
-use crate::check::profile::TemporalProfile;
 use crate::check::profile::protocol_profile;
+use crate::check::profile::TemporalProfile;
 use crate::check::refusal::{AliasKind, CheckRefusal, ProtocolAnchorCause};
+use crate::check::Scope;
 use crate::value::layer::HeaderLayer;
 use fsl_foundation::selection::ProfileSelection;
 
