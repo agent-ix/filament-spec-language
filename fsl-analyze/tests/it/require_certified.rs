@@ -11,6 +11,7 @@ use crate::analyze_cli_support::{
     litmus_request, order_protocol, request_members, Run, Workspace,
 };
 use crate::analyze_family_cli::{process_provider, PROCESS_PROVIDER};
+use crate::protocol_conformance::{order_premises, order_recording, recording_member};
 
 /// The Counter request of `items` with `require_certified` set to `required`,
 /// analyzed with a process provider that answers `proved`.
@@ -118,19 +119,28 @@ fn a_require_certified_that_is_not_a_boolean_refuses_the_request() {
     }
 }
 
-/// A global-conformance verdict has no core checker.
+/// A conformance verdict over a recording has no core checker; one the
+/// engine closed carries a certified record and stays.
 #[trace("TC-3240", "FR-1052-AC-9")]
 #[test]
-fn a_conformance_proof_is_withheld_when_certification_is_required() {
-    let run = |name: &str, required: bool| {
+fn a_recording_conformance_proof_is_withheld_when_certification_is_required() {
+    let recorded = |name: &str, required: bool| {
         let ws = Workspace::new(name);
-        let extra = json!({"items": [{"claim": "Flow", "kind": "global-conformance"}],
+        let recording = order_recording(json!({"state": "closed", "premises": order_premises()}));
+        ws.write("recording.json", recording.to_string().as_bytes());
+        let mut item = json!({"claim": "Flow", "kind": "global-conformance"});
+        item["recording"] = recording_member()["recording"].clone();
+        let extra = json!({"items": [item], "documents": [{"file": "recording.json"}],
             "require_certified": required});
         analyze(&litmus_request(&ws, &order_protocol(true), extra)).item(0)
     };
-    let default = run("require-1052-9-default", false);
+    let default = recorded("require-1052-9-default", false);
     assert_eq!(default["global"]["label"], "proved", "{default}");
-    let required = run("require-1052-9-required", true);
+    assert_eq!(
+        default["record"]["certification"], "uncertified",
+        "{default}"
+    );
+    let required = recorded("require-1052-9-required", true);
     assert_eq!(
         required["global"],
         json!({"label": "inconclusive", "basis": "unsettled", "complete": false,
@@ -143,4 +153,15 @@ fn a_conformance_proof_is_withheld_when_certification_is_required() {
         "{required}"
     );
     assert_eq!(label(&required), "inconclusive", "{required}");
+
+    let engine = |name: &str, required: bool| {
+        let ws = Workspace::new(name);
+        let extra = json!({"items": [{"claim": "Flow", "kind": "global-conformance"}],
+            "require_certified": required});
+        analyze(&litmus_request(&ws, &order_protocol(true), extra)).item(0)
+    };
+    let closed = engine("require-1052-9-engine", true);
+    assert_eq!(closed["record"]["certification"], "certified", "{closed}");
+    assert_eq!(closed["global"]["label"], "proved", "{closed}");
+    assert_eq!(closed, engine("require-1052-9-engine-default", false));
 }

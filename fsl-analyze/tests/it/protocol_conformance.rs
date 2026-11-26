@@ -48,7 +48,7 @@ fn conformance(name: &str, unit: &str, members: Value, documents: &[(&str, Value
 
 /// A closed-or-not recording of the order fixture: `Placed`, `Got`, `Ship`
 /// and `finish`, with the closure record `closure`.
-fn order_recording(closure: Value) -> Value {
+pub(crate) fn order_recording(closure: Value) -> Value {
     json!({
         "format": "filament.protocol-recording/1",
         "identity": {"authority": "test", "identity": "recording"},
@@ -72,7 +72,7 @@ fn order_recording(closure: Value) -> Value {
 }
 
 /// The required premises of instance `w-1` of the order fixture.
-fn order_premises() -> Value {
+pub(crate) fn order_premises() -> Value {
     json!([
         {"kind": "execution", "node": "Flow::Done"},
         {"kind": "branch", "node": "Flow::Main::Decide::no"},
@@ -80,7 +80,7 @@ fn order_premises() -> Value {
     ])
 }
 
-fn recording_member() -> Value {
+pub(crate) fn recording_member() -> Value {
     json!({"recording": {"authority": "test", "identity": "recording"}})
 }
 

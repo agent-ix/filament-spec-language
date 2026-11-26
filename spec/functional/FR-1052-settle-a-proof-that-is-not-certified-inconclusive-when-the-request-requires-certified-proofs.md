@@ -143,11 +143,13 @@ Each item's terminal record, changed only as "Behavior" states.
   `refinement_transfer` request (FR-1031), the claim items of a `run` call
   (FR-960) and the verification planner's results take no such member and
   settle as under `AdmitAny`.
-- A global-conformance item the policy settles `inconclusive` SHALL write its
-  FR-990 `global` member with label `inconclusive`, basis `unsettled`,
-  `complete` `false` and cause `proof-not-certified`, and each `prefixes` and
-  `projections` label that is `proved` as `inconclusive`. Its obligation
-  verdicts and closure record are the evidence the engine computed and stay.
+- A global-conformance item whose record is not a `certified` proof SHALL
+  write each FR-990 label that is `proved` as `inconclusive`: a `proved`
+  `global` member becomes label `inconclusive`, basis `unsettled`, `complete`
+  `false` and cause `proof-not-certified`, and so does each `proved` label of
+  `prefixes` and `projections`. Its obligation verdicts and closure record are
+  the evidence the engine computed and stay. An item whose record is a
+  `certified` proof is unchanged.
 - FR-621's `aggregate` SHALL read the settled record: a required item the
   policy settles `inconclusive` is a `not-proved` gap with `result`
   `inconclusive`.
@@ -168,7 +170,7 @@ Each item's terminal record, changed only as "Behavior" states.
 | FR-1052-AC-6 | A `native-analyze/1` request whose only required item is AC-1's uncertified entry has `aggregate` `{"status": "complete", "gaps": []}` by default and, under `require_certified` `true`, `{"status": "incomplete", "gaps": [{"request_index": 0, "reason": "not-proved", "result": "inconclusive"}]}`. | Test (TC-3240) |
 | FR-1052-AC-7 | A `native-analyze/1` request with `"require_certified": "yes"`, and one with `"require_certified": 1`, each refuse the whole request at the request stage with `invalid-request`, exit 20, naming `require_certified`, and run no item. | Test (TC-3240) |
 | FR-1052-AC-8 | `analyze` and `provider::run` over AC-2's request and AC-4's request settle the item under `CertificationPolicy::RequireCertified` as AC-2 and AC-4 state, and under `AdmitAny` settle it `proved`. | Test (TC-3240) |
-| FR-1052-AC-9 | A global-conformance item whose `global` member is `proved` by default writes it, under `RequireCertified`, with label `inconclusive`, basis `unsettled`, `complete` `false` and cause `proof-not-certified`, with the same closure record and obligation verdicts. | Test (TC-3240) |
+| FR-1052-AC-9 | A global-conformance item over a recording with a closed closure record, whose record is `proved`, `uncertified` and whose `global` member is `proved`, settles under `RequireCertified` `inconclusive` and writes `global` with label `inconclusive`, basis `unsettled`, `complete` `false` and cause `proof-not-certified`, with the same closure record and obligation verdicts. The same claim decided over the protocol system, whose record is `proved`, `certified`, is unchanged. | Test (TC-3240) |
 
 ## Dependencies
 

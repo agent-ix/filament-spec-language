@@ -2558,14 +2558,26 @@ impl AnalyzeRecord {
     }
 
     /// Apply [`CertificationPolicy::RequireCertified`] to the settled item:
-    /// its terminal record and the conformance labels it writes beside it.
+    /// its terminal record and, unless that record is a certified proof, the
+    /// conformance labels it writes beside it.
     fn require_certified(&mut self) {
-        match &mut self.settlement {
-            Settlement::Terminal(record) => record.require_certified(),
-            Settlement::Disposed(_) => {}
-        }
-        if let Some(output) = &mut self.protocol_conformance {
-            output.withhold_proofs();
+        let certified = match &mut self.settlement {
+            Settlement::Terminal(record) => {
+                record.require_certified();
+                matches!(
+                    record.value(),
+                    TerminalValue::Proved {
+                        certification: fsl_replay::Certification::Certified,
+                        ..
+                    }
+                )
+            }
+            Settlement::Disposed(_) => false,
+        };
+        if !certified {
+            if let Some(output) = &mut self.protocol_conformance {
+                output.withhold_proofs();
+            }
         }
     }
 

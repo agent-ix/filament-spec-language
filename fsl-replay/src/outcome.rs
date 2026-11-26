@@ -1232,9 +1232,9 @@ pub struct ProtocolConformanceOutput {
 }
 
 impl ProtocolConformanceOutput {
-    /// No core check stands behind a conformance verdict, so for a request
-    /// that requires certified proofs every label that would read `proved`
-    /// reads `inconclusive`. Obligation verdicts and the closure record are
+    /// For a request that requires certified proofs, and an item whose record
+    /// is not a certified proof, every label that would read `proved` reads
+    /// `inconclusive`. Obligation verdicts and the closure record are
     /// the evidence the engine computed and stay.
     #[implements("FR-1052-AC-9")]
     pub fn withhold_proofs(&mut self) {

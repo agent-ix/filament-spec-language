@@ -590,14 +590,15 @@ fn workload_mean_time_is_not_proved_when_infinite() {
         claims,
     );
     let record = settle(&world, "MeanTime");
-    let terminal = record.terminal().expect("a terminal record");
-    assert!(
-        matches!(terminal.value(), TerminalValue::Unsupported(_)),
-        "{record:#?}"
+    let Settlement::Disposed(disposed) = &record.settlement else {
+        panic!("expected a disposition: {record:#?}");
+    };
+    assert_eq!(disposed.kind, DispositionKind::Unsupported);
+    let diagnostic = disposed.diagnostic.as_ref().expect("a diagnostic");
+    assert_eq!(
+        diagnostic.code.to_string(),
+        "unsupported_construct/not-yet-implemented"
     );
-    let code = terminal.diagnostic().expect("a diagnostic");
-    assert_eq!(code.code(), "unsupported_construct");
-    assert_eq!(code.cause(), "not-yet-implemented");
 }
 
 const NEVER: &str = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
