@@ -70,6 +70,7 @@ mod hybrid;
 mod hybrid_replay;
 mod id_text;
 mod identity;
+mod instance_records;
 mod limits;
 mod model_check;
 mod replay_model_input;
@@ -457,6 +458,7 @@ pub use filament_semantic_value::declaration::EqualityOperator;
 pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
+pub use instance_records::{combine_instance_records, InstanceRecord};
 pub use outcome::undefined_reason;
 pub use outcome::verdict_bound_wire;
 pub use outcome::{
