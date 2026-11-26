@@ -43,6 +43,7 @@ use fsl_semantics::check::{
     Bound, Capability, CheckedInterval, DeclarationFamily, Event, FormulaNode, ProbForm,
     ProbScheduler, ReachTarget, UnaryTemporal,
 };
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 
 use super::items::{admission, BROKEN, NOT_YET};
@@ -2856,6 +2857,7 @@ struct IntervalSettlement<'a> {
 /// Settle a decided interval from its two checked documents: `proved` with
 /// `ValueBounds` only when the claim side's document and its counterpart are
 /// both accepted, and a rejection of either as that document's rejection.
+#[implements("FR-1042-AC-1")]
 fn finish_interval(
     settlement: IntervalSettlement<'_>,
     subject: SubjectLimits<'_>,
@@ -3030,6 +3032,7 @@ fn build_refusal(refusal: ProductRefusal, subject: SubjectLimits<'_>) -> EngineR
 
 /// FR-201's certificate for `product`: the solved value of every state, under
 /// the key the checker gives the same model state.
+#[implements("FR-201-AC-1")]
 fn certificate_of(
     product: &ProbProduct,
     binding: Option<&ObjectReference>,

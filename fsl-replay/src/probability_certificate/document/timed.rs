@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
+use ix_trace_rs::implements;
 use num_traits::Zero;
 use serde_json::{Value as JsonValue, json};
 
@@ -1637,9 +1638,70 @@ impl Watch<'_> {
         }
     }
 
-    /// The phase and the clock after reading `state`, `previous` being the
-    /// phase before the move and `elapsed` the clock after it.
+    /// The phase and the clock after a delay that reaches `state` with the
+    /// clock at `elapsed`. A delay is not a predicate position (ADR-026
+    /// TS-3), so a single operator's event reads nothing and only closes once
+    /// the clock is past its window. The nested monitor reads each instant a
+    /// delay reaches, and an elapsed measure's reading cannot change while no
+    /// discrete step happens.
     #[allow(clippy::too_many_arguments)]
+    #[implements("FR-204-AC-21")]
+    fn delay(
+        &self,
+        system: &ModelSystem<'_>,
+        binding: Option<&filament_exact::ObjectReference>,
+        state: &ModelSimState,
+        previous: Phase,
+        elapsed: u64,
+        deadline: u64,
+        cancel: &Cancel,
+    ) -> Result<(Phase, u64), ProbabilityDocumentError> {
+        match self {
+            Self::Deadline(_) => {
+                let phase = match previous {
+                    Phase::Pending if elapsed > deadline => Phase::Rejected,
+                    other => other,
+                };
+                Ok((phase, elapsed))
+            }
+            Self::Bounded { root, .. } => Ok((
+                Phase::Bounded(bounded_at(previous, *root, elapsed)),
+                elapsed,
+            )),
+            Self::Nested { .. } | Self::Elapsed(_) => {
+                self.observe(system, binding, state, previous, elapsed, deadline, cancel)
+            }
+        }
+    }
+
+    /// The phase and the clock at the idle observation of `state`, a
+    /// predicate position reached with no discrete step. The nested monitor
+    /// has already read this instant on the delay that reached it.
+    #[allow(clippy::too_many_arguments)]
+    #[implements("FR-204-AC-21")]
+    fn idle_observation(
+        &self,
+        system: &ModelSystem<'_>,
+        binding: Option<&filament_exact::ObjectReference>,
+        state: &ModelSimState,
+        previous: Phase,
+        elapsed: u64,
+        deadline: u64,
+        cancel: &Cancel,
+    ) -> Result<(Phase, u64), ProbabilityDocumentError> {
+        match self {
+            Self::Nested { .. } => Ok((previous, elapsed)),
+            Self::Deadline(_) | Self::Bounded { .. } | Self::Elapsed(_) => {
+                self.observe(system, binding, state, previous, elapsed, deadline, cancel)
+            }
+        }
+    }
+
+    /// The phase and the clock after reading the predicate position `state`,
+    /// `previous` being the phase before the move and `elapsed` the clock
+    /// after it. A decided event stays decided.
+    #[allow(clippy::too_many_arguments)]
+    #[implements("FR-204-AC-21")]
     fn observe(
         &self,
         system: &ModelSystem<'_>,
@@ -1652,16 +1714,16 @@ impl Watch<'_> {
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         let watch = match self {
             Self::Deadline(predicate) => {
-                let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
+                let phase = match previous {
+                    Phase::Accepted | Phase::Rejected => previous,
+                    _ => phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?,
+                };
                 return Ok((phase, elapsed));
             }
             Self::Bounded {
                 root, predicates, ..
             } => {
-                let mut operator = match previous {
-                    Phase::Bounded(operator) => operator,
-                    _ => *root,
-                };
+                let mut operator = bounded_at(previous, *root, elapsed);
                 if operator.phase == fsl_eval::probabilistic::DeadlinePhase::Pending {
                     let truths = read_truths(system, predicates, binding, state, cancel)?;
                     operator.phase = deadline_read(
@@ -1671,11 +1733,7 @@ impl Watch<'_> {
                         elapsed,
                         operator.lower,
                     );
-                    if elapsed > operator.upper {
-                        operator.phase = deadline_timeout(operator.kind);
-                    }
                 }
-                operator.elapsed = elapsed.min(operator.upper);
                 return Ok((Phase::Bounded(operator), elapsed));
             }
             Self::Nested {
@@ -1750,6 +1808,27 @@ impl Watch<'_> {
         let hit = if within { one() } else { zero() };
         Some((hit.sub(&watch.q), within))
     }
+}
+
+/// A bounded operator `previous` holds, or `root` before its first position,
+/// with its clock at `elapsed`: a pending one is decided once the clock is
+/// past its window.
+#[implements("FR-204-AC-21")]
+fn bounded_at(
+    previous: Phase,
+    root: fsl_eval::probabilistic::TimedOperatorState,
+    elapsed: u64,
+) -> fsl_eval::probabilistic::TimedOperatorState {
+    let mut operator = match previous {
+        Phase::Bounded(operator) => operator,
+        _ => root,
+    };
+    if operator.phase == fsl_eval::probabilistic::DeadlinePhase::Pending && elapsed > operator.upper
+    {
+        operator.phase = deadline_timeout(operator.kind);
+    }
+    operator.elapsed = elapsed.min(operator.upper);
+    operator
 }
 
 fn read_truths(
@@ -1831,6 +1910,7 @@ struct RegionState {
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
+#[implements("FR-204-AC-21")]
 fn enumerate_digital_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -1990,6 +2070,15 @@ fn enumerate_digital_deadline(
             if current.tail == DigitalTail::IdleDelayed {
                 let mut observed = current.clone();
                 observed.tail = DigitalTail::IdleReady;
+                (observed.phase, observed.elapsed) = watch.idle_observation(
+                    system,
+                    binding,
+                    observed.timed.discrete(),
+                    current.phase.clone(),
+                    current.elapsed,
+                    deadline,
+                    cancel,
+                )?;
                 let target = digital_key(
                     system, timed, binding, &observed, &caps, key_scale, deadline,
                 )?;
@@ -2148,7 +2237,7 @@ fn enumerate_digital_deadline(
         }
         let mut choices = Vec::new();
         if given_actions == 0 {
-            for choice in digital_time_choices(
+            for (_, choice) in digital_time_choices(
                 system,
                 timed,
                 watch,
@@ -2985,6 +3074,7 @@ fn digital_key(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
+#[implements("FR-204-AC-21")]
 fn next_digital_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -3015,7 +3105,7 @@ fn next_digital_delay(
             .min(deadline.saturating_add(1));
         let clocks = quantized_clocks(&delayed, caps, scale)?;
         let delayed = TimedState::new(delayed.discrete().clone(), ClockValuation::new(clocks));
-        let (phase, elapsed) = watch.observe(
+        let (phase, elapsed) = watch.delay(
             system,
             binding,
             delayed.discrete(),
@@ -3044,6 +3134,7 @@ fn next_digital_delay(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-21")]
 fn digital_idle_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -3070,7 +3161,7 @@ fn digital_idle_delay(
         delayed.discrete().clone(),
         ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
     );
-    let (phase, elapsed) = watch.observe(
+    let (phase, elapsed) = watch.delay(
         system,
         binding,
         delayed.discrete(),
@@ -3790,6 +3881,7 @@ type DigitalWorkloadChoices = (Vec<Vec<ProbabilityEdge>>, Vec<Vec<crate::Product
 /// different verdicts, until the standard rules between them: several free
 /// identities enabled now, and a free identity that the unit delay disables.
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-5")]
 fn digital_workload_choices(
     run: &WorkloadRun<'_, '_>,
     current: &RegionState,
@@ -3879,7 +3971,7 @@ fn digital_workload_choices(
             reached,
             pending,
         )?;
-        scheduler_actions.resize_with(time_choices.len(), Vec::new);
+        let (time_actions, time_choices): (Vec<_>, Vec<_>) = time_choices.into_iter().unzip();
         choices.extend(time_choices);
         // The workload resolves the free identity enabled now.
         let weighted = free_now
@@ -3913,9 +4005,19 @@ fn digital_workload_choices(
             run.choice_of(states, &mut resolve, reached, pending, storage)?;
             charge_work(meter, run.cancel, 1)?;
         }
-        if !resolve.is_empty() {
+        // A witness names the action it takes where the scheduler can resolve,
+        // so such a state lists the action of each of its choices.
+        if let Some(first) = free_now.first().filter(|_| !resolve.is_empty()) {
             choices.push(resolve);
-            scheduler_actions.push(Vec::new());
+            let schedule = crate::Schedule::of(run.system, &first.identity)
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            scheduler_actions.extend(time_actions.into_iter().map(|action| vec![action]));
+            scheduler_actions.push(vec![crate::ProductAction::WorkloadResolve {
+                schedule,
+                delay: 0,
+            }]);
+        } else {
+            scheduler_actions.resize_with(choices.len(), Vec::new);
         }
         return Ok((choices, scheduler_actions));
     }
@@ -4133,8 +4235,9 @@ fn digital_workload_choices(
 
 /// The time-passing choices of a running state that no identity races from:
 /// the next distinct unit delay and, where the state may idle, the idle
-/// delay.
+/// delay, each with the action a witness names it by.
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-5")]
 fn digital_time_choices(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4150,7 +4253,7 @@ fn digital_time_choices(
     storage: &mut u64,
     reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
     pending: &mut VecDeque<ProbabilityProductKey>,
-) -> Result<Vec<Vec<ProbabilityEdge>>, ProbabilityDocumentError> {
+) -> Result<Vec<(crate::ProductAction, Vec<ProbabilityEdge>)>, ProbabilityDocumentError> {
     let mut choices = Vec::new();
     if let Some((delayed_key, delayed)) = next_digital_delay(
         system, timed, watch, binding, current, caps, key_scale, deadline, cancel,
@@ -4163,10 +4266,11 @@ fn digital_time_choices(
             limits,
             storage,
         )?;
-        choices.push(vec![ProbabilityEdge {
+        let edge = ProbabilityEdge {
             target: delayed_key,
             probability: one(),
-        }]);
+        };
+        choices.push((crate::ProductAction::UnitDelay, vec![edge]));
         charge_work(meter, cancel, 1)?;
     }
     let invariants = timed
@@ -4180,10 +4284,11 @@ fn digital_time_choices(
             system, timed, watch, binding, current, caps, key_scale, deadline, cancel,
         )? {
             admit_region_state(target.clone(), idle, reached, pending, limits, storage)?;
-            choices.push(vec![ProbabilityEdge {
+            let edge = ProbabilityEdge {
                 target,
                 probability: one(),
-            }]);
+            };
+            choices.push((crate::ProductAction::EnterIdleDelay, vec![edge]));
             charge_work(meter, cancel, 1)?;
         }
     }
@@ -4267,6 +4372,7 @@ fn digital_enabled_actions(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-21")]
 fn digital_state_after_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4297,7 +4403,7 @@ fn digital_state_after_delay(
             delayed.discrete().clone(),
             ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
         );
-        let (phase, elapsed) = watch.observe(
+        let (phase, elapsed) = watch.delay(
             system,
             binding,
             delayed.discrete(),
@@ -4320,6 +4426,7 @@ fn digital_state_after_delay(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
+#[implements("FR-204-AC-21")]
 fn next_region_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4371,7 +4478,7 @@ fn next_region_delay(
             .min(deadline.saturating_add(1));
         let clocks = quantized_clocks(&delayed, caps, scale)?;
         let delayed = TimedState::new(delayed.discrete().clone(), ClockValuation::new(clocks));
-        let (phase, elapsed) = watch.observe(
+        let (phase, elapsed) = watch.delay(
             system,
             binding,
             delayed.discrete(),
@@ -5476,10 +5583,7 @@ mod witness_pricing_tests {
             ("F", Some(true), vec![]),
         ]);
 
-        assert_eq!(
-            price(&graph, part(1, 4), &[path(&["X", "I", "F"])]),
-            None
-        );
+        assert_eq!(price(&graph, part(1, 4), &[path(&["X", "I", "F"])]), None);
     }
 
     /// A path whose first step is no outcome of the chosen choice is dropped
