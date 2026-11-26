@@ -265,7 +265,7 @@ fn an_open_argument_builds_open() {
 /// row, none for a bare name whichever class it later resolves to -- or as
 /// `Memory`; a protocol step row's `node` target builds as `Node` with its
 /// binder expressions.
-#[trace("TC-889", "FR-310-AC-2")]
+#[trace("TC-889")]
 #[test]
 fn step_sources_and_node_targets_build_as_written() {
     let (_, unit) = build(
