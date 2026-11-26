@@ -63,8 +63,8 @@ and only position 0 lies at time 0.
 
 - Step 1: `proved`, basis `exhaustive`, backend `en-1`, the same verdict as the zone route.
 - Steps 2 and 3: `declined` `invalid-input` naming the strict constraint or interval; no engine runs.
-- Step 4: the table's verdicts; each EN-1 decline is `declined` `invalid-input`, `invalid_runtime_input`/`invalid-value`, with `backend` `en-1`, and no search runs. The EN-1 column gives the part and rule the decline names (FR-243). No typed member of the refusal wire carries them today (the `invalid-value` payload of FSpec FR-272 is an input path and role), so the test asserts them when such a member is defined.
-- Step 5: declined the same way, naming a clock constraint of the subject.
+- Step 4: the table's verdicts; each EN-1 decline is `declined` `invalid-input`, `invalid_runtime_input`/`invalid-value`, with `backend` `en-1`, and no search runs. Each decline carries `not_digitisable`: `rule` is the FR-243 spelling of the rule the EN-1 column lists, (c) `second-bounded-operator` and (d) `two-sided-interval`, and `span` is the byte range in the unit source of the occurrence of the operator the column names.
+- Step 5: declined the same way, `not_digitisable` `rule` `fairness-over-clock-constraint` and `span` that of the subject's first clock constraint in source order.
 - Assertions compare typed members and the exit code, never message text.
 
 Test: `fsl-analyze/tests/it/analyze_reach_rulings.rs`
