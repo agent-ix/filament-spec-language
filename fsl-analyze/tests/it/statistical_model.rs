@@ -3382,3 +3382,53 @@ fn a_nested_timed_formula_on_a_dense_idle_tail_stops_incomplete() {
         other => panic!("{other:?}"),
     }
 }
+
+/// FSpec FR-420 "Windows on an idle tail": `accumulate` and `elapsed` read
+/// the same on every completion. `send` at 2 ms with cost 1, then idle:
+/// the run accumulates 1 and takes 2 ms to `phase = 1`, and never reaches
+/// `phase = 2`.
+#[test]
+fn accumulate_and_elapsed_on_a_dense_idle_tail_are_decided() {
+    for (claim, holds) in [
+        (
+            "accumulate cost from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 1",
+            true,
+        ),
+        (
+            "accumulate cost from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2",
+            false,
+        ),
+        (
+            "accumulate cost from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3",
+            false,
+        ),
+        (
+            "elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms <= 2 ms",
+            true,
+        ),
+        (
+            "elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms <= 1 ms",
+            false,
+        ),
+        (
+            "elapsed from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 5 ms",
+            false,
+        ),
+    ] {
+        let decision = if holds {
+            Decision::Accepted
+        } else {
+            Decision::Rejected
+        };
+        assert_eq!(
+            measured(&window_world(
+                2,
+                None,
+                SEND_COST,
+                &format!("probability >= 0.5 [{claim}]")
+            )),
+            (Some(ratio(i64::from(holds), 1)), decision),
+            "{claim}"
+        );
+    }
+}
