@@ -170,6 +170,12 @@ impl Orders {
     /// The fixture, with `place` granting `placed` and `cancelled` (the wide
     /// frame) or `placed` alone (the narrow frame).
     fn new(narrow: bool) -> Self {
+        Self::build(narrow, "", |_| {})
+    }
+
+    /// [`Orders::new`] with the declarations `units` ahead of the clauses and
+    /// `amend` applied to the finished package document.
+    fn build(narrow: bool, units: &str, amend: impl FnOnce(&mut Json)) -> Self {
         let document = lifecycle_document_with("not self.placed", |document| {
             let boolean_type = format!("{NATIVE}/Boolean");
             let types = document["types"].as_array_mut().unwrap();
@@ -305,18 +311,17 @@ impl Orders {
                 population_declaration("Q", "Pump"),
                 population_declaration("Spare", "Lamp"),
             ]);
+            amend(document);
         });
-        let (package, _, packages) = model_package_unpinned(
-            &document,
-            "invariant Consistent using v on M::OrderLifecycle at current { not (self.placed and self.cancelled) }\n\
+        let clauses = "invariant Consistent using v on M::OrderLifecycle at current { not (self.placed and self.cancelled) }\n\
              pre PlaceRequires using v on M::OrderLifecycle::place { not self.placed }\n\
              post FlagsPlaced using v on M::OrderLifecycle::place { flags.placed }\n\
              invariant Bounded using v on M::ExpressLifecycle at current { self.retries >= 0 }\n\
              invariant Owner using v on M::Owned at current { self.label = self.label }\n\
              invariant PumpKept using v on M::Pump at current { true }\n\
-             post PumpServiced using v on M::Pump::service { true }",
-        )
-        .expect("the Orders fixture checks");
+             post PumpServiced using v on M::Pump::service { true }";
+        let (package, _, packages) = model_package_unpinned(&document, &[units, clauses].concat())
+            .expect("the Orders fixture checks");
         let model = json!({
             "identity": crate::tc235_k2::PACKAGE,
         });
@@ -1780,6 +1785,77 @@ fn a_parameter_refusal_carries_a_pointer_that_resolves_in_the_invocation() {
         assert!(
             invocation.pointer(pointer).is_some(),
             "{pointer} resolves in the supplied invocation"
+        );
+    }
+}
+
+/// TC-1045 step 8, FSpec FR-154 "Unit bounds": the invariant `Consistent` of
+/// `OrderLifecycle` over an invocation of `expedite`, which only
+/// `ExpressLifecycle` declares, refuses on side `post` an argument or a result
+/// beyond the `max` `3` on `ms`, which the object type `Pump` carries.
+#[trace("TC-1045", "FR-106-AC-86")]
+#[test]
+fn a_specialized_machine_operation_refuses_beyond_its_unit_bound() {
+    let ms_type = "ix://filament/unit/ms";
+    let multiplicity = || json!({"lower": 1, "upper": 1, "ordered": false, "unique": true});
+    let orders = Orders::build(
+        false,
+        "dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n",
+        |document| {
+            type_named_mut(document, "Pump")["constraints"] = json!([{
+                "identity": id("Pump/max"), "keyword": "max",
+                "operands": {"value": "3"}, "appliesTo": ms_type,
+                "diagnosticCode": "bound.max", "origin": origin("Pump/max"),
+            }]);
+            let express = type_named_mut(document, "ExpressLifecycle");
+            let expedite = &mut express["operations"][0];
+            expedite["params"] = json!([{
+                "identity": id("ExpressLifecycle/expedite/q"),
+                "origin": origin("ExpressLifecycle/expedite/q"),
+                "name": "q", "typeRef": ms_type, "presence": "required",
+                "nullable": false, "defaultKind": "none", "multiplicity": multiplicity(),
+            }]);
+            expedite["returns"] = json!({
+                "typeRef": ms_type, "nullable": false, "multiplicity": multiplicity(),
+            });
+        },
+    );
+    let ms = |magnitude: &str| {
+        json!({"kind": "quantity", "unit": "ms",
+            "magnitude": {"kind": "rational", "numerator": magnitude, "denominator": "1"}})
+    };
+    let admit = |argument: &str, result: &str| {
+        let mut docs = Docs::default();
+        let pre =
+            docs.snapshot(&orders.snapshot_of("i2", "e1", "pre", vec![express(false, false, 0)]));
+        let post =
+            docs.snapshot(&orders.snapshot_of("i2", "e2", "post", vec![express(true, false, 0)]));
+        let mut invocation = orders.invocation(
+            "i2",
+            "ExpressLifecycle",
+            "expedite",
+            Json::Null,
+            &pre,
+            &post,
+            json!({"q": ms(argument)}),
+        );
+        invocation["result"] = ms(result);
+        let i2 = docs.invocation(&invocation);
+        orders.context(&docs, "Consistent", &i2, ContextSide::Post)
+    };
+
+    admit("3", "3").unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+    for (outcome, named, path) in [
+        (admit("4", "3"), ("parameter", "q"), "/parameters/q"),
+        (admit("3", "4"), ("result", "expedite"), "/result"),
+    ] {
+        let record = refused(outcome);
+        assert_refusal(
+            &record,
+            Code::InvalidRuntimeInput,
+            "invalid-value",
+            &[named, ("keyword", "max"), ("bound", "3"), ("path", path)],
         );
     }
 }

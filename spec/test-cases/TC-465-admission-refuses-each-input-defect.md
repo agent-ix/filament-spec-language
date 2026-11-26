@@ -15,7 +15,7 @@ and input path, that completeness precedes closure, that the frame compares
 scalar as well as reference fields, and that a document with several defects
 reports the first by FR-106's order.
 
-Scope: FR-106-AC-3, FR-106-AC-4, FR-106-AC-5, FR-106-AC-7, FR-106-AC-11, FR-106-AC-12, FR-106-AC-13.
+Scope: FR-106-AC-3, FR-106-AC-4, FR-106-AC-5, FR-106-AC-7, FR-106-AC-11, FR-106-AC-12, FR-106-AC-13, FR-106-AC-85.
 
 ## Test Procedure
 
@@ -106,6 +106,10 @@ default and `Witness` limits; admit the wrapping-debit invocation under
 FR-106-AC-13: admit the wrapping debit under default limits, run it through
 `run_clause`'s `Clause` selection of `VersionAdvances` and its `Frame`
 selection of `attemptUpdate`.
+FR-106-AC-85: over a package variant in which `Item` carries `max` `3` on
+`ms` and declares `meter(q: ms): ms`, admit `q` `3 ms` and then `4 ms` as a
+`PreCall` argument, and as the argument of an `Invocation` selected for a
+precondition and for a postcondition, and in a `Frame` run.
 
 ## Expected Results
 
@@ -119,3 +123,5 @@ both limits naming the parameter; the wrapping debit reports `child`,
 `versionNumber`, `[0, 1000]` and -1; the out-of-range pre snapshot refuses.
 FR-106-AC-13: each of the three refuses `invalid_runtime_input`/
 `invalid-value` naming `child` and `versionNumber`.
+FR-106-AC-85: each `3 ms` admits; each `4 ms` refuses `invalid_runtime_input`/
+`invalid-value` naming `q`, the constraint, `max` and `3`, at `/parameters/q`.

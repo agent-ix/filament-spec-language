@@ -3527,7 +3527,7 @@ fn admit_invocation_documents(
 
     // Check 5: operation, then the invocation each snapshot names.
     let state_machine = is_state_machine_context(context_view, context_name);
-    let operation = check_operation(
+    let (invoked_on, operation) = check_operation(
         &invocation.call,
         &Receiver {
             views,
@@ -3704,7 +3704,7 @@ fn admit_invocation_documents(
     check_argument_bounds(
         views,
         types,
-        clause_context,
+        invoked_on,
         &operation,
         &parameters,
         result.as_ref(),
@@ -3733,11 +3733,13 @@ fn admit_invocation_documents(
 /// FSpec FR-154 "Unit bounds": an argument or result an invocation supplies
 /// that violates a bound on its parameter or on the operation's result
 /// refuses `invalid_runtime_input`/`invalid-value`, naming the parameter
-/// (or the result), the constraint, its keyword and bound.
+/// (or the result), the constraint, its keyword and bound. `receiver` is the
+/// type the operation is invoked on: it and its supertypes declare the
+/// parameters and result whose bounds apply.
 fn check_argument_bounds(
     views: &[ModelView],
     types: &TypeEnvironment,
-    context: EffectiveId,
+    receiver: EffectiveId,
     operation: &OperationDeclaration,
     parameters: &[(String, Value)],
     result: Option<&Value>,
@@ -3759,7 +3761,7 @@ fn check_argument_bounds(
                         .view
                         .type_identities()
                         .get(&member.owner)
-                        .is_some_and(|owner| types.conforms(context.clone(), owner.clone()));
+                        .is_some_and(|owner| types.conforms(receiver.clone(), owner.clone()));
             if !declared {
                 continue;
             }
@@ -3824,12 +3826,14 @@ struct PreCallContext<'a> {
 /// machine's clause the `context` must be the clause's machine or a
 /// specialization of it, and the `operation` the clause's, or for an
 /// invariant any effective operation of the machine the `context` names.
-/// Returns the operation the invocation names.
+/// Returns the operation the invocation names, with the type it is invoked on:
+/// the clause's context, or the machine the `context` of a state machine's
+/// invocation names.
 fn check_operation(
     call: &document::InvocationCall,
     receiver: &Receiver<'_>,
     source: OperationSource<'_>,
-) -> Result<OperationDeclaration, AdmissionFailure> {
+) -> Result<(EffectiveId, OperationDeclaration), AdmissionFailure> {
     let wrong_invocation = || refuse(admission_record(Code::WrongSnapshot, "wrong-invocation"));
     if !receiver.state_machine {
         if call.context != receiver.context_name {
@@ -3839,12 +3843,14 @@ fn check_operation(
             OperationSource::Clause(operation)
                 if call.operation == operation.declaration.name() =>
             {
-                Ok(operation.declaration.clone())
+                Ok((receiver.context.clone(), operation.declaration.clone()))
             }
             OperationSource::Clause(_) => Err(wrong_invocation()),
             OperationSource::Any(table) => {
                 match table.resolve(receiver.types, receiver.context.clone(), &call.operation) {
-                    OperationLookup::Declared { operation, .. } => Ok(operation.clone()),
+                    OperationLookup::Declared { operation, .. } => {
+                        Ok((receiver.context.clone(), operation.clone()))
+                    }
                     OperationLookup::Missing | OperationLookup::Ambiguous(_) => {
                         Err(wrong_invocation())
                     }
@@ -3862,12 +3868,12 @@ fn check_operation(
         .ok_or_else(wrong_invocation)?;
     match source {
         OperationSource::Clause(operation) if call.operation == operation.declaration.name() => {
-            Ok(operation.declaration.clone())
+            Ok((invoked, operation.declaration.clone()))
         }
         OperationSource::Clause(_) => Err(wrong_invocation()),
         OperationSource::Any(table) => {
-            match table.resolve(receiver.types, invoked, &call.operation) {
-                OperationLookup::Declared { operation, .. } => Ok(operation.clone()),
+            match table.resolve(receiver.types, invoked.clone(), &call.operation) {
+                OperationLookup::Declared { operation, .. } => Ok((invoked, operation.clone())),
                 OperationLookup::Missing | OperationLookup::Ambiguous(_) => Err(wrong_invocation()),
             }
         }
@@ -3969,7 +3975,7 @@ fn admit_pre_call(
     check_model(views, context.context_view, &snapshot.model)?;
 
     // Check 5: operation.
-    let operation = match (call, context.operation) {
+    let (invoked_on, operation) = match (call, context.operation) {
         (Some(call), source) => check_operation(
             call,
             &Receiver {
@@ -3981,7 +3987,10 @@ fn admit_pre_call(
             },
             source,
         )?,
-        (None, OperationSource::Clause(operation)) => operation.declaration.clone(),
+        (None, OperationSource::Clause(operation)) => (
+            context.clause_context.clone(),
+            operation.declaration.clone(),
+        ),
         (None, OperationSource::Any(_)) => return Err(fault("context-selection-names-no-call")),
     };
     if let Some(invocation) = input.invocation {
@@ -4072,6 +4081,14 @@ fn admit_pre_call(
             input.parameters,
         )?;
         let parameters = document::admit_parameters(&mut references, &operation, input.parameters)?;
+        check_argument_bounds(
+            context.views,
+            context.types,
+            invoked_on,
+            &operation,
+            &parameters,
+            None,
+        )?;
         (
             parameters,
             AdmittedValueOrigins {

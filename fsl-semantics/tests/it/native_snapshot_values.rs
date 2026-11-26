@@ -3401,12 +3401,7 @@ fn an_omitted_optional_parameter_of_no_checked_type_is_admitted() {
 #[trace("TC-1746")]
 #[test]
 fn a_unit_bound_refusal_names_the_failing_field_parameter_or_result() {
-    let replay = replay_with(
-        fixture::bounded_quantity_document(),
-        quantity_fields(),
-        "dimension Time;\nunit s : Time = rational(1, 1);\n\
-         unit ms : Time = rational(1, 1000) * s;\n",
-    );
+    let replay = bounded_quantity_replay();
     let within = ms(ratio("3", "1"));
     let beyond = ms(ratio("4", "1"));
     let invoke = |parameter: &Value, result: &Value| {
@@ -3438,6 +3433,122 @@ fn a_unit_bound_refusal_names_the_failing_field_parameter_or_result() {
         assert_eq!(named("path"), Some(path), "{field}");
     }
     assert_eq!(snapshot.fields.get("population"), Some(&id("items")));
+}
+
+/// [`fixture::bounded_quantity_document`] over the units it names.
+fn bounded_quantity_replay() -> Replay {
+    replay_with(
+        fixture::bounded_quantity_document(),
+        quantity_fields(),
+        "dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n",
+    )
+}
+
+/// `magnitude` `ms` as a `PreCall` argument.
+fn pre_call_ms(magnitude: i64) -> SnapshotValue {
+    let magnitude = filament_exact::Rational::new(
+        filament_exact::Integer::from(magnitude),
+        filament_exact::Integer::from(1_i64),
+    )
+    .expect("a denominator of one");
+    SnapshotValue::quantity("ms".to_owned(), &magnitude)
+}
+
+/// The whole refusal of `meter`'s argument `q` beyond `Item`'s `max` `3` on
+/// `ms`: its catalogue row and every field, the document locus of FR-663
+/// among them as `field` and `path`.
+fn assert_argument_beyond_bound(record: &fsl_semantics::model::observation::AdmissionRecord) {
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "invalid-value");
+    assert_eq!(
+        record.fields,
+        BTreeMap::from([
+            ("bound", "3".to_owned()),
+            ("constraint", "ix://test/orders/Item/max".to_owned()),
+            ("field", "q".to_owned()),
+            ("keyword", "max".to_owned()),
+            ("parameter", "q".to_owned()),
+            ("path", "/parameters/q".to_owned()),
+        ])
+    );
+    assert_eq!(record.path, Vec::new());
+}
+
+/// FSpec FR-154 "Unit bounds" (TC-465): a `PreCall` selection whose argument
+/// violates the bound refuses; the bound itself admits.
+#[trace("TC-465", "FR-106-AC-85")]
+#[test]
+fn a_pre_call_argument_beyond_its_unit_bound_refuses() {
+    let replay = bounded_quantity_replay();
+    let within = replay
+        .pre_call("meter", vec![("q", pre_call_ms(3))])
+        .unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+    assert_eq!(within.parameters.len(), 1);
+    assert_argument_beyond_bound(&record_of(
+        replay.pre_call("meter", vec![("q", pre_call_ms(4))]),
+    ));
+}
+
+/// FSpec FR-154 "Unit bounds" (TC-465): an invocation selected for a
+/// precondition refuses an argument that violates the bound, as one selected
+/// for a postcondition does; the bound itself admits.
+#[trace("TC-465", "FR-106-AC-85")]
+#[test]
+fn an_invocation_argument_beyond_its_unit_bound_refuses_for_either_clause() {
+    let replay = bounded_quantity_replay();
+    for selected in [Selected::Precondition, Selected::Postcondition] {
+        let invoke = |argument: &str| {
+            replay.invoke(
+                "meter",
+                selected,
+                json!({"q": ms(ratio(argument, "1"))}),
+                ms(ratio("3", "1")),
+                ObservationLimits::default(),
+            )
+        };
+        let within = invoke("3").unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+        assert_eq!(within.parameters.len(), 1);
+        assert_argument_beyond_bound(&record_of(invoke("4")));
+    }
+}
+
+/// FSpec FR-154 "Unit bounds" (TC-465): a `Frame` run's invocation refuses an
+/// argument that violates the bound; the bound itself admits.
+#[trace("TC-465", "FR-106-AC-85")]
+#[test]
+fn a_frame_run_argument_beyond_its_unit_bound_refuses() {
+    let replay = bounded_quantity_replay();
+    let facts = FrameFacts {
+        context: replay.item(),
+        frame: fixture_key(8),
+        operation: replay.operation("meter"),
+    };
+    let admit = |argument: &str| {
+        let invoked = replay.invocation_over(
+            "meter",
+            &snapshot_text(&replay, "pre", "pre", &replay.base),
+            &snapshot_text(&replay, "post", "post", &replay.base),
+            json!({"q": ms(ratio(argument, "1"))}),
+            ms(ratio("3", "1")),
+        );
+        admit_frame_invocation(
+            replay.graph.model_selections(),
+            replay.graph.scope().types(),
+            &facts,
+            &replay.packages,
+            ModelNormalizationLimits::default(),
+            &Provisions {
+                snapshots: &invoked.snapshots,
+                invocations: &invoked.invocations,
+            },
+            &invoked.call,
+            ObservationLimits::default(),
+        )
+        .map(|_admitted| ())
+    };
+    admit("3").unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+    assert_argument_beyond_bound(&record_of(admit("4")));
 }
 
 /// FR-505-AC-5 (TC-1300 row 23), the unit sentence: over a bounded Rational

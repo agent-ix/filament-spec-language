@@ -1430,7 +1430,15 @@ completeness.
     population the package does not declare included), then
     admission SHALL refuse `dangling_reference`/
     `absent-target-in-complete-population`, naming it and its population
-    (check 8's closure rule).
+    (check 8's closure rule). If an argument of a `PreCall` or `Invocation`
+    selection, or a result that admission reads, violates a unit bound on its
+    parameter or on the operation's result (FSpec FR-154 "Unit bounds"), then
+    admission SHALL refuse `invalid_runtime_input`/`invalid-value`, naming the
+    parameter (or the result), the constraint, its keyword and its bound, at
+    `/parameters/NAME` (or `/result`), whichever clause is selected. The
+    parameters and result are those the type the operation is invoked on and
+    its supertypes declare; for a state machine that type is the one the
+    invocation's `context` names.
 11. Frame and delta check. For an invocation selected for a postcondition or
     by `Context` with `side` `post`, admission SHALL run the frame
     check (`enforce_frame` through `admit_invocation`, with the operation's
@@ -1633,6 +1641,8 @@ completeness.
 | FR-106-AC-81 | In the planned `fsl-eval/tests/it/clock_reference_v2.rs::clock_reference_seed_ref_outside_timed_selector_range_remains_admitted` vector, extend the TC-464 `Call` fixture with `q: Sequence<Clock>` having no declared maximum, use a complete `calls` population containing `c1` with `q` empty, and set `r` to `{"reference":{"population":<calls declaration> ,"key":<canonical place/v2 id>}}`. Construct that id from `P` = `Call`'s `calls` population declaration, `K` = `c1`, `S` = the selected `Call` model scope, `T` = the declared `Call.q` collection-of-Clock path, and `J` = `[["slot","1","7"]]`. With `model_check.max_clocks` 4 and the fixture's four live scalar places, slot 7 is outside the derived selector range but valid for the unbounded declared template. Source and Bare admission retain `r` as the exact reference data value; `q[7]` is not a live clock, and a stored-field read, equality comparison and state-key encoding preserve the identity. The timed engine admits the input without refusing or truncating that reference. | Test (TC-464) |
 | FR-106-AC-82 | Over TC-465's `ConfigVersion` snapshot with `versionNumber` removed from the first object, admission refuses `invalid_runtime_input`/`missing-member` with `object` `root`, `field` and `member` `versionNumber`, and `path` `/populations/0/objects/0/fields/versionNumber`, the pointer of the absent member; the unknown, invalid-value and wrong-kind field refusals name `/populations/0/objects/0/fields/NAME` and a duplicate key `/populations/0/objects/2/key`; the native result retains the same `path`. | Test (TC-465) |
 | FR-106-AC-84 | Over TC-464 step 11's `Box`, `Pair` and `Holder` fields, admit a record using the existing `record`/`fields` carrier, a nominal tuple using `{"tuple":{"type":"<Pair declaration identity>","components":[<Reference<Ring> value>,{"boolean":true}]}}`, and the `Holder::Has` union case using `{"variant":{"type":"<Holder declaration identity>","case":"Has","components":[<Reference<Ring> value>]}}`; retain the selected declaration identities and component order, and recursively admit each nested reference as the same checked reference value. The `Holder::Empty` nullary case is `{"variant":{"type":"<Holder declaration identity>","case":"Empty"}}`. An extra record, tuple or variant payload member refuses `invalid_runtime_input`/`unknown-member`; a tuple component count other than two, a `Has` component count other than one, and an unknown case each refuse `invalid_runtime_input`/`invalid-value`; each refusal occurs before an observation is produced. | Test (TC-464) |
+| FR-106-AC-85 | With `Item` carrying `max` `3` on `ix://filament/unit/ms` and an operation `meter(q: ms): ms` (FSpec FR-154 "Unit bounds"), an argument `4 ms` refuses `invalid_runtime_input`/`invalid-value` naming parameter `q`, the constraint, keyword `max` and bound `3`, with `field` `q` and `path` `/parameters/q`, under a `PreCall` selection, under an `Invocation` selected for a precondition or a postcondition and under a `Frame` run; `3 ms` admits under each. | Test (TC-465) |
+| FR-106-AC-86 | With TC-1045's `Pump` carrying `max` `3` on `ix://filament/unit/ms` and an operation `expedite(q: ms): ms` of `ExpressLifecycle`, which `OrderLifecycle` does not declare, `Consistent` of `OrderLifecycle` selected by `Context` with `side` `post` over an invocation of `expedite` refuses `invalid_runtime_input`/`invalid-value`, keyword `max` and bound `3`, for the argument `4 ms` at `/parameters/q` and for the result `4 ms` at `/result`; `3 ms` for both admits. | Test (TC-1045) |
 
 ## Dependencies
 

@@ -18,7 +18,7 @@ and 11.6 for a context, and that admission is deterministic over reordered
 documents.
 
 Scope: FR-106-AC-41, FR-106-AC-42, FR-106-AC-43, FR-106-AC-44,
-FR-106-AC-45, FR-106-AC-46 and FR-106-AC-47. TC-1040 steps 6 to 8 use the
+FR-106-AC-45, FR-106-AC-46, FR-106-AC-47 and FR-106-AC-86. TC-1040 steps 6 to 8 use the
 documents of step 1: `P1` is TC-1040's `p1` and `Q2` its `q1`.
 
 ## Preconditions
@@ -96,6 +96,11 @@ Snapshots hold `"populations": []` unless a step says otherwise. Tag the tests
    the `P1` document, and one less. A replay environment document (FR-098) that
    holds `contexts`.
 
+8. `Pump` gains `max` `3` on `ms`, and `expedite` of `ExpressLifecycle` the parameter
+   `q: ms` and the result `ms`. `Consistent` selected by `Context` side `post`
+   over `i2`, with `q` and the result `3 ms`, then `q` `4 ms`, then the result
+   `4 ms`.
+
 ## Expected Results
 
 - Step 1: side `pre` over `P1` admits one observation: the pre context, `i1`'s
@@ -157,3 +162,6 @@ Snapshots hold `"populations": []` unless a step says otherwise. Tag the tests
   exact bound admits and one less returns `stage_limit_exceeded`/
   `node-count-exceeded` naming `observation.values`. The environment document
   refuses `invalid_runtime_input`/`unknown-member` naming `contexts`.
+- Step 8: both `3 ms` admit; `q` `4 ms` refuses `invalid_runtime_input`/
+  `invalid-value` at `/parameters/q`, and the result `4 ms` at `/result`, each
+  with keyword `max` and bound `3` (FR-106-AC-86).
