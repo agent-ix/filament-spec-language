@@ -39,6 +39,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-contract-ir/FR-070
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
 ---
 # FR-201: Check a probability certificate
 
@@ -90,7 +92,13 @@ pub fn check_probability_certificate(
     limits: &ExactProbLimits,
 ) -> Result<CertificateCheck, ReplayRefusal>;
 
-pub enum CertificateCheck { Accepted { bound_side: Bound }, Rejected(CertificateRejection), Stopped(ExactProbLimit) }
+pub enum CertificateCheck {
+    Accepted { bound_side: Bound },
+    Rejected(CertificateRejection),
+    Stopped(ExactProbLimit),
+    NoInitialState,                             // FR-125; see "Instancing outcomes"
+    NoInstance,
+}
 ```
 
 The checker uses FR-338's `CertificateRejection{rule, at}`. FR-338's
@@ -563,11 +571,10 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
   state/edge, representation/arithmetic and cumulative work/storage limits
   and actual cancellation cause. Undefined P or source evaluation SHALL
   retain typed nonacceptance rather than false, zero or a missing action.
-  Zero direct `over` instances retain `UnsupportedBinding` and unsupported
-  disposal without invented evidence. Existing profiles retain their
-  bytes, admission and verdicts; an eligible existing acyclic or cyclic
-  DTMC producer SHALL retain its existing profile preference. No completed
-  runtime, full repository/all-expansion FR-201-AC-30 assurance or shared
+  Existing profiles retain their bytes, admission and verdicts; an
+  eligible existing acyclic or cyclic DTMC producer SHALL retain its
+  existing profile preference. No completed runtime, full
+  repository/all-expansion FR-201-AC-30 assurance or shared
   FR-413 witness transport is claimed by this specification.
 
 ### Closed cyclic until and always document profiles
@@ -790,6 +797,34 @@ AST or additional body field is added.
   canonical order.
 - A checker run stopped by a budget SHALL return `Stopped` naming it.
 
+### Instancing outcomes
+
+- Every checker entry SHALL derive FR-125's instancing outcomes, in
+  FR-125's order, from the checked subject and claim by its own code, never
+  from an engine result. For `NoInitialState` and `NoInstance` it SHALL
+  return that member: `CertificateCheck` from the wire form and
+  `ExactProbabilityCertificateCheck`, which has the same two members, from
+  the checked-subject and document forms. Neither is an acceptance, a
+  rejection or a refusal. `RequiresBound` and `conflicting-identity` are
+  refusals of the entry.
+- The checker SHALL first read the certificate and compare its identity, and
+  those refusals take precedence: malformed, noncanonical or incomplete
+  bytes, an identity mismatch, a byte limit and cancellation are reported as
+  they are for any subject. It SHALL decide the instancing outcomes next,
+  before it admits the claim's form, compares the certificate's
+  objective or kind with the claim, or enumerates a product.
+- These outcomes apply to every document profile. When no universe is
+  missing, a subject with an empty `initial` list gives `NoInitialState`,
+  and one with an initial state and no admitted `over` or `on each` instance
+  gives `NoInstance`: direct claim binding and the checker return it and the
+  direct EN-5 item settles `inconclusive`, `no-instance`, never
+  `UnsupportedBinding` or unsupported, with no certificate, counterexample
+  or invented binding or evidence. A profile's admission of one initial
+  state and at most one binding applies only to a subject with neither
+  outcome.
+- `fsl-probability-check` SHALL write `status` `no-initial-state` or
+  `no-instance` for them, never `accepted` or `rejected`.
+
 ### Conditional certificates
 
 A proof of a conditioned reading (FR-196 "Conditioned readings": an `on each`
@@ -963,7 +998,9 @@ it SHALL NOT be encoded as this profile.
 
 - FSL's settlement map in `fsl-replay` SHALL run the checker on the
   certificate that left S6c over E11 and settle `proved` only on `Accepted`; `Rejected` SHALL settle
-  `inconclusive`, `CertificateRejected`; `Stopped` SHALL settle V-7.
+  `inconclusive`, `CertificateRejected`; `Stopped` SHALL settle V-7;
+  `NoInitialState` and `NoInstance` SHALL settle `inconclusive` with the
+  cause `no-initial-state` or `no-instance`.
 - The checker's arithmetic and graph algorithms SHALL be code separate from
   EN-5's iterative and linear-algebra methods.
 
@@ -1130,10 +1167,9 @@ action transport, second reward expression or new unit algebra is added.
   evaluation, graph/rank passes, retained rows and exact sums SHALL retain
   the real caller's byte/state/edge, representation/arithmetic,
   cumulative work/storage and cancellation controls with typed causes.
-  Zero direct `over` instances retain `UnsupportedBinding` and unsupported
-  EN-5 disposal with no invented evidence. Existing profiles retain their
-  canonical bytes, admission and verdicts; the producer SHALL prefer the
-  existing acyclic reward profile when it already applies. No completed
+  Existing profiles retain their canonical bytes, admission and
+  verdicts; the producer SHALL prefer the existing acyclic reward
+  profile when it already applies. No completed
   implementation, full FR-201-AC-30/all-expansion memory qualification or
   shared FR-413 witness contract is claimed by this specification.
 
@@ -1229,9 +1265,8 @@ is introduced.
 - Original/stopped admission, actual raw/internal/full key construction,
   all-action/draw, B/reward/unit evaluation, exact sums and properness
   work/storage SHALL retain real caller byte/state/edge, representation,
-  arithmetic, cumulative work/storage and cancellation causes. Zero
-  direct instances retain UnsupportedBinding/unsupported without invented
-  evidence. Existing profile bytes/defaults, producer preference for an
+  arithmetic, cumulative work/storage and cancellation causes. Existing
+  profile bytes/defaults, producer preference for an
   eligible old acyclic or DTMC profile, and sealed acceptance remain
   unchanged. External transition construction/interpreter allocations
   remain their existing boundary; this specification claims no complete
@@ -1292,12 +1327,9 @@ not from that set, values, component rows or a producer's graph.
   its P label is retained. No synthetic state/key or operation identity
   SHALL be invented for that implicit continuation. P states SHALL NOT
   absorb an enabled outgoing transition. The producer and checker SHALL
-  preserve actual binding admission. With zero `over` instances, direct
-  claim binding SHALL retain `UnsupportedBinding`, and the direct EN-5
-  item SHALL retain its unsupported disposition without a terminal verdict,
-  certificate or counterexample. This profile SHALL NOT invent a vacuous
-  proof, binding, state or document, or prescribe higher-level planner
-  behavior outside that direct entry.
+  preserve actual binding admission. This profile SHALL NOT invent a
+  vacuous proof, binding, state or document, or prescribe higher-level
+  planner behavior outside the direct entry.
 - The document SHALL have exactly `identity`, `objective`, `kind`,
   `values` and `components`, with `kind` equal to `"long-run"`; `ranking`
   and `policy` SHALL be absent. Identity and exact rationals use the existing
@@ -1403,12 +1435,10 @@ another same-dimension UnitId SHALL NOT substitute for that identity.
   complete original graph, positive-support BSCC partition, canonical
   component ordering, bias normalization, strict transport and independent
   threshold checks. Predicate-true states SHALL NOT absorb their outgoing
-  transitions. Zero direct `over` instances retain `UnsupportedBinding`
-  and the unsupported EN-5 disposition with no invented evidence. General
-  MDP/every-scheduler, fairness, timed, multi-post and interval proof
-  documents, including shared FR-413 wire, remain outside this profile.
-  Long-run refutations use FR-202's separate subsystem counterexample role
-  without widening this proof profile.
+  transitions. General MDP/every-scheduler, fairness, timed, multi-post
+  and interval proof documents, including shared FR-413 wire, remain
+  outside this profile. Long-run refutations use FR-202's separate
+  subsystem counterexample role without widening this proof profile.
 - The checker SHALL independently evaluate the named checked reward on
   every reachable semantic transition and typed draw, using FR-196's
   operation/receiver/non-random-argument identity and the checked expression.
@@ -1518,12 +1548,11 @@ component a behaviour ends in.
   A terminal state's only action is FR-196's implicit terminal stutter, a
   probability-one self-loop on its same complete key with its P label
   retained; no synthetic key or operation identity is invented. P states
-  SHALL NOT absorb an enabled transition. Zero direct `over` instances
-  retain `UnsupportedBinding` and the unsupported EN-5 disposition with no
-  invented evidence. Workload claims keep the DTMC profiles above.
-  Weighted, fairness, timed, multi-post, multiple initial/binding and
-  interval proof documents remain outside this profile, as does shared
-  FR-413 wire. Source threshold endpoint admission is unchanged.
+  SHALL NOT absorb an enabled transition. Workload claims keep the DTMC
+  profiles above. Weighted, fairness, timed, multi-post, multiple
+  initial/binding and interval proof documents remain outside this
+  profile, as does shared FR-413 wire. Source threshold endpoint
+  admission is unchanged.
 - The document SHALL have exactly `identity`, `objective`, `kind`,
   `values`, `ranking` and `components`, with `kind` `"long-run"`; `policy`
   SHALL be absent. `values` and `ranking` SHALL each cover exactly the
@@ -1678,9 +1707,8 @@ initial states/bindings and refutations remain outside this profile.
 - Source fairness admission and unresolved-operation refusals SHALL retain
   their earlier typed outcomes. Identity mismatch precedes enumeration;
   malformed evidence, objective mismatch, false equality/rank and missed
-  threshold retain the existing rejection/refusal rules and loci. No proof
-  SHALL be emitted from Bounds, PrecisionBudget or zero direct instances;
-  the latter retain UnsupportedBinding/unsupported without invented binding.
+  threshold retain the existing rejection/refusal rules and loci. No
+  proof SHALL be emitted from Bounds or PrecisionBudget.
   Requested/Deadline cancellation and byte/state/edge/work/storage/
   representation/arithmetic limits SHALL retain their actual typed causes
   throughout intake, source-operation identity reconstruction, full-key
@@ -1725,23 +1753,23 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-27 | Under Steady, the original up/down chain with up-to-up 1999/2000 and down-to-up 9/10 accepts a long-run document with one component value and gain 1800/1801, bias 0 at up and -2000/1801 at down (choose the fixture's canonical key order up before down), and both state values 1800/1801. Both workload bound sides accept at equality; AtLeast 1801/1802 and AtMost 999/1000 reject ThresholdMissed. These comparison thresholds lie strictly between 0 and 1 under the existing S3 admission policy. Changing the bias, setting transported gain to 0, or replacing long-run evidence by reachability values prevents acceptance. No P state absorbs its original transitions. | Test |
 | FR-201-AC-28 | A transient self-cycling s goes to s with 1/2, P-terminal g with 1/6 and not-P-terminal f with 1/3. Independent terminal stutter gives BSCCs {g} and {f}, respective component value/gain 1 and 0 and bias 0; values s=1/3,g=1,f=0 accept both workload bounds at 1/3. A two-state deterministic cycle alternates P and not-P and accepts rho=gain=1/2 with normalized biases 0,-1/2 in that key order, despite periodicity. Merging/splitting/omitting a BSCC, adding a transient bias member or changing transient V rejects; harmonic values alone cannot certify a wrong recurrent value. | Test |
 | FR-201-AC-29 | AC-27/28 documents round-trip canonically through a fresh checker process with no analyzer/provider dependency. Noncanonical rational/JSON/key encodings, duplicate or incomplete rows/components, foreign bindings, model-only keys, wrong normalization or missing components prevent acceptance. Identity conflict refuses before enumeration; a changed derived predicate set/optimization refuses objective mismatch. Equivalent source changes that preserve every checked condition may accept. Earlier profile bytes and verdicts remain unchanged. | Test |
-| FR-201-AC-30 | Pre-cancellation and exhaustion/cancellation during admission, full-key creation, workload/predicate evaluation, SCC/membership passes and exact sums retain typed nonacceptance without truth values under the actual caller control. Reachable undefined P/workload evaluation is never relabelled false/zero. Weighted claims emit no document of this profile; a weighted zero-weight component takes its unweighted fraction (FR-199-AC-4). Unweighted every-scheduler claims emit no document of this profile and use the MDP long-run profile (FR-201-AC-70 to AC-74); event-position claims are admitted as "Long-run claim profile admission" states (FR-201-AC-74). So an every-scheduler `using inf` claim and a workload `using ev` claim no longer settle unsupported: the first settles through the MDP profile, the second through this profile. Unresolved workload, fairness, clocks, multi-post, multiple initials/bindings, the timed profile and unsupported kinds remain explicitly unsupported. Zero over instances retain UnsupportedBinding at direct claim binding and an unsupported disposition at the direct EN-5 item, with no terminal verdict, certificate, counterexample or fabricated binding. | Test |
+| FR-201-AC-30 | Pre-cancellation and exhaustion/cancellation during admission, full-key creation, workload/predicate evaluation, SCC/membership passes and exact sums retain typed nonacceptance without truth values under the actual caller control. Reachable undefined P/workload evaluation is never relabelled false/zero. Weighted claims emit no document of this profile; a weighted zero-weight component takes its unweighted fraction (FR-199-AC-4). Unweighted every-scheduler claims emit no document of this profile and use the MDP long-run profile (FR-201-AC-70 to AC-74); event-position claims are admitted as "Long-run claim profile admission" states (FR-201-AC-74). So an every-scheduler `using inf` claim and a workload `using ev` claim no longer settle unsupported: the first settles through the MDP profile, the second through this profile. Unresolved workload, fairness, clocks, multi-post, multiple initials/bindings, the timed profile and unsupported kinds remain explicitly unsupported. With an initial state and no admitted `over` instance, the outcome is `NoInstance` as "Instancing outcomes" states. | Test |
 | FR-201-AC-31 | FR-199-AC-3's Steady availability graph, with up-to-up 1999/2000, down-to-up 9/10, outgoing duration 1 at up and 3 at down, accepts the weighted profile with component value/gain 600/601, both state values 600/601, bias 0 at up and -2000/601 at down in that canonical key order. Both bound sides accept at 600/601; AtMost 999/1000 accepts and AtLeast 999/1000 rejects ThresholdMissed, while AtMost 599/600 rejects. Unweighted value/gain 1800/1801 or bias -2000/1801 fails. | Test |
 | FR-201-AC-32 | A periodic chain alternates P state a and not-P state b; at a two equally probable draws to b have R magnitudes 1 and 3, and b's step to a has R 1. The weighted component accepts rho=gain=2/3 and biases (a,b)=(0,-2/3). Under a matching claim identity/objective, swapping the two a draw weights preserves acceptance; changing 3 to 5 falsifies that certificate. When changed workload weights, random support values/weights or reward expressions change the claim identity under [FR-498](FR-498-carry-a-probabilistic-claim-s-checked-package-identity.md), the old document refuses IdentityMismatch before enumeration. For numerical acceptance/rejection against the edited claim, rebind through the canonical writer to that actual claim, preserving all offered evidence (including values, gains, biases and any ranks) and objective without rederiving evidence. A zero-weight transient s entering this component and an all-P state c with probabilities 1/4 and 3/4, where c has an explicit probability-one self-step of R 1, accepts V(s)=11/12; a globally pooled numerator/denominator substitute 8/9 rejects. A reachable all-zero-weight BSCC, alone or beside a positive-weight BSCC, and any reachable terminal stutter take their unweighted fraction, certified by their unweighted gain–bias pair, which the checker accepts (FR-199-AC-4); none settles Unsupported(ZeroWeightComponent). | Test |
 | FR-201-AC-33 | AC-31/32 documents round-trip canonical bytes through a fresh independent checker without analyzer/provider linkage. Wrong checked weight name/model or actual unit, changed predicate set/optimization/profile, foreign binding/model-only keys, malformed rational/JSON/key data and duplicate/missing/out-of-order component/value/bias members prevent acceptance with their specified typed rule/locus. Under a matching claim identity/objective, independently checked equivalent quantity expressions normalize through the actual weight UnitId and preserve acceptance; another same-dimension descriptor or matching display name cannot replace that UnitId. Source edits covered by FR-498 retain AC-32's IdentityMismatch refusal for the old document; numerical acceptance/rejection uses its unchanged offered evidence and objective canonically rebound to the actual edited claim as in AC-32. Gain 0, a numerator payoff in gain, unscaled unweighted bias, false BSCC coverage or changed transient values reject. Older unweighted/reward/eventual profiles keep their bytes/verdicts. | Test |
-| FR-201-AC-34 | Pre-cancellation and exhaustion/cancellation during actual admission, key construction, graph/draw expansion, predicate/weight/unit evaluation, SCC/membership and exact weighted sums retain the actual typed limit/cancellation cause with no acceptance. Undefined or negative reachable weights, undefined predicates/workload and unsupported reward types preserve typed nonacceptance rather than zero. Unsupported shape/kind/fairness/every-scheduler cases issue no weighted proof. Zero direct over instances preserve UnsupportedBinding/unsupported with no invented evidence. Integer representation and exact weight arithmetic retain their respective existing limits, without imposing a probability-value range on weights. No weighted claim is relabelled as an unweighted profile or an FR-202 refutation. | Test |
+| FR-201-AC-34 | Pre-cancellation and exhaustion/cancellation during actual admission, key construction, graph/draw expansion, predicate/weight/unit evaluation, SCC/membership and exact weighted sums retain the actual typed limit/cancellation cause with no acceptance. Undefined or negative reachable weights, undefined predicates/workload and unsupported reward types preserve typed nonacceptance rather than zero. Unsupported shape/kind/fairness/every-scheduler cases issue no weighted proof. With an initial state and no admitted `over` instance, the outcome is `NoInstance` as "Instancing outcomes" states. Integer representation and exact weight arithmetic retain their respective existing limits, without imposing a probability-value range on weights. No weighted claim is relabelled as an unweighted profile or an FR-202 refutation. | Test |
 | FR-201-AC-35 | A DTMC retry state s has self and B-entering draws each of probability 1/2 and R=1 on both. The cyclic reward profile accepts V(s)=2, V(B)=0 and ranks (s,B)=(1,0), at both workload equality bounds. AtMost 3/2 and AtLeast 5/2 reject ThresholdMissed. Changing only entry-B R to 3 accepts V(s)=4; offering 2 rejects InequalityFails. Swapping equally probable draw costs preserves 4, while changing their mean falsifies it. Costs 2 ms on self and 6 ms on entry give 8 ms and accept an equivalent 0.008 s bound through actual checked conversion; declared/compound descriptors retain their actual identity rather than a fixed step cost or display alias. | Test |
 | FR-201-AC-36 | A zero-cost retry with positive exit probability accepts V(s)=V(B)=0 and ranks (1,0), including either bound at 0. Giving s rank 0 rejects RankBroken despite zero values. A closed non-B zero-cost self-loop or cycle rejects otherwise Bellman-valid finite V=0 evidence as RankBroken; the producer preserves FR-198 infinity without a finite document. Initial B accepts only its zero value/rank even when its original outgoing operation has positive cost. An admitted A-to-B subject with a positive-cost cycle reachable solely after B accepts first-hit evidence with rows only for A and B; adding after-B value/rank/target keys rejects the specified coverage/objective rule. | Test |
 | FR-201-AC-37 | AC-35/36 documents round-trip canonically through a fresh checker without analyzer/provider linkage. Changed actual reward name/model/unit, target set, optimization/profile or binding prevents acceptance; dimension-equivalent foreign UnitIds are not aliases. Noncanonical rational/JSON/key data, malformed or duplicate/missing/out-of-order rows, model-only keys, false Bellman values, and absent/wrong progress ranks retain precise rule/locus diagnostics. The old acyclic reward and probability/long-run profile bytes/verdicts remain unchanged; an eligible acyclic producer keeps its existing profile. | Test |
-| FR-201-AC-38 | Pre-cancellation and phase-observed Requested/Deadline or byte/state/edge/work/storage/representation/arithmetic exhaustion during original/stopped admission, raw/internal/full keys, draw/B/reward/unit evaluation, progress checking and exact sums preserve the actual typed cause with no accepted truth. Earlier model refusals and deferred undefined/negative evaluation are not coerced to zero. Unsupported kind/shape/fairness/every-scheduler, multi-post or refutation/infinity requests emit no finite cyclic reward proof. Direct zero over instances retain UnsupportedBinding/unsupported without a fabricated binding, terminal verdict, certificate or counterexample. | Test |
+| FR-201-AC-38 | Pre-cancellation and phase-observed Requested/Deadline or byte/state/edge/work/storage/representation/arithmetic exhaustion during original/stopped admission, raw/internal/full keys, draw/B/reward/unit evaluation, progress checking and exact sums preserve the actual typed cause with no accepted truth. Earlier model refusals and deferred undefined/negative evaluation are not coerced to zero. Unsupported kind/shape/fairness/every-scheduler, multi-post or refutation/infinity requests emit no finite cyclic reward proof. With an initial state and no admitted `over` instance, the outcome is `NoInstance` as "Instancing outcomes" states. | Test |
 | FR-201-AC-39 | A live state s has actions a with probabilities (self,target,fail)=(1/2,1/5,3/10) and b with (1/2,2/5,1/10). With target value 1 and false-terminal fail value 0, the new profile accepts minimum 2/5 under AtLeast 2/5 and maximum 4/5 under AtMost 4/5, with rank(s)=1 and boundary ranks 0. Minimum AtLeast 1/2 and maximum AtMost 3/4 reject ThresholdMissed. Changing an otherwise matching actual action probability, omitting a source action from the extremum or replacing separate actions by their averaged distribution cannot verify the old vector. Separately let S choose A=(1/2 fail,1/2 T) or B=(1/4 fail,3/4 T), and let T step to target with probability 2/3 and S with 1/3. Minimum (vS,vT)=(2/5,4/5) and maximum (2/3,8/9) accept with rank(S)=rank(T)=1 and boundary ranks 0: S progresses only to value-zero fail, while its positive successor T has equal rank. | Test |
 | FR-201-AC-40 | For wait-to-self versus go-to-target, the actual minimum is 0. A bogus minimum v(s)=1/2 satisfies Bellman equality but rejects RankBroken because wait supplies no lower-rank successor, even though go does. For wait-to-self versus attempt to target/fail with probabilities 4/5 and 1/5, the maximum is 4/5: bogus v(s)=9/10 is a Bellman fixed point through wait but rejects RankBroken because only the nontight attempt progresses; at v(s)=4/5 the tight attempt and rank 1 accept under AtMost 19/20. Zero-valued live minimum states require a closed zero-support action; maximum zeros require all action supports to remain zero. Lower-rank value-zero successors count, but probability-zero successors do not. | Test |
 | FR-201-AC-41 | AC-39/40 valid documents round-trip canonical bytes through a fresh checker without analyzer/provider linkage. Target/non-target-terminal boundaries, stopped targets/coverage and complete full-key bindings are independently checked. Wrong objective/identity, malformed rational/JSON/key data, duplicate/missing/out-of-order values or ranks, extra after-target rows, model-only keys, false Bellman values, zero support and rank progress prevent acceptance with the specified rule/locus. A valid post-target cycle alone does not add certificate rows. Earlier profile bytes/verdicts and eligible producer preferences remain unchanged. | Test |
-| FR-201-AC-42 | Actual pre-cancellation and phase-observed Requested/Deadline or byte/state/edge/work/storage/representation/arithmetic exhaustion during original/stopped admission, raw/internal/full keys, all-action and draw reconstruction, min/max sums, zero-support and progress checks retain their real typed cause without an accepted truth. Undefined predicates/workload or source refusals are not coerced to zero or dropped actions. Fairness, workload selection, rewards, timed/general temporal, pending multi-post, multiple-initial/binding, non-exact or refutation requests issue no new-profile proof. Zero direct instances retain UnsupportedBinding/unsupported without fabricated evidence. Existing source thresholds 0/1 stay refused and no new min-AtMost/max-AtLeast syntax is added. | Test |
+| FR-201-AC-42 | Actual pre-cancellation and phase-observed Requested/Deadline or byte/state/edge/work/storage/representation/arithmetic exhaustion during original/stopped admission, raw/internal/full keys, all-action and draw reconstruction, min/max sums, zero-support and progress checks retain their real typed cause without an accepted truth. Undefined predicates/workload or source refusals are not coerced to zero or dropped actions. Fairness, workload selection, rewards, timed/general temporal, pending multi-post, multiple-initial/binding, non-exact or refutation requests issue no new-profile proof. With an initial state and no admitted `over` instance, the outcome is `NoInstance` as "Instancing outcomes" states. Existing source thresholds 0/1 stay refused and no new min-AtMost/max-AtLeast syntax is added. | Test |
 | FR-201-AC-43 | A non-B s chooses actions a or b, each with self/B probabilities 1/2 and 1/2 and costs R=1 or R=2 on both draws respectively. The new cyclic MDP reward profile accepts minimum V(s)=2 under Every AtLeast 2 and maximum V(s)=4 under Every AtMost 4, with V(B)=0 and ranks (s,B)=(1,0). Bounds 5/2 and 7/2 respectively reject ThresholdMissed. Distinct action costs cannot be averaged despite identical successor distributions. Changing entry-B draw R changes the required value; actual unit conversion accepts an equivalent bound, while a foreign dimension-equivalent UnitId refuses objective mismatch. | Test |
 | FR-201-AC-44 | For WAIT self R=0 versus GO to B R=1, minimum V(s)=1 accepts with rank 1. Bogus minimum V(s)=0 or 1/2 satisfies Bellman equality through WAIT but rejects RankBroken because no tight action progresses. Maximum is infinity: no finite native document is emitted, and bogus maximum V(s)=1 rejects RankBroken despite Bellman equality. A zero-cost positive-exit retry accepts V(s)=0 with positive rank at bound 0; rank 0 rejects. Non-B terminals and closed zero-cost classes have infinity and cannot pass vacuous universal progress. Minimum initial safe exit cost 1 versus another action to an infinite non-B trap retains unsupported mixed-infinite coverage without a finite document; fabricated finite trap rows fail properness and missing rows fail coverage. | Test |
 | FR-201-AC-45 | AC-43/44 documents round-trip canonically through a fresh checker without analyzer/provider linkage. Entry-B cost is counted once, initial B has V/rank zero, and an otherwise admitted post-B cycle adds no rows or costs. Wrong checked reward/model/unit, targets, optimization/profile, identity or binding; changed actual draw R; false values/progress; malformed rational/JSON/full-key data; missing/duplicate/out-of-order/extra rows and model-only keys prevent acceptance under the precise existing rule/locus. Old acyclic and DTMC bytes/verdicts, producer preferences and sealed acceptance remain unchanged. | Test |
-| FR-201-AC-46 | Actual pre-cancellation and phase-observed Requested/Deadline or byte/state/edge/work/storage/representation/arithmetic exhaustion during original/stopped admission, actual raw/internal/full keys, all-action/draw/B/reward/unit reconstruction, exact sums, tightness and universal/existential progress preserve the typed cause without accepted truth. Earlier model/negative-reward refusal and deferred undefined or unsupported evaluation are not coerced to zero or omitted actions. Unsupported shape/fairness/workload/timed/multi-post/refutation/infinity forms issue no new-profile proof; zero direct instances preserve UnsupportedBinding/unsupported without invented evidence. No new bound directions or full all-expansion memory qualification are claimed. | Test |
+| FR-201-AC-46 | Actual pre-cancellation and phase-observed Requested/Deadline or byte/state/edge/work/storage/representation/arithmetic exhaustion during original/stopped admission, actual raw/internal/full keys, all-action/draw/B/reward/unit reconstruction, exact sums, tightness and universal/existential progress preserve the typed cause without accepted truth. Earlier model/negative-reward refusal and deferred undefined or unsupported evaluation are not coerced to zero or omitted actions. Unsupported shape/fairness/workload/timed/multi-post/refutation/infinity forms issue no new-profile proof; with an initial state and no admitted `over` instance, the outcome is `NoInstance` as "Instancing outcomes" states. No new bound directions or full all-expansion memory qualification are claimed. | Test |
 | FR-201-AC-56 | A `Health` chain whose `ok` state stays `ok` with `9/10` per step and otherwise moves to a fault state: `probability >= 0.75 [always[0,2] holds(ok)]` under its workload settles `proved`, `ExactValue{81/100}`, with a `reachability/v1` bounded document whose undecided keys (remaining horizon 2 and 1) have values `81/100` and `9/10` and ranks 2 and 1, whose `targets` are the accepting decided keys after position 2, and which `fsl-probability-check` accepts; the fault state is a rejecting decided key with value 0, and a variant whose fault state is terminal closes by false extension with the same values. The value `81/100` replaced by `9/10` is rejected `InequalityFails` at the initial key. | Test (TC-636) |
 | FR-201-AC-47 | The bounded fair profile admits the exact Every/minimum AtLeast and maximum AtMost slice with nonempty checked weak/strong whole/each operation fairness; horizon zero and transported 0/1 values work with interior source bounds. The fair and unfair bounded fixture both have minimum 24/25, while fair result/objective retain the exact checked set. Fairness-empty documents retain existing bytes. Unsupported shapes and zero instances emit no new-profile proof. | Test |
 | FR-201-AC-48 | Canonical fairness records reuse the closed shared operation target and independently match the resolved checked set, including inherited declaring identities and whole/each receiver semantics. Authored reorder/duplicate spellings normalize identically; missing, extra, changed-kind/granularity/model/name, duplicate or out-of-order records and malformed/foreign targets cannot establish the claim. Distinct weak/strong constraints are retained. | Test |
@@ -1765,7 +1793,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-71 | `Loop`: P state `c1` has `stay` to not-P `c2` and `quit` to P-terminal `g` with 3/4 and not-P-terminal `f` with 1/4; `c2` steps to `c1`; initial `c1`. The checker derives MECs `{c1, c2}` (staying actions `stay` and `c2`'s step, `quit` leaving), `{g}` and `{f}` (terminal stutter), with rho 1/2, 1 and 0 and biases `c1` 0, `c2` -1/2 (choose the fixture's canonical key order `c1` before `c2`). Minimum: V(c1) = V(c2) = 1/2, V(g) = 1, V(f) = 0, every state in S with rank 0; it accepts Every AtLeast 1/2 and AtLeast 2/5, and AtLeast 3/5 rejects ThresholdMissed. Maximum: V(c1) = V(c2) = 3/4 through `quit`, S = {g, f}, ranks c1 = 1, c2 = 2; it accepts Every AtMost 3/4 and AtMost 4/5, and AtMost 7/10 rejects ThresholdMissed. | Test (TC-3190) |
 | FR-201-AC-72 | In AC-71, the bogus maximum V(c1) = V(c2) = 1 and the bogus minimum V(c1) = V(c2) = 0 satisfy every Bellman equation through the `stay` cycle but leave c1 and c2 outside S with only the cycle tight, so each rejects RankBroken at c1 when rank(c1) <= rank(c2) and otherwise at c2. Giving component `{c1, c2}` value and gain 3/4 (so c1 and c2 would join S) rejects InequalityFails in the component check before V is read: with bias c2 = -3/4 at c1, with c2 = -1/4 at c2. | Test (TC-3190) |
 | FR-201-AC-73 | In AC-71, a producer-supplied component list that omits `{c1, c2}` (treating c1 and c2 as transient) with minimum V(c1) = V(c2) = 3/4 and ranks c1 = 1, c2 = 2 satisfies every offered Bellman and rank condition, yet would prove a false Every AtLeast 3/4 (true minimum 1/2); it rejects InequalityFails at the first key of `{c1, c2}` by the partition check. Splitting `{c1, c2}` into `{c1}` and `{c2}`, or adding `g` to it, rejects InequalityFails at the smallest differing key. AC-70/71 documents round-trip canonically through a fresh checker without analyzer/provider linkage; a `policy` member, missing or extra rows, wrong objective, identity or binding, and model-only keys prevent acceptance with the specified rule/locus. | Test (TC-3190) |
-| FR-201-AC-74 | The AC-71 claims written `using` the event-position false-extension profile settle the same values and accept the same documents as under the infinite-trace profile: terminal `g` keeps value 1 by stutter rather than 0 by false extension. A workload long-run claim under that profile likewise uses the DTMC profiles (FR-201-AC-27's chain accepts at 1800/1801). Neither settles `unsupported`/`not-yet-implemented` for its profile. Weighted or fair every-scheduler, timed, multi-post and multiple initial/binding claims emit no MDP long-run document; pre-cancellation and exhaustion during MEC refinement or exact sums retain their typed cause with no accepted truth; zero direct instances retain UnsupportedBinding/unsupported. | Test (TC-3190) |
+| FR-201-AC-74 | The AC-71 claims written `using` the event-position false-extension profile settle the same values and accept the same documents as under the infinite-trace profile: terminal `g` keeps value 1 by stutter rather than 0 by false extension. A workload long-run claim under that profile likewise uses the DTMC profiles (FR-201-AC-27's chain accepts at 1800/1801). Neither settles `unsupported`/`not-yet-implemented` for its profile. Weighted or fair every-scheduler, timed, multi-post and multiple initial/binding claims emit no MDP long-run document; pre-cancellation and exhaustion during MEC refinement or exact sums retain their typed cause with no accepted truth; with an initial state and no admitted `over` instance, the outcome is `NoInstance` as "Instancing outcomes" states. | Test (TC-3190) |
 | FR-201-AC-75 | For a checked root `holds(c.heads)` with no temporal operator, `QualifiedBoundedMonitor::supports` and `QualifiedBoundedMonitor::supports_observations` both return true under the event-position false-extension profile and both return false under the infinite-trace profile. Under the event-position profile the monitor's initial canonical monitor-state key and decided verdict for the tails and heads initial observations equal those of `eventually[0,0] holds(c.heads)` apart from the checked formula context. For a temporal clause whose formula is a root `holds(c.heads)`, `bounded_shape` and `closure_shape` return what they return without this reading (no bounded shape), and `BoundedTranslation::clause` over an origin clause under the infinite-trace profile still refuses it `NotTranslated`. | Test (TC-3195) |
 | FR-201-AC-76 | Over the `Link` model under `Even` with a start snapshot holding `m` undelivered and `n` delivered, the `on-each-reachability/v1` `Ratio` document for FR-875's claim `E` has, at `m`'s initial key, `numerator` `391/400` and `denominator` `1` (`m` activates at position 0) and, at `n`'s initial key, `0` and `0` (`n` never activates); at `rational(9, 10)` the checker accepts it with `m` the one compared instance (`391/400 >= 9/10`) and `n` vacuous, and at `rational(99, 100)` it rejects `ThresholdMissed` at `m`'s initial key with no `part` (`391/400 < 99/100`). | Test (TC-3208) |
 | FR-201-AC-77 | Over a start snapshot holding only `n` (delivered), the `Ratio` document built over that snapshot, whose rows are `n`'s with `numerator` `0` and `denominator` `0` at `n`'s initial key, is rejected `InequalityFails` at `n`'s initial key with no `part`, and the `Vacuous` document of the profile (`values` `[]`, `conditional` `{mode: "vacuous"}`, the same `objective`) is accepted on the side of a proof. Over AC-76's snapshot the `Vacuous` document is rejected `InequalityFails` at `m`'s initial key with no `part`, since `m` activates. | Test (TC-3208) |
@@ -1776,6 +1804,8 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-82 | On AC-81's graph, each pretarget row has positive rank, every positive-probability nonterminal policy successor has strictly smaller rank, and the goal-observation edge has terminal rank 0; `fsl-probability-check` accepts the AC-81 Lower document with bound side `AtLeast`. | Test (TC-639) |
 | FR-201-AC-83 | On AC-81's document, omitting the `ranking` member rejects `Malformed` at `CertificateMember("ranking")` before graph enumeration. | Test (TC-639) |
 | FR-201-AC-84 | On AC-81's document, changing only K0's rank from 3 to 2 while K1 remains rank 2 rejects `RankBroken` at K0, the initial pretarget key and first failing key in canonical order. | Test (TC-639) |
+| FR-201-AC-85 | Over a subject with an empty `initial` list, the document form called with a document of another item's identity refuses `IdentityMismatch`, and with truncated bytes refuses `Malformed`; with a well-formed document of the claim's identity, whatever its kind, it returns `NoInitialState`, the wire form returns `CertificateCheck::NoInitialState`, and `fsl-probability-check` writes `status` `no-initial-state`. Over a subject with an initial state and no admitted key the three give `NoInstance` and `no-instance`. | Test (TC-3241) |
+| FR-201-AC-86 | The wire form, the document form and `fsl-probability-check`, given a well-formed document of the claim's identity, refuse `RequiresBound` over a subject with a universe missing and an empty `initial` list, never returning `NoInitialState`; and refuse `invalid_runtime_input/conflicting-identity` over records typing `c` as `Animal` in `animals` and `Dog` in `dogs`, never accepting or rejecting the document. | Test (TC-3241) |
 
 ## Dependencies
 

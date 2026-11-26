@@ -61,7 +61,8 @@ rank progress; producer values and qualitative classifications are untrusted.
    FR-187 model refusal precedence and deferred typed nonacceptance;
    never replace an invalid reward by zero. Include unsupported shapes,
    fairness/every-scheduler, multi-post/infinity/refutation forms and
-   zero direct over instances.
+   an initial state with no admitted `over` instance at direct claim
+   binding, the checker and the direct EN-5 item.
 
 Executable assertions SHALL carry actual criterion trace attributes,
 for example `#[trace("TC-1403", "FR-201-AC-36")]`. This procedure does not
@@ -85,7 +86,7 @@ author a matrix or claim whole-runtime allocation qualification.
   complete stopped coverage and precise inequality/rank/member outcomes.
   Earlier profiles are unchanged; the acyclic producer preference remains.
 - Step 5 preserves the actual typed source refusal, unsupported, limit or
-  cancellation cause without an accepted token or truth value. Zero direct
-  instances preserve UnsupportedBinding/unsupported with no invented
-  binding, terminal verdict, certificate or counterexample. No finite
+  cancellation cause without an accepted token or truth value. With an
+  initial state and no admitted instance, all three give `NoInstance` as
+  FR-201 "Instancing outcomes" states. No finite
   document becomes an infinity document or FR-202/FR-413 refutation.
