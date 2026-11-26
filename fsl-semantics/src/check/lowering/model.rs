@@ -470,6 +470,20 @@ impl PackagePlace {
     }
 }
 
+/// A lazily built cache derived from a model's `records`: every cache is
+/// equal to every other, so two models with equal records stay equal whether
+/// or not either has been read.
+#[derive(Clone, Debug, Default)]
+struct FieldPositions(std::sync::OnceLock<BTreeMap<(DeclarationKey, String), usize>>);
+
+impl PartialEq for FieldPositions {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for FieldPositions {}
+
 /// One admitted domain package, as `check` keys its declarations (FR-094
 /// "Inputs"): its model selection, its records by declaration key, and
 /// its effective view's `type_identities`, read from `EffectiveId` to
@@ -512,7 +526,7 @@ pub struct AdmittedModel {
     source_field_spans: BTreeMap<DeclarationKey, fsl_foundation::Span>,
     /// Each field's declared position, by `(owner, field name)`, built once
     /// from `records` on first use.
-    field_positions: std::sync::OnceLock<BTreeMap<(DeclarationKey, String), usize>>,
+    field_positions: FieldPositions,
     /// Every required single-valued field whose type is a package object
     /// type, `(owner, field name, target)`: [`Self::referenced_object`],
     /// found once from `records`.
@@ -1237,7 +1251,7 @@ impl AdmittedModel {
             places: Vec::new(),
             source_places: BTreeMap::new(),
             source_field_spans: BTreeMap::new(),
-            field_positions: std::sync::OnceLock::new(),
+            field_positions: FieldPositions::default(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -1291,7 +1305,7 @@ impl AdmittedModel {
             places: Vec::new(),
             source_places: BTreeMap::new(),
             source_field_spans: BTreeMap::new(),
-            field_positions: std::sync::OnceLock::new(),
+            field_positions: FieldPositions::default(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -1332,6 +1346,7 @@ impl AdmittedModel {
         self.source_field_spans = field_spans;
         self.places = self.find_places();
         self.references = self.find_references();
+        self.field_positions = FieldPositions::default();
     }
 
     /// The named source object's checked node, for the source model's time member.
@@ -1500,7 +1515,7 @@ impl AdmittedModel {
     /// The declared position of the field `name` of `owner`, from an index
     /// of every field record built once per model.
     pub(crate) fn field_position(&self, owner: &DeclarationKey, name: &str) -> Option<usize> {
-        let positions = self.field_positions.get_or_init(|| {
+        let positions = self.field_positions.0.get_or_init(|| {
             self.records
                 .values()
                 .filter_map(|record| match record {
