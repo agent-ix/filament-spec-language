@@ -551,7 +551,8 @@ fn redefinition_chain_package(edges: usize) -> (CheckedPackage, Vec<u8>) {
 /// The model correspondence body of a redefinition chain is charged while it
 /// is built: a refused emission's peak live bytes stay near the bound when the
 /// chain, and so the whole body, grows about fourfold. The charge never
-/// exceeds what the package carries: it still emits at exactly its length.
+/// exceeds what the package carries: at exactly its length it still emits, byte
+/// for byte as under a larger bound.
 #[trace("TC-738", "FR-264-AC-6", "FR-264-AC-9")]
 #[test]
 fn an_over_limit_model_correspondence_is_refused_before_it_is_built() {
@@ -589,9 +590,13 @@ fn an_over_limit_model_correspondence_is_refused_before_it_is_built() {
         "peak live bytes follow the bound, not the chain: {short_peak} then {long_peak}"
     );
 
-    let bytes = u64::try_from(emitted_byte_count_of(&long)).expect("a fixture length");
-    let exact = emitted_at(&long, bytes).expect("a ceiling of exactly N bytes emits");
-    assert_eq!(exact.package().bytes().len() as u64, bytes);
+    let emit = |bound: u64| {
+        crate::emit::emit_checked_uncached(&long, &Cancel::new(), EmitLimits::new(bound))
+    };
+    let larger = emit(u64::MAX).expect("a raised output limit emits");
+    let bytes = u64::try_from(larger.package().bytes().len()).expect("a fixture length");
+    let exact = emit(bytes).expect("a ceiling of exactly N bytes emits");
+    assert_eq!(exact.package().bytes(), larger.package().bytes());
     let early = refused(&long, bytes / 10).count_total;
     let late = refused(&long, bytes - 1).count_total;
     eprintln!("bytes={bytes} early={early} late={late}");
@@ -601,10 +606,12 @@ fn an_over_limit_model_correspondence_is_refused_before_it_is_built() {
     );
 }
 
-/// The strict reader rebuilds, from a chain package emitted at exactly its
+/// A chain package of `N` bytes is emitted at bound `N`, byte for byte as under
+/// a larger bound, and refused at `N - 1` and `0`. The strict reader rebuilds,
+/// from the package emitted at exactly its
 /// length, one declaration per type and one per type and member it declares or
 /// inherits, hidden redefined members included.
-#[trace("TC-738", "FR-264-AC-6")]
+#[trace("TC-738", "FR-264-AC-6", "FR-400-AC-14")]
 #[test]
 fn a_chain_correspondence_emitted_at_its_length_reads_back_every_declaration() {
     let (package, document) = redefinition_chain_package(2);
@@ -614,6 +621,14 @@ fn a_chain_correspondence_emitted_at_its_length_reads_back_every_declaration() {
     let emitted = emit(u64::MAX).expect("a raised output limit emits");
     let bytes = u64::try_from(emitted.package().bytes().len()).expect("a fixture length");
     let emission = emit(bytes).expect("a ceiling of exactly N bytes emits");
+    assert_eq!(emission.package().bytes(), emitted.package().bytes());
+    for bound in [bytes - 1, 0] {
+        let limit = limit_of(emit(bound).expect_err("a ceiling below N refuses"));
+        assert_eq!(limit.setting(), Setting::EmitOutputBytes);
+        assert_eq!(limit.kind(), LimitKind::InputBytes);
+        assert_eq!(limit.configured_bound(), bound);
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
+    }
 
     let mut read: Vec<(Option<String>, String)> =
         super::source_objects::read_correspondence(&emission, &document)
