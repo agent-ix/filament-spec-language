@@ -446,10 +446,6 @@ pub(crate) fn shared_defect(pointer: &str, defect: WireDefect) -> TaskProductSha
     let reason = match defect.kind {
         WireDefectKind::Missing => TaskProductShapeReason::Missing,
         WireDefectKind::UnknownMember => TaskProductShapeReason::UnknownMember,
-        // A `type` of any other spelling or kind names no listed variant.
-        WireDefectKind::WrongKind if defect.pointer == "/type" => {
-            TaskProductShapeReason::UnknownVariant
-        }
         WireDefectKind::WrongKind => TaskProductShapeReason::WrongKind,
         WireDefectKind::Invalid => TaskProductShapeReason::NotCanonical,
         WireDefectKind::UnknownVariant => TaskProductShapeReason::UnknownVariant,

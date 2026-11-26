@@ -974,9 +974,9 @@ fn model_step(
             .map_err(|error| invalid(&at, error.to_string()))?;
     let identity = match transition.get("type").and_then(serde_json::Value::as_str) {
         Some("terminal-stutter") => {
-            let extra = transition
-                .as_object()
-                .and_then(|members| members.keys().find(|name| *name != "type"));
+            let mut rest = transition.as_object().cloned().unwrap_or_default();
+            rest.remove("type");
+            let extra = rest.keys().next();
             return match extra {
                 Some(extra) => Err(invalid(
                     format!("{at}.{extra}"),

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The package-bound boundary between native and backend reference identities.
 
-use crate::shared_wire::{EMPTY_NAME, TransitionIdentity};
+use crate::shared_wire::TransitionIdentity;
+use crate::written_operation::WrittenOperation;
 use filament_exact::{
     Cancel, EffectiveId, IdentityCopyError, IntegerDecimalBudget, ObjectId, ObjectReference,
 };
@@ -1366,18 +1367,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         // FR-120's reader rule: a string holding an identity text is that
         // text and any other string a name. The empty name is none.
         let operation = scope.member("operation", |s| {
-            let operation = if crate::written_operation::WrittenOperation::is_identity_text(
-                members.operation,
-            ) {
+            let operation = if WrittenOperation::is_identity_text(members.operation) {
                 s.text(members.operation)?
             } else {
                 let operation = s.json(&map["operation"], 0)?;
                 canonical_text(&operation, s, limits)?
             };
-            if operation == EMPTY_NAME {
-                return Err(s.fail(ReferenceFailure::MalformedWire));
-            }
-            Ok(operation)
+            WrittenOperation::admit_identity_text(operation)
+                .ok_or_else(|| s.fail(ReferenceFailure::MalformedWire))
         })?;
         let receiver = scope.member("receiver", |s| {
             let Some(receiver) = members.receiver else {

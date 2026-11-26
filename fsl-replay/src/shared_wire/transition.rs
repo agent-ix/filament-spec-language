@@ -15,8 +15,6 @@ use super::{closed_object, member, unique_object, WireDefect, WireDefectKind};
 use crate::written_operation::WrittenOperation;
 
 const KIND: &str = "transition";
-/// The identity text of the empty name, which is no name (FR-120).
-pub(crate) const EMPTY_NAME: &str = r#""""#;
 
 /// The members of a written transition: checked for shape, with no identity
 /// text admitted yet.
@@ -74,10 +72,10 @@ impl<'a> TransitionIdentity<'a> {
     pub(crate) fn members(value: &Value) -> Result<TransitionMembers<'_>, WireDefect> {
         let refuse = |pointer: &str, kind| WireDefect::new(pointer, kind);
         let map = closed_object(value, &Self::MEMBERS, &[])?;
+        // A `type` of any other spelling or JSON kind names no listed variant.
         match member(map, "type")?.as_str() {
             Some(KIND) => {}
-            Some(_) => return Err(refuse("/type", WireDefectKind::UnknownVariant)),
-            None => return Err(refuse("/type", WireDefectKind::WrongKind)),
+            _ => return Err(refuse("/type", WireDefectKind::UnknownVariant)),
         }
         let operation = match member(map, "operation")?.as_str() {
             Some("") => return Err(refuse("/operation", WireDefectKind::Invalid)),
@@ -112,11 +110,9 @@ impl<'a> TransitionIdentity<'a> {
         let members = Self::members(value)?;
         let operation = WrittenOperation::from_wire(members.operation.to_owned())
             .into_identity_text()
-            .map_err(|_| refuse("/operation", WireDefectKind::Invalid))?;
-        // The identity text of the empty name is the empty name too.
-        if operation == EMPTY_NAME {
-            return Err(refuse("/operation", WireDefectKind::Invalid));
-        }
+            .ok()
+            .and_then(WrittenOperation::admit_identity_text)
+            .ok_or_else(|| refuse("/operation", WireDefectKind::Invalid))?;
         let text = |value: &Value, pointer: &str| {
             serde_json::to_string(value).map_err(|_| refuse(pointer, WireDefectKind::Invalid))
         };

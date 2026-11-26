@@ -18,7 +18,6 @@ use serde_json::{Map, Value};
 pub use bound::{BoundForm, ProbabilisticBound};
 pub use state::{state_key_from_text, state_key_text, StateLocus};
 pub use transition::TransitionIdentity;
-pub(crate) use transition::EMPTY_NAME;
 
 /// Why a shared wire value is not one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]

@@ -441,9 +441,6 @@ fn read_document(
         match defect.kind {
             WireDefectKind::Missing => malformed("missing-member", at),
             WireDefectKind::UnknownMember => malformed("unknown-member", at),
-            WireDefectKind::WrongKind if defect.pointer == "/type" => {
-                TemporalCounterexampleReadRefusal::TraceAlphabet { pointer: at }
-            }
             WireDefectKind::WrongKind => malformed("wrong-value-kind", at),
             WireDefectKind::Invalid => malformed("invalid-value", at),
             WireDefectKind::UnknownVariant => {
