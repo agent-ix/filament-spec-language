@@ -477,7 +477,7 @@ fn an_entry_point_refuses_the_limits_of_another_operation() {
 /// bounds the reader, and `accounting.work_units` reaches the replay's
 /// accounting.
 #[test]
-#[trace("TC-721", "FR-121-AC-12")]
+#[trace("TC-721", "FR-121-AC-12", "FR-255-AC-24")]
 fn replay_with_limits_applies_the_callers_settings() {
     use fsl_command::command::{CommandLimits, RunLimits};
     use fsl_foundation::{AccountingSetting, SettingName};
@@ -536,6 +536,27 @@ fn replay_with_limits_applies_the_callers_settings() {
             .as_str()
             .unwrap()
             .contains("s1.tokens"),
+        "{document}"
+    );
+
+    // The recompile emits the package under the caller's E4 bound.
+    let mut emit = CommandLimits::replay();
+    emit.set(
+        SettingName::Stage(fsl_foundation::Setting::EmitOutputBytes),
+        1,
+    )
+    .expect("replay exposes the emit limit");
+    let error = fsl_command::command::replay_with_limits(&path, RunLimits::default(), &emit)
+        .expect_err("one byte cannot hold the recompiled package");
+    let outcome = error.outcome_document(fsl_replay::Operation::Replay);
+    let document: Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "stage_limit_exceeded", "{document}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("emit.output_bytes"),
         "{document}"
     );
 }

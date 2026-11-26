@@ -27,6 +27,7 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::family::UnsupportedItem;
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
 
@@ -200,8 +201,9 @@ pub(super) fn run_model_item(
     )
 }
 
-/// The reference `clause`'s `over` parameter reads as under `instance`
+/// The written binding of `clause`'s `over` parameter to `instance`
 /// (FSpec FR-364's `over_binding`), over `system`.
+#[implements("FR-125-AC-9")]
 fn bound_over(
     system: &ModelSystem<'_>,
     clause: &CheckedTemporalClause,
@@ -210,7 +212,7 @@ fn bound_over(
     let ValueType::Reference(object_type) = &clause.over().1 else {
         return None;
     };
-    system.bound_reference(object_type.clone(), instance).ok()
+    system.written_reference(object_type.clone(), instance).ok()
 }
 
 /// The EN-1 run of `item` and its layer-6 settlement (FR-127).

@@ -41,12 +41,13 @@ foundation type.
 ## Behavior
 
 - The names accepted are exactly those a request's `stage_limits` carries
-  (FR-263): every stage and accounting setting of FR-255's tables except
-  `replay.input_bytes` and `format.output_bytes`. `replay.input_bytes` is the
-  reader limit a caller passes as `ReplayLimits`, which the root already
-  exports. The request decoder and `with_named` share one check, so the two
-  cannot disagree.
-- An unknown name, or one of the two excluded names, refuses with the typed
+  (FR-263): the stage settings replay consumes, as FR-255 "Lifecycle
+  caller-limit coverage" lists them for `replay` (`emit.output_bytes` among
+  them) except `replay.input_bytes`, and every accounting setting.
+  `replay.input_bytes` is the reader limit a caller passes as `ReplayLimits`,
+  which the root already exports. The request decoder and `with_named` share
+  one check, so the two cannot disagree.
+- An unknown name, or a setting a request does not carry, refuses with the typed
   `StageLimitNameRefusal` and returns no limits: `with_named` consumes the
   limits and yields either the whole new value or the refusal.
 - A later entry for a name replaces an earlier one. A bound is used as given,
@@ -58,7 +59,9 @@ foundation type.
   defaults at a few hundred kilobytes, so a consumer that compiles a source
   over 1 MiB raises `s1.input_bytes`, `s1.tokens` and `s1.nodes` by name and
   `ReplayLimits::with_input_bytes` together. Each raised stage limit is still
-  a separate named entry; there is no combined setting.
+  a separate named entry; there is no combined setting. A source whose package
+  is longer than the `emit.output_bytes` default (16777216 bytes) raises
+  `emit.output_bytes` by name as well.
 - A limit with no entry runs at its published default: the capability is an
   opt-in and changes no default and no other consumer's caps.
 
@@ -69,8 +72,8 @@ foundation type.
 | FR-399-AC-1 | A consumer that names only the `fsl_replay` root compiling a source larger than 1 MiB through `compile_admitted` with default limits is refused as `AdmittedResource::StageLimit` naming the `s1.input_bytes` ceiling. | Test (TC-1093) |
 | FR-399-AC-2 | With `s1.input_bytes` raised by `with_named` above the default `ReplayLimits`, the compile refuses as `AdmittedResource::AboveReader`. | Test (TC-1093) |
 | FR-399-AC-3 | With `s1.input_bytes` raised by `with_named` and `ReplayLimits::with_input_bytes` raised to match, a comment-padded source larger than 1 MiB compiles. | Test (TC-1093) |
-| FR-399-AC-4 | A source of real declarations larger than 1 MiB, with `s1.input_bytes` and the reader limit raised, is refused naming the `s1.tokens` ceiling; with `s1.tokens` also raised, naming the `s1.nodes` ceiling; and it compiles only with `s1.input_bytes`, `s1.tokens`, `s1.nodes` and the reader limit all raised. | Test (TC-1093) |
-| FR-399-AC-5 | `with_named` refuses an unknown name, the empty name, `replay.input_bytes` and `format.output_bytes` with `StageLimitNameRefusal` carrying the name, and returns no limits. | Test (TC-1093) |
+| FR-399-AC-4 | A source of real declarations larger than 1 MiB, with `s1.input_bytes` and the reader limit raised, is refused naming the `s1.tokens` ceiling; with `s1.tokens` also raised, naming the `s1.nodes` ceiling; and it compiles only with `s1.input_bytes`, `s1.tokens`, `s1.nodes` and the reader limit all raised. Where its package is longer than the `emit.output_bytes` default, those four alone refuse naming `emit.output_bytes`, and it compiles with `emit.output_bytes` also raised by name. | Test (TC-1093) |
+| FR-399-AC-5 | `with_named` refuses an unknown name, the empty name, `replay.input_bytes` and a setting replay does not consume, such as `format.output_bytes`, `render.output_bytes`, `monitor.max_activations`, `exact_prob.max_witness_paths` and `smt_encoding.max_constants`, with `StageLimitNameRefusal` carrying the name, and returns no limits. | Test (TC-1093) |
 | FR-399-AC-6 | A default `StageLimits` holds no entry, so a source just under 1 MiB compiles at the default; a later `with_named` of one name replaces the earlier bound. | Test (TC-1093) |
 
 ## Dependencies
