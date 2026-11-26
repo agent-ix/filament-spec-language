@@ -31,7 +31,7 @@ populations that overlap its type, and that no route proves, refutes or
 accepts a key that no initial state admits.
 
 Scope: FR-125-AC-19 to FR-125-AC-22, FR-128-AC-17, FR-151-AC-5,
-FR-172-AC-10, FR-172-AC-11, FR-176-AC-6, FR-176-AC-7, FR-181-AC-8 to
+FR-172-AC-10, FR-172-AC-11, FR-176-AC-6 to FR-176-AC-8, FR-181-AC-8 to
 FR-181-AC-11, FR-183-AC-13, FR-315-AC-59 and FR-621-AC-23.
 
 ## Test Procedure
@@ -44,7 +44,7 @@ implementation.
 2. Run FR-181-AC-9 under the event-position profile and FR-181-AC-10 through
    package selection.
 3. Run FR-176-AC-6's universal clause through the source route and
-   `check_hyper`.
+   `check_hyper`, and FR-176-AC-8's two requests.
 4. Check and run FR-172-AC-10, FR-172-AC-11, FR-125-AC-19, FR-125-AC-20 and
    FR-125-AC-22.
 5. Run each FR-125-AC-21 variant and FR-181-AC-11.
@@ -62,7 +62,8 @@ asserts.
   `refuted` at `l`.
 - Step 2: `proved` at `l` alone; the package item is
   `unsupported_construct`/`not-yet-implemented`, exit 21.
-- Step 3: `Holds` for `l` alone, `proved`, exit 0.
+- Step 3: `Holds` for `l` alone, `proved`, exit 0; FR-176-AC-8's requests are
+  `refuted` at `p` and then at `q`.
 - Step 4: the instances, excluded keys, outcomes and verdicts each criterion
   states.
 - Step 5: the outcomes of FR-125-AC-21 in its order, none a fault.

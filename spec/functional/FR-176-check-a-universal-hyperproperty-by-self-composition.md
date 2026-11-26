@@ -25,6 +25,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-184
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: depends_on
 ---
 # FR-176: Check a universal hyperproperty by self-composition (EN-1)
 
@@ -130,6 +132,13 @@ public outputs differ.
   exists; FR-182 states the cause's full meaning, which also covers an EN-3
   proof that came with no accepted match witness.
 
+### Instances
+
+- The engine SHALL select the item's outcome over the clause's instances as
+  FR-177 "Instances" states: the first refuted instance in FR-125's canonical
+  order, which no finding of a later instance replaces at any depth, and which
+  an earlier instance that is undecided, bounded or stopped does not hide.
+
 ### Limits
 
 - `max_states` SHALL count product states, `max_transitions` joint steps
@@ -146,6 +155,7 @@ public outputs differ.
 | FR-176-AC-5 | Over ADR-023 §8's secure vault with the added `pre G using v on V::Vault::step { q(1 - self.h) = 0 }`, which has no value from a state with `h` 1, and `NonInterference` with the body `always holds(q(1 - v.h @ a) = q(1 - v.h @ b))`, `q` being AC-4's Kernel-checked function, whose letter has no value at a joint state with either `h` 1: the item returns `Violated` with an `Undefined` counterexample at `trace_position` 0 at the initial tuple `a = (0, 0)`, `b = (1, 0)`, the first with an `h` 1 in canonical order, whose locus is the body atom, naming `a` and `b`, with cause `division-by-zero`, not `G`. FR-183 replays it to `reproduced-with-evaluated-witness`. With the body `always holds(v.l @ a = v.l @ b)`, whose letter is defined there, the counterexample at `trace_position` 0 at the same tuple names `G` with `b`'s `step` transition, and `b` only. | Test (TC-601) |
 | FR-176-AC-6 | Instances of a universal clause. `pets` declares `Thing`, which has the subtype `Lamp`; its universe is `[l, m]`; the model has no operation; the one initial state holds a `Lamp` under `l`. `forall trace a of M forall trace b of M { always holds(present(lookup<M::Thing>(M::pets, v) absent empty) @ a) }` with `v: M::Thing` has the one instance `l` (FR-125): `check_hyper` returns `Holds` with a certificate for `l` and none for `m`, and the source `native-analyze/1` item settles `proved`, exit 0. | Test (TC-3219) |
 | FR-176-AC-7 | The universal package route. A `package` request over the handoff directory of AC-6's unit settles an item record equal to the source route's: `proved`, exit 0, certificate accepted, for the instance `l` and none for `m`. Over FR-125-AC-19's subject, `forall trace x of M forall trace y of M { always holds(present(lookup<M::Thing>(M::P1, v) absent empty) @ x) }` settles on both routes `refuted` at the instance `a`, with a counterexample that replays and no instance binding naming `u`. FR-172-AC-11's parameter type, in a two-universal clause, settles `inconclusive`, `no-instance`, on both routes. | Test (TC-3219) |
+| FR-176-AC-8 | The first refuted instance in order decides. `Counter`'s `value` is `Int[0, 5]`; `inc` raises its receiver's value by 1 and is enabled below 3; `idle` changes nothing and is always enabled; the universe is `[p, q]`, with one initial state; the clause is `forall trace a of M` with `v: M::Counter` and no fairness set. With `p` at 0 and `q` at 2, `always holds((v.value <= 1) @ a)` returns `Violated` for the instance `p`, on a trace on which `p` reaches 2, although `q` is violated at position 0, and the item settles `refuted`. With `p` at 0 and `q` at 4, `always holds((v.value <= 3) @ a)` with `max_depth` 1, where `p` is bounded by the search horizon, returns `Violated` for the instance `q` and settles `refuted`, never `inconclusive`. | Test (TC-3219) |
 
 ## Dependencies
 

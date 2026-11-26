@@ -239,10 +239,11 @@ refuted, with its counterexample and replay, an earlier instance that is not
 `proved`; otherwise a `proved` record, which stands only when every
 instance's record is `proved` and its certificate was checked. An item with
 no instance reports FR-125's `NoInstance` or `NoInitialState`, never a fault.
-Where an engine returns one outcome over all instances, its own ranking
-decides which that is (FR-126 "Bindings and ranking", FR-177 "Instances"). A
-claim is false when any instance is false, so a single refutation decides the
-item, and a fixed order makes the reported instance the same on every run.
+An engine that returns one outcome over all of a hyper item's instances
+SHALL select it by this rule. A temporal clause's engine returns its outcome
+as FR-126 "Bindings and ranking" states. A claim is false when any instance
+is false, so a single refutation decides the item, and a fixed order makes the
+reported instance the same on every run.
 The counterexample names the instance it refutes (FSpec FR-364
 `over_binding`; FSpec FR-393 `instance` for state-graph evidence).
 
