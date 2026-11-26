@@ -292,8 +292,7 @@ mod native_result;
 mod protocol_premises;
 mod protocol_proof;
 mod protocol_structure;
-#[cfg(feature = "quire-extraction")]
-pub use fsl_source::{AvailabilityState, KindAvailability};
+pub use quire_rs::semantic::{AvailabilityState, KindAvailability};
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
     read_native_run_result, read_native_run_result_bounded, read_outcome_diagnostics,
@@ -309,7 +308,6 @@ pub use native_result::{
     StateRead, TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic,
 };
 pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
-#[cfg(feature = "quire-extraction")]
 pub use native_result::{
     write_clause_run_result_for_with_extraction, ExtractionBinding, ExtractionBody, ExtractionMap,
     ExtractionOriginal, ExtractionOutcome, ExtractionPosition, ExtractionRecord, ExtractionRegion,

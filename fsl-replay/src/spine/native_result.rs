@@ -8,12 +8,10 @@ use fsl_foundation::diagnostic::Code;
 use fsl_foundation::diagnostic::Locus;
 use fsl_foundation::wire_format::WireFormat;
 use fsl_foundation::LocatedSpan;
-#[cfg(feature = "quire-extraction")]
-use fsl_source::{AvailabilityState, KindAvailability};
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
-#[cfg(feature = "quire-extraction")]
+use quire_rs::semantic::{AvailabilityState, KindAvailability};
 use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -270,7 +268,6 @@ pub struct ClauseRunRecord(
 impl ClauseRunRecord {
     /// The Quire-backed source extraction record, when this run consumed a
     /// Markdown source through extraction.
-    #[cfg(feature = "quire-extraction")]
     #[implements("FR-267-AC-17")]
     pub fn extraction(&self) -> Option<&ExtractionRecord> {
         self.0.extraction.as_ref()
@@ -1222,7 +1219,6 @@ struct ClauseRead {
     basis: Basis,
     #[serde(default, deserialize_with = "present")]
     witness: Option<RecordWire<Box<RawValue>>>,
-    #[cfg(feature = "quire-extraction")]
     #[serde(default, deserialize_with = "present")]
     extraction: Option<ExtractionRecord>,
     #[serde(default, deserialize_with = "present")]
@@ -1248,12 +1244,10 @@ struct ClauseRead {
     _evidence_ledger: Option<serde_json::Value>,
 }
 
-#[cfg(feature = "quire-extraction")]
 trait ExtractionShape {
     fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String>;
 }
 
-#[cfg(feature = "quire-extraction")]
 macro_rules! extraction_leaf_shape {
     ($($type:ty),+ $(,)?) => {
         $(
@@ -1266,17 +1260,14 @@ macro_rules! extraction_leaf_shape {
     };
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_leaf_shape!(String, u8, u64, bool, serde_json::Value);
 
-#[cfg(feature = "quire-extraction")]
 impl<K, V> ExtractionShape for BTreeMap<K, V> {
     fn missing_member(_: NodeRef<'_>, _: &str) -> Option<String> {
         None
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 impl<T: ExtractionShape> ExtractionShape for Vec<T> {
     #[implements("FR-267-AC-17")]
     fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
@@ -1289,7 +1280,6 @@ impl<T: ExtractionShape> ExtractionShape for Vec<T> {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 impl<T: ExtractionShape> ExtractionShape for Option<T> {
     #[implements("FR-267-AC-17")]
     fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
@@ -1301,7 +1291,6 @@ impl<T: ExtractionShape> ExtractionShape for Option<T> {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 impl ExtractionShape for KindAvailability {
     #[implements("FR-267-AC-17")]
     fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
@@ -1314,7 +1303,6 @@ impl ExtractionShape for KindAvailability {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 macro_rules! extraction_record_type {
     (
         $name:ident {
@@ -1390,7 +1378,6 @@ macro_rules! extraction_record_type {
     };
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionRecord {
         original: ExtractionOriginal,
@@ -1403,7 +1390,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionOriginal {
         authority: String,
@@ -1413,7 +1399,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionBody {
         authority: String,
@@ -1423,7 +1408,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionBinding {
         clause: String,
@@ -1431,7 +1415,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionMap {
         region: ExtractionSpan,
@@ -1439,7 +1422,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionSpan {
         start: u64,
@@ -1447,7 +1429,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionSegment {
         body_start: u64,
@@ -1457,7 +1438,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionRegion {
         start: ExtractionPosition,
@@ -1465,7 +1445,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionPosition {
         byte: u64,
@@ -1474,7 +1453,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionOutcome {
         #[serde(
@@ -1489,7 +1467,6 @@ extraction_record_type! {
     }
 }
 
-#[cfg(feature = "quire-extraction")]
 #[derive(Deserialize, Serialize)]
 #[serde(remote = "KindAvailability", deny_unknown_fields)]
 struct KindAvailabilityWire {
@@ -1505,7 +1482,6 @@ struct KindAvailabilityWire {
 }
 
 /// Quire's `availability`, admitted only as a JSON object.
-#[cfg(feature = "quire-extraction")]
 #[implements("FR-267-AC-17")]
 fn availability_object<'de, D: serde::Deserializer<'de>>(
     decoder: D,
@@ -1524,7 +1500,6 @@ fn availability_object<'de, D: serde::Deserializer<'de>>(
 
 /// Quire's availability `state`, admitted only as a JSON string: Serde's
 /// derived enum decoder also accepts `{"available": null}`.
-#[cfg(feature = "quire-extraction")]
 #[implements("FR-267-AC-17")]
 fn availability_state<'de, D: serde::Deserializer<'de>>(
     decoder: D,
@@ -1533,7 +1508,6 @@ fn availability_state<'de, D: serde::Deserializer<'de>>(
     AvailabilityState::deserialize(serde::de::value::StringDeserializer::new(name))
 }
 
-#[cfg(feature = "quire-extraction")]
 #[implements("FR-267-AC-17")]
 fn validate_extraction(extraction: Option<NodeRef<'_>>) -> Result<(), NativeRunReadError> {
     let Some(value) = extraction.filter(|value| !matches!(value.node(), Node::Null)) else {
@@ -3017,7 +2991,6 @@ pub fn read_native_run_result_bounded(
             .canonical(&splice)
             .map_err(|_| budget.copy_failure("witness", "cannot traverse witness document"))?;
         budget.charge(u64::try_from(shallow.len()).unwrap_or(u64::MAX))?;
-        #[cfg(feature = "quire-extraction")]
         validate_extraction(root.get("extraction"))?;
         let document: ClauseRead = read_typed(&shallow)?;
         if let Some(limits) = &document.limits {
@@ -3582,7 +3555,6 @@ struct ClauseRunDocument {
     basis: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<RecordWire<Box<RawValue>>>,
-    #[cfg(feature = "quire-extraction")]
     #[serde(skip_serializing_if = "Option::is_none")]
     extraction: Option<ExtractionRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4398,20 +4370,11 @@ pub fn write_clause_run_result_for(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
-    check_report(report, selection)?;
-    #[cfg(feature = "quire-extraction")]
-    {
-        write_document(report, selection, None)
-    }
-    #[cfg(not(feature = "quire-extraction"))]
-    {
-        write_document(report, selection)
-    }
+    write_clause_run_result_for_with_extraction(report, selection, None)
 }
 
 /// [`write_clause_run_result_for`] with the source extraction record required
 /// for a command run that selected a Markdown clause through Quire.
-#[cfg(feature = "quire-extraction")]
 #[implements("FR-267-AC-17")]
 pub fn write_clause_run_result_for_with_extraction(
     report: &ClauseRunReport,
@@ -4481,7 +4444,7 @@ fn verdict_basis(report: &ClauseRunReport) -> bool {
 fn write_document(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
-    #[cfg(feature = "quire-extraction")] extraction: Option<ExtractionRecord>,
+    extraction: Option<ExtractionRecord>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
     let witness = report.witness.as_ref().map(RecordWire::of).transpose()?;
     let ledger = report
@@ -4523,7 +4486,6 @@ fn write_document(
         },
         basis: report.basis.as_str(),
         witness,
-        #[cfg(feature = "quire-extraction")]
         extraction,
         ledger,
         limits: run_limits(selection),
@@ -4598,7 +4560,6 @@ fn run_limits(
 }
 
 #[cfg(test)]
-#[cfg(feature = "quire-extraction")]
 mod qsl_3117_deciding_run {
     use super::{read_native_run_result, NativeRunReadError};
     use ix_trace_rs::trace;
