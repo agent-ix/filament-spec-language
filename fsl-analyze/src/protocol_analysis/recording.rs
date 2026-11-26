@@ -3612,6 +3612,7 @@ fn branch_completion(
 
 /// Whether a recorded action has the branch decision required by its checked
 /// control ancestry before it occurs.
+#[implements("FR-895-AC-42")]
 fn observation_enabled(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -3693,11 +3694,12 @@ fn observation_enabled(
             .observations
             .iter()
             .enumerate()
-            .filter(|(_, entry)| {
+            .filter(|(index, entry)| {
                 entry.kind == ObservationKind::Case
                     && entry.node.starts_with(&format!("{choice_name}::"))
                     && entry.instance == observation.instance
                     && entry.role_instance == observation.role_instance
+                    && begun_before(protocol, document, position, *index)
             })
             .collect::<Vec<_>>();
         if selected.is_empty() {
