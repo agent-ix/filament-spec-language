@@ -3554,9 +3554,7 @@ fn model_unit_outcome_diagnostic(
     diagnostic: &fsl_forms::cst::CompleteDiagnostic,
 ) -> fsl_replay::OutcomeDiagnostic {
     let locus = diagnostic.source_region().map(|region| {
-        fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(
-            region.clone(),
-        ))
+        fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(region.clone()))
     });
     fsl_replay::OutcomeDiagnostic::new(
         Some(diagnostic.cause().as_str()),
