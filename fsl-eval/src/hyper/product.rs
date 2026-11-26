@@ -431,6 +431,16 @@ pub enum HyperFinding {
     MemberContract,
 }
 
+impl HyperFinding {
+    /// Whether this finding is a component's contract conjunction with no
+    /// value or refused, so what its state enables is unknown (ADR-022 GM-6).
+    #[must_use]
+    pub fn leaves_successors_unknown(&self) -> bool {
+        matches!(self, Self::Contract { finding, .. }
+            if finding.undefined_contract().is_some() || finding.is_refused_contract())
+    }
+}
+
 /// Why a product's exploration ended before its frontier emptied.
 #[derive(Debug)]
 pub enum Halt {

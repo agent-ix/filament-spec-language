@@ -1672,9 +1672,8 @@ fn settled_trap(world: &World, limits: ModelCheckLimits) -> (ResultLabel, Settle
     (record.label, record.basis)
 }
 
-/// FR-181-AC-13: a product state the body automaton has no run from leaves
-/// its part closed on both sides, whether a limit cut its expansion or its
-/// contract has no value.
+/// FR-181-AC-13: a product state the body automaton has no run from, whose
+/// expansion a limit cut, leaves its part closed on both sides.
 #[trace("TC-3219", "FR-181-AC-13")]
 #[test]
 fn a_trap_with_an_unexpanded_rejected_state_replays() {
@@ -1690,8 +1689,18 @@ fn a_trap_with_an_unexpanded_rejected_state_replays() {
     let mut limits = unsampled();
     limits.limits.max_states = 1;
     assert_eq!(settled_trap(&world, limits), refuted);
-    // The body is false at the start `(h, l) = (0, 1)`, where `step`'s
-    // precondition has no value.
+    // The same start's two `step`s with `max_transitions` 1.
+    let mut limits = unsampled();
+    limits.limits.max_transitions = 1;
+    assert_eq!(settled_trap(&world, limits), refuted);
+}
+
+/// FR-181-AC-13: a state whose `step` precondition has no value is not read
+/// as disabled, so no trap rests on it: the engine does not return `Trapped`,
+/// and a `Trapped` outcome for it does not replay.
+#[trace("TC-3219", "FR-181-AC-13")]
+#[test]
+fn a_state_with_an_undefined_guard_is_not_a_trap() {
     let world = World::new_with_kernel_function(
         GUARDED,
         false,
@@ -1699,7 +1708,29 @@ fn a_trap_with_an_unexpanded_rejected_state_replays() {
         &clause("", "holds(v.l @ b = 0)"),
         KERNEL_QUOTIENT,
     );
-    assert_eq!(settled_trap(&world, unsampled()), refuted);
+    let mut cut = unsampled();
+    cut.limits.max_states = 1;
+    for limits in [unsampled(), cut] {
+        let mut result = single(&world, limits);
+        assert!(
+            !matches!(result.outcome, ExistentialOutcome::Trapped { .. }),
+            "{:?}",
+            result.outcome
+        );
+        result.outcome = ExistentialOutcome::Trapped {
+            stem: ModelPath {
+                initial: 0,
+                steps: Vec::new(),
+            },
+        };
+        let record = settle_instance(&world, &result, unsampled()).record;
+        assert_eq!(
+            record.label,
+            ResultLabel::Inconclusive,
+            "{:?}",
+            record.value
+        );
+    }
 }
 
 /// FR-181-AC-13: a trap that ranks before an undefined letter of its part
