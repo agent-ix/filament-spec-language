@@ -481,6 +481,12 @@ fn wrong_data_is_named() {
             takes: "",
         },
         shared("S-14", "fsl_eval::planned::item"),
+        Entry {
+            row: "O-1",
+            rule: Rule::ProducerObject,
+            item: "fsl_eval::probabilistic::step",
+            takes: "ModelSystem",
+        },
     ];
     const ROWS: &[ExceptionRow] = &[
         ExceptionRow {
@@ -500,6 +506,12 @@ fn wrong_data_is_named() {
             rule: Rule::SharedSemantics,
             concerns: &[],
             planned: true,
+        },
+        ExceptionRow {
+            id: "O-1",
+            rule: Rule::ProducerObject,
+            concerns: &[("fsl_eval::value", &["fsl_eval::value"])],
+            planned: false,
         },
     ];
     const DATA_ONLY: &[BaseRow] = &[BaseRow {
@@ -528,6 +540,8 @@ fn wrong_data_is_named() {
         "entry S-3 fsl_eval::probabilistic::step: breaks \"Producer call into checker\", but row \
          S-3 is \"Shared semantics\"",
         "row S-4 has no entry",
+        "entry O-1 fsl_eval::probabilistic::step: the item is defined outside the modules row O-1 \
+         concerns",
         "check entry fsl_replay::missing: the item does not exist",
         "check entry fsl_replay::missing: no route R-9 in FR-1051",
         "codec function fsl_eval::probabilistic::step: no codec class C-9 in FR-1051",

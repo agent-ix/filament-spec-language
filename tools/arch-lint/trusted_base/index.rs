@@ -108,7 +108,6 @@ pub(super) struct ItemInfo {
     pub(super) kind: Kind,
     /// The module whose source holds the definition.
     pub(super) module: usize,
-    pub(super) line: usize,
     /// Declared `pub`, without a restriction.
     pub(super) public: bool,
 }
@@ -426,7 +425,6 @@ impl Index {
                 path: format!("{}::{name}", self.modules[module].path),
                 kind: Kind::Type,
                 module,
-                line: ident.span().start().line,
                 public: is_public(visibility),
             },
             variants,
@@ -455,7 +453,6 @@ impl Index {
                 path,
                 kind,
                 module,
-                line: ident.span().start().line,
                 public,
             },
             signature,
