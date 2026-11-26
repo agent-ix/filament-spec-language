@@ -371,7 +371,7 @@ pub(super) struct ValueBoundControl<'a, 'control> {
 /// maximal fair end component. A fair maximum takes FR-201's cyclic maximum
 /// conditions unchanged (FR-1041 "Check"), where a state of `U` may reach the
 /// target, so it has no such set.
-#[implements("FR-1041-AC-3", "FR-1041-AC-4")]
+#[implements("FR-1041-AC-3")]
 fn fair_minimum_zero_states(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
