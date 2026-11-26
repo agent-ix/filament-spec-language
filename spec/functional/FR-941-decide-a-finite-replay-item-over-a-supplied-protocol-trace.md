@@ -9,6 +9,8 @@ relationships:
     type: specifies
   - target: ix://agent-ix/filament-spec-language/FR-217
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-433
     type: depends_on
 ---
@@ -186,6 +188,7 @@ The order fixture is FR-636's.
 | FR-941-AC-3 | A trace beginning with `Got` settles `declined` `invalid-input`, `invalid-value`, `details.position` 0. | Test (TC-2621) |
 | FR-941-AC-4 | The order fixture with `requires temporal R;` and `R` a clause `using t0 over (k: M::Core) clock "model-steps" on origin` under the infinite-trace profile, over the supplied trace `Placed`, `Got`, `Ship`: with `R` `eventually holds(k.r1 = k.r1)` the item settles `proved` with `disposition.temporal` kind `holds` and 3 replayed steps; with `always holds(k.r1 != k.r1)` it settles `refuted`, kind `violated`, `position` 0, and a `kind: formula` counterexample that replays with `reproduced` `true`; with `always holds(k.r1 = k.r1)` it settles `inconclusive`, kind `pending`, category `pending`, basis `unsettled`, exit 0; with `always holds(q(k.r1 - k.r1) >= 0)`, where `function q using v(x: Integer): Integer pure { 6 mod x }` has its body checked under `CheckMode::Kernel` and the Linked clause calls it (FR-495-AC-3, FR-952), it settles `refuted`, kind `undefined`, cause `undefined-evaluation` with `cause` `division-by-zero` at position 0; with two requirements `requires temporal P; requires temporal R;`, `P` pending and `R` violated, it reports `R`'s `violated` disposition. | Test (TC-2965) |
 | FR-941-AC-5 | The order fixture with AC-4's `Kernel`-checked function `q`, the protocol capture `capture c: Integer = 0;` and the `Got` receive constraint `{ q(c) = 0 }`, over the supplied trace `Placed`, `Got`, `Ship` recorded from the fixture with constraint `{ true }`: the bare item settles `refuted`, cause `undefined-evaluation`, `where.position` 1, `where.locus` `protocol`, `cause` `division-by-zero`, with a counterexample of the one step `Placed` that replays to `reproduced-with-evaluated-witness`, never `declined`; the same trace with step 2's post-state key changed is still `refuted` at position 1; the same trace beginning with `Got` settles `declined` `invalid-input`, `invalid-value`, `details.position` 0. | Test (TC-2965) |
+| FR-941-AC-6 | The trace of AC-1 with step 1's `post_state.key` written `AB`, whose unused trailing bits are not zero, settles `declined` `invalid-input`, `invalid_runtime_input`/`invalid-value`, `details.position` 1, `details.path` `/prefix/1/post_state/key`; the same bad key in step 2 behind a stale step 0 reports the step-2 defect, not the stale step. | Test (TC-2621) |
 
 ## Dependencies
 
