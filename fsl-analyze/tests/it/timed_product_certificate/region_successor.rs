@@ -74,3 +74,46 @@ fn a_delay_reaches_the_region_between_two_clocks_integer_crossings() {
     let world = two_clocks("time invariant Bounded when { self.phase < 2 } { self.y <= 3 ms }\n");
     assert_eq!(observed(&world), all_refuted());
 }
+
+/// `first` runs before 1 ms and resets `x`, then `third` needs `y > 1 ms`
+/// under `phase_one`, which keeps `x` short of 1 ms. Time cannot diverge
+/// without `third`, so the claim that `late` is reached holds with value 1.
+fn forced_third(third: &str, phase_one: &str) -> World {
+    let body = format!(
+        "{}\
+         pre First using v on M::Call::first {{ self.phase = 0 and self.x > 0 ms }}\n\
+         post FirstDone using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Third using v on M::Call::third {{ self.phase = 1 and {third} and self.y > 1 ms }}\n\
+         post ThirdDone using v on M::Call::third {{ self.phase = 2 and self.late = true }}\n\
+         time invariant Zeroth when {{ self.phase = 0 }} {{ self.y < 1 ms }}\n\
+         time invariant Oneth when {{ self.phase = 1 }} {{ {phase_one} }}\n\
+         probabilistic Reached using ev on M over (c: M::Call) under every scheduler on origin \
+         {{ probability >= 0.5 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n",
+        timed_world::DENSE,
+    );
+    timed_world::world(
+        &timed_world::document(
+            &["x", "y"],
+            &[("first", &["phase", "x"]), ("third", &["phase", "late"])],
+        ),
+        PROFILES,
+        &body,
+    )
+}
+
+/// A strict invariant: the walk that skips a region lands on `x = 1 ms`, which
+/// the invariant excludes, so the delay itself is lost and the state reads as
+/// time-locked.
+#[test]
+fn a_strict_invariant_does_not_turn_the_skip_into_a_time_lock() {
+    let world = forced_third("self.x < 1 ms", "self.x < 1 ms");
+    assert_eq!(outcome(&settle(&world, "Reached")), "proved 1/1");
+}
+
+/// A closed invariant admits the point the walk lands on, so `third` at
+/// `x <= 1 ms` is still reached.
+#[test]
+fn a_closed_invariant_keeps_its_last_instant() {
+    let world = forced_third("self.x <= 1 ms", "self.x <= 1 ms");
+    assert_eq!(outcome(&settle(&world, "Reached")), "proved 1/1");
+}
