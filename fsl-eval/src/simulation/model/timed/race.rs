@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-253/FR-254: one exact timed race and the ordered tie steps it takes.
 
-use filament_exact::{Integer, Rational};
+use filament_exact::{Identifier, Integer, Rational, Value};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::{DelayDistribution, Workload};
+use ix_trace_rs::implements;
 
 use super::{GuardedStep, TimeLock, TimedState, TimedStop, TimedSystem, DEFAULT_MAX_CLOCKS};
 use crate::simulation::choice::{weighted_choice_counted, ChoicePoint};
 use crate::simulation::model::TransitionId;
-use crate::simulation::sampled::{draw_timed_delay, TimedDelayRefusal};
-use crate::simulation::sampled::{SampledBehaviour, SampledStep};
+use crate::simulation::sampled::{draw_timed_delay, take_enabled_step, TimedDelayRefusal};
+use crate::simulation::sampled::{SampleStop, SampledBehaviour, SampledStep, StepAt};
 use crate::simulation::StateKey;
 
 /// One transition taken by a timed race. The first transition has the
@@ -120,6 +121,10 @@ pub struct TimedSample {
     pub stamp: Rational,
     /// Whether the prefix ended at an idle tail.
     pub idle: bool,
+    /// The step that leaves the last position and lands after the horizon.
+    /// It is drawn for its rewards (FSpec FR-420 "Sampling timed runs") and
+    /// adds no position.
+    pub crossing: Option<SampledStep>,
 }
 
 /// A timed sampling request refused before a sample can be completed.
@@ -131,6 +136,9 @@ pub enum TimedSampleStop {
     /// The sampled prefix exceeded its request budget before its horizon.
     #[error("the timed sample exceeded its maximum number of steps")]
     MaxSampleSteps,
+    /// A tick subject's untimed step (FSpec FR-420 "Tick subjects") stopped.
+    #[error("the tick subject's step stopped: {0:?}")]
+    Step(Box<SampleStop>),
     /// The sample reached a local time-lock before its horizon.
     #[error("the timed sample reached a local time-lock at {state:?}")]
     TimeLockedSample {
@@ -163,9 +171,11 @@ pub enum TimedSampleReplay {
 /// Sample one timed prefix through `horizon`, repeating FR-253's race.
 ///
 /// The first position is at time zero. The sample stops when a race has no
-/// scheduled identity, or when the next position would pass the horizon.
-/// Tied transitions are retained in their race order; only the first has a
-/// positive delay and every later tied transition has delay zero.
+/// scheduled identity, or when the next position would pass the horizon; the
+/// step that would pass it is kept as the crossing step. Tied transitions are
+/// retained in their race order; only the first has a positive delay and
+/// every later tied transition has delay zero. A tick subject runs no race:
+/// each step is FR-408's untimed step and stamps move by the tick period.
 pub fn sample_timed(
     system: &TimedSystem<'_, '_>,
     initial: &TimedState,
@@ -184,19 +194,52 @@ pub fn sample_timed(
     let mut states = vec![state.clone()];
     let mut stamps = vec![stamp.clone()];
     let mut idle = false;
+    let mut crossing = None;
+    let ticking = system.tick_period().is_some();
     while stamp <= *horizon {
-        let time_lock = system
-            .time_lock(
-                &state,
-                usize::try_from(DEFAULT_MAX_CLOCKS.get()).unwrap_or(usize::MAX),
-            )
-            .map_err(TimedRaceStop::Timed)?;
+        // A tick subject admits no delay of its own: its terminal states
+        // stutter (FSpec FR-420 "Tick subjects") and are no time-lock.
+        let time_lock = if ticking {
+            None
+        } else {
+            system
+                .time_lock(
+                    &state,
+                    usize::try_from(DEFAULT_MAX_CLOCKS.get()).unwrap_or(usize::MAX),
+                )
+                .map_err(TimedRaceStop::Timed)?
+        };
         if time_lock == Some(TimeLock::Local) {
             return Err(TimedSampleStop::TimeLockedSample {
                 state: system
                     .state_key(&state)
                     .map_err(|_| TimedRaceStop::StateKey)?,
             });
+        }
+        if ticking {
+            let at = StepAt {
+                seed: at.seed,
+                trace: at.trace,
+                step: u64::try_from(steps.len()).unwrap_or(u64::MAX),
+            };
+            let Some((step, next, advance)) = tick_step(system, &state, workload, at)? else {
+                idle = true;
+                break;
+            };
+            let next_stamp = stamp.add(&advance);
+            if next_stamp > *horizon {
+                crossing = Some(step);
+                break;
+            }
+            if u64::try_from(steps.len()).unwrap_or(u64::MAX) >= max_sample_steps {
+                return Err(TimedSampleStop::MaxSampleSteps);
+            }
+            steps.push(step);
+            state = next;
+            stamp = next_stamp;
+            states.push(state.clone());
+            stamps.push(stamp.clone());
+            continue;
         }
         let point = ChoicePoint {
             step: u64::try_from(steps.len()).unwrap_or(u64::MAX),
@@ -243,7 +286,24 @@ pub fn sample_timed(
         let mut advanced = false;
         for race_step in race.steps {
             let next_stamp = stamp.add(&race_step.delay);
-            if next_stamp > *horizon {
+            let rewards = step_rewards(system, &state, &race_step.transition)?;
+            let passes = next_stamp > *horizon;
+            if !passes && u64::try_from(steps.len()).unwrap_or(u64::MAX) >= max_sample_steps {
+                return Err(TimedSampleStop::MaxSampleSteps);
+            }
+            let post_state = system
+                .state_key(&race_step.state)
+                .map_err(|_| TimedRaceStop::StateKey)?;
+            let step = SampledStep {
+                transition: TransitionId::Operation(race_step.transition),
+                delay: Some(race_step.delay.clone()),
+                post_state,
+                choices: race_step.choices,
+                random: Vec::new(),
+                probability: race_step.probability,
+                rewards,
+            };
+            if passes {
                 return Ok(TimedSample {
                     trace: at.trace,
                     start,
@@ -253,23 +313,10 @@ pub fn sample_timed(
                     state,
                     stamp,
                     idle: false,
+                    crossing: Some(step),
                 });
             }
-            if u64::try_from(steps.len()).unwrap_or(u64::MAX) >= max_sample_steps {
-                return Err(TimedSampleStop::MaxSampleSteps);
-            }
-            let post_state = system
-                .state_key(&race_step.state)
-                .map_err(|_| TimedRaceStop::StateKey)?;
-            steps.push(SampledStep {
-                transition: TransitionId::Operation(race_step.transition),
-                delay: Some(race_step.delay.clone()),
-                post_state,
-                choices: race_step.choices,
-                random: Vec::new(),
-                probability: race_step.probability,
-                rewards: Vec::new(),
-            });
+            steps.push(step);
             state = race_step.state;
             stamp = next_stamp;
             states.push(state.clone());
@@ -290,6 +337,7 @@ pub fn sample_timed(
         state,
         stamp,
         idle,
+        crossing,
     })
 }
 
@@ -406,6 +454,7 @@ pub fn replay_timed_sample(
         || !same_start
         || replayed.stamp != record.stamp
         || replayed.idle != record.idle
+        || replayed.crossing != record.crossing
         || !same_state
     {
         return Ok(TimedSampleReplay::Disagrees(
@@ -424,6 +473,87 @@ impl TimedSample {
             steps: self.steps.clone(),
         }
     }
+}
+
+/// Every reward of the model for the step `transition` takes from `state`
+/// (FR-187): empty for a model that declares none.
+#[implements("FR-254-AC-5")]
+fn step_rewards(
+    system: &TimedSystem<'_, '_>,
+    state: &TimedState,
+    transition: &ModelTransition,
+) -> Result<Vec<(Identifier, Value)>, TimedSampleStop> {
+    let model = system.model_system();
+    if model.zero_rewards().is_empty() {
+        return Ok(Vec::new());
+    }
+    let actions = model
+        .enabled_actions(state.discrete())
+        .map_err(|stop| TimedRaceStop::Timed(TimedStop::Expansion(stop)))?
+        .map_err(|_| TimedSampleStop::Step(Box::new(SampleStop::UndecidedSuccessor)))?;
+    actions
+        .iter()
+        .flat_map(|action| &action.draws)
+        .find(|draw| draw.successors.iter().any(|(taken, _)| taken == transition))
+        .map(|draw| draw.rewards.clone())
+        .ok_or_else(|| TimedRaceStop::StateKey.into())
+}
+
+/// One step of a tick subject from `state`: FR-408's scheduler draw and
+/// random parameters over the identities the clocks enable, the reached
+/// timed state and the time it advances. `None` at an idle tail.
+#[implements("FR-254-AC-6")]
+fn tick_step(
+    system: &TimedSystem<'_, '_>,
+    state: &TimedState,
+    workload: &Workload,
+    at: StepAt,
+) -> Result<Option<(SampledStep, TimedState, Rational)>, TimedSampleStop> {
+    let successors = system.steps(state).map_err(TimedRaceStop::Timed)?;
+    let model = system.model_system();
+    let mut actions = model
+        .enabled_actions(state.discrete())
+        .map_err(|stop| TimedRaceStop::Timed(TimedStop::Expansion(stop)))?
+        .map_err(|_| TimedSampleStop::Step(Box::new(SampleStop::UndecidedSuccessor)))?;
+    for action in &mut actions {
+        for draw in &mut action.draws {
+            draw.successors.retain(|(transition, _)| {
+                successors
+                    .iter()
+                    .any(|(step, _)| step.transition() == transition)
+            });
+        }
+    }
+    actions.retain(|action| action.draws.iter().any(|draw| !draw.successors.is_empty()));
+    if actions.is_empty() {
+        return Ok(None);
+    }
+    let key = system
+        .state_key(state)
+        .map_err(|_| TimedRaceStop::StateKey)?;
+    let taken = take_enabled_step(model, workload, &actions, &key, at)
+        .map_err(|stop| TimedSampleStop::Step(Box::new(stop)))?;
+    let TransitionId::Operation(transition) = &taken.transition else {
+        return Err(TimedRaceStop::StateKey.into());
+    };
+    let (step, next) = successors
+        .into_iter()
+        .find(|(step, _)| step.transition() == transition)
+        .ok_or(TimedRaceStop::TieDisabled)?;
+    let advance = system.tick_of(step.operation());
+    let post_state = system
+        .state_key(&next)
+        .map_err(|_| TimedRaceStop::StateKey)?;
+    let sampled = SampledStep {
+        transition: taken.transition,
+        delay: Some(zero()),
+        post_state,
+        choices: taken.choices,
+        random: taken.random,
+        probability: taken.probability,
+        rewards: taken.rewards,
+    };
+    Ok(Some((sampled, next, advance)))
 }
 
 struct Candidate {

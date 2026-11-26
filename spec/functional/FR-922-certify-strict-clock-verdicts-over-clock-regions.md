@@ -13,6 +13,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-752
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-421
+    type: depends_on
 ---
 # FR-922: Certify strict-clock verdicts over clock regions
 
@@ -26,11 +30,9 @@ wrong value once a constraint is strict: a guard `x > 1` excludes the delay 1
 that digital clocks would take, so the strict case has its own route and its
 own certificate.
 
-When a timed claim is a bounded-window formula that FR-204 Admission "Route"
-does not give the digital MDP, EN-5 SHALL decide it over the region MDP in
-the same way, with a `route: "region"` document, even when every constraint
-is closed: its value can turn on a position being absent from a window,
-which integer time stamps cannot always arrange (FR-204-AC-26).
+When FR-204 Admission "Route" does not give a claim the digital MDP, EN-5
+SHALL decide it over the region MDP in the same way, with a `route: "region"`
+document, even when every constraint is closed (FR-204-AC-26, ADR-038).
 
 ## Use case
 
@@ -64,9 +66,8 @@ unsound, and the checker rejects a certificate that states it.
   between corners, whose minimum and maximum are the dense infimum and
   supremum.
 - The checker SHALL refuse `ObjectiveMismatch` for a digital document over a
-  claim the region route decides (a strict constraint, or a bounded-window
-  form FR-204 Admission "Route" sends to regions), and for a region document
-  over a claim the digital route decides.
+  claim the region route decides (FR-204 Admission "Route"), and for a region
+  document over a claim the digital route decides.
 
 ## Acceptance Criteria
 
