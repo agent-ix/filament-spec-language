@@ -785,7 +785,7 @@ fn zeno_only_unit() -> String {
 fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness() {
     let unit = zeno_only_unit();
     assert!(unit.contains("when { true } { self.x <= 0 ms }"), "{unit}");
-    let ws = Workspace::new("timed-sg-zeno-only");
+    let ws = Workspace::new("timed-sg-zeno-certificate");
     let run = analyze(&request_over(
         &ws,
         &unit,
@@ -821,4 +821,181 @@ fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness(
         "{temporal}"
     );
     assert!(temporal["certificate"].is_null(), "{temporal}");
+}
+
+/// The document item `analyze` writes for `item` over a timed subject whose
+/// object types the unit declares: `Derived` extends `Base` and the base
+/// population holds `c` as a `Derived`, so a binding of `over (c: Base)` has
+/// an admitted type other than its declared type. A domain package declaring
+/// both types cannot name one of them as its time source, and the `analyze`
+/// request reader names no population of a unit's own, so the binding is
+/// given directly. The selected domain package holds no object.
+fn settle_over_base(claim: &str, item: Value) -> Value {
+    use crate::timed_world::{world_over, DENSE};
+    use fsl_analyze::analyze::document::{
+        analyze_document, resolve_items, AnalyzeRun, ItemSelection, SubjectSelection,
+    };
+    use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision, SubjectBinding};
+    use fsl_eval::simulation::model::PopulationUniverse;
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    use fsl_semantics::model::observation::document_reference;
+
+    let world = world_over(
+        &crate::zone_search::rpc_document(),
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}\
+             time Base dense unit ms;\n\
+             object Base {{ x: Clock; population bases; }}\n\
+             object Derived extends Base {{ }}\n\
+             {claim}"
+        ),
+        &[],
+    );
+    let bases = world
+        .package
+        .graph()
+        .source_packages()
+        .iter()
+        .flat_map(|source| &source.records)
+        .find_map(|record| match record {
+            DomainPackageRecord::Population(population) => Some(population.key.clone()),
+            _ => None,
+        })
+        .expect("the unit declares one population");
+    let mut snapshot: Value = serde_json::from_slice(
+        world.snapshots.values().next().expect("one snapshot"),
+    )
+    .expect("snapshot JSON");
+    snapshot["populations"]
+        .as_array_mut()
+        .expect("snapshot populations")
+        .push(json!({"population": "bases", "complete": true,
+            "objects": [{"key": "c", "type": "Derived", "fields": {}}]}));
+    let bytes = snapshot.to_string().into_bytes();
+    let snapshots = std::collections::BTreeMap::from([(
+        document_reference(&bytes).expect("a document names itself"),
+        bytes,
+    )]);
+    let request = world.request();
+    let mut universes = request.universes.clone();
+    universes.push(PopulationUniverse {
+        population: bases,
+        keys: vec!["c".to_owned()],
+    });
+    let binding = SubjectBinding {
+        packages: request.packages,
+        snapshots: &snapshots,
+        initial: request.initial.clone(),
+        universes,
+    };
+    let engines = Engines::fsl().expect("the manifests register");
+    let mut registry = fsl_route::Registry::new();
+    for descriptor in engines.registrations() {
+        registry
+            .register(descriptor.clone())
+            .expect("a unique backend");
+    }
+    let selections: Vec<ItemSelection> =
+        serde_json::from_value(json!([item])).expect("an item selection");
+    let source = world.package.graph().source().clone();
+    let items = resolve_items(
+        &world.package,
+        &SubjectSelection::default_over(&snapshots),
+        Some(&selections),
+        &registry,
+        std::slice::from_ref(&source),
+        &binding,
+        &AnalyzeLimits::unbounded(),
+    );
+    let (document, _) = analyze_document(
+        AnalyzeRun {
+            package: &world.package,
+            binding,
+            provision: SourceProvision::single(&source, &world.unit),
+            items,
+            engines: &engines,
+            limits: AnalyzeLimits::unbounded(),
+        },
+        &crate::analyze_cli_support::Fr290,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("a settled run");
+    document["items"][0].clone()
+}
+
+/// FR-125 "Instancing"'s written binding of the held `Derived` under `c` for
+/// a parameter of type `Base`: `Base`'s universe, the admitted type `Derived`
+/// and the key.
+fn the_admitted_derived() -> Value {
+    json!({
+        "identity": "c",
+        "object_type": {
+            "original": {"node": "ix://source/package/Derived", "package": "source/package"},
+            "owner_effective_type": null
+        },
+        "type": "reference",
+        "universe": {
+            "ordinal": 0,
+            "package": "source/package",
+            "path": ["model", "object_type", "ix://source/package/Base"]
+        }
+    })
+}
+
+const BASE_POSSIBLE: &str = "possible AnyBase using v over (c: Base) { true }\n";
+
+/// FR-125 "Instancing": the zone route's state-graph evidence of
+/// `over (c: Base)` names the admitted `Derived`, and its replay and zone
+/// certificate accept that binding.
+#[trace("TC-520")]
+#[test]
+fn zone_state_graph_evidence_binds_the_admitted_member_type() {
+    let item = settle_over_base(BASE_POSSIBLE, json!({"claim": "AnyBase"}));
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(
+        item["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "c", "key": the_admitted_derived()}),
+        "{item}"
+    );
+}
+
+/// FR-125 "Instancing": the digital-clocks route's state-graph evidence of
+/// `over (c: Base)` names the admitted `Derived`, and its replay accepts that
+/// binding.
+#[trace("TC-520")]
+#[test]
+fn digital_state_graph_evidence_binds_the_admitted_member_type() {
+    let item = settle_over_base(
+        BASE_POSSIBLE,
+        json!({"claim": "AnyBase", "options": {"method": "digital-clocks"}}),
+    );
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(
+        item["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "c", "key": the_admitted_derived()}),
+        "{item}"
+    );
+}
+
+/// FR-125 "Instancing": a refuted zone temporal `over_binding` of
+/// `over (c: Base)` names the admitted `Derived`.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_zone_temporal_over_binding_names_the_admitted_member_type() {
+    let item = settle_over_base(
+        "temporal NeverBase using tt over (c: Base) clock \"model-time\" on origin \
+            { always holds(false) }\n",
+        json!({"claim": "NeverBase"}),
+    );
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    assert_eq!(
+        item["counterexample"]["over_binding"],
+        the_admitted_derived(),
+        "{item}"
+    );
 }

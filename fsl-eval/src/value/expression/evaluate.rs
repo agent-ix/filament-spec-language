@@ -1270,6 +1270,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self
     }
 
+    #[implements("FR-230-AC-71")]
     fn clock_place_reference(
         &self,
         node: N,
@@ -5237,6 +5238,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// the evaluator without it. A missing or ill-typed slot is caller input
     /// that refuses `invalid_runtime_input`/`wrong-value-kind`, never a fault
     /// or a misread.
+    #[implements("FR-106-AC-12")]
     fn admitted_slot<'o>(
         &self,
         objects: &'o ObjectEnvironment,

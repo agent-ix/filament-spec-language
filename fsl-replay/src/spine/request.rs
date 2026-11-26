@@ -14,6 +14,7 @@ use fsl_semantics::model::observation::{
     ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor, SelectedObject,
     SnapshotValue, collection_kind_of_tag,
 };
+use ix_trace_rs::implements;
 use quire_canonical::{Node, NodeRef};
 use serde_json::value::RawValue;
 
@@ -976,6 +977,27 @@ fn canonical_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestR
     String::from_utf8(bytes).map_err(|error| invalid(member, error.to_string()))
 }
 
+/// The identity text of the operation member `raw`, by FR-120's reader rule:
+/// a string holding an identity text is that text, any other string is a name,
+/// and an object is its canonical text.
+#[implements("FR-120-AC-39")]
+fn operation_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestReadError> {
+    let text = canonical_text(raw, member)?;
+    match text.bytes().next() {
+        Some(b'"') => {
+            let wire: String =
+                serde_json::from_str(&text).map_err(|error| invalid(member, error.to_string()))?;
+            Ok(if crate::outcome::is_identity_text(&wire) {
+                wire
+            } else {
+                text
+            })
+        }
+        Some(b'{') => Ok(text),
+        _ => Err(invalid(member, "an operation is a string or an object")),
+    }
+}
+
 /// One step of a model-arm behaviour; `None` for the terminal stutter step.
 fn model_step(
     step: &ModelStepWire,
@@ -997,7 +1019,7 @@ fn model_step(
             })?;
             let at = format!("{member}.transition");
             filament_semantic_value::model_transition::ModelTransition::new(
-                canonical_text(operation, &format!("{at}.operation"))?,
+                operation_text(operation, &format!("{at}.operation"))?,
                 transition
                     .receiver
                     .as_deref()
@@ -2077,6 +2099,75 @@ mod tests {
             super::model_step(&step("terminal-stutter"), "trace.steps[0]"),
             Ok(None)
         ));
+    }
+
+    /// FR-120-AC-1 (TC-471): a step written as its identity bytes, the
+    /// operation one string holding the identity text, reads back as that
+    /// transition; a string holding no JSON text is itself the typed value.
+    #[trace("TC-471", "FR-120-AC-1")]
+    #[test]
+    fn an_observed_model_step_reads_its_operation_string() {
+        let limits = quire_canonical::Limits::new(u64::MAX);
+        let operation = r#"{"node":"test/counters/Counter/increment","package":"test/counters"}"#;
+        let transition = filament_semantic_value::model_transition::ModelTransition::new(
+            operation.to_owned(),
+            None,
+            Vec::new(),
+            limits,
+        )
+        .expect("canonical identity");
+        let read = |identity: serde_json::Value| {
+            let step: super::ModelStepWire = serde_json::from_value(serde_json::json!({
+                "transition": identity,
+                "post_state": {"key": ""},
+            }))
+            .expect("the closed step shape");
+            super::model_step(&step, "trace.steps[0]")
+                .expect("a transition step")
+                .expect("not the terminal stutter")
+                .transition
+        };
+        let written: serde_json::Value =
+            serde_json::from_slice(&transition.canonical_bytes(limits).expect("identity bytes"))
+                .expect("identity JSON");
+        assert_eq!(written["operation"], operation);
+        assert_eq!(read(written), transition);
+        let named = read(serde_json::json!(
+            {"type": "transition", "operation": "increment", "receiver": null, "arguments": []}
+        ));
+        assert_eq!(named.operation(), r#""increment""#);
+    }
+
+    /// FR-120-AC-39 (TC-471): an operation string spelled like a JSON literal
+    /// or array is a name, an object member is its canonical text, and any
+    /// other member is refused.
+    #[trace("TC-471", "FR-120-AC-39")]
+    #[test]
+    fn an_observed_model_step_reads_a_literal_spelling_as_a_name() {
+        let read = |operation: serde_json::Value| {
+            let step: super::ModelStepWire = serde_json::from_value(serde_json::json!({
+                "transition": {"type": "transition", "operation": operation,
+                    "receiver": null, "arguments": []},
+                "post_state": {"key": ""},
+            }))
+            .expect("the closed step shape");
+            super::model_step(&step, "trace.steps[0]")
+                .map(|step| step.expect("not the terminal stutter").transition)
+        };
+        for name in ["true", "false", "null", "1", "[1]"] {
+            let transition = read(serde_json::json!(name)).expect("a name");
+            assert_eq!(transition.operation(), format!("\"{name}\""));
+        }
+        let object = read(serde_json::json!({"name": "tick"})).expect("an object");
+        assert_eq!(object.operation(), r#"{"name":"tick"}"#);
+        for other in [
+            serde_json::json!(true),
+            serde_json::json!(1),
+            serde_json::json!([1]),
+        ] {
+            let refused = read(other).expect_err("neither a string nor an object");
+            assert_eq!(refused.member, "trace.steps[0].transition.operation");
+        }
     }
 
     #[test]
