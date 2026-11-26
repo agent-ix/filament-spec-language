@@ -25,6 +25,7 @@ use crate::model_check::counterexample::{
     UndefinedEvaluation, UndefinedLocus,
 };
 use crate::refinement::{RefinementFailure, StepRejection};
+use crate::written_operation::WrittenOperation;
 
 /// Why a counterexample has no wire spelling here.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -454,25 +455,26 @@ fn read_document(
         // FR-120's reader rule; this reader also rebuilds a string beginning
         // `ix://` as the `{node, package}` identity.
         let operation_value = match operation_wire {
-            Json::String(operation) => match serde_json::from_str::<Json>(operation) {
-                Ok(value) if super::is_identity_text(operation) => value,
-                _ if operation.starts_with("ix://") => {
-                    let mut parts = operation
-                        .strip_prefix("ix://")
-                        .unwrap_or_default()
-                        .split('/');
-                    let owner = parts.next().filter(|part| !part.is_empty());
-                    let repository = parts.next().filter(|part| !part.is_empty());
-                    let package = owner
-                        .zip(repository)
-                        .map(|(owner, repository)| format!("{owner}/{repository}"))
-                        .ok_or_else(|| {
-                            malformed("invalid-value", format!("{pointer}/operation"))
-                        })?;
-                    json!({"node": operation, "package": package})
-                }
-                _ => Json::String(operation.clone()),
-            },
+            Json::String(operation)
+                if !WrittenOperation::is_identity_text(operation)
+                    && operation.starts_with("ix://") =>
+            {
+                let mut parts = operation
+                    .strip_prefix("ix://")
+                    .unwrap_or_default()
+                    .split('/');
+                let owner = parts.next().filter(|part| !part.is_empty());
+                let repository = parts.next().filter(|part| !part.is_empty());
+                let package = owner
+                    .zip(repository)
+                    .map(|(owner, repository)| format!("{owner}/{repository}"))
+                    .ok_or_else(|| malformed("invalid-value", format!("{pointer}/operation")))?;
+                json!({"node": operation, "package": package})
+            }
+            Json::String(operation) => WrittenOperation::from_wire(operation.clone())
+                .into_identity_text()
+                .and_then(|text| serde_json::from_str(&text))
+                .map_err(|_| malformed("invalid-value", format!("{pointer}/operation")))?,
             Json::Object(_) => operation_wire.clone(),
             _ => {
                 return Err(malformed(
@@ -2105,7 +2107,7 @@ fn probabilistic_wire_using(
         Ok::<_, CounterexampleWireError>(json!({
             "type": "transition",
             // The identity text itself, as one string (FR-120).
-            "operation": identity.operation,
+            "operation": WrittenOperation::identity(&identity.operation),
             "receiver": reference(&identity.receiver)?,
             "arguments": identity.arguments.iter().map(typed).collect::<Result<Vec<_>, _>>()?,
         }))

@@ -184,7 +184,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
             self.codec.encode_transition_in(
                 transition,
                 scope,
-                crate::outcome::task_source_operation,
+                crate::written_operation::WrittenOperation::task_source_spelling,
             )
         })
     }
@@ -320,7 +320,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
         self.codec.encode_transition_in(
             value,
             &mut self.scope,
-            crate::outcome::task_source_operation,
+            crate::written_operation::WrittenOperation::task_source_spelling,
         )
     }
 
@@ -1381,7 +1381,11 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         // FR-120's reader rule: a string holding an identity text is that
         // text, any other string a name, and an object its canonical text.
         let operation = scope.member("operation", |s| match &map["operation"] {
-            Value::String(text) if crate::outcome::is_identity_text(text) => s.text(text),
+            Value::String(text)
+                if crate::written_operation::WrittenOperation::is_identity_text(text) =>
+            {
+                s.text(text)
+            }
             Value::String(_) | Value::Object(_) => {
                 let operation = s.json(&map["operation"], 0)?;
                 canonical_text(&operation, s, limits)

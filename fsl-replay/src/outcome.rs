@@ -69,6 +69,7 @@ use crate::spine::{
     ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
+use crate::written_operation::WrittenOperation;
 use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
@@ -601,7 +602,7 @@ pub(crate) struct TimedStateWire {
 pub(crate) struct TimedTransitionWire {
     #[serde(rename = "type")]
     kind: &'static str,
-    operation: String,
+    operation: WrittenOperation,
     receiver: Option<serde_json::Value>,
     arguments: Vec<serde_json::Value>,
 }
@@ -610,32 +611,9 @@ pub(crate) struct TimedTransitionWire {
 pub(super) struct TaskSourceTransitionWire {
     #[serde(rename = "type")]
     kind: &'static str,
-    operation: String,
+    operation: WrittenOperation,
     receiver: Option<serde_json::Value>,
     arguments: Vec<serde_json::Value>,
-}
-
-/// Whether a written `operation` string is itself an identity text (FR-120):
-/// the JSON text of an object or of a string. Any other string is a name.
-#[implements("FR-120-AC-39")]
-pub(crate) fn is_identity_text(wire: &str) -> bool {
-    matches!(wire.trim_start().bytes().next(), Some(b'{' | b'"'))
-        && serde_json::from_str::<serde::de::IgnoredAny>(wire).is_ok()
-}
-
-/// The one `operation` string a task-source writer writes (FR-120): the
-/// identity text `text` itself, except that a name (a JSON string whose content
-/// is not itself an identity text) is written as that name, which the reader
-/// rule restores. Neither case copies.
-#[implements("FR-120-AC-40")]
-pub(crate) fn task_source_operation<'a>(
-    operation: &'a serde_json::Value,
-    text: &'a str,
-) -> &'a str {
-    match operation.as_str() {
-        Some(name) if !is_identity_text(name) => name,
-        _ => text,
-    }
 }
 
 impl From<&filament_semantic_value::model_transition::ModelTransition>
@@ -644,7 +622,7 @@ impl From<&filament_semantic_value::model_transition::ModelTransition>
     fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
         let operation: serde_json::Value = serde_json::from_str(identity.operation())
             .expect("canonical source operation identity");
-        let operation = task_source_operation(&operation, identity.operation()).to_owned();
+        let operation = WrittenOperation::task_source(&operation, identity.operation());
         let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
         Self {
             kind: "transition",
@@ -738,7 +716,7 @@ impl From<&filament_semantic_value::model_transition::ModelTransition> for Timed
             kind: "transition",
             // FSpec FR-181 writes the operation as one string: the identity
             // text itself (FR-120), as the canonical identity bytes do.
-            operation: identity.operation().to_owned(),
+            operation: WrittenOperation::identity(identity.operation()),
             receiver: identity.receiver().map(value),
             arguments: identity
                 .arguments()

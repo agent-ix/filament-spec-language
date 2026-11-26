@@ -21,7 +21,7 @@ use super::{
 };
 use crate::certificate::closure::CertificateRejection;
 use crate::certificate::{CertificateLocus, CertificateRule};
-use crate::outcome::is_identity_text;
+use crate::written_operation::WrittenOperation;
 use crate::TaskTransitionAction;
 
 /// The largest index or count the wire carries (RFC 8785 exact integers).
@@ -475,14 +475,9 @@ pub(crate) fn source_transition(
         .enumerate()
         .map(|(index, value)| typed(value, child(&arguments_at, index)))
         .collect::<Result<Vec<_>, _>>()?;
-    // FR-120's reader rule: a string holding an identity text is that text,
-    // any other string a name.
-    let operation = if is_identity_text(&operation) {
-        operation
-    } else {
-        serde_json::to_string(&Value::String(operation))
-            .or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))?
-    };
+    let operation = WrittenOperation::from_wire(operation)
+        .into_identity_text()
+        .or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))?;
     ModelTransition::new(operation, receiver, arguments, IDENTITY_LIMITS)
         .or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))
 }
