@@ -150,7 +150,7 @@ fn a_walk_inside_a_region_takes_no_state_or_edge_slot() {
         timed_world::DENSE,
     );
     let world = timed_world::world(
-        &timed_world::document(&["x"], &[("step", &["phase", "late"])]),
+        &timed_world::document(&["x"], &[("step", &["phase"])]),
         PROFILES,
         &body,
     );
