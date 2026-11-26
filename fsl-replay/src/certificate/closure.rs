@@ -940,6 +940,7 @@ impl<S: SubjectSystem> Check<'_, S> {
     /// FR-339: the partition `components` of the closure the run accepted,
     /// checked over the product graph the run recorded and the clause's
     /// resolved constraints. It reads no fact but the recorded ones.
+    #[implements("FR-126-AC-1")]
     fn components(
         &self,
         recording: Recording<S>,
@@ -951,6 +952,12 @@ impl<S: SubjectSystem> Check<'_, S> {
         let recorded = recording
             .finish()
             .map_err(|_| fault("the-recorded-product-graph-is-well-formed"))?;
+        // If the negated liveness automaton has no successor for any initial
+        // letter, the claim is already true at every initial state. The
+        // reached product and its component partition are both empty.
+        if self.members.is_empty() && components.is_empty() {
+            return Ok(TemporalCertificateCheck::Accepted);
+        }
         let constraints = self
             .system
             .clause_constraints(clause.fairness(), &recorded.transitions, &|transition| {

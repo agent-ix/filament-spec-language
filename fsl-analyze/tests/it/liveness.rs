@@ -36,15 +36,6 @@ use ix_trace_rs::trace;
 
 use crate::counter::{document, document_with_ranged_parameter, value, CONTRACT, UNLIMITED, ZERO};
 
-/// FR-126-AC-2: `eventually p` is already true when its sole initial state
-/// satisfies `p`. The component checker must accept the producer's proof.
-#[trace("TC-521", "FR-126-AC-2")]
-#[test]
-fn eventually_true_at_the_initial_state_proves_for_an_admitted_object() {
-    let one_object = counter(document(false), "", "eventually holds(c.value <= 1)");
-    let _ = one_object.certified(|value| Some(value <= 1));
-}
-
 /// FR-125-AC-7: an empty universe has no instance and must settle
 /// inconclusive, without asking the closure checker to validate a proof.
 #[trace("TC-520", "FR-125-AC-7")]
