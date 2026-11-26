@@ -1090,8 +1090,8 @@ they produce:
   package of the request's subjects (see Product identity, "One checked
   package"), `package` being the first subject's. `CheckedStepMatch` reads no
   state and no instance, so the encoder passes one `ParameterBinding` per
-  `clause.parameters` member, in parameter order, whose population is that
-  parameter's population and whose key is the request's key, and the readings
+  `clause.parameters` member, in parameter order, whose population is a
+  population of that parameter and whose key is the request's key, and the readings
   do not depend on them.
 - **The body's atoms are not evaluated.** An atom is read symbolically. The
   encoder reads `clause.condition(atom)` and `clause.component_reads(atom)`
@@ -1346,13 +1346,15 @@ impl HyperProductIdentity {
      an alias to its model, so the check is one subject per alias over one
      checked package;
   3. `instance-binding`, when `instance` does not hold exactly one pair per
-     member of `clause.parameters`, in parameter order, each key in that
-     parameter's universe, at the first parameter that breaks this. The
-     parameter's universe is the key list of the populations of its alias's
-     subject that admit the parameter's object type (FR-125 Instancing); an admitting subject
-     whose instances cannot be listed refuses `instance-binding`; and when
-     FR-120 does not admit the subject, it is the keys of all of that
-     subject's universes.
+     member of `clause.parameters`, in parameter order, each key an instance
+     of its parameter (FR-125 Instancing), at the first parameter that breaks
+     this. A universe key that no initial state admits is not an instance.
+     Over a subject whose `initial` list is empty, which admits no key, every
+     key of an overlapping population's universe is accepted, so that the
+     identity exists and the item settles `NoInitialState`. An admitting
+     subject whose instances cannot be listed refuses `instance-binding`; and
+     when FR-120 does not admit the subject, the accepted keys are those of
+     all of that subject's universes.
      `encode_hyper_query` then refuses a subject that FR-120 does not admit
      as `subject-binding` at its alias (FR-315-AC-51), after these four
      checks and before `hyper-body`;
@@ -1455,6 +1457,7 @@ impl HyperProductIdentity {
 | FR-315-AC-56 | Normal form of the refinement queries, over `CasRefinesCounter` and `CasRefinesCounter2`: no assertion of the `Initial` query or of any `Step { row }` query, the `commitB` row (row 1) included, holds a double negation, a Boolean constant as an operand of `not`, `and`, `or` or `=`, an `and` (`or`) operand of an `and` (`or`), a repeated `and` or `or` operand, an implication, a comparison of two literals or of a term with itself, a sum with a nested sum or two literal summands, an `ite` with a constant condition, equal branches or a constant branch, or a difference of two literals. `CasRefinesCounter`'s `Initial` query asserts `(and (not s0.c.busyA) (not s0.c.busyB) (= s0.c.tmpA 0) (= s0.c.tmpB 0) (= s0.c.value 0))` and then `(not (= s0.c.value 0))`; its `commitA` row assertion is the flat conjunction `(and s0.c.busyA (= s0.c.tmpA s0.c.value) (< s0.c.value 2) (or (not (< s0.c.tmpA 2)) (and (<= (- 1) s0.c.tmpA) (<= s0.c.tmpA 1))) (< s0.c.tmpA 2) (= s1.c.value (+ s0.c.tmpA 1)) (not s1.c.busyA) (= s1.c.busyB s0.c.busyB) (= s1.c.tmpA s0.c.tmpA) (= s1.c.tmpB s0.c.tmpB) (not (and (< s0.c.value 2) (or (not (< s0.c.value 2)) (and (<= (- 1) s0.c.value) (<= s0.c.value 1))) (= s1.c.value (+ s0.c.value 1)))))`. Each rule of Normal form, applied to a term that it rewrites, gives the term it states. | Test (TC-900) |
 | FR-315-AC-57 | The two Int-sorted linear terms from FR-314-AC-18's `t28`, `(* 1 (- (+ 1 x) y))` and `(* 1 (- x (+ (- 1) y)))`, each normalize to `(+ x (- y) 1)` and therefore print byte-for-byte equally. The normal form distributes only literal scaling over Int addition and subtraction, combines exact coefficients of equal Int atoms, and does not multiply two nonconstant terms; a product of two nonconstant terms is refused `out-of-fragment`. Rule 9 takes precedence over rule 7 for every linear term: `(- x) + (- y)` prints `(+ (- x) (- y))`, and `2*x + (-y)` prints `(+ (* 2 x) (- y))`, because only the exact two-atom coefficient pattern `+1,-1` with zero constant prints `(- t u)`. | Test (TC-900) |
 | FR-315-AC-58 | Over a `Counter` with a required `value` and an optional `held`, both `Int[0, 3]`, the universe `{c, d}`, both at `value` 0, `c.held` 0 and `d.held` absent, and the operation `inc`, which raises its receiver's `value` by 1 below 3 (frame `modifies self.value`, FR-154), take a package built by hand: the checked package of the unit whose clause is `eventually[0,3] holds(c.value = 3)` `on each` `when present(c.held) and (c.value < 2 or value(c.held) = 0)` under event-position false-extension, its guard replaced after S3 by the right operand `c.value < 2 or value(c.held) = 0` alone, whose presence obligation only the dropped operand discharged (FR-104, FR-337). The negated property of `Unrolling{depth: 2}` holds, at each position `p` in `0..=2` and for each instance `x`, the condition's definedness failure `(and (not h<p>) F)` with `F` = `(not (=> (not (< s<p>.x.value 2)) s<p>.x.held.present))`. Of its disjuncts only `d`'s at position 2 is satisfiable, and every model of it has `c.value` 0, 0, 0 and `d.value` 0, 1, 2: CG reads the prefix `inc` on `d` twice (rule 4b, UE-3) and names `over_binding` `d` (rule 4c). FR-128 replays that prefix, the condition read from the hand-built package, to `refuted` with `kind: UndefinedEvaluation` at position 2, cause `none-value`, its site naming the activation (FR-126); the same payload with `over_binding` `c` settles `inconclusive`, `ReplayParity`. | Test (TC-1201) |
+| FR-315-AC-59 | Over an HP-2 clause with one object parameter whose universe is `{v, w}` and whose initial states hold an object under `v` only, `HyperProductIdentity::of` at the instance `w` refuses `instance-binding` at the parameter, and at `v` returns an identity. With an empty `initial` list it returns an identity at `v`, and the item settles `NoInitialState`. | Test (TC-3219) |
 
 ## Dependencies
 
