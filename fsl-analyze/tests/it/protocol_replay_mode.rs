@@ -2769,6 +2769,8 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
                 "{outstanding} {node}: {item}"
             );
         }
+        let order: Vec<usize> = (0..14).collect();
+        assert_every_verdict_only_advances(prefixes, &order);
         assert_eq!(prefixes[13]["obligations"], item["obligations"], "{item}");
     }
 }

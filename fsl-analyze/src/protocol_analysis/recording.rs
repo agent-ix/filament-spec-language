@@ -1749,6 +1749,7 @@ fn validate_identities(document: &RecordingDocument) -> Result<(), RecordingRefu
     Ok(())
 }
 
+#[implements("FR-895-AC-42")]
 fn assess_obligations(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,
@@ -1980,17 +1981,8 @@ fn assess_obligations(
                 let mut guard_failed = false;
                 let mut guard_pending = false;
                 for group in grouped.values() {
-                    let repeated_choice_is_ambiguous = control_repeat_limit(protocol, control) > 1
-                        && group
-                            .iter()
-                            .map(|(_, observation)| observation.node.as_str())
-                            .collect::<BTreeSet<_>>()
-                            .len()
-                            > 1;
-                    if repeated_choice_is_ambiguous {
-                        guard_pending = true;
-                        continue;
-                    }
+                    // A repeated choice's each recorded case has its own
+                    // guard result at that observation's causal position.
                     for (position, observation) in group {
                         let Some(choice) = choice else {
                             guard_failed = true;
