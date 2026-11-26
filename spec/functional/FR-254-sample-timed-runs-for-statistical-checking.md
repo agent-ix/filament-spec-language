@@ -61,17 +61,49 @@ server is available. Each estimate comes with its confidence and the grid
   h` SHALL be the time-stamp difference of the two positions. `weighted by
   delay` SHALL weight each position by the delay of the step that leaves
   it.
-- **Given delays only.** If an identity with a free delay (FR-253) races
-  at a sampled timed state, then EN-4 SHALL settle the item `unsupported`,
-  `NotStochastic{state, identity}`, at the first such state.
+- **Time windows.** For a time horizon `h`, EN-4 SHALL read the window FSpec
+  FR-407 "Time windows" states: every position from the activating one whose
+  stamp is at most `h` after it, inclusive, each step's post-state its own
+  position, several at one stamp included; a delay and the instant `h` add
+  none. This holds for a formula and for every measure: an unweighted
+  fraction is the positions where `P` holds over the positions in the window,
+  never over `h + 1`, and the positions of `accumulate`, `steps` and
+  `elapsed` are positions of the window. No form with a time horizon SHALL be
+  read with a step horizon.
+- **Step rewards.** Each sampled timed step SHALL carry its rewards. Under
+  `weighted by R`, EN-4 SHALL draw the step that leaves a window position even
+  when it lands after the window's end, weigh the position by its reward and
+  add no position for it.
+- **Tick subjects.** Under a `time tick` source EN-4 SHALL run no race and
+  dispose no identity as free: it takes the statistical design's untimed step
+  (FSpec FR-420 "Tick subjects") and stamps each position with the period
+  times the tick-operation steps up to it.
+- **Idle tail under a tick source.** Where a `time tick` sample reaches an
+  idle tail before its window ends, EN-4 SHALL read the terminal stutter
+  positions stamped within the window.
+- **Idle tail under dense time.** Where a `time dense` sample reaches an idle
+  tail before its window ends, EN-4 SHALL decide the sample's reading over
+  every completion of FSpec FR-420 "Windows on an idle tail", by the tests
+  stated there, never by trying chosen values of `m`.
+- Where all completions give one reading, EN-4 SHALL settle the sample with
+  that reading.
+- If two completions give different readings, then EN-4 SHALL stop the run at
+  the first such sample in trace-index order and settle the item
+  `unsupported`, `not-stochastic` with `state`, the idle tail's first timed
+  state, and `idle_tail` true, with no `identity` (FSpec FR-331).
+- **Given delays only.** Over a `time dense` subject, if an identity with a
+  free delay (FR-253) races at a sampled timed state, then EN-4 SHALL settle
+  the item `unsupported`, `NotStochastic{state, identity}`, at the first such
+  state.
 - **Draws.** A `discrete` draw SHALL select by exact integer weights. A
   `uniform`, `uniform[a, b]` or `exponential` draw SHALL take a uniform value `u` on a grid
   of `2^-q` from the generator and return the conditioned inverse
   distribution function at `u`, computed by the statistical design's
   rational method and rounded up, an exact rational. Each delay draw and
   each tie-break SHALL be one more choice with its own choice index.
-- A sample SHALL end when its next position's time stamp passes the
-  horizon, or at an idle tail.
+- A sample SHALL end when its next position's time stamp passes the end of
+  its window, the horizon after the activating position's stamp, or at an idle
+  tail.
 - If a sample reaches a local time-lock before its horizon, where no
   positive delay is admissible and no transition identity is enabled, then
   EN-4 SHALL settle the item `unsupported`, `TimeLockedSample{state}`,
@@ -108,6 +140,10 @@ server is available. Each estimate comes with its confidence and the grid
 | FR-254-AC-2 | Every sampled delay is an exact rational; a sampled witness replays through `replay_sampled_witness` (FR-193) with FR-237's timed steps, and its draws recompute from the seed; the same witness with one delay changed fails draw recomputation. With `q` 8, the basis records 8 and each sampled `uniform` or `exponential` delay equals the rounded-up conditioned inverse distribution function at a multiple of `2^-8`. | Test (TC-709) |
 | FR-254-AC-3 | `elapsed from holds(c.phase = Waiting) until holds(c.phase != Waiting) within 3 ms` reads each sample's time-stamp difference; a model that never returns to its initial discrete state with every clock 0 settles `incomplete`, `limit-reached` naming `statistical.max_cycle_steps` under the regenerative method; an `exact` request over the strict-guard `Rpc` variant is decided over clock regions (FR-204), never admitted as untimed. `RareLate` with no `delay` declaration on `timeout` settles `unsupported`, `NotStochastic`, naming the state just after `send` and `timeout`. `RareLate` with `max_sample_steps` 1 stops `Incomplete(LimitReached{limit, value, setting})` naming `max_sample_steps`, 1 and `statistical.max_sample_steps` (FR-255's engine table). | Test (TC-709) |
 | FR-254-AC-4 | A stochastic `Lock` variant (one object `c` with `phase: {A, B}` and a clock `x` never reset; `go` moves `A` to `B`, with `delay Lock::go ~ discrete { 1/2 ms: 1 };`; `time invariant when phase = B { x <= 1 ms }`; no operation enabled in `B`) samples `go` at `1/2`, delays to `(B, x = 1)`, where no positive delay is admissible and no identity is enabled, and settles `unsupported`, `TimeLockedSample` naming that state, with no witness kept. | Test (TC-709) |
+| FR-254-AC-5 | On TC-709's `Send` fixture (`send` at 2 ms, `reply` 10 ms later), `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` reads the positions stamped 0 and 2 ms and settles `Rejected` with estimate `1/2`; with `reward cost` 1 on `send` and 3 on `reply`, the `weighted by cost` form settles `Rejected` with estimate `3/4`, reading the reward of the `reply` step that lands at 12 ms. | Test (TC-709) |
+| FR-254-AC-6 | On TC-709's `Tick` fixture (`time tick`, period 2 ms), `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` reads the positions stamped 0, 0, 2 and 4 ms and settles `Rejected` with estimate `3/4`; `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]` settles `Accepted` with estimate 1, and with `[3 ms, 3 ms]` `Rejected` with estimate 0. No item is `NotStochastic`. | Test (TC-709) |
+| FR-254-AC-7 | On TC-709's `Idle` fixture (`send` at 2 ms, then an idle tail), each is decided, as every completion gives one reading: `probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]` estimate 1, `Accepted`; the same with `<= rational(2, 5)` estimate 0, `Rejected`; `mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25` estimate 1, `Rejected`; `mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25` estimate 0, `Accepted`; with `reward cost` 1 on `send`, `mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25` estimate 0, `Accepted`; `probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]` estimate 0, `Rejected`; `probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]` censored, estimate 0, `Rejected`; `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]` estimate 0, `Rejected`; `probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]` estimate 1, `Accepted`. | Test (TC-709) |
+| FR-254-AC-8 | On the `Idle` fixture, each of these settles `unsupported`, `not-stochastic` with the timed state just after `send`, `idle_tail` true and no `identity`: `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` (values `(1 + m)/(2 + m)`); `probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(3, 5)]` (true at `m = 0`, false for large `m`); `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]` (false with no stutter position, true with one at 4 ms). With `send` at 5 ms the first claim settles `Rejected` with estimate `1/2`. | Test (TC-709) |
 
 ## Dependencies
 
@@ -124,6 +160,7 @@ server is available. Each estimate comes with its confidence and the grid
 ## References
 
 - FSpec half: FSpec FR-420 (Linear STD-139) owns timed events and
-  measures, free delays and the sampler's delay draws on the `2^-q` grid
-  (ADR-026 OV-8); FSpec FR-408 (Linear STD-137) owns the
+  measures, free delays, the sampler's delay draws on the `2^-q` grid, tick
+  subjects and windows on an idle tail
+  (ADR-026 OV-8); FSpec FR-407 owns time windows; FSpec FR-408 (Linear STD-137) owns the
   statistical methods.
