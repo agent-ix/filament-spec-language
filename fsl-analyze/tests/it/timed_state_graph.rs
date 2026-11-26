@@ -917,7 +917,7 @@ fn escape_run(name: &str, extra: Option<&str>, claim: &str) -> Value {
 /// the item is inconclusive: never a counterexample that ends where the
 /// target is still reachable.
 #[trace("TC-2412", "FR-852-AC-34")]
-#[trace("TC-1742", "FSpec-FR-712-AC-11")]
+#[trace("TC-1742", "FSpec-FR-712-AC-12")]
 #[test]
 fn zones_report_no_trap_stem_that_ends_where_the_target_is_reachable() {
     for (name, claim) in [
@@ -946,7 +946,7 @@ fn zones_report_no_trap_stem_that_ends_where_the_target_is_reachable() {
 /// A later violating node whose trapped states a step lands in gives the
 /// stem, although an earlier node's are reached only by waiting.
 #[trace("TC-2412", "FR-852-AC-34")]
-#[trace("TC-1742", "FSpec-FR-712-AC-11")]
+#[trace("TC-1742", "FSpec-FR-712-AC-12")]
 #[test]
 fn zones_take_the_trap_stem_from_a_node_a_step_lands_in() {
     for (name, claim) in [
@@ -976,7 +976,7 @@ fn zones_take_the_trap_stem_from_a_node_a_step_lands_in() {
 /// Phase 1 has a trap no stem reaches, and phase 0 has two sequences to
 /// phase 2: the second violation refutes.
 #[trace("TC-2412", "FR-852-AC-34")]
-#[trace("TC-1742", "FSpec-FR-712-AC-11")]
+#[trace("TC-1742", "FSpec-FR-712-AC-12")]
 #[test]
 fn zones_refute_by_two_sequences_beside_a_trap_with_no_stem() {
     let item = escape_run(

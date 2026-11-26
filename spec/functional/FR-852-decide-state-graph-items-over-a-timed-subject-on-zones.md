@@ -104,7 +104,7 @@ and `exploration`.
   states, with the search's path to the node; the first that ends in a violating
   state is the trap. When none does, `unique path` SHALL still search for two
   sequences. With neither, the instance has no counterexample form: the item
-  SHALL settle `inconclusive` `lasso-not-concretized` (FSpec FR-712-AC-11),
+  SHALL settle `inconclusive` `lasso-not-concretized` (FSpec FR-712-AC-12),
   never `refuted` with another path, unless another instance is `refuted`.
 - **Certificate.** A proof or refutation SHALL carry EN-6's zone certificate
   (FR-245) over the explored zone graph and, for `always possible`, FSpec
