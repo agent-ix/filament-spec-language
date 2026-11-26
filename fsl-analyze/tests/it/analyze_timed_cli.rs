@@ -1571,38 +1571,36 @@ fn no_fair_behaviour_comes_before_an_undefined_refutation() {
     );
 }
 
-/// FR-125-AC-13: a subject with no clock whose population has no universe is
-/// refused for the missing bound, ahead of its empty initial list, on a temporal
-/// claim and a state-graph claim, each on both timed routes.
-#[trace("FR-125-AC-13")]
-#[test]
-fn a_timed_claim_over_no_universe_requires_a_bound() {
+/// A temporal claim and a state-graph claim, each on both timed routes, over
+/// `model` with `body`, no initial state and a universe snapshot listing no
+/// population: each item's result, diagnostic code and cause.
+fn over_no_universe(name: &str, model: &[u8], body: &str) -> Vec<(String, String, String)> {
     use crate::timed_world::{unit_text, DENSE, PACKAGE};
     let unit = unit_text(
         PACKAGE,
         crate::zone_search::TIMED,
         &format!(
-            "{DENSE}temporal Safe using tt over (c: M::Call) clock \"model-time\" on \
+            "{DENSE}{body}temporal Safe using tt over (c: M::Call) clock \"model-time\" on \
              origin {{ always holds(true) }}\n\
              possible Reaches using v over (c: M::Call) {{ c.phase = 1 }}\n"
         ),
     );
     let digital = json!({"method": "digital-clocks"});
-    let ws = Workspace::new("timed-no-universe");
+    let ws = Workspace::new(name);
     let mut universe: Value = serde_json::from_slice(&rpc_snapshot()).expect("the snapshot");
     universe["identity"]["identity"] = json!("u0");
     universe["populations"] = json!([]);
     let run = analyze(&request_over(
         &ws,
         &unit,
-        &crate::timed_world::document(&[], &[("go", &["phase"])]),
+        model,
         &[rpc_snapshot(), universe.to_string().into_bytes()],
         json!({"items": [{"claim": "Safe"}, {"claim": "Safe", "options": digital.clone()},
             {"claim": "Reaches"}, {"claim": "Reaches", "options": digital}],
             "subject": {"initial_states": [], "universes": [{"authority": "test", "identity": "u0"}],
                 "proof_bounds": []}}),
     ));
-    let found: Vec<(String, String, String)> = (0..4)
+    (0..4)
         .map(|n| {
             let record = &run.item(n)["record"];
             let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
@@ -1612,11 +1610,39 @@ fn a_timed_claim_over_no_universe_requires_a_bound() {
                 text(&record["diagnostic"]["cause"]),
             )
         })
-        .collect();
-    let expected = (
-        "unsupported".to_owned(),
-        "unsupported_projection".to_owned(),
-        "unbounded-extent".to_owned(),
+        .collect()
+}
+
+fn requires_bound_on_all_four() -> Vec<(String, String, String)> {
+    vec![
+        (
+            "unsupported".to_owned(),
+            "unsupported_projection".to_owned(),
+            "unbounded-extent".to_owned(),
+        );
+        4
+    ]
+}
+
+/// FR-125-AC-13: a subject with no clock whose population has no universe is
+/// refused for the missing bound, ahead of its empty initial list.
+#[trace("FR-125-AC-13")]
+#[test]
+fn a_timed_claim_over_no_universe_requires_a_bound() {
+    let model = crate::timed_world::document(&[], &[("go", &["phase"])]);
+    assert_eq!(
+        over_no_universe("timed-no-universe", &model, ""),
+        requires_bound_on_all_four()
     );
-    assert_eq!(found, vec![expected; 4], "{}", run.document());
+}
+
+/// FR-125-AC-13 with a clock the population's objects own: its clocks cannot
+/// be listed without the universe, which is a missing bound, not a bad value.
+#[trace("FR-125-AC-13")]
+#[test]
+fn a_clock_owner_with_no_universe_requires_a_bound() {
+    assert_eq!(
+        over_no_universe("timed-no-universe-clocked", &locking_document(), LOCKING),
+        requires_bound_on_all_four()
+    );
 }
