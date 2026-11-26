@@ -485,3 +485,163 @@ fn a_refused_deep_sum_peaks_in_proportion_to_its_length() {
         "peak live bytes grew faster than the sum: {short} at 1,000 terms, {long} at 4,000"
     );
 }
+
+/// A checked unit selecting a model package that holds a chain of `edges`
+/// operation redefinitions: `edges + 1` object types, each a direct subtype of
+/// the one before, whose one operation redefines its parent's. The effective
+/// view holds one declaration per type and inherited member, so the model
+/// correspondence body grows with the square of `edges`.
+fn redefinition_chain_package(edges: usize) -> (CheckedPackage, Vec<u8>) {
+    use super::tc235_k2::{declaration, domain_document, id, operation};
+
+    let types: Vec<Value> = (0..=edges)
+        .map(|level| {
+            let name = format!("A{level}");
+            let mut redefiner = operation(&name, &format!("op{level}"));
+            let mut supertypes = Vec::new();
+            if let Some(parent) = level.checked_sub(1) {
+                redefiner["redefines"] = json!(id(&format!("A{parent}/op{parent}")));
+                supertypes.push(id(&format!("A{parent}")));
+            }
+            declaration(
+                &name,
+                "thing",
+                json!({
+                    "supertypes": supertypes,
+                    "fields": [], "operations": [redefiner],
+                }),
+            )
+        })
+        .collect();
+    let document = super::wire_bytes(&domain_document(
+        types,
+        // An object type that needs no identity field, so the chain declares
+        // operations and nothing else.
+        vec![json!({
+            "kind": {"module": super::tc235_k2::BUSINESS, "name": "thing"},
+            "moduleVersion": "1.0.0",
+            "construct": {
+                "identity": "none", "shape": "record", "members": {},
+                "meaning": fsl_semantics::model::intake::meaning::OBJECT_TYPE,
+            },
+        })],
+    ))
+    .expect("the chain package encodes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the chain package is admitted");
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+                profile P = \"filament.model.complete/v1\";\n\
+                model M = \"test/orders\";\n\
+                function keep using P(): Boolean pure { true }\n";
+    let mut declarations = super::assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles against the chain package");
+    let pending = declarations
+        .link_dispatch(Default::default())
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
+    (CheckedPackage::link(graph), document)
+}
+
+/// The model correspondence body of a redefinition chain is charged while it
+/// is built: a refused emission's peak live bytes stay near the bound when the
+/// chain, and so the whole body, grows about fourfold. The charge never
+/// exceeds what the package carries: it still emits at exactly its length.
+#[trace("TC-738", "FR-264-AC-6", "FR-264-AC-9")]
+#[test]
+fn an_over_limit_model_correspondence_is_refused_before_it_is_built() {
+    const BOUND: u64 = 64 * 1024;
+    let refused = |package: &CheckedPackage, bound: u64| {
+        let mut outcome = None;
+        let info = allocation_counter::measure(|| {
+            outcome = Some(crate::emit::emit_checked_uncached(
+                package,
+                &Cancel::new(),
+                EmitLimits::new(bound),
+            ));
+        });
+        let limit = limit_of(
+            outcome
+                .expect("emission ran")
+                .expect_err("a bound below N refuses"),
+        );
+        assert_eq!(limit.setting(), Setting::EmitOutputBytes);
+        assert_eq!(limit.configured_bound(), bound);
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
+        info
+    };
+    let _ = allocation_counter::measure(|| {});
+
+    let short = redefinition_chain_package(32).0;
+    let long = redefinition_chain_package(64).0;
+    let (short_peak, long_peak) = (
+        refused(&short, BOUND).bytes_max,
+        refused(&long, BOUND).bytes_max,
+    );
+    eprintln!("short_peak={short_peak} long_peak={long_peak}");
+    assert!(
+        long_peak < short_peak.saturating_mul(2),
+        "peak live bytes follow the bound, not the chain: {short_peak} then {long_peak}"
+    );
+
+    let bytes = u64::try_from(emitted_byte_count_of(&long)).expect("a fixture length");
+    let exact = emitted_at(&long, bytes).expect("a ceiling of exactly N bytes emits");
+    assert_eq!(exact.package().bytes().len() as u64, bytes);
+    let early = refused(&long, bytes / 10).count_total;
+    let late = refused(&long, bytes - 1).count_total;
+    eprintln!("bytes={bytes} early={early} late={late}");
+    assert!(
+        early.saturating_mul(3) < late.saturating_mul(2),
+        "an early refusal skips the rest of the body: {early} against {late}"
+    );
+}
+
+/// The strict reader rebuilds, from a chain package emitted at exactly its
+/// length, one declaration per type and one per type and member it declares or
+/// inherits, hidden redefined members included.
+#[trace("TC-738", "FR-264-AC-6")]
+#[test]
+fn a_chain_correspondence_emitted_at_its_length_reads_back_every_declaration() {
+    let (package, document) = redefinition_chain_package(2);
+    let emit = |bound: u64| {
+        crate::emit::emit_checked_uncached(&package, &Cancel::new(), EmitLimits::new(bound))
+    };
+    let emitted = emit(u64::MAX).expect("a raised output limit emits");
+    let bytes = u64::try_from(emitted.package().bytes().len()).expect("a fixture length");
+    let emission = emit(bytes).expect("a ceiling of exactly N bytes emits");
+
+    let mut read: Vec<(Option<String>, String)> =
+        super::source_objects::read_correspondence(&emission, &document)
+            .into_iter()
+            .map(|preimage| {
+                let owner = preimage
+                    .owner_effective_type
+                    .map(|owner| owner.original().node().to_owned());
+                (owner, preimage.original.node)
+            })
+            .collect();
+    read.sort();
+
+    let id = super::tc235_k2::id;
+    let declared = |name: &str| (None, id(name));
+    let member = |owner: &str, name: &str| (Some(id(owner)), id(name));
+    assert_eq!(
+        read,
+        vec![
+            declared("A0"),
+            declared("A1"),
+            declared("A2"),
+            member("A0", "A0/op0"),
+            member("A1", "A0/op0"),
+            member("A1", "A1/op1"),
+            member("A2", "A0/op0"),
+            member("A2", "A1/op1"),
+            member("A2", "A2/op2"),
+        ]
+    );
+}

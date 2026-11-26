@@ -253,7 +253,7 @@ fn correspondence_unit(diamond: bool, declarations: &str) -> (Emission, Vec<u8>)
     (emission, document)
 }
 
-fn read_correspondence(
+pub(super) fn read_correspondence(
     emission: &Emission,
     document: &[u8],
 ) -> Vec<fsl_semantics::model::key::EffectiveDeclarationPreimage> {

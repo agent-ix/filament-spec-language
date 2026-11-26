@@ -12,7 +12,9 @@ use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::model::key::EffectiveDeclarationPreimage;
 
-use super::{claim_literal, node_id, push_scalar_type, source_artifact, EmitRefusal, GRAPH_V2};
+use super::{
+    claim_literal, node_id, push_scalar_type, source_artifact, EmitRefusal, OutputMeter, GRAPH_V2,
+};
 
 /// Append one model-correspondence node per `model_root` that has an admitted
 /// effective view, in `model_roots` order. Aliases that select one package
@@ -22,12 +24,18 @@ use super::{claim_literal, node_id, push_scalar_type, source_artifact, EmitRefus
 /// The body is a flat, ordered sequence of typed scalar terms. Its closed
 /// grammar is documented by `append_preimage`; the strict reader rebuilds
 /// the original model preimage types without encoding identities as strings.
+///
+/// A body holds one preimage per effective declaration, so it can be far larger
+/// than the model it comes from: each preimage's terms are charged to `meter` as
+/// they are built (FR-264 Behavior 5), and an over-limit body is refused before
+/// the rest of it exists.
 pub(super) fn append(
     ids: &StructuralIds,
     graph: &CheckedGraph,
     regions: &impl Fn(&filament_semantic_value::location::ExpressionLocation) -> Option<SourceRegion>,
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
+    meter: &mut OutputMeter,
 ) -> Result<(), EmitRefusal> {
     // The source model is selected under the empty alias.
     let views: Vec<_> = graph
@@ -75,9 +83,16 @@ pub(super) fn append(
             &integer_type,
             view.declarations().len().to_string(),
         )?;
-        for entry in view.declarations() {
-            append_preimage(&mut members, &entry.preimage, &text_type, &integer_type)?;
-        }
+        meter.section(|section| {
+            for entry in view.declarations() {
+                let built = members.len();
+                append_preimage(&mut members, &entry.preimage, &text_type, &integer_type)?;
+                for term in &members[built..] {
+                    section.push(term)?;
+                }
+            }
+            Ok(())
+        })?;
         let key = fsl_semantics::check::structural_node_key(
             graph.package_name(),
             vec![
