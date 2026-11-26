@@ -3429,7 +3429,11 @@ fn a_policy_over_an_omitted_or_incomplete_population_refuses_at_initial() {
         .expect("config_history row");
     row["complete"] = json!(false);
 
-    let unit = plan_unit("Int[0,1]", "", "Reach.length >= 1");
+    let unit = plan_unit("Int[0,1]", "", "Reach.length >= 1").replace(
+        "synthesis Reach",
+        r#"temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber != 4) }
+synthesis Reach"#,
+    );
     for (snapshot, cause) in [
         (omitted.clone(), "missing-required-artifact"),
         (incomplete.clone(), "incomplete-scope"),
@@ -3440,7 +3444,7 @@ fn a_policy_over_an_omitted_or_incomplete_population_refuses_at_initial() {
             &unit,
             "spine-model.semantic-ir.json",
             "spine-initial.json",
-            json!({"policy":[if cause == "incomplete-scope" { "MissingPolicy" } else { "SomeTime" }], "limits":{"max_states":1}}),
+            json!({"policy":[if cause == "incomplete-scope" { "MissingPolicy" } else { "NeverFour" }], "limits":{"max_states":1}}),
         );
         assert_eq!(exit, 22, "{value}");
         assert_eq!(value["code"], "incomplete_population", "{value}");
@@ -3456,7 +3460,7 @@ fn a_policy_over_an_omitted_or_incomplete_population_refuses_at_initial() {
         &unit,
         "spine-model.semantic-ir.json",
         "spine-initial.json",
-        json!({"policy":["SomeTime"], "limits":{"max_states":1}}),
+        json!({"policy":["NeverFour"], "limits":{"max_states":1}}),
     );
     assert_eq!(exit, 22, "{value}");
     assert_eq!(value["code"], "incomplete_population", "{value}");
@@ -3491,7 +3495,7 @@ fn a_policy_over_an_omitted_or_incomplete_population_refuses_at_initial() {
         &unit,
         "spine-model.semantic-ir.json",
         "spine-initial.json",
-        json!({"policy":["SomeTime", "MissingPolicy"], "limits":{"max_states":1}}),
+        json!({"policy":["NeverFour", "MissingPolicy"], "limits":{"max_states":1}}),
     );
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["code"], "missing_declaration", "{value}");
@@ -3608,7 +3612,7 @@ fn a_plan_policy_with_no_admitted_instance_is_inconclusive() {
         value["synthesis"],
         json!({
             "format":"filament.plan-outcome/v1",
-            "package":"example/config-version",
+            "package":"test:w21:unit.native",
             "declaration":"Reach",
             "status":"inconclusive",
             "objective":{"direction":"minimize", "expression":"length", "value":null},
@@ -3685,6 +3689,9 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
         first["fields"]["versionNumber"] = json!({"integer":"0"});
         second["key"] = json!("a");
         second["fields"]["versionNumber"] = json!({"integer":"0"});
+        if second["fields"]["parent"]["present"].is_object() {
+            second["fields"]["parent"]["present"]["reference"]["key"] = json!("b");
+        }
         *objects = vec![first.clone(), second.clone()];
         (first, second)
     };
