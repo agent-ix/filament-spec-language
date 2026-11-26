@@ -2321,6 +2321,8 @@ fn partial_lower_action_sum(
     }
     Ok(sum)
 }
+/// The first activated state the tight actions reach from the initial state,
+/// breadth-first with each layer in canonical order (FR-201's locus).
 fn tight_activation(
     graph: &Graph,
     values: &BTreeMap<ProbabilityProductKey, Rational>,
@@ -2328,29 +2330,32 @@ fn tight_activation(
     cancel: &Cancel,
 ) -> Result<Option<ProbabilityProductKey>, ProbabilityDocumentError> {
     let mut seen = BTreeSet::from([graph.initial.clone()]);
-    let mut queue = VecDeque::from([graph.initial.clone()]);
-    let mut activated = BTreeSet::new();
-    while let Some(key) = queue.pop_front() {
-        poll(cancel)?;
-        let state = graph
-            .states
-            .get(&key)
-            .ok_or(ProbabilityDocumentError::Malformed)?;
-        if state.activated {
-            activated.insert(key.clone());
-        }
-        for choice in &state.choices {
-            if values.get(&key) != Some(&action_sum(choice, values, meter, cancel)?) {
-                continue;
+    let mut layer = BTreeSet::from([graph.initial.clone()]);
+    while !layer.is_empty() {
+        let mut next = BTreeSet::new();
+        for key in &layer {
+            poll(cancel)?;
+            let state = graph
+                .states
+                .get(key)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            if state.activated {
+                return Ok(Some(key.clone()));
             }
-            for edge in choice {
-                if !edge.probability.is_zero() && seen.insert(edge.target.clone()) {
-                    queue.push_back(edge.target.clone());
+            for choice in &state.choices {
+                if values.get(key) != Some(&action_sum(choice, values, meter, cancel)?) {
+                    continue;
+                }
+                for edge in choice {
+                    if !edge.probability.is_zero() && seen.insert(edge.target.clone()) {
+                        next.insert(edge.target.clone());
+                    }
                 }
             }
         }
+        layer = next;
     }
-    Ok(activated.into_iter().next())
+    Ok(None)
 }
 /// For a `>= c` quantile whose initial shifted maximum is exactly 0, the first
 /// activated state its tight actions reach: some scheduler may then meet the

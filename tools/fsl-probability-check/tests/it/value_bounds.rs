@@ -750,8 +750,7 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
     assert_eq!(code, 2, "{output}");
     assert_eq!(output["status"], "refused", "{output}");
     assert_eq!(
-        output["reason"],
-        "invalid_runtime_input: probability certificate objective mismatch",
+        output["reason"], "invalid_runtime_input: probability certificate objective mismatch",
         "{output}"
     );
 
@@ -1531,15 +1530,12 @@ fn a_fraction_or_fair_lower_over_a_stopped_graph_stays_stopped() {
     }
 }
 
-/// FR-1042 "Pairing" over FR-1043-AC-3's `>= c` quantile with the maximum
-/// shifted value exactly 0: the claim-side `upper` whose tight actions reach an
-/// activated state misses its threshold at the initial key.
-#[trace("TC-3151", "FR-1042-AC-28")]
-#[test]
-fn a_strict_quantile_upper_of_zero_with_tight_activation_is_rejected() {
+/// `proof`, FR-1043-AC-3's `quantile 0.9 of M >= 2` document, with every
+/// shifted value raised by `9/10 - 1/3 = 17/30` and bound to the claim at
+/// level `1/3`, where the maximum is exactly 0.
+fn tight_zero(proof: Value) -> Value {
     let shift = Rational::new(Integer::from(17_i64), Integer::from(30_i64)).unwrap();
-    let mut request = measure_bound(&quantile("0.9", ">= 2"), "upper");
-    request = edit(&request, |doc| {
+    let mut request = edit(&proof, |doc| {
         for row in doc["values"].as_array_mut().unwrap() {
             let part = |name: &str| row["value"][name].as_str().unwrap().parse::<i64>().unwrap();
             let value = Rational::new(
@@ -1550,14 +1546,42 @@ fn a_strict_quantile_upper_of_zero_with_tight_activation_is_rejected() {
             .add(&shift);
             row["value"] = json!({"numerator": value.numerator().to_string(), "denominator": value.denominator().to_string()});
         }
-        doc["objective"]["base"]["measure"]["level"] = rational(1, 3);
+        // A bound document wraps the objective an `exact` one states.
+        let objective = if doc["kind"] == "exact" {
+            &mut doc["objective"]
+        } else {
+            &mut doc["objective"]["base"]
+        };
+        objective["measure"]["level"] = rational(1, 3);
     });
     replace_source_and_rebind(&mut request, &quantile("rational(1,3)", ">= 2"));
+    request
+}
+
+/// FR-1042 "Pairing" over FR-1043-AC-3's `>= c` quantile with the maximum
+/// shifted value exactly 0: the claim-side `upper` whose tight actions reach an
+/// activated state misses its threshold at the initial key.
+#[trace("TC-3151", "FR-1042-AC-28")]
+#[test]
+fn a_strict_quantile_upper_of_zero_with_tight_activation_is_rejected() {
+    let exact = proof(&quantile("0.9", ">= 2"));
+    let initial = ranked(&document(&exact), 4).remove(0).0;
+    let request = tight_zero(bound(&exact, "upper", &[], None, true));
     let (code, output) = run(&request);
     assert_eq!(code, 1, "{output}");
     assert_eq!(output["rule"], "threshold-missed", "{output}");
-    let initial = ranked(&document(&request), 4).remove(0).0;
     assert_eq!(output["at"], at_key(&initial), "{output}");
+}
+
+/// The checker side of the exact route over the same tight zero: the `exact`
+/// document is rejected `InequalityFails` at FR-201's locus, the first
+/// activated state breadth-first, here the activated initial state.
+#[trace("TC-3152", "FR-1043-AC-3")]
+#[test]
+fn a_strict_quantile_exact_zero_with_tight_activation_is_rejected_at_the_initial_key() {
+    let request = tight_zero(proof(&quantile("0.9", ">= 2")));
+    let initial = ranked(&document(&request), 4).remove(0).0;
+    rejected(&request, "inequality-fails", at_key(&initial));
 }
 
 /// FR-1042-AC-29, FR-1043 "Forms and documents": where activation is
