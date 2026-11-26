@@ -8,10 +8,13 @@ use fsl_foundation::diagnostic::Code;
 use fsl_foundation::diagnostic::Locus;
 use fsl_foundation::wire_format::WireFormat;
 use fsl_foundation::LocatedSpan;
+#[cfg(feature = "quire-extraction")]
 use fsl_source::{AvailabilityState, KindAvailability};
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
+#[cfg(feature = "quire-extraction")]
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
@@ -267,6 +270,7 @@ pub struct ClauseRunRecord(
 impl ClauseRunRecord {
     /// The Quire-backed source extraction record, when this run consumed a
     /// Markdown source through extraction.
+    #[cfg(feature = "quire-extraction")]
     #[implements("FR-267-AC-17")]
     pub fn extraction(&self) -> Option<&ExtractionRecord> {
         self.0.extraction.as_ref()
@@ -1218,6 +1222,7 @@ struct ClauseRead {
     basis: Basis,
     #[serde(default, deserialize_with = "present")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    #[cfg(feature = "quire-extraction")]
     #[serde(default, deserialize_with = "present")]
     extraction: Option<ExtractionRecord>,
     #[serde(default, deserialize_with = "present")]
@@ -1243,6 +1248,73 @@ struct ClauseRead {
     _evidence_ledger: Option<serde_json::Value>,
 }
 
+#[cfg(feature = "quire-extraction")]
+trait ExtractionShape {
+    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String>;
+}
+
+#[cfg(feature = "quire-extraction")]
+macro_rules! extraction_leaf_shape {
+    ($($type:ty),+ $(,)?) => {
+        $(
+            impl ExtractionShape for $type {
+                fn missing_member(_: NodeRef<'_>, _: &str) -> Option<String> {
+                    None
+                }
+            }
+        )+
+    };
+}
+
+#[cfg(feature = "quire-extraction")]
+extraction_leaf_shape!(String, u8, u64, bool, serde_json::Value);
+
+#[cfg(feature = "quire-extraction")]
+impl<K, V> ExtractionShape for BTreeMap<K, V> {
+    fn missing_member(_: NodeRef<'_>, _: &str) -> Option<String> {
+        None
+    }
+}
+
+#[cfg(feature = "quire-extraction")]
+impl<T: ExtractionShape> ExtractionShape for Vec<T> {
+    #[implements("FR-267-AC-17")]
+    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+        let Node::Array(entries) = node.node() else {
+            return None;
+        };
+        entries
+            .enumerate()
+            .find_map(|(index, entry)| T::missing_member(entry, &format!("{path}[{index}]")))
+    }
+}
+
+#[cfg(feature = "quire-extraction")]
+impl<T: ExtractionShape> ExtractionShape for Option<T> {
+    #[implements("FR-267-AC-17")]
+    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+        if matches!(node.node(), Node::Null) {
+            None
+        } else {
+            T::missing_member(node, path)
+        }
+    }
+}
+
+#[cfg(feature = "quire-extraction")]
+impl ExtractionShape for KindAvailability {
+    #[implements("FR-267-AC-17")]
+    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+        if !matches!(node.node(), Node::Object(_)) {
+            return None;
+        }
+        ["state", "lossy"]
+            .into_iter()
+            .find_map(|name| node.get(name).is_none().then(|| format!("{path}.{name}")))
+    }
+}
+
+#[cfg(feature = "quire-extraction")]
 macro_rules! extraction_record_type {
     (
         $name:ident {
@@ -1263,9 +1335,37 @@ macro_rules! extraction_record_type {
             $($(#[$optional_attribute])* pub $optional_field: $optional_type,)*
         }
 
+        impl ExtractionShape for $name {
+            #[implements("FR-267-AC-17")]
+            fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+                if !matches!(node.node(), Node::Object(_)) {
+                    return None;
+                }
+                $(
+                    let field_path = format!("{path}.{}", stringify!($field));
+                    let Some(value) = node.get(stringify!($field)) else {
+                        return Some(field_path);
+                    };
+                    if let Some(missing) = <$field_type as ExtractionShape>::missing_member(value, &field_path) {
+                        return Some(missing);
+                    }
+                )*
+                $(
+                    if let Some(value) = node.get(stringify!($optional_field)) {
+                        let field_path = format!("{path}.{}", stringify!($optional_field));
+                        if let Some(missing) = <$optional_type as ExtractionShape>::missing_member(value, &field_path) {
+                            return Some(missing);
+                        }
+                    }
+                )*
+                None
+            }
+        }
+
     };
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionRecord {
         original: ExtractionOriginal,
@@ -1278,6 +1378,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionOriginal {
         authority: String,
@@ -1287,6 +1388,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionBody {
         authority: String,
@@ -1296,6 +1398,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionBinding {
         clause: String,
@@ -1303,6 +1406,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionMap {
         region: ExtractionSpan,
@@ -1310,6 +1414,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionSpan {
         start: u64,
@@ -1317,6 +1422,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionSegment {
         body_start: u64,
@@ -1326,6 +1432,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionRegion {
         start: ExtractionPosition,
@@ -1333,6 +1440,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionPosition {
         byte: u64,
@@ -1341,6 +1449,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionOutcome {
         #[serde(with = "KindAvailabilityWire")]
@@ -1352,6 +1461,7 @@ extraction_record_type! {
     }
 }
 
+#[cfg(feature = "quire-extraction")]
 #[derive(Deserialize, Serialize)]
 #[serde(remote = "KindAvailability")]
 struct KindAvailabilityWire {
@@ -1365,81 +1475,40 @@ struct KindAvailabilityWire {
     lossy: bool,
 }
 
+#[cfg(feature = "quire-extraction")]
 #[implements("FR-267-AC-17")]
-fn validate_extraction(bytes: &[u8]) -> Result<(), NativeRunReadError> {
-    let document: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|source| NativeRunReadError::MalformedMember {
-            member: "extraction".to_owned(),
-            source,
-        })?;
-    let Some(value) = document.get("extraction").filter(|value| !value.is_null()) else {
+fn validate_extraction(extraction: Option<NodeRef<'_>>) -> Result<(), NativeRunReadError> {
+    let Some(value) = extraction.filter(|value| !matches!(value.node(), Node::Null)) else {
         return Ok(());
     };
-    let extraction: ExtractionRecord =
-        serde_path_to_error::deserialize(value.clone()).map_err(|error| {
-            let member =
-                extraction_error_member(&error.path().to_string(), &error.inner().to_string());
-            NativeRunReadError::MalformedMember {
-                member,
-                source: error.into_inner(),
-            }
-        })?;
-    if extraction.map.segments.is_empty() {
+    if let Some(member) = ExtractionRecord::missing_member(value, "extraction") {
+        return Err(NativeRunReadError::MalformedMember {
+            member,
+            source: serde_json::Error::custom("missing required extraction member"),
+        });
+    }
+    let segments_empty = value
+        .get("map")
+        .and_then(|map| map.get("segments"))
+        .is_some_and(
+            |segments| matches!(segments.node(), Node::Array(entries) if entries.len() == 0),
+        );
+    if segments_empty {
         return Err(NativeRunReadError::Invalid {
             member: "extraction.map.segments",
             reason: "a non-empty segment array",
         });
     }
-    if extraction
-        .original_regions
-        .as_ref()
-        .is_some_and(Vec::is_empty)
-    {
+    let regions_empty = value.get("original_regions").is_some_and(
+        |regions| matches!(regions.node(), Node::Array(entries) if entries.len() == 0),
+    );
+    if regions_empty {
         return Err(NativeRunReadError::Invalid {
             member: "extraction.original_regions",
             reason: "a non-empty region array",
         });
     }
     Ok(())
-}
-
-fn extraction_error_member(path: &str, reason: &str) -> String {
-    let mut path = path.trim_matches('.').to_owned();
-    let field = reason
-        .split_once("missing field `")
-        .and_then(|(_, tail)| tail.split_once('`').map(|(field, _)| field.to_owned()))
-        .or_else(|| {
-            let (_, tail) = reason.split_once("expected struct ")?;
-            let name = tail
-                .trim_start_matches('`')
-                .split(|character: char| !character.is_ascii_alphanumeric())
-                .next()?;
-            name.strip_prefix("Extraction").map(camel_to_snake)
-        });
-    if let Some(field) = field {
-        if path.rsplit('.').next() != Some(field.as_str()) {
-            if !path.is_empty() {
-                path.push('.');
-            }
-            path.push_str(&field);
-        }
-    }
-    if path.is_empty() {
-        "extraction".to_owned()
-    } else {
-        format!("extraction.{path}")
-    }
-}
-
-fn camel_to_snake(value: &str) -> String {
-    let mut snake = String::with_capacity(value.len());
-    for (index, character) in value.chars().enumerate() {
-        if character.is_ascii_uppercase() && index > 0 {
-            snake.push('_');
-        }
-        snake.push(character.to_ascii_lowercase());
-    }
-    snake
 }
 
 #[derive(Deserialize)]
@@ -2890,7 +2959,8 @@ pub fn read_native_run_result_bounded(
             .canonical(&splice)
             .map_err(|_| budget.copy_failure("witness", "cannot traverse witness document"))?;
         budget.charge(u64::try_from(shallow.len()).unwrap_or(u64::MAX))?;
-        validate_extraction(&shallow)?;
+        #[cfg(feature = "quire-extraction")]
+        validate_extraction(root.get("extraction"))?;
         let document: ClauseRead = read_typed(&shallow)?;
         if let Some(limits) = &document.limits {
             let value = &limits.0.max_candidates;
@@ -3454,6 +3524,7 @@ struct ClauseRunDocument {
     basis: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    #[cfg(feature = "quire-extraction")]
     #[serde(skip_serializing_if = "Option::is_none")]
     extraction: Option<ExtractionRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4269,11 +4340,19 @@ pub fn write_clause_run_result_for(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
-    write_clause_run_result_for_with_extraction(report, selection, None)
+    #[cfg(feature = "quire-extraction")]
+    {
+        write_clause_run_result_for_with_extraction(report, selection, None)
+    }
+    #[cfg(not(feature = "quire-extraction"))]
+    {
+        write_document(report, selection)
+    }
 }
 
 /// [`write_clause_run_result_for`] with the source extraction record required
 /// for a command run that selected a Markdown clause through Quire.
+#[cfg(feature = "quire-extraction")]
 #[implements("FR-267-AC-17")]
 pub fn write_clause_run_result_for_with_extraction(
     report: &ClauseRunReport,
@@ -4331,7 +4410,7 @@ fn verdict_basis(report: &ClauseRunReport) -> bool {
 fn write_document(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
-    extraction: Option<ExtractionRecord>,
+    #[cfg(feature = "quire-extraction")] extraction: Option<ExtractionRecord>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
     let witness = report.witness.as_ref().map(RecordWire::of).transpose()?;
     let ledger = report
@@ -4373,6 +4452,7 @@ fn write_document(
         },
         basis: report.basis.as_str(),
         witness,
+        #[cfg(feature = "quire-extraction")]
         extraction,
         ledger,
         limits: run_limits(selection),
@@ -4447,6 +4527,7 @@ fn run_limits(
 }
 
 #[cfg(test)]
+#[cfg(feature = "quire-extraction")]
 mod qsl_3117_deciding_run {
     use super::{read_native_run_result, NativeRunReadError};
     use ix_trace_rs::trace;

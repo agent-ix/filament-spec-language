@@ -856,6 +856,7 @@ mod extraction_tests {
     use super::{extraction_regions_for_locus, RunCause};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
+    use ix_trace_rs::trace;
     use serde_json::{json, Value};
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
@@ -883,16 +884,19 @@ mod extraction_tests {
         .clone()
     }
 
-    fn record() -> Value {
-        json!({
-            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md"},
-            "body": {"authority": "agent-ix", "identity": "body"},
+    fn record() -> fsl_replay::spine::ExtractionRecord {
+        serde_json::from_value(json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
             "binding": {"clause": "valid_clause", "package": "agent-ix/spec"},
-            "outcome": {"availability": {"state": "available"}}
-        })
+            "outcome": {"availability": {"state": "available", "lossy": false}, "clause_text": {}, "diagnostics": []},
+            "map": {"region": {"start": 0, "end": 1}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+        }))
+        .unwrap()
     }
 
     #[test]
+    #[trace("FR-267-AC-17")]
     fn unmappable_body_locus_fails_closed_and_foreign_loci_remain_unmapped() {
         let map = verified_map();
         let record = record();
@@ -924,9 +928,10 @@ mod extraction_tests {
             "start": start,
             "end": start + 1
         });
-        assert_eq!(
-            extraction_regions_for_locus(dependency_locus, &record, &map).unwrap(),
-            None
+        assert!(
+            extraction_regions_for_locus(dependency_locus, &record, &map)
+                .unwrap()
+                .is_none()
         );
         let dependency_path_locus = json!({
             "kind": "located",
@@ -936,9 +941,10 @@ mod extraction_tests {
                 "end": {"byte": 1, "line": 1, "column": 2}
             }
         });
-        assert_eq!(
-            extraction_regions_for_locus(dependency_path_locus, &record, &map).unwrap(),
-            None
+        assert!(
+            extraction_regions_for_locus(dependency_path_locus, &record, &map)
+                .unwrap()
+                .is_none()
         );
     }
 }

@@ -292,25 +292,29 @@ mod native_result;
 mod protocol_premises;
 mod protocol_proof;
 mod protocol_structure;
+#[cfg(feature = "quire-extraction")]
 pub use fsl_source::{AvailabilityState, KindAvailability};
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
     read_native_run_result, read_native_run_result_bounded, read_outcome_diagnostics,
     temporal_disposition_json, write_clause_run_result, write_clause_run_result_for,
-    write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead, CallOriginRead,
-    ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead,
-    EffectiveIdRead, ExtractionBinding, ExtractionBody, ExtractionMap, ExtractionOriginal,
-    ExtractionOutcome, ExtractionPosition, ExtractionRecord, ExtractionRegion, ExtractionSegment,
-    ExtractionSpan, FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead,
-    GuardRead, IndeterminateReasonRead, LocatedRead, ModelBindingRead, ModelStepRead,
-    ModelTransitionRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError, NativeRunResult,
-    NativeRunResultError, OutcomeDiagnosticRead, PositionRead, ProgressValueRead,
-    ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
-    ProtocolInconclusiveCause, ProtocolProofBasis, ProtocolRecordError, ProtocolSettlementEntry,
-    RefusalLocusRead, SourceRefRead, SpanRead, StateRead, TemporalRecord, UndefinedLocusRead,
-    UnsupportedDiagnostic,
+    CallLocationRead, CallLocusRead, CallOriginRead, ClauseRunRecord, ClosureRead,
+    CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
+    FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead,
+    IndeterminateReasonRead, LocatedRead, ModelBindingRead, ModelStepRead, ModelTransitionRead,
+    NativeRunLimits, NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError,
+    OutcomeDiagnosticRead, PositionRead, ProgressValueRead, ProtocolAnalysisKind,
+    ProtocolAnalysisRecord, ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis,
+    ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
+    StateRead, TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic,
 };
 pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
+#[cfg(feature = "quire-extraction")]
+pub use native_result::{
+    write_clause_run_result_for_with_extraction, ExtractionBinding, ExtractionBody, ExtractionMap,
+    ExtractionOriginal, ExtractionOutcome, ExtractionPosition, ExtractionRecord, ExtractionRegion,
+    ExtractionSegment, ExtractionSpan,
+};
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,
