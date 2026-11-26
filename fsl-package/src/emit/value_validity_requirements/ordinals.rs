@@ -24,6 +24,7 @@ use filament_exact::NodeKey;
 use filament_semantic_value::location::ExpressionOwner;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::CheckedGraph;
+use ix_trace_rs::implements;
 
 use super::{frames, EmitRefusal, Omitted};
 use crate::emit::location_paths::Paths;
@@ -95,15 +96,15 @@ impl Renumbering {
         !self.by_node.is_empty()
     }
 
-    /// Relabel term rows except body locations. The body-location writer keeps
-    /// the captured source-use order while recomputing its compact path deltas.
-    pub(in crate::emit) fn relabel_term_data_without_body_locations(
+    /// Relabel all term rows to the final owner-walk occurrence ordinals.
+    #[implements("FSpec-FR-322-AC-490")]
+    pub(in crate::emit) fn relabel_term_data(
         &self,
         ids: &HashMap<NodeKey, CheckedNodeId>,
         data: &mut filament_contract_model::CheckedTermDataV2,
     ) {
         let by_id = self.by_id(ids);
-        relabel_term_data_without_body_locations(&by_id, data);
+        relabel_term_data_inner(&by_id, data);
     }
 
     fn by_id(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> BTreeMap<CheckedNodeId, Mapping> {
@@ -545,20 +546,12 @@ pub(in crate::emit) fn relabel_term_data(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {
-    relabel_term_data_inner(by_id, data, true);
-}
-
-fn relabel_term_data_without_body_locations(
-    by_id: &BTreeMap<CheckedNodeId, Mapping>,
-    data: &mut filament_contract_model::CheckedTermDataV2,
-) {
-    relabel_term_data_inner(by_id, data, false);
+    relabel_term_data_inner(by_id, data);
 }
 
 fn relabel_term_data_inner(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
     data: &mut filament_contract_model::CheckedTermDataV2,
-    relabel_body_locations: bool,
 ) {
     if by_id.is_empty() {
         return;
@@ -623,21 +616,19 @@ fn relabel_term_data_inner(
             ))
         });
     }
-    if relabel_body_locations {
-        let mut changed = false;
-        data.body_locations.retain_mut(|row| {
-            let moved = relabel(&row.application, &mut row.occurrence);
-            changed |= moved != Some(false);
-            moved.is_some()
+    let mut changed = false;
+    data.body_locations.retain_mut(|row| {
+        let moved = relabel(&row.application, &mut row.occurrence);
+        changed |= moved != Some(false);
+        moved.is_some()
+    });
+    if changed {
+        data.body_locations.sort_by(|left, right| {
+            (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
+                &right.application,
+                &right.occurrence,
+                right.term_ordinal,
+            ))
         });
-        if changed {
-            data.body_locations.sort_by(|left, right| {
-                (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
-                    &right.application,
-                    &right.occurrence,
-                    right.term_ordinal,
-                ))
-            });
-        }
     }
 }

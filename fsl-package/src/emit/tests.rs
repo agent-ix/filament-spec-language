@@ -114,7 +114,7 @@ mod selected_model_rows;
 mod source_enum_carrier;
 mod source_enum_rows;
 mod source_map_debug;
-mod source_objects;
+pub(in crate::emit) mod source_objects;
 mod source_record_rows;
 mod source_tuple_rows;
 mod source_union_rows;

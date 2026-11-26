@@ -8351,7 +8351,7 @@ fn emit_package_nodes(
             );
             value_validity
                 .renumbering
-                .relabel_term_data_without_body_locations(&row_ids, data);
+                .relabel_term_data(&row_ids, data);
         }
     }
     let selected_operation_member_rows = selected_operation_member_rows
