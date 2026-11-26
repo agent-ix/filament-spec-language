@@ -735,6 +735,111 @@ fn altered_timed_witness_is_not_refuted() {
     assert!(record.probabilistic_counterexample.is_none());
 }
 
+/// FR-202: a timed deadline witness names the claim's binding. One that names
+/// no instance, or another instance, is refused by the source replay and by
+/// the package replay.
+#[trace("TC-2492", "FR-202-AC-10")]
+#[test]
+fn a_timed_witness_with_another_binding_is_refused_by_both_replays() {
+    use filament_exact::{ObjectId, ObjectReference};
+    use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, PackageModelInput};
+    use fsl_replay::{ProbabilityWitnessError, ProbabilityWitnessReplay};
+
+    let claim = deadline("Deadline", "under every scheduler", ">= 0.995");
+    let world = retx(GUARD, true, "", &claim);
+    let record = settle(&world, "Deadline");
+    let witness = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .evidence()
+        .clone();
+    let bound = witness.binding.clone().expect("the claim binds `c`");
+    assert_eq!(bound.object().as_str(), "c");
+    let mut unbound = witness.clone();
+    unbound.binding = None;
+    let mut other = witness.clone();
+    other.binding = Some(ObjectReference::new(
+        bound.universe().clone(),
+        bound.object_type().clone(),
+        ObjectId::new("other").expect("an id"),
+    ));
+
+    let simulation = world.request();
+    let limits = ExactProbLimits::default();
+    let source = ModelSystem::new(simulation.clone()).expect("the source system admits");
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("the same checked owner emits");
+    let read_limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        simulation.packages,
+        read_limits,
+    )
+    .expect("the real bytes admit");
+    let mut budget = read_limits.native_join_limits().budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the actual identity rows join");
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .expect("the actual equality rows join");
+    let bare = fsl_package::BarePackage::new(&admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the real supply joins");
+    let owner = PackageModelInput::of(&bare, simulation.packages, simulation.normalization)
+        .expect("the package owner reads the timed subject");
+    let package = ModelSystem::new(ModelSimulationRequest {
+        input: owner.input(),
+        ..simulation.clone()
+    })
+    .expect("the package system admits");
+
+    let from_source = |witness: &fsl_replay::ProbabilisticCounterexample| {
+        fsl_replay::replay_probabilistic_witness(
+            &world.package,
+            &source,
+            &witness.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    let from_package = |witness: &fsl_replay::ProbabilisticCounterexample| {
+        fsl_replay::replay_probabilistic_witness_from_package(
+            &owner,
+            &package,
+            &witness.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    for replayed in [from_source(&witness), from_package(&witness)] {
+        let Ok(ProbabilityWitnessReplay::Reproduced(token)) = replayed else {
+            panic!("the produced witness reproduces: {replayed:?}");
+        };
+        assert_eq!(token.mass(), &ratio(1, 100));
+    }
+    for (name, altered) in [("unbound", &unbound), ("other instance", &other)] {
+        for (route, replayed) in [
+            ("source", from_source(altered)),
+            ("package", from_package(altered)),
+        ] {
+            assert!(
+                matches!(replayed, Err(ProbabilityWitnessError::Refused)),
+                "{name} by the {route} replay: {replayed:?}"
+            );
+        }
+    }
+}
+
 /// FR-921: the clock valuation a digital key names is placed by clock identity
 /// in the model's place order, never by the position of the clock in the key.
 /// The same two-clock key with its clocks listed in the opposite order names
