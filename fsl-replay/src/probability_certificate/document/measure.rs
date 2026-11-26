@@ -2323,6 +2323,7 @@ fn partial_lower_action_sum(
 }
 /// The first activated state the tight actions reach from the initial state,
 /// breadth-first with each layer in canonical order (FR-201's locus).
+#[implements("FR-201-AC-5")]
 fn tight_activation(
     graph: &Graph,
     values: &BTreeMap<ProbabilityProductKey, Rational>,
