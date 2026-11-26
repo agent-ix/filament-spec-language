@@ -5553,9 +5553,10 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 /// (`CheckedGraph::region`, FR-096).
 ///
 /// A package emitted before (by this function or
-/// [`emit_checked_with_cancel`]) returns its remembered emission: a checked
-/// package does not change, so a dependency reached again, or a caller that
-/// emits what the lifecycle already emitted, does not emit it twice.
+/// [`emit_checked_with_cancel`]) returns its remembered emission, so a
+/// dependency reached again, or a caller that emits what the lifecycle already
+/// emitted, does not emit it twice. A successful abstraction binding changes
+/// the package and drops that emission ([`CheckedPackage::bind_abstraction`]).
 ///
 /// `limits` is the caller's ceiling on the package's canonical bytes
 /// (`emit.output_bytes`); a remembered emission longer than it is refused

@@ -197,7 +197,8 @@ pub struct CheckedPackage {
     /// This package's checked emission, set only by the emitter
     /// ([`Self::remember_emission`]; the bytes stay the emitter's own
     /// output, ADR-013 O-02) so a package reached again, as a dependency or
-    /// by another emit, is not emitted again. Reset when the package changes.
+    /// by another emit, is not emitted again. A successful binding, the one
+    /// change a linked package takes, resets it.
     #[cfg(feature = "std")]
     emission: OnceLock<Emission>,
 }
@@ -626,18 +627,16 @@ impl CheckedPackage {
         &mut self,
         bindings: &[AuthoredBinding],
     ) -> Result<(), Vec<AbstractionRefusal>> {
-        self.abstraction = Some(self.graph.check_abstraction(bindings)?);
-        #[cfg(feature = "std")]
-        {
-            self.emission = OnceLock::new();
-        }
-        Ok(())
+        self.bind_abstraction_at(bindings, Vec::new())
     }
 
     /// As [`Self::bind_abstraction`], for a relation read from the
     /// `abstraction` declarations located at `sites`, one per declaration:
     /// the emitter writes one `declaration` occurrence of the relation node at
     /// each (FSpec FR-451).
+    ///
+    /// A successful binding changes what the emitter writes, so it drops the
+    /// remembered emission.
     ///
     /// # Errors
     ///
@@ -649,6 +648,10 @@ impl CheckedPackage {
     ) -> Result<(), Vec<AbstractionRefusal>> {
         let relation = self.graph.check_abstraction(bindings)?;
         self.abstraction = Some(relation.with_sites(sites));
+        #[cfg(feature = "std")]
+        {
+            self.emission = OnceLock::new();
+        }
         Ok(())
     }
 

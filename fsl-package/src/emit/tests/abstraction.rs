@@ -366,3 +366,98 @@ fn a_rust_path_with_an_empty_segment_refuses_the_emission() {
         })
     );
 }
+
+/// The `occurrences` of each relation node of `emission`.
+fn relation_occurrences(emission: &Emission) -> Vec<Value> {
+    let wire = wire(emission);
+    super::owners::node_where(&wire, "correspondence", "abstraction_relation")
+        .into_iter()
+        .map(|relation| relation["occurrences"].clone())
+        .collect()
+}
+
+/// The unit's one clause: a site the unit's own regions resolve.
+fn clause_site() -> filament_semantic_value::location::ExpressionLocation {
+    use filament_semantic_value::location::{
+        ExpressionLocation as Location, ExpressionOwner as Origin,
+    };
+    Location::root(Origin::StateClause {
+        clause: "Updated".to_owned(),
+        index: 0,
+    })
+}
+
+/// NFR-015-AC-9 (TC-1111 step 7): `bind_abstraction` after an emission clears
+/// the remembered emission, and emitting again includes the bound relation.
+#[trace("TC-1111", "NFR-015-AC-9")]
+#[test]
+fn a_binding_after_an_emission_emits_the_relation() {
+    let (_, mut package) = linked();
+    let first = emit_checked(&package).expect("the package emits");
+    assert_eq!(relation_occurrences(&first), Vec::<Value>::new());
+    assert_eq!(package.emitted_package_name(), Some("pkg"));
+
+    package
+        .bind_abstraction(&three_bindings("version"))
+        .expect("the relation checks");
+    assert_eq!(package.emitted_package_name(), None);
+    // An unsited relation has no region of its own, so the caller places it.
+    let graph = package.graph();
+    let source = graph.source().clone();
+    let second = emit_package(&package, |location| {
+        graph
+            .region(location)
+            .or_else(|| Some(SourceRegion::new(source.clone(), 0, 1).expect("a nonempty region")))
+    })
+    .expect("the bound package emits");
+    assert_eq!(
+        relation_occurrences(&second),
+        [json!([{"role": "declaration", "ordinal": 0}])]
+    );
+}
+
+/// NFR-015-AC-10 (TC-1111 step 8): `bind_abstraction_at` after an emission
+/// clears the remembered emission, so the next emission holds the relation
+/// node and its `declaration` occurrence; a refused binding keeps the
+/// remembered emission.
+#[trace("TC-1111", "NFR-015-AC-10")]
+#[test]
+fn a_binding_at_a_site_after_an_emission_emits_the_relation() {
+    let (_, mut package) = linked();
+    let first = emit_checked(&package).expect("the package emits");
+    assert_eq!(relation_occurrences(&first), Vec::<Value>::new());
+    assert_eq!(package.emitted_package_name(), Some("pkg"));
+
+    package
+        .bind_abstraction_at(&three_bindings("version"), vec![clause_site()])
+        .expect("the relation checks");
+    assert_eq!(package.emitted_package_name(), None);
+    let second = emit_checked(&package).expect("the bound package emits");
+    assert_eq!(
+        relation_occurrences(&second),
+        [json!([{"role": "declaration", "ordinal": 0}])]
+    );
+
+    let (_, mut refused) = linked();
+    emit_checked(&refused).expect("the package emits");
+    let absent = AuthoredBinding::Population {
+        key: declaration("absent"),
+        value: PopulationBinding {
+            collection: RustPath::new("state::absent"),
+        },
+    };
+    let refusals = refused
+        .bind_abstraction_at(&[absent], vec![clause_site()])
+        .expect_err("the package holds no such declaration");
+    assert!(
+        matches!(
+            &refusals[..],
+            [fsl_semantics::check::AbstractionRefusal::MissingDeclaration { .. }]
+        ),
+        "{refusals:?}"
+    );
+    assert!(refused.abstraction().is_none());
+    assert_eq!(refused.emitted_package_name(), Some("pkg"));
+    let kept = refused.remembered_emission().expect("the emission is kept");
+    assert_eq!(relation_occurrences(kept), Vec::<Value>::new());
+}

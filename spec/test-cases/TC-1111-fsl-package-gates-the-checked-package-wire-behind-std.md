@@ -29,7 +29,7 @@ NFR-015-AC-4 to NFR-015-AC-7, NFR-015-AC-9 and NFR-015-AC-10.
    `dependencies` and `dependency_selections`; `ResolvedDependency`;
    `export_bindings`, `BoundItem`, `ExportRefusal` and `UnboundElement`. In
    one compile-fail case per export, name each export in its "Behind `std`"
-   column: `CheckedPackage::link_with`, `CheckedPackage::emitted_package_id`,
+   column: `CheckedPackage::link_with`, `CheckedPackage::emitted_package_name`,
    `Import`, `LinkRefusal`, `EmittedPackage`; `emit_checked`,
    `emit_checked_with_cancel`, `emit_package`, `checked_node_id`,
    `checked_occurrence`, `Emission`, `EmitRefusal`, `OmissionCause`,
@@ -44,12 +44,12 @@ NFR-015-AC-4 to NFR-015-AC-7, NFR-015-AC-9 and NFR-015-AC-10.
    `#[cfg(feature = "std")]` items excluded, for `serde_json`, `HashMap` and
    `HashSet`.
 7. With default features, emit a package with `emit_checked`, call
-   `bind_abstraction` with valid bindings and read `emitted_package_id`.
+   `bind_abstraction` with valid bindings and read `emitted_package_name`.
 8. With default features, emit a package with no abstraction relation with `emit_checked`, call
    `bind_abstraction_at` with valid bindings and one site, read
-   `emitted_package_id`, then emit it again and read it. Emit a second
+   `emitted_package_name`, then emit it again and read it. Emit a second
    package, call `bind_abstraction_at` with one binding whose key names a
-   declaration the package does not hold, and read `emitted_package_id`.
+   declaration the package does not hold, and read `emitted_package_name`.
 
 ## Expected Results
 
@@ -68,5 +68,5 @@ NFR-015-AC-4 to NFR-015-AC-7, NFR-015-AC-9 and NFR-015-AC-10.
 8. It is `None` after the binding; the second emission holds the relation
    node and its `declaration` occurrence, which the first lacks. The second
    package's binding is refused with
-   `AbstractionRefusal::MissingDeclaration`, and `emitted_package_id` then
-   equals the emitted `package_id`.
+   `AbstractionRefusal::MissingDeclaration`, and `emitted_package_name` then
+   equals the first emission's package name.
