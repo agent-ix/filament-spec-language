@@ -347,6 +347,28 @@ impl PlaceConstraint {
     }
 }
 
+/// The guarded steps of a state and the first undefined finding of its
+/// expansion (ADR-018 UE-6).
+#[derive(Clone, Debug)]
+pub struct GuardedSteps {
+    /// The steps, in canonical transition order.
+    pub steps: Vec<GuardedStep>,
+    /// The first contract conjunction or protocol expression the expansion
+    /// evaluated undefined.
+    pub undefined: Option<super::ModelFinding>,
+}
+
+/// The first finding of an expansion that evaluated undefined.
+fn first_undefined(findings: &[super::ModelFinding]) -> Option<super::ModelFinding> {
+    findings
+        .iter()
+        .find(|finding| {
+            finding.undefined_contract().is_some()
+                || finding.undefined_protocol_expression().is_some()
+        })
+        .cloned()
+}
+
 /// One discrete step enabled at a model state by its data precondition,
 /// with the clock part of its guard over places.
 #[derive(Clone, Debug)]
@@ -482,6 +504,11 @@ pub enum TimedStop {
         /// Those with a place.
         placed: u64,
     },
+    /// An expansion of the state evaluated a contract conjunction or a
+    /// protocol expression undefined (ADR-018 UE-6): the step set the state
+    /// yields reads it as a disabled step, so no verdict may be drawn from
+    /// that set. The finding is the expansion's first undefined one.
+    Undefined(Box<super::ModelFinding>),
 }
 
 /// What a time invariant's or an `urgent when`'s alternatives hold of at a
@@ -1842,7 +1869,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         if self.urgent_operations.is_empty() {
             return Ok(false);
         }
-        Ok(self.guarded_steps(state)?.iter().any(|step| {
+        // An undefined guard reads as a disabled step here; the route that
+        // verdicts the state refutes it (ADR-018 UE-6).
+        Ok(self.guarded_expansion(state)?.steps.iter().any(|step| {
             !step.parts.is_empty()
                 && self
                     .urgent_operations
@@ -1870,6 +1899,24 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// [`TimedStop`] when the state cannot be expanded or a guard part's
     /// predicate has no truth value.
     pub fn guarded_steps(&self, state: &ModelSimState) -> Result<Vec<GuardedStep>, TimedStop> {
+        let GuardedSteps { steps, undefined } = self.guarded_expansion(state)?;
+        match undefined {
+            Some(finding) => Err(TimedStop::Undefined(Box::new(finding))),
+            None => Ok(steps),
+        }
+    }
+
+    /// The steps [`Self::guarded_steps`] returns, with the first contract
+    /// conjunction or protocol expression the expansion of `state`
+    /// evaluated undefined (ADR-018 UE-6). An undefined conjunct is read as
+    /// a disabled step, so a route that expands `state` to reach a verdict
+    /// refutes it as an undefined evaluation and never settles it from
+    /// `steps` alone.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::guarded_steps`], except for an undefined finding.
+    pub fn guarded_expansion(&self, state: &ModelSimState) -> Result<GuardedSteps, TimedStop> {
         self.within_max_clocks(state)?;
         if self.free_delay {
             return self.free_delay_steps(state);
@@ -1883,6 +1930,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             Some(&post_presence),
             Some(&self.clock_selectors),
         )?;
+        let undefined = first_undefined(&expansion.findings);
         let mut steps = Vec::new();
         for vector in enabled {
             // Each binding of the operation's `Clock` parameters to places
@@ -2109,7 +2157,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             .collect::<Result<Vec<_>, ExpansionStop>>()?;
         keyed.sort_by(|left, right| left.0.cmp(&right.0));
         let steps = keyed.into_iter().map(|(_, step)| step).collect();
-        Ok(steps)
+        Ok(GuardedSteps { steps, undefined })
     }
 
     fn task_releases_for(&self, operation: &str) -> Result<Vec<TaskReleaseBinding>, TimedStop> {
@@ -2127,13 +2175,14 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
 
     /// Data-enabled steps of an untimed subject: no concrete clock guards,
     /// resets, carries or placements.
-    fn free_delay_steps(&self, state: &ModelSimState) -> Result<Vec<GuardedStep>, TimedStop> {
+    fn free_delay_steps(&self, state: &ModelSimState) -> Result<GuardedSteps, TimedStop> {
         let (expansion, enabled) = expand_enabled_with_clock_selectors(
             self.system,
             state,
             None,
             Some(&self.clock_selectors),
         )?;
+        let undefined = first_undefined(&expansion.findings);
         let mut steps = Vec::new();
         for vector in enabled {
             for position in vector.successors.clone() {
@@ -2169,7 +2218,10 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             })
             .collect::<Result<Vec<_>, ExpansionStop>>()?;
         keyed.sort_by(|left, right| left.0.cmp(&right.0));
-        Ok(keyed.into_iter().map(|(_, step)| step).collect())
+        Ok(GuardedSteps {
+            steps: keyed.into_iter().map(|(_, step)| step).collect(),
+            undefined,
+        })
     }
 
     /// Each binding of `vector`'s operation's `Clock` parameters to places
@@ -2949,8 +3001,32 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     ///
     /// As [`Self::guarded_steps`] and [`Self::invariants`].
     pub fn steps(&self, state: &TimedState) -> Result<Vec<(GuardedStep, TimedState)>, TimedStop> {
+        let guarded = self.guarded_steps(&state.discrete)?;
+        self.steps_over(guarded, state)
+    }
+
+    /// [`Self::steps`] reading an undefined guard as a disabled step: for a
+    /// route that refutes the undefined guard where it enters `state`
+    /// (ADR-018 UE-6) and reads the steps after only for divergence.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::steps`], except for an undefined finding.
+    pub fn steps_reading_undefined_as_disabled(
+        &self,
+        state: &TimedState,
+    ) -> Result<Vec<(GuardedStep, TimedState)>, TimedStop> {
+        let guarded = self.guarded_expansion(&state.discrete)?.steps;
+        self.steps_over(guarded, state)
+    }
+
+    fn steps_over(
+        &self,
+        guarded: Vec<GuardedStep>,
+        state: &TimedState,
+    ) -> Result<Vec<(GuardedStep, TimedState)>, TimedStop> {
         let mut found = Vec::new();
-        for step in self.guarded_steps(&state.discrete)? {
+        for step in guarded {
             if !step
                 .parts
                 .iter()

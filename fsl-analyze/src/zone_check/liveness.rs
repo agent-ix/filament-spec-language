@@ -873,6 +873,15 @@ impl Run<'_, '_, '_> {
         if passed.is_some() {
             return Ok(Ok(vec![(None, q, passed.clone())]));
         }
+        // ADR-018 UE-6: a step guard with no value at the entered state is
+        // an undefined position like an undefined letter. Under a fairness
+        // the product settles it, and the expansion of the state is
+        // undecided meanwhile.
+        if live.universal || live.cells.constrained.is_empty() {
+            if let Some(undefined) = self.undefined_of(state)? {
+                return Ok(Err(undefined));
+            }
+        }
         Ok(match self.reading(live, state, initial)? {
             Reading::Defined(letter) => Ok(self
                 .automaton(live.successors(q, letter))?
@@ -1442,7 +1451,7 @@ impl Run<'_, '_, '_> {
                 (initial, stages)
             }
         };
-        let badness = Badness::Undefined(live.instance.clone(), cause, locus);
+        let badness = Badness::Undefined(Some(live.instance.clone()), cause, locus);
         self.finite_counterexample(
             (initial, stages, 0),
             state.clone(),

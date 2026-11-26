@@ -341,6 +341,9 @@ struct Digital<'q, 'r, 's, 'a, L> {
     stats: RunStats,
     non_zeno: Option<NonZeno>,
     steps: BTreeMap<Vec<u8>, Vec<(GuardedStep, TimedState)>>,
+    /// Each discrete state's first step guard evaluated undefined, if any
+    /// (ADR-018 UE-6).
+    guards: std::cell::RefCell<BTreeMap<Vec<u8>, Option<(UndefinedLocus, UndefinedCause)>>>,
     /// Each searched state's [`Digital::diverges`].
     divergence: BTreeMap<Vec<u8>, bool>,
     /// Each state's [`Digital::continues`] under the clause's fairness.
@@ -387,6 +390,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             stats: RunStats::default(),
             non_zeno: None,
             steps: BTreeMap::new(),
+            guards: std::cell::RefCell::default(),
             divergence: BTreeMap::new(),
             fair_continuation: BTreeMap::new(),
         })
@@ -486,7 +490,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         if let Some(known) = self.steps.get(&key) {
             return Ok(known.clone());
         }
-        let found = self.timed_stop(self.timed().steps(state))?;
+        let found = self.timed_stop(self.timed().steps_reading_undefined_as_disabled(state))?;
         self.steps.insert(key, found.clone());
         Ok(found)
     }
@@ -504,6 +508,27 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             && !self.timed_stop(self.timed().is_urgent(discrete))?)
     }
 
+    /// The first step guard or protocol expression the expansion of `state`
+    /// evaluated undefined (ADR-018 UE-6), computed once per discrete state.
+    fn guard_undefined(
+        &self,
+        state: &ModelSimState,
+    ) -> Result<Option<(UndefinedLocus, UndefinedCause)>, Halt> {
+        let key = self.discrete_key(state)?;
+        if let Some(known) = self.guards.borrow().get(&key) {
+            return Ok(known.clone());
+        }
+        let found = self
+            .timed_stop(self.timed().guarded_expansion(state))?
+            .undefined
+            .and_then(|finding| {
+                fsl_replay::undefined_finding(std::slice::from_ref(&finding))
+                    .map(|(locus, _, cause)| (locus, cause))
+            });
+        self.guards.borrow_mut().insert(key, found.clone());
+        Ok(found)
+    }
+
     /// The letter at `state` for `instance`, `initial` at position 0.
     fn reading(
         &self,
@@ -513,6 +538,15 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         state: &ModelSimState,
         initial: bool,
     ) -> Result<Reading, Halt> {
+        // ADR-018 UE-6: a step guard with no value at `state` is an
+        // undefined position, whatever the claim reads there. The product
+        // read by no claim (`universal`) only asks whether time can diverge
+        // and reads the guard as a disabled step.
+        if !universal {
+            if let Some((locus, cause)) = self.guard_undefined(state)? {
+                return Ok(Reading::Undefined(locus, cause));
+            }
+        }
         if universal {
             return Ok(Reading::Defined(Letter::default()));
         }
