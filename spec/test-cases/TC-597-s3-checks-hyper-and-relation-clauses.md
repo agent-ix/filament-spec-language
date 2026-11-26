@@ -29,7 +29,7 @@ Tag the tests `#[trace("TC-597", "FR-172-AC-n")]`.
 
 ## Expected Results
 
-- Step 1: alias `V` with two universal quantifiers, one instance, both conjuncts in `mu_universal`; aliases `S` and `N`; `Opaque`'s conjunct in `mu_existential`.
+- Step 1: alias `V` with two universal quantifiers, one object parameter, both conjuncts in `mu_universal`; aliases `S` and `N`; `Opaque`'s conjunct in `mu_existential`.
 - Step 2: each refuses with the code and span FR-172-AC-2 names.
 - Step 3: `align_skip` holding `mix`; each variant refuses `unsupported_construct`/`expression-form`.
 - Step 4: two model execution bindings; three distinct identities.
