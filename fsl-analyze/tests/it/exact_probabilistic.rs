@@ -4465,7 +4465,7 @@ fn an_mdp_undefined_path_names_the_post_state_taken_at_each_draw() {
 /// FR-200 fair minimum over `{s, u}`: strong fairness to `z_go` leaves the
 /// fair non-target end component `{u}`, which `drift` reaches from `s` with
 /// probability 1. By hand the infimum is `1 - 1 = 0`, below `2/5`.
-#[trace("TC-635")]
+#[trace("TC-635", "FR-200-AC-2")]
 #[test]
 fn fair_minimum_over_a_component_with_an_exit_back_into_its_scc_is_refuted() {
     use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
@@ -4499,7 +4499,7 @@ fn fair_minimum_over_a_component_with_an_exit_back_into_its_scc_is_refuted() {
 /// of eventual `g` and of `not g until u` are `1/2`, the minimum of `always
 /// not u` is `1 - 1/2`, and the minimum of eventual `g` is 0. The maximum of
 /// eventual `u` is `1/2` and its minimum 0.
-#[trace("TC-633", "TC-635")]
+#[trace("TC-633", "TC-635", "FR-200-AC-2", "FR-1041-AC-7")]
 #[test]
 fn extrema_over_a_component_holding_the_target_are_decided_and_certified() {
     use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
@@ -4674,7 +4674,7 @@ fn extrema_over_a_component_holding_the_target_are_decided_and_certified() {
 /// by hand the maximum of eventual `g` is 1 at every state. That vector passes
 /// every condition but `<= 2/5`; a document that values `u` at 0 breaks the
 /// maximum equation there.
-#[trace("TC-3150")]
+#[trace("TC-3150", "FR-1041-AC-7")]
 #[test]
 fn fair_maximum_checker_accepts_a_positive_value_on_a_fair_end_component() {
     use fsl_eval::simulation::model::ModelSystem;
@@ -4805,6 +4805,184 @@ fn fair_maximum_checker_accepts_a_positive_value_on_a_fair_end_component() {
         ),
         "{checked:?}"
     );
+}
+
+/// FR-1041-AC-7: a fair maximum needs a tight action at every positive
+/// state, also at one its partial `policy` does not list. `i` begins into `s`,
+/// whose actions are the self-loop `a_wait` and `fail` into the terminal dead
+/// state, and `g` is never reached, so by hand the fair maximum is 0
+/// everywhere. The forged vector `1/3, 1/3, 0` solves both maximum equations,
+/// ranks `2, 1, 0` and the policy `{i: begin}` is tight; only `fail`, with
+/// sum `0 < 1/3`, descends from `s`. Under `strong begin`, `{s}` is a fair
+/// end component; under `strong fail` it is not.
+#[trace("TC-3150", "FR-1041-AC-7")]
+#[test]
+fn fair_maximum_checker_rejects_progress_through_an_action_that_is_not_tight() {
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_eval::simulation::TransitionSystem as _;
+    use fsl_replay::{
+        ExactProbabilityCertificateCheck, ProbabilityCertificateLocus, ProbabilityCertificateRule,
+    };
+
+    for fair in ["begin", "fail"] {
+        let claim = format!(
+            "probabilistic Forged using inf on M over (w: M::W) \
+             under every scheduler fair strong W::{fair} on origin \
+             {{ probability <= rational(1,2) [ eventually holds(w.g) ] }}"
+        );
+        let mut model = prob_world::fair_mec_refinement(&claim);
+        let boolean = model.fields.first().expect("a field").1.clone();
+        model.package = "test/untight-maximum";
+        model.fields = vec![
+            ("i", boolean.clone()),
+            ("s", boolean.clone()),
+            ("g", boolean),
+        ];
+        model.operations = [
+            ("begin", vec!["i", "s"]),
+            ("a_wait", vec!["s"]),
+            ("fail", vec!["s"]),
+        ]
+        .map(|(name, modifies)| prob_world::Operation {
+            name,
+            parameters: vec![],
+            modifies,
+            deletes: false,
+        })
+        .into();
+        model.body = format!(
+            "pre BeginAtI using v on M::W::begin {{ self.i }}\n\
+             post Begun using v on M::W::begin {{ self.i = false and self.s = true }}\n\
+             pre WaitAtS using v on M::W::a_wait {{ self.s }}\n\
+             post Waited using v on M::W::a_wait {{ self.s = true }}\n\
+             pre FailAtS using v on M::W::fail {{ self.s }}\n\
+             post Failed using v on M::W::fail {{ self.s = false }}\n\
+             terminal Done using v on M when {{ not (self.i or self.s) }};\n\
+             workload Equal on M {{ weight W::begin = 1; weight W::a_wait = 1; \
+             weight W::fail = 1; }}\n{claim}"
+        );
+        model.initial = serde_json::json!({
+            "i": {"boolean": true}, "s": {"boolean": false}, "g": {"boolean": false}
+        });
+        let world = World::new(&model);
+        let product = built(&world, "Forged");
+        assert_eq!(product.states.len(), 3);
+        let i = start(&product);
+        let successor = |from: ProbStateId| {
+            product
+                .edges
+                .iter()
+                .find(|edge| edge.from == from && edge.to != from)
+                .expect("an edge leaving the state")
+                .to
+        };
+        let s = successor(i);
+        let dead = successor(s);
+
+        let system = ModelSystem::new(world.subject().simulation).expect("the model is admitted");
+        let claims = world.package.graph().probabilistic_model().claims();
+        let item = fsl_replay::probabilistic_claim_identity(world.claim("Forged"))
+            .expect("canonical claim identity");
+        let binding = fsl_replay::claim_binding(&system, world.claim("Forged"))
+            .expect("the claim binding is checked")
+            .map(|binding| binding.reference);
+        let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+            &ExactProbLimits::default(),
+            fsl_replay::AccountingLimits::default().0,
+        );
+        let key = |state: ProbStateId| {
+            fsl_replay::ProbabilityProductKey::for_model_state_with_limits(
+                binding.as_ref(),
+                &product.states[state.index()].model,
+                fsl_replay::ProbabilityDocumentIoLimits {
+                    bytes: limits.bytes,
+                    storage_bytes: limits.storage_bytes,
+                },
+                &Cancel::new(),
+            )
+            .expect("canonical product key")
+        };
+        // The honest document: every value 0.
+        let mut values = product
+            .ids()
+            .map(|state| fsl_replay::ExactProbabilityValue {
+                state: key(state),
+                value: ratio(0, 1),
+            })
+            .collect::<Vec<_>>();
+        values.sort_by(|left, right| left.state.cmp(&right.state));
+        let proof = fsl_replay::probability_proof_document(
+            &system,
+            claims,
+            &item,
+            &fsl_replay::ExactProbabilityCertificate { values },
+            limits,
+            &Cancel::new(),
+        )
+        .expect("the zero vector satisfies the equations");
+        let honest = fsl_replay::write_probability_proof_document(&proof, limits, &Cancel::new())
+            .expect("canonical exact document");
+        let check = |bytes: &[u8]| {
+            fsl_replay::check_probability_certificate_document(
+                &system,
+                claims,
+                &item,
+                bytes,
+                limits,
+                &Cancel::new(),
+            )
+        };
+        let accepted = check(&honest);
+        assert!(
+            matches!(accepted, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+            "{fair}: {accepted:?}"
+        );
+
+        let initial = system
+            .initial()
+            .into_iter()
+            .next()
+            .expect("one initial state");
+        let begin = system
+            .actions(&initial)
+            .expect("initial actions expand")
+            .expect("initial actions are decided")
+            .into_iter()
+            .next()
+            .expect("only begin is enabled");
+        let begin = fsl_replay::Schedule::of(&system, &begin.identity).expect("canonical schedule");
+        let begin: serde_json::Value =
+            serde_json::from_slice(begin.as_bytes()).expect("canonical JSON");
+        // The rows follow canonical key order.
+        let mut keys = [key(i), key(s), key(dead)];
+        keys.sort();
+        let row = |state: ProbStateId| {
+            keys.iter()
+                .position(|candidate| *candidate == key(state))
+                .expect("every state has a row")
+        };
+        let mut forged: serde_json::Value =
+            serde_json::from_slice(&honest).expect("canonical exact JSON");
+        for (state, numerator, denominator, rank) in
+            [(i, "1", "3", 2), (s, "1", "3", 1), (dead, "0", "1", 0)]
+        {
+            forged["values"][row(state)]["value"] =
+                serde_json::json!({"numerator": numerator, "denominator": denominator});
+            forged["ranking"][row(state)]["rank"] = serde_json::json!(rank);
+        }
+        let state = forged["values"][row(i)]["state"].clone();
+        forged["policy"] = serde_json::json!([{"state": state, "choice": begin}]);
+        let checked = check(&serde_json::to_vec(&forged).expect("forged document"));
+        assert!(
+            matches!(
+                &checked,
+                Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+                    if rejection.rule == ProbabilityCertificateRule::RankBroken
+                        && rejection.at == ProbabilityCertificateLocus::ProductState(key(s))
+            ),
+            "{fair}: {checked:?}"
+        );
+    }
 }
 
 #[trace("TC-633", "FR-201-AC-15")]

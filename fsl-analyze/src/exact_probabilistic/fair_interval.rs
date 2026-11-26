@@ -178,7 +178,7 @@ mod tests {
     /// `0 <-> 1` with target `1`: every path from `0` reaches the target on its
     /// first step, so the fair infimum is 1. The component `{0, 1}` holds the
     /// target, so it is none of the product restricted to non-target states.
-    #[trace("TC-635")]
+    #[trace("TC-635", "FR-200-AC-2")]
     #[test]
     fn fair_minimum_bounds_ignore_a_component_that_holds_the_target() {
         let edge = |from, to| ProbEdge {

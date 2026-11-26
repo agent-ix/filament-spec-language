@@ -105,8 +105,9 @@ action `go`, and rejects a document that states 0 there.
   of strictly smaller rank.
 - Maximum: the checker SHALL apply FR-201's cyclic MDP maximum conditions
   unchanged (a tight progressing action at every positive non-target state,
-  every action of a zero-valued live state staying at zero). It SHALL still
-  compare the fairness records with the checked set.
+  every action of a zero-valued live state staying at zero). A `policy` row is
+  optional; at a positive state with no row the progressing action SHALL also
+  be tight. It SHALL still compare the fairness records with the checked set.
 - Why the minimum is sound: under a fair scheduler a run reaches the target
   or ends, with probability 1, in a fair end component of the non-target
   states (Baier and Kwiatkowska), so the fair infimum is
@@ -167,6 +168,7 @@ action `go`, and rejects a document that states 0 there.
 | FR-1041-AC-4 | `probability <= 0.5 [eventually holds(delivered)]` over `W` under `fair strong go` settles `proved`, `ExactValue{1/2}` (the maximum through `go`) with an accepted document in this profile; `probability <= 0.4` settles `refuted`. | Test (TC-3150) |
 | FR-1041-AC-5 | FR-201-AC-51's unbounded fair eventual item, `probability >= rational(1,2) [eventually holds(m.delivered)]` over the cyclic `link` model under `every scheduler fair strong Msg::send_a`, settles `proved`, `ExactValue{1/2}`, with values `1/2` at the undelivered state, 1 at delivered and 0 at the stopped terminal, which `fsl-probability-check` accepts from the emitted package and rejects with one value altered. | Test (TC-2065) |
 | FR-1041-AC-6 | Pre-cancellation, cancellation during refinement, and exhaustion of the state, edge, work or arithmetic limit during end-component refinement or progress checking settle `incomplete` with the actual limit and no truth value; a fairness constraint whose operation is never enabled is retained in the objective and changes no value. | Test (TC-3150) |
+| FR-1041-AC-7 | A maximum takes FR-201's cyclic maximum conditions unchanged. Where `{u}` is a fair end component from which the target is reached with probability 1 (`return`, then a retried `go`), the maximum document with value 1 at `u` passes every condition but a missed threshold, and the same document with `u` at 0 is rejected `InequalityFails`. Where `i` begins into `s`, whose actions are a self-loop and `fail` into a non-target terminal, and no target is reachable (maximum 0), the document with `i` and `s` at `1/3`, ranks 2, 1, 0 and a `policy` naming only `i` is rejected `RankBroken` at `s`, since no tight action at `s` descends, both when `{s}` is a fair end component and when it is not. | Test (TC-3150) |
 
 ## Dependencies
 

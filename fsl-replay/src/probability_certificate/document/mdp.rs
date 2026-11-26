@@ -1073,12 +1073,22 @@ fn progress_failure_with_fair_zero(
                     })
                 })
             };
-            if let Some(index) = policy.get(key) {
-                action_sums.get(*index).is_some_and(|sum| sum <= value) && progresses(*index)
-            } else {
-                state.choices.iter().enumerate().any(|(index, _)| {
-                    action_sums.get(index).is_some_and(|sum| sum <= value) && progresses(index)
+            // The action must be tight, listed or not. A minimum equation
+            // gives `sum >= value`, so `<=` is tight there; a maximum one
+            // gives `sum <= value`, so only equality is.
+            let tight = |index: usize| {
+                action_sums.get(index).is_some_and(|sum| {
+                    if objective == ProbabilityObjective::Maximum {
+                        sum == value
+                    } else {
+                        sum <= value
+                    }
                 })
+            };
+            if let Some(index) = policy.get(key) {
+                tight(*index) && progresses(*index)
+            } else {
+                (0..state.choices.len()).any(|index| tight(index) && progresses(index))
             }
         } else {
             match objective {

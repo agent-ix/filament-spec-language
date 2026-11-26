@@ -528,6 +528,7 @@ fn decide_reachability_threshold_with_blocked(
     )
 }
 
+#[implements("FR-198-AC-5")]
 fn reachability_threshold(
     product: &ProbProduct,
     target: &[bool],
@@ -568,11 +569,11 @@ fn reachability_threshold(
     } else {
         None
     };
+    // The components of the non-target states. Dropping a whole component for
+    // holding a target would leave its smaller ones uncollapsed, and a witness
+    // there may stay for ever.
     let mecs = if product.kind == ProductKind::Mdp && objective == UnboundedObjective::Max {
-        maximal_end_components(&graph)?
-            .into_iter()
-            .filter(|component| component.iter().all(|state| !target[*state]))
-            .collect::<Vec<_>>()
+        maximal_end_components_from(&graph, (0..target.len()).filter(|s| !target[*s]).collect())?
     } else {
         Vec::new()
     };
@@ -3350,6 +3351,37 @@ mod tests {
         assert!(lower[0].rational() < ratio(1, 2));
         assert!(upper[0].rational() > ratio(1, 2));
         assert!(upper[0].rational() < ratio(3, 5));
+    }
+
+    /// FR-198-AC-5's rule on a component that also holds the target: `s` (state
+    /// 0) has the self-loop `wait` first and `go` to the target second, and the
+    /// target returns to `s`. By hand the maximum is 1 and only `go` attains it,
+    /// although both reach the same iterate value.
+    #[trace("TC-633", "FR-198-AC-5")]
+    #[test]
+    fn interval_witness_leaves_an_end_component_beside_the_target() {
+        let product = graph(
+            ProductKind::Mdp,
+            vec![
+                choice_edge(0, 0, one(), 0),
+                choice_edge(0, 1, one(), 1),
+                edge(1, 0, one()),
+            ],
+        );
+        let result = decide_reachability_threshold(
+            &product,
+            &[false, true],
+            UnboundedObjective::Max,
+            &ratio(1, 2),
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("intervals separate the threshold");
+        let UnboundedOutcome::Bounds { lower, policy, .. } = result else {
+            panic!("the interval should decide: {result:?}");
+        };
+        assert_eq!(lower[0].rational(), one());
+        assert_eq!(policy[0], Some(1), "`wait` never reaches the target");
     }
 
     /// Trace: FR-198-AC-1.
