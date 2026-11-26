@@ -1,0 +1,27 @@
+   Compiling filament-exact v0.3.0 (https://github.com/agent-ix/filament-exact?rev=08a5a1763ef4bd1ea7d1147717c959af5a3522cc#08a5a176)
+   Compiling allocation-counter v0.8.1
+   Compiling filament-semantic-value v0.1.5 (https://github.com/agent-ix/filament-semantic-value?rev=689f259eab592b62cb362f5e649dba16adf874f7#689f259e)
+   Compiling fsl-foundation v0.1.0 (/mnt/build/dev/worktrees/q-3845/fsl-foundation)
+   Compiling filament-contract-model v0.1.2 (https://github.com/agent-ix/filament-contract-ir?rev=dc9b220b92390eb8c5999a1b26ac8ff94cfffd33#dc9b220b)
+   Compiling filament-checked v0.1.6 (https://github.com/agent-ix/filament-eval?rev=b50cfacb80459d5f1fb3b8deeafc63222db69401#b50cfacb)
+   Compiling fsl-cst v0.1.0 (/mnt/build/dev/worktrees/q-3845/fsl-cst)
+   Compiling fsl-forms v0.1.0 (/mnt/build/dev/worktrees/q-3845/fsl-forms)
+   Compiling fsl-semantics v0.1.0 (/mnt/build/dev/worktrees/q-3845/fsl-semantics)
+   Compiling fsl-package v0.3.0 (/mnt/build/dev/worktrees/q-3845/fsl-package)
+    Finished `test` profile [unoptimized] target(s) in 5m 49s
+     Running unittests src/lib.rs (/home/peter/dev/worktrees/q-shared-target/debug/deps/fsl_package-245a67496378271b)
+
+running 10 tests
+test emit::value_validity_requirements::tests::package_order_sorts_by_claim_key_then_role_ordinal_and_kind ... ok
+test emit::value_validity_requirements::tests::reordering_frames_remaps_every_record_citation ... ok
+test emit::value_validity_requirements::tests::a_branch_without_a_scalar_operation_holds_no_frame ... ok
+test emit::value_validity_requirements::tests::both_guard_holds_outcomes_survive_native_admission ... ok
+test emit::value_validity_requirements::tests::unguarded_record_keeps_an_empty_path_condition ... ok
+test emit::value_validity_requirements::tests::nested_guards_share_every_prefix_in_one_table ... ok
+test emit::value_validity_requirements::tests::records_of_a_shared_application_follow_the_owner_walk ... ok
+test emit::value_validity_requirements::tests::bare_parameter_guard_is_one_shared_frame_per_outcome ... ok
+test emit::value_validity_requirements::tests::bounded_mutual_recursion_emits_guarded_range_records ... ok
+test emit::value_validity_requirements::tests::mutual_recursion_preserves_repeated_syntax_owner_regions ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1173 filtered out; finished in 0.11s
+
