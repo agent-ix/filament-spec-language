@@ -306,6 +306,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
+        | RunCause::OverrideUnapplied { .. }
         | RunCause::OutputExists { .. }
         | RunCause::ExtractionRequiresRun => (types::Stage::Request, types::Details::None),
         RunCause::TransferSelection { stage, details, .. } => (

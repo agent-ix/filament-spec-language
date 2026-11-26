@@ -10,6 +10,7 @@ mod handoff;
 mod items;
 pub mod limits;
 mod model_based_test;
+mod overrides;
 pub mod monitor;
 mod output;
 mod output_file;
@@ -54,6 +55,7 @@ use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
 use fsl_replay::spine::SpineLimits;
+use ix_trace_rs::implements;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
 use settle::Settle;
 use std::{
@@ -786,6 +788,14 @@ pub enum RunCause {
         "invalid request: output is given both in the request and as an output override (--output); give it once"
     )]
     OutputGivenTwice,
+    /// FR-255 Behavior 15: the run route cannot apply a caller override.
+    #[error("invalid request: the {member} override cannot be applied to a {route} run; remove it")]
+    OverrideUnapplied {
+        /// The run route.
+        route: overrides::RunRoute,
+        /// The override member or setting name.
+        member: &'static str,
+    },
     /// FR-810: a file or directory already exists at the output path.
     #[error("invalid request: output {path} already exists; FSL never overwrites an existing path", path = path.display())]
     OutputExists {
@@ -1290,6 +1300,7 @@ impl RunCause {
             | Self::RequiresDirectory { .. }
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
+            | Self::OverrideUnapplied { .. }
             | Self::OutputExists { .. }
             | Self::ExportProtocolRequest { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
@@ -1670,6 +1681,7 @@ impl RunError {
             | RunCause::TlFault(_)
             | RunCause::ClocksGivenTwice
             | RunCause::OutputGivenTwice
+            | RunCause::OverrideUnapplied { .. }
             | RunCause::OutputExists { .. }
             | RunCause::Output(_)
             | RunCause::ClauseOutput(_)
@@ -2181,15 +2193,27 @@ fn run_configured(
     let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
         request_shape::admit(request_shape::Family::Run, bytes)?;
         if monitor::is_monitor_request(bytes) {
-            monitor::run_bytes(directory, bytes, limits.dependent_bytes, &settle).map(Some)
+            monitor::run_bytes(
+                directory,
+                bytes,
+                limits.dependent_bytes,
+                overrides,
+                &settle,
+            )
+            .map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
+            let caller = overrides::command_limits(
+                overrides::RunRoute::Replay,
+                CommandLimits::replay(),
+                overrides,
+            )?;
             replay::run_bytes(
                 directory,
                 path.to_str(),
                 bytes,
                 limits.dependent_bytes,
-                &CommandLimits::replay(),
+                &caller,
             )
             .map(Some)
         } else {
@@ -4362,10 +4386,10 @@ fn with_checked_request<T>(
 /// FR-961).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RequestOverrides<'a> {
-    /// The caller's fully resolved scalar evaluation budget. When supplied,
-    /// this effective budget replaces request accounting for calls and clause
-    /// selections, and configures each verification-plan step.
-    pub accounting: Option<&'a filament_exact::ScalarLimits>,
+    /// The accounting counters the caller names. Each replaces the request's
+    /// value of that counter only; every other counter keeps the request's
+    /// value (FR-255 Behavior 15).
+    pub accounting: Option<&'a std::collections::BTreeMap<fsl_foundation::AccountingSetting, u64>>,
     /// The `clocks` object, as the driver's `--clocks` file carries it. A request
     /// that also carries `clocks` is refused `invalid-request` at stage `request`.
     pub clocks: Option<&'a serde_json::value::RawValue>,
@@ -4382,19 +4406,35 @@ pub struct RequestOverrides<'a> {
     pub observation: Option<&'a fsl_semantics::model::observation::ObservationLimits>,
 }
 
-/// The caller's effective budget replaces request accounting on a call or a
-/// clause selection, never a fresh allowance.
-fn apply_accounting_override(request: &mut wire::Request, overrides: &RequestOverrides<'_>) {
-    if let Some(accounting) = overrides.accounting {
-        if let Some(call) = &mut request.call {
-            call.accounting = wire::Accounting::from_limits(*accounting);
+impl RequestOverrides<'_> {
+    /// `request`'s accounting limits with each counter the caller names
+    /// replaced.
+    fn accounting_over(&self, request: filament_exact::ScalarLimits) -> filament_exact::ScalarLimits {
+        let mut limits = fsl_replay::AccountingLimits(request);
+        for (setting, bound) in self.accounting.into_iter().flatten() {
+            limits.set_bound(*setting, *bound);
         }
-        if let Some(clause) = &mut request.clause {
-            clause.accounting = wire::Accounting::from_limits(*accounting);
-        }
+        limits.0
     }
 }
 
+/// The caller's counters replace the request's on a call or a clause
+/// selection, never a fresh allowance.
+fn apply_accounting_override(request: &mut wire::Request, overrides: &RequestOverrides<'_>) {
+    let apply = |accounting: &mut wire::Accounting| {
+        *accounting = wire::Accounting::from_limits(
+            overrides.accounting_over(call_accounting(accounting)),
+        );
+    };
+    if let Some(call) = &mut request.call {
+        apply(&mut call.accounting);
+    }
+    if let Some(clause) = &mut request.clause {
+        apply(&mut clause.accounting);
+    }
+}
+
+#[implements("FR-640-AC-14")]
 fn request_with_overrides<T: wire::ClocksRequest>(
     bytes: &[u8],
     overrides: &RequestOverrides<'_>,
@@ -4586,6 +4626,7 @@ fn prepare_run_bytes_with_sources(
     }
     if let Some(member) = &request.model_based_test {
         model_based_test::decode(member)?;
+        overrides::refuse_unapplied(overrides::RunRoute::ModelBasedTest, overrides)?;
     }
     if request.tl_lowering.is_some() && request.model_based_test.is_some() {
         return Err(RunCause::ClauseRequest {
@@ -4595,6 +4636,23 @@ fn prepare_run_bytes_with_sources(
     }
     if let Some(transfer) = &request.refinement_transfer {
         validate_transfer_member(&request, transfer)?;
+        let observation = transfer
+            .observation_limits
+            .as_ref()
+            .map(|stated| fsl_replay::spine::ObservationLimitsWire::resolve(Some(stated)))
+            .transpose()
+            .map_err(|error| RunCause::ClauseRequest {
+                member: error.member,
+                reason: error.reason,
+            })?;
+        let effective = overrides::effective_limits(
+            overrides::RunRoute::RefinementTransfer,
+            overrides::RequestLimits {
+                observation,
+                ..Default::default()
+            },
+            overrides,
+        )?;
         let mut intake = intake_with_bytes(
             directory,
             FileCounts {
@@ -4618,6 +4676,7 @@ fn prepare_run_bytes_with_sources(
                 request,
                 source,
                 integer_division,
+                limits: Box::new(effective),
             },
         )));
     }
@@ -4682,8 +4741,7 @@ fn prepare_run_bytes_with_sources(
             source,
             integer_division,
             library_integer_division,
-            overrides.limits.copied().unwrap_or_default(),
-            overrides.observation.copied(),
+            overrides,
         )
     })();
     *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
@@ -4941,9 +4999,10 @@ fn prepare_complete_run(
     source: FormalSource,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
-    stage_limits: SpineLimits,
-    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+    overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
+    let stage_limits = overrides.limits.copied().unwrap_or_default();
+    let observation_override = overrides.observation.copied();
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(
             intake,
@@ -4963,8 +5022,7 @@ fn prepare_complete_run(
                 source,
                 integer_division,
                 library_integer_division,
-                limits: stage_limits,
-                observation_override,
+                overrides,
             },
         );
     }

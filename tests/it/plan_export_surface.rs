@@ -2174,14 +2174,21 @@ fn transfer_run_over(
     supply_spec: bool,
     closure_unit: bool,
 ) -> (u8, Value) {
-    transfer_run_declaring(members, supply_spec, &transfer_declarations(closure_unit))
+    transfer_run_declaring(
+        members,
+        supply_spec,
+        &transfer_declarations(closure_unit),
+        &Default::default(),
+    )
 }
 
-/// [`transfer_run_over`] over a unit with `declarations`.
+/// [`transfer_run_over`] over a unit with `declarations`, run with the
+/// caller's `overrides`.
 fn transfer_run_declaring(
     members: &[(&str, Value)],
     supply_spec: bool,
     declarations: &str,
+    overrides: &fsl_command::command::RequestOverrides<'_>,
 ) -> (u8, Value) {
     use crate::support::refinement_cas::{self, Variant};
     let directory = tempfile::tempdir().unwrap();
@@ -2612,6 +2619,7 @@ fn a_protocol_abstract_subject_is_refused_not_settled_as_a_model() {
         )],
         true,
         &declarations,
+        &Default::default(),
     );
     assert_eq!(exit, 20, "{value}");
     names(&value, "select");
@@ -3729,4 +3737,54 @@ fn positive_bounded_source_policy_runs_through_the_host_request() {
     assert_eq!(first.0, 0, "{}", first.1);
     assert_eq!(first.1["synthesis"]["status"], "optimal", "{}", first.1);
     assert!(!first.1["synthesis"]["plan"].is_null(), "{}", first.1);
+}
+
+/// A transfer unit that also holds `1 + 1 + 1`, five expression nodes.
+fn transfer_run_overridden(overrides: &fsl_command::command::RequestOverrides<'_>) -> (u8, Value) {
+    let declarations = format!(
+        "{}function f using v(): Integer pure {{ 1 + 1 + 1 }}\n",
+        transfer_declarations(false)
+    );
+    transfer_run_declaring(
+        &[(
+            "refinement_transfer",
+            transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["PrevSafe"]),
+        )],
+        true,
+        &declarations,
+        overrides,
+    )
+}
+
+/// FR-255-AC-32: a `refinement_transfer` request whose checked source holds
+/// `1 + 1 + 1`, run with the caller's `s3.nodes` at 4, returns
+/// `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`.
+#[test]
+#[trace("FR-255-AC-32")]
+fn a_refinement_transfer_applies_the_callers_stage_limit() {
+    use fsl_foundation::SettingLimits;
+    let mut limits = fsl_replay::spine::SpineLimits::default();
+    assert!(limits.set_bound(fsl_foundation::Setting::S3Nodes, 4));
+    let (exit, value) = transfer_run_overridden(&fsl_command::command::RequestOverrides {
+        limits: Some(&limits),
+        ..Default::default()
+    });
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(value["code"], "stage_limit_exceeded", "{value}");
+    names(&value, "S3 node limit 4 reached (5)");
+}
+
+/// FR-255 Behavior 15: a `refinement_transfer` run refuses an output override,
+/// naming it.
+#[test]
+#[trace("FR-255-AC-33")]
+fn a_refinement_transfer_refuses_an_output_override() {
+    let output = std::path::PathBuf::from("transfer-output.json");
+    let (exit, value) = transfer_run_overridden(&fsl_command::command::RequestOverrides {
+        output: Some(&output),
+        ..Default::default()
+    });
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names(&value, "output override");
 }

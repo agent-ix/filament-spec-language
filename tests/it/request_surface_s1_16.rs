@@ -4553,3 +4553,88 @@ fn a_direct_member_past_the_candidate_bound_settles_incomplete() {
     assert_eq!(record["cause"], candidate_limit_reached(), "{value}");
     assert_eq!(exit, 22, "{value}");
 }
+
+// ---- FR-752/FR-255: caller overrides on a direct model-based test ------
+
+/// A direct `model_based_test` member over a passing clause of the narrowed
+/// spine model, run with the caller's `overrides`.
+fn run_member_overridden(overrides: &fsl_command::command::RequestOverrides<'_>) -> (u8, Value) {
+    let directory = bump_directory(
+        &format!(
+            "{MODEL_HEADER}invariant Always using v on Config::ConfigVersion at current {{ true }}\n"
+        ),
+        &["a"],
+        true,
+    );
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "model_based_test": {"clause": "Always", "seed": 7, "max_cases": 5,
+            "max_trace_length": 2, "initial": "s.json"}}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    match fsl_command::command::run_with_overrides(&path, overrides, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).expect("a JSON document"),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
+}
+
+/// FR-752-AC-15: with the caller's `accounting.work_units` at 5 the direct
+/// member stops at that bound.
+#[test]
+#[trace("FR-752-AC-15")]
+fn a_direct_member_stops_at_the_callers_work_bound() {
+    let (exit, control) = run_member_overridden(&Default::default());
+    assert_eq!(exit, 0, "{control}");
+    let accounting = std::collections::BTreeMap::from([(
+        fsl_foundation::AccountingSetting::WorkUnits,
+        5,
+    )]);
+    let (exit, value) = run_member_overridden(&fsl_command::command::RequestOverrides {
+        accounting: Some(&accounting),
+        ..Default::default()
+    });
+    let record = &value["model_based_test"];
+    assert_eq!(record["status"], "incomplete", "{value}");
+    assert_eq!(
+        record["cause"],
+        json!({"kind": "limit-reached", "limit": "work_units", "value": 5,
+            "setting": "accounting.work_units"}),
+        "{value}"
+    );
+    assert_eq!(exit, 22, "{value}");
+}
+
+/// FR-255 Behavior 15: a direct member, which compiles without clock
+/// selections and writes no file, refuses a clocks or output override.
+#[test]
+#[trace("FR-255-AC-33")]
+fn a_direct_member_refuses_an_override_it_cannot_apply() {
+    let supplied = serde_json::value::RawValue::from_string("{}".to_owned()).unwrap();
+    let output = std::path::PathBuf::from("model-based-output.json");
+    for (overrides, member) in [
+        (
+            fsl_command::command::RequestOverrides {
+                clocks: Some(&supplied),
+                ..Default::default()
+            },
+            "clocks override",
+        ),
+        (
+            fsl_command::command::RequestOverrides {
+                output: Some(&output),
+                ..Default::default()
+            },
+            "output override",
+        ),
+    ] {
+        let (exit, value) = run_member_overridden(&overrides);
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert!(value["message"].as_str().unwrap().contains(member), "{value}");
+    }
+}

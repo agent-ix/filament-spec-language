@@ -560,3 +560,57 @@ fn replay_with_limits_applies_the_callers_settings() {
         "{document}"
     );
 }
+
+/// FR-255-AC-33: a `native-replay/1` file run through `run` refuses a clocks
+/// override and an output override, naming each, and applies the caller's
+/// accounting counter.
+#[test]
+#[trace("FR-255-AC-33")]
+fn a_replay_run_applies_or_refuses_each_override() {
+    use fsl_command::command::{run_with_overrides, RequestOverrides};
+    use fsl_foundation::AccountingSetting;
+    let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
+    let path = fixture.request_file(&fixture.package);
+    let supplied = serde_json::value::RawValue::from_string("{}".to_owned()).unwrap();
+    let output = fixture.directory.path().join("replayed.json");
+    for (overrides, member) in [
+        (
+            RequestOverrides {
+                clocks: Some(&supplied),
+                ..Default::default()
+            },
+            "clocks override",
+        ),
+        (
+            RequestOverrides {
+                output: Some(&output),
+                ..Default::default()
+            },
+            "output override",
+        ),
+    ] {
+        let error = run_with_overrides(&path, &overrides, &crate::negotiation::Fr290)
+            .expect_err("the override cannot be applied");
+        let envelope = error.value().unwrap();
+        assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+        assert!(
+            envelope["message"].as_str().unwrap().contains(member),
+            "{envelope}"
+        );
+    }
+    assert!(!output.exists());
+
+    let accounting = BTreeMap::from([(AccountingSetting::WorkUnits, 0)]);
+    let limited = run_with_overrides(
+        &path,
+        &RequestOverrides {
+            accounting: Some(&accounting),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .expect("an exhausted budget settles, it does not refuse");
+    assert_eq!(limited.exit_code, 22);
+    let row = &limited.value.as_value()["results"][0];
+    assert_eq!(row["limit"]["setting"], "accounting.work_units", "{row}");
+}

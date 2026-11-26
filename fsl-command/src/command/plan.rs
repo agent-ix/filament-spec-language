@@ -232,9 +232,7 @@ pub(super) fn run_bytes(
             // the analyze route's own over its empty `limits` member.
             let mut analyze_limits =
                 super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), None);
-            if let Some(accounting) = overrides.accounting {
-                analyze_limits.accounting = *accounting;
-            }
+            analyze_limits.accounting = overrides.accounting_over(analyze_limits.accounting);
             if let Some(observation) = overrides.observation {
                 analyze_limits.observation = *observation;
             }

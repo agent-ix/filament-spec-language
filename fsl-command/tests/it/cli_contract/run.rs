@@ -7,6 +7,7 @@
 
 use crate::config_version_spine::spine as config_domain;
 use fsl_command::command::{RequestOverrides, RunLimits};
+use fsl_foundation::AccountingSetting;
 use ix_trace_rs::trace;
 use serde_json::value::RawValue;
 use serde_json::{json, Value};
@@ -62,7 +63,12 @@ fn with_provider_context(path: &std::path::Path, overrides: &RequestOverrides<'_
     }
 }
 
-/// A driver's effective accounting budget is used by calls and each item.
+/// The caller override naming `accounting.work_units` at zero.
+fn no_work() -> std::collections::BTreeMap<AccountingSetting, u64> {
+    std::collections::BTreeMap::from([(AccountingSetting::WorkUnits, 0)])
+}
+
+/// A driver's named accounting counters are used by calls and each item.
 #[test]
 #[trace("FR-100-AC-1", "FR-651-AC-1")]
 fn caller_overrides_reach_call_and_items_accounting() {
@@ -78,8 +84,7 @@ fn caller_overrides_reach_call_and_items_accounting() {
     job["request"]["call"]["accounting"] = json!({"work_units":u64::MAX});
     let path = case.json("accounting.json", &job);
     assert_eq!(plain(&path).exit, 0);
-    let mut accounting = fsl_replay::AccountingLimits::default().0;
-    accounting.work_units = 0;
+    let accounting = no_work();
     let overrides = RequestOverrides {
         accounting: Some(&accounting),
         ..Default::default()
@@ -374,8 +379,7 @@ fn caller_overrides_reach_plan_clocks_stages_and_observations() {
     let mut executing = job.clone();
     executing["request"]["verification_plan"]["execute"] = json!(true);
     executing["request"]["requirements"] = json!({"backend":"en-1"});
-    let mut accounting = fsl_replay::AccountingLimits::default().0;
-    accounting.work_units = 0;
+    let accounting = no_work();
     let budgeted = with_provider_context(
         &case.json("plan-accounting.json", &executing),
         &RequestOverrides {
@@ -1087,8 +1091,7 @@ fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
     let control = plain(&path);
     assert_eq!(control.exit, 0, "{}", control.document);
 
-    let mut accounting = fsl_replay::AccountingLimits::default().0;
-    accounting.work_units = 0;
+    let accounting = no_work();
     let limited = run(
         &path,
         RunLimits::default(),
@@ -1140,7 +1143,10 @@ fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
 
     // Just-enough caller limits (the published defaults, supplied explicitly)
     // leave the result exactly as it is without overrides.
-    let enough = fsl_replay::AccountingLimits::default().0;
+    let enough = std::collections::BTreeMap::from([(
+        AccountingSetting::WorkUnits,
+        fsl_replay::AccountingLimits::default().0.work_units,
+    )]);
     let stages = fsl_replay::spine::SpineLimits::default();
     let with = run(
         &path,

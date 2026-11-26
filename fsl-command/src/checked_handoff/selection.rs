@@ -765,6 +765,7 @@ impl Selection {
             package_name: rows.package_name.clone(),
             points: rows.execution_points.clone(),
             temporal_selections,
+            limits: fsl_replay::spine::SpineLimits::default(),
         })
     }
 

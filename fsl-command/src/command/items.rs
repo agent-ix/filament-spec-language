@@ -830,10 +830,7 @@ fn prepare_value_invariants(
             snapshot,
             invocation,
             observation_limits: inputs.observation_limits,
-            accounting: overrides
-                .accounting
-                .copied()
-                .unwrap_or_else(|| super::call_accounting(&accounting)),
+            accounting: overrides.accounting_over(super::call_accounting(&accounting)),
         },
     })
 }

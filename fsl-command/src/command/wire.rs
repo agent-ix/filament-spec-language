@@ -926,6 +926,12 @@ impl ClocksRequest for Request {
     }
 }
 
+impl ClocksRequest for MonitorRequest {
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
+        &mut self.clocks
+    }
+}
+
 impl ClocksRequest for CompileRequest {
     fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
         self.clocks

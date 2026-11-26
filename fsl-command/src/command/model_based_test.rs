@@ -368,28 +368,40 @@ pub(super) fn result_json(
 }
 
 /// The run-level inputs shared with every other `run` route.
-pub(super) struct Context {
+pub(super) struct Context<'a> {
     pub(super) source: FormalSource,
     pub(super) integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     pub(super) library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
-    pub(super) limits: fsl_replay::spine::SpineLimits,
-    pub(super) observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+    pub(super) overrides: &'a super::RequestOverrides<'a>,
 }
 
-#[implements("FR-752-AC-16")]
+#[implements("FR-752-AC-16", "FR-752-AC-15")]
 pub(super) fn prepare(
     intake: &mut Intake<'_>,
     request: &wire::Request,
     member: &Value,
-    context: Context,
+    context: Context<'_>,
 ) -> Result<PreparedRun> {
     let Context {
         source,
         integer_division,
         library_integer_division,
-        limits,
-        observation_override,
+        overrides,
     } = context;
+    // The member is closed, so no request carries these: they run at the
+    // published defaults and the caller's values.
+    let published = fsl_analyze::analyze::AnalyzeLimits::published(
+        fsl_analyze::analyze::DeadlineSupply::Unbounded,
+    );
+    let effective = super::overrides::effective_limits(
+        super::overrides::RunRoute::ModelBasedTest,
+        super::overrides::RequestLimits {
+            accounting: published.accounting,
+            observation: None,
+        },
+        overrides,
+    )?;
+    let limits = effective.spine;
     let selection = decode(member)?;
     if request.package.is_some()
         || request.call.is_some()
@@ -586,12 +598,6 @@ pub(super) fn prepare(
     let sampler =
         fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
             .map_err(|error| invalid("model_based_test", format!("{error:?}")))?;
-    let observation = observation_override.unwrap_or_default();
-    // The member is closed, so no request carries these: they run at the
-    // published defaults.
-    let published = fsl_analyze::analyze::AnalyzeLimits::published(
-        fsl_analyze::analyze::DeadlineSupply::Unbounded,
-    );
     let request = fsl_eval::simulation::model::ModelBasedTestRequest {
         clause: Some(clause_identity),
         profile: sampler,
@@ -608,9 +614,9 @@ pub(super) fn prepare(
             }
         }),
         expansion: published.expansion,
-        accounting: published.accounting,
+        accounting: effective.accounting.0,
         normalization: limits.model,
-        observation,
+        observation: effective.observation,
         emit: limits.package.emit(),
         exploration: fsl_eval::simulation::Limits::default(),
         position_limit: published.position_limit,

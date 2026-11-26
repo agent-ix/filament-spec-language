@@ -3,10 +3,13 @@
 
 use filament_exact::{Integer, IntegerInterval, ValueType};
 use fsl_foundation::Code;
+use ix_trace_rs::implements;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
 use std::time::{Duration, Instant};
+
+use super::overrides::{effective_limits, refuse_unapplied, RequestLimits, RunRoute};
 
 const DEFAULT_MAX_CANDIDATES: u64 = 10_000_000;
 const DEFAULT_MAX_WORK: u64 = 100_000_000;
@@ -700,12 +703,21 @@ impl Requested {
     }
 }
 
+/// The accounting a value synthesis states for itself.
+fn value_limits(selection: &Selection) -> RequestLimits {
+    RequestLimits {
+        accounting: super::call_accounting(&selection.accounting),
+        observation: None,
+    }
+}
+
 /// Run the native-run/1 synthesis selection when present.
+#[implements("FR-255-AC-32", "FR-255-AC-33")]
 pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
     run_limits: super::RunLimits,
-    _overrides: &super::RequestOverrides<'_>,
+    overrides: &super::RequestOverrides<'_>,
 ) -> super::Result<Option<super::RunResult>> {
     let started = Instant::now();
     let mut document: Value = serde_json::from_slice(bytes).map_err(super::RunCause::Json)?;
@@ -722,11 +734,20 @@ pub(super) fn run_bytes(
     };
     let requested = Requested::read(member, started)?;
     let request_bytes = serde_json::to_vec(&document).map_err(super::RunCause::Output)?;
-    let request: super::wire::Request = super::request(&request_bytes)?;
+    // The synthesis member is removed above, so this reads the rest of the
+    // request, refusing clocks given by both before any file is read.
+    let request: super::wire::Request = super::request_with_overrides(&request_bytes, overrides)?;
     if request.package.is_some() {
-        return run_package_synthesis(directory, &request, &requested, run_limits.dependent_bytes)
-            .map(Some);
+        return run_package_synthesis(
+            directory,
+            &request,
+            &requested,
+            run_limits.dependent_bytes,
+            overrides,
+        )
+        .map(Some);
     }
+    let spine = effective_limits(RunRoute::Synthesis, RequestLimits::default(), overrides)?.spine;
     exclusive_member(&request)?;
     if request.integer_division.is_some()
         || request.libraries.iter().any(|library| {
@@ -801,6 +822,7 @@ pub(super) fn run_bytes(
         package_name: package_name.clone(),
         points: Default::default(),
         temporal_selections: Vec::new(),
+        limits: spine,
     })
     .map_err(|error| match error {
         crate::emit_checked_v2::Error::Producer(producer) => match *producer {
@@ -813,8 +835,7 @@ pub(super) fn run_bytes(
     })?;
     let model_documents =
         super::package_input_from_selected_models(&request.models, &model_sources)?;
-    let read_limits =
-        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
+    let read_limits = spine.imports;
     let admitted = fsl_package::admit_checked_package(
         compiled.emitted.package().bytes(),
         &model_documents,
@@ -849,7 +870,7 @@ pub(super) fn run_bytes(
                 packages: &model_documents,
                 intake: &mut intake,
             },
-            super::call_accounting(&super::wire::Accounting::default()),
+            overrides,
             requested.started,
         )?;
         return Ok(Some(super::RunResult {
@@ -863,6 +884,13 @@ pub(super) fn run_bytes(
         }));
     }
     let selection = requested.value()?;
+    let accounting = effective_limits(
+        RunRoute::ValueSynthesis,
+        value_limits(&selection),
+        overrides,
+    )?
+    .accounting
+    .0;
     let ValueType::Int(domain) = checked.domain() else {
         return Err(refused(
             "/request/synthesis/declaration",
@@ -912,12 +940,12 @@ pub(super) fn run_bytes(
     let mut searcher = SourceEvaluator {
         package: compiled.checked.package(),
         checked,
-        meter: filament_exact::Meter::new(super::call_accounting(&selection.accounting)),
+        meter: filament_exact::Meter::new(accounting),
     };
     let mut checker = PackageEvaluator {
         world: &check_world,
         projected: &check_projected,
-        meter: filament_exact::Meter::new(super::call_accounting(&selection.accounting)),
+        meter: filament_exact::Meter::new(accounting),
     };
     let (outcome, exit_code) = run_value_synthesis(
         ValueRun {
@@ -984,12 +1012,15 @@ impl CandidateEvaluator for SourceEvaluator<'_> {
     }
 }
 
+#[implements("FR-255-AC-32", "FR-255-AC-33")]
 fn run_package_synthesis(
     directory: &Path,
     request: &super::wire::Request,
     requested: &Requested,
     dependent_bytes: usize,
+    overrides: &super::RequestOverrides<'_>,
 ) -> super::Result<super::RunResult> {
+    refuse_unapplied(RunRoute::PackageSynthesis, overrides)?;
     exclusive_member(request)?;
     if !request.extensions.is_empty() {
         return Err(refused(
@@ -1033,6 +1064,13 @@ fn run_package_synthesis(
         return Err(plan_not_routed());
     }
     let selection = requested.value()?;
+    let accounting = effective_limits(
+        RunRoute::PackageSynthesis,
+        value_limits(&selection),
+        overrides,
+    )?
+    .accounting
+    .0;
     let (world, projected) = read_value_synthesis(&bare, &claim.declaration)?;
     let (check_world, check_projected) = read_value_synthesis(&bare, &claim.declaration)?;
     let package_name = admitted.package.name().to_owned();
@@ -1049,12 +1087,12 @@ fn run_package_synthesis(
     let mut searcher = PackageEvaluator {
         world: &world,
         projected: &projected,
-        meter: filament_exact::Meter::new(super::call_accounting(&selection.accounting)),
+        meter: filament_exact::Meter::new(accounting),
     };
     let mut checker = PackageEvaluator {
         world: &check_world,
         projected: &check_projected,
-        meter: filament_exact::Meter::new(super::call_accounting(&selection.accounting)),
+        meter: filament_exact::Meter::new(accounting),
     };
     let (outcome, exit_code) = run_value_synthesis(
         ValueRun {
