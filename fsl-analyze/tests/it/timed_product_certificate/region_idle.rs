@@ -10,7 +10,7 @@
 use fsl_analyze::analyze::AnalyzeRecord;
 use fsl_replay::{ProofBasis, TerminalValue};
 
-use super::{PROFILES, settle};
+use super::{settle, PROFILES};
 use crate::timed_world::{self, World};
 
 fn outcome(record: &AnalyzeRecord) -> String {
