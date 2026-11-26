@@ -2218,26 +2218,9 @@ fn an_undefined_operation_guard_is_reported_at_its_contract_site() {
 #[trace("TC-612", "FR-168-AC-12")]
 #[test]
 fn an_undefined_terminal_predicate_is_reported_without_a_claim_predicate() {
-    let model = Model {
-        package: "test/counter",
-        alias: "C",
-        object: "Counter",
-        population: "counters",
-        symmetric: false,
-        fields: vec![Field {
-            name: "value",
-            range: Some((0, 3)),
-        }],
-        operations: vec![Operation {
-            name: "inc",
-            modifies: &["value"],
-        }],
-    };
-    let body = "pre CanInc using v on C::Counter::inc { self.value < 3 }\n\
-        post Inc using v on C::Counter::inc { self.value = pre(self.value) + 1 }\n\
-        terminal Done using v on C when { 6 mod (3 - self.value) = 0 };\n\
+    let body = "terminal Done using v on C when { remainder(3 - self.value) = 0 };\n\
         possible AtThree using v over (c: C::Counter) { c.value = 3 }\n";
-    let world = World::new(model, body, &[&[("c", &[("value", 0)])]]);
+    let world = counter_kernel_world("", body);
     let result = run(world.request(
         &["c"],
         vec![world.item("AtThree")],
