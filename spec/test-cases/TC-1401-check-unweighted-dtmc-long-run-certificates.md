@@ -44,8 +44,9 @@ profile or its bounded key owner is already implemented.
    requirement of each pass. Run pre-cancellation and cancellation during
    each operation listed in AC-30 using observed phase entry rather than
    a fixed poll count. Include undefined reachable P and workload inputs,
-   each excluded shape/kind/profile (including weighted claims), and zero
-   admitted instances at direct claim binding and the direct EN-5 item.
+   each excluded shape/kind/profile (including weighted claims), and an
+   initial state with no admitted `over` instance at direct claim
+   binding, the checker and the direct EN-5 item.
    Independently retain FR-199's existing weighted
    zero-weight component control through its own solver entry.
    Preserve explicit typed outcomes and
@@ -77,8 +78,6 @@ original-gain assertion; no test should rewrite that result to zero.
 - Step 4 preserves typed limit/cancellation/undefined/refusal or explicit
   unsupported outcomes without truth values or an accepted document.
   A weighted zero-weight case remains `Unsupported(ZeroWeightComponent)`.
-  Zero over instances give `NoInstance` at direct claim binding and the
-  checker and `inconclusive`, `no-instance`, at the direct EN-5 item,
-  never `UnsupportedBinding` or unsupported, without certificate,
-  counterexample or invented binding/evidence. This procedure asserts no
-  higher-level planner behavior.
+  With an initial state and no admitted instance, all three give
+  `NoInstance` as FR-201 "Instancing outcomes" states. This
+  procedure asserts no higher-level planner behavior.

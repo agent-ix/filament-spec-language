@@ -69,9 +69,10 @@ policies, action ordinals and qualitative labels are not authorities.
    Exercise cumulative work/storage, byte/state/edge, representation and
    exact arithmetic stops. Include undefined state predicates, source
    refusals, unsupported shapes/kinds/fairness/workload/reward/timing/
-   pending choices and zero direct over instances. Confirm source
-   probability thresholds 0 and 1 stay refused and no minimum AtMost or
-   maximum AtLeast source form is introduced.
+   pending choices and an initial state with no admitted `over` instance
+   at direct claim binding, the checker and the direct EN-5 item.
+   Confirm source probability thresholds 0 and 1 stay refused and no
+   minimum AtMost or maximum AtLeast source form is introduced.
 
 Executable assertions SHALL carry actual criterion attributes, for
 example `#[trace("TC-1404", "FR-201-AC-40")]`. This procedure does not
@@ -100,8 +101,6 @@ author a matrix or claim whole-runtime allocation qualification.
   because its threshold property happens to hold.
 - Step 5 preserves the actual typed refusal, unsupported, limit or
   cancellation cause with no accepted truth. No evaluation failure becomes
-  zero or a dropped action. Zero direct instances give `NoInstance` at
-  direct claim binding and the checker and `inconclusive`,
-  `no-instance`, at the direct EN-5 item, never `UnsupportedBinding` or
-  unsupported, with no fabricated binding, certificate or
-  counterexample. No proof becomes an FR-202 or FR-413 refutation.
+  zero or a dropped action. With an initial state and no admitted
+  instance, all three give `NoInstance` as FR-201 "Instancing outcomes"
+  states. No proof becomes an FR-202 or FR-413 refutation.

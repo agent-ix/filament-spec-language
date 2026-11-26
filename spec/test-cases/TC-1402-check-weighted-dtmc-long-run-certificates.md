@@ -57,13 +57,14 @@ bottom components; it does not import a solver's stationary vector.
    SCC/membership and weighted row sums; use actual phase events rather
    than a fixed poll offset and preserve Requested/Deadline causes.
    Include undefined/negative weights at both recurrent and transient
-   states, absent rewards, unsupported kinds/shapes, and direct zero over
-   instances. Distinguish FR-187's earlier finite-domain negative-reward
-   admission refusal from defensive post-admission weight checks; do not
-   relabel the earlier refusal as profile unsupported. Exercise integer
-   representation and exact weight arithmetic
-   limits separately; weights may exceed one but their arithmetic is not
-   exempt from scalar/rational ceilings.
+   states, absent rewards, unsupported kinds/shapes, and an initial
+   state with no admitted `over` instance at direct claim binding, the
+   checker and the direct EN-5 item. Distinguish FR-187's earlier
+   finite-domain negative-reward admission refusal from defensive
+   post-admission weight checks; do not relabel the earlier refusal as
+   profile unsupported. Exercise integer representation and exact weight
+   arithmetic limits separately; weights may exceed one but their
+   arithmetic is not exempt from scalar/rational ceilings.
 
 Executable assertions SHALL carry actual criterion trace attributes, for
 example `#[trace("TC-1402", "FR-201-AC-31")]`. This procedure neither
@@ -91,8 +92,7 @@ authors a matrix nor asserts whole-runtime allocation qualification.
   evidence. Existing profiles are unchanged.
 - Step 4 retains typed stop/refusal/unsupported outcomes and actual caller
   cause/consumption without accepted truth values. No invalid weight is
-  silently zeroed. Zero direct instances give `NoInstance` at direct
-  claim binding and the checker and `inconclusive`, `no-instance`, at
-  the direct EN-5 item, never `UnsupportedBinding` or unsupported,
-  without a certificate, counterexample or invented binding. No weighted
-  proof becomes an unweighted document or native/shared-wire refutation.
+  silently zeroed. With an initial state and no admitted instance, all
+  three give `NoInstance` as FR-201 "Instancing outcomes" states. No
+  weighted proof becomes an unweighted document or native/shared-wire
+  refutation.

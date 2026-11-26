@@ -56,7 +56,9 @@ do not trust producer policy, properness labels or supplied costs.
    offsets. Exhaust actual byte/state/edge/work/storage/representation and
    arithmetic requirements. Check earlier model/negative refusal precedence
    and deferred undefined/unsupported evaluation without zero substitution.
-   Exercise unsupported shapes and zero direct over instances.
+   Exercise unsupported shapes, and an initial state with no admitted
+   `over` instance at direct claim binding, the checker and the direct
+   EN-5 item.
 
 Executable assertions SHALL carry actual criterion attributes such as
 `#[trace("TC-1405", "FR-201-AC-44")]`. This procedure writes no matrix and
@@ -81,9 +83,7 @@ does not qualify external transition/interpreter allocations or all AC-30.
   Extra rows reject coverage and extra targets refuse objective mismatch.
   Existing bytes/verdicts and sealed acceptance are unchanged.
 - Step 5 retains actual typed refusal, unsupported, limit or cancellation
-  causes with no accepted token/truth. Zero instances give `NoInstance`
-  at direct claim binding and the checker and `inconclusive`,
-  `no-instance`, at the direct EN-5 item, never `UnsupportedBinding` or
-  unsupported, without invented binding or evidence. No new bound
-  direction, infinity document, refutation or FR-413 transport is
-  implied.
+  causes with no accepted token/truth. With an initial state and no
+  admitted instance, all three give `NoInstance` as FR-201 "Instancing
+  outcomes" states. No new bound direction, infinity document,
+  refutation or FR-413 transport is implied.

@@ -21,8 +21,9 @@ Build `Avail2` and `Loop` as the ACs describe. Check the stated minimum and
 maximum documents and their thresholds with the independent checker, then
 the bogus, wrong-gain and wrong-partition variants. Repeat the `Loop` claims
 under the event-position false-extension profile, and run the unsupported,
-cancellation and limit cases. Bind a claim whose `over` type has no admitted
-instance.
+cancellation and limit cases. Run a claim over an initial state with no
+admitted `over` instance at direct claim binding, the checker and the
+direct EN-5 item.
 
 ## Expected Results
 
@@ -32,5 +33,5 @@ a wrong component gain rejects `InequalityFails` in the component check; an
 omitted or altered MEC rejects `InequalityFails` at the smallest differing
 key, even when every offered equation holds. The event-position claims
 settle the same values as the infinite-trace claims.
-With zero direct instances, direct claim binding and the checker return
-`NoInstance` and the direct EN-5 item settles `inconclusive`, `no-instance`.
+With an initial state and no admitted instance, all three give `NoInstance`
+as FR-201 "Instancing outcomes" states.
