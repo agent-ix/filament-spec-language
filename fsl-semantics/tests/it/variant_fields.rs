@@ -982,6 +982,14 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         }
     );
     assert_eq!(record.location.path(), [0]);
+    assert_eq!(
+        (record.cause.code(), record.cause.cause()),
+        (
+            fsl_foundation::diagnostic::Code::IllTyped,
+            Some("type-mismatch")
+        ),
+        "an absent record field remains ill_typed/type-mismatch: {record:?}"
+    );
 
     let object = refusals
         .iter()
