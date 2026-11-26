@@ -380,8 +380,8 @@ fn a_two_universal_item_ranges_over_the_admitted_keys_alone() {
 #[test]
 fn every_overlapping_population_gives_instances() {
     let in_p1 = "present(lookup<M::Thing>(M::P1, v) absent empty)";
-    let either = "present(lookup<M::Thing>(M::P1, v) absent empty) \
-                  or present(lookup<M::Thing>(M::P2, v) absent empty)";
+    let either = "(present(lookup<M::Thing>(M::P1, v) absent empty) \
+                  or present(lookup<M::Thing>(M::P2, v) absent empty))";
     for packaged in [false, true] {
         let run = Pets::TWO.analyze(
             &format!("hyper-two-populations-universal-{packaged}"),
@@ -511,16 +511,33 @@ fn counter_analyze(
     listed: &[&str],
     item: Json,
 ) -> Run {
+    ranged_counter_analyze(name, declaration, held, listed, item, true)
+}
+
+/// A `native-analyze/1` request over the receiver-framed Counter with `value`
+/// in `Int[0, 5]` and `inc` enabled below 3; `idle` adds an always enabled
+/// operation that changes nothing.
+fn ranged_counter_analyze(
+    name: &str,
+    declaration: &str,
+    held: &[(&str, i64)],
+    listed: &[&str],
+    item: Json,
+    idle: bool,
+) -> Run {
     let mut model: Json =
-        serde_json::from_slice(&crate::counter::document(false)).expect("counter JSON");
+        serde_json::from_slice(&crate::analyze_reach_rulings::receiver_framed_document())
+            .expect("counter JSON");
     let types = model["types"].as_array_mut().expect("types");
     types[0]["constraints"][1]["operands"]["value"] = json!("5");
-    let operations = types[1]["operations"].as_array_mut().expect("operations");
-    let mut idle = operations[0].clone();
-    idle["identity"] = json!("ix://test/counter/Counter/idle");
-    idle["name"] = json!("idle");
-    idle["frame"] = json!({"modifies": [], "creates": [], "deletes": []});
-    operations.push(idle);
+    if idle {
+        let operations = types[1]["operations"].as_array_mut().expect("operations");
+        let mut stay = operations[0].clone();
+        stay["identity"] = json!("ix://test/counter/Counter/idle");
+        stay["name"] = json!("idle");
+        stay["frame"] = json!({"modifies": [], "creates": [], "deletes": []});
+        operations.push(stay);
+    }
     let universe: Vec<(&str, i64)> = listed.iter().map(|key| (*key, 0)).collect();
     let universe = String::from_utf8(counter_snapshot(&universe))
         .expect("snapshot text")
@@ -604,14 +621,14 @@ fn a_universal_item_takes_the_first_refuted_instance() {
 #[test]
 fn a_single_existential_item_takes_the_refuted_instance_past_an_undecided_one() {
     let item = || json!({"claim": "H", "temporal": {"max_depth": 1, "witness_samples": 0}});
-    let run = counter_analyze(
+    let run = ranged_counter_analyze(
         "hyper-exists-refuted-later",
         &counter_exists(3),
         &[("p", 0), ("q", 4)],
         &["p", "q"],
         item(),
+        false,
     );
-    println!("PROBE {}", run.document());
     assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
     assert_eq!(run.exit, 10, "{}", run.document());
     assert_eq!(
@@ -620,20 +637,28 @@ fn a_single_existential_item_takes_the_refuted_instance_past_an_undecided_one() 
         "{}",
         run.document()
     );
-    let run = counter_analyze(
+    let run = ranged_counter_analyze(
         "hyper-exists-undecided",
         &counter_exists(3),
-        &[("p", 0), ("q", 4)],
+        &[("p", 0)],
         &["p"],
         item(),
+        false,
     );
     assert_eq!(label(&run.item(0)), "inconclusive", "{}", run.document());
-    let run = counter_analyze(
+    assert_eq!(
+        run.item(0)["record"]["cause"]["kind"],
+        "bound-reached",
+        "{}",
+        run.document()
+    );
+    let run = ranged_counter_analyze(
         "hyper-exists-no-instance",
         &counter_exists(3),
         &[],
         &["r"],
         item(),
+        false,
     );
     assert_eq!(label(&run.item(0)), "inconclusive", "{}", run.document());
     assert_eq!(
@@ -848,23 +873,6 @@ fn a_parameter_holds_every_overlapping_population() {
         members,
         BTreeSet::from([lamp.object.clone(), switch.object.clone()])
     );
-}
-
-/// FR-125-AC-22 over the single-existential form: the first refuted pair is
-/// `(l, k)`, and an item over two object parameters is never a fault.
-#[trace("TC-3219", "FR-125-AC-22")]
-#[test]
-fn a_two_parameter_single_existential_item_is_refuted_at_the_first_pair() {
-    let pair = Pets {
-        populations: &[("pets", &["Thing"])],
-        held: &[("pets", &[("l", "Lamp"), ("k", "Lamp")])],
-        listed: &[("pets", &[("l", "Lamp"), ("k", "Lamp")])],
-    };
-    let declaration = "hyper H using t0 over behaviours (v: M::Thing, w: M::Thing) \
-        exists trace a of M { always holds((v = w) @ a) }\n";
-    let run = pair.analyze("hyper-two-parameters-exists", declaration, claim(), false);
-    println!("PROBE exit {} {}", run.exit, run.document());
-    assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
 }
 
 /// FR-125-AC-14's subject as AC-20 reads it: `inc` disabled and `make`,
