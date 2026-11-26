@@ -303,6 +303,121 @@ fn hp4_negotiation_has_no_route_target_and_keeps_its_universal_sibling() {
     assert_eq!(supported["certificate"]["accepted"], true);
 }
 
+/// FR-173-AC-5 / FR-281: package negotiation settles a checked HP-4 clause
+/// without an engine route while retaining the Universal sibling's route.
+#[trace("FR-173-AC-5", "FR-281-AC-3")]
+#[test]
+fn package_hp4_negotiation_has_no_route_and_keeps_its_universal_sibling() {
+    use crate::analyze_cli_support::{package_selection, HANDOFF};
+
+    let declaration = "hyper Other using inf over behaviours (v: V::Vault) \
+        exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }\n\
+        hyper Universal using inf over behaviours (v: V::Vault) \
+        forall trace a of V { always holds(v.h @ a = v.h @ a) }";
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, declaration);
+    let ws = Workspace::new("hyper-wire-package-hp4-sibling");
+    let source_path = request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Other"}, {"claim": "Universal"}]}),
+    );
+    let source_document: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&source_path).expect("source request exists"),
+    )
+    .expect("source request is JSON");
+    let (members, _) = package_selection(&ws, &source_document["request"]);
+    ws.write("program.fsl", b"not a native unit");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("remove the fixture's retained sources");
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let run = analyze(&package_path);
+    let document = run.document();
+    let unsupported = run.item(0);
+    assert_eq!(label(&unsupported), "unsupported", "{document}");
+    assert_eq!(
+        unsupported["record"]["diagnostic"]["cause"],
+        "unsupported-requested-capability",
+        "{document}"
+    );
+    assert!(unsupported["request"].is_null(), "{document}");
+    assert!(unsupported["counterexample"].is_null(), "{document}");
+    let universal = run.item(1);
+    assert_eq!(label(&universal), "proved", "{document}");
+    assert_eq!(
+        universal["request"]["candidates"]["backends"],
+        json!([fsl_route::tie::EN1])
+    );
+}
+
+/// FR-173-AC-3 / FR-173-AC-5 / FR-182-AC-1: a fixed-sample clause with no
+/// decided form settles V-8; HP-4 and the supported sibling keep their own
+/// negotiation outcomes.
+#[trace("FR-173-AC-3", "FR-173-AC-5", "FR-182-AC-1")]
+#[test]
+fn no_form_and_hp4_hyper_items_settle_v8_and_keep_the_universal_sibling() {
+    let declaration = r#"hyper Other using inf over behaviours (v: V::Vault)
+        exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }
+hyper Universal using inf over behaviours (v: V::Vault)
+        forall trace a of V { always holds(v.h @ a = v.h @ a) }
+hyper FixedSample using fs over behaviours (v: V::Vault)
+        forall trace a of V { always [0, 1] holds(v.h @ a = v.h @ a) }"#;
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, declaration);
+    let unit = unit.replace(
+        "profile inf = \"filament.temporal.infinite-trace/v1\";",
+        "profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile fs = \"filament.temporal.fixed-sample.false-extension/v1\";",
+    );
+    let ws = Workspace::new("hyper-wire-fixed-sample-no-form");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [
+            {"claim": "Other"},
+            {"claim": "Universal"},
+            {"claim": "FixedSample"}
+        ]}),
+    ));
+    let document = run.document();
+    let hp4 = run.item(0);
+    assert_eq!(label(&hp4), "unsupported", "{document}");
+    assert_eq!(
+        hp4["record"]["diagnostic"]["cause"],
+        "unsupported-requested-capability",
+        "{document}"
+    );
+    assert_eq!(hp4["request"]["candidates"]["backends"], json!([]));
+    assert!(hp4["counterexample"].is_null(), "{document}");
+    let universal = run.item(1);
+    assert_eq!(label(&universal), "proved", "{document}");
+    assert_eq!(
+        universal["request"]["candidates"]["backends"],
+        json!([fsl_route::tie::EN1])
+    );
+    let fixed_sample = run.item(2);
+    assert_eq!(run.exit, 21, "{document}");
+    assert_eq!(label(&fixed_sample), "unsupported", "{document}");
+    assert_eq!(
+        fixed_sample["record"]["diagnostic"]["cause"],
+        "unsupported-requested-capability",
+        "{document}"
+    );
+    assert_eq!(
+        fixed_sample["request"]["candidates"]["backends"],
+        json!([])
+    );
+    assert!(fixed_sample["counterexample"].is_null(), "{document}");
+}
+
 /// FR-179 through `native-analyze/1`: a step relation over reachable
 /// transitions is checked by enumerating the tuples of its executions. Over
 /// the vault's `reset`, `h` is unchanged, so two resets from equal `h` agree

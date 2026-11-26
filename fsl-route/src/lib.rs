@@ -1402,10 +1402,9 @@ pub struct CandidateSet {
 }
 
 impl CandidateSet {
-    /// The empty set of an item of `kind` that is routed to no engine
-    /// whatever is registered (an item the request writer disposes
-    /// `Unsupported`, FR-234).
-    pub(crate) fn none(kind: Capability, named: Option<&BackendId>) -> Self {
+    /// An empty candidate set for an item of `kind` that has no engine route,
+    /// preserving any explicitly named backend for negotiation.
+    pub fn none(kind: Capability, named: Option<&BackendId>) -> Self {
         Self {
             kind,
             requested_backend: named.cloned(),

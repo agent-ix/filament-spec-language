@@ -17,6 +17,7 @@ use fsl_semantics::check::{
     AtomSlot, BinaryTemporal, PackageFormulaNode, PackageHyperForm, PackageHyperParameter,
     PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
 };
+use ix_trace_rs::implements;
 
 use super::{FormulaOperation, FORMULA_VISITS};
 use crate::bare_slot::BareSelectionFailure;
@@ -110,6 +111,65 @@ fn slot(name: &str) -> Option<(String, String)> {
 }
 
 impl BarePackage<'_> {
+    /// Read the temporal profile of a selected hyper clause without building
+    /// its package evaluation form.
+    #[implements("FR-173-AC-3")]
+    pub fn hyper_clause_profile(
+        &self,
+        claim: &OccurrenceKey,
+    ) -> Result<TemporalProfile, BareClauseRefusal> {
+        let package = self.package();
+        let root = crate::resolve_hyper_root(package, claim).map_err(|_| malformed(claim))?;
+        let wrapper_key = root.body().ok_or_else(|| malformed(claim))?;
+        let wrapper = self
+            .node_by_key(wrapper_key)?
+            .ok_or_else(|| malformed(claim))?;
+        let CheckedTerm::Application { operation, .. } = &wrapper.body else {
+            return Err(malformed(claim));
+        };
+        operation
+            .read()
+            .ok()
+            .and_then(|read| {
+                read.laws
+                    .iter()
+                    .find(|law| law.role == filament_contract_model::LawRole::TemporalProfile)
+            })
+            .and_then(|law| TemporalProfile::from_identity(&law.definition.identity))
+            .ok_or_else(|| malformed(claim))
+    }
+
+    /// The HP-4 ordering reason available from the package's checked
+    /// quantifier sequence. Other forms remain the responsibility of the
+    /// source classifier or the package form reader.
+    #[implements("FR-173-AC-5")]
+    pub fn hyper_clause_hp4_reason(
+        &self,
+        claim: &OccurrenceKey,
+    ) -> Result<Option<fsl_semantics::check::HyperUnsupported>, BareClauseRefusal> {
+        let node = self
+            .node_by_key(claim.node())?
+            .ok_or_else(|| malformed(claim))?;
+        let entries = group_member(&node.body, "quantifiers")
+            .and_then(members)
+            .ok_or_else(|| malformed(claim))?;
+        let mut first_exists = None;
+        let mut last_forall = None;
+        for (index, entry) in entries.iter().enumerate() {
+            match group_member(entry, "quantifier").and_then(text) {
+                Some("exists") => {
+                    first_exists.get_or_insert(index);
+                }
+                Some("forall") => last_forall = Some(index),
+                _ => return Err(malformed(claim)),
+            };
+        }
+        Ok(first_exists
+            .zip(last_forall)
+            .filter(|(exists, forall)| exists < forall)
+            .map(|_| fsl_semantics::check::HyperUnsupported::ExistentialBeforeUniversal))
+    }
+
     /// Read the admitted universal hyper form at its exact claim occurrence.
     /// No source body is retained or reconstructed. Other hyper forms remain
     /// explicit pending facts until their package evaluators are available.
@@ -149,24 +209,10 @@ impl BarePackage<'_> {
         let wrapper = self
             .node_by_key(wrapper_key)?
             .ok_or_else(|| malformed(claim))?;
-        let CheckedTerm::Application {
-            operation,
-            arguments,
-            ..
-        } = &wrapper.body
-        else {
+        let CheckedTerm::Application { arguments, .. } = &wrapper.body else {
             return Err(malformed(claim));
         };
-        let profile = operation
-            .read()
-            .ok()
-            .and_then(|read| {
-                read.laws
-                    .iter()
-                    .find(|law| law.role == filament_contract_model::LawRole::TemporalProfile)
-            })
-            .and_then(|law| TemporalProfile::from_identity(&law.definition.identity))
-            .ok_or_else(|| malformed(claim))?;
+        let profile = self.hyper_clause_profile(claim)?;
         if profile != TemporalProfile::InfiniteTrace {
             return Err(pending(&node.node_id, "hyper-profile"));
         }
