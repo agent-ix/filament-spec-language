@@ -44,3 +44,5 @@ One medium finding.
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | Checked at head 8bc5cfda3663de78b37a32d5be17391ce9345c54. |
+| FND-002 | fixed | Checked at head 1de8eecdc4f9de17bd8e690943721fc493c3f671. |
+| FND-003 | fixed | Checked at head 1de8eecdc4f9de17bd8e690943721fc493c3f671. |
