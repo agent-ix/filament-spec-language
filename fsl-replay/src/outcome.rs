@@ -4338,7 +4338,7 @@ mod tests {
 
     /// FR-628-AC-4: a claim-level state-graph record preserves its selected
     /// binding even when it has no evidence to carry that binding.
-    #[trace("FR-628-AC-4")]
+    #[trace("FR-621-AC-24", "FR-628-AC-4")]
     #[test]
     fn state_graph_item_writes_selected_instance_without_evidence() {
         let item = record(

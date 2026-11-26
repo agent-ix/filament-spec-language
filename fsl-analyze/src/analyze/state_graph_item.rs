@@ -63,7 +63,7 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
 
 /// The item-level binding that identifies a refuting or first non-proved
 /// state-graph instance (FR-621, FSpec FR-390).
-#[implements("FR-628-AC-4")]
+#[implements("FR-621-AC-24", "FR-628-AC-4")]
 fn item_instance(
     record: &StateGraphRecord,
     claim: &CheckedStateGraphClaim,

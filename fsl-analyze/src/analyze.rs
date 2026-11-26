@@ -84,6 +84,7 @@ use fsl_route::routing::Disposition;
 use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, RegistrationRefusal};
 use fsl_route::{NegotiationCause, NegotiationOutcome};
 use fsl_semantics::check::{Capability, DeclarationFamily};
+use ix_trace_rs::implements;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
     AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits,
@@ -1633,6 +1634,7 @@ fn item_stage(
 /// # Errors
 ///
 /// As [`analyze_document`].
+#[implements("FR-621-AC-24", "FR-628-AC-4")]
 pub fn analyze_item(
     record: &TerminalRecord,
     counterexamples: &[ItemCounterexample],
