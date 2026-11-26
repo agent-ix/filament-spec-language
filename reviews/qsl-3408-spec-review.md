@@ -83,22 +83,59 @@ Must-fix tickets. FND-007 and FND-009 to FND-013 are low.
 | --- | --- | --- | --- |
 | FND-014 | low | FR-181-AC-11's third variant ("a universe holding only keys no initial state admits") has no fixture of its own. Read with the stated initial state, which holds `p` and `q`, those records sit outside the universe, and that is an admission refusal, not `no-instance`. | spec/functional/FR-181-check-a-single-existential-claim-through-the-possible-family.md:187 |
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-015 | low | FR-177 "Instances" lets the engine skip later instances after the first refuted one but does not require it, so exploration statistics and any shared-limit stop on a later instance differ between conforming engines. | spec/functional/FR-177-check-a-forall-exists-safety-hyperproperty-by-witness-sets.md:174-176 |
+
+## New findings (disposition pass 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-016 | low | No criterion covers FR-621's single-outcome sentence: an HP-2 or HP-3 engine whose one returned refutation fails replay settles `replay-parity`. FR-621-AC-24 exercises only per-instance state-graph records. | spec/functional/FR-621-write-the-analyze-result-as-one-outcome-document-per-request.md:257 |
+
+## New findings (disposition pass 4)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-017 | low | Step 3 of "The proved record over several instances" takes "the smallest depth or horizon" across `bounded-complete{depth}` (steps) and a `bounded-solver` horizon (FSpec FR-193, continuous time). Those units do not compare. Say that only bases of one kind compare, or that one item's instances never mix the two. | spec/functional/FR-621-write-the-analyze-result-as-one-outcome-document-per-request.md:277 |
+| FND-018 | low | FR-621-AC-25 has no case for the author's two choices (an `inductive{depth}` basis is not depth-bounded; a bounded basis wins over inductive and witness bases) or for a state-constrained run in step 4. | spec/functional/FR-621-write-the-analyze-result-as-one-outcome-document-per-request.md:375 |
+
 ## Dispositions
 
-Round 1, head 29b21bd1b99313f9c760544b08da617557f39721 (spec commit 29b21bd1b9).
+Round 1, head 29b21bd1b99313f9c760544b08da617557f39721.
 
 | FND | outcome | reason |
 | --- | --- | --- |
-| FND-001 | fixed | FR-172 now says S3 SHALL NOT refuse a parameter no population overlaps, and FR-125 reports NoInstance; FR-172-AC-11 and FR-176-AC-7 assert it. |
+| FND-001 | fixed | FR-172 now says S3 SHALL NOT refuse a parameter no population overlaps, and FR-125 reports NoInstance; FR-172-AC-11 and FR-176-AC-7. |
 | FND-002 | fixed | The FR-125 bullet and AC-20 now limit the claim to verdict members and instance bindings, and allow evidence and certificate states to hold z's object. |
-| FND-003 | fixed | FR-181 now states the `ProductClosureRefusal::Input("HP-5-instance")` refusal, and AC-8 asserts it. |
-| FND-004 | fixed | FR-176-AC-7 covers the universal package route against the source route. |
-| FND-005 | fixed | FR-621 now gives admitted keys, FR-125 canonical order and the hyper combining rule; FR-621-AC-23 discriminates list order from key order. |
-| FND-006 | fixed | FR-151 and ADR-021 SYM-6 now partition the admitted keys, and an excluded orbit gives no instance; FR-151-AC-5. |
+| FND-003 | fixed | FR-181 now states the `ProductClosureRefusal::Input("HP-5-instance")` refusal; AC-8 asserts it. |
+| FND-004 | fixed | FR-176-AC-7 covers the universal package route. |
+| FND-005 | fixed | FR-621 now gives admitted keys, FR-125 order and the combining rule; FR-621-AC-23. |
+| FND-006 | fixed | FR-151 and ADR-021 SYM-6 now partition the admitted keys; FR-151-AC-5. |
 | FND-007 | fixed | FR-165 and ADR-018 QS-5 now say admitted keys. |
-| FND-008 | deferred | Code defect; the QSL-3408 code PR follows this spec PR. FR-181-AC-11 (refutation after a NoDecision instance) and FR-125-AC-21 (zero instances never a fault) now assert the fix. |
-| FND-009 | fixed | AC-19 states the infinite-trace profile and no operation, and renames the trace variable to `t`. |
+| FND-008 | deferred | Code defect; the QSL-3408 code PR follows this spec PR. FR-181-AC-11 and FR-125-AC-21 now assert the fix. |
+| FND-009 | fixed | AC-19 states the profile and no operation, and renames the trace variable to `t`. |
 | FND-010 | fixed | AC-21 states the non-empty initial list and limits the two-alias variant to the two-universal clause. |
-| FND-011 | fixed | FR-125-AC-22 asserts the product order. |
-| FND-012 | fixed | AC-10 drops "today", and a SHALL bullet in FR-181 states the package outcome. |
-| FND-013 | fixed | FR-128 now refuses an over_binding that is not an instance; FR-128-AC-17. |
+| FND-011 | fixed | FR-125-AC-22. |
+| FND-012 | fixed | AC-10 drops "today"; a SHALL bullet in FR-181 states the package outcome. |
+| FND-013 | fixed | FR-128 refuses a non-instance over_binding; FR-128-AC-17. |
+
+Round 2, head d89b4cf82ee6ead81221b4ee5bf28bdd9ffef6f4.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-014 | fixed | AC-11's third variant names universe `[r]` and an initial state holding no Counter. |
+
+Round 3, head 91ecf8672dfd7dd4826037b6282013f2f127843d.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-015 | fixed | 97b1832f9b: FR-177 now says the statistics SHALL count only the instances the engine explored, which makes the records definite for each engine. |
+
+Round 4, head 1b3f884a598ecac83500db1f592ae18a4496995b. No finding was open from earlier rounds other than FND-016 (low), which this head does not address.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-016 | still-open | 1b3f884a59 adds no single-outcome replay-parity case; low, accepted-no-change is acceptable. |

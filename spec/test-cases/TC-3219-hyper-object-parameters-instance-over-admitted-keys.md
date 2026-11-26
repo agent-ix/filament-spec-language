@@ -32,7 +32,7 @@ accepts a key that no initial state admits.
 
 Scope: FR-125-AC-19 to FR-125-AC-22, FR-128-AC-17, FR-151-AC-5,
 FR-172-AC-10, FR-172-AC-11, FR-176-AC-6 to FR-176-AC-8, FR-181-AC-8 to
-FR-181-AC-11, FR-183-AC-13, FR-315-AC-59, FR-621-AC-23 to FR-621-AC-25.
+FR-181-AC-11, FR-183-AC-13, FR-315-AC-59, FR-621-AC-23 to FR-621-AC-26.
 
 ## Test Procedure
 
@@ -54,6 +54,7 @@ implementation.
    FR-151-AC-5's declaration and FR-621-AC-23's request.
 8. Settle FR-621-AC-24's two instance records in each order.
 9. Combine each pair of proved records FR-621-AC-25 gives.
+10. Settle FR-621-AC-26's two replaced counterexamples.
 
 Tag the tests `#[trace("TC-3219", "FR-xxx-AC-n")]` with the criterion each
 asserts.
@@ -74,3 +75,4 @@ asserts.
 - Step 8: `refuted` from the confirmed instance, and `replay-parity` only when
   none is confirmed.
 - Step 9: the certification, basis and instance each case states.
+- Step 10: each item is `inconclusive`, `replay-parity`.
