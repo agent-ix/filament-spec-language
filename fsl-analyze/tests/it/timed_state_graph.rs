@@ -1122,3 +1122,28 @@ fn the_decision_lists_whole_nodes_of_e_p_and_a_trapped_node() {
     assert!(stem.steps.is_empty(), "{stem:?}");
     assert_eq!(paths, None);
 }
+
+/// FR-125 "Instancing": on the digital probabilistic route, the proved entry
+/// and the refuted binding of `over (c: Base)` name the admitted `Derived`,
+/// and the proof's certificate accepts that binding.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_digital_probability_binding_names_the_admitted_member_type() {
+    for (comparison, expected) in [("<= 0.5", "proved"), (">= 0.5", "refuted")] {
+        let item = settle_over_base(
+            &format!(
+                "probabilistic OverBase using tt on M over (c: Base) under every scheduler \
+                 on origin {{ probability {comparison} [ eventually[0 ms, 1 ms] holds(false) ] }}\n"
+            ),
+            json!({"claim": "OverBase"}),
+        );
+        assert_eq!(label(&item), expected, "{item}");
+        let binding = if expected == "proved" {
+            assert_eq!(item["certificate"]["accepted"], true, "{item}");
+            &item["record"]["basis"]["entries"][0]["binding"]
+        } else {
+            &item["counterexample"]["binding"]
+        };
+        assert_eq!(*binding, the_admitted_derived(), "{item}");
+    }
+}
