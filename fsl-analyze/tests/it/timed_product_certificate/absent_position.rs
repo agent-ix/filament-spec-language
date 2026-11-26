@@ -432,3 +432,26 @@ fn a_sampled_position_fraction_over_a_time_window_reads_the_window() {
         "{verdict:?}"
     );
 }
+
+/// The same subject with time bounded until `third` runs, so no undecided
+/// state is quiescent. The maximum is still 1.
+#[test]
+fn region_delay_between_two_clocks_with_no_idle_state_reaches_late() {
+    let package_document = timed_world::document(
+        &["x", "y"],
+        &[("first", &["phase", "x"]), ("third", &["phase", "late"])],
+    );
+    let claims = extrema_claims("eventually[0 ms, 4 ms] holds(c.late)");
+    let body = format!(
+        "{}\
+         pre First using v on M::Call::first {{ self.phase = 0 and self.x > 0 ms and self.x < 1 ms }}\n\
+         post FirstDone using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Third using v on M::Call::third {{ self.phase = 1 and self.x < 1 ms and self.y > 1 ms }}\n\
+         post ThirdDone using v on M::Call::third {{ self.phase = 2 and self.late = true }}\n\
+         time invariant Bounded when {{ self.phase < 2 }} {{ self.y <= 3 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world(&package_document, super::PROFILES, &body);
+    assert_eq!(observed(&world), dense_extrema());
+}
