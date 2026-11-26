@@ -70,7 +70,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use ix_trace_rs::implements;
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{

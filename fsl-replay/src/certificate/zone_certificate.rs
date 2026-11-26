@@ -96,7 +96,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use ix_trace_rs::implements;
 use filament_exact::{Cancel, Integer, Meter, Rational, ValueType};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{

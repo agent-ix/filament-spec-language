@@ -35,7 +35,6 @@
 //! encoding of them is remaining work on QSL-549.
 
 use base64::Engine as _;
-use ix_trace_rs::implements;
 use filament_exact::{Cancel, LimitKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
