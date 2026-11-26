@@ -71,11 +71,12 @@ it is not a new Quire-wide performance guarantee. The spine limits, including th
 source-byte limit on the extracted body, remain independent and fresh for each
 request and apply at compilation.
 The `quire-extraction` Cargo feature of `fsl-source` is optional and is enabled
-only through `fsl-replay`'s feature of the same name; it is what lets FSL code
-name quire-rs. The root crate has no `quire-extraction` feature (ADR-011 §7.3
-X-4), and a build without `fsl-replay`'s feature calls no Quire extraction. quire-rs is
-still built transitively in every build, through FCD's
-`agent-ix-extraction-frontend` (`model::intake`). C retains changes to existing
+only through `fsl-replay`'s feature of the same name; it gates the extraction
+adapter. `fsl-replay` names quire-rs in every build for the result types of the
+extraction record (ADR-011 §6.1). The root crate has no `quire-extraction`
+feature (ADR-011 §7.3 X-4), and a build without `fsl-replay`'s feature calls no
+Quire extraction. quire-rs is also built transitively in every build, through
+FCD's `agent-ix-extraction-frontend` (`model::intake`). C retains changes to existing
 repositories, schemas, CLI/wire adoption and broader integration.
 
 ## Acceptance Criteria

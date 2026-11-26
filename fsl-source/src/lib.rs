@@ -8,9 +8,10 @@
 //! and quire-rs among them, is behind this crate's `quire-extraction` feature. Without
 //! that feature the crate is empty.
 //!
-//! This crate is `fsl-replay`'s only code path to quire-rs (ADR-011 §6.1 layer-6 row):
-//! `fsl-replay` names no quire-rs dependency. quire-rs is also built transitively
-//! through FCD's `agent-ix-extraction-frontend` (`model::intake`).
+//! `fsl-replay` runs the extraction only through this crate. It also names quire-rs
+//! itself, for the result types its record reader and writer use (ADR-011 §6.1
+//! layer-6 row). quire-rs is also built transitively through FCD's
+//! `agent-ix-extraction-frontend` (`model::intake`).
 
 #![cfg(feature = "quire-extraction")]
 

@@ -14,8 +14,9 @@ description = "ADR-011 §6.1 layer 6: the CG-facing replay facade -- the TK-01 r
 default = []
 # ADR-011 §6.1 layer-6 row: "I3 under feature `quire-extraction`". FR-109's
 # `run_clause` accepts an I3 extracted source (`fsl_source::ExtractedSource`)
-# as its unit only with this feature.
-quire-extraction = []
+# as its unit only with this feature. It gates the adapter alone: the result
+# reader and writer handle `extraction` in every build.
+quire-extraction = ["dep:fsl-source", "fsl-source/quire-extraction"]
 # FR-237's `replay_timed_counterexample`: the timed replay core without
 # FR-128's recompile and identity checks, for tests only until S4 writes
 # timed members (QSL-580). Only dev-dependencies enable it.
@@ -30,7 +31,10 @@ fsl-foundation = { path = "../fsl-foundation" }
 fsl-package = { path = "../fsl-package" }
 fsl-semantics = { path = "../fsl-semantics" }
 fsl-route = { path = "../fsl-route" }
-fsl-source = { path = "../fsl-source", features = ["quire-extraction"] }
+fsl-source = { path = "../fsl-source", optional = true }
+# Quire's `semantic` result types, which the extraction record's `outcome`
+# holds (FR-267-AC-17).
+quire-rs = { workspace = true }
 filament-exact = { workspace = true }
 filament-observation = { workspace = true }
 # `DeclineCode::Std001`: the STD-001 registry code type a `declined` result

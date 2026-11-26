@@ -619,7 +619,10 @@ pub(super) fn clause_report(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, None)
+    settle_correction(&mut report, selection)?;
+    let bytes = fsl_replay::spine::write_clause_run_result_for(&report, Some(selection))
+        .map_err(RunCause::ClauseOutput)?;
+    clause_result(&report, selection, &bytes)
 }
 
 #[cfg(feature = "quire-extraction")]
@@ -627,42 +630,41 @@ pub(super) fn clause_report(
 pub(super) fn clause_report_with_extraction(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: fsl_replay::spine::ExtractionRecord,
+    mut extraction: fsl_replay::spine::ExtractionRecord,
     map: &fsl_foundation::source_map::SourceMap,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, Some((extraction, map)))
-}
-
-#[implements("FR-267-AC-17")]
-fn clause_report_with_record(
-    report: &mut fsl_replay::spine::ClauseRunReport,
-    selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: Option<(
-        fsl_replay::spine::ExtractionRecord,
-        &fsl_foundation::source_map::SourceMap,
-    )>,
-) -> super::Result<RunResult> {
-    // FR-526: a timestamped run settles its correction relation before any
-    // result document is written; a refused relation writes none.
-    fsl_replay::spine::settle_run_correction(report, selection)
-        .map_err(RunCause::TemporalCorrection)?;
-    let report = &*report;
-    let extraction = extraction
-        .map(|(mut record, map)| {
-            if let Some(regions) = extraction_original_regions(report, selection, &record, map)? {
-                record.original_regions = Some(regions);
-            }
-            Ok::<_, RunCause>(record)
-        })
-        .transpose()?;
+    settle_correction(&mut report, selection)?;
+    if let Some(regions) = extraction_original_regions(&report, selection, &extraction, map)? {
+        extraction.original_regions = Some(regions);
+    }
     let bytes = fsl_replay::spine::write_clause_run_result_for_with_extraction(
-        report,
+        &report,
         Some(selection),
-        extraction,
+        Some(extraction),
     )
     .map_err(RunCause::ClauseOutput)?;
+    clause_result(&report, selection, &bytes)
+}
+
+/// FR-526: a timestamped run settles its correction relation before any
+/// result document is written; a refused relation writes none.
+fn settle_correction(
+    report: &mut fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+) -> super::Result<()> {
+    fsl_replay::spine::settle_run_correction(report, selection)
+        .map_err(RunCause::TemporalCorrection)?;
+    Ok(())
+}
+
+/// The command result of a written clause-run document.
+fn clause_result(
+    report: &fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    bytes: &[u8],
+) -> super::Result<RunResult> {
     let outcome = monitor_outcome(std::iter::once((&selection.clause_name()[..], report)));
-    let value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
+    let value = serde_json::from_slice(bytes).map_err(RunCause::Output)?;
     Ok(RunResult {
         // FR-285: a finite-window `pending` exits 0 and `indeterminate` 11.
         exit_code: report.disposition.exit_code(),
@@ -856,7 +858,8 @@ mod extraction_tests {
     use super::{extraction_regions_for_locus, RunCause};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
-    use serde_json::{json, Value};
+    use ix_trace_rs::trace;
+    use serde_json::json;
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";
@@ -888,20 +891,14 @@ mod extraction_tests {
             "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
             "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
             "binding": {"clause": "valid_clause", "package": "agent-ix/spec"},
-            "outcome": {
-                "availability": {"state": "available", "lossy": false},
-                "clause_text": {},
-                "diagnostics": []
-            },
-            "map": {
-                "region": {"start": 0, "end": 1},
-                "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
-            }
+            "outcome": {"availability": {"state": "available", "lossy": false}, "clause_text": {}, "diagnostics": []},
+            "map": {"region": {"start": 0, "end": 1}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
         }))
-        .expect("the extraction fixture matches the shared record")
+        .unwrap()
     }
 
     #[test]
+    #[trace("FR-267-AC-17")]
     fn unmappable_body_locus_fails_closed_and_foreign_loci_remain_unmapped() {
         let map = verified_map();
         let record = record();
