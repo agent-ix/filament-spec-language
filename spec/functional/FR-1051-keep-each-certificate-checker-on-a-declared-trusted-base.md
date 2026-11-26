@@ -33,9 +33,9 @@ every other sharing between producer and checker, and requires two kinds of
 evidence that a checker rejects what it should: single mutations of accepted
 certificates, and false claims whose truth a definitional reference computes.
 
-This requirement narrows ADR-028 CE-7 and ADR-026 CF-6. CE-7 lets the EN-5
-checker share the EN-1 product construction; here that sharing is the
-recorded exception S-1, to be removed. CF-6 makes only the zone checker's
+This requirement narrows ADR-028 CE-7 and ADR-026 CF-6. CE-7, as ADR-038 amended it, says the
+EN-5 checker shares the concrete run alone; the EN-1 translations it still
+shares on main are the recorded exception S-1, to be removed. CF-6 makes only the zone checker's
 DBM operations separate code; here every function outside the trusted base
 is separate. It generalises FR-921 item 7 (no monitor shared by the
 timed-product producer and checker) to every checker of FR-282's table and
@@ -135,7 +135,10 @@ submodules except the parts the listed exception rows name; "type items"
 allows the module's structs, enums, type aliases and traits and only the
 functions the check's data records under that row, each a service or codec
 function that derives no member value. Text in parentheses describes a row
-and does not narrow it. That a function recorded under B-9, B-11 or B-12
+and does not narrow it. Where a module row and a row for one of its submodules or files both
+apply, the most specific one governs that submodule's items (B-5 does not
+admit what S-8 or S-9 names in `fsl_eval::simulation::model` or
+`::protocol`). That a function recorded under B-9, B-11 or B-12
 derives no member value is checked by the review of the change that records
 it, not by the arch-lint check; B-10 admits data items only, which the check
 tests (AC-8).
@@ -152,7 +155,7 @@ tests (AC-8).
 | B-8 | Predicate reading | `fsl_eval::model_subject` | module |
 | B-9 | Position automaton | the position automaton of `fsl_eval::automaton` (`position_automaton` and the types it returns and reads: clocked edges, reads, stamps, window claims, atoms, letters, state ids, automaton errors) | the items the check's data records under B-9 |
 | B-10 | Declared route table and locked-run mapping | `fsl-eval`: the declaration of the route admission table (its rows and the names of the conditions each row tests, FSpec FR-421 "Closed and strict conditions") and of the mapping from a claim monitor kind and reading to the value of a locked run (FSpec FR-416 "How claims read a time-lock"), as data only. No function that tests a condition or reads a subject | data items only (constants, statics, type items) |
-| B-11 | Replay services | `request`, `bounds`, `limits`, `identity`, `execute`, `spine`, `application`, `model_check::identity`, `model_check::limits` | type items |
+| B-11 | Replay services | `request`, `bounds`, `limits`, `identity`, `execute`, `spine`, `application`, `model_check::identity`, `model_check::limits`, `spine_eval_api` | type items |
 | B-12 | Replay codecs and result data | `reference_codec`, `product_action`, `outcome`, `outcome::counterexample`, `result`, `result::wire`, `proof_result`, `witness`, `task_transition`, `exact_probabilistic`, `hybrid`, `protocol_analysis`, `model_check::counterexample`, `model_check::hyper_counterexample`, `model_check::graph_settle`, `model_check::outcome`, `model_check::state_graph`, `model_check::item` | type items |
 
 Named exception (B-10): the producer and the checker read one declared route
@@ -199,9 +202,24 @@ not caught by mutation; the false-claim corpus is the evidence against them.
   `AbstractProtocolSystem`, `RefinementSystems` or `FiniteTracePopulation`;
   a `dyn` object or generic implementation of `ModelLetters`,
   `TemporalLetters`, `HyperLetters`, `TupleLetters`, `StepMatch` or
-  `ModelEvaluator`; a closure, function pointer or `dyn Fn*`; or a type an
-  exception row S-1 to S-9 concerns. The checker SHALL build its own from the
-  checked package.
+  `ModelEvaluator`; a closure, function pointer or `dyn Fn*`; or a value that
+  carries behaviour of an S-1 to S-9 row (a translation, monitor, measure
+  plan, product or encoder, such as `BoundedTranslation`, `SafetyTranslation`,
+  `PropertyAutomaton`, `Monitor`, `QualifiedBoundedMonitor`, `MeasurePlan`,
+  `HyperProduct`, `ProjectedProduct` or `WitnessProduct`) or a reading of the
+  claim the checker must derive itself (the quantifier list `FiniteQuantifier`
+  of a finite hyper claim). The checker SHALL build its own from the checked
+  package.
+- A plain data type an S row concerns is not a producer object: it carries no
+  behaviour the producer supplies and no value the checker must derive. These
+  are allowed: `AutomatonStateKey` (a certificate member the checker
+  recomputes and compares), `SmtEncodingLimits` (a checker limit),
+  `RefinementCertificateRequest` (the package, refinement key and the two
+  subjects: subject binding; the code that builds it is S-7),
+  `ParameterBinding` (the clause instance: claim binding), `FiniteFalseTuple`
+  (the counterexample itself), `ProtocolClass` and `ProtocolFairness` (members
+  of the protocol assumption witness the replay checks) and `UndefinedCause`
+  (a member of the contract counterexample the replay checks).
 
 ### Recorded exceptions
 
@@ -213,7 +231,7 @@ other exception is allowed.
 
 | ID | Rule broken | Code it concerns | Sharing | Removed by |
 | --- | --- | --- | --- | --- |
-| S-1 | Shared semantics | `fsl_eval::automaton` outside B-9; `model_check::item`'s translations | ADR-028 CE-7's shared EN-1 product: property-automaton, safety, bounded and qualified bounded monitor translations and their key contexts, used by the closure, SMT, zone, product-closure, hyper-replay and EN-5 checkers and by `fsl-analyze`; and the per-instance translations of a model-check item, built by the same code for both. Removing this row amends CE-7 (AC-15) | QSL-3501 |
+| S-1 | Shared semantics | `fsl_eval::automaton` outside B-9; `model_check::item`'s translations | The EN-1 product translations, which ADR-028 CE-7 no longer permits: property-automaton, safety, bounded and qualified bounded monitor translations and their key contexts, used by the closure, SMT, zone, product-closure, hyper-replay and EN-5 checkers and by `fsl-analyze`; and the per-instance translations of a model-check item, built by the same code for both. AC-15 keeps CE-7 from permitting them again | QSL-3501 |
 | S-2 | Shared semantics | `fsl_eval::probabilistic` (`advance_nested_timed_deadline`) | The nested timed deadline step of `fsl-analyze` digital stepping and the timed-product checker; FR-921 item 7 already forbids it | QSL-3324 |
 | S-3 | Shared semantics | `fsl_eval::probabilistic`, `fsl_eval::probabilistic::key` (everything outside S-2) | The measure and monitor step: measure plans, payoffs, accumulators, monitor and deadline state, measure and reward keys | QSL-3501 |
 | S-4 | Shared semantics | `fsl_eval::fairness` | The fairness graph analysis, used by the zone, SCC, refinement and counterexample-replay checkers and by `fsl-analyze` | QSL-3501 |
@@ -226,25 +244,29 @@ other exception is allowed.
 | S-11 | Shared semantics | `model_check/digital_state_graph.rs` | Digital state-graph exploration, called by `fsl-analyze` state-graph analysis and by graph replay | QSL-3501 |
 | S-12 | Shared semantics | `product_action.rs` | The canonical schedule and free-delay action keys, derived by the same functions for `fsl-analyze` exact analysis and the EN-5 checker | QSL-3501 |
 | S-13 | Shared semantics | `model_check/counterexample.rs` | Counterexample positions and loop (the trace position, the closure loop, step-site pointers) and the choice of the first undefined finding, derived by the same functions for the producer's writers and for counterexample replay | QSL-3501 |
+| S-14 | Shared semantics | `model_check/identity.rs` | Clause, state-graph and hyper identity derivation (`ClauseIdentity::of_admitted`, `StateGraphIdentity::resolve`, `HyperIdentity::resolve`), named by counterexample and graph replay and by `fsl-analyze` and settling code | QSL-3501 |
 | P-1 | Producer call into checker | `probability_certificate/document/measure.rs` | The checker's own objective plan, measure key and measure control, called by `fsl-analyze` exact measure and undefined-witness code | QSL-3501 |
 | P-2 | Producer call into checker | `probability_certificate.rs`, `probability_certificate/key_admission.rs`, `probability_certificate/document/timed.rs` | Product-key encoding (model-state, formula-state, digital and region keys, every budget and limit form), digital clock decoding and key accounting, called by `fsl-analyze` exact, candidate and digital analysis | QSL-3501 |
 | P-3 | Producer call into checker | `probability_certificate/document.rs`, `probability_certificate/document/{measure,mdp,partial,long_run}.rs`, `probability_certificate/witness.rs` | Writers that derive ranks, the objective, coverage, the bound ranking, the fair objective, fairness records, cyclic-MDP ranks and policy, partial ranks, long-run keys, optimisation and weight objective, or a subsystem's base objective | QSL-3501 |
 | P-4 | Producer call into checker | `probability_certificate/document/instances.rs` | The on-each producer lives in the checker file and shares its helpers with the on-each checker | QSL-3501 |
 | P-5 | Producer call into checker | `probability_certificate/bounded.rs`, `probability_certificate/cyclic.rs`, `probability_certificate/document.rs`, `probability_certificate.rs` | The monitor context, the subject admission (acyclicity, reward subject) and the claim identity and binding derivation, called by `fsl-analyze` before it writes | QSL-3501 |
 | P-6 | Producer call into checker | `refinement/**`, `refinement.rs` | The refinement step judge, subject admission and system opening, the abstract protocol system (stepping, keys, fairness), the protocol step view and the refinement liveness check and abstract classes, called by `fsl-analyze` refinement, contract and protocol analysis | QSL-3501 |
-| P-7 | Producer call into checker | `model_check/replay.rs` | The protocol trace evaluator of counterexample replay, called by `fsl-analyze` finite protocol replay to decide | QSL-3501 |
+| P-7 | Producer call into checker | `model_check/replay.rs` | The protocol and model trace evaluators and the behaviour valuations of counterexample replay, called by `fsl-analyze` finite protocol replay to decide and by the spine's clause evaluation (`spine/clause/**`) | QSL-3501 |
 | P-8 | Producer call into checker | `certificate/closed_form/task_set.rs` | Closed-form subject admission and priority order, used by `fsl-analyze` schedulability analysis | QSL-3501 |
 | P-9 | Producer call into checker | `certificate/task_product.rs`, `certificate/task_product/**` | Task-product key order, transition identity, queue bounds and closure method, derived by checker functions for `fsl-analyze` task search | QSL-3501 |
 | P-10 | Producer call into checker | `certificate/product.rs` | The product-closure writer (fairness components, canonical closure), its key and the package-hyper subject binding, called by `fsl-analyze` hyper search | QSL-3501 |
 | P-11 | Producer call into checker | `hybrid_replay/**` | The hybrid checker's model reader, interval machine, box operations, flowpipe rule probe and class admission, used by `fsl-hybrid-reference` to build and probe boxes | QSL-3501 |
 | P-12 | Producer call into checker | `contract_check.rs` | The operation-contract arm in `fsl-analyze` selects the claim, builds the target, enumerates declared and initial cases, evaluates each case and writes and reads its counterexample with the code its replay uses | QSL-3501 |
 | P-13 | Producer call into checker | `certificate/zone.rs` | Zone construction and DBM closure (`Zone::zero`, `Zone::from_matrix`), used by the zone producers to write certificates | QSL-3501 |
-| O-1 | Producer object | `probability_certificate/**` | The checked-subject form of the EN-5 checker and the probability witness replays take the producer's `ModelSystem` and compare it by pointer | QSL-3501 |
+| P-14 | Producer call into checker | `certificate/zone_certificate/task_check.rs` | The checker's task-product exploration and recomputed `task_product` member (`explore_task_product`, `recomputed_member`), re-exported at the `fsl-replay` crate root, whose only other callers are tests | QSL-3501 |
+| O-1 | Producer object | `probability_certificate.rs`, `probability_certificate/**` | The checked-subject form of the EN-5 checker and the probability witness replays take the producer's `ModelSystem` and compare it by pointer | QSL-3501 |
 | O-2 | Producer object | `model_check/replay.rs`, `certificate/zone_certificate.rs` | Counterexample replay and the zone checker read atoms through the producer's letters, and the reference-literal and timed replays step the producer's system | QSL-3501 |
 | O-3 | Producer object | `outcome/counterexample.rs` | Task-product trace replay checks keys of the producer's own product object | QSL-3501 |
 | O-4 | Producer object | `model_check/refinement_replay.rs` | Refinement replay steps the systems the producer opened | QSL-3501 |
-| O-5 | Producer object | `model_check/hyper_replay.rs`, `model_check/finite_hyper_replay.rs`, `certificate/product.rs` | Hyper trace and match-witness replay take the producer's systems, letters and step matcher; model-relation replay takes its systems and evaluator; finite hyper replay decides with the producer's population and body closure; the package-hyper and model-relation closure requests carry the producer's evaluator | QSL-3501 |
+| O-5 | Producer object | `model_check/hyper_replay.rs`, `model_check/finite_hyper_replay.rs`, `certificate/product.rs` | Hyper trace and match-witness replay take the producer's systems, letters and step matcher; model-relation replay takes its systems and evaluator; finite hyper replay decides with the producer's population, body closure and quantifier list; the package-hyper and model-relation closure requests carry the producer's evaluator | QSL-3501 |
 | O-6 | Producer object | `contract_check.rs` | The operation-contract replay reads the `ModelSystem` the producer opened through `self` | QSL-3501 |
+| O-7 | Producer object | `probability_certificate/document.rs`, `probability_certificate/document/mdp.rs`, `probability_certificate/document/long_run.rs`, `probability_certificate/witness.rs` | The test-support `*_observing` entries take the caller's `observe` closure, which receives each checker phase and returns nothing | QSL-3501 |
+| O-8 | Producer object | `certificate/zone_certificate.rs` | `check_zone_certificate` and `check_free_delay_zone_certificate` take the producer's `item_of` closure, which maps the certificate's obligation to the item identity the FR-245 identity check compares | QSL-3501 |
 
 ### Routes
 
@@ -407,7 +429,7 @@ part of the fragment:
 | FR-1051-AC-12 | An allowed-to-survive entry without a reason, or one whose mutation the harness no longer makes or the check entry now rejects, fails the harness as stale, naming the entry. | Test |
 | FR-1051-AC-13 | The harness fails, naming each route, when a route of the Routes table has no registered accepted fixture, or when a registered fixture is not accepted by its check entry. The harness crate's manifest has no `fsl-replay` dependency and it is a dev-dependency only. The first registered routes are R-12 (finite-horizon measure), R-13 (value bounds), R-11 (cyclic-MDP fair), R-27 and R-28 (zone `always possible` and `unique path`, decoding with `ZoneCertificate::from_wire`) and R-50 (counterexample replay, byte route); R-32 (explicit state graph) registers through a typed adapter. | Test |
 | FR-1051-AC-14 | A repository test holds, for each route without a harness registration, the names of its hand-written rejection tests as of this requirement. It fails, naming the route and the test, when a named test is no longer defined; it fails as stale, naming the route, when a route that has a harness registration still has a list. | Test |
-| FR-1051-AC-15 | The spec-consistency test fails, naming ADR-028 CE-7, when the check's data holds no entry for row S-1 and the text of CE-7 still says the product construction is shared with EN-1. | Test |
+| FR-1051-AC-15 | The spec-consistency test fails, naming ADR-028 CE-7, when the text of CE-7 does not say that the checker shares the concrete run alone, or says that the product construction is shared with EN-1. | Test |
 | FR-1051-AC-16 | A test fails, naming each route, when a route of the Routes table has no corpus entry. For each proof-route entry, the route's check entry rejects the self-consistent certificate with the semantic rule the entry states, and the test fails on a rejection by any other rule or by a decoding, identity or shape refusal; analysis does not settle the claim `proved`. For each replay-route entry, the forged witness or counterexample is not reproduced. A covered route's entry has its truth from the reference or, for a replay route, a hand-derived argument; a not-yet route's entry carries a hand-derived value with its derivation. | Test |
 | FR-1051-AC-17 | The corpus holds the six seeds of the seed table, each on its route with the model and witness given there; for each, the reference computes false, the check entry rejects the self-consistent certificate with the semantic rule its corpus entry states, and analysis does not settle `proved`. | Test |
 | FR-1051-AC-18 | The reference crate's manifest has no direct dependency on a workspace crate other than `fsl-package`, `fsl-semantics` and `fsl-foundation`, and is a dev-dependency only; the arch-lint check fails on a reference fixture that names `fsl_eval::simulation::model::ModelSystem` or an `fsl-eval` path to a `RewardEvaluator` implementation. | Test |
@@ -417,7 +439,7 @@ part of the fragment:
 
 PLANNED. No criterion is met on main. The exception rows record the sharing
 on origin/main as of this requirement. The arch-lint check and its data, the
-restructuring that removes S-1 and S-3 to S-13, P-1 to P-13 and O-1 to O-6
+restructuring that removes S-1 and S-3 to S-14, P-1 to P-14 and O-1 to O-8
 (QSL-3501), the separate timed monitor that removes S-2 (QSL-3324), the
 shared admission data of B-10 (QSL-3494, after FSL PR #4042), the mutation
 harness (QSL-3505) and the definitional reference with its corpus (QSL-3500)
