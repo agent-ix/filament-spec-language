@@ -75,7 +75,7 @@ pub struct ZoneCertificate {
 
 pub struct StateGraphPart {                     // FSpec FR-418 `state_graph`, FSpec FR-712
     pub form: StateGraphFormKind,               // `always-possible`
-    pub ef_nodes: Vec<NodeIndex>,               // positions in `nodes` of the E(P) zones, ascending
+    pub ef_nodes: Vec<NodeIndex>,               // positions in `nodes` of the nodes whose whole zone lies in E(P), ascending
 }
 
 pub struct RefinementPart {                     // FR-430
@@ -121,8 +121,11 @@ pub struct RefinementPart {                     // FR-430
 - **State-graph form.** The certificate of a `possible`, `always possible`
   or `unique path` item over a timed subject (FR-852, FSpec FR-712) SHALL
   certify the reachable timed graph: its reachability part covers every
-  reachable symbolic state, and, for `always possible`, `state_graph` lists
-  the `EF P` zones. It SHALL carry no `admitted` member. The engine emits it whether or not the reachable graph holds a quiescent node or a
+  reachable symbolic state, and, for `always possible`, `state_graph.ef_nodes`
+  lists the nodes whose whole zone lies in `E(P)`, the valuations with a run
+  to a `P` state; a node only part of whose zone lies in `E(P)` is not listed.
+  The listing is not a proof by itself: FR-245's checker recomputes `E(P)`
+  (FSpec FR-712). It SHALL carry no `admitted` member. The engine emits it whether or not the reachable graph holds a quiescent node or a
   cycle of positive total delay. These forms read reachable states and
   discrete step sequences of the timed state graph, and FSpec FR-712 defines
   that graph by reachability alone: a state reached only through zero-delay

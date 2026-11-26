@@ -15,6 +15,13 @@
 //!
 //! Every predicate reads model state only, so its reading is given per node
 //! and is one per model state.
+//!
+//! The decision draws on the budgets the exploration left (FR-852
+//! "Budgets"): a zone it holds counts against `max_symbolic_states` and
+//! `max_zone_bytes` with the graph's, and each predecessor or successor it
+//! computes, each piece a zone subtraction makes and each pair of zones it
+//! intersects count against `max_symbolic_transitions` with the graph's
+//! edges.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -28,8 +35,8 @@ use num_integer::Integer as _;
 
 use super::concretise::{concretise_from, Concrete, NotConcretised, Stage, Target};
 use super::search::{
-    apply_step_clocks, constrain_at, intersect, preimage_step_clocks, scaled, uncovered,
-    TimedStateGraph, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckRefusal, ZoneStop,
+    apply_step_clocks, constrain_at, intersect, preimage_step_clocks, scaled, subtract, zone_bytes,
+    Split, TimedStateGraph, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckRefusal, ZoneStop,
 };
 use super::state_graph::TimedStateGraphDecision;
 use super::Dbm;
@@ -81,9 +88,10 @@ pub(super) struct Zones<'r, 's, 'a> {
     /// Each graph node's model state, by index into `states`.
     of_node: Vec<usize>,
     moves: Vec<Move>,
-    /// The zones stored and predecessor or successor steps computed by the
-    /// decision, charged against the search's limits.
+    /// The zones, their bytes and the symbolic work held and done by the
+    /// exploration and this decision together.
     stored: u64,
+    bytes: u64,
     computed: u64,
 }
 
@@ -155,8 +163,12 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
             states,
             of_node,
             moves,
-            stored: 0,
-            computed: 0,
+            stored: graph
+                .stats
+                .symbolic_states
+                .saturating_add(graph.stats.divergence_states),
+            bytes: graph.stats.zone_bytes,
+            computed: graph.stats.retained_edges,
         })
     }
 
@@ -199,6 +211,10 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                 .ok_or(ZoneCheckRefusal::Fault("state-graph-witness"))?
                 .prefix;
             witness_paths.push(ModelPath { initial, steps });
+            // This initial state's search is dropped before the next.
+            for held in &reached {
+                self.release_zone(&held.zone);
+            }
         }
         Ok(TimedStateGraphDecision::Holds {
             witness_paths,
@@ -218,8 +234,9 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         let ef = self.eventually(&p)?;
         let mut ef_nodes = Vec::new();
         let mut trapped = None;
+        let graph = self.graph;
         for (node, from) in q.iter().enumerate() {
-            let outside = uncovered(&self.graph.nodes[node].zone, &ef[self.of_node[node]])?;
+            let outside = self.outside(&graph.nodes[node].zone, &ef[self.of_node[node]])?;
             if outside.is_empty() {
                 ef_nodes.push(node);
             } else if trapped.is_none() && *from {
@@ -253,8 +270,9 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         let y = self.per_state(y);
         // A valuation with no sequence.
         let ef = self.eventually(&y)?;
+        let graph = self.graph;
         for &node in &sources {
-            let outside = uncovered(&self.graph.nodes[node].zone, &ef[self.of_node[node]])?;
+            let outside = self.outside(&graph.nodes[node].zone, &ef[self.of_node[node]])?;
             if !outside.is_empty() {
                 let (stem, _) = self.stem(node, &outside)?;
                 return Ok(TimedStateGraphDecision::Refuted {
@@ -282,7 +300,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         for (state, _) in y.iter().enumerate().filter(|(_, holds)| **holds) {
             let zone = self.within_invariants(state)?;
             if !zone.is_empty() {
-                self.charge_zone()?;
+                self.charge_zone(&zone)?;
                 words[0].zones.insert(state, vec![zone]);
             }
         }
@@ -302,6 +320,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                         continue;
                     }
                     for (other, word) in seen.get(&node).into_iter().flatten() {
+                        self.charge_step()?;
                         let mut both = here.clone();
                         intersect(&mut both, other)?;
                         if !both.is_empty() {
@@ -312,16 +331,16 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                     fresh.push(here);
                 }
                 for zone in fresh {
-                    self.charge_zone()?;
+                    self.charge_zone(&zone)?;
                     seen.entry(node).or_default().push((zone, at));
                 }
             }
             for (transition, zones) in self.extend(&words[at])? {
-                if !meets(&zones, &reachable)? {
+                if !self.meets(&zones, &reachable)? {
+                    for zone in zones.values().flatten() {
+                        self.release_zone(zone);
+                    }
                     continue;
-                }
-                for _ in zones.values().flatten() {
-                    self.charge_zone()?;
                 }
                 words.push(Word {
                     first: Some((transition, at)),
@@ -356,8 +375,10 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                         .or_default()
                         .entry(source)
                         .or_default();
-                    let parts = uncovered(&before, stored)?;
-                    stored.extend(parts);
+                    for part in self.outside(&before, stored)? {
+                        self.charge_zone(&part)?;
+                        stored.push(part);
+                    }
                 }
             }
         }
@@ -390,20 +411,72 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         Ok(())
     }
 
-    fn charge_zone(&mut self) -> Result<(), ZoneCheckRefusal> {
-        self.stored += 1;
+    /// Charge one held zone against `max_symbolic_states` and
+    /// `max_zone_bytes`.
+    fn charge_zone(&mut self, zone: &Dbm) -> Result<(), ZoneCheckRefusal> {
+        self.stored = self.stored.saturating_add(1);
         let limit = self.limits.max_symbolic_states;
         if self.stored > limit {
             return Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(
                 ZoneCheckLimit::MaxSymbolicStates(limit),
             )));
         }
+        self.bytes = self.bytes.saturating_add(zone_bytes(zone));
+        let limit = self.limits.max_zone_bytes;
+        if self.bytes > limit {
+            return Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(
+                ZoneCheckLimit::MaxZoneBytes(limit),
+            )));
+        }
         Ok(())
+    }
+
+    /// Give back a charged zone that is dropped.
+    fn release_zone(&mut self, zone: &Dbm) {
+        self.stored = self.stored.saturating_sub(1);
+        self.bytes = self.bytes.saturating_sub(zone_bytes(zone));
+    }
+
+    /// The parts of `zone` outside every zone of `held`.
+    fn outside(&mut self, zone: &Dbm, held: &[Dbm]) -> Result<Vec<Dbm>, ZoneCheckRefusal> {
+        let room = self.limits.max_symbolic_states.saturating_sub(self.stored);
+        let states = self.limits.max_symbolic_states;
+        subtract(zone, held, &mut |split| match split {
+            Split::Read => self.poll(),
+            Split::Piece(pieces) => {
+                if u64::try_from(pieces).map_or(true, |pieces| pieces > room) {
+                    return Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(
+                        ZoneCheckLimit::MaxSymbolicStates(states),
+                    )));
+                }
+                self.charge_step()
+            }
+        })
+    }
+
+    /// Whether some zone of `zones` meets one the forward search reached at
+    /// its state.
+    fn meets(
+        &mut self,
+        zones: &BTreeMap<usize, Vec<Dbm>>,
+        reached: &[Reached],
+    ) -> Result<bool, ZoneCheckRefusal> {
+        for node in reached {
+            for zone in zones.get(&node.state).into_iter().flatten() {
+                self.charge_step()?;
+                let mut both = zone.clone();
+                intersect(&mut both, &node.zone)?;
+                if !both.is_empty() {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     fn charge_step(&mut self) -> Result<(), ZoneCheckRefusal> {
         self.poll()?;
-        self.computed += 1;
+        self.computed = self.computed.saturating_add(1);
         let limit = self.limits.max_symbolic_transitions;
         if self.computed > limit {
             return Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(
@@ -487,7 +560,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
             if zone.is_empty() {
                 continue;
             }
-            self.charge_zone()?;
+            self.charge_zone(&zone)?;
             at_state[state].push(reached.len());
             reached.push(Reached {
                 state,
@@ -532,7 +605,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                 if covered {
                     continue;
                 }
-                self.charge_zone()?;
+                self.charge_zone(&next)?;
                 at_state[target].push(reached.len());
                 reached.push(Reached {
                     state: target,
@@ -559,7 +632,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         for (state, _) in p.iter().enumerate().filter(|(_, holds)| **holds) {
             let zone = self.within_invariants(state)?;
             if !zone.is_empty() {
-                self.charge_zone()?;
+                self.charge_zone(&zone)?;
                 queue.push_back((state, ef[state].len()));
                 ef[state].push(zone);
             }
@@ -572,8 +645,8 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                 if before.is_empty() {
                     continue;
                 }
-                for zone in uncovered(&before, &ef[source])? {
-                    self.charge_zone()?;
+                for zone in self.outside(&before, &ef[source])? {
+                    self.charge_zone(&zone)?;
                     queue.push_back((source, ef[source].len()));
                     ef[source].push(zone);
                 }
@@ -682,6 +755,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         }
         let start = self.zero_clocks();
         for candidate in candidates {
+            self.poll()?;
             let target = Target::Within(candidate);
             if let Some(concrete) = self.concretise(&moves, &start, &self.graph.scale, &target)? {
                 return Ok((
@@ -757,6 +831,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                     continue;
                 }
                 for onward in words[rest].zones.get(&target).into_iter().flatten() {
+                    self.poll()?;
                     // The rest's zones are closed under delay predecessors,
                     // so one that a later instant is in holds the landing
                     // too.
@@ -783,17 +858,44 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
     }
 }
 
-/// Whether some zone of `zones` meets one the forward search reached at its
-/// state.
-fn meets(zones: &BTreeMap<usize, Vec<Dbm>>, reached: &[Reached]) -> Result<bool, ZoneCheckRefusal> {
-    for node in reached {
-        for zone in zones.get(&node.state).into_iter().flatten() {
-            let mut both = zone.clone();
-            intersect(&mut both, &node.zone)?;
-            if !both.is_empty() {
-                return Ok(true);
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+    use num_bigint::BigInt;
+
+    use super::super::search::{subtract, Split, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop};
+    use super::super::{Bound, Dbm};
+
+    /// `low <= x <= low + 1` over one clock.
+    fn unit(low: i64) -> Dbm {
+        let mut zone = Dbm::universe(2);
+        zone.constrain(1, 0, Bound::le(BigInt::from(low + 1)))
+            .expect("an upper bound");
+        zone.constrain(0, 1, Bound::le(BigInt::from(-low)))
+            .expect("a lower bound");
+        zone
     }
-    Ok(false)
+
+    #[trace("FR-852-AC-33")]
+    #[test]
+    fn a_wide_union_is_subtracted_without_recursion_and_within_its_budget() {
+        let stopped = || {
+            ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(ZoneCheckLimit::MaxSymbolicStates(
+                100,
+            )))
+        };
+        // 100,000 held zones, none meeting the point: each is read in turn
+        // and nothing is split.
+        let held: Vec<Dbm> = (0..100_000).map(|index| unit(2 * index + 1)).collect();
+        let point = Dbm::zero(2);
+        let rest = subtract(&point, &held, &mut |_| Ok::<_, ZoneCheckRefusal>(()));
+        assert_eq!(rest, Ok(vec![point]));
+        // 12,000 held zones that each split the rest stop at the cap.
+        let held: Vec<Dbm> = (0..12_000).map(|index| unit(2 * index + 1)).collect();
+        let rest = subtract(&Dbm::universe(2), &held, &mut |split| match split {
+            Split::Piece(pieces) if pieces > 100 => Err(stopped()),
+            Split::Piece(_) | Split::Read => Ok(()),
+        });
+        assert_eq!(rest, Err(stopped()));
+    }
 }

@@ -16,7 +16,8 @@
 //! - `unique path`: every `X` valuation reached is in `E(Y)`, and no two
 //!   transition sequences, read backwards from `Y`, lead from one of them.
 //!
-//! Every zone held and every predecessor or successor computed is charged to
+//! Every zone held, every predecessor or successor computed, every piece a
+//! zone subtraction makes and every pair of zones intersected is charged to
 //! `max_certificate_edges`.
 
 use std::collections::{BTreeMap, VecDeque};
@@ -153,7 +154,7 @@ impl<O> Checker<'_, '_, O> {
         match claim.form() {
             StateGraphForm::Possible { .. } => {
                 for (location, point) in &points {
-                    if !outside(point, &eventually[*location])?.is_empty() {
+                    if !self.outside(point, &eventually[*location])?.is_empty() {
                         return reject(
                             CertificateRule::InitialMissing,
                             CertificateLocus::CertificateMember(CertificateMember::Initials),
@@ -173,7 +174,7 @@ impl<O> Checker<'_, '_, O> {
                     };
                     self.poll()?;
                     let zone = &self.certificate.nodes[node].zone;
-                    if outside(zone, &eventually[*location])?.is_empty() {
+                    if self.outside(zone, &eventually[*location])?.is_empty() {
                         expected.push(node);
                     }
                 }
@@ -183,7 +184,7 @@ impl<O> Checker<'_, '_, O> {
                 let from =
                     per_location(&from_values.ok_or_else(|| fault(CheckerFault::Automaton))?);
                 for (location, zone) in &reached {
-                    if from[*location] && !outside(zone, &eventually[*location])?.is_empty() {
+                    if from[*location] && !self.outside(zone, &eventually[*location])?.is_empty() {
                         return reject(CertificateRule::SuccessorMissing, name(*location));
                     }
                 }
@@ -197,7 +198,7 @@ impl<O> Checker<'_, '_, O> {
                     .filter(|(location, _)| from[*location])
                     .collect();
                 for (location, zone) in &sources {
-                    if !outside(zone, &eventually[*location])?.is_empty() {
+                    if !self.outside(zone, &eventually[*location])?.is_empty() {
                         return reject(CertificateRule::CountBroken, name(*location));
                     }
                 }
@@ -350,7 +351,7 @@ impl<O> Checker<'_, '_, O> {
                     if origin.is_empty() {
                         continue;
                     }
-                    for piece in outside(&origin, &found[from])? {
+                    for piece in self.outside(&origin, &found[from])? {
                         self.charge(1)?;
                         found[from].push(piece);
                         grew = true;
@@ -388,8 +389,8 @@ impl<O> Checker<'_, '_, O> {
         let mut taken: Vec<Region> = Vec::new();
         while let Some(sequence) = sequences.pop_front() {
             self.poll()?;
-            let mine = shared(&sequence, sources)?;
-            if let Some((location, _)) = shared(&mine, &taken)?.first() {
+            let mine = self.shared(&sequence, sources)?;
+            if let Some((location, _)) = self.shared(&mine, &taken)?.first() {
                 return Ok(Some(*location));
             }
             self.charge(mine.len() as u64)?;
@@ -407,50 +408,124 @@ impl<O> Checker<'_, '_, O> {
                         .filter(|(location, _)| *location == edge.from)
                         .map(|(_, zone)| zone.clone())
                         .collect();
-                    for piece in outside(&origin, &held)? {
+                    for piece in self.outside(&origin, &held)? {
                         self.charge(1)?;
                         regions.push((edge.from, piece));
                     }
                 }
             }
             for regions in longer.into_values() {
-                if !shared(&regions, &onward)?.is_empty() {
+                if !self.shared(&regions, &onward)?.is_empty() {
                     sequences.push_back(regions);
                 }
             }
         }
         Ok(None)
     }
+
+    /// [`outside`], charged to `max_certificate_edges`.
+    fn outside(&self, zone: &Zone, held: &[Zone]) -> Step<Vec<Zone>, O> {
+        outside(zone, held, &|count| self.charge(count))
+    }
+
+    /// The nonempty intersections of `left` with `right`, location by
+    /// location, each pair charged.
+    fn shared(&self, left: &[Region], right: &[Region]) -> Step<Vec<Region>, O> {
+        let mut both = Vec::new();
+        for (location, zone) in left {
+            for (_, other) in right.iter().filter(|(other, _)| other == location) {
+                self.charge(1)?;
+                let mut zone = zone.clone();
+                intersect(&mut zone, other)?;
+                if !zone.is_empty() {
+                    both.push((*location, zone));
+                }
+            }
+        }
+        Ok(both)
+    }
 }
 
 /// The parts of `zone` that no zone of `held` holds.
-fn outside<O>(zone: &Zone, held: &[Zone]) -> Step<Vec<Zone>, O> {
-    let mut rest = vec![zone.clone()];
+///
+/// `charge` is called with zero before each pair of a held zone and a piece
+/// is read, to poll, and with the number of pieces each split makes; its
+/// error stops the subtraction.
+fn outside<O>(
+    zone: &Zone,
+    held: &[Zone],
+    charge: &impl Fn(u64) -> Step<(), O>,
+) -> Step<Vec<Zone>, O> {
+    let mut rest = Vec::new();
+    if !zone.is_empty() {
+        rest.push(zone.clone());
+    }
     for other in held {
-        let mut next = Vec::new();
-        for piece in &rest {
-            next.extend(piece.minus(other)?);
-        }
-        rest = next;
         if rest.is_empty() {
             break;
         }
+        let mut next = Vec::new();
+        for piece in rest {
+            charge(0)?;
+            let mut meet = piece.clone();
+            intersect(&mut meet, other)?;
+            if meet.is_empty() {
+                next.push(piece);
+                continue;
+            }
+            let made = piece.minus(other)?;
+            charge(u64::try_from(made.len()).unwrap_or(u64::MAX))?;
+            next.extend(made);
+        }
+        rest = next;
     }
-    rest.retain(|piece| !piece.is_empty());
     Ok(rest)
 }
 
-/// The nonempty intersections of `left` with `right`, location by location.
-fn shared<O>(left: &[Region], right: &[Region]) -> Step<Vec<Region>, O> {
-    let mut both = Vec::new();
-    for (location, zone) in left {
-        for (_, other) in right.iter().filter(|(other, _)| other == location) {
-            let mut zone = zone.clone();
-            intersect(&mut zone, other)?;
-            if !zone.is_empty() {
-                both.push((*location, zone));
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use filament_exact::Integer;
+    use ix_trace_rs::trace;
+
+    use super::{outside, Halt, Step};
+    use crate::certificate::zone::Zone;
+    use crate::certificate::zone_certificate::ZoneCertificateRefusal;
+
+    /// `low <= x <= low + 1` over one clock.
+    fn unit(low: i64) -> Zone {
+        let mut zone = Zone::universe(2);
+        zone.constrain(1, 0, &Integer::from(low + 1), false)
+            .expect("an upper bound");
+        zone.constrain(0, 1, &Integer::from(-low), false)
+            .expect("a lower bound");
+        zone
+    }
+
+    /// A budget of `limit` pieces, stopping as the checker does.
+    fn budget(limit: u64) -> impl Fn(u64) -> Step<(), ()> {
+        let spent = Cell::new(0_u64);
+        move |count| {
+            spent.set(spent.get() + count);
+            if spent.get() > limit {
+                return Err(Halt::Refusal(ZoneCertificateRefusal::Undecided));
             }
+            Ok(())
         }
     }
-    Ok(both)
+
+    #[trace("FR-852-AC-33")]
+    #[test]
+    fn a_wide_union_is_subtracted_within_its_budget() {
+        // 20,000 held zones, none meeting the point: nothing is split.
+        let held: Vec<Zone> = (0..20_000).map(|index| unit(2 * index + 1)).collect();
+        let point = Zone::zero(2);
+        let rest = outside::<()>(&point, &held, &budget(0));
+        assert!(matches!(rest, Ok(parts) if parts == vec![point.clone()]));
+        // 12,000 held zones that each split the rest stop at the budget.
+        let held: Vec<Zone> = (0..12_000).map(|index| unit(2 * index + 1)).collect();
+        let rest = outside(&Zone::universe(2), &held, &budget(200));
+        assert!(matches!(rest, Err(Halt::Refusal(_))));
+    }
 }

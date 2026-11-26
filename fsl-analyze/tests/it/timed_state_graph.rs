@@ -691,8 +691,8 @@ fn assert_proved_and_certified(item: &Value) {
 
 /// With `one` never enabled, every `first` after time 0 leaves a reachable
 /// state from which no run reaches phase 2, so the claim is false.
-#[trace("TC-2412", "FR-852-AC-2")]
-#[trace("TC-2412", "FSpec-FR-712-AC-2")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_refute_always_possible_when_part_of_a_zone_is_trapped() {
     let item = trapped_with("timed-sg-part-zone-trap", "false", ALWAYS_DONE);
@@ -701,8 +701,8 @@ fn zones_refute_always_possible_when_part_of_a_zone_is_trapped() {
 
 /// `unique path` counts the ways from every reachable `X` state: a trapped
 /// state has none, so the claim is false although every other state has one.
-#[trace("TC-2412", "FR-852-AC-3")]
-#[trace("TC-2412", "FSpec-FR-712-AC-3")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_refute_unique_path_when_part_of_a_zone_has_no_path() {
     let item = trapped_with("timed-sg-part-zone-unique", "false", UNIQUE_DONE);
@@ -711,8 +711,8 @@ fn zones_refute_unique_path_when_part_of_a_zone_has_no_path() {
 
 /// `zero` takes `t = 0` and `one` exactly the other times, so every state has
 /// a way, and one way, although two steps leave the node of phase 1.
-#[trace("TC-2412", "FR-852-AC-2")]
-#[trace("TC-2412", "FR-852-AC-3")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_prove_over_steps_that_split_a_zone_between_them() {
     let guard = "self.y >= 2 ms and self.x < 2 ms";
@@ -721,7 +721,8 @@ fn zones_prove_over_steps_that_split_a_zone_between_them() {
 }
 
 /// At `t = 0` both `zero` and `one` run: two sequences from one state.
-#[trace("TC-2412", "FR-852-AC-3")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_refute_unique_path_with_two_sequences_from_part_of_a_zone() {
     let item = trapped_with(
@@ -734,8 +735,8 @@ fn zones_refute_unique_path_with_two_sequences_from_part_of_a_zone() {
 
 /// `one` takes `t` strictly inside (0, 1) ms only, so the one time `t = 1`
 /// is trapped: a strict bound's boundary.
-#[trace("TC-2412", "FR-852-AC-2")]
-#[trace("TC-2412", "FR-852-AC-3")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_refute_when_only_a_strict_boundary_is_trapped() {
     let guard = "self.y >= 2 ms and self.x < 2 ms and self.x > 1 ms";
@@ -745,8 +746,8 @@ fn zones_refute_when_only_a_strict_boundary_is_trapped() {
 
 /// TC-2412 step 8's subject on EN-6: with `first` strictly between 0 and
 /// 1 ms, neither `zero` nor `one` is ever taken, so both claims are false.
-#[trace("TC-2412", "FR-852-AC-2")]
-#[trace("TC-2412", "FR-852-AC-3")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_refute_the_trap_between_two_integer_times() {
     let guard = "self.y >= 2 ms and self.x <= 1 ms";
@@ -763,7 +764,8 @@ fn zones_refute_the_trap_between_two_integer_times() {
 }
 
 /// One step through two overlapping guard parts is one transition sequence.
-#[trace("TC-2412", "FR-852-AC-3")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_count_one_sequence_for_a_step_through_two_guard_parts() {
     let item = trapped_with(
@@ -776,7 +778,8 @@ fn zones_count_one_sequence_for_a_step_through_two_guard_parts() {
 
 /// `possible` is read from the initial state alone: phase 3 is reachable
 /// when `one` can run and not when it never can.
-#[trace("TC-2412", "FR-852-AC-1")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_decide_possible_from_the_initial_valuation() {
     let never = trapped_with("timed-sg-possible-never", "false", POSSIBLE_THREE);
@@ -792,7 +795,8 @@ fn zones_decide_possible_from_the_initial_valuation() {
 /// `renew` leaves `x` behind the time, where `finish`'s lower bound is out of
 /// reach before phase 1 ends. The aLU simulation covers that state by
 /// `keep`'s and would hide it.
-#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_refute_a_trap_that_lower_bound_coverage_would_hide() {
     let body = format!(
@@ -825,8 +829,8 @@ fn zones_refute_a_trap_that_lower_bound_coverage_would_hide() {
 /// `enter` reaches phase 1 with `x >= 5 ms`, and `join` goes on to a phase 2
 /// whose node `skip` already stored with any `x`. The edge into that wider
 /// node leads on to phase 3; no run from phase 1 does.
-#[trace("TC-2412", "FR-852-AC-2")]
-#[trace("TC-2412", "FR-852-AC-3")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn zones_refute_where_a_covering_edge_leads_further_than_any_run() {
     for (name, claim) in [
@@ -1019,8 +1023,8 @@ fn rule(verdict: fsl_replay::ZoneCertificateVerdict) -> fsl_replay::CertificateR
 /// The checker, on certificates written here. Nodes 0, 1 and 2 are phases 0,
 /// 1 and 2 when `one` never runs; closing over whole nodes lists all three,
 /// but only phase 2's zone lies in `E(P)`.
-#[trace("TC-2412", "FR-852-AC-2")]
-#[trace("TC-2412", "FSpec-FR-712-AC-2")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn the_checker_rejects_a_node_level_closure() {
     use fsl_replay::CertificateRule;
@@ -1044,9 +1048,8 @@ fn the_checker_rejects_a_node_level_closure() {
 }
 
 /// The checker's own `unique path` and `possible`, and its budget.
-#[trace("TC-2412", "FR-852-AC-1")]
-#[trace("TC-2412", "FR-852-AC-3")]
-#[trace("TC-2412", "FSpec-FR-712-AC-3")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn the_checker_decides_unique_path_and_possible_on_valuations() {
     use fsl_replay::{CertificateRule, ZoneCertificateVerdict};
@@ -1086,7 +1089,8 @@ fn the_checker_decides_unique_path_and_possible_on_valuations() {
 /// The producer's own result on the trap subject: only the phase-2 node's
 /// whole zone lies in `E(P)`, and the initial node holds a trapped state,
 /// reached by waiting.
-#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FR-852-AC-32")]
+#[trace("TC-2412", "FSpec-FR-712-AC-10")]
 #[test]
 fn the_decision_lists_whole_nodes_of_e_p_and_a_trapped_node() {
     use filament_exact::Cancel;
@@ -1140,6 +1144,77 @@ fn the_decision_lists_whole_nodes_of_e_p_and_a_trapped_node() {
     assert_eq!(node, 0);
     assert!(stem.steps.is_empty(), "{stem:?}");
     assert_eq!(paths, None);
+}
+
+/// The decision draws on what the exploration left: a budget the explored
+/// graph fills exactly lets the search finish and stops the decision, and the
+/// item settles `incomplete` naming it.
+#[trace("TC-2412", "FR-852-AC-33")]
+#[test]
+fn a_budget_the_graph_fills_stops_the_decision() {
+    use filament_exact::Cancel;
+    use fsl_analyze::zone_check::{
+        decide_timed_state_graph, explore_timed_state_graph, ZoneCheckLimit, ZoneCheckLimits,
+        ZoneCheckRefusal, ZoneStop,
+    };
+    use fsl_eval::simulation::model::TimedSystem;
+
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x", "y"], &PHASE_OPS),
+        crate::zone_search::TIMED,
+        &trap_body("false", ALWAYS_DONE),
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed subject");
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("Done")
+        .expect("Done");
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: world.request().universes[0].population.clone(),
+        key: "c".to_owned(),
+    };
+    let over = system
+        .bound_reference(claim.over().expect("over").object.clone(), &instance)
+        .expect("bound c");
+    // The graph holds three nodes and two edges.
+    for (limits, limit) in [
+        (
+            ZoneCheckLimits {
+                max_symbolic_states: 3,
+                ..ZoneCheckLimits::default()
+            },
+            ZoneCheckLimit::MaxSymbolicStates(3),
+        ),
+        (
+            ZoneCheckLimits {
+                max_symbolic_transitions: 2,
+                ..ZoneCheckLimits::default()
+            },
+            ZoneCheckLimit::MaxSymbolicTransitions(2),
+        ),
+    ] {
+        let graph =
+            explore_timed_state_graph(&timed, limits, &Cancel::new()).expect("the graph fits");
+        assert_eq!((graph.nodes.len(), graph.edges.len()), (3, 2));
+        let decided =
+            decide_timed_state_graph(&timed, &graph, claim, Some(&over), limits, &Cancel::new());
+        assert_eq!(
+            decided,
+            Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(limit)))
+        );
+    }
+    let run = timed_run(
+        "timed-sg-decision-budget",
+        &trap_body("false", ALWAYS_DONE),
+        &["x", "y"],
+        &PHASE_OPS,
+        json!([{"claim": "Done", "temporal": {"limits": {"max_states": 3}}}]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "incomplete", "{item}");
+    assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
 }
 
 /// FR-125 "Instancing": on the digital probabilistic route, the proved entry
