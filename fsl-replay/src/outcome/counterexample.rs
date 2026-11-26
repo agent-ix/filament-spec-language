@@ -19,13 +19,15 @@ use ix_trace_rs::implements;
 use serde_json::{json, Value as Json};
 use std::any::{Any, TypeId};
 
-use super::{undefined_reason, TimedStateWire, WrittenTransition};
+use super::undefined_reason;
 use crate::model_check::counterexample::{
     ClosureStutter, CounterexampleKind, ModelStep, Race, StepSite, TemporalCounterexample,
     UndefinedEvaluation, UndefinedLocus,
 };
 use crate::refinement::{RefinementFailure, StepRejection};
-use crate::written_operation::WrittenOperation;
+use crate::shared_wire::{
+    ProbabilisticBound, StateLocus, TransitionIdentity, WireDefect, WireDefectKind,
+};
 
 /// Why a counterexample has no wire spelling here.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -372,7 +374,6 @@ fn read_document(
     closure_alphabet: bool,
 ) -> Result<TaskProductCounterexampleDocument, TemporalCounterexampleReadRefusal> {
     use crate::{TaskTransitionAction as Action, TaskTransitionIdentity};
-    use base64::Engine;
     use filament_exact::Integer;
 
     fn malformed(
@@ -435,79 +436,34 @@ fn read_document(
         Rational::new(integer("numerator")?, integer("denominator")?)
             .map_err(|_| malformed("invalid-value", pointer))
     }
-    #[implements("FR-120-AC-39", "FR-120-AC-40")]
+    fn shared_defect(pointer: &str, defect: WireDefect) -> TemporalCounterexampleReadRefusal {
+        let at = format!("{pointer}{}", defect.pointer);
+        match defect.kind {
+            WireDefectKind::Missing => malformed("missing-member", at),
+            WireDefectKind::UnknownMember => malformed("unknown-member", at),
+            WireDefectKind::WrongKind => malformed("wrong-value-kind", at),
+            WireDefectKind::Invalid => malformed("invalid-value", at),
+            WireDefectKind::UnknownVariant => {
+                TemporalCounterexampleReadRefusal::TraceAlphabet { pointer: at }
+            }
+        }
+    }
     fn source_transition(
         value: &Json,
         pointer: &str,
     ) -> Result<ModelTransition, TemporalCounterexampleReadRefusal> {
-        exact_members(
-            value,
-            &["type", "operation", "receiver", "arguments"],
-            &[],
-            pointer,
-        )?;
-        if required(value, "type", pointer)?.as_str() != Some("transition") {
-            return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
-                pointer: format!("{pointer}/type"),
-            });
-        }
-        let operation_wire = required(value, "operation", pointer)?;
-        // FR-120's reader rule; this reader also rebuilds a string beginning
-        // `ix://` as the `{node, package}` identity.
-        let operation_value = match operation_wire {
-            Json::String(operation)
-                if !WrittenOperation::is_identity_text(operation)
-                    && operation.starts_with("ix://") =>
-            {
-                let mut parts = operation
-                    .strip_prefix("ix://")
-                    .unwrap_or_default()
-                    .split('/');
-                let owner = parts.next().filter(|part| !part.is_empty());
-                let repository = parts.next().filter(|part| !part.is_empty());
-                let package = owner
-                    .zip(repository)
-                    .map(|(owner, repository)| format!("{owner}/{repository}"))
-                    .ok_or_else(|| malformed("invalid-value", format!("{pointer}/operation")))?;
-                json!({"node": operation, "package": package})
-            }
-            Json::String(operation) => WrittenOperation::from_wire(operation.clone())
-                .into_identity_text()
-                .and_then(|text| serde_json::from_str(&text))
-                .map_err(|_| malformed("invalid-value", format!("{pointer}/operation")))?,
-            Json::Object(_) => operation_wire.clone(),
-            _ => {
-                return Err(malformed(
-                    "wrong-value-kind",
-                    format!("{pointer}/operation"),
-                ))
-            }
-        };
-        let receiver = match required(value, "receiver", pointer)? {
-            Json::Null => None,
-            value => Some(
-                serde_json::to_string(value)
-                    .map_err(|_| malformed("invalid-value", format!("{pointer}/receiver")))?,
-            ),
-        };
-        let arguments = required(value, "arguments", pointer)?
-            .as_array()
-            .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/arguments")))?
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                serde_json::to_string(value)
-                    .map_err(|_| malformed("invalid-value", format!("{pointer}/arguments/{index}")))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        ModelTransition::new(
-            serde_json::to_string(&operation_value)
-                .map_err(|_| malformed("invalid-value", format!("{pointer}/operation")))?,
-            receiver,
-            arguments,
-            quire_canonical::Limits::new(u64::MAX),
-        )
-        .map_err(|_| malformed("invalid-value", pointer))
+        TransitionIdentity::read(value)
+            .map(TransitionIdentity::into_model)
+            .map_err(|defect| shared_defect(pointer, defect))
+    }
+    /// The `post_state` of the step at `pointer`.
+    fn post_state_key(
+        value: &Json,
+        pointer: &str,
+    ) -> Result<fsl_eval::simulation::StateKey, TemporalCounterexampleReadRefusal> {
+        StateLocus::read(required(value, "post_state", pointer)?)
+            .map(StateLocus::into_key)
+            .map_err(|defect| shared_defect(&format!("{pointer}/post_state"), defect))
     }
     fn task_transition(
         value: &Json,
@@ -656,16 +612,13 @@ fn read_document(
                 exact_members(transition, &["type"], &[], &transition_pointer)
             }
         }?;
+        // The spelling of the key is read with the step; only its shape here.
         let state = required(value, "post_state", pointer)?;
-        exact_members(state, &["key"], &[], &format!("{pointer}/post_state"))?;
-        if required(state, "key", &format!("{pointer}/post_state"))?
-            .as_str()
-            .is_none()
-        {
-            return Err(malformed(
-                "wrong-value-kind",
-                format!("{pointer}/post_state/key"),
-            ));
+        match StateLocus::read(state) {
+            Err(defect) if defect.kind != WireDefectKind::Invalid => {
+                return Err(shared_defect(&format!("{pointer}/post_state"), defect));
+            }
+            _ => {}
         }
         // A source step of the model alphabet may omit its delay; a task step
         // and the terminal stutter carry theirs (FR-237 "Reading the wire"). A
@@ -701,22 +654,12 @@ fn read_document(
             _ => {
                 return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
                     pointer: format!("{transition_pointer}/type"),
-                })
+                });
             }
         };
-        let post_state = required(
-            required(value, "post_state", pointer)?,
-            "key",
-            &format!("{pointer}/post_state"),
-        )?
-        .as_str()
-        .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/post_state/key")))?;
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(post_state)
-            .map_err(|_| malformed("invalid-value", format!("{pointer}/post_state/key")))?;
         Ok(ModelStep {
             transition,
-            post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+            post_state: post_state_key(value, pointer)?,
             delay: value
                 .get("delay")
                 .map(|delay| rational(delay, &format!("{pointer}/delay")))
@@ -729,19 +672,10 @@ fn read_document(
         site: StepSite,
     ) -> Result<ClosureStutter, TemporalCounterexampleReadRefusal> {
         let pointer = site.pointer();
-        let key = required(
-            required(value, "post_state", &pointer)?,
-            "key",
-            &format!("{pointer}/post_state"),
-        )?
-        .as_str()
-        .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/post_state/key")))?;
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(key)
-            .map_err(|_| malformed("invalid-value", format!("{pointer}/post_state/key")))?;
+        let post_state = post_state_key(value, &pointer)?;
         Ok(ClosureStutter {
             site,
-            post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+            post_state,
             delay: value
                 .get("delay")
                 .map(|delay| rational(delay, &format!("{pointer}/delay")))
@@ -954,12 +888,12 @@ fn rational(value: &Rational) -> Json {
 }
 
 fn state(key: &fsl_eval::simulation::StateKey) -> Result<Json, CounterexampleWireError> {
-    serde_json::to_value(TimedStateWire::from(key))
+    serde_json::to_value(StateLocus::from(key))
         .map_err(|_| CounterexampleWireError::Unspelled("state key"))
 }
 
 fn model_transition(identity: &ModelTransition) -> Result<Json, CounterexampleWireError> {
-    serde_json::to_value(WrittenTransition::from(identity))
+    serde_json::to_value(TransitionIdentity::borrowed(identity))
         .map_err(|_| CounterexampleWireError::Unspelled("transition"))
 }
 
@@ -1429,7 +1363,7 @@ fn temporal<T: Spelling>(
         (None, _) => Json::Null,
         (Some(_), Some(found)) => reference(found)?,
         (Some(ModelInstance { .. }), None) => {
-            return Err(CounterexampleWireError::Unspelled("over binding"))
+            return Err(CounterexampleWireError::Unspelled("over binding"));
         }
     };
     let fairness = counterexample
@@ -1837,8 +1771,7 @@ fn zero_rational() -> Rational {
 pub fn task_source_transition_wire(
     identity: &ModelTransition,
 ) -> Result<Json, CounterexampleWireError> {
-    WrittenTransition::read(identity)
-        .and_then(serde_json::to_value)
+    serde_json::to_value(TransitionIdentity::borrowed(identity))
         .map_err(|_| CounterexampleWireError::Unspelled("source transition"))
 }
 
@@ -1868,7 +1801,7 @@ pub fn hyper_counterexample_wire(
                 HyperStep::Model(found) => {
                     let mut written = step(found)?;
                     written["type"] = json!("step");
-                    written["post_state"] = key_text(&found.post_state)?;
+                    written["post_state"] = state(&found.post_state)?;
                     written
                 }
                 HyperStep::TerminalStutter => json!({"type": "terminal-stutter"}),
@@ -1917,7 +1850,7 @@ pub fn hyper_counterexample_wire(
             let state_keys = undefined
                 .state_keys
                 .iter()
-                .map(key_text)
+                .map(state)
                 .collect::<Result<Vec<_>, _>>()?;
             written["undefined"] = json!({"type": "undefined-evaluation", "where": {
                 "position": undefined.position.to_string(), "state_keys": state_keys,
@@ -2073,8 +2006,7 @@ fn assignments_wire_using(
 /// encoding, including a value absent from `value_schema`'s enum-member index.
 pub fn probabilistic_wire(
     witness: &crate::ProbabilisticCounterexample,
-    bound: &fsl_semantics::check::Bound,
-    claim_type: &str,
+    bound: &ProbabilisticBound,
     value_schema: &ProbabilisticValueSchema<'_>,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
@@ -2084,7 +2016,7 @@ pub fn probabilistic_wire(
         fsl_eval::simulation::model::ScheduledIdentity,
     )],
 ) -> Result<Json, CounterexampleWireError> {
-    probabilistic_wire_using(witness, bound, claim_type, state_key, scheduler, |value| {
+    probabilistic_wire_using(witness, bound, state_key, scheduler, |value| {
         value_schema.encode(value)
     })
 }
@@ -2095,25 +2027,32 @@ pub fn probabilistic_wire(
 fn scheduled_transition(
     identity: &fsl_eval::simulation::model::ScheduledIdentity,
     encode: &dyn Fn(&Value) -> Option<Json>,
-) -> Result<WrittenTransition, CounterexampleWireError> {
-    Ok(WrittenTransition {
-        kind: "transition",
-        operation: WrittenOperation::of(&identity.operation),
-        receiver: Some(reference(&identity.receiver)?),
-        arguments: identity
-            .arguments
-            .iter()
-            .map(|value| {
-                encode(value).ok_or(CounterexampleWireError::Unspelled("probabilistic value"))
-            })
-            .collect::<Result<_, _>>()?,
-    })
+) -> Result<TransitionIdentity<'static>, CounterexampleWireError> {
+    let unspelled = || CounterexampleWireError::Unspelled("probabilistic scheduled identity");
+    let text = |value: &Json| serde_json::to_string(value).map_err(|_| unspelled());
+    let receiver = text(&reference(&identity.receiver)?)?;
+    let arguments = identity
+        .arguments
+        .iter()
+        .map(|value| {
+            let written =
+                encode(value).ok_or(CounterexampleWireError::Unspelled("probabilistic value"))?;
+            text(&written)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    ModelTransition::new(
+        identity.operation.clone(),
+        Some(receiver),
+        arguments,
+        quire_canonical::Limits::new(u64::MAX),
+    )
+    .map(TransitionIdentity::owned)
+    .map_err(|_| unspelled())
 }
 
 fn probabilistic_wire_using(
     witness: &crate::ProbabilisticCounterexample,
-    bound: &fsl_semantics::check::Bound,
-    claim_type: &str,
+    bound: &ProbabilisticBound,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2161,15 +2100,11 @@ fn probabilistic_wire_using(
                 .collect::<Result<Vec<_>, CounterexampleWireError>>()
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (comparison, threshold) = match bound {
-        fsl_semantics::check::Bound::AtLeast(threshold) => ("greater-or-equal", threshold),
-        fsl_semantics::check::Bound::AtMost(threshold) => ("less-or-equal", threshold),
-    };
     let mut written = json!({
         "type": "probabilistic",
         "initial_state": 0,
         "binding": witness.binding.as_ref().map(reference).transpose()?,
-        "bound": {"type": claim_type, "comparison": comparison, "threshold": rational(threshold)},
+        "bound": bound,
         "evidence": {"type": "path-set", "paths": paths},
     });
     if let Some(instance) = &witness.instance {
@@ -2281,8 +2216,7 @@ fn randomized_scheduler_wire_entry(
 pub fn probabilistic_undefined_wire(
     witness: &crate::ProbabilityUndefinedWitness,
     claim: &OccurrenceKey,
-    bound: &fsl_semantics::check::Bound,
-    claim_type: &str,
+    bound: &ProbabilisticBound,
     value_schema: &ProbabilisticValueSchema<'_>,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
@@ -2292,30 +2226,16 @@ pub fn probabilistic_undefined_wire(
         fsl_eval::simulation::model::ScheduledIdentity,
     )],
 ) -> Result<Json, CounterexampleWireError> {
-    use base64::Engine;
-    let mut written = probabilistic_wire(
-        &witness.path,
-        bound,
-        claim_type,
-        value_schema,
-        state_key,
-        scheduler,
-    )?;
+    let mut written = probabilistic_wire(&witness.path, bound, value_schema, state_key, scheduler)?;
     let paths = written["evidence"]["paths"].take();
     let mut evaluation = undefined(&witness.evaluation, Some(claim))?;
-    evaluation["where"]["product_state"] = json!({"key": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(witness.product_state.as_bytes())});
+    evaluation["where"]["product_state"] =
+        state(&fsl_eval::simulation::StateKey::from_canonical_bytes(
+            witness.product_state.as_bytes().to_vec(),
+        ))?;
     written["evidence"] =
         json!({"type": "undefined-path", "path": paths[0], "undefined": evaluation});
     Ok(written)
-}
-
-/// The unpadded base64url spelling of a state key, as FSpec FR-393 writes a
-/// `post_state` and a `state_key`.
-fn key_text(key: &fsl_eval::simulation::StateKey) -> Result<Json, CounterexampleWireError> {
-    state(key)?
-        .get("key")
-        .cloned()
-        .ok_or(CounterexampleWireError::Unspelled("state key"))
 }
 
 fn graph_step(
@@ -2324,7 +2244,7 @@ fn graph_step(
     let mut written = json!({
         "type": "step",
         "transition": model_transition(&step.transition)?,
-        "post_state": key_text(&step.post_state)?,
+        "post_state": state(&step.post_state)?,
     });
     if let Some(delay) = &step.delay {
         written["delay"] = rational(delay);
@@ -2451,7 +2371,7 @@ pub fn graph_evidence_wire(
             });
             let mut at = json!({
                 "position": stem.steps.len(),
-                "state_key": key_text(&undefined.state_key)?,
+                "state_key": state(&undefined.state_key)?,
                 "locus": locus(claim)?,
             });
             if let Some(role) = role {
@@ -2587,6 +2507,60 @@ mod tests {
         }
     }
 
+    /// FSpec FR-331 `State`, FR-400: a hyper step's `post_state` is the
+    /// State object. `[1,[]]` is `WzEsW11d` in unpadded base64url.
+    #[trace("FSpec-FR-400")]
+    #[test]
+    fn a_hyper_step_writes_its_post_state_as_a_state_object() {
+        let counterexample = crate::HyperCounterexample {
+            kind: crate::HyperCounterexampleKind::Closed,
+            instance: Vec::new(),
+            traces: vec![crate::HyperTrace {
+                variable: "a".to_owned(),
+                alias: "M".to_owned(),
+                initial: 0,
+                steps: vec![crate::HyperStep::Model(step(1))],
+                results: Vec::new(),
+                marks: Vec::new(),
+            }],
+            trace_position: 0,
+        };
+        let wire = hyper_counterexample_wire(&counterexample, None).expect("spelled");
+        assert_eq!(
+            wire["traces"][0]["steps"][0]["post_state"],
+            json!({"key": "WzEsW11d"})
+        );
+    }
+
+    /// FSpec FR-400 `UndefinedEvaluation`: `where.state_keys` is one State
+    /// object per component. `[1,[]]` is `WzEsW11d` and `[2,[]]` is
+    /// `WzIsW11d`.
+    #[trace("FSpec-FR-400")]
+    #[test]
+    fn a_hyper_undefined_locus_writes_state_objects() {
+        let counterexample = crate::HyperCounterexample {
+            kind: crate::HyperCounterexampleKind::Undefined(crate::HyperUndefined {
+                position: 0,
+                state_keys: vec![key(1), key(2)],
+                variables: vec![
+                    ("a".to_owned(), "M".to_owned()),
+                    ("b".to_owned(), "M".to_owned()),
+                ],
+                locus: crate::HyperLocus::RelationBody,
+                transition: None,
+                cause: fsl_eval::temporal::UndefinedCause::Kernel(Undefined::DivisionByZero),
+            }),
+            instance: Vec::new(),
+            traces: Vec::new(),
+            trace_position: 0,
+        };
+        let wire = hyper_counterexample_wire(&counterexample, Some(&claim())).expect("spelled");
+        assert_eq!(
+            wire["undefined"]["where"]["state_keys"],
+            json!([{"key": "WzEsW11d"}, {"key": "WzIsW11d"}])
+        );
+    }
+
     /// FSpec FR-712 timed state-graph paths retain the chosen exact delay
     /// before each discrete step. Untimed paths keep the FR-393 shape.
     #[test]
@@ -2599,15 +2573,15 @@ mod tests {
             json!({
                 "type": "step",
                 "transition": {"type": "transition", "operation": r#"{"name":"s1"}"#, "receiver": null, "arguments": []},
-                "post_state": key_text(&key(1)).expect("key"),
+                "post_state": {"key": "WzEsW11d"},
                 "delay": {"numerator": "3", "denominator": "2"},
             })
         );
     }
 
     /// FR-120-AC-39 (TC-471): an operation string spelled like a JSON literal
-    /// or array is a name; an identity text and an object keep their reading;
-    /// any other member is refused.
+    /// or array is a name, an identity text keeps its reading, and any other
+    /// member, an object among them, is refused.
     #[trace("TC-471", "FR-120-AC-39")]
     #[test]
     fn a_counterexample_operation_spelled_like_a_literal_is_a_name() {
@@ -2624,21 +2598,56 @@ mod tests {
             read_temporal_counterexample::<ModelTransition>(&written)
                 .map(|read| read.prefix[0].transition.operation().to_owned())
         };
-        for name in ["tick", "true", "false", "null", "1", "[1]"] {
+        for name in ["tick", "true", "false", "null", "1", "[1]", "ix://a/b/C/d"] {
             assert_eq!(read(json!(name)).expect("a name"), format!("\"{name}\""));
         }
-        for spelled in [json!(r#"{"name":"s1"}"#), json!({"name": "s1"})] {
-            assert_eq!(
-                read(spelled).expect("an identity"),
-                r#"{"name":"s1"}"#.to_owned()
-            );
-        }
-        for other in [json!(true), json!(1), json!([1]), json!(null)] {
+        assert_eq!(
+            read(json!(r#"{"name":"s1"}"#)).expect("an identity"),
+            r#"{"name":"s1"}"#.to_owned()
+        );
+        for other in [
+            json!({"name": "s1"}),
+            json!(true),
+            json!(1),
+            json!([1]),
+            json!(null),
+        ] {
             assert_eq!(
                 read(other),
                 Err(TemporalCounterexampleReadRefusal::MalformedWire {
                     cause: "wrong-value-kind",
                     pointer: "/loop/0/transition/operation".to_owned(),
+                })
+            );
+        }
+        for empty in [json!(""), json!(r#""""#)] {
+            assert_eq!(
+                read(empty),
+                Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause: "invalid-value",
+                    pointer: "/loop/0/transition/operation".to_owned(),
+                })
+            );
+        }
+        for (member, replacement, cause) in [
+            ("receiver", None, "missing-member"),
+            ("arguments", None, "missing-member"),
+            ("receiver", Some(json!(1)), "wrong-value-kind"),
+        ] {
+            let mut written = wire.clone();
+            let members = written["loop"][0]["transition"]
+                .as_object_mut()
+                .expect("a transition");
+            match replacement {
+                Some(replacement) => members.insert(member.to_owned(), replacement),
+                None => members.remove(member),
+            };
+            assert_eq!(
+                read_temporal_counterexample::<ModelTransition>(&written)
+                    .map(|read| read.prefix.len()),
+                Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause,
+                    pointer: format!("/loop/0/transition/{member}"),
                 })
             );
         }
