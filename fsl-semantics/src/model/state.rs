@@ -10,7 +10,7 @@
 //! between two states is [`crate::model::population::decide_frame`], called
 //! directly over the model's [`StateModel::population_index`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, OnceLock};
 
 use filament_contract_model::{
