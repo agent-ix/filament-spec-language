@@ -1428,23 +1428,11 @@ extraction_read_type! {
 
 extraction_read_type! {
     ExtractionOutcomeRead {
-        availability: ExtractionAvailabilityRead,
-        clause_text: Option<std::collections::BTreeMap<String, String>>,
+        availability: ExtractionKindAvailabilityRead,
+        clause_text: std::collections::BTreeMap<String, String>,
         diagnostics: Vec<serde_json::Value>;
         #[serde(default, deserialize_with = "present")]
         clauses: Option<Vec<serde_json::Value>>
-    }
-}
-
-extraction_read_type! {
-    ExtractionAvailabilityRead {
-        fields: ExtractionKindAvailabilityRead,
-        clauses: ExtractionKindAvailabilityRead,
-        operations: ExtractionKindAvailabilityRead;
-        #[serde(default)]
-        model: Option<ExtractionKindAvailabilityRead>,
-        #[serde(default)]
-        relations: Option<ExtractionKindAvailabilityRead>
     }
 }
 
@@ -4513,12 +4501,8 @@ mod qsl_3117_deciding_run {
 
     fn valid_extraction_outcome() -> Value {
         json!({
-            "availability": {
-                "fields": {"state": "available", "lossy": false},
-                "clauses": {"state": "available", "lossy": false},
-                "operations": {"state": "available", "lossy": false}
-            },
-            "clause_text": null,
+            "availability": {"state": "available", "lossy": false},
+            "clause_text": {},
             "diagnostics": []
         })
     }
@@ -4691,13 +4675,8 @@ mod qsl_3117_deciding_run {
                 Some(json!({})),
             ),
             (
-                "extraction.outcome.availability.fields",
-                "/outcome/availability/fields",
-                None,
-            ),
-            (
-                "extraction.outcome.availability.fields.state",
-                "/outcome/availability/fields/state",
+                "extraction.outcome.availability.state",
+                "/outcome/availability/state",
                 Some(json!("unknown")),
             ),
         ];
