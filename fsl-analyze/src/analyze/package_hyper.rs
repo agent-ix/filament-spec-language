@@ -194,7 +194,9 @@ impl<'a> PackageHyperSubject<'a> {
                         .and_then(|slot| owned.get(slot))
                         .ok_or_else(|| fault("parameter-alias"))?;
                     let admitted = system
-                        .hyper_instances(&parameter.object)
+                        .instances(&filament_exact::ValueType::Reference(
+                            parameter.object.clone(),
+                        ))
                         .map_err(|_| fault("parameter-universe"))?;
                     let bound = admitted
                         .into_iter()

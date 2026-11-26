@@ -255,7 +255,7 @@ impl OneIdentity {
 
 /// The package written to its handoff bytes, with the rows of its supply.
 pub(crate) struct Handoff {
-    bytes: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
     admitted: fsl_package::CheckedPackageV2,
     identities: fsl_package::ReadIdentityRows,
     equality: fsl_package::ReadEqualityRows,
@@ -305,7 +305,7 @@ impl Handoff {
             .expect("the supply joins")
     }
 
-    fn supply(&self) -> fsl_replay::HandoffSupply<'_> {
+    pub(crate) fn supply(&self) -> fsl_replay::HandoffSupply<'_> {
         fsl_replay::HandoffSupply {
             dependencies: &[],
             identities: &self.identity_bytes,

@@ -811,7 +811,9 @@ fn with_hyper_replay<T>(
         let instance = systems_by_alias
             .get(alias_index)
             .ok_or_else(|| fault("each-parameter-alias-has-a-subject"))?
-            .hyper_instances(&parameter.object)
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
             .map_err(|_| fault("a-population-domain-has-a-subject-population"))?
             .into_iter()
             .find(|instance| &instance.key == key)

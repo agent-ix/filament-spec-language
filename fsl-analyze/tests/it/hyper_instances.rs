@@ -13,13 +13,16 @@ use fsl_analyze::model_check::{
     check_hyper, check_single_existential, HyperCheckRequest, ModelCheckRefusal,
     SingleExistentialRequest, SingleExistentialRun,
 };
-use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch};
+use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    settle_existential, ExistentialOutcome, HyperOutcome, ModelCheckLimits, ProductClosureClause,
-    ProductClosureRefusal, ProductClosureRequest, ResultLabel, StateGraphMethod, UndecidedCause,
+    replay_hyper_trace_tuple, settle_existential, DisagreementCause, ExistentialOutcome,
+    HyperCounterexampleKind, HyperOutcome, HyperReplay, HyperStep, InconclusiveCause,
+    ModelCheckLimits, ModelStep, ProductClosureClause, ProductClosureRefusal,
+    ProductClosureRequest, ResultLabel, StateGraphMethod, TerminalValue, UndecidedCause,
 };
 use fsl_route::reductions::Reductions;
 use fsl_semantics::model::observation::AdmissionFailure;
@@ -1055,4 +1058,235 @@ fn a_temporal_item_reports_the_first_refuted_instance_in_universe_order() {
             run.document()
         );
     }
+}
+
+/// FR-181-AC-12: the source item of a clause with two object parameters has no
+/// evidence shape, so it is not yet implemented, with no verdict and no
+/// instance.
+#[trace("TC-3219", "FR-181-AC-12")]
+#[test]
+fn a_two_parameter_hp5_item_is_not_implemented() {
+    let pair = Pets {
+        populations: &[("pets", &["Thing"])],
+        held: &[("pets", &[("l", "Lamp"), ("k", "Lamp")])],
+        listed: &[("pets", &[("l", "Lamp"), ("k", "Lamp")])],
+    };
+    let declaration = "hyper H using t0 over behaviours (v: M::Thing, w: M::Thing) \
+        exists trace a of M { always holds((v = w) @ a) }\n";
+    let run = pair.analyze("hyper-two-parameters-exists", declaration, claim(), false);
+    let text = run.document().to_string();
+    assert_eq!(run.exit, 21, "{text}");
+    assert!(text.contains("unsupported_construct"), "{text}");
+    assert!(text.contains("not-yet-implemented"), "{text}");
+    let item = run.item(0);
+    assert_eq!(item["record"]["result"], "unsupported", "{text}");
+    assert!(item["axes"]["truth"].is_null(), "{text}");
+    assert!(!text.contains("\"instance\""), "{text}");
+}
+
+/// The `Counter` of FR-176-AC-8 from `p` at 0 and `q` at 2, with `idle`
+/// always enabled.
+fn counter_with_idle(claim: &str) -> crate::graph_world::World {
+    use crate::graph_world::{Field, Model, Operation};
+    let model = Model {
+        package: "test/counter",
+        alias: "M",
+        object: "Counter",
+        population: "counters",
+        symmetric: false,
+        fields: vec![Field {
+            name: "value",
+            range: Some((0, 5)),
+        }],
+        operations: vec![
+            Operation {
+                name: "inc",
+                modifies: &["value"],
+            },
+            Operation {
+                name: "idle",
+                modifies: &[],
+            },
+        ],
+    };
+    crate::graph_world::World::with_profiles(
+        model,
+        "profile t0 = \"filament.temporal.infinite-trace/v1\";\n",
+        &format!("{}{claim}", crate::counter::CONTRACT),
+        &[&[("p", &[("value", 0)]), ("q", &[("value", 2)])]],
+    )
+}
+
+/// FR-621-AC-26, the universal half: `p` is violated at position 2 and `q` at
+/// position 0. With `p`'s counterexample replaced by the lasso that takes
+/// `idle` at every step, on which `p` stays at 0, the item is
+/// `replay-parity`, not refuted by `q`.
+#[trace("TC-3219", "FR-621-AC-26")]
+#[test]
+fn a_universal_counterexample_that_does_not_replay_is_not_displaced_by_a_later_instance() {
+    let world = counter_with_idle(&counter_universal(1));
+    let [clause] = world.package.graph().hyper_clauses() else {
+        panic!("one hyper clause");
+    };
+    let subject = || world.subject(&["p", "q"], UNLIMITED);
+    let system = ModelSystem::new(subject().simulation).expect("admitted");
+    let letters =
+        CheckedHyperLetters::new(&world.package, clause, vec![&system, &system]).expect("letters");
+    let matcher = CheckedStepMatch::new(&world.package, clause);
+    let limits = ModelCheckLimits::default();
+    let mut outcome = check_hyper(
+        HyperCheckRequest {
+            clause,
+            subjects: vec![subject()],
+            letters: &letters,
+            matcher: &matcher,
+            limits,
+            meter: UNLIMITED,
+            reductions: Default::default(),
+            max_depth: None,
+        },
+        &Cancel::new(),
+    )
+    .expect("the run is not refused");
+    let HyperOutcome::Violated { counterexample, .. } = &mut outcome else {
+        panic!("a violation: {outcome:?}");
+    };
+    assert_eq!(counterexample.instance, [("v".to_owned(), "p".to_owned())]);
+
+    let initial = system.initial()[0].clone();
+    let (transition, next) = system
+        .successors(&initial)
+        .expect("the counter expands")
+        .successors
+        .into_iter()
+        .find(|(transition, _)| {
+            transition.operation().contains("/idle\"")
+                && transition
+                    .receiver()
+                    .is_some_and(|key| key.contains("\"p\""))
+        })
+        .expect("idle on p is enabled");
+    let idle = HyperStep::Model(ModelStep {
+        transition,
+        post_state: system
+            .state_key(&next, fsl_foundation::IdentityLimits::default())
+            .expect("a key")
+            .0
+            .into(),
+        delay: None,
+    });
+    for trace in &mut counterexample.traces {
+        trace.initial = 0;
+        trace.steps = vec![idle.clone()];
+        trace.results = Vec::new();
+    }
+    counterexample.kind = HyperCounterexampleKind::Lockstep { loop_entry: 0 };
+    counterexample.trace_position = 0;
+    let record = fsl_replay::settle_hyper_check(
+        &outcome,
+        &limits,
+        &[],
+        None,
+        &Cancel::new(),
+        |counterexample| {
+            let [(parameter, key)] = counterexample.instance.as_slice() else {
+                panic!("one binding: {:?}", counterexample.instance);
+            };
+            let bound = system
+                .instances(&ValueType::Reference(clause.parameters()[0].object.clone()))
+                .expect("instances")
+                .into_iter()
+                .find(|instance| &instance.key == key)
+                .expect("an instance");
+            replay_hyper_trace_tuple(
+                &HyperReplay {
+                    clause,
+                    systems: vec![&system, &system],
+                    instance: &[ParameterBinding {
+                        parameter: parameter.clone(),
+                        instance: bound,
+                    }],
+                    letters: &letters,
+                    matcher: &matcher,
+                    meter: UNLIMITED,
+                    max_witness_set: limits.max_witness_set,
+                    max_states: u64::try_from(limits.limits.max_states).expect("small"),
+                    cancel: &Cancel::new(),
+                },
+                counterexample,
+            )
+        },
+    )
+    .expect("the outcome settles");
+    assert!(
+        matches!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+                DisagreementCause::Verdicts { .. }
+            ))
+        ),
+        "{:?}",
+        record.value
+    );
+}
+
+/// FR-125-AC-14's subject with `inc` disabled and `drop`, which may delete a
+/// `Counter`.
+fn counter_with_drop() -> Vec<u8> {
+    let mut model: Json =
+        serde_json::from_slice(&crate::counter::document(false)).expect("counter JSON");
+    let operations = model["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations");
+    let mut delete = operations[0].clone();
+    delete["identity"] = json!("ix://test/counter/Counter/drop");
+    delete["name"] = json!("drop");
+    delete["frame"] = json!({
+        "modifies": [], "creates": [], "deletes": ["ix://test/counter/Counter"]
+    });
+    operations.push(delete);
+    model.to_string().into_bytes()
+}
+
+/// FR-181-AC-5: once `drop` has deleted the instance's object, its read has
+/// no value, so the source item is refuted with the `absent-key` evaluation
+/// at the position after that step.
+#[trace("TC-3219", "FR-181-AC-5")]
+#[test]
+fn an_hp5_item_with_an_undefined_read_is_refuted_with_its_evaluation() {
+    let declaration = "hyper H using t0 over behaviours (v: M::Counter) \
+        exists trace a of M { always holds((v.value = 0) @ a) }\n";
+    let unit = unit_text_in(
+        crate::counter::PACKAGE,
+        &format!("{MAKE_UNIT}{TERMINAL}{declaration}"),
+    );
+    let workspace = Workspace::new("hyper-dropped-key");
+    let universe = String::from_utf8(counter_snapshot(&[("c", 0)]))
+        .expect("snapshot text")
+        .replace("\"identity\":\"start\"", "\"identity\":\"u0\"")
+        .into_bytes();
+    let run = analyze(&request_over(
+        &workspace,
+        &unit,
+        &counter_with_drop(),
+        &[counter_snapshot(&[("c", 0)]), universe],
+        json!({
+            "items": [claim()],
+            "subject": {
+                "initial_states": [{"authority": "test", "identity": "start"}],
+                "universes": [{"authority": "test", "identity": "u0"}],
+                "proof_bounds": []
+            }
+        }),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{}", run.document());
+    assert_eq!(run.exit, 10, "{}", run.document());
+    let counterexample = &item["counterexample"];
+    assert_eq!(counterexample["arm"], "undefined", "{item}");
+    assert_eq!(counterexample["undefined"]["cause"], "absent-key", "{item}");
+    assert_eq!(
+        counterexample["undefined"]["where"]["position"], 1,
+        "{item}"
+    );
 }

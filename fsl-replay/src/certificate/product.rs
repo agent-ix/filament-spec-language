@@ -459,7 +459,9 @@ fn complete_hyper_scope(
             .get(slot)
             .ok_or(ProductClosureRefusal::Input("parameter-subject"))?;
         let instances = system
-            .hyper_instances(&parameter.object)
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         domains.push(
             instances
@@ -625,7 +627,9 @@ fn check(
             .get(slot(parameter.alias.as_str())?)
             .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
         let admitted = system
-            .hyper_instances(&parameter.object)
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         let found = admitted
             .into_iter()

@@ -877,23 +877,14 @@ fn replay_claim_undefined(
     Ok(false)
 }
 
-fn evidence_over(evidence: &GraphEvidence) -> Option<&fsl_eval::model_subject::ModelInstance> {
-    match evidence {
-        GraphEvidence::Witness { over, .. }
-        | GraphEvidence::Trap { over, .. }
-        | GraphEvidence::PathPair { over, .. }
-        | GraphEvidence::Undefined { over, .. } => over.as_ref(),
-    }
-}
-
 fn graph_over(
     system: &ModelSystem<'_>,
     claim: &CheckedStateGraphClaim,
     evidence: &GraphEvidence,
 ) -> Result<Option<ObjectReference>, ReplayRefusal> {
-    match (claim.over(), evidence_over(evidence)) {
-        (None, None) => Ok(None),
-        (Some(parameter), Some(instance)) => {
+    match (claim.over(), evidence.over()) {
+        (None, []) => Ok(None),
+        (Some(parameter), [instance]) => {
             let model_instance = system
                 .instances(&filament_exact::ValueType::Reference(
                     parameter.object.clone(),
