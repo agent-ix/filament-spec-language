@@ -119,6 +119,7 @@ mod refinement_query;
 mod request;
 mod result;
 mod scalar;
+pub mod shared_wire;
 pub mod source_inventory;
 pub mod spine;
 mod spine_eval_api;
@@ -460,7 +461,6 @@ pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use outcome::undefined_reason;
-pub use outcome::verdict_bound_wire;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,

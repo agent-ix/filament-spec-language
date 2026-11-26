@@ -1836,7 +1836,10 @@ fn a_quantile_claim_reports_its_empirical_quantile() {
     assert_eq!(verdict.quantile, three);
     // FR-410: the verdict's bound is the claim as written, with its level.
     assert_eq!(
-        fsl_replay::verdict_bound_wire(&verdict.bound),
+        serde_json::to_value(fsl_replay::shared_wire::ProbabilisticBound::from(
+            &verdict.bound
+        ))
+        .expect("writes"),
         json!({"type": "quantile", "comparison": "less-or-equal",
             "threshold": {"numerator": "5", "denominator": "1"},
             "level": {"numerator": "19", "denominator": "20"}})
@@ -2009,7 +2012,10 @@ fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
     assert_eq!(verdict.decision, Decision::Rejected);
     // FR-410: a rejection by `undefined-evaluation` still carries its bound.
     assert_eq!(
-        fsl_replay::verdict_bound_wire(&verdict.bound),
+        serde_json::to_value(fsl_replay::shared_wire::ProbabilisticBound::from(
+            &verdict.bound
+        ))
+        .expect("writes"),
         json!({"type": "probability", "comparison": "greater-or-equal",
             "threshold": {"numerator": "1", "denominator": "2"}})
     );
@@ -2670,7 +2676,10 @@ fn an_at_least_quantile_claim_writes_its_own_bound_with_its_level() {
     let world = World::new(&prob_world::service(claim));
     let verdict = decided(&world, "AtLeast", StatisticalMethod::Okamoto);
     assert_eq!(
-        fsl_replay::verdict_bound_wire(&verdict.bound),
+        serde_json::to_value(fsl_replay::shared_wire::ProbabilisticBound::from(
+            &verdict.bound
+        ))
+        .expect("writes"),
         json!({"type": "quantile", "comparison": "greater-or-equal",
             "threshold": {"numerator": "2", "denominator": "1"},
             "level": {"numerator": "1", "denominator": "2"}})

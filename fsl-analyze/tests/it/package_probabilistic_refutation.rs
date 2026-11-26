@@ -439,10 +439,12 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         ));
     }
     assert!(!scheduler.is_empty());
-    assert!(scheduler.iter().any(|(_, identity)| identity
-        .arguments
-        .iter()
-        .any(|value| matches!(value, Value::Enum(_)))));
+    assert!(scheduler.iter().any(|(_, identity)| {
+        identity
+            .arguments
+            .iter()
+            .any(|value| matches!(value, Value::Enum(_)))
+    }));
     let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
     let admitted = fsl_package::admit_checked_package(&bytes, compiled.packages(), limits)
         .expect("the actual package admits");
@@ -468,9 +470,9 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         )
         .expect("the actual supply joins");
     let world = bare.world().expect("the authenticated enum world reads");
-    let ProbForm::Reach { bound, .. } = &claim.form else {
-        panic!("the source claim is an eventuality");
-    };
+    assert!(matches!(claim.form, ProbForm::Reach { .. }));
+    let bound = fsl_replay::shared_wire::ProbabilisticBound::of_claim(&claim.form)
+        .expect("an eventuality has a claim bound");
     let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
         system
             .state_key(state, fsl_foundation::IdentityLimits::default())
@@ -480,8 +482,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     let scope = checked.graph().scope();
     let expected = fsl_replay::probabilistic_wire(
         witness,
-        bound,
-        "probability",
+        &bound,
         &fsl_replay::ProbabilisticValueSchema::new(
             scope.types(),
             scope.variant_types(),
@@ -493,8 +494,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     .expect("source declarations spell the actual evidence");
     let actual = fsl_replay::probabilistic_wire(
         witness,
-        bound,
-        "probability",
+        &bound,
         &fsl_replay::ProbabilisticValueSchema::new(world.types(), &[], &[])
             .with_enum_members(world.enum_members()),
         &state_key,
