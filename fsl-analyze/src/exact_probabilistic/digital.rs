@@ -1627,6 +1627,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- exploration ---------------------------------------------------------
 
+    #[implements("FR-204-AC-1")]
     fn explore(&mut self) -> Step<Vec<(u32, Option<ModelInstance>, ProbStateId)>> {
         self.poll()?;
         let deadline = if matches!(self.form, Form::Elapsed { .. }) {
