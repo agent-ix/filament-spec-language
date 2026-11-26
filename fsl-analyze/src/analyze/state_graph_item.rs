@@ -36,7 +36,8 @@ use fsl_route::StateGraphFormKind;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
 use ix_trace_rs::implements;
 
-use super::items::{model_refusal, INVALID_VALUE};
+use super::instance_records::{decisive, undecided};
+use super::items::{INVALID_VALUE, model_refusal};
 use super::timed_item::subject_refusal;
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
@@ -113,6 +114,8 @@ pub(super) fn state_graph_item<'a>(
                         form: &form,
                         timed: backend == crate::zone_check::manifest::BACKEND_ID,
                         digital,
+                        #[cfg(feature = "test-support")]
+                        alter: None,
                     },
                     cancel,
                 )
@@ -133,7 +136,15 @@ struct Run<'r, 'a> {
     form: &'r TemporalItem,
     timed: bool,
     digital: bool,
+    /// Alters an instance's evidence before its replay, so that a test can
+    /// make one instance's replay disagree.
+    #[cfg(feature = "test-support")]
+    alter: Option<AlterEvidence>,
 }
+
+/// A change to the evidence an instance replays from.
+#[cfg(feature = "test-support")]
+pub type AlterEvidence = fn(&mut GraphEvidence);
 
 impl<'a> Run<'_, 'a> {
     fn simulation(&self) -> ModelSimulationRequest<'a> {
@@ -183,8 +194,13 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         seed: form.seed,
     };
     let replay = |instance: &StateGraphInstanceOutcome| {
-        let evidence = evidence_of(&system, claim, instance)
+        #[cfg_attr(not(feature = "test-support"), allow(unused_mut))]
+        let mut evidence = evidence_of(&system, claim, instance)
             .ok_or_else(|| ReplayRefusal::Fault(InternalFault::new("analyze", "graph-evidence")))?;
+        #[cfg(feature = "test-support")]
+        if let Some(alter) = read.alter {
+            alter(&mut evidence);
+        }
         replay_instance(read, evidence, None, false).map_err(|refusal| *refusal)
     };
     let settled = match check_and_settle_state_graph(request, cancel, replay) {
@@ -407,7 +423,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 match paths {
                     Ok(paths) => Some(GraphEvidence::Witness {
                         paths,
-                        over: instance.clone(),
+                        over: instance.iter().cloned().collect(),
                     }),
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
@@ -421,7 +437,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 Some(GraphEvidence::Trap {
                     stem,
                     closure: TrapClosure::StateGraph,
-                    over: instance.clone(),
+                    over: instance.iter().cloned().collect(),
                 })
             }
             DigitalDecision::PathPair {
@@ -446,7 +462,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     stem,
                     first,
                     second,
-                    over: instance.clone(),
+                    over: instance.iter().cloned().collect(),
                 })
             }
         };
@@ -995,33 +1011,15 @@ fn no_timed_graph_decision(
     read: &Run<'_, '_>,
     cause: fsl_replay::InconclusiveCause,
 ) -> EngineReport {
-    let record = StateGraphRecord {
-        value: TerminalValue::Inconclusive(cause),
-        label: fsl_replay::ResultLabel::Inconclusive,
-        basis: fsl_replay::SettlementBasis::Unsettled,
-        execution: fsl_replay::Execution::Completed,
-        truth: fsl_replay::Truth::Pending,
-        method: fsl_replay::EXPLICIT_STATE,
+    let method = fsl_replay::StateGraphMethod {
+        limits: read.form.limits,
         max_depth: read
             .form
             .max_depth
             .and_then(|depth| u64::try_from(depth).ok()),
-        limits: read.form.limits.used(),
-        limit_reached: None,
         seed: read.form.seed.unwrap_or_default(),
-        witness_samples: read.form.witness_samples.unwrap_or(1),
-        walks_stopped: 0,
-        end: None,
-        undefined: None,
     };
-    EngineReport::StateGraph(Box::new(GraphReport {
-        record,
-        exploration: fsl_replay::RunStats::default(),
-        counterexample: None,
-        evidence: None,
-        certificate_document: None,
-        checker: None,
-    }))
+    undecided(cause, &method, read.form.witness_samples.unwrap_or(1))
 }
 
 #[implements("FR-852-AC-34")]
@@ -1312,6 +1310,7 @@ fn timed_evidence(
     decision: TimedStateGraphDecision,
     over: Option<ModelInstance>,
 ) -> Option<GraphEvidence> {
+    let over: Vec<_> = over.into_iter().collect();
     match decision {
         TimedStateGraphDecision::Holds { witness_paths, .. }
             if matches!(claim.form(), StateGraphForm::Possible { .. }) =>
@@ -1339,19 +1338,6 @@ fn timed_evidence(
     }
 }
 
-/// The index of the instance that decides the item.
-fn decisive(records: &[StateGraphRecord]) -> usize {
-    records
-        .iter()
-        .position(|record| matches!(record.value, TerminalValue::Refuted))
-        .or_else(|| {
-            records
-                .iter()
-                .position(|record| !matches!(record.value, TerminalValue::Proved { .. }))
-        })
-        .unwrap_or(0)
-}
-
 /// The FR-393 evidence an instance's outcome settles from, bound to the
 /// instance it was found for.
 fn evidence_of(
@@ -1359,7 +1345,9 @@ fn evidence_of(
     claim: &CheckedStateGraphClaim,
     instance: &StateGraphInstanceOutcome,
 ) -> Option<GraphEvidence> {
-    let over = bound_instance(system, claim, instance.over.as_ref())?;
+    let over: Vec<_> = bound_instance(system, claim, instance.over.as_ref())?
+        .into_iter()
+        .collect();
     let witnesses = |paths: &[fsl_replay::GraphWitness]| {
         paths
             .iter()
@@ -1555,6 +1543,8 @@ pub struct PackageStateGraphSubject<'a> {
     form: TemporalItem,
     package_bytes: &'a [u8],
     supply: fsl_replay::HandoffSupply<'a>,
+    #[cfg(feature = "test-support")]
+    alter: Option<AlterEvidence>,
 }
 
 impl<'a> PackageStateGraphSubject<'a> {
@@ -1585,7 +1575,19 @@ impl<'a> PackageStateGraphSubject<'a> {
             form: TemporalItem::default(),
             package_bytes,
             supply,
+            #[cfg(feature = "test-support")]
+            alter: None,
         })
+    }
+
+    /// The same subject, whose instances replay from evidence that `alter`
+    /// has changed. A reproduced replay of altered evidence is impossible
+    /// unless the change keeps it true.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub fn altering_evidence(mut self, alter: AlterEvidence) -> Self {
+        self.alter = Some(alter);
+        self
     }
 
     /// The rebuilt claim.
@@ -1629,6 +1631,8 @@ impl<'a> PackageStateGraphSubject<'a> {
                         form: &self.form,
                         timed,
                         digital: false,
+                        #[cfg(feature = "test-support")]
+                        alter: self.alter,
                     },
                     cancel,
                 )

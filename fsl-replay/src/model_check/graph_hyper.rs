@@ -3,9 +3,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use filament_exact::{Cancel, LimitKind, Meter, ScalarLimits};
+use filament_exact::{Cancel, LimitKind, Meter, ScalarLimits, ValueType};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::fairness::FairnessGranularity;
+use filament_semantic_value::location::ExpressionLocation;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{analyze, Constraint, EdgeLabel, Graph, Identity, Strength, Vertex};
 use fsl_eval::hyper::{
@@ -20,7 +21,10 @@ use fsl_eval::temporal::{
     evaluate_tuple, AtomReading, ComponentPosition, ComponentTrace, LetterStop, TemporalOutcome,
     TemporalPosition, TupleLetters,
 };
-use fsl_semantics::check::{CheckedHyperClause, FormulaNode, HyperForm, PredicateRole};
+use fsl_semantics::check::{
+    CheckedHyperClause, FormulaNode, FormulaNodeId, HyperForm, PredicateRole,
+};
+use ix_trace_rs::implements;
 
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::Lasso;
@@ -58,13 +62,7 @@ pub(super) fn replay_evidence(
     let Some(quantifier) = clause.quantifiers().first() else {
         return Err(fault("an-HP-5-clause-has-one-quantifier"));
     };
-    let over = match evidence {
-        GraphEvidence::Witness { over, .. }
-        | GraphEvidence::Trap { over, .. }
-        | GraphEvidence::PathPair { over, .. }
-        | GraphEvidence::Undefined { over, .. } => over.as_ref(),
-    };
-    let bindings = hyper_bindings(system, clause, over)?;
+    let bindings = hyper_bindings(system, clause, evidence.over())?;
     let letters = CheckedHyperLetters::new(package, clause, vec![system])
         .map_err(|_| fault("the-HP-5-letters-match-the-subject"))?;
     match evidence {
@@ -170,26 +168,30 @@ pub(super) fn replay_evidence(
 fn hyper_bindings(
     system: &ModelSystem<'_>,
     clause: &CheckedHyperClause,
-    over: Option<&fsl_eval::model_subject::ModelInstance>,
+    over: &[fsl_eval::model_subject::ModelInstance],
 ) -> Result<Vec<ParameterBinding>, ReplayRefusal> {
-    match (clause.parameters(), over) {
-        ([], None) => Ok(Vec::new()),
-        ([parameter], Some(instance)) => {
+    let parameters = clause.parameters();
+    if parameters.len() != over.len() {
+        return Err(refused(ModelTraceRefusal::OverBinding));
+    }
+    parameters
+        .iter()
+        .zip(over)
+        .map(|(parameter, instance)| {
             let admitted = system
-                .hyper_instances(&parameter.population)
+                .instances(&ValueType::Reference(parameter.object.clone()))
                 .map_err(|_| refused(ModelTraceRefusal::OverBinding))?;
             if !admitted.iter().any(|candidate| {
                 candidate.population == instance.population && candidate.key == instance.key
             }) {
                 return Err(refused(ModelTraceRefusal::OverBinding));
             }
-            Ok(vec![ParameterBinding {
+            Ok(ParameterBinding {
                 parameter: parameter.name.clone(),
                 instance: instance.clone(),
-            }])
-        }
-        _ => Err(refused(ModelTraceRefusal::OverBinding)),
-    }
+            })
+        })
+        .collect()
 }
 
 fn path_initial(path: &WitnessPath) -> usize {
@@ -347,6 +349,17 @@ fn replay_positions_as_positions(positions: &[ReplayPosition]) -> Vec<Position> 
         .collect()
 }
 
+/// The `locus` of an undefined HP-5 evaluation: where the condition of the
+/// `holds` atom `atom` is. The settlement writes it and replay compares it.
+pub(super) fn atom_location(
+    clause: &CheckedHyperClause,
+    atom: FormulaNodeId,
+) -> Option<&ExpressionLocation> {
+    clause
+        .condition(atom)
+        .map(|(condition, _)| condition.location())
+}
+
 fn replay_undefined(
     clause: &CheckedHyperClause,
     letters: &CheckedHyperLetters<'_, '_>,
@@ -378,7 +391,7 @@ fn replay_undefined(
                 .body()
                 .node_id(index)
                 .ok_or_else(|| fault("a-formula-node-has-an-id"))?;
-            let Some((condition, _)) = clause.condition(atom) else {
+            let Some(location) = atom_location(clause, atom) else {
                 return Err(fault("an-HP-5-holds-node-has-a-condition"));
             };
             let reading = match letters.atom(atom, bindings, &[state], &mut meter) {
@@ -391,7 +404,7 @@ fn replay_undefined(
             if let AtomReading::Undefined(cause) = reading {
                 return Ok(position_index + 1 == positions.len()
                     && cause == undefined.cause
-                    && condition.location() == expected_locus);
+                    && location == expected_locus);
             }
         }
     }
@@ -405,6 +418,7 @@ struct ProductNode {
     edges: Vec<(HyperTransition, usize)>,
 }
 
+#[implements("FR-181-AC-13")]
 #[allow(clippy::too_many_arguments)]
 fn replay_product_trap(
     system: &ModelSystem<'_>,
@@ -477,6 +491,19 @@ fn replay_product_trap(
     if roots.is_empty() {
         return Err(fault("the-HP-5-product-has-an-initial-root"));
     }
+    // A root whose letter has no value is undefined-evaluation evidence, not
+    // a trap.
+    if roots
+        .iter()
+        .any(|root| matches!(root.property, Property::Undefined { .. }))
+    {
+        return Ok(result(
+            inconclusive(Category::Violation, Category::Success),
+            Vec::new(),
+            None,
+            None,
+        ));
+    }
 
     let mut nodes = Vec::<ProductNode>::new();
     let mut by_key = BTreeMap::<(StateKey, Option<usize>), usize>::new();
@@ -510,13 +537,30 @@ fn replay_product_trap(
             .get(id)
             .map(|node| node.state.clone())
             .ok_or_else(|| fault("a-product-queue-entry-is-a-node"))?;
+        // A state whose letter has no value has no step after it.
+        if matches!(state.property, Property::Undefined { .. }) {
+            continue;
+        }
+        // A state the body automaton has no run from lies on no accepting
+        // cycle, and nor does any state after it, so it is not expanded. Its
+        // contract conjunctions still need a value, which the product read
+        // when it created the state, as the engine requires.
+        if state.property == Property::Dead {
+            if state.has_unknown_successors() {
+                return Ok(result(
+                    inconclusive(Category::Violation, Category::Success),
+                    Vec::new(),
+                    Some(nodes.len() as u64),
+                    None,
+                ));
+            }
+            continue;
+        }
         let expansion = match product.successors(&state) {
             Ok(expansion) => expansion,
             Err(_) => return product_halt_result(&product, max_candidates, accounting),
         };
-        if state_has_open_finding(&expansion.findings)
-            || matches!(state.property, Property::Undefined { .. })
-        {
+        if state_has_open_finding(&expansion.findings) {
             return Ok(result(
                 inconclusive(Category::Violation, Category::Success),
                 Vec::new(),
@@ -544,14 +588,6 @@ fn replay_product_trap(
                 return Ok(stopped_result(
                     ModelCheckLimit::MaxTransitions,
                     max_transitions as u64,
-                ));
-            }
-            if matches!(next.property, Property::Undefined { .. }) {
-                return Ok(result(
-                    inconclusive(Category::Violation, Category::Success),
-                    Vec::new(),
-                    Some(nodes.len() as u64),
-                    None,
                 ));
             }
             let key = product_key(system, &next)?;

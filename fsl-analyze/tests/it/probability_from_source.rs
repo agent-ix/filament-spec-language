@@ -1382,12 +1382,13 @@ fn a_written_verdict_bound_validates_against_the_pinned_schema() {
         level,
     };
     let schema = provider_definition("ProbabilisticBound");
-    let quantile = fsl_replay::verdict_bound_wire(&bound(
+    let quantile = serde_json::to_value(fsl_replay::shared_wire::ProbabilisticBound::from(&bound(
         ClaimForm::Quantile,
         BoundComparison::GreaterOrEqual,
         ratio(3, 1),
         Some(ratio(1, 2)),
-    ));
+    )))
+    .expect("writes");
     assert_eq!(quantile["type"], "quantile", "{quantile}");
     assert_eq!(quantile["comparison"], "greater-or-equal", "{quantile}");
     assert_eq!(
@@ -1406,12 +1407,13 @@ fn a_written_verdict_bound_validates_against_the_pinned_schema() {
         (ClaimForm::MeanOfFraction, "mean-of-fraction"),
         (ClaimForm::LongRunFraction, "long-run-fraction"),
     ] {
-        let wire = fsl_replay::verdict_bound_wire(&bound(
+        let wire = serde_json::to_value(fsl_replay::shared_wire::ProbabilisticBound::from(&bound(
             form,
             BoundComparison::LessOrEqual,
             ratio(9, 10),
             None,
-        ));
+        )))
+        .expect("writes");
         assert_eq!(wire["type"], name, "{wire}");
         assert_eq!(wire["comparison"], "less-or-equal", "{wire}");
         assert!(wire.get("level").is_none(), "{wire}");
@@ -1636,7 +1638,9 @@ fn native_probability_reward_admission_preserves_accounting_stop() {
             fsl_eval::simulation::model::ClauseOutcome::Incomplete(denied),
         )) = raw_statistical
         else {
-            panic!("the EN-4 existing typed incomplete route must receive the reward stop: {raw_statistical:?}")
+            panic!(
+                "the EN-4 existing typed incomplete route must receive the reward stop: {raw_statistical:?}"
+            )
         };
         assert_eq!(denied.limit_kind, filament_exact::LimitKind::WorkUnits);
         assert_eq!(denied.limit, bound);

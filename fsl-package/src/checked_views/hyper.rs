@@ -258,7 +258,7 @@ impl BarePackage<'_> {
         for entry in parameter_terms {
             let (name, model) = binding(entry).ok_or_else(|| malformed(claim))?;
             let model = reference(model).ok_or_else(|| malformed(claim))?;
-            declared_parameters.push((name.to_owned(), self.protocol_role_model(model)?));
+            declared_parameters.push((name.to_owned(), model, self.protocol_role_model(model)?));
         }
         let uses = super::subject::formula_graph_of(package, formula_root)
             .map_err(|_| malformed(claim))?;
@@ -360,7 +360,7 @@ impl BarePackage<'_> {
                     let (parameter, trace) = slot(name).ok_or_else(|| malformed(claim))?;
                     let parameter = declared_parameters
                         .iter()
-                        .position(|(name, _)| *name == parameter)
+                        .position(|(name, _, _)| *name == parameter)
                         .ok_or_else(|| malformed(claim))?;
                     let trace = quantifiers
                         .iter()
@@ -392,16 +392,8 @@ impl BarePackage<'_> {
         for (_, _, count) in &mut atoms {
             *count = atom_slots.len();
         }
-        let catalog = package
-            .selected_model_population_catalog(
-                filament_contract_model::CheckedModelPopulationCatalogLimits {
-                    work: FORMULA_VISITS,
-                    entries: FORMULA_VISITS,
-                },
-            )
-            .map_err(|_| malformed(claim))?;
         let mut parameters = Vec::new();
-        for (index, (name, object)) in declared_parameters.into_iter().enumerate() {
+        for (index, (name, model_node, object)) in declared_parameters.into_iter().enumerate() {
             let used_aliases: BTreeSet<_> = atom_slots
                 .iter()
                 .filter(|slot| slot.parameter == index)
@@ -410,40 +402,32 @@ impl BarePackage<'_> {
             if used_aliases.len() > 1 {
                 return Err(malformed(claim));
             }
-            let mut candidates = Vec::new();
-            for alias in &aliases {
-                if used_aliases
-                    .first()
-                    .is_some_and(|used| *used != alias.as_str())
-                {
-                    continue;
+            // FR-940: a parameter no atom slot reads takes the first subject
+            // alias whose package declares its type.
+            let alias = match used_aliases.first() {
+                Some(used) => (*used).to_owned(),
+                None => {
+                    let Some(filament_contract_model::CheckedNodeOwner::ModelRoot { identity }) =
+                        nodes.get(model_node).and_then(|node| node.owner.as_ref())
+                    else {
+                        return Err(malformed(claim));
+                    };
+                    aliases
+                        .iter()
+                        .find(|alias| {
+                            subject_models
+                                .get(alias.as_str())
+                                .is_some_and(|model| model.as_ref() == identity.as_ref())
+                        })
+                        .cloned()
+                        .ok_or_else(|| malformed(claim))?
                 }
-                for root in catalog.roots() {
-                    if subject_roots.get(alias).copied() != Some(root.root()) {
-                        continue;
-                    }
-                    for (ordinal, population) in root.populations().iter().enumerate() {
-                        if population.members().len() == 1
-                            && population.members()[0].normalized_type_identity() == &object
-                        {
-                            candidates.push((alias.clone(), ordinal));
-                        }
-                    }
-                }
-            }
-            let Some((alias, ordinal)) = candidates.first() else {
-                return Err(pending(&node.node_id, "hyper-population-cover"));
             };
-            if candidates.len() != 1 {
-                return Err(malformed(claim));
-            }
             parameters.push(PackageHyperParameter {
                 name,
-                alias: alias.clone(),
-                object: object.clone(),
-                population_object: object,
-                population_ordinal: *ordinal,
-                maximum: None,
+                alias,
+                object,
+                populations: Vec::new(),
             });
         }
         let (normal_body, copy_group) = normal::copy_group(

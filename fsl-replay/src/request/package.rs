@@ -121,8 +121,11 @@ impl ReplayPackage {
                     continue;
                 }
                 let at = format!("{pointer}/clock");
-                let clock = serde_json::from_value(json_value(required(row, "clock", &pointer)?))
-                    .map_err(|_| field_refusal(&at, PackageMemberCause::WrongKind))?;
+                let clock = serde_json::from_value(json_value(
+                    required(row, "clock", &pointer)?,
+                    CLOCK_OBJECT_LEVELS,
+                ))
+                .map_err(|_| field_refusal(&at, PackageMemberCause::WrongKind))?;
                 members.entry(name.to_owned()).or_insert(clock);
             }
         }
@@ -143,9 +146,11 @@ impl ReplayPackage {
                         &format!("{pointer}/clock_name"),
                     )?;
                     let clock_at = format!("{pointer}/clock");
-                    let clock =
-                        serde_json::from_value(json_value(required(row, "clock", &pointer)?))
-                            .map_err(|_| field_refusal(&clock_at, PackageMemberCause::WrongKind))?;
+                    let clock = serde_json::from_value(json_value(
+                        required(row, "clock", &pointer)?,
+                        CLOCK_OBJECT_LEVELS,
+                    ))
+                    .map_err(|_| field_refusal(&clock_at, PackageMemberCause::WrongKind))?;
                     dependency_members.insert(name.to_owned(), clock);
                 }
             }
@@ -577,18 +582,28 @@ fn package_pointer(native: Option<&str>) -> String {
     format!("/package{}", native.unwrap_or_default())
 }
 
+/// The objects a clock configuration nests: itself, and an exact number
+/// inside it.
+const CLOCK_OBJECT_LEVELS: u8 = 2;
+
 /// A clock configuration node as JSON: its objects and strings, which are
-/// every member a configuration has. Any other node becomes `null`, which no
-/// configuration admits.
-fn json_value(value: NodeRef<'_>) -> serde_json::Value {
+/// every member a configuration has. Any other node, and an object below
+/// [`CLOCK_OBJECT_LEVELS`], becomes `null`, which no configuration admits; so
+/// the tree this builds, and every walk of it, is as deep as a configuration
+/// and no deeper, whatever the request nests there (ADR-030 D-1).
+fn json_value(value: NodeRef<'_>, levels: u8) -> serde_json::Value {
     match value.node() {
         Node::String(text) => serde_json::Value::String(text.to_owned()),
-        Node::Object(members) => serde_json::Value::Object(
-            members
-                .into_iter()
-                .map(|(key, value)| (key.to_owned(), json_value(value)))
-                .collect(),
-        ),
+        Node::Object(members) => levels
+            .checked_sub(1)
+            .map_or(serde_json::Value::Null, |below| {
+                serde_json::Value::Object(
+                    members
+                        .into_iter()
+                        .map(|(key, value)| (key.to_owned(), json_value(value, below)))
+                        .collect(),
+                )
+            }),
         Node::Null | Node::Bool(_) | Node::Number(_) | Node::Array(_) => serde_json::Value::Null,
     }
 }

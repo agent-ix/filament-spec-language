@@ -21,7 +21,7 @@ use filament_exact::{Cancel, CancelCause, Meter, Undefined};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::model_check::{HyperRefusal, ModelCheckRefusal};
-use fsl_eval::hyper::HyperLetters;
+use fsl_eval::hyper::{BodySense, HyperInputs, HyperLetters, HyperProduct, Property};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{StopReason, TransitionSystem};
@@ -516,10 +516,19 @@ fn hp5_witnesses_settle_through_the_product_certificate_and_replay() {
         ExistentialOutcome::Witnessed { lassos } => {
             assert_eq!(lassos.len(), 2);
             assert_eq!(lassos[0].lasso.path.initial, 0);
-            assert_eq!(positions(&world, &lassos[0].lasso), [(0, 0), (0, 1), (0, 1)]);
+            assert_eq!(
+                positions(&world, &lassos[0].lasso),
+                [(0, 0), (0, 1), (0, 1)]
+            );
             assert_eq!(lassos[1].lasso.path.initial, 1);
-            assert_eq!(positions(&world, &lassos[1].lasso), [(1, 0), (1, 1), (1, 1)]);
-            lassos.iter().map(|witness| witness.source.clone()).collect::<Vec<_>>()
+            assert_eq!(
+                positions(&world, &lassos[1].lasso),
+                [(1, 0), (1, 1), (1, 1)]
+            );
+            lassos
+                .iter()
+                .map(|witness| witness.source.clone())
+                .collect::<Vec<_>>()
         }
         other => panic!("witnessed: {other:?}"),
     };
@@ -570,12 +579,7 @@ fn hp5_witnesses_settle_through_the_product_certificate_and_replay() {
     let ExistentialOutcome::Witnessed { lassos } = &mut loop_removed.outcome else {
         unreachable!("the engine outcome was witnessed")
     };
-    lassos[0]
-        .lasso
-        .path
-        .steps
-        .pop()
-        .expect("one loop step");
+    lassos[0].lasso.path.steps.pop().expect("one loop step");
     let refused = settle_instance(&world, &loop_removed, limits);
     assert!(matches!(
         refused.record.value,
@@ -1114,8 +1118,9 @@ fn instances_share_the_runs_limits() {
     );
 }
 
-/// A start with no vault gives the clause no instance, and a subject with no
-/// initial state gives each instance `NoInitialState`.
+/// A start with no vault gives the clause no instance. A subject with no
+/// initial state admits no key either, so it has no instance to decide, and its
+/// item settles `NoInitialState` (FR-181, FR-125 "Instancing").
 #[trace("TC-606", "FR-181-AC-7")]
 #[test]
 fn no_instance_and_no_initial_state_decide_nothing() {
@@ -1125,8 +1130,10 @@ fn no_instance_and_no_initial_state_decide_nothing() {
         .expect("not refused");
     assert!(run.instances.is_empty());
     let empty = World::new(Vault::Secure, false, &[], &clause("", SETTLES));
-    let result = single(&empty, ModelCheckLimits::default());
-    assert_eq!(result.outcome, ExistentialOutcome::NoInitialState);
+    let run = empty
+        .run_single(ModelCheckLimits::default(), None, &Cancel::new())
+        .expect("not refused");
+    assert!(run.instances.is_empty());
 }
 
 /// The clause must be HP-5: a universal clause is refused, naming its form.
@@ -1556,4 +1563,286 @@ fn sampling_gives_each_instance_its_own_first_witness() {
     for instance in &run.instances {
         assert_eq!(instance.walks_stopped, 0);
     }
+}
+
+/// FR-181-AC-5's `Undefined` outcome settles `refuted`,
+/// `decisive-counterexample`, for the cause the division found.
+#[trace("TC-615", "FR-181-AC-5")]
+#[trace("TC-3219", "FR-181-AC-5")]
+#[test]
+fn an_undefined_hp5_finding_settles_refuted() {
+    let body = "eventually always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &clause("", body),
+        KERNEL_REMAINDER,
+    );
+    for limits in [unsampled(), ModelCheckLimits::default()] {
+        let result = single(&world, limits);
+        assert!(matches!(
+            result.outcome,
+            ExistentialOutcome::Undefined { .. }
+        ));
+        let record = settle_instance(&world, &result, limits).record;
+        assert_eq!(record.label, ResultLabel::Refuted);
+        assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
+        assert_eq!(record.value, TerminalValue::Refuted);
+    }
+}
+
+/// FR-181-AC-12: a clause with two object parameters is checked once per
+/// instance pair, and settlement takes each pair, under both profiles. The
+/// first vault starts with `l = 0` and the second with `l = 1`, so the outputs
+/// agree only where a vault is paired with itself.
+#[trace("TC-3219", "FR-181-AC-12")]
+#[test]
+fn a_two_parameter_clause_settles_each_instance_pair() {
+    let objects = [("v", (0, 0)), ("w", (0, 1))];
+    for (profile, body) in [
+        ("inf", "always holds(x.l @ b = y.l @ b)"),
+        ("ep", "always [0, 0] holds(x.l @ b = y.l @ b)"),
+    ] {
+        let declaration = format!(
+            "hyper Possible using {profile} over behaviours (x: V::Vault, y: V::Vault) \
+             exists trace b of V {{ {body} }}"
+        );
+        let world = World::with_vaults(Vault::Secure, &objects, &declaration);
+        let run = world
+            .run_single(unsampled(), None, &Cancel::new())
+            .expect("not refused");
+        let settled: Vec<_> = run
+            .instances
+            .iter()
+            .map(|instance| {
+                let keys: Vec<_> = instance.instance.iter().map(|(_, k)| k.as_str()).collect();
+                let record = settle_instance(&world, instance, unsampled()).record;
+                (keys.join(","), record.label)
+            })
+            .collect();
+        assert_eq!(
+            settled,
+            [
+                ("v,v".to_owned(), ResultLabel::Proved),
+                ("v,w".to_owned(), ResultLabel::Refuted),
+                ("w,v".to_owned(), ResultLabel::Refuted),
+                ("w,w".to_owned(), ResultLabel::Proved),
+            ],
+            "{profile}"
+        );
+        // An outcome that binds one parameter, or both out of order, is not
+        // an instance of the clause.
+        let pair = run.instances[1].instance.clone();
+        for instance in [
+            vec![pair[0].clone()],
+            vec![pair[1].clone(), pair[0].clone()],
+        ] {
+            let mut outcome = run.instances[1].clone();
+            outcome.instance = instance;
+            let subjects = [world.subject()];
+            let request = ProductClosureRequest {
+                package: &world.package,
+                clause: ProductClosureClause::Hyper(&world.clause),
+                subjects: &subjects,
+                meter: UNLIMITED,
+            };
+            let method = StateGraphMethod {
+                limits: unsampled(),
+                max_depth: None,
+                seed: 0,
+            };
+            assert!(matches!(
+                fsl_replay::settle_existential(&request, &outcome, &method, &Cancel::new()),
+                Err(fsl_replay::ProductClosureRefusal::Input("HP-5-instance"))
+            ));
+        }
+    }
+}
+
+/// The record of the trapped instance of `world` under `limits`.
+fn settled_trap(world: &World, limits: ModelCheckLimits) -> (ResultLabel, SettlementBasis) {
+    let result = single(world, limits);
+    assert!(
+        matches!(result.outcome, ExistentialOutcome::Trapped { .. }),
+        "{:?}",
+        result.outcome
+    );
+    let record = settle_instance(world, &result, limits).record;
+    (record.label, record.basis)
+}
+
+/// FR-181-AC-13: a product state the body automaton has no run from, whose
+/// expansion a limit cut, leaves its part closed on both sides.
+#[trace("TC-3219", "FR-181-AC-13")]
+#[test]
+fn a_trap_with_an_unexpanded_rejected_state_replays() {
+    let refuted = (ResultLabel::Refuted, SettlementBasis::ClosedScope);
+    // The body is false at the start `l = 0`, and `max_states` 1 cuts the
+    // start's expansion.
+    let world = World::new(
+        Vault::Secure,
+        false,
+        &[(0, 0)],
+        &clause("", "holds(v.l @ b = 1)"),
+    );
+    let mut limits = unsampled();
+    limits.limits.max_states = 1;
+    assert_eq!(settled_trap(&world, limits), refuted);
+    // The same start's two `step`s with `max_transitions` 1.
+    let mut limits = unsampled();
+    limits.limits.max_transitions = 1;
+    assert_eq!(settled_trap(&world, limits), refuted);
+}
+
+/// FR-181-AC-13: a state whose `step` precondition has no value is not read
+/// as disabled, so no trap rests on it: the engine does not return `Trapped`,
+/// and a `Trapped` outcome for it does not replay.
+#[trace("TC-3219", "FR-181-AC-13")]
+#[test]
+fn a_state_with_an_undefined_guard_is_not_a_trap() {
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 1)],
+        &clause("", "holds(v.l @ b = 0)"),
+        KERNEL_QUOTIENT,
+    );
+    let mut cut = unsampled();
+    cut.limits.max_states = 1;
+    for limits in [unsampled(), cut] {
+        let mut result = single(&world, limits);
+        assert!(
+            !matches!(result.outcome, ExistentialOutcome::Trapped { .. }),
+            "{:?}",
+            result.outcome
+        );
+        result.outcome = ExistentialOutcome::Trapped {
+            stem: ModelPath {
+                initial: 0,
+                steps: Vec::new(),
+            },
+        };
+        let record = settle_instance(&world, &result, unsampled()).record;
+        assert_eq!(
+            record.label,
+            ResultLabel::Inconclusive,
+            "{:?}",
+            record.value
+        );
+    }
+}
+
+/// FR-181-AC-13: a trap that ranks before an undefined letter of its part
+/// replays, from a start the body rejects and from one it does not.
+#[trace("TC-3219", "FR-181-AC-13")]
+#[test]
+fn a_trap_before_a_later_undefined_letter_replays() {
+    let body = "holds(v.l @ b = 1) and always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &[(0, 0)],
+        &clause("", body),
+        KERNEL_REMAINDER,
+    );
+    assert_eq!(
+        settled_trap(&world, unsampled()),
+        (ResultLabel::Refuted, SettlementBasis::ClosedScope)
+    );
+}
+
+/// FR-181-AC-13: the product reads a no-run state's contract conjunctions when
+/// it creates the state, so asking whether its part is closed expands nothing:
+/// the answer is there on an initial state and on a successor that no
+/// expansion has visited.
+#[trace("TC-3219", "FR-181-AC-13")]
+#[test]
+fn a_no_run_state_carries_its_contract_reading() {
+    let guarded = |start, body: &str| {
+        World::new_with_kernel_function(
+            GUARDED,
+            false,
+            &[start],
+            &clause("", body),
+            KERNEL_QUOTIENT,
+        )
+    };
+    let secure = World::new(
+        Vault::Secure,
+        false,
+        &[(0, 0)],
+        &clause("", "holds(v.l @ b = 1)"),
+    );
+    // `(h, l) = (0, 1)`: the body `l = 0` is false there and the guard
+    // `1 div 0` has no value.
+    assert_eq!(
+        initial_readings(&guarded((0, 1), "holds(v.l @ b = 0)")),
+        [(true, true)]
+    );
+    // The body `l = 1` is false at `(0, 0)`; the secure `step` has no guard.
+    assert_eq!(initial_readings(&secure), [(true, false)]);
+    // The body `l = 1` is true at `(0, 1)`: the state has a run.
+    assert_eq!(
+        initial_readings(&guarded((0, 1), "holds(v.l @ b = 1)")),
+        [(false, false)]
+    );
+    // From `(0, 0)`, `step(0)` keeps `l = 0` and `step(1)` gives `l = 1`,
+    // where `always l = 0` has no run and the guard has no value.
+    let world = guarded((0, 0), "always holds(v.l @ b = 0)");
+    with_product(&world, |product| {
+        let initial: Vec<_> = product.initial_iter().filter_map(Result::ok).collect();
+        let expansion = product.successors(&initial[0]).expect("the start expands");
+        let mut read: Vec<_> = expansion
+            .successors
+            .iter()
+            .map(|(_, state)| (low(&state.components[0]), state.has_unknown_successors()))
+            .collect();
+        read.sort_unstable();
+        assert_eq!(read, [(0, false), (1, true)]);
+    });
+}
+
+/// For each initial product state of `world`'s clause, whether the body
+/// automaton has no run from it and whether its successors are unknown.
+fn initial_readings(world: &World) -> Vec<(bool, bool)> {
+    with_product(world, |product| {
+        product
+            .initial_iter()
+            .filter_map(Result::ok)
+            .map(|state| {
+                (
+                    state.property == Property::Dead,
+                    state.has_unknown_successors(),
+                )
+            })
+            .collect()
+    })
+}
+
+/// `read` of the product of `world`'s clause body, its initial states read and
+/// none expanded.
+fn with_product<T>(world: &World, read: impl FnOnce(&HyperProduct<'_, '_>) -> T) -> T {
+    let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
+    let seams = world.seams();
+    let cancel = Cancel::new();
+    let instance = instance();
+    let mut product = HyperProduct::new(HyperInputs {
+        systems: vec![&system],
+        instance: &instance,
+        body: world.clause.body(),
+        profile: world.clause.profile(),
+        sense: BodySense::Itself,
+        letters: &seams,
+        matcher: None,
+        max_automaton_states: u64::MAX,
+        meter: UNLIMITED,
+        cancel: &cancel,
+        copy_swap: None,
+        key_generators: Vec::new(),
+        constraint: None,
+    })
+    .expect("the body translates");
+    product.start().expect("the initial states read");
+    read(&product)
 }
