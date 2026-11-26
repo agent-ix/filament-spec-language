@@ -807,3 +807,61 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
         run.item(0)
     );
 }
+
+/// FR-232 "Vacuity", FR-240 "Vacuity": FR-232-AC-3's `Stall` (`ping` changes
+/// nothing, `x <= 1 ms`) is closed and has no time-divergent behaviour, so
+/// every claim over it is `inconclusive` `no-admitted-behaviour` on both
+/// routes, with no fairness declared.
+#[trace("FR-232-AC-3", "FR-240-AC-4")]
+#[test]
+fn digital_clocks_prove_nothing_over_a_stalled_subject() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}time invariant Stall when {{ true }} {{ self.x <= 1 ms }}\n\
+             temporal Safe using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ always holds(true) }}\n\
+             temporal Live using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ always eventually holds(true) }}\n"
+        ),
+    );
+    let ws = Workspace::new("timed-digital-stall");
+    let digital = json!({"method": "digital-clocks"});
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[("ping", &[])]),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Safe"}, {"claim": "Live"},
+            {"claim": "Safe", "options": digital.clone()},
+            {"claim": "Live", "options": digital}]}),
+    ));
+    let settled: Vec<(String, String, String)> = (0..4)
+        .map(|n| {
+            let record = &run.item(n)["record"];
+            (
+                record["backend"].as_str().unwrap_or_default().to_owned(),
+                label(&run.item(n)).to_owned(),
+                record["cause"].to_string(),
+            )
+        })
+        .collect();
+    let expected: Vec<(String, String, String)> = ["en-6", "en-6", "en-1", "en-1"]
+        .iter()
+        .map(|backend| {
+            (
+                (*backend).to_owned(),
+                "inconclusive".to_owned(),
+                settled[0].2.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(settled, expected, "{}", run.document()["items"]);
+    assert!(
+        settled[0].2.contains("no-admitted-behaviour"),
+        "{}",
+        run.item(0)
+    );
+}
