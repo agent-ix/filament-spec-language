@@ -2389,7 +2389,7 @@ fn acceptance(
     })
 }
 
-#[implements("FR-1042-AC-27", "FR-1043-AC-10")]
+#[implements("FR-1042-AC-27", "FR-1042-AC-29", "FR-1042-AC-30", "FR-1043-AC-10")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2781,6 +2781,7 @@ pub(super) fn check(
     }
     Ok(acceptance(&document, value, side, bytes))
 }
+#[implements("FR-1042-AC-28")]
 #[allow(clippy::too_many_arguments)]
 fn check_value_bounds(
     document: &MeasureProbabilityDocument,
