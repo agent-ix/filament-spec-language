@@ -177,10 +177,17 @@ pub fn run_model_based_test(
   exploration, SHALL use the request's `ExpansionLimits.max_candidates` as a
   local per-expansion ceiling. When a candidate's charge would exceed that
   ceiling, FR-120 SHALL stop before allocating its successor and return no
-  partial successor set as completed. When an expansion reaches that ceiling,
-  FR-752 SHALL settle the run `incomplete` with cause
+  partial successor set as completed. A stopped expansion SHALL NOT end the
+  run's case generation: partition search, the sampled trace up to the stopped
+  state, later cases and coverage exploration go on with what the run holds.
+  A run in which an expansion reached that ceiling and which retains no
+  counterexample SHALL settle `incomplete` with cause
   `limit-reached{limit: max_candidates, value, setting: expansion.max_candidates}`,
-  with `value` equal to the configured bound.
+  with `value` equal to the configured bound. A retained counterexample SHALL
+  settle the run `refuted` whether or not an expansion of the run reached the
+  ceiling, and each operation the stopped coverage exploration left open is
+  `uncovered` with reason `undetermined`, limit `candidates` and that bound as
+  its value.
 - Partition cases SHALL be built as FSpec FR-190 "Partitions" states: in the
   domain through the shortest enabled prefix the coverage exploration finds,
   or as refusal cases through the native admission that guards the root.
@@ -277,6 +284,7 @@ pub fn run_model_based_test(
 | FR-752-AC-14 | The measured holding-claim fixture has a successful `example/config-version` package, `Config::ConfigVersion` fields `x: Int[0,1000]` and `y: Int[0,1000]`, both independently modified by `ix://example/config-version/ConfigVersion/attemptUpdate`, and a complete snapshot containing objects `root` and `child` with both fields 0. Its `Ready { true }` model-based-test plan uses seed 7, bound 20 and `max_trace_length` 8. In the debug test profile, the same exact filtered direct integration-test binary was run once at each configured ceiling under a 12 GiB virtual-memory cap (`ulimit -v 12582912`); each run reported one passed test and 1255 filtered tests. At `expansion.max_candidates = 50000`, `/usr/bin/time -v` reported peak RSS 355896 kB and wall time 1:50.52 (test duration 110.48 s); the test reached `used = max_candidates = 50000` at the candidate-limit branch 121 times. At `expansion.max_candidates = 200000`, `/usr/bin/time -v` reported peak RSS 1078156 kB and wall time 10:32.00 (test duration 631.83 s); the test reached `used = max_candidates = 200000` at that branch 121 times. In the 200000 observation, the plan reported status `passed`, 20 generated and 20 passed cases, partial operation coverage with `attemptUpdate` uncovered at candidate limit value 200000, and `cause: null`; this observed result does not assert that the required over-limit `incomplete` settlement in AC-13 is already implemented. From these two capped measurements, the slope is `(1078156 - 355896) / 150000 = 4.81507 kB` per configured candidate, with an intercept of approximately 115143 kB. Linear extrapolation predicts 3726443 kB (about 3.55 GiB) at 750000 and 4930209 kB (about 4.70 GiB) at 1000000; 4 GiB is 4194304 kB. The selected plan-step default is 200000, directly measured below 4 GiB; 750000 is a projection and 1000000 projects above the threshold. | Analysis |
 | FR-752-AC-15 | A direct `model_based_test` request member run with no caller setting gives the entry `expansion.max_candidates` 200000 and `accounting.work_units` 1000000. With the caller override `accounting.work_units=5` the run stops at that bound, settling `incomplete` with a `limit-reached` cause naming `work_units`, value 5 and setting `accounting.work_units`. | Test |
 | FR-752-AC-16 | AC-13's holding-claim fixture, run as a direct `model_based_test` request member with no caller candidate setting, settles `incomplete` with cause `limit-reached{limit: max_candidates, value: 200000, setting: expansion.max_candidates}`. | Test |
+| FR-752-AC-17 | AC-13's holding-claim fixture with the clause body `false` in place of the holding claim, run with no caller candidate setting, settles `refuted` with a 1-minimal, replay-reproduced counterexample of zero invocations, and its `attemptUpdate` operation is `uncovered` with reason `undetermined`, limit `candidates` and value 200000; this holds for a direct `model_based_test` request member and for a `model_based_test` plan step. | Test |
 
 ## Dependencies
 
