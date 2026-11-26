@@ -94,6 +94,7 @@ pub(super) fn run_bytes(
     let Some((request::Route::Source, plan_request)) = member(bytes)? else {
         return Ok(None);
     };
+    super::overrides::admit(super::overrides::RunRoute::VerificationPlan, overrides)?;
     let mut request: wire::Request = super::request_with_overrides(bytes, overrides)?;
     // A `synthesis` beside this member is refused by the synthesis run's own
     // mutual-exclusion check (FR-1037), which names every excluded member.
@@ -230,12 +231,10 @@ pub(super) fn run_bytes(
             // The native-run request carries no analysis limits or deadline member
             // (FSpec FR-824 "no member sets a step's limits"), so the limits are
             // the analyze route's own over its empty `limits` member.
-            let mut analyze_limits =
-                super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), None);
-            analyze_limits.accounting = overrides.accounting_over(analyze_limits.accounting);
-            if let Some(observation) = overrides.observation_limits() {
-                analyze_limits.observation = observation;
-            }
+            let analyze_limits = super::overrides::analyze_limits(
+                super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), None),
+                overrides,
+            );
             let consumers =
                 plan_consumers(package, plan, &inputs, &analyze_limits).map_err(plan_refusal)?;
             plan_request.close_by_plan(&request::Consumers {

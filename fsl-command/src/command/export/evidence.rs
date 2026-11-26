@@ -70,12 +70,10 @@ pub(super) fn run(
             });
         }
     }
-    if overrides.output.is_some() {
-        return Err(RunCause::ClauseRequest {
-            member: "output".to_owned(),
-            reason: "an export_evidence selection does not write a target file".to_owned(),
-        });
-    }
+    super::super::overrides::admit(
+        super::super::overrides::RunRoute::ExportEvidence,
+        overrides,
+    )?;
     let code = Code::UnimplementedCapability;
     let document = OutcomeDocument::new(Operation::Export, None, code.category())
         .with_diagnostics(vec![OutcomeDiagnostic::new(

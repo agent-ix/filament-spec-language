@@ -21,6 +21,7 @@ enum ItemExecution {
 }
 
 struct CallOutput {
+    item_limits: fsl_analyze::analyze::AnalyzeLimits,
     source: fsl_foundation::source::Source,
     function: String,
     requirements: Option<super::requirements::Requirements>,
@@ -59,6 +60,9 @@ pub(super) fn run_bytes(
             "items is mutually exclusive with call and clause",
         ));
     }
+    // FR-255 Behavior 16: each selection also refuses what its own route
+    // does not apply.
+    super::overrides::admit(super::overrides::RunRoute::Items, overrides)?;
     let Some(items) = items.as_object() else {
         return Err(refused("items", "expected an object"));
     };
@@ -424,9 +428,10 @@ pub(super) fn run_bytes(
                     {
                         bind_population_argument(&mut input.call, parameter, object)?;
                     }
-                    let candidate = compilation_from_function(&input);
+                    let candidate = compilation_from_function(&input, overrides.spine_limits());
                     set_compilation(&mut compilation, candidate)?;
                     let call_output = Some(CallOutput {
+                        item_limits: super::overrides::item_limits(overrides),
                         source: input.source.clone(),
                         function: input.call.function.clone(),
                         requirements: requirements.clone(),
@@ -578,6 +583,7 @@ pub(super) fn run_bytes(
                                     &requirements,
                                     &selection,
                                     &call_output.packages,
+                                    call_output.item_limits,
                                     settle,
                                 )?)
                             }
@@ -723,6 +729,7 @@ fn prepare_value_invariants(
     overrides: &RequestOverrides<'_>,
     input: ValueInvariantInput<'_>,
 ) -> Result<PreparedValueInvariants> {
+    super::overrides::admit(super::overrides::RunRoute::ValueInvariants, overrides)?;
     let request: super::wire::Request = super::request_with_overrides(bytes, overrides)?;
     if request.package.is_some()
         || request.refinement_transfer.is_some()
@@ -860,6 +867,7 @@ fn compilation_from_clause(
 
 fn compilation_from_function(
     input: &super::FunctionRunInput,
+    limits: fsl_replay::spine::SpineLimits,
 ) -> fsl_replay::spine::ProgramCompilationRequest {
     fsl_replay::spine::ProgramCompilationRequest {
         source: input.source.identity().clone(),
@@ -868,7 +876,7 @@ fn compilation_from_function(
         package_name: input.package_name.clone(),
         packages: input.packages.clone(),
         dependencies: input.dependencies.clone(),
-        limits: fsl_replay::spine::SpineLimits::default(),
+        limits,
         clocks: input.call.clocks.clone(),
     }
 }

@@ -613,7 +613,7 @@ pub(super) fn prepare(
                 universes: universes.clone(),
             }
         }),
-        expansion: published.expansion,
+        expansion: super::overrides::analyze_limits(published, overrides).expansion,
         accounting: effective.accounting.0,
         normalization: limits.model,
         observation: effective.observation,

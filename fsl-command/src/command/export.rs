@@ -153,7 +153,6 @@ pub(super) fn run_selected_bytes(
             request::read(member, &given)?;
         }
     }
-    super::overrides::refuse_unheld(super::overrides::RunRoute::Export, overrides)?;
     super::request_shape::admit(super::request_shape::Family::Export(selection), bytes)?;
     if let Some(result) = run_document(directory, bytes, document, limits, overrides)? {
         return Ok(result);
@@ -197,6 +196,15 @@ fn run_document(
     let Some(member) = body.get("export") else {
         return Ok(None);
     };
+    // FR-255 Behavior 16: an export applies each override its form reads.
+    super::overrides::admit(
+        if body.contains_key("package") {
+            super::overrides::RunRoute::PackageExport
+        } else {
+            super::overrides::RunRoute::Export
+        },
+        overrides,
+    )?;
     // FR-1031: an export beside a transfer is a selection conflict.
     if body.contains_key("refinement_transfer") {
         let present: Vec<&str> = std::iter::once("export")
@@ -247,6 +255,7 @@ fn run_document(
             package,
             limits.dependent_bytes,
             request.initial.as_deref(),
+            &overrides.spine_limits(),
         )?;
         let clauses = map::package_clauses(&admitted.package)?;
         let models = admitted
@@ -585,9 +594,7 @@ fn compile_and_map(
             let admitted = fsl_package::admit_checked_package(
                 emitted.package().bytes(),
                 &packages,
-                fsl_package::V2ReadLimits::bounded(
-                    fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT,
-                ),
+                overrides.spine_limits().imports,
             )
             .map_err(admission_cause)?;
             let graph = checked.package().graph();

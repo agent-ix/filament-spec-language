@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::overrides::{
-    effective_limits, refuse_request_clocks, refuse_unapplied, RequestLimits, RunRoute,
+    admit, effective_limits, refuse_request_clocks, RequestLimits, RunRoute,
 };
 
 const DEFAULT_MAX_CANDIDATES: u64 = 10_000_000;
@@ -1027,7 +1027,7 @@ fn run_package_synthesis(
     dependent_bytes: usize,
     overrides: &super::RequestOverrides<'_>,
 ) -> super::Result<super::RunResult> {
-    refuse_unapplied(RunRoute::PackageSynthesis, overrides)?;
+    admit(RunRoute::PackageSynthesis, overrides)?;
     exclusive_member(request)?;
     if !request.extensions.is_empty() {
         return Err(refused(
@@ -1040,8 +1040,14 @@ fn run_package_synthesis(
         .as_ref()
         .ok_or_else(|| refused("/request/package", "expected a package selection"))?;
     super::package_run::validate_request(request)?;
-    let admitted =
-        super::package_run::admit(directory, request, package_selection, dependent_bytes, None)?;
+    let admitted = super::package_run::admit(
+        directory,
+        request,
+        package_selection,
+        dependent_bytes,
+        None,
+        &overrides.spine_limits(),
+    )?;
     let mut budget = admitted.budget;
     let identities = admitted.identities.unwrap_or_else(|| {
         fsl_package::ReadIdentityRows::of_rows(

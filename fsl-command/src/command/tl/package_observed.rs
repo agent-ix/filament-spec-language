@@ -37,6 +37,13 @@ pub(in crate::command) struct PackageRun<'a> {
     pub(in crate::command) model_limits: ModelNormalizationLimits,
     /// The bytes of the `initial` snapshot file.
     pub(in crate::command) snapshot: Option<&'a [u8]>,
+    /// The accounting limits each valuation runs under.
+    pub(in crate::command) accounting: filament_exact::ScalarLimits,
+    /// The limits the `initial` snapshot is admitted under.
+    pub(in crate::command) observation_limits:
+        fsl_semantics::model::observation::ObservationLimits,
+    /// `s3.nodes`, which bounds reading the clause from the package.
+    pub(in crate::command) clause_nodes: u64,
 }
 
 /// The snapshot a `cross_evaluate.initial` request builds its model subject
@@ -150,14 +157,11 @@ pub(super) fn observe(
     let model = PackageModelInput::of(bare, run.packages, run.model_limits)
         .map_err(|refusal| not_read(&refusal))?;
     let clause = model
-        .temporal_run_clause(
-            claim,
-            filament_semantic_value::checking::CheckingLimits::default().nodes(),
-        )
+        .temporal_run_clause(claim, run.clause_nodes)
         .map_err(|refusal| clause_not_read(&refusal))?;
     let selection = clause_selection(lowering, initial)?;
     match cross {
-        CrossEvaluate::Trace { .. } => trace(bare, &model, (&clause, key), run.sources, selection),
+        CrossEvaluate::Trace { .. } => trace(bare, &model, (&clause, key), run, selection),
         CrossEvaluate::Initial { .. } => {
             let initial = initial.ok_or_else(|| {
                 RunCause::TlFault("an initial request reads its snapshot".to_owned())
@@ -185,7 +189,7 @@ fn trace(
         &fsl_semantics::check::CheckedTemporalClause,
         &filament_exact::NodeKey,
     ),
-    sources: &[fsl_foundation::Source],
+    run: &PackageRun<'_>,
     selection: ClauseRunSelection,
 ) -> Result<Observation> {
     let ClauseRunSelection::SampledTemporal { name, trace, .. } = &selection else {
@@ -228,7 +232,7 @@ fn trace(
     }
     let request = PackageSampledRequest {
         package: bare,
-        sources,
+        sources: run.sources,
         ledger: None,
         progress_capacity: fsl_replay::spine::SpineLimits::default()
             .progress
@@ -238,7 +242,7 @@ fn trace(
         clause: Some((clause, key)),
         types: model.input().types,
         trace,
-        accounting: fsl_replay::AccountingLimits::default().0,
+        accounting: run.accounting,
     };
     match fsl_replay::spine::run_package_valuation(&request) {
         Ok(positions) => Ok(Observation::Valued(Observed {
@@ -264,8 +268,6 @@ fn behaviours(
     initial: &Initial,
     selection: ClauseRunSelection,
 ) -> Result<Observation> {
-    let observation_limits = fsl_replay::spine::ObservationLimitsWire::resolve(None)
-        .map_err(|error| invalid(&error.member, error.reason))?;
     let valuations = fsl_replay::spine::run_package_behaviours(PackageBehaviours {
         input: model.input().into(),
         clause,
@@ -274,8 +276,8 @@ fn behaviours(
         model_limits: run.model_limits,
         snapshots: &initial.snapshots,
         initial: &initial.observation.reference,
-        observation_limits,
-        accounting: fsl_replay::AccountingLimits::default().0,
+        observation_limits: run.observation_limits,
+        accounting: run.accounting,
         max_steps: initial.max_steps,
     });
     match valuations {
