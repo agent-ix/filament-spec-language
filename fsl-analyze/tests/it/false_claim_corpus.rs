@@ -5,7 +5,7 @@ use ix_trace_rs::trace;
 
 /// The oracle stays isolated from producer and checker crates and is linked
 /// only into tests. Runtime checks are added alongside each route's seed.
-#[trace("FR-1051-AC-13")]
+#[trace("FR-1051-AC-18")]
 #[test]
 fn reference_crate_has_only_the_declared_semantic_dependencies() {
     let manifest = include_str!("../../../fsl-definitional-reference/Cargo.toml");
@@ -80,9 +80,9 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
     );
 }
 
-/// FR-1051-AC-14: a disjunctive guard is refused before the reference can
+/// FR-1051-AC-19: a disjunctive guard is refused before the reference can
 /// return a truth value. The guard is read from the checked operation graph.
-#[trace("FR-1051-AC-14")]
+#[trace("FR-1051-AC-19")]
 #[test]
 fn reference_refuses_disjunctive_operation_guards() {
     let mut model = crate::prob_world::coin("");

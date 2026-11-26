@@ -147,7 +147,7 @@ pub struct ReferenceRefusal {
 /// The fragment admits conjunctive guards. This check walks the checked
 /// operation clauses from [`CheckedGraph`]; it does not parse or reinterpret
 /// source text.
-#[implements("FR-1051-AC-14")]
+#[implements("FR-1051-AC-19")]
 pub fn validate_conjunctive_guards(graph: &CheckedGraph) -> Result<(), ReferenceRefusal> {
     for model in graph.timed_models() {
         for guard in model.guards() {
