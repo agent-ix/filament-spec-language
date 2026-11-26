@@ -304,7 +304,7 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
         json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
     );
     let admitted = analyze(&request);
-    assert_eq!(label(&admitted), "proved", "{}", admitted.document());
+    assert_eq!(label(&admitted.item(0)), "proved", "{}", admitted.document());
 }
 
 fn recording_document(protocol: &str) -> Value {
