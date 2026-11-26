@@ -2645,6 +2645,11 @@ fn on_each_statistical_evidence_builds_no_product() {
 /// and `event` is the path formula the claim asks to have probability at
 /// least one half.
 fn run_over_base(name: &str, scope: &str, event: &str) -> Value {
+    run_over_base_items(name, scope, event, json!([{"claim": "OverBase"}]))
+}
+
+/// [`run_over_base`] under the request items `items`.
+fn run_over_base_items(name: &str, scope: &str, event: &str, items: Value) -> Value {
     const BASE: &str = "ix://test/link/Base";
     let mut model: Value = serde_json::from_slice(LINK_MODEL).expect("the Link model");
     let types = model["types"].as_array_mut().expect("types");
@@ -2685,7 +2690,7 @@ fn run_over_base(name: &str, scope: &str, event: &str) -> Value {
         &text,
         &serde_json::to_vec(&model).expect("model JSON"),
         &[LINK_START.to_vec()],
-        json!({"items": [{"claim": "OverBase"}]}),
+        json!({"items": items}),
     ))
     .document()
 }
@@ -2766,4 +2771,29 @@ fn a_probability_on_each_instance_names_the_admitted_member_type() {
     let entry = &item["record"]["basis"]["entries"][0];
     assert_admitted_msg_reference(&entry["instance"]);
     assert_eq!(entry["binding"], Value::Null, "{entry}");
+}
+
+/// FR-125 "Instancing", FR-741 "Binding": each statistical test row's `over`
+/// binding is the reference with the admitted type and no population.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_statistical_test_binding_names_the_admitted_member_type() {
+    let document = run_over_base_items(
+        "over-base-statistical",
+        "using ev on M over (b: M::Base) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.05",
+        "eventually[0,2] holds(b = b)",
+        json!([{"claim": "OverBase", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "sprt"},
+            "seed": "7", "max_witnesses": 8, "workers": 1}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "measured", "{document}");
+    let tests = item["verdict"]["provenance"]["tests"]
+        .as_array()
+        .expect("provenance tests");
+    assert!(!tests.is_empty(), "{document}");
+    for test in tests {
+        assert_admitted_msg_reference(&test["binding"]);
+    }
 }

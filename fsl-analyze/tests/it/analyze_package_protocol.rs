@@ -3307,6 +3307,18 @@ fn terminal_request(
     terminal: &str,
     blocked: bool,
 ) -> std::path::PathBuf {
+    terminal_request_over(ws, captures, terminal, blocked, "Cell")
+}
+
+/// [`terminal_request`] with the protocol over `M::<over>`: `Cell`, or the
+/// supertype `Base` that `Cell` then extends.
+fn terminal_request_over(
+    ws: &Workspace,
+    captures: &str,
+    terminal: &str,
+    blocked: bool,
+    over: &str,
+) -> std::path::PathBuf {
     let run = if blocked {
         format!(
             "sequence Main {{ {} }}",
@@ -3316,7 +3328,7 @@ fn terminal_request(
         "sequence Main {}".to_owned()
     };
     let body = format!(
-        "{}protocol Flow using pp over (k: M::Cell) on origin {{
+        "{}protocol Flow using pp over (k: M::{over}) on origin {{
             {captures}
             role w on M::Cell;
             {terminal}
@@ -3351,6 +3363,9 @@ fn terminal_request(
                 Some("value_type" | "object_type" | "population")
             )
         });
+    if over == "Base" {
+        add_base_supertype(&mut model);
+    }
     let model = serde_json::to_vec(&model).expect("the terminal model serializes");
     crate::analyze_cli_support::request_over(
         ws,
@@ -3955,4 +3970,52 @@ fn another_protocols_memory_does_not_change_the_package_subject() {
     let package = package_run(&ws, &path);
     assert_eq!(package.item(0), source.item(0), "{}", package.document());
     assert_eq!(package.exit, source.exit);
+}
+
+/// `Cell` extends a `Base` with no fields.
+fn add_base_supertype(model: &mut Value) {
+    const BASE: &str = "ix://test/fill/Base";
+    let types = model["types"].as_array_mut().expect("model types");
+    let cell = types
+        .iter_mut()
+        .find(|node| node["identity"] == "ix://test/fill/Cell")
+        .expect("Cell is declared");
+    cell["supertypes"] = json!([BASE]);
+    let mut base = cell.clone();
+    base["identity"] = json!(BASE);
+    base["displayName"] = json!(BASE);
+    base["supertypes"] = json!([]);
+    base["fields"] = json!([]);
+    base["operations"] = json!([]);
+    base["origin"] = json!({"generated": {"generatorIdentity": BASE,
+        "generatorVersion": "1.0.0", "inputIdentities": [BASE]}});
+    types.push(base);
+}
+
+/// FR-125 "Instancing": on the source and the package route, a refuted
+/// protocol claim over `M::Base` names its `over` object with the admitted
+/// type `Cell`.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_protocol_over_subject_names_the_admitted_member_type_on_both_routes() {
+    let ws = Workspace::new("package-over-admitted-type");
+    let path = terminal_request_over(&ws, "", "", true, "Base");
+    let source = analyze(&path);
+    let (package_path, _) = package_request(&ws, &path);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package analysis");
+    let package = analyze(&package_path);
+    for run in [&source, &package] {
+        let item = run.item(0);
+        assert_eq!(label(&item), "refuted", "{}", run.document());
+        let over = &item["counterexample"]["subject"]["over"];
+        assert_eq!(over["type"], "reference", "{}", run.document());
+        assert_eq!(
+            over["object_type"]["original"],
+            json!({"node": "ix://test/fill/Cell", "package": "test/fill"}),
+            "{}",
+            run.document()
+        );
+        assert!(over.get("population").is_none(), "{over}");
+        assert_eq!(item["replay"]["reproduced"], true);
+    }
 }
