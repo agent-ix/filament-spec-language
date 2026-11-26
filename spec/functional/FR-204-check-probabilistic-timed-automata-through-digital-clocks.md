@@ -359,44 +359,18 @@ QSL-3448.
   or `region-walk-unchecked` (F-7). It names no limit, because nothing was
   exhausted, and it is never `unsupported`.
 - **F-7 Region route while QSL-3444 is open.** QSL-3444's region time
-  successor can skip a region between two clocks' integer crossings. Until
-  it is fixed, an item decided over the region MDP (a strict constraint, an
-  elapsed `>=` quantile, or a bounded-window form Admission "Route" sends to
-  regions) SHALL NOT settle `proved`; it SHALL settle
-  `Incomplete(TimedRouteWithheld{reason: RegionWalkUnchecked})`. This covers
-  deadline events, reachability and expected time over strict subjects
-  (FR-922), as well as QSL-3444's own strict `eventually[0 ms, 4 ms]` claim.
-  A region refutation SHALL be kept only when every time invariant that
-  applies on the subject is a conjunction of atomic clock bounds and no race
-  draws a given (`discrete`) delay. Otherwise it settles the same cause
-  instead of `refuted`. The argument for keeping it:
-  - **A skipped region is passed, not invented.** Every point of a region has
-    the same sequence of time-successor regions, so a walk from `R` that
-    lands in `R''` and skips `R'` stands for real delays from every point of
-    `R` that pass through `R'`. Every modelled delay edge is therefore a real
-    delay.
-  - **Invariants still hold along it.** A conjunction of atomic clock bounds
-    is convex, so when it holds at both ends of the delay it holds at every
-    instant between them, including in `R'`. Urgency and the invariants'
-    `when` conditions are discrete and do not change during a delay.
-  - **Deadlines and windows are read as on the real path.** The deadline,
-    elapsed and obligation clocks are clocks of the same region. A delay
-    from `R` to `R''` that passes a deadline closes it as the real delay
-    does, and no predicate is read inside a delay (Admission "Positions"),
-    so the skipped region carries no position whose reading is lost.
-  - **Enabledness only shrinks.** A discrete move enabled only in `R'` is
-    missing from the model. The skip therefore removes scheduler choices;
-    it adds none.
-  - **So a modelled witness is a real scheduler.** It makes the same choice
-    at each point of a region, because guards and successors are uniform on
-    regions. The modelled maximum is at most the real one and the modelled
-    minimum at least the real one. A modelled value above a `<=` bound, or
-    below a `>=` bound, is therefore attained by a real scheduler, which is
-    sound for a refutation and unsound for a proof.
-  - **Where the argument fails.** It does not cover a race that draws a fixed
-    delay: points of one region can land in different regions after the same
-    delay. It also does not cover a non-convex time invariant, which can fail
-    inside a skipped region.
+  successor can skip a region between two clocks' integer crossings. A skip
+  can drop behaviours, and it can also drop an admissible delay: a point
+  region where an invariant last holds. That makes a false time-lock and so
+  a false refutation. Until QSL-3444 is fixed, an item decided over the
+  region MDP SHALL settle neither `proved` nor `refuted`; it SHALL settle
+  `Incomplete(TimedRouteWithheld{reason: RegionWalkUnchecked})`. Such items
+  include:
+  - an item with a strict constraint, whether a deadline event,
+    reachability or expected time (FR-922), including QSL-3444's own strict
+    `eventually[0 ms, 4 ms]` claim;
+  - an elapsed `>=` quantile;
+  - a bounded-window form that Admission "Route" sends to regions.
 
   F-7 ends when QSL-3444 is fixed.
 
@@ -407,9 +381,9 @@ The criteria it changes while it holds, each with its temporary outcome:
   the origin), FR-498-AC-8, FR-877-AC-1 and FR-877-AC-2 (its
   tampered-document clause).
 - **F-4:** AC-5 to AC-12, AC-24, FR-877-AC-5, FR-920-AC-4 and FR-202-AC-8.
-- **F-7:** AC-2 (its strict-guard clause), AC-13, FR-877-AC-3, FR-920-AC-2,
-  FR-922-AC-1 to FR-922-AC-3, and the region-route proofs of AC-21, AC-26
-  and FR-498-AC-3.
+- **F-7:** AC-2 (its strict-guard clause), AC-13, FR-877-AC-3, FR-877-AC-4, FR-920-AC-2,
+  FR-922-AC-1 to FR-922-AC-3, and the region-route verdicts of AC-21, AC-26
+  and FR-498-AC-3, proofs and refutations alike.
 
 Checked and not changed:
 
@@ -417,8 +391,6 @@ Checked and not changed:
   "model-steps"`, a timed invariant over the discrete state, which F-5
   keeps.
 - FR-196-AC-14: product structure, with no verdict.
-- FR-877-AC-4: a region refutation over a convex invariant with no drawn
-  delay, which F-7 keeps.
 - FR-940-AC-39: program and package parity, which still holds for a
   withheld item.
 
@@ -451,7 +423,7 @@ Checked and not changed:
 | FR-204-AC-23 | For AC-22's claim, a supplied finite Lower document with `ranking` omitted settles `inconclusive` with cause `CertificateRejected{Malformed, CertificateMember("ranking")}`; the infinite engine start value alone does not settle `refuted` and emits no `ExactValue`. | Test (TC-639) |
 | FR-204-AC-24 | On a timed `Retx` subject with an admitted workload `One` and claim `expected elapsed until holds(false) >= 3 ms`, the exact engine's `+infinity` minimum is accepted as a proof of the lower bound; the result settles `proved` and carries no infinite `ExactValue` or fabricated finite exact value. Temporary (QSL-3324 fallback F-4, while it holds): `send`'s free delay has the window `[1 ms, 2 ms]`, so the item settles `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})` instead of `proved`; the stated result stays the target. | Test (TC-639) |
 | FR-204-AC-25 | On timed `Retx` with claim `expected elapsed until holds(false) >= 3 ms` under every scheduler, because every admitted scheduler has nonreachability value `+infinity`, the result settles `proved` without an infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
-| FR-204-AC-26 | A bounded-window form other than a deadline event is decided over the region MDP even when every constraint is closed, with dense values derived in "Worked example: pointwise values" (items 6 and 7). Over the closed model `Gap` of that example, over every scheduler, `always[1 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`: `probability <= 0.5` settles `refuted` on the maximum `ExactValue{1}` and `probability >= 0.5` settles `refuted` on the minimum `ExactValue{0}`, never `proved` on the digital MDP's maximum `0`, and the item's certificate document has `route: "region"`. Over `Retx` of AC-1, `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`, so `probability <= 0.95` does not settle `proved`, which the digital MDP's maximum `9/10` would give: it settles `refuted` on the maximum `ExactValue{1}`. Temporary (QSL-3324 fallback F-2, while it holds): the `Retx` item settles `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})`, because the digital maximum `9/10` would prove it and no digital refutation exists; the `Gap` items are treated in the next sentence. Temporary (QSL-3324 fallback F-1 and F-7, while they hold): `Gap`'s `probability <= 0.5` item settles `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})` on the digital route (whose maximum `0` would prove it) or `RegionWalkUnchecked` on the region route, with no `route: "region"` document; its `probability >= 0.5` refutation on the minimum `0` is kept (`s = 0` is an integer schedule, read at positions once the position fix has landed). | Test (TC-639) |
+| FR-204-AC-26 | A bounded-window form other than a deadline event is decided over the region MDP even when every constraint is closed, with dense values derived in "Worked example: pointwise values" (items 6 and 7). Over the closed model `Gap` of that example, over every scheduler, `always[1 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`: `probability <= 0.5` settles `refuted` on the maximum `ExactValue{1}` and `probability >= 0.5` settles `refuted` on the minimum `ExactValue{0}`, never `proved` on the digital MDP's maximum `0`, and the item's certificate document has `route: "region"`. Over `Retx` of AC-1, `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`, so `probability <= 0.95` does not settle `proved`, which the digital MDP's maximum `9/10` would give: it settles `refuted` on the maximum `ExactValue{1}`. Temporary (QSL-3324 fallback F-2, while it holds): the `Retx` item settles `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})`, because the digital maximum `9/10` would prove it and no digital refutation exists; the `Gap` items are treated in the next sentence. Temporary (QSL-3324 fallback F-1 and F-7, while they hold): `Gap`'s `probability <= 0.5` item settles `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})` on the digital route (whose maximum `0` would prove it) or `RegionWalkUnchecked` on the region route, with no `route: "region"` document; its `probability >= 0.5` refutation on the minimum `0` is kept on the digital route (`s = 0` is an integer schedule, read at positions once the position fix has landed) and settles `RegionWalkUnchecked` on the region route. | Test (TC-639) |
 
 The Chain check also asserts that the six firing orders listed in the worked
 example are represented as six outcome edges from the initial product key,
