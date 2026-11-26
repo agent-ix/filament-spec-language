@@ -2532,6 +2532,111 @@ fn enumerate_region_deadline(
                 }
             }
         }
+        // A quiescent state's idle tail: it waits to the time successor, and
+        // after a wait may observe the unchanged state as a position.
+        if current.tail != DigitalTail::Running {
+            let mut choices = Vec::new();
+            let waiting = RegionState {
+                tail: DigitalTail::IdleDelayed,
+                ..current.clone()
+            };
+            let mut targets: Vec<(ProbabilityProductKey, RegionState)> = next_region_delay(
+                system,
+                timed,
+                watch,
+                binding,
+                &waiting,
+                &caps,
+                base_scale,
+                subdivisions,
+                key_scale,
+                deadline,
+                cancel,
+            )?
+            .into_iter()
+            .collect();
+            // With no later region, a state that has not just waited can
+            // still wait where it is.
+            if targets.is_empty() && current.tail == DigitalTail::IdleReady {
+                let start =
+                    lower_fractions(watch, &current, &caps, subdivisions, key_scale, deadline)?;
+                if let Some(entered) = idle_delayed_state(
+                    system, timed, watch, binding, &start, &caps, key_scale, deadline, cancel,
+                )? {
+                    let target = region_key(
+                        system,
+                        timed,
+                        binding,
+                        &entered,
+                        &caps,
+                        base_scale,
+                        subdivisions,
+                        key_scale,
+                        deadline,
+                    )?;
+                    targets.push((target, entered));
+                }
+            }
+            if current.tail == DigitalTail::IdleDelayed {
+                let (phase, elapsed) = watch.idle_observation(
+                    system,
+                    binding,
+                    current.timed.discrete(),
+                    current.phase.clone(),
+                    current.elapsed,
+                    deadline,
+                    cancel,
+                )?;
+                if phase == Phase::Active {
+                    activated.insert(key.clone());
+                }
+                let observed = RegionState {
+                    timed: current.timed.clone(),
+                    elapsed,
+                    phase,
+                    tail: DigitalTail::IdleReady,
+                };
+                let target = region_key(
+                    system,
+                    timed,
+                    binding,
+                    &observed,
+                    &caps,
+                    base_scale,
+                    subdivisions,
+                    key_scale,
+                    deadline,
+                )?;
+                targets.push((target, observed));
+            }
+            for (target, reached_state) in targets {
+                admit_region_state(
+                    target.clone(),
+                    reached_state,
+                    &mut reached,
+                    &mut pending,
+                    limits,
+                    storage,
+                )?;
+                choices.push(vec![ProbabilityEdge {
+                    target,
+                    probability: one(),
+                }]);
+                edges = edges.saturating_add(1);
+                charge_work(meter, cancel, 1)?;
+            }
+            insert_checker_state(
+                key,
+                CheckerState {
+                    terminal: choices.is_empty().then_some(false),
+                    choices,
+                },
+                &mut states,
+                storage,
+                limits,
+            )?;
+            continue;
+        }
         let mut choices = Vec::new();
         if let Some((delayed_key, delayed)) = next_region_delay(
             system,
@@ -2646,6 +2751,47 @@ fn enumerate_region_deadline(
             }
             if enabled && !choice.is_empty() {
                 choices.push(choice);
+            }
+        }
+        // A state with no time invariant that is not urgent may wait for good,
+        // so it can also enter the idle tail.
+        let quiescent = timed
+            .invariants(current.timed.discrete())
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+            .is_empty()
+            && !timed
+                .is_urgent(current.timed.discrete())
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        if quiescent {
+            let start = lower_fractions(watch, &current, &caps, subdivisions, key_scale, deadline)?;
+            if let Some(entered) = idle_delayed_state(
+                system, timed, watch, binding, &start, &caps, key_scale, deadline, cancel,
+            )? {
+                let target = region_key(
+                    system,
+                    timed,
+                    binding,
+                    &entered,
+                    &caps,
+                    base_scale,
+                    subdivisions,
+                    key_scale,
+                    deadline,
+                )?;
+                admit_region_state(
+                    target.clone(),
+                    entered,
+                    &mut reached,
+                    &mut pending,
+                    limits,
+                    storage,
+                )?;
+                choices.push(vec![ProbabilityEdge {
+                    target,
+                    probability: one(),
+                }]);
+                edges = edges.saturating_add(1);
+                charge_work(meter, cancel, 1)?;
             }
         }
         if edges > u64::try_from(limits.edges).unwrap_or(u64::MAX) {
@@ -2956,7 +3102,7 @@ fn region_key(
             base_scale.to_string(),
             encoded_clocks,
             deadline_key,
-            "running"
+            state.tail.tag()
         ]
     ]);
     let product = json!([
@@ -3134,7 +3280,6 @@ fn next_digital_delay(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-204-AC-21")]
 fn digital_idle_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -3146,6 +3291,30 @@ fn digital_idle_delay(
     deadline: u64,
     cancel: &Cancel,
 ) -> Result<Option<(ProbabilityProductKey, RegionState)>, ProbabilityDocumentError> {
+    let Some(state) = idle_delayed_state(
+        system, timed, watch, binding, current, caps, scale, deadline, cancel,
+    )?
+    else {
+        return Ok(None);
+    };
+    let key = digital_key(system, timed, binding, &state, caps, scale, deadline)?;
+    Ok(Some((key, state)))
+}
+
+/// The state one grid unit later in the idle tail.
+#[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-21")]
+fn idle_delayed_state(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    watch: &Watch<'_>,
+    binding: Option<&filament_exact::ObjectReference>,
+    current: &RegionState,
+    caps: &[u64],
+    scale: u64,
+    deadline: u64,
+    cancel: &Cancel,
+) -> Result<Option<RegionState>, ProbabilityDocumentError> {
     let delta = rational_units(1, scale)?;
     let Some(delayed) = timed
         .delay(&current.timed, &delta)
@@ -3170,14 +3339,12 @@ fn digital_idle_delay(
         deadline,
         cancel,
     )?;
-    let state = RegionState {
+    Ok(Some(RegionState {
         timed: delayed,
         elapsed,
         phase,
         tail: DigitalTail::IdleDelayed,
-    };
-    let key = digital_key(system, timed, binding, &state, caps, scale, deadline)?;
-    Ok(Some((key, state)))
+    }))
 }
 
 /// Whether `objective` is one of the three workload spellings.

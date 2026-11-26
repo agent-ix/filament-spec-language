@@ -27,6 +27,7 @@ use crate::long_run_support::limits;
 use crate::timed_world::{self, World};
 
 mod bounded_monitor_profile;
+mod region_idle;
 mod region_successor;
 
 const PROFILES: &str = "profile ev = \"filament.temporal.timed/v1\";\n\

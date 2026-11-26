@@ -117,3 +117,10 @@ fn a_closed_invariant_keeps_its_last_instant() {
     let world = forced_third("self.x <= 1 ms", "self.x <= 1 ms");
     assert_eq!(outcome(&settle(&world, "Reached")), "proved 1/1");
 }
+
+/// The same two-clock subject with no time invariant, so that every state can
+/// also wait forever (QSL-3443).
+#[test]
+fn the_two_clock_subject_with_idle_states_reaches_late() {
+    assert_eq!(observed(&two_clocks("")), all_refuted());
+}

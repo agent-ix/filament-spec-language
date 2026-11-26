@@ -2075,33 +2075,14 @@ impl<'c> Builder<'_, '_, 'c> {
                     planned.push(unit);
                 }
             } else {
-                let current_key = self.nodes[at].key.clone();
-                let mut cursor = state.clone();
-                for elapsed_ticks in 1..=self.subdivisions {
-                    self.poll()?;
-                    let Some(delayed) = self.unit_delay(local, &cursor)? else {
-                        break;
-                    };
-                    let unit = self.delay_move(DelayMove {
-                        at,
-                        state: &cursor,
-                        choice: ProductAction::UnitDelay,
-                        delayed: delayed.clone(),
-                        tail: Tail::Running,
-                        elapsed_ticks,
-                        planned,
-                        omit_unchanged: true,
-                    })?;
-                    if unit.target.key != current_key {
-                        planned.push(unit);
-                        break;
-                    }
-                    if delayed.0 == cursor.clocks && delayed.1 == cursor.deadline {
-                        break;
-                    }
-                    cursor.clocks = delayed.0;
-                    cursor.deadline = delayed.1;
-                }
+                self.successor_delay(
+                    at,
+                    state,
+                    local,
+                    ProductAction::UnitDelay,
+                    Tail::Running,
+                    planned,
+                )?;
             }
             if local.quiescent {
                 planned.push(self.delay_move(DelayMove {
@@ -2119,10 +2100,77 @@ impl<'c> Builder<'_, '_, 'c> {
         Ok(())
     }
 
+    /// The region route's delay, taken to the time successor (FR-922): the
+    /// first region the walk reaches that differs from the one `state` is in,
+    /// both read under the tail `tail`.
+    fn successor_delay(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Local,
+        choice: ProductAction,
+        tail: Tail,
+        planned: &mut Vec<Planned>,
+    ) -> Step<()> {
+        // From a state already under `tail` the region it is in is its own key.
+        let stay = if state.tail == tail {
+            self.nodes[at].key.clone()
+        } else {
+            let binding = self.binding_of(at)?;
+            let monitor = self.nodes[at].key.monitor;
+            let here = DState {
+                tail,
+                ..state.clone()
+            };
+            self.key_of(&here, binding, monitor, None)?
+        };
+        let mut cursor = self.packed_representative(state)?;
+        for elapsed_ticks in 1..=self.subdivisions {
+            self.poll()?;
+            let Some(delayed) = self.unit_delay(local, &cursor)? else {
+                break;
+            };
+            let moved = self.delay_move(DelayMove {
+                at,
+                state: &cursor,
+                choice: choice.clone(),
+                delayed: delayed.clone(),
+                tail,
+                elapsed_ticks,
+                planned,
+                omit_unchanged: true,
+            })?;
+            if moved.target.key != stay {
+                planned.push(moved);
+                break;
+            }
+            if delayed.0 == cursor.clocks && delayed.1 == cursor.deadline {
+                // No later region: waiting stays here, which is still a
+                // move for a state not yet under `tail`.
+                if state.tail != tail {
+                    planned.push(moved);
+                }
+                break;
+            }
+            cursor.clocks = delayed.0;
+            cursor.deadline = delayed.1;
+        }
+        Ok(())
+    }
+
     fn idle_moves(&mut self, at: usize, state: &DState) -> Step<Vec<Planned>> {
         let local = self.local(&state.model)?;
         let mut planned = Vec::new();
-        if let Some(delayed) = self.unit_delay(&local, state)? {
+        if self.subdivisions != 1 {
+            self.successor_delay(
+                at,
+                state,
+                &local,
+                ProductAction::IdleDelay,
+                Tail::IdleDelayed,
+                &mut planned,
+            )?;
+        } else if let Some(delayed) = self.unit_delay(&local, state)? {
             let delay = self.delay_move(DelayMove {
                 at,
                 state,
@@ -2131,11 +2179,9 @@ impl<'c> Builder<'_, '_, 'c> {
                 tail: Tail::IdleDelayed,
                 elapsed_ticks: 1,
                 planned: &planned,
-                omit_unchanged: self.subdivisions != 1,
+                omit_unchanged: false,
             })?;
-            if self.subdivisions == 1 || delay.target.key != self.nodes[at].key {
-                planned.push(delay);
-            }
+            planned.push(delay);
         }
         if state.tail == Tail::IdleDelayed {
             let reached = DState {
