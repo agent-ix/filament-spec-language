@@ -28,7 +28,7 @@ use fsl_eval::probabilistic::TimedOperatorState;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
     Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
-    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
+    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, UndecidedSuccessor, same_rewards,
 };
 use fsl_replay::{
     DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
@@ -999,7 +999,16 @@ impl<'c> Builder<'_, '_, 'c> {
             }
             Err(stop) => return Err(ProductRefusal::Expansion(stop).into()),
         };
-        let steps = self.timed.guarded_steps(model).map_err(timed_refusal)?;
+        let steps = self.timed.guarded_steps(model).map_err(|stop| match stop {
+            // An undefined step guard leaves the state's successors not
+            // exactly known (ADR-018 UE-6); the exact route's refutation of
+            // it is its own ticket's.
+            TimedStop::Undefined(_) => ProductRefusal::UndecidedSuccessor(UndecidedSuccessor {
+                state: StateKey::from_canonical_bytes(key.clone()),
+            })
+            .into(),
+            stop => timed_refusal(stop),
+        })?;
         let invariants = self.timed.invariants(model).map_err(timed_refusal)?;
         let urgent = self.timed.is_urgent(model).map_err(timed_refusal)?;
         let local = Rc::new(Local {

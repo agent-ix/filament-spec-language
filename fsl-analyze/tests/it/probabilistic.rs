@@ -21,8 +21,6 @@ mod liveness_support;
 mod long_run_support;
 mod prob_world;
 mod probabilistic_request_support;
-mod probe3534;
-mod probe3534_prob;
 mod provider_schema_support;
 mod relation_claims_support;
 mod source_value_support;

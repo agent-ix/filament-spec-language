@@ -272,17 +272,17 @@ pub use task_product::{
 };
 pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::admission::{
-    Admission, AdmissionRow, ClaimForm, DelayClass, EN1_DIGITAL, EN5_DIGITAL, FreeSubject, ReadFrom,
-    RegionCause, RouteConditions, SearchItem, en5_admission,
+    Admission, AdmissionRow, ClaimForm, DelayClass, EN1_DIGITAL, EN5_DIGITAL, FreeSubject,
+    ReadFrom, RegionCause, RouteConditions, SearchItem, en5_admission,
 };
 pub use timed::{
     BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
-    DelayInterval, GuardedStep, GuardedSteps, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,
-    TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
-    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
-    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed, replay_timed_sample,
-    sample_timed, sample_timed_race,
+    DelayInterval, GuardedStep, GuardedSteps, MoveRefusal, PlaceConstraint, ScheduledWindow,
+    TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour,
+    TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample,
+    TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite,
+    TimedState, TimedStop, TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed,
+    replay_timed_sample, sample_timed, sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
 

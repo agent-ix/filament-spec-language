@@ -34,7 +34,6 @@ mod operation_contract;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
 mod quotient;
-mod probe3534_ref;
 mod race_freedom;
 mod rc11_oracle;
 #[path = "../support/rc11.rs"]

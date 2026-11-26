@@ -45,10 +45,10 @@ use fsl_semantics::model::object_environment::PlacePresences;
 use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::implements;
 
+use super::BROKEN;
 use super::encode::declaration_text;
 use super::state_predicate::PredicateReading;
 use super::walk::{expand_enabled_with_clock_selectors, stop};
-use super::BROKEN;
 use super::{ModelSimState, ModelSystem};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::reduction::Permutation;
@@ -60,9 +60,9 @@ pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass
 pub mod admission;
 mod race;
 pub use race::{
-    advance_timed, replay_timed_sample, sample_timed, sample_timed_race, TimedAdvance, TimedRace,
-    TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
+    TimedAdvance, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample,
+    TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
+    advance_timed, replay_timed_sample, sample_timed, sample_timed_race,
 };
 
 /// One clock of the subject: a clock field of one object of its universe.
@@ -356,6 +356,18 @@ pub struct GuardedSteps {
     /// The first contract conjunction or protocol expression the expansion
     /// evaluated undefined.
     pub undefined: Option<super::ModelFinding>,
+}
+
+impl GuardedSteps {
+    /// The transition whose precondition guard the first undefined finding
+    /// is, when it is one (ADR-018 UE-6): the `where` transition a replay
+    /// rebuilds the undefined site with.
+    pub fn undefined_guard_of(&self) -> Option<ModelTransition> {
+        self.undefined
+            .as_ref()
+            .and_then(super::ModelFinding::undefined_contract)
+            .and_then(|contract| contract.guard_of)
+    }
 }
 
 /// The first finding of an expansion that evaluated undefined.

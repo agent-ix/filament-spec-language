@@ -422,7 +422,7 @@ impl Run<'_, '_, '_> {
             };
             match self.decide(&mut live)? {
                 Found::Counterexample(counterexample) => {
-                    return Ok(Liveness::Violated(counterexample))
+                    return Ok(Liveness::Violated(counterexample));
                 }
                 Found::NotConcretised => not_concretised = true,
                 Found::Nothing(proof) => proofs.push(*proof),
@@ -862,6 +862,7 @@ impl Run<'_, '_, '_> {
     /// Under a fairness an undefined reading is entered here
     /// ([`LiveVertex::undefined`]), since only the finished product says
     /// whether a fair behaviour passes through it.
+    #[implements("FR-239-AC-7")]
     fn take(
         &mut self,
         live: &mut Live<'_>,
@@ -1770,7 +1771,7 @@ impl Run<'_, '_, '_> {
             Err(NotConcretised::Exhausted) => {
                 return Err(self.stop(ZoneStop::LimitReached(
                     ZoneCheckLimit::MaxSymbolicTransitions(self.limits.max_symbolic_transitions),
-                )))
+                )));
             }
             Err(_) => return Ok(None),
         };

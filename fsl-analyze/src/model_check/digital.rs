@@ -316,6 +316,15 @@ struct Product {
     index: BTreeMap<Vec<u8>, usize>,
 }
 
+/// A step guard or protocol expression an expansion evaluated undefined
+/// (ADR-018 UE-6), with the transition whose precondition it is.
+#[derive(Clone)]
+struct UndefinedGuard {
+    locus: UndefinedLocus,
+    guard_of: Option<ModelTransition>,
+    cause: UndefinedCause,
+}
+
 /// An undefined position the product reached: the vertex it is read at
 /// (or the initial state's index) and what is undefined.
 struct UndefinedAt {
@@ -343,7 +352,7 @@ struct Digital<'q, 'r, 's, 'a, L> {
     steps: BTreeMap<Vec<u8>, Vec<(GuardedStep, TimedState)>>,
     /// Each discrete state's first step guard evaluated undefined, if any
     /// (ADR-018 UE-6).
-    guards: std::cell::RefCell<BTreeMap<Vec<u8>, Option<(UndefinedLocus, UndefinedCause)>>>,
+    guards: std::cell::RefCell<BTreeMap<Vec<u8>, Option<UndefinedGuard>>>,
     /// Each searched state's [`Digital::diverges`].
     divergence: BTreeMap<Vec<u8>, bool>,
     /// Each state's [`Digital::continues`] under the clause's fairness.
@@ -510,10 +519,8 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
 
     /// The first step guard or protocol expression the expansion of `state`
     /// evaluated undefined (ADR-018 UE-6), computed once per discrete state.
-    fn guard_undefined(
-        &self,
-        state: &ModelSimState,
-    ) -> Result<Option<(UndefinedLocus, UndefinedCause)>, Halt> {
+    #[implements("FR-243-AC-8")]
+    fn guard_undefined(&self, state: &ModelSimState) -> Result<Option<UndefinedGuard>, Halt> {
         let key = self.discrete_key(state)?;
         if let Some(known) = self.guards.borrow().get(&key) {
             return Ok(known.clone());
@@ -522,14 +529,20 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             .timed_stop(self.timed().guarded_expansion(state))?
             .undefined
             .and_then(|finding| {
-                fsl_replay::undefined_finding(std::slice::from_ref(&finding))
-                    .map(|(locus, _, cause)| (locus, cause))
+                fsl_replay::undefined_finding(std::slice::from_ref(&finding)).map(
+                    |(locus, guard_of, cause)| UndefinedGuard {
+                        locus,
+                        guard_of,
+                        cause,
+                    },
+                )
             });
         self.guards.borrow_mut().insert(key, found.clone());
         Ok(found)
     }
 
     /// The letter at `state` for `instance`, `initial` at position 0.
+    #[implements("FR-243-AC-8")]
     fn reading(
         &self,
         instance: &ModelInstance,
@@ -543,8 +556,8 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         // read by no claim (`universal`) only asks whether time can diverge
         // and reads the guard as a disabled step.
         if !universal {
-            if let Some((locus, cause)) = self.guard_undefined(state)? {
-                return Ok(Reading::Undefined(locus, cause));
+            if let Some(guard) = self.guard_undefined(state)? {
+                return Ok(Reading::Undefined(guard.locus, guard.cause));
             }
         }
         if universal {
@@ -1323,6 +1336,14 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             .filter(|(place, _)| self.timed().live(place, reached.discrete()))
             .map(|(_, value)| value.clone())
             .collect();
+        // The guarded transition of an undefined precondition, which a
+        // replay rebuilds the site with.
+        let transition = match &locus {
+            UndefinedLocus::Contract(_) | UndefinedLocus::Protocol(_) => self
+                .guard_undefined(reached.discrete())?
+                .and_then(|guard| guard.guard_of),
+            _ => None,
+        };
         Ok(TemporalCounterexample {
             initial_state: initial,
             kind: CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
@@ -1330,7 +1351,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                     position: u64::try_from(prefix.len()).unwrap_or(u64::MAX),
                     state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(discrete_key),
                     locus,
-                    transition: None,
+                    transition,
                     time: Some(Box::new(TimedPoint { stamp, clocks })),
                 },
                 cause,

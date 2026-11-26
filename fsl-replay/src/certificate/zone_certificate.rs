@@ -3597,7 +3597,7 @@ impl<O> Checker<'_, '_, O> {
         let period = self.timed.tick_period().cloned();
         let mut positions = 0_usize;
         if !tail || decided {
-            let checker_steps = self.timed.guarded_steps(state).or_else(undecided)?;
+            let checker_steps = self.steps_at(state)?;
             for step in checker_steps {
                 let target = self.invariants(step.post())?;
                 let state_key = self.state_key(step.post())?;
@@ -3838,7 +3838,32 @@ impl<O> Checker<'_, '_, O> {
             .ok_or(fault(CheckerFault::UnreachedNode))
     }
 
+    /// Whether the item refutes a state with an undefined step guard as a
+    /// bad node (ADR-018 UE-6): a claim or deadlock-freedom item. Every
+    /// other item refuses `Undecided` at such a state.
+    pub(super) fn refutes_undefined_guards(&self) -> bool {
+        !(self.time_lock
+            || self.release_ops.is_some()
+            || self.live.is_some()
+            || self.refined.is_some()
+            || self.state_graph.is_some())
+    }
+
+    /// The guarded steps of `state`. An undefined step guard is read as a
+    /// disabled step where the item judges the state bad
+    /// ([`Self::refutes_undefined_guards`]), and refuses `Undecided`
+    /// otherwise.
+    #[implements("FR-245-AC-13")]
+    pub(super) fn steps_at(&self, state: &ModelSimState) -> Step<Vec<GuardedStep>, O> {
+        let expanded = self.timed.guarded_expansion(state).or_else(undecided)?;
+        if expanded.undefined.is_some() && !self.refutes_undefined_guards() {
+            return undecided(());
+        }
+        Ok(expanded.steps)
+    }
+
     /// Whether `node` violates the item at some valuation of its zone.
+    #[implements("FR-245-AC-13")]
     fn bad(&self, node: usize) -> Step<bool, O> {
         let state = self.state(node)?;
         if self.time_lock
@@ -3851,6 +3876,17 @@ impl<O> Checker<'_, '_, O> {
             // Time-lock freedom is read from the divergence part, and a
             // liveness product's bad cycles from its components.
             return Ok(false);
+        }
+        // ADR-018 UE-6: a step guard with no value at the node's state is
+        // a violation, whatever the claim reads there.
+        if self
+            .timed
+            .guarded_expansion(state)
+            .or_else(undecided)?
+            .undefined
+            .is_some()
+        {
+            return Ok(true);
         }
         let Some(claim) = &self.claim else {
             return self.deadlocked(node);
@@ -3892,7 +3928,7 @@ impl<O> Checker<'_, '_, O> {
             return Ok(false);
         }
         let mut enabling = Vec::new();
-        for step in self.timed.guarded_steps(state).or_else(undecided)? {
+        for step in self.steps_at(state)? {
             let target = self.invariants(step.post())?;
             // Pull post-state invariants through the simultaneous carries
             // and resets to the pre-state valuations that enable this step.

@@ -21,6 +21,9 @@ pub enum DigitalGraphLimit {
     Clocks(u64),
     /// Caller cancellation.
     Cancelled,
+    /// A state's step guard has no value (ADR-018 UE-6): the graph's steps
+    /// there read it as disabled, so no graph is built past it.
+    UndefinedGuard,
 }
 
 /// One edge of an integer-clock graph; `None` is a unit delay edge.
@@ -235,6 +238,7 @@ fn grid(timed: &TimedSystem<'_, '_>) -> (Rational, Rational) {
 fn limit_from_stop(stop: TimedStop, max_states: u64) -> DigitalGraphLimit {
     match stop {
         TimedStop::MaxClocks { max_clocks } => DigitalGraphLimit::Clocks(max_clocks),
+        TimedStop::Undefined(_) => DigitalGraphLimit::UndefinedGuard,
         _ => DigitalGraphLimit::States(max_states),
     }
 }

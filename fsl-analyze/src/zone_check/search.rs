@@ -1894,6 +1894,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
 
     /// The first undefined finding of `state`'s expansion (ADR-018 UE-6) as
     /// the locus and cause an undefined evaluation names.
+    #[implements("FR-239-AC-7")]
     pub(super) fn undefined_of(
         &mut self,
         state: &ModelSimState,
@@ -2181,6 +2182,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         clippy::type_complexity,
         reason = "no violation, a violation, or one only after a delay"
     )]
+    #[implements("FR-239-AC-7")]
     fn badness(&mut self, node: usize) -> Result<Option<Result<Badness, ()>>, Halt> {
         // ADR-018 UE-6: a step guard with no value at the node's state is
         // read as a disabled step by the expansion, so the node is refuted
@@ -2612,13 +2614,11 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         // canonical state; σ carries them to the concrete one.
         let badness = match badness {
             Badness::False(instance) => Badness::False(lift_instance(instance, &sigma)),
-            Badness::Undefined(instance, cause, locus) => {
-                Badness::Undefined(
-                    instance.map(|instance| lift_instance(instance, &sigma)),
-                    cause,
-                    locus,
-                )
-            }
+            Badness::Undefined(instance, cause, locus) => Badness::Undefined(
+                instance.map(|instance| lift_instance(instance, &sigma)),
+                cause,
+                locus,
+            ),
             Badness::Deadlock(zone) => Badness::Deadlock(self.renamed(&zone, &sigma)?),
         };
         self.finite_counterexample((initial, stages, stutters), state, badness, escape, &sigma)
@@ -2710,6 +2710,14 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 let fairness = self
                     .claim()
                     .map_or_else(Vec::new, |claim| claim.clause.fairness().to_vec());
+                // The guarded transition of an undefined precondition,
+                // which a replay rebuilds the site with.
+                let transition = match &locus {
+                    UndefinedLocus::Contract(_) | UndefinedLocus::Protocol(_) => {
+                        self.expanded_steps(&state)?.undefined_guard_of()
+                    }
+                    _ => None,
+                };
                 (
                     CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
                         site: UndefinedSite {
@@ -2718,7 +2726,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                                 discrete_key,
                             ),
                             locus,
-                            transition: None,
+                            transition,
                             time: Some(Box::new(TimedPoint {
                                 stamp: concrete.last_stamp.clone(),
                                 clocks: present,

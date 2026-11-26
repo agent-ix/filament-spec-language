@@ -8,12 +8,14 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::check_model;
 use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
 use fsl_analyze::model_check::ModelCheckRequest;
-use fsl_analyze::zone_check::ZoneCheckLimits;
+use fsl_analyze::zone_check::{settle_zone_check, ZoneCheckLimits, ZoneItem};
 use fsl_eval::simulation::model::TimedSystem;
 use fsl_replay::{
-    check_closure, check_components, CounterexampleKind, ModelCheckItem, ModelCheckLimits,
-    ModelCheckOutcome, ProofCertificate, StateGraphOutcome,
+    check_closure, check_components, CertificateCheckLimits, CertificateRule, CounterexampleKind,
+    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelTraceReplayResult, ProofCertificate,
+    StateGraphOutcome, TerminalValue, ZoneCertificateVerdict,
 };
+use ix_trace_rs::trace;
 
 use crate::counter::{document, CONTRACT, UNLIMITED};
 use crate::graph_world::config_kernel_world_over;
@@ -84,7 +86,8 @@ fn probe_graph_unique_path_holds_by_empty_path() {
 
 // EN-1 temporal claims: `inc`'s guard has no value at value 2.
 
-const COUNTER_GUARD: &str = "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\
+const COUNTER_GUARD: &str =
+    "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\
      post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
 const REMAINDER: &str =
     "function undefined_remainder using v(x: Integer): Integer pure { 6 mod x }\n";
@@ -171,7 +174,9 @@ fn bounded(profile: &str, formula: &str, atom: fn(i64) -> Option<bool>) {
 
 #[test]
 fn probe_temporal_bounded_horizon_before_the_state() {
-    bounded(BOUNDED, "eventually[0,0] holds(c.value = 0)", |v| Some(v == 0));
+    bounded(BOUNDED, "eventually[0,0] holds(c.value = 0)", |v| {
+        Some(v == 0)
+    });
 }
 
 #[test]
@@ -263,12 +268,18 @@ fn probe_checker_closure_certificate_past_the_guard() {
 // `phase = 1`.
 
 fn timed(claim: &str) -> crate::timed_world::World {
+    timed_guard("1 - self.phase", claim)
+}
+
+/// [`timed`] with `bad`'s precondition `q(argument) >= 0`: `argument` is
+/// `0` at `phase = 1` for `1 - self.phase`, so `6 mod 0` has no value there.
+fn timed_guard(argument: &str, claim: &str) -> crate::timed_world::World {
     let body = format!(
         "{DENSE}\
          function q using v(x: Integer): Integer pure {{ 6 mod x }}\n\
          pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
          post Went using v on M::Call::go {{ self.phase = 1 }}\n\
-         pre Bad using v on M::Call::bad {{ q(1 - self.phase) >= 0 }}\n\
+         pre Bad using v on M::Call::bad {{ q({argument}) >= 0 }}\n\
          post Stayed using v on M::Call::bad {{ self.late = pre(self.late) }}\n\
          {claim}"
     );
@@ -305,6 +316,7 @@ fn zone_refutes(outcome: &crate::zone_search::Outcome) {
     );
 }
 
+#[trace("TC-710", "FR-239-AC-7")]
 #[test]
 fn probe_zone_safety() {
     let world = timed(&temporal("always holds(c.phase <= 3)"));
@@ -315,6 +327,7 @@ fn probe_zone_safety() {
     ));
 }
 
+#[trace("TC-710", "FR-239-AC-7")]
 #[test]
 fn probe_zone_liveness() {
     let world = timed(&temporal("eventually holds(c.phase = 0)"));
@@ -325,12 +338,14 @@ fn probe_zone_liveness() {
     ));
 }
 
+#[trace("TC-710", "FR-239-AC-7")]
 #[test]
 fn probe_zone_deadlock_freedom() {
     let world = timed(&temporal("always holds(c.phase <= 3)"));
     zone_refutes(&crate::zone_search::deadlock(&world));
 }
 
+#[trace("TC-710", "FR-243-AC-8")]
 #[test]
 fn probe_digital_safety() {
     let world = timed(&temporal("always holds(c.phase <= 3)"));
@@ -442,4 +457,101 @@ fn probe_timed_fixture_control() {
         second.successors.len()
     );
     assert!(findings.contains("ContractUndetermined"), "{findings}");
+}
+
+/// FR-235-AC-9: the zone refutation settles `refuted` after FR-237's replay
+/// reproduces `where`, the guarded transition included.
+#[trace("TC-710", "FR-235-AC-9")]
+#[test]
+fn probe_zone_refutation_settles_refuted_after_replay() {
+    let world = timed(&temporal("always holds(c.phase <= 3)"));
+    let outcome = crate::zone_search::claim(&world, ZoneCheckLimits::default(), &Cancel::new());
+    let record = settle_zone_check(
+        ZoneItem::Outcome(&outcome),
+        &Cancel::new(),
+        |_| Ok(ZoneCertificateVerdict::Accepted),
+        |payload| {
+            crate::zone_replay::replay(&world, payload).map(|settlement| ModelTraceReplayResult {
+                settlement,
+                hints: Vec::new(),
+                terminals: Default::default(),
+            })
+        },
+    );
+    println!("OBSERVED: {}", short(&record.value));
+    assert_eq!(record.value, TerminalValue::Refuted);
+}
+
+/// FR-243-AC-8: the digital counterexample replays, the guarded transition
+/// included.
+#[trace("TC-710", "FR-243-AC-8")]
+#[test]
+fn probe_digital_refutation_replays() {
+    let world = timed(&temporal("always holds(c.phase <= 3)"));
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("a timed subject");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("letters");
+    let outcome = check_digital(
+        &DigitalRequest {
+            subject: &timed,
+            clause: node.clause(),
+            letters: &letters,
+            limits: DigitalLimits {
+                max_states: u64::MAX,
+                max_transitions: u64::MAX,
+                max_automaton_states: u64::MAX,
+            },
+        },
+        &Cancel::new(),
+    )
+    .expect("checked")
+    .outcome;
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("a violation: {}", short(&outcome));
+    };
+    let settlement = crate::zone_replay::replay(&world, &counterexample).expect("replays");
+    println!("OBSERVED: {}", short(&settlement));
+    assert!(crate::zone_replay::reproduced(&settlement));
+}
+
+/// FR-239-AC-8: under a weak fairness constraint the zone route never
+/// returns `Holds` past the undefined guard (it stays `Undecided` until the
+/// refutation through a fair behaviour lands).
+#[trace("TC-710", "FR-239-AC-8")]
+#[test]
+fn probe_zone_liveness_under_fairness_is_not_holds() {
+    let world = timed(&temporal(
+        "fair weak M::Call::go; eventually holds(c.phase = 0)",
+    ));
+    let outcome = crate::zone_search::claim(&world, ZoneCheckLimits::default(), &Cancel::new());
+    let text = format!("{outcome:?}");
+    println!("OBSERVED: {}", &text[..text.len().min(120)]);
+    assert!(!text.starts_with("Holds"), "expected not Holds (UE-6)");
+}
+
+/// FR-245-AC-13: a certificate for the same subject with `bad`'s guard
+/// defined, replayed against the subject whose guard has no value at the
+/// `phase = 1` node, is rejected `BadState`.
+#[trace("TC-710", "FR-245-AC-13")]
+#[test]
+fn probe_checker_rejects_bad_state_at_an_undefined_guard() {
+    let claim = temporal("always holds(c.phase <= 3)");
+    let defined = timed_guard("2 - self.phase", &claim);
+    let certificate = crate::zone_search::proved(crate::zone_search::claim(
+        &defined,
+        ZoneCheckLimits::default(),
+        &Cancel::new(),
+    ));
+    let undefined = timed(&claim);
+    let verdict =
+        crate::zone_search::check(&undefined, &certificate, CertificateCheckLimits::default())
+            .expect("the check runs");
+    println!("OBSERVED: {}", short(&verdict));
+    assert!(
+        matches!(&verdict, ZoneCertificateVerdict::Rejected(rejection)
+            if rejection.rule == CertificateRule::BadState),
+        "expected BadState (UE-6, FR-245): {}",
+        short(&verdict)
+    );
 }
