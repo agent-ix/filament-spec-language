@@ -862,10 +862,11 @@ refinement (FR-255-AC-29) and EN-6 symbolic vertices charge
 automaton has no move, and the product states of a refinement search, do not
 yet charge it. No analyze item builds a protocol-abstract refinement yet, so
 FR-255-AC-29 is reached through `check_refinement` with a protocol binding.
-FR-255-AC-30 (a replay request's
-`stage_limits` at a protocol refinement step) is specified here and not
-implemented: no replay route takes `stage_limits` into a protocol refinement
-check, whose replay entry points call the unbounded closure checks. The
+FR-255-AC-30 is implemented in `replay_refinement_trace`, which takes the
+`model_check` limits: the protocol closures of one replay share the
+`max_transitions` allowance, and the analyze refinement item passes its own.
+No replay request route carries `stage_limits` into that call yet.
+The
 `observation.input_bytes` stop of FR-255-AC-31 is tested; its `emit.output_bytes`
 and hyper-clause `s3.nodes` stops are specified here and not yet tested.
 
