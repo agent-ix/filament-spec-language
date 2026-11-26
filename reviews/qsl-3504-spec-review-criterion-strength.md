@@ -153,3 +153,6 @@ The check reads paths only. Not blocking, since a fixture can name the evaluator
 | FND-012 | fixed | Checked at 6808d45edd |
 | FND-013 | fixed | Checked at 6808d45edd |
 | FND-014 | fixed | Checked at 6808d45edd |
+| FND-015 | fixed | Checked at 620af78ce1 |
+| FND-016 | fixed | Checked at 620af78ce1 |
+| FND-017 | fixed | Checked at 620af78ce1 |
