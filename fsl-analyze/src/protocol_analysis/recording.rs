@@ -2104,7 +2104,7 @@ fn assess_obligations(
                     .iter()
                     .find(|repeat| repeat.node == control.node);
                 repeat.map(|repeat| {
-                    repeat_control_verdict(protocol, document, control, repeat.max, instance)
+                    repeat_control_verdict(protocol, document, control, repeat.max, &instance)
                 })
             } else {
                 None

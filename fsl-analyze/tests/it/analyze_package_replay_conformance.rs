@@ -437,3 +437,60 @@ fn a_predicate_join_over_a_package_settles_unsupported() {
     assert_eq!(diagnostic["code"], "unsupported_construct", "{settled}");
     assert_eq!(diagnostic["cause"], "not-yet-implemented", "{settled}");
 }
+
+/// FR-895-AC-46 (TC-2531): package recording assessment refuses a protocol
+/// containing `repeat` as one typed unsupported result, without obligation
+/// verdicts.
+#[trace("TC-2531", "FR-895-AC-46")]
+#[test]
+fn a_repeat_over_a_package_recording_has_no_partial_obligation_verdicts() {
+    let mut protocol = order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { repeat Loop by Seller visible () max 2 while { true } sequence Body {",
+    );
+    let finish = protocol.find("finish Done").expect("finish terminal");
+    let close = protocol[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes");
+    protocol.replace_range(close..close + 2, " } exhausted sequence Out { } }");
+
+    let recording = json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "identity": {"authority": "test", "identity": "recording"},
+        "observations": [], "local_order": {}, "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    });
+    let ws = Workspace::new("package-repeat-recording-assessment");
+    let items = json!([{"claim": "Flow", "kind": "global-conformance",
+        "recording": {"authority": "test", "identity": "recording"}}]);
+    let path = litmus_request(&ws, &protocol, json!({"items": items}));
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    ws.write("recording.json", recording.to_string().as_bytes());
+    request["request"]["documents"]
+        .as_array_mut()
+        .expect("documents")
+        .push(json!({"file": "recording.json"}));
+    ws.write("analyze.json", request.to_string().as_bytes());
+
+    let (members, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove authored source");
+    let sources = ws.path(&format!("{HANDOFF}/sources"));
+    std::fs::remove_dir_all(&sources).expect("remove retained source files");
+    let package = analyze(
+        &ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
+    let settled = package.document();
+    assert_eq!(settled["category"], "unsupported", "{settled}");
+    let diagnostic = &settled["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "unsupported_construct", "{settled}");
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{settled}");
+    let item = &settled["items"][0];
+    assert!(item.get("record").is_none(), "{settled}");
+    assert!(item.get("obligations").is_none(), "{settled}");
+}
