@@ -1989,3 +1989,35 @@ fn a_preflight_limit_reached_cause_carries_its_required_count() {
         );
     }
 }
+
+/// FSpec FR-331: a `not-stochastic` cause names the identity at fault or an
+/// idle tail, never both or neither, and `idle_tail` is `true`.
+#[test]
+fn a_not_stochastic_cause_names_exactly_one_of_identity_and_idle_tail() {
+    let defect = |members: Value| {
+        let mut cause = json!({"type": "not-stochastic", "state": {}});
+        for (name, value) in members.as_object().expect("members").clone() {
+            cause[name] = value;
+        }
+        entry_defect(
+            &with(base("unsupported"), json!({"cause": cause})),
+            EntryOrigin::FirstParty,
+        )
+    };
+    let at = |pointer: &str| pointer.to_owned();
+    assert_eq!(
+        defect(json!({})),
+        (at("/cause/identity"), EntryCause::MissingMember)
+    );
+    assert_eq!(
+        defect(json!({"identity": {}, "idle_tail": true})),
+        (at("/cause/idle_tail"), EntryCause::UnknownMember)
+    );
+    assert_eq!(
+        defect(json!({"idle_tail": false})),
+        (at("/cause/idle_tail"), EntryCause::InvalidValue)
+    );
+    // A well-formed one passes the rule: the reader then refuses the cause as
+    // one a result entry does not carry.
+    assert_eq!(defect(json!({"idle_tail": true})).0, at("/cause/type"));
+}
