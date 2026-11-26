@@ -13,7 +13,7 @@ relationships:
 Verify that `encode_smt_query` prints the unrolling and induction queries
 in canonical order and bytes, and refuses a construct it cannot encode.
 
-Scope: FR-315-AC-1 to FR-315-AC-6, FR-315-AC-15 to FR-315-AC-32 FR-315-AC-53 to FR-315-AC-57 and FR-315-AC-62.
+Scope: FR-315-AC-1 to FR-315-AC-6, FR-315-AC-15 to FR-315-AC-32, FR-315-AC-53 to FR-315-AC-57 and FR-315-AC-62.
 
 Steps 8, 10, 18 and 20 read scripts with a `QF_LIA` solver, steps 18 and
 20 with replay as well; step 29 reads normalized terms, and every other step

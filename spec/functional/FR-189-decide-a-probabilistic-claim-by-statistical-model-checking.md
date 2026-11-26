@@ -101,7 +101,7 @@ pub enum UndecidedCause { IndifferenceRegion, UndecidedSuccessor }
 ```
 
 `StatisticalRefusal` holds FR-120's `AdmissionFailure`, FR-151's `SymmetryRefusal` for a malformed symmetry declaration, FR-101's
-`RequiresBound` and `GeneratorMismatch`, `EveryScheduler` for a claim `under every scheduler` and
+`RequiresBound`, `ConflictingIdentity` and `GeneratorMismatch`, `EveryScheduler` for a claim `under every scheduler` and
 `MissingConfidence` for a claim without confidence parameters,
 `NoInitialState` for a subject whose `initial` list is empty, `NoInstance` for
 a claim whose `over` type has no admitted instance (FR-125), `TooManyTests`
@@ -263,6 +263,12 @@ unsupported condition.
   order, from `ModelSystem::claim_instances` (FR-125 "Instancing"):
   `RequiresBound`, then `NoInitialState`, then a conflicting identity, then
   `NoInstance`. A claim with no `over` has one instance, with no bound object.
+- EN-4 SHALL decide the refusals that read only the claim and the method,
+  `EveryScheduler`, `ExactOnlyForm`, `MissingConfidence` and
+  `NotStatistical`, before any instancing outcome, so such a request over a
+  subject with no instance reports that refusal. A refusal that counts the
+  tests (`TooManyTests`, `TraceIndexRange`, `ConfidenceBeyondPrecision`)
+  follows instancing.
 - If the subject's `initial` list is empty, then EN-4 SHALL refuse with
   `StatisticalRefusal::NoInitialState`; if the subject has an initial state
   and the claim's `over` type has no admitted instance, then EN-4 SHALL refuse
@@ -314,6 +320,9 @@ unsupported condition.
 | FR-189-AC-15 | Through the `BehaviourSampler` seam, a quantile `<= 3` claim at `q = 1/2` over 4 counted samples (the stub ends the test after exactly 4 counted samples) with `M` values 1, 3, 2, 5 gives the test `quantile` `Value(2)`; at `q = 9/10` with the samples 1, 3, 2 and one censored sample, the rank `⌈36/10⌉ = 4` lies among the censored samples and `quantile` is `Censored`; at `q = 1/2` the same samples give `Value(2)`. With `M` of type `Quantity<ms>`, threshold `3 ms` and samples `1 ms`, `3 ms`, `2 ms`, `5 ms` at `q = 1/2`, the test quantile is `Value(2)` interpreted in `ms` by the checked reward type and canonically stored as `2/1`; it is not `1/500 s`. In another run with `q = 1/2` and samples `1 ms`, `1.50 ms`, `2 ms`, `5 ms`, the quantile is `Value(3/2)`; replacing `1.50 ms` with the equivalent `rational(3, 2) ms` gives the same exact rational value. With a quantity reward whose unit is `ms`, a threshold of `0.005 s` reaches EN-4 as `5 ms` under FR-186's exact conversion rule. A `1 s` support value for a `Quantity<ms>` parameter is refused `value-outside-type` as FR-185-AC-8 requires, and a threshold `5 m` for the time reward is refused `ill_typed`/`unit-mismatch` as FR-186-AC-2 requires, each before EN-4 draws a sample. A `P95` probability-bound test and a quantile test that has no estimate, because it counted no sample, have `quantile` absent. | Test (TC-624) |
 | FR-189-AC-16 | A sampler stub that returns `k` holding samples of `N = 231` for a claim `probability >= 9/10` with `α = β = 1/100`, `ι = 1/10` and `m = 1`, under `StatisticalMethod::ClopperPearson`, settles the test Accepted at `k` = 231 and 219, Undecided (`IndifferenceRegion`) at 218 and 197, and Rejected at 196 and 184, while `Okamoto` on the same stub accepts only at 231 and rejects only at 184; at `k = 219` the exact Clopper–Pearson ends, each truncated after 20 digits, are `0.90351472792271070929…` (lower) and `0.97621175445884490995…` (upper), and the reported lower end is at most the exact lower end and within `2^-64` of it, and the reported upper end at least the exact upper end and within `2^-64` of it, and the basis records `ClopperPearson` with coverage `FiniteSample`. A mean-of-fraction claim and a long-run fraction claim with `ClopperPearson` refuse `NotStatistical` before any sample is drawn. | Test (TC-624) |
 | FR-189-AC-17 | Over AC-6's `Coin` model and claim `over (c: M::Coin)`, with the universe of `coins` `[k]` and one initial state that holds no object, the request is refused `NoInstance` before any sample is drawn, and FR-192 settles it `inconclusive` with the cause `no-instance`, never Accepted. With the same universe and an empty `initial` list it is refused `NoInitialState`, not `NoInstance`. | Test (TC-624) |
+| FR-189-AC-18 | Over AC-17's `Coin` claim with an empty `initial` list and no universe for `coins`, the request is refused `RequiresBound` naming it, never `NoInitialState`. | Test (TC-624) |
+| FR-189-AC-19 | Over FR-125-AC-13's records, an `Animal` under `c` in `animals` and a `Dog` under `c` in `dogs`, a claim over `Animal` is refused `conflicting-identity` naming `c` and both types before any sample is drawn, with no terminal result; with the universe of a third overlapping population removed it is refused `RequiresBound`. | Test (TC-624) |
+| FR-189-AC-20 | A claim under every scheduler over an empty `initial` list is refused `EveryScheduler`, not `NoInitialState`. | Test (TC-624) |
 
 ## Dependencies
 

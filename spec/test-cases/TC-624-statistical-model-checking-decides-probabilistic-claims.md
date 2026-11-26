@@ -12,7 +12,7 @@ relationships:
 
 Verify EN-4's Okamoto and SPRT decisions on `P95`, its Clopper–Pearson decisions and interval on the `N = 231` stub, the exact sample counts and thresholds, Bonferroni and symmetry, activation, and the stops and refusals.
 
-Scope: FR-189-AC-1 to FR-189-AC-5, FR-189-AC-7 to FR-189-AC-12, FR-189-AC-13 to FR-189-AC-17.
+Scope: FR-189-AC-1 to FR-189-AC-5, FR-189-AC-7 to FR-189-AC-12, FR-189-AC-13 to FR-189-AC-20.
 
 ## Test Procedure
 
@@ -35,6 +35,13 @@ Fixtures: FR-189-AC-8's `ClaimSampler` stubs with one test and with two, `Behavi
 14. Give a `probability >= 9/10` claim (`α = β = 1/100`, `ι = 1/10`) `k` holding samples of 231 from a stub, at `k` = 231, 219, 218, 197, 196 and 184, under `ClopperPearson` and under `Okamoto`; read the interval at 219; request `ClopperPearson` for a mean-of-fraction claim and for a long-run fraction claim (FR-189-AC-16).
 15. Run the `Coin` claim with the universe `[k]` over one initial state that
     holds no object, then over an empty `initial` list (FR-189-AC-17).
+16. Run it over an empty `initial` list with no universe for `coins`
+    (FR-189-AC-18).
+17. Run a claim over `Animal` over records typing `c` as `Animal` and `Dog`,
+    then with a third overlapping population's universe removed
+    (FR-189-AC-19).
+18. Run a claim under every scheduler over an empty `initial` list
+    (FR-189-AC-20).
 
 Tag the tests `#[trace("TC-624", "FR-189-AC-n")]`.
 
@@ -55,3 +62,6 @@ Tag the tests `#[trace("TC-624", "FR-189-AC-n")]`.
 - Step 13: `quantile` `Value(2)`; `Censored`; `Value(2)` interpreted in `ms` by the checked reward type with canonical rational magnitude `2/1`; `Value(3/2)` for both equivalent quantity inputs; the checked threshold normalized to `5 ms`; both unit/type refusals before sampling; absent for the no-sample test; absent for the `P95` test.
 - Step 14: under `ClopperPearson`, Accepted at 231 and 219, Undecided (`IndifferenceRegion`) at 218 and 197, Rejected at 196 and 184; under `Okamoto`, Accepted only at 231 and Rejected only at 184; at 219 the reported lower end is at most the exact lower end `0.90351472792271070929…` (exact ends truncated after 20 digits) and within `2^-64` of it, and the reported upper end is at least the exact upper end `0.97621175445884490995…` and within `2^-64` of it, with basis `ClopperPearson` and coverage `FiniteSample`; both fraction requests refuse `NotStatistical` with no sample drawn.
 - Step 15: `NoInstance`, settled `inconclusive`, `no-instance`, with no sample drawn; then `NoInitialState`.
+- Step 16: `RequiresBound` naming `coins`.
+- Step 17: refused `conflicting-identity` with no sample; then `RequiresBound`.
+- Step 18: `EveryScheduler`.

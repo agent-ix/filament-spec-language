@@ -148,13 +148,12 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 - Neither outcome is a fault (FR-621). EN-5 SHALL settle each as the
   settlement table states, with no runtime diagnostic, verdict, certificate,
   counterexample or numeric entry, and SHALL NOT read the empty set as
-  probability zero or as vacuous truth. These are the causes every other
-  route reports for the same subject.
-- FR-201's certificate checker SHALL derive the same two outcomes, in the
-  same order, from the checked subject by its own code, never from an engine
-  result. For a subject with either outcome it SHALL return that typed
-  cause for whatever document is offered, and neither accept the document
-  nor report it rejected, malformed or unsupported.
+  probability zero or as vacuous truth. The causes are FR-125's. Another
+  route may refuse for a reason of its own first, as FR-189 and FR-315 state.
+- `conflicting-identity` is a request refusal with no terminal record.
+- FR-201's certificate checker derives the same outcomes by its own code and
+  returns them as FR-201 "Instancing outcomes" states, including which
+  refusals of the certificate itself come first.
 
 ### Product admission before materialization
 
@@ -263,7 +262,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | `PredicateRefused(Incomplete(i))` | `incomplete`, execution `resource-incomplete` | `Incomplete(LimitReached{limit, value, setting})` for the typed `ClauseMeter`, naming `i`'s counter by FR-255 Behavior 9's rule and `value` that counter's configured bound | FR-255 Behavior 9 |
 | `PredicateRefused` holding `KernelRefused(CheckedInvariant)`, `NotBoolean`, `KernelUndefined` or `FamilyUndefined` | `failed`, diagnostic `runtime_invariant`/`established-invariant-broken` | `Failed` | FR-127 |
 | `Translation(error)` | `failed`, diagnostic `runtime_invariant`/`established-invariant-broken` | `Failed` | FR-127 |
-| `Admission(failure)` or `NotSimulated(RequiresBound)` | none: a request refusal, returned to the caller | no terminal record | FR-126, FR-196 |
+| `Admission(failure)`, `NotSimulated(RequiresBound)` or `NotSimulated(ConflictingIdentity)` | none: a request refusal, returned to the caller | no terminal record | FR-126, FR-196 |
 
 - An undefined read is never a `PredicateRefused` (FR-196 returns
   `ProbBuild::Undefined`), and a checked claim's predicate completes a
@@ -344,6 +343,8 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | FR-203-AC-33 | For FR-196-AC-5's `Coin` model and `probability >= 0.5 [ always[0,3] holds(c.v = 0) ]` claim over `(c: M::Coin)` under workload `Even`, evidence `exact`, an instrumented run records the `work_units` charges of the first proof-only build (`P`), undefined-path re-exploration (`R`), and all later certificate or witness work (`W`). With `accounting.work_units = P + R - 1`, where `P <= P + R - 1` and `R <= P + R - 1`, the first unpaid re-exploration charge settles `incomplete`, `Incomplete(LimitReached{work_units, P + R - 1, accounting.work_units})` with no truth value. With a bound of `P + R`, the re-exploration completes, even if a later certificate or witness charge then stops the item. With a bound equal to the recorded full-run total `P + R + W`, the item settles as FR-196-AC-5 specifies, with `UndefinedEvaluation{where: 1, cause: absent-key}`; a separate item starts with a fresh allowance. | Test |
 | FR-203-AC-34 | An exact item whose subject has a non-empty `initial` list and no admitted key for the claim's `over` parameter, or none for its `on each` activation type, settles `inconclusive` with cause `no-instance`, `Inconclusive(NoInstance)`, never `proved`, `unsupported` or `failed`, with no certificate, counterexample or numeric entry. This holds also when the claim's form is outside what EN-5 admits. | Test (TC-3241) |
 | FR-203-AC-35 | FR-201's certificate checker, called directly with a well-formed document of the claim's identity, returns `NoInitialState` for AC-20's subjects and `NoInstance` for AC-34's, for an `on each` claim and for a claim that is not, and neither accepts the document nor reports it rejected, malformed or unsupported. The test states each expected cause itself and takes none from an engine result. | Test (TC-3241) |
+| FR-203-AC-36 | Over FR-125-AC-13's records, an `Animal` under `c` in `animals` and a `Dog` under `c` in `dogs`, an exact claim over `Animal` is a request refusal `invalid_runtime_input/conflicting-identity` with no terminal record; with the universe of a third overlapping population removed it is `RequiresBound`. | Test (TC-3241) |
+| FR-203-AC-37 | An exact item whose claim form EN-5 does not admit, over a subject with an empty `initial` list, settles `inconclusive`, `no-initial-state`, never `unsupported`. | Test (TC-3241) |
 
 ## Dependencies
 
