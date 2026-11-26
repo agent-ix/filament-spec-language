@@ -81,6 +81,20 @@ reports.
 - `invalid_runtime_input`/`conflicting-identity` for an item whose
   overlapping populations' initial member records give one key two types
   (Instancing).
+- `ModelSystem::claim_instances(over: &ValueType) -> Result<ClaimInstances,
+  NoClaimInstances>`, for the `over` type of a claim or its `on each`
+  activation type. `ClaimInstances` holds at least one instance, in the
+  canonical order (Instancing). `NoClaimInstances` is
+  `NotSimulated(NotSimulated)`, `NoInitialState` or `NoInstance`. The call
+  decides Instancing's outcomes in their order: `RequiresBound` as
+  `NotSimulated(RequiresBound)`, `NoInitialState`, the conflicting identity
+  as `NotSimulated(ConflictingIdentity)` naming the key and both types, then
+  `NoInstance`. `ModelSystem::new` SHALL admit member records that give one
+  universe and key two types when they stand in different populations or in
+  different initial states; this call, not admission, refuses them, so it can
+  report `RequiresBound` and `NoInitialState` first. Two such records in one
+  population of one initial state stay FR-106 check 6.3's admission refusal
+  (FR-120 "Initial states"). A claim with no `over` makes no call for it.
 - `ModelSystem::instances` and `ModelSystem::excluded_keys` for a claim, and
   for the object type of a hyper object parameter: its
   instances in the canonical order, and the universe keys no initial record
@@ -169,7 +183,9 @@ bullets state how FSL applies them over FR-120's subject.
   universe and key and different types, in one population or in two, in one
   initial state or in two, SHALL refuse the item
   `invalid_runtime_input`/`conflicting-identity`, naming the key and both
-  types, before it forms any instance.
+  types, before it forms any instance. Two such records in one population of
+  one initial state are refused earlier, at admission (FR-106 check 6.3), so
+  the order below does not apply to them.
 - An instance whose admitted record does not conform to `T` (an `Animal` key
   holding a `Cat` under `over (x: Dog)`) is an instance. Where no overlapping
   population holds under the key an object whose most-specific type conforms
@@ -386,6 +402,7 @@ formula guard and is read as an ordinary `holds` condition.
 | FR-125-AC-20 | A key only an operation creates. Over AC-14's subject (`P1` of `Counter`, universe `[c, d, z]`, `make` creating a `Counter` with value 1 under `z`), the parameter `v: M::Counter` has the instances `c` and `d` and the excluded keys `[z]`. `forall trace a of M { always holds(v.value @ a = 0) }` settles `proved`, and `exists trace a of M { always holds((v.value = 0) @ a) }` gives the two instances `c` and `d`, each `Witnessed`, and settles `proved`. No instance binding names `z`; states of the evidence and certificates may hold the object `make` creates under it. | Test (TC-3219) |
 | FR-125-AC-21 | Hyper instancing outcomes, decided before any state is explored and never a fault. Each of these holds for a single-existential clause and for a two-universal clause: an overlapping population with no universe gives `RequiresBound` naming it; a subject with an empty `initial` list and bounded universes gives `NoInitialState`, never `NoInstance`; a subject with a non-empty `initial` list whose universe holds only keys no initial state admits gives `NoInstance`, which settles `inconclusive`, never `proved`; member records giving one key two types give `invalid_runtime_input`/`conflicting-identity`. A two-universal clause over two aliases, each subject with an initial state, in which one parameter has an admitted key and the other has none, gives `NoInstance`. Through `native-analyze/1` the single-existential `NoInstance` and `NoInitialState` items report the causes `no-instance` and `no-initial-state`. | Test (TC-3219) |
 | FR-125-AC-22 | Order of two parameters. The model has no operation, the universe of its one population of `Thing` is `[l, k]`, and the one initial state holds a `Thing` under each. For `(v: M::Thing, w: M::Thing)`, `forall trace a of M forall trace b of M { always holds((v = w) @ a) }` is violated at position 0 by the instances `(l, k)` and `(k, l)` only, and reports `v = l`, `w = k`: the instance order is `(l, l)`, `(l, k)`, `(k, l)`, `(k, k)`, the first parameter varying slowest. | Test (TC-3219) |
+| FR-125-AC-23 | `claim_instances` over FR-125-AC-13's populations. With records typed `Animal` and `Dog` under `c` and bounded universes, `ModelSystem::new` admits the subject and the call returns `NotSimulated(ConflictingIdentity)` naming `c` and both types; with those records and the universe of a third overlapping population removed, it returns `NotSimulated(RequiresBound)`. With a universe removed and an empty `initial` list it returns `NotSimulated(RequiresBound)`; with bounded universes and an empty list, `NoInitialState`; with an initial state and no admitted key, `NoInstance`; and over AC-8's populations, `Ok` holding `l` then `s`. | Test (TC-520) |
 
 ## Dependencies
 
