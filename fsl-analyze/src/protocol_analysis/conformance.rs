@@ -402,6 +402,98 @@ pub(crate) fn package_global_recording_item<'a>(
     )
 }
 
+/// Classify package behavior conformance when its checked subject has no
+/// admitted `over` instance. Non-empty package behavior remains unsupported.
+#[implements("FR-125-AC-13", "FR-990-AC-11")]
+pub(crate) fn package_global_behavior_item<'a>(
+    index: fsl_foundation::RequestIndex,
+    input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    binding: crate::analyze::SubjectBinding<'a>,
+    limits: crate::analyze::AnalyzeLimits,
+    protocol: String,
+) -> crate::analyze::AnalyzeItem<'a> {
+    crate::analyze::AnalyzeItem::new(
+        index,
+        fsl_semantics::check::Capability::GlobalConformance,
+        Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        fsl_route::Mode::Bounded,
+        super::manifest::BACKEND_ID,
+        move |_| {
+            let Some(form) = input.evaluator.package_protocol(&protocol) else {
+                return internal_fault();
+            };
+            let memory = match fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(
+                &form,
+                &[],
+            ) {
+                Ok(memory) => memory,
+                Err(_) => return internal_fault(),
+            };
+            let program = match fsl_eval::simulation::protocol::PackageProtocolProgram::with_memory(
+                &input,
+                form,
+                memory,
+            ) {
+                Ok(program) => program,
+                Err(_) => {
+                    return crate::analyze::EngineReport::Refused(
+                        crate::analyze::Refusal::Unsupported(
+                            filament_semantic_value::catalog::CatalogCode::new(
+                                "unsupported_construct",
+                                "not-yet-implemented",
+                            ),
+                        ),
+                    );
+                }
+            };
+            let simulation = fsl_eval::simulation::model::ModelSimulationRequest {
+                input: input.clone(),
+                packages: binding.packages,
+                normalization: limits.normalization,
+                snapshots: binding.snapshots,
+                initial: binding.initial.clone(),
+                universes: binding.universes.clone(),
+                observation: limits.observation,
+                expansion: fsl_eval::simulation::model::ExpansionLimits {
+                    max_candidates: u64::MAX,
+                },
+                meter: limits.accounting,
+                emit: limits.emit,
+            };
+            let model = match fsl_eval::simulation::model::ModelSystem::new(simulation) {
+                Ok(model) => model,
+                Err(failure) => {
+                    return crate::analyze::EngineReport::Refused(
+                        crate::analyze::admission(&failure),
+                    );
+                }
+            };
+            match model.claim_instances(&program.over_type) {
+                Ok(_) => crate::analyze::EngineReport::Refused(
+                    crate::analyze::Refusal::Unsupported(
+                        filament_semantic_value::catalog::CatalogCode::new(
+                            "unsupported_construct",
+                            "not-yet-implemented",
+                        ),
+                    ),
+                ),
+                Err(fsl_eval::simulation::model::NoClaimInstances::NoInstance) => {
+                    empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance)
+                }
+                Err(fsl_eval::simulation::model::NoClaimInstances::NoInitialState) => {
+                    empty_population_report(index, fsl_replay::InconclusiveCause::NoInitialState)
+                }
+                Err(fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
+                    fsl_eval::simulation::NotSimulated::RequiresBound(_),
+                )) => crate::analyze::EngineReport::Refused(
+                    crate::analyze::Refusal::RequiresBound,
+                ),
+                Err(_) => internal_fault(),
+            }
+        },
+    )
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one recording binds its selected protocol, subject, document, population, and replay limits"

@@ -3695,25 +3695,37 @@ impl<'a> WorkInputs<'_, 'a> {
             (_, Some(Route::SuppliedProtocol(protocol)))
                 if item.kind == Capability::GlobalConformance =>
             {
-                let recording = item
-                    .options
-                    .recording
-                    .as_ref()
-                    .and_then(|reference| self.binding.snapshots.get(reference))
-                    .map(Vec::as_slice);
-                crate::protocol_analysis::conformance::package_global_recording_item(
-                    item.request_index,
-                    crate::protocol_analysis::conformance::PackageRecordingRequest {
-                        input: self.input.input(),
-                        selected_protocol: protocol,
-                        recording_identity: item.options.recording.clone(),
-                        recording,
-                        population: item.options.population.clone(),
-                        incremental: item.options.assessment
-                            == Some(super::super::request::AssessmentMode::Incremental),
-                        replay_limits: self.limits.replay,
-                    },
-                )
+                match item.options.recording.as_ref() {
+                    Some(recording_identity) => {
+                        let recording = self
+                            .binding
+                            .snapshots
+                            .get(recording_identity)
+                            .map(Vec::as_slice);
+                        crate::protocol_analysis::conformance::package_global_recording_item(
+                            item.request_index,
+                            crate::protocol_analysis::conformance::PackageRecordingRequest {
+                                input: self.input.input(),
+                                selected_protocol: protocol,
+                                recording_identity: Some(recording_identity.clone()),
+                                recording,
+                                population: item.options.population.clone(),
+                                incremental: item.options.assessment
+                                    == Some(super::super::request::AssessmentMode::Incremental),
+                                replay_limits: self.limits.replay,
+                            },
+                        )
+                    }
+                    None => {
+                        crate::protocol_analysis::conformance::package_global_behavior_item(
+                            item.request_index,
+                            self.input.input().clone(),
+                            self.binding.clone(),
+                            self.limits,
+                            protocol,
+                        )
+                    }
+                }
             }
             (
                 Some(ItemForm::Temporal(form)),

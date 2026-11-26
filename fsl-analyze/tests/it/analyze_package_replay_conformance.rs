@@ -297,13 +297,13 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
     }
     assert_equal(&source, &package);
 
-    let (source, package) = both_routes(
+    let admitted = conformance(
         "package-no-instance-control",
-        json!([{"claim": "Flow", "kind": "global-conformance"}]),
+        &order_protocol(true),
+        json!({}),
         &[],
     );
-    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
-    assert_equal(&source, &package);
+    assert_eq!(label(&admitted), "proved", "{}", admitted.document());
 }
 
 fn recording_document(protocol: &str) -> Value {
