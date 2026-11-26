@@ -1449,7 +1449,7 @@ extraction_read_type! {
     ExtractionKindAvailabilityRead {
         state: ExtractionAvailabilityStateRead,
         lossy: bool;
-        #[serde(default)]
+        #[serde(default, deserialize_with = "present")]
         reason: Option<String>
     }
 }
@@ -4678,6 +4678,11 @@ mod qsl_3117_deciding_run {
                 "extraction.outcome.availability.state",
                 "/outcome/availability/state",
                 Some(json!("unknown")),
+            ),
+            (
+                "extraction.outcome.availability.reason",
+                "/outcome/availability/reason",
+                Some(Value::Null),
             ),
         ];
         for (expected, pointer, replacement) in cases {
