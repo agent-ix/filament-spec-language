@@ -3,6 +3,8 @@ id: FR-331
 title: "Replay a temporal counterexample over an observed trace"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-specification/FR-181
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
   - target: ix://agent-ix/filament-spec-language/US-010
