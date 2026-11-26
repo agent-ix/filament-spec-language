@@ -7,6 +7,8 @@ relationships:
     type: implements
   - target: ix://agent-ix/filament-spec-language/FR-620
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-281
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-282
@@ -22,6 +24,8 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-651
     type: references
   - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-361
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-352
     type: depends_on
@@ -224,16 +228,22 @@ result-settled item in one place, whatever its verdict.
 
 ### Items over several claim instances
 
-A claim whose `over` parameter binds a population has one instance per
-object of the subject's universe, and the item reports one record for all of
-them. The writer SHALL order the instances by the bound object's universe
-key in FSpec FR-181 key order and SHALL report: the first `refuted`
-instance, when any instance is refuted, with its counterexample and replay;
-otherwise the first instance whose record is not `proved`; otherwise a
-`proved` record, whose certificate covers every instance. A claim is false
-when any instance is false, so a single refutation decides the item, and a
-fixed key order makes the reported instance the same on every run. The
-counterexample names the instance it refutes (FSpec FR-364
+A claim whose `over` parameter binds an object type has one instance per
+admitted key, and a hyper claim with object parameters one per tuple of
+admitted keys, as FR-125 Instancing states (FSpec FR-361, FR-395), not one per
+object of a universe. The item reports one record for all of them. The writer
+SHALL order the instances in FR-125's canonical instance order, not by key
+bytes, and SHALL report: the first `refuted` instance, when any instance is
+refuted, with its counterexample and replay, an earlier instance that is not
+`proved` notwithstanding; otherwise the first instance whose record is not
+`proved`; otherwise a `proved` record, which stands only when every
+instance's record is `proved` and its certificate was checked. An item with
+no instance reports FR-125's `NoInstance` or `NoInitialState`, never a fault.
+Where an engine returns one outcome over all instances, its own ranking
+decides which that is (FR-126 "Bindings and ranking", FR-177 "Instances"). A
+claim is false when any instance is false, so a single refutation decides the
+item, and a fixed order makes the reported instance the same on every run.
+The counterexample names the instance it refutes (FSpec FR-364
 `over_binding`; FSpec FR-393 `instance` for state-graph evidence).
 
 ### Temporal dispositions, values and engine roles
@@ -274,8 +284,8 @@ counterexample names the instance it refutes (FSpec FR-364
 - The `items` array follows the multi-item rules FR-651 gives a run's
   `items`: entries are ordered, each gives exactly one outcome item in that
   order, and one entry's refusal settles only that entry. An analyze item
-  names a claim, and the claim quantifies over every object of the subject's
-  universes, so an analyze item has no `each` population selector.
+  names a claim, and the claim quantifies over every admitted key of the
+  subject (FR-125 Instancing), so an analyze item has no `each` population selector.
 
 ### Categories and exit
 
@@ -307,7 +317,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-6 | In text mode the AC-2 request prints `0 Bounded refuted` as its first line and exits 10. | Test (TC-1581) |
 | FR-621-AC-7 | The temporal clause `Reaches` (`eventually holds(r.level = 2)` under infinite-trace over a record trace subject), still pending at the end of the `finite` samples 0, 1 it is run over through the FR-641 clause-run request, reports `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; a `finite-replay` analyze item naming a temporal clause settles `invalid-request` `inapplicable-kind` with `detail.family` `temporal-trace`, exit 20; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
 | FR-621-AC-8 | Over the Counter subject, the `proved` EN-1 item of `Bounded` carries `certificate.identity` with exactly the members `node_id`, `model` and `ordinal`, `model` the Counter model's identity text; the `refuted` item of `BelowThree` carries `replay.target` `{"state_clause": Q}` with `Q` ending in `BelowThree`; and, both items required, `aggregate` is `incomplete` with one gap for `BelowThree`'s index, `reason` `not-proved`, `result` `refuted`. | Test (TC-2184) |
-| FR-621-AC-9 | Over the Counter subject provisioned with counters `a` at 1, `b` at 0 and `d` at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b` (the first refuted instance in key order, though `a` precedes it and is proved), and the same document run twice writes equal items; the refuted `always possible (value = 0)` item over the one-counter fixture carries `replay.target` `{"state_clause": Q}` with `Q` ending in the claim's declared name, and `replay.reproduced` `true`. | Test (TC-2292) |
+| FR-621-AC-9 | Over the Counter subject provisioned with counters `a` at 1, `b` at 0 and `d` at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b` (the first refuted instance in the instance order, though `a` precedes it and is proved), and the same document run twice writes equal items; the refuted `always possible (value = 0)` item over the one-counter fixture carries `replay.target` `{"state_clause": Q}` with `Q` ending in the claim's declared name, and `replay.reproduced` `true`. | Test (TC-2292) |
 | FR-621-AC-10 | Over the Counter subject, the `proved` item of `Bounded` and the `refuted` item of `BelowThree` each carry `record.settled_by` `result` and `record.backend` `en-1`; the `invalid-request` item of an unknown claim `Missing` carries `record.settled_by` `disposition` and no `backend` member. | Test (TC-2296) |
 | FR-621-AC-11 | Over the Counter subject, the analyze document of `[{"claim": "Bounded"}]` has `last_stage` `S6c`; of `[{"claim": "Bounded"}, {"claim": "BelowThree"}]`, whose refuted item is replayed, `S8`; of `[{"claim": "Bounded", "temporal": {"limits": {"max_states": 2}}}]`, whose item is `incomplete`, `S6c`; and of `[{"claim": "Nothing", "temporal": {"item_kind": "deadlock-freedom"}}]`, whose only item is an `unknown-claim` disposition, `S4`. | Test (TC-2381) |
 | FR-621-AC-12 | A malformed `native-analyze/1` document gives `last_stage` `null`; a program the checker refuses gives `S3`; a snapshot naming the undeclared population `ix://test/counter/nowhere` gives `S4`; and a request cancelled before its first item gives `null`. | Test (TC-2382) |
@@ -321,6 +331,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-20 | For the `command::analyze` request defined in AC-19, item 1 has `request_index` `1`, `claim_name` `ServedIfAcquireIsStronglyFair`, `record.result` `refuted`, and a nonempty `counterexample.loop`. | Test (TC-1581) |
 | FR-621-AC-21 | For the `command::analyze` request defined in AC-19, item 2 has `request_index` `2`, `claim_name` `ServedIfEachAcquireIsStronglyFair`, `record.result` `proved`, and `certificate.accepted` `true`. | Test (TC-1581) |
 | FR-621-AC-22 | For the `command::analyze` request defined in AC-19, the three outcome items have `request_index` `[0, 1, 2]` and `claim_name` `["ServedWithoutFairness", "ServedIfAcquireIsStronglyFair", "ServedIfEachAcquireIsStronglyFair"]` in request order, and the document exits 10. | Test (TC-1581) |
+| FR-621-AC-23 | Over the Counter subject with universe list `[b, a]` and both counters at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b`, the first in universe list order, not `a`, the first in key order. | Test (TC-3219) |
 
 ## Dependencies
 

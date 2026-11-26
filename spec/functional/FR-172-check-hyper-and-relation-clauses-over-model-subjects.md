@@ -104,9 +104,10 @@ pub struct CheckedModelRelation {
   a parameter that has no admitted key, an empty universe included, is
   reported `NoInstance` by FR-125 Instancing, the same as a temporal clause
   or state-graph claim.
-- This requirement does not change the check of a parameter whose type no
-  population of the model overlaps, which S3 refuses. FSpec FR-395 states
-  `NoInstance` for it; the difference is open.
+- S3 SHALL NOT refuse a parameter whose type no population of the model
+  overlaps. The checked parameter then holds no population, the clause has
+  zero instances, and FR-125 Instancing reports `NoInstance` (FSpec FR-395
+  "Object parameters").
 - If an object parameter names a population of an alias the clause does not
   bind, then S3 SHALL refuse `ill_typed` at the parameter (FSpec FR-395).
 
@@ -241,6 +242,7 @@ pub struct CheckedModelRelation {
 | FR-172-AC-8 | With the `Linked` clause of FR-487's Acceptance Criteria, `B` = `(let r = v.next in present(r) and deref(value(r)).l = 1) @ a` checks: `@ a` scopes over the `let`, so the read of `next` and the read of `l` carry `a`. `B` = `deref(value(v.next @ a)).l = 1` refuses `ill_typed` at the `.l` read, which no `@` encloses, and `B` = `present(v.next @ a) and present(v.next)` refuses `ill_typed` at the bare `v.next`. | Test (TC-1264) |
 | FR-172-AC-9 | Through `command::compile` (`native-compile/1`) with the counter-step model selected, the source clause `hyper IgnoreTick using infinite over behaviours (item: CounterModel::Counter) forall trace left of CounterModel forall trace right of CounterModel align skip {} match { left.step.op = right.step.op } { always holds(item.value @ left = item.value @ right) }` gives a `filament-outcome/1` document with `last_stage` `S3`, category `unsupported`, exit code 21, and one diagnostic `unsupported_construct` with cause `expression-form` whose locus is the span of `align skip {}`; no diagnostic has code `invalid_syntax` and `last_stage` is never `S1`. The same source with the list holding one qualified name of an operation of the counter-step model gives no diagnostic at its `align skip` item. | Test (TC-597) |
 | FR-172-AC-10 | Over a model with two populations that overlap `Thing`, one of member type `Lamp` and one of member type `Switch`, both subtypes of `Thing`, a `hyper` clause with the parameter `v: V::Thing` checks, with no `ambiguous_declaration` refusal, and the checked parameter holds the type `Thing` and both populations. A population whose member types are all unrelated to `Thing` is not among them. | Test (TC-3219) |
+| FR-172-AC-11 | Over a model with an object type `Orphan` that no population overlaps, a `hyper` clause with the parameter `v: V::Orphan` and the body `always holds((v = v) @ a)` checks, with no refusal, and the checked parameter holds no population. Its `native-analyze/1` source item, over a subject with an initial state, settles `inconclusive` with cause `no-instance`, never `proved` and never a fault. | Test (TC-3219) |
 
 ## Dependencies
 

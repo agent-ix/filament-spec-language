@@ -5,6 +5,10 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-125
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-128
+    type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-151
+    type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-172
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-176
@@ -15,6 +19,8 @@ relationships:
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-315
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: verifies
 ---
 # TC-3219: Hyper object parameters instance over admitted keys
 
@@ -24,8 +30,9 @@ Verify that a hyper object parameter has one instance per admitted key of the
 populations that overlap its type, and that no route proves, refutes or
 accepts a key that no initial state admits.
 
-Scope: FR-125-AC-19 to FR-125-AC-21, FR-172-AC-10, FR-176-AC-6,
-FR-181-AC-8 to FR-181-AC-10, FR-183-AC-13 and FR-315-AC-59.
+Scope: FR-125-AC-19 to FR-125-AC-22, FR-128-AC-17, FR-151-AC-5,
+FR-172-AC-10, FR-172-AC-11, FR-176-AC-6, FR-176-AC-7, FR-181-AC-8 to
+FR-181-AC-11, FR-183-AC-13, FR-315-AC-59 and FR-621-AC-23.
 
 ## Test Procedure
 
@@ -38,10 +45,13 @@ implementation.
    package selection.
 3. Run FR-176-AC-6's universal clause through the source route and
    `check_hyper`.
-4. Check and run FR-172-AC-10, FR-125-AC-19 and FR-125-AC-20.
-5. Run each FR-125-AC-21 variant.
+4. Check and run FR-172-AC-10, FR-172-AC-11, FR-125-AC-19, FR-125-AC-20 and
+   FR-125-AC-22.
+5. Run each FR-125-AC-21 variant and FR-181-AC-11.
 6. Replay FR-183-AC-13's witness and counterexample, and build FR-315-AC-59's
    identities.
+7. Run FR-176-AC-7 over source and package, FR-128-AC-17's two envelopes,
+   FR-151-AC-5's declaration and FR-621-AC-23's request.
 
 Tag the tests `#[trace("TC-3219", "FR-xxx-AC-n")]` with the criterion each
 asserts.
@@ -57,3 +67,4 @@ asserts.
   states.
 - Step 5: the outcomes of FR-125-AC-21 in its order, none a fault.
 - Step 6: the unadmitted key is refused and the admitted one is not.
+- Step 7: the records, refusal, instance and binding each criterion states.
