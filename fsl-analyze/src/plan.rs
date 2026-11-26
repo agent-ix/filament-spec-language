@@ -580,7 +580,7 @@ fn model_based_test(
         },
         subject,
         expansion: fsl_eval::simulation::model::ExpansionLimits {
-            max_candidates: u64::MAX,
+            max_candidates: 50_000,
         },
         accounting: limits.accounting,
         normalization: limits.normalization,
