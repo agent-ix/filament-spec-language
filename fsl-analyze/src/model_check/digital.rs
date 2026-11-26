@@ -980,7 +980,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     }
 
     /// The decision over every instance (FR-240, FR-126).
-    #[implements("FR-232-AC-3", "FR-240-AC-4")]
+    #[implements("FR-232-AC-3")]
     fn decide(&mut self, automaton: &mut PositionAutomaton) -> Result<ModelCheckOutcome, Halt> {
         let system = self.timed().system();
         let instances = system
