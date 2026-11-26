@@ -58,6 +58,14 @@ Head checked: dfada161883cc6eca32769fe9e69d14f1dbf3828.
 | FND-009 | medium | Arch ruling (2): the kept mixed-race criteria must be marked in the admission table as pending the region route; ADR-038 lists them in Consequences only and omits FR-202-AC-11 and FSpec FR-421-AC-6. | spec/decisions/ADR-038-one-timed-run-layer-and-route-admission.md:264-267 |
 | FND-010 | low | Row E's 'deadline event' lacks 'on origin'; argument E rounds with argument B, which keeps deadlines only from position 0. | spec/decisions/ADR-038-one-timed-run-layer-and-route-admission.md:115,182-194 |
 
+## New findings (disposition pass 2)
+
+Head checked: 1f28bffa4099537db59f78ed16c6f52d15f3dc34.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-011 | low | The pending row's list of kept mixed-race criteria omits FSpec FR-413-AC-8 (a workload refutation with a free delay), which FSpec FR-421 names as pending. | spec/decisions/ADR-038-one-timed-run-layer-and-route-admission.md:117 |
+
 ## Dispositions
 
 | FND | outcome | reason |
@@ -69,3 +77,6 @@ Head checked: dfada161883cc6eca32769fe9e69d14f1dbf3828.
 | FND-005 | fixed | - |
 | FND-006 | fixed | - |
 | FND-007 | fixed | - |
+| FND-008 | fixed | - |
+| FND-009 | fixed | - |
+| FND-010 | fixed | - |
