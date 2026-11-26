@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::{CapacityBinding, RoleBinding};
-use fsl_eval::simulation::model::{PackageModelInput, PendingPackageForm};
+use fsl_eval::simulation::model::{PackageModelInput, PendingClauseForm, PendingPackageForm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
@@ -2719,19 +2719,14 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 note: None,
             })
         };
-        let form = package
-            .hyper_clause_form(&claim)
+        let clause = input
+            .hyper_clause(&claim, crate::plan::MODEL_BASED_POSITIONS)
             .map_err(|refusal| match refusal {
-                fsl_package::BareClauseRefusal::Pending { fact, .. } => pending(fact),
+                PendingClauseForm::Read(fsl_package::BareClauseRefusal::Pending {
+                    fact, ..
+                }) => pending(fact),
                 _ => fault(),
             })?;
-        let world = package.world().map_err(|_| fault())?;
-        let clause = fsl_semantics::check::CheckedHyperClause::of_package_form(
-            form,
-            world.types(),
-            crate::plan::MODEL_BASED_POSITIONS,
-        )
-        .map_err(|_| fault())?;
         use fsl_eval::simulation::model::ModelEvaluator;
         package
             .hyper_reference_literals(&clause)
