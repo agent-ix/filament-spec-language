@@ -1486,6 +1486,7 @@ fn require_tool_on_main_history(tool_root: &Path, runner: &dyn CommandRunner) ->
     Ok(())
 }
 
+#[cfg(test)]
 fn run_with_runner(
     workspace_root: &Path,
     operands: &[OsString],
