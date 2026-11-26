@@ -2574,11 +2574,10 @@ impl<'a> ModelSystem<'a> {
     /// Conflicting identities are rejected by [`Self::new`] before a system
     /// is available.
     #[implements("FR-125-AC-13", "FR-125-AC-21")]
-    pub fn claim_instances(
-        &self,
-        over: &ValueType,
-    ) -> Result<ClaimInstances, NoClaimInstances> {
-        let instances = self.instances(over).map_err(NoClaimInstances::NotSimulated)?;
+    pub fn claim_instances(&self, over: &ValueType) -> Result<ClaimInstances, NoClaimInstances> {
+        let instances = self
+            .instances(over)
+            .map_err(NoClaimInstances::NotSimulated)?;
         if self.initial_base.is_empty() {
             return Err(NoClaimInstances::NoInitialState);
         }

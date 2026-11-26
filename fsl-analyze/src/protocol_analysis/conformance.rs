@@ -6,8 +6,8 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind, SubjectMemory, Tso,
-    live_instance_bound,
+    live_instance_bound, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind,
+    SubjectMemory, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
@@ -510,7 +510,10 @@ pub(crate) fn global_behavior_item<'a>(
                 Err(super::finite_replay::ReplayFault::ClaimInstances(
                     fsl_eval::simulation::model::NoClaimInstances::NoInstance,
                 )) => {
-                    return empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance);
+                    return empty_population_report(
+                        index,
+                        fsl_replay::InconclusiveCause::NoInstance,
+                    );
                 }
                 Err(super::finite_replay::ReplayFault::ClaimInstances(
                     fsl_eval::simulation::model::NoClaimInstances::NoInitialState,
@@ -573,9 +576,7 @@ pub(crate) fn global_behavior_item<'a>(
                     limits.replay,
                     cancel,
                 ) {
-                    crate::analyze::EngineReport::GlobalConformance(report) => {
-                        reports.push(report)
-                    }
+                    crate::analyze::EngineReport::GlobalConformance(report) => reports.push(report),
                     other => return other,
                 }
             }
@@ -588,14 +589,12 @@ pub(crate) fn global_behavior_item<'a>(
                         .is_some_and(|output| output.global.label == "refuted")
                 })
                 .or_else(|| {
-                    reports
-                        .iter()
-                        .position(|report| {
-                            report
-                                .output
-                                .as_ref()
-                                .is_some_and(|output| output.global.label != "proved")
-                        })
+                    reports.iter().position(|report| {
+                        report
+                            .output
+                            .as_ref()
+                            .is_some_and(|output| output.global.label != "proved")
+                    })
                 })
                 .unwrap_or(0);
             crate::analyze::EngineReport::GlobalConformance(reports.remove(selected))
