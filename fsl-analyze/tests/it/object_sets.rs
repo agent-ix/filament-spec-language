@@ -8,6 +8,8 @@
 //! of the expected list is given `age` `i + 1`, and the claim `x.age <= i`
 //! is refuted at the `i`-th instance for each `i < n` and proved at `i = n`.
 //! An excluded key holds no object, so an extra instance changes a verdict.
+//! Liveness is probed with the refuted claims only: it reads the instances in
+//! order and does not show that no further one follows.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,6 +37,7 @@ use fsl_replay::{
 use fsl_semantics::check::HyperForm;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{document_reference, DocumentRef};
+use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
 use crate::analyze_cli_support::{analyze, request_over, Run, Workspace};
@@ -63,6 +66,9 @@ struct Case {
     listed: Named,
     initial: bool,
     make: bool,
+    /// The model declares `Animal` as its only object type, which a timed
+    /// model needs (FR-230-AC-38).
+    single_type: bool,
     over: &'static str,
     expect: Expect,
 }
@@ -77,6 +83,7 @@ const BASE: Case = Case {
     listed: &[("animals", &["a"])],
     initial: true,
     make: false,
+    single_type: false,
     over: "Animal",
     expect: Expect::NoInstance,
 };
@@ -176,7 +183,33 @@ const TWO_POPULATIONS: Case = Case {
     ..BASE
 };
 
-const ALL: &[Case] = &[
+const fn single(case: Case) -> Case {
+    Case {
+        single_type: true,
+        ..case
+    }
+}
+
+/// Two populations of the one object type, listing `c` in both.
+const TIMED_TWO_POPULATIONS: Case = single(Case {
+    populations: &[("P1", &["Animal"]), ("P2", &["Animal"])],
+    held: &[
+        ("P1", &[("d", "Animal"), ("c", "Animal")]),
+        ("P2", &[("c", "Animal"), ("a", "Animal")]),
+    ],
+    ..TWO_POPULATIONS
+});
+
+/// Every case with at least one instance.
+const INSTANCES: &[Case] = &[
+    UNADMITTED_KEY,
+    SUBTYPE_ONLY,
+    CREATED,
+    UNADMITTED_ACROSS,
+    TWO_POPULATIONS,
+];
+/// Every case with none, by the cause FR-125's order reports.
+const CAUSES: &[Case] = &[
     EMPTY_UNIVERSE,
     ONLY_UNADMITTED,
     ORPHAN,
@@ -185,11 +218,15 @@ const ALL: &[Case] = &[
     ORPHAN_NO_INITIAL,
     NO_UNIVERSE,
     CONFLICT,
-    UNADMITTED_KEY,
-    SUBTYPE_ONLY,
-    CREATED,
-    UNADMITTED_ACROSS,
-    TWO_POPULATIONS,
+];
+
+/// The cases a single-object-type model can state, for the timed routes.
+const TIMED_INSTANCES: &[Case] = &[single(UNADMITTED_KEY), single(CREATED)];
+const TIMED_NO_INSTANCE: &[Case] = &[single(EMPTY_UNIVERSE), single(ONLY_UNADMITTED)];
+const TIMED_EARLIER_CAUSES: &[Case] = &[
+    single(NO_INITIAL),
+    single(EMPTY_UNIVERSE_NO_INITIAL),
+    single(NO_UNIVERSE),
 ];
 
 fn operation(name: &str, creates: &[String]) -> Json {
@@ -210,27 +247,41 @@ impl Case {
         }
     }
 
+    /// The case's populations, and the `actors` population a protocol's
+    /// roles range over.
     fn populations(&self) -> Vec<(&str, &[&str])> {
         let mut populations = self.populations.to_vec();
-        populations.push(("actors", &["Other"]));
+        if !self.single_type {
+            populations.push(("actors", &["Other"]));
+        }
         populations
     }
 
     fn held(&self) -> Vec<Held<'static>> {
         let mut held = self.held.to_vec();
-        held.push(("actors", &[("p", "Other")]));
+        if !self.single_type {
+            held.push(("actors", &[("p", "Other")]));
+        }
         held
     }
 
     fn listed(&self) -> Vec<(&str, &[&str])> {
         let mut listed = self.listed.to_vec();
-        listed.push(("actors", &["p"]));
+        if !self.single_type {
+            listed.push(("actors", &["p"]));
+        }
         listed
     }
 
     fn model(&self) -> Vec<u8> {
         let mut model: Json = serde_json::from_slice(&document(&self.populations())).expect("JSON");
-        for ty in model["types"].as_array_mut().expect("types") {
+        let types = model["types"].as_array_mut().expect("types");
+        if self.single_type {
+            types.retain(|ty| {
+                ty["kind"]["name"] != "object_type" || ty["identity"] == json!(ident("Animal"))
+            });
+        }
+        for ty in types {
             if ty["identity"] == json!(ident("Animal")) {
                 ty["fields"].as_array_mut().expect("fields").truncate(1);
                 let mut operations = vec![operation("idle", &[])];
@@ -454,6 +505,28 @@ fn judge(case: &Case, i: usize, document: &Json, at: usize) -> Option<String> {
     ))
 }
 
+/// The exact route over no instance: unsupported, with no verdict,
+/// certificate or counterexample (FR-201).
+fn check_exact_unsupported(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let over = case.over;
+        let unit = untimed_unit(
+            "",
+            &format!(
+                "terminal Done using v on M when {{ true }};\nprobabilistic C0 using t0 on M over (x: M::{over}) under every scheduler on origin {{ probability >= 0.5 [ eventually holds(true) ] }}\n"
+            ),
+        );
+        let item = json!({"claim": "C0", "probabilistic": {"evidence": "exact"}});
+        let document = case.analyze(&unit, vec![item]).document();
+        let item = &document["items"][0];
+        if item["record"]["result"] != "unsupported" || !item["counterexample"].is_null() {
+            wrong.push(format!("{}: {}", case.name, short(item)));
+        }
+    }
+    assert_clean(wrong);
+}
+
 fn assert_clean(wrong: Vec<String>) {
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
 }
@@ -461,7 +534,19 @@ fn assert_clean(wrong: Vec<String>) {
 fn check_route(route: Route, cases: &[Case]) {
     let mut wrong = Vec::new();
     for case in cases {
-        let probes = case.probes();
+        let mut probes = case.probes();
+        if case.instances().is_empty() {
+            // A hyper body names its trace, and `Orphan` has no field.
+            if matches!(
+                route,
+                Route::SingleExistential | Route::ForallForall | Route::ForallExists
+            ) {
+                probes = vec![(0, "x = x".to_owned())];
+            }
+        } else if matches!(route, Route::Liveness) {
+            // Only the refuted probes: see the module note on liveness.
+            probes.pop();
+        }
         let claims: String = probes
             .iter()
             .map(|(i, p)| route.claim(&format!("C{i}"), case.over, p))
@@ -599,7 +684,12 @@ fn check_conformance(cases: &[Case]) {
                     None => result == "proved",
                 };
                 if !right {
-                    wrong.push(format!("{} probe {i}: {}", case.name, short(item)));
+                    wrong.push(format!(
+                        "{} probe {i}: {} {}",
+                        case.name,
+                        short(item),
+                        short(&document["diagnostics"])
+                    ));
                 }
             } else {
                 wrong.extend(judge(case, i, &document, 0));
@@ -687,7 +777,7 @@ fn spells(expect: Expect, seen: &str) -> bool {
         Expect::Instances(_) => false,
         Expect::NoInstance => seen.contains("NoInstance"),
         Expect::NoInitialState => seen.contains("NoInitialState"),
-        Expect::Conflict => seen.contains("ConflictingIdentity"),
+        Expect::Conflict => seen.contains("conflicting-identity"),
         Expect::RequiresBound => seen.contains("RequiresBound"),
     }
 }
@@ -910,11 +1000,12 @@ fn check_plan_policies(cases: &[Case]) {
     assert_clean(wrong);
 }
 
-/// The SMT temporal encoder: what it refuses over an empty set, and the
-/// script it writes otherwise.
-fn check_smt_temporal(cases: &[Case]) {
+/// The SMT temporal encoder: each case with the refusal FR-315's ordered
+/// table gives it, or `None` where it writes a script. No solver is run, so
+/// the instance list itself is not read back.
+fn check_smt_temporal(cases: &[(Case, Option<&str>)]) {
     let mut wrong = Vec::new();
-    for case in cases {
+    for (case, refusal) in cases {
         let over = case.over;
         let p = if case.instances().is_empty() {
             "true"
@@ -930,16 +1021,13 @@ fn check_smt_temporal(cases: &[Case]) {
             SmtQueryKind::InductionBase { depth: 1 },
             &SmtEncodingLimits::default(),
         );
-        match (case.expect, encoded) {
-            (Expect::Instances(_), Ok(script)) => {
-                println!("{}\n{}", case.name, String::from_utf8_lossy(&script));
-            }
-            (expect, Err(refusal)) if spells(expect, &format!("{refusal:?}")) => {}
-            (_, other) => wrong.push(format!(
-                "{}: {:?}",
-                case.name,
-                other.map(|script| script.len())
-            )),
+        let seen = format!("{:?}", encoded.map(|script| script.len()));
+        let right = match refusal {
+            Some(name) => seen.starts_with("Err(") && seen.contains(name),
+            None => seen.starts_with("Ok("),
+        };
+        if !right {
+            wrong.push(format!("{}: expected {refusal:?}, got {seen}", case.name));
         }
     }
     assert_clean(wrong);
@@ -953,7 +1041,7 @@ fn check_hyper_library(cases: &[Case]) {
     for case in cases {
         let over = case.over;
         let p = if case.instances().is_empty() {
-            "true".to_owned()
+            "x = x".to_owned()
         } else {
             "x.age <= 9".to_owned()
         };
@@ -1018,75 +1106,277 @@ fn check_hyper_library(cases: &[Case]) {
     assert_clean(wrong);
 }
 
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
 #[test]
-fn zz_temporal() {
-    check_route(Route::Temporal, ALL);
+fn temporal_ranges_over_the_admitted_keys() {
+    check_route(Route::Temporal, INSTANCES);
 }
+
+#[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13", "FSpec-FR-361-AC-8")]
+#[trace("TC-520", "FSpec-FR-361-AC-14", "FSpec-FR-361-AC-16")]
 #[test]
-fn zz_liveness() {
-    check_route(Route::Liveness, ALL);
+fn temporal_names_why_there_is_no_instance() {
+    check_route(Route::Temporal, CAUSES);
 }
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
 #[test]
-fn zz_graph() {
-    check_route(Route::StateGraph, ALL);
+fn liveness_binds_the_instances_in_order() {
+    check_route(Route::Liveness, INSTANCES);
 }
+
+#[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13", "FSpec-FR-361-AC-8")]
+#[trace("TC-520", "FSpec-FR-361-AC-14", "FSpec-FR-361-AC-16")]
 #[test]
-fn zz_hp5() {
-    check_route(Route::SingleExistential, ALL);
+fn liveness_names_why_there_is_no_instance() {
+    check_route(Route::Liveness, CAUSES);
 }
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
 #[test]
-fn zz_hpaa() {
-    check_route(Route::ForallForall, ALL);
+fn state_graph_ranges_over_the_admitted_keys() {
+    check_route(Route::StateGraph, INSTANCES);
 }
+
+#[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13", "FSpec-FR-361-AC-8")]
+#[trace("TC-520", "FSpec-FR-361-AC-14", "FSpec-FR-361-AC-16")]
 #[test]
-fn zz_hpae() {
-    check_route(Route::ForallExists, ALL);
+fn state_graph_names_why_there_is_no_instance() {
+    check_route(Route::StateGraph, CAUSES);
 }
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
 #[test]
-fn zz_zone() {
-    check_route(Route::Zone, ALL);
+fn state_graph_library_lists_the_instances_its_checker_accepts() {
+    check_state_graph_library(INSTANCES);
 }
+
+#[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13")]
 #[test]
-fn zz_digital() {
-    check_route(Route::Digital, ALL);
+fn state_graph_library_names_why_there_is_no_instance() {
+    check_state_graph_library(CAUSES);
 }
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
 #[test]
-fn zz_tgraph() {
-    check_route(Route::TimedStateGraph, ALL);
+fn closure_checker_accepts_the_certificate_over_the_instances() {
+    check_certificates("always", INSTANCES);
 }
+
+#[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13")]
 #[test]
-fn zz_exact() {
-    check_probabilistic(Probabilistic::Exact, ALL);
+fn closure_checker_names_why_there_is_no_instance() {
+    check_certificates("always", CAUSES);
 }
+
+#[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13")]
 #[test]
-fn zz_statistical() {
-    check_probabilistic(Probabilistic::Statistical, ALL);
+fn component_checker_names_why_there_is_no_instance() {
+    check_certificates("eventually", CAUSES);
 }
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
 #[test]
-fn zz_conformance() {
-    check_conformance(ALL);
+fn hp5_ranges_over_a_subtype_population() {
+    check_route(Route::SingleExistential, &[SUBTYPE_ONLY]);
 }
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20")]
 #[test]
-fn zz_closure() {
-    check_certificates("always", ALL);
+#[ignore = "QSL-3408: HP-5 instances universe keys no initial state admits (FR-125-AC-19, AC-20)"]
+fn hp5_excludes_unadmitted_keys() {
+    check_route(Route::SingleExistential, &[UNADMITTED_KEY, CREATED]);
 }
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
 #[test]
-fn zz_components() {
-    check_certificates("eventually", ALL);
+#[ignore = "QSL-3408: a hyper parameter over several populations is refused ambiguous (FR-172-AC-10)"]
+fn hp5_ranges_over_several_populations() {
+    check_route(
+        Route::SingleExistential,
+        &[UNADMITTED_ACROSS, TWO_POPULATIONS],
+    );
 }
+
+#[trace("TC-3219", "FR-125-AC-21", "FR-172-AC-11")]
 #[test]
-fn zz_graph_library() {
-    check_state_graph_library(ALL);
+fn hp5_names_why_there_is_no_instance() {
+    check_route(Route::SingleExistential, CAUSES);
 }
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
 #[test]
-fn zz_plan() {
-    check_plan_policies(ALL);
+fn hyper_ranges_over_a_subtype_population() {
+    check_route(Route::ForallForall, &[SUBTYPE_ONLY]);
+    check_route(Route::ForallExists, &[SUBTYPE_ONLY]);
 }
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20")]
 #[test]
-fn zz_smt() {
-    check_smt_temporal(ALL);
+#[ignore = "QSL-3408: hyper clauses instance universe keys no initial state admits (FR-125-AC-19, AC-20)"]
+fn hyper_excludes_unadmitted_keys() {
+    check_route(Route::ForallForall, &[UNADMITTED_KEY, CREATED]);
+    check_route(Route::ForallExists, &[UNADMITTED_KEY, CREATED]);
 }
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
 #[test]
-fn zz_hyper_library() {
-    check_hyper_library(ALL);
+#[ignore = "QSL-3408: a hyper parameter over several populations is refused ambiguous (FR-172-AC-10)"]
+fn hyper_ranges_over_several_populations() {
+    check_route(Route::ForallForall, &[UNADMITTED_ACROSS, TWO_POPULATIONS]);
+    check_route(Route::ForallExists, &[UNADMITTED_ACROSS, TWO_POPULATIONS]);
+}
+
+#[trace("TC-3219", "FR-125-AC-21", "FR-172-AC-11")]
+#[test]
+fn hyper_names_why_there_is_no_instance() {
+    check_route(Route::ForallForall, CAUSES);
+    check_route(Route::ForallExists, CAUSES);
+}
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20", "FR-125-AC-21")]
+#[test]
+fn hyper_smt_and_product_checker_take_only_instances() {
+    check_hyper_library(INSTANCES);
+    check_hyper_library(CAUSES);
+}
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-14")]
+#[test]
+fn zone_ranges_over_the_admitted_keys() {
+    check_route(Route::Zone, TIMED_INSTANCES);
+    check_route(Route::Zone, &[TIMED_TWO_POPULATIONS]);
+}
+
+#[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-16")]
+#[test]
+fn zone_names_the_causes_before_instancing() {
+    check_route(Route::Zone, TIMED_EARLIER_CAUSES);
+}
+
+#[trace("TC-520", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
+#[test]
+#[ignore = "QSL-3484: en-6 proves a claim over no instance (FR-125-AC-7)"]
+fn zone_reports_no_instance() {
+    check_route(Route::Zone, TIMED_NO_INSTANCE);
+}
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-14")]
+#[test]
+fn digital_ranges_over_the_admitted_keys() {
+    check_route(Route::Digital, TIMED_INSTANCES);
+    check_route(Route::Digital, &[TIMED_TWO_POPULATIONS]);
+}
+
+#[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-16")]
+#[test]
+fn digital_names_the_causes_before_instancing() {
+    check_route(Route::Digital, TIMED_EARLIER_CAUSES);
+}
+
+#[trace("TC-520", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
+#[test]
+#[ignore = "QSL-3484: en-1 digital clocks proves a claim over no instance (FR-125-AC-7)"]
+fn digital_reports_no_instance() {
+    check_route(Route::Digital, TIMED_NO_INSTANCE);
+}
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-14")]
+#[test]
+fn timed_state_graph_ranges_over_the_admitted_keys() {
+    check_route(Route::TimedStateGraph, TIMED_INSTANCES);
+}
+
+#[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13", "FSpec-FR-361-AC-8")]
+#[trace("TC-520", "FSpec-FR-361-AC-16")]
+#[test]
+fn timed_state_graph_names_why_there_is_no_instance() {
+    check_route(Route::TimedStateGraph, TIMED_NO_INSTANCE);
+    check_route(Route::TimedStateGraph, TIMED_EARLIER_CAUSES);
+}
+
+#[trace("TC-520", "FR-125-AC-8")]
+#[test]
+fn exact_binds_the_one_admitted_key() {
+    check_probabilistic(Probabilistic::Exact, &[UNADMITTED_KEY]);
+}
+
+#[trace("TC-636", "FR-201-AC-30")]
+#[test]
+fn exact_is_unsupported_over_no_instance() {
+    check_exact_unsupported(&[EMPTY_UNIVERSE, ONLY_UNADMITTED, ORPHAN]);
+}
+
+#[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-14")]
+#[test]
+fn exact_refuses_before_instancing() {
+    check_probabilistic(Probabilistic::Exact, &[NO_UNIVERSE, CONFLICT]);
+}
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
+#[test]
+fn statistical_tests_each_admitted_key() {
+    check_probabilistic(Probabilistic::Statistical, INSTANCES);
+}
+
+#[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-14", "FSpec-FR-361-AC-16")]
+#[test]
+fn statistical_names_the_causes_before_instancing() {
+    check_probabilistic(
+        Probabilistic::Statistical,
+        &[
+            NO_INITIAL,
+            EMPTY_UNIVERSE_NO_INITIAL,
+            ORPHAN_NO_INITIAL,
+            NO_UNIVERSE,
+            CONFLICT,
+        ],
+    );
+}
+
+#[trace("TC-2532", "FR-896-AC-7")]
+#[test]
+fn conformance_checks_each_admitted_key() {
+    check_conformance(INSTANCES);
+}
+
+#[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13", "FSpec-FR-361-AC-8")]
+#[trace("TC-520", "FSpec-FR-361-AC-14", "FSpec-FR-361-AC-16")]
+#[test]
+#[ignore = "QSL-3507: global conformance fails established-invariant-broken over no instance (FR-125-AC-13)"]
+fn conformance_names_why_there_is_no_instance() {
+    check_conformance(CAUSES);
+}
+
+#[trace("TC-2862", "FR-1012-AC-8")]
+#[test]
+fn plan_policy_monitors_each_admitted_key() {
+    check_plan_policies(&[SUBTYPE_ONLY, TWO_POPULATIONS]);
+}
+
+#[trace("TC-2862", "FR-1012-AC-8")]
+#[test]
+#[ignore = "QSL-3323: plan policy monitors universe keys no initial state admits (FR-1012-AC-8)"]
+fn plan_policy_monitors_no_excluded_key() {
+    check_plan_policies(&[UNADMITTED_KEY, UNADMITTED_ACROSS]);
+}
+
+#[trace("TC-900", "FR-315-AC-21")]
+#[test]
+fn smt_temporal_refuses_in_its_table_order() {
+    check_smt_temporal(&[
+        (EMPTY_UNIVERSE, Some("NoInstance")),
+        (ORPHAN, Some("NoInstance")),
+        (ONLY_UNADMITTED, Some("ObjectLifecycle")),
+        (NO_INITIAL, Some("NoInitialState")),
+        (EMPTY_UNIVERSE_NO_INITIAL, Some("NoInitialState")),
+        (ORPHAN_NO_INITIAL, Some("NoInitialState")),
+        (NO_UNIVERSE, Some("NoInitialState")),
+        (CONFLICT, Some("conflicting-identity")),
+        (UNADMITTED_KEY, Some("ObjectLifecycle")),
+        (SUBTYPE_ONLY, None),
+        (CREATED, Some("ObjectLifecycle")),
+        (UNADMITTED_ACROSS, Some("ObjectLifecycle")),
+        (TWO_POPULATIONS, Some("ConstantName")),
+    ]);
 }
