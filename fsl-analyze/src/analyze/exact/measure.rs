@@ -443,10 +443,7 @@ pub(super) fn run(
             value: accepted.value().clone(),
             side: accepted.side(),
         });
-        let binding = binding.map(|bound| ExactBinding {
-            population: bound.instance.population.node,
-            key: bound.instance.key,
-        });
+        let binding = binding.map(|bound| bound.reference);
         let extremum = match optimization {
             ProbabilityObjective::Maximum => Some(Extremum::Max),
             ProbabilityObjective::Minimum => Some(Extremum::Min),
@@ -706,10 +703,7 @@ fn finish_measure_interval(
         value: accepted.value().clone(),
         side: accepted.side(),
     });
-    let binding = binding.map(|bound| ExactBinding {
-        population: bound.instance.population.node.clone(),
-        key: bound.instance.key.clone(),
-    });
+    let binding = binding.map(|bound| bound.reference.clone());
     let extremum = match optimization {
         ProbabilityObjective::Maximum => Some(Extremum::Max),
         ProbabilityObjective::Minimum => Some(Extremum::Min),
