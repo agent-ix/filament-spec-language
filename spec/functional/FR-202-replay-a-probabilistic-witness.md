@@ -19,6 +19,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-1043
     type: references
+  - target: ix://agent-ix/filament-specification/FR-413
+    type: depends_on
 ---
 # FR-202: Replay a probabilistic witness
 
