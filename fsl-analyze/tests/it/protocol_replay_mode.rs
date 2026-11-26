@@ -2455,9 +2455,7 @@ fn a_cancel_in_nested_repeats_cancels_per_iteration_of_each() {
     let placed = |message: &str| looped("send", "Placed", "Buyer", message);
     let got = |message: &str| looped("receive", "Got", "Seller", message);
     let assert_all_satisfied = |item: &Value, count: usize| {
-        let prefixes = item["prefixes"]
-            .as_array()
-            .unwrap_or_else(|| panic!("prefixes: {item}"));
+        let prefixes = item["prefixes"].as_array().expect("prefixes");
         assert_eq!(prefixes.len(), count, "{item}");
         for prefix in prefixes {
             for node in [NESTED_LEFT, NESTED_RIGHT] {
@@ -2751,7 +2749,9 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
             &[(4, 5), (11, 12)],
         );
         assert_source_assessment_pair(&source, &recording, &item);
-        let prefixes = item["prefixes"].as_array().expect("prefixes");
+        let prefixes = item["prefixes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("prefixes: {item}"));
         assert_eq!(prefixes.len(), 14, "{outstanding}: {item}");
         for prefix in prefixes {
             for node in [NESTED_LEFT, NESTED_RIGHT] {
@@ -2820,7 +2820,9 @@ fn an_unobserved_choice_predecessor_stays_undecided_open_and_closed() {
             assessed_item("incremental"),
         )
         .item(0);
-        let prefixes = item["prefixes"].as_array().expect("prefixes");
+        let prefixes = item["prefixes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("prefixes: {item}"));
         assert_eq!(prefixes.len(), 1, "{item}");
         assert_eq!(prefixes[0]["obligations"], item["obligations"], "{item}");
         let obligation = prefixes[0]["obligations"]
