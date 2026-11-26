@@ -7,6 +7,7 @@
 use super::*;
 use filament_exact::{Charge, ChargePoint};
 use fsl_eval::value::{BinderCharges, ChargeAmounts, BINDER_ACCOUNTING_VERSION};
+use ix_trace_rs::implements;
 
 const COUNTERS: [LimitKind; 10] = [
     LimitKind::IntegerBits,
@@ -23,6 +24,18 @@ const COUNTERS: [LimitKind; 10] = [
 
 fn usage(meter: &Meter) -> [u64; 10] {
     COUNTERS.map(|kind| meter.consumed(kind))
+}
+
+#[implements("FR-520-AC-10")]
+fn is_workspace_source_file(path: &std::path::Path, workspace_root: &std::path::Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "rs")
+        && path
+            .strip_prefix(workspace_root)
+            .is_ok_and(|relative| {
+                relative
+                    .components()
+                    .any(|component| component.as_os_str() == "src")
+            })
 }
 
 fn run(
@@ -518,14 +531,34 @@ fn the_retired_state_module_and_its_exports_do_not_exist() {
     // Other modules declare their own `evaluate_v2` (temporal result
     // authentication) and `ACCOUNTING_VERSION` (composed binding work); the
     // retired items are the ones of the deleted `state` module.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .canonicalize()
+        .expect("workspace root resolves");
     assert!(!root.join("src/state.rs").exists() && !root.join("src/state").exists());
     let lib = std::fs::read_to_string(root.join("src/lib.rs")).expect("lib.rs reads");
     assert!(
         !lib.contains("mod state;"),
         "the root crate declares no state module"
     );
-    let mut stack = vec![root];
+    let nested_checkout = tempfile::tempdir().expect("checkout path fixture");
+    let nested_root = nested_checkout.path().join("src/checkout");
+    let nested_test = nested_root.join("tests/it/model.rs");
+    std::fs::create_dir_all(nested_test.parent().expect("test parent exists"))
+        .expect("fixture directories create");
+    std::fs::write(&nested_test, "// test outside crate source\n")
+        .expect("fixture source writes");
+    assert!(
+        nested_test
+            .components()
+            .any(|component| component.as_os_str() == "src"),
+        "the fixture path has an outer src component"
+    );
+    assert!(
+        !is_workspace_source_file(&nested_test, &nested_root),
+        "a test path outside the workspace's src directories is not scanned"
+    );
+    let mut stack = vec![root.clone()];
     let mut scanned = 0_usize;
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).expect("directory reads") {
@@ -535,8 +568,7 @@ fn the_retired_state_module_and_its_exports_do_not_exist() {
                 if !matches!(name, "target" | ".git" | "fuzz") {
                     stack.push(path);
                 }
-            } else if path.extension().is_some_and(|ext| ext == "rs")
-                && path.components().any(|c| c.as_os_str() == "src")
+            } else if is_workspace_source_file(&path, &root)
                 && name != "state_compensation.rs"
             {
                 let text = std::fs::read_to_string(&path).expect("source reads");
