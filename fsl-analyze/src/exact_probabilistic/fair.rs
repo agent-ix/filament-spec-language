@@ -167,6 +167,7 @@ pub fn maximal_fair_end_components(
 /// states, with a constraint's enabledness read from every action of the
 /// unrestricted graph. This is FR-200's `U` for an infimum: `allowed` holds the
 /// non-target states, so a component that runs through a target is none.
+#[implements("FR-200-AC-2", "FR-200-AC-5")]
 pub(super) fn fair_components_within(
     product: &ProbProduct,
     graph: &Graph<'_>,
