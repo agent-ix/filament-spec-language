@@ -2487,6 +2487,7 @@ fn an_unknown_terminal_keeps_a_possible_witness_unchecked() {
     );
     let world = counter_kernel_world(SECOND_ALIAS, &body);
     let claim = world.claim("AlwaysTrue");
+    let over = bound_to(&world, &["c"], "c");
     let request = world.request(&["c"], vec![world.item("AlwaysTrue")], no_samples());
     let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
         let StateGraphOutcome::WitnessedUnchecked { paths, .. } = &instance.outcome else {
@@ -2498,7 +2499,7 @@ fn an_unknown_terminal_keeps_a_possible_witness_unchecked() {
         let witness = paths.first().expect("one initial-state witness");
         Ok(world.replay_witness(
             claim,
-            instance.over.clone(),
+            Some(over.clone()),
             witness.path.clone(),
             witness.source.clone(),
             &["c"],
@@ -2538,7 +2539,6 @@ fn an_unknown_terminal_refuses_a_no_witness_possible_item_as_undecided() {
         "possible Never using v over (x: M::Vault) { false }",
         "function narrow using v(x: Integer): Int[0, 0] pure { x }\n",
     );
-    let claim = world.claim("Never");
     let request = world.request(&["v"], vec![world.item("Never")], no_samples());
     let settled = check_and_settle_state_graph(request, &Cancel::new(), |_| {
         panic!("a no-witness item has no evidence to replay")
@@ -2586,6 +2586,7 @@ fn an_intended_terminal_alias_settles_a_possible_item_with_undefined_sibling() {
         "",
     );
     let claim = world.claim("AlwaysTrue");
+    let over = bound_to(&world, &["v"], "v");
     let request = world.request(&["v"], vec![world.item("AlwaysTrue")], no_samples());
     let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
         let StateGraphOutcome::Witnessed { paths, .. } = &instance.outcome else {
@@ -2597,7 +2598,7 @@ fn an_intended_terminal_alias_settles_a_possible_item_with_undefined_sibling() {
         let witness = paths.first().expect("one initial-state witness");
         Ok(world.replay_witness(
             claim,
-            instance.over.clone(),
+            Some(over.clone()),
             witness.path.clone(),
             witness.source.clone(),
             &["v"],
