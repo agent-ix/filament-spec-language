@@ -1862,6 +1862,87 @@ fn an_item_with_no_probabilistic_member_takes_every_default() {
     assert_eq!(request["limits"]["max_samples"], 1_u64 << 24, "{item}");
 }
 
+/// What `Eventually`'s decoded certificate holds, written from the source and
+/// the spec: the claim's identity, and ADR-028 §15.4's values under `Even`
+/// (`391/400` at the start, `17/20` after one loss, 1 once delivered and 0
+/// after two losses; FR-201-AC-12 states the same two exact values) at
+/// FR-196's product keys of the one message `m`.
+fn assert_decoded_eventually_certificate(decoded: &fsl_replay::ProbabilityCertificateDocument) {
+    assert_eq!(
+        decoded.identity.model().map(|model| model.as_str()),
+        Some("test/link")
+    );
+    assert_eq!(decoded.identity.ordinal(), 0);
+    let node = fsl_foundation::node_wire::node_key_to_json(decoded.identity.node())
+        .expect("the claim node key writes");
+    assert_eq!(node["package"], "analyze-unit", "{node}");
+    assert_eq!(node["ordinal"], 0, "{node}");
+    for (index, segment) in ["claim", "probabilistic_claim", "Eventually"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(node["path"][index], segment, "{node}");
+    }
+    assert_eq!(
+        decoded.optimization,
+        fsl_replay::ProbabilityObjective::Workload
+    );
+    assert!(decoded.reward.is_none());
+    assert!(decoded.timed.is_none());
+    assert!(decoded.policy.is_none());
+
+    // The `(delivered, attempts)` of `m` that a product key names.
+    let state_of = |key: &ProbabilityProductKey| -> (bool, String) {
+        let key: Value =
+            serde_json::from_slice(key.as_bytes()).expect("a canonical product key is JSON");
+        assert_eq!(key[0], "filament.probability-product-key/v1", "{key}");
+        assert_eq!(key[1]["identity"], "m", "{key}");
+        let fields = &key[4][1]["semantic"]["entries"][0]["value"]["entries"][0]["value"]["fields"];
+        assert_eq!(fields[0]["name"], "delivered", "{key}");
+        assert_eq!(fields[1]["name"], "attempts", "{key}");
+        (
+            fields[0]["value"]["value"]
+                .as_bool()
+                .expect("delivered is a Boolean"),
+            fields[1]["value"]["value"]
+                .as_str()
+                .expect("attempts is an integer")
+                .to_owned(),
+        )
+    };
+    let rational = |numerator: i64, denominator: i64| {
+        filament_exact::Rational::new(
+            filament_exact::Integer::from(numerator),
+            filament_exact::Integer::from(denominator),
+        )
+        .expect("a nonzero denominator")
+    };
+    let expected = [
+        ((false, "0"), rational(391, 400)),
+        ((false, "1"), rational(17, 20)),
+        ((false, "2"), rational(0, 1)),
+        ((true, "1"), rational(1, 1)),
+        ((true, "2"), rational(1, 1)),
+    ]
+    .into_iter()
+    .map(|((delivered, attempts), value)| ((delivered, attempts.to_owned()), value))
+    .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(decoded.values.len(), expected.len());
+    let values = decoded
+        .values
+        .iter()
+        .map(|row| (state_of(&row.state), row.value.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values, expected);
+    let mut targets: Vec<_> = decoded.targets.iter().map(state_of).collect();
+    targets.sort();
+    assert_eq!(
+        targets,
+        [(true, "1".to_owned()), (true, "2".to_owned())],
+        "the targets are the delivered states"
+    );
+}
+
 /// FR-410, FR-741, FR-322, FSpec FR-412: a real statistical `measured` item's
 /// `verdict` validates against FSpec's backend-provider schema
 /// (`StatisticalVerdict`), and the exact `proved` item's certificate identity
@@ -1936,12 +2017,11 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
         .expect("the emitted certificate passes the strict reader");
     let rewritten = fsl_replay::write_probability_certificate(&decoded, limits, &cancel)
         .expect("the admitted certificate writes canonically");
-    let read_again = fsl_replay::read_probability_certificate(&rewritten, limits, &cancel)
-        .expect("the canonical rewrite passes the strict reader");
     assert_eq!(
-        read_again, decoded,
-        "certificate values survive the round trip"
+        rewritten, certificate_bytes,
+        "the canonical rewrite is the emitted certificate, byte for byte"
     );
+    assert_decoded_eventually_certificate(&decoded);
     assert_eq!(
         certificate["document"]["identity"], certificate["identity"],
         "{item}"
