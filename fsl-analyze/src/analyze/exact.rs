@@ -618,6 +618,7 @@ fn bounded_monitor_failure(
 
 /// Dyadic refinement reached its maximum precision with the threshold still inside
 /// `[lower, upper]`.
+#[implements("FR-203-AC-2")]
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
     settled(
         &ExactProbBuildIssue::PrecisionBudget { lower, upper },
