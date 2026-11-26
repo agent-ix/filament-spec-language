@@ -21,7 +21,7 @@ use fsl_eval::fairness::{Analysis, Outcome};
 use fsl_eval::simulation::model::states_non_zeno;
 use fsl_replay::{
     AcceptanceSet, CertEdge, CertNode, ComponentReason, Components, DivergenceWitness,
-    DivergentTarget, LuBounds, NonZeno, ProductMark, SilentMove,
+    DivergentTarget, LuBounds, NonZeno, ProductMark, SilentMove, UNDEFINED_POSITION_STATE,
 };
 use num_bigint::BigInt;
 
@@ -90,7 +90,10 @@ impl Run<'_, '_, '_> {
                     .map_err(|_| Halt::Refusal(ZoneCheckRefusal::Fault("state-key")))?;
                 nodes.push(CertNode {
                     state_key,
-                    automaton_state: vertex.q.index(),
+                    automaton_state: match vertex.undefined {
+                        Some(_) => UNDEFINED_POSITION_STATE,
+                        None => vertex.q.index(),
+                    },
                     zone: core_zone(&vertex.zone)?,
                     locked: false,
                     product: Some(ProductMark {

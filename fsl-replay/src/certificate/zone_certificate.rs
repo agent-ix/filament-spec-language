@@ -271,6 +271,12 @@ pub struct RefinementIdentity {
     pub abstract_package: EmittedPackage,
 }
 
+/// The `automaton_state` of a liveness-product node past an undefined
+/// reading (FR-245): no claim automaton state, since the claim is read no
+/// further. The node is in every automaton acceptance set, so the component
+/// reasons show that no fair behaviour passes through the reading.
+pub const UNDEFINED_POSITION_STATE: usize = u32::MAX as usize;
+
 /// What a node of FR-240's liveness product carries beyond a search
 /// node: the instance whose claim automaton it reads, and how it was
 /// entered, which places it in the product's acceptance sets.
@@ -2285,6 +2291,10 @@ impl<O> Checker<'_, '_, O> {
         }
         if self.window.is_none() && self.live.is_none() {
             return listed == 0 && q == 0;
+        }
+        // Past an undefined reading both name the one such position.
+        if (listed == UNDEFINED_POSITION_STATE) != (q == UNDEFINED_POSITION_STATE) {
+            return false;
         }
         match (self.bound.get(&listed), self.binds.get(&q)) {
             (Some(&known), _) => known == q,

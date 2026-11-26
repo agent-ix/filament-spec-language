@@ -178,14 +178,22 @@ edges, automaton states and stored zone bytes.
   value and its setting. When the `Cancel` handle is cancelled, it SHALL
   return `Stopped(Cancelled, …)`.
 - If an atom of the claim evaluates `Undefined` at a point of a symbolic
-  state the search creates, and that point has a time-divergent
-  continuation, then the engine SHALL end the search with `Violated` at the
-  first such symbolic state in canonical breadth-first order, concretized
-  by FR-241 to such a point, with `kind: UndefinedEvaluation{where,
-  cause}`, `where` naming the position, its time stamp, the discrete state
-  key, the clock valuation and the expression's locus (ADR-026 TV-1,
-  ADR-018 UE-1). An
-  undefined position SHALL rank like any other violation.
+  state the search creates, no fairness is declared, and that point has a
+  time-divergent continuation, then the engine SHALL end the search with
+  `Violated` at the first such symbolic state in canonical breadth-first
+  order, concretized by FR-241 to such a point, with `kind:
+  UndefinedEvaluation{where, cause}`, `where` naming the position, its
+  time stamp, the discrete state key, the clock valuation and the
+  expression's locus (ADR-026 TV-1, ADR-018 UE-1). An undefined position
+  SHALL rank like any other violation.
+- Under a declared fairness, an `Undefined` reading refutes only when an
+  admitted behaviour, time-divergent and fair (FSpec FR-161, FR-416),
+  passes through it. FR-240's product SHALL enter the point as an undefined
+  position, which reads no claim automaton state, is in every automaton
+  acceptance set and keeps taking the model's steps. The engine SHALL
+  return that `Violated` exactly when a fair component lies past such a
+  position, with the prefix of a fair behaviour up to it, ahead of any
+  violating cycle.
 - An expansion that stops on an undecided contract conjunction SHALL return
   `Undecided(UndecidedSuccessor)`; a subject with no initial state,
   `Undecided(NoInitialState)`.

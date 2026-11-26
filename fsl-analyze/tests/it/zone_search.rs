@@ -313,6 +313,7 @@ pub(crate) fn operations(counterexample: &TemporalCounterexample) -> Vec<String>
                 "grow",
                 "arm",
                 "disarm",
+                "block",
             ]
             .into_iter()
             .find(|name| operation.contains(&format!("Call/{name}\"")))

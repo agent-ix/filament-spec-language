@@ -57,9 +57,9 @@ point is still decided by the horizon construction.
 - A `TimedInvariant` clause that declares no fairness SHALL read its
   predicate at each symbolic state; a data predicate SHALL decide on the
   discrete state alone.
-- A TT-1 or TT-2 claim that declares a fairness SHALL be decided on FR-240's
-  liveness product (FR-239), over the claim automaton FR-240 reads for it,
-  not by the two forms above.
+- EN-6 SHALL decide a TT-1 or TT-2 claim that declares a fairness on
+  FR-240's liveness product (FR-239), over the claim automaton FR-240 reads
+  for it, not by the two forms above.
 - The translation SHALL translate an interval operator with a lower bound and no upper bound (`[q, *]`)
   to FR-1034's lower-bound-only component (one clock, the
   lower guard only, `q` its one constant), never to a horizon clock or block

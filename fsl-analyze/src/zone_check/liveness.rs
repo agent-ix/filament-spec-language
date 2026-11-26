@@ -45,7 +45,8 @@ use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint};
 use fsl_eval::simulation::Permutation;
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_replay::{
-    CounterexampleKind, FairnessMember, Lasso, ModelStep, TemporalCounterexample, UndefinedLocus,
+    CounterexampleKind, FairnessMember, Lasso, ModelStep, TemporalCounterexample, TimedPoint,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::CaptureSite;
 use ix_trace_rs::implements;
@@ -111,6 +112,11 @@ pub(super) struct LiveVertex {
     pub(super) tail: bool,
     /// The initial state's index, for an initial vertex.
     pub(super) initial: Option<usize>,
+    /// Under a fairness, the undefined reading the behaviour has passed:
+    /// from there the claim is read no further, `q` stays and the vertex is
+    /// in every automaton acceptance set, so a fair accepting cycle here is
+    /// an admitted behaviour through that position, and none is none.
+    pub(super) undefined: Option<Box<(UndefinedLocus, UndefinedCause)>>,
 }
 
 /// How an edge of the product is taken.
@@ -177,6 +183,14 @@ enum Reading {
     Defined(Letter),
     Undefined(UndefinedLocus, UndefinedCause),
 }
+
+/// How a position is taken: the claim automaton's transition, none past an
+/// undefined reading, and the undefined reading the target has passed.
+type Taken = (
+    Option<ClockedEdge>,
+    StateId,
+    Option<Box<(UndefinedLocus, UndefinedCause)>>,
+);
 
 /// What expanding a vertex gives.
 enum Expansion {
@@ -474,7 +488,17 @@ impl Run<'_, '_, '_> {
         let analyses = analyze(&model.graph, &vertices, &model.constraints, self.cancel)
             .map_err(|error| self.fairness(error))?;
         let mut passing = false;
-        for component in Analysis::fair_in(&analyses) {
+        // A component past an undefined reading comes first: that reading
+        // ranks ahead of a violating cycle.
+        let past_undefined = |vertex: &Vertex| {
+            live.product
+                .vertices
+                .get(vertex.index())
+                .is_some_and(|vertex| vertex.undefined.is_some())
+        };
+        let mut fair: Vec<_> = Analysis::fair_in(&analyses).collect();
+        fair.sort_by_key(|component| !component.vertices().first().is_some_and(&past_undefined));
+        for component in fair {
             self.poll()?;
             passing = true;
             let Some(&entry) = component.vertices().first() else {
@@ -502,6 +526,11 @@ impl Run<'_, '_, '_> {
                 cycle.push(index);
             }
             if let Some(found) = self.lasso(live, entry.index(), &cycle)? {
+                let found = if live.product.vertices[entry.index()].undefined.is_some() {
+                    self.undefined_prefix(live, entry.index(), found)?
+                } else {
+                    found
+                };
                 return Ok(Found::Counterexample(Box::new(found)));
             }
         }
@@ -515,6 +544,103 @@ impl Run<'_, '_, '_> {
                 automaton_sets: live.acceptance_sets(),
                 bounds: live.lower.clone(),
             }))
+        })
+    }
+
+    /// The undefined-evaluation counterexample of `lasso`, a concrete fair
+    /// behaviour through the fair component entered at `entry`, past an
+    /// undefined reading: its prefix up to that position, which the rest of
+    /// the lasso shows is admitted.
+    #[implements("FSpec-FR-161-AC-16")]
+    fn undefined_prefix(
+        &mut self,
+        live: &Live<'_>,
+        entry: usize,
+        lasso: TemporalCounterexample,
+    ) -> Result<TemporalCounterexample, Halt> {
+        let path = self.path_to(live, entry);
+        let passed = |index: usize| live.product.vertices[index].undefined.is_some();
+        // The stem's edges up to the first one into the undefined position;
+        // none when an initial position is the undefined one.
+        let root = path
+            .first()
+            .map_or(entry, |&edge| live.product.edges[edge].from);
+        let reaching = if passed(root) {
+            0
+        } else {
+            path.iter()
+                .position(|&edge| passed(live.product.edges[edge].to))
+                .ok_or(ZoneCheckRefusal::Fault("undefined-entry"))?
+                + 1
+        };
+        let at = path[..reaching]
+            .last()
+            .map_or(root, |&edge| live.product.edges[edge].to);
+        let vertex = &live.product.vertices[at];
+        let (locus, cause) = vertex
+            .undefined
+            .as_deref()
+            .cloned()
+            .ok_or(ZoneCheckRefusal::Fault("undefined-entry"))?;
+        let mut clocks = self
+            .timed
+            .initial()
+            .get(lasso.initial_state)
+            .ok_or(ZoneCheckRefusal::Fault("initial-state"))?
+            .clocks()
+            .clone();
+        let mut stamp = Rational::from_integer(Integer::zero());
+        let mut prefix = Vec::new();
+        for &edge in &path[..reaching] {
+            let edge = live.product.edges[edge];
+            let Via::Step { step, .. } = edge.via else {
+                continue;
+            };
+            let taken = lasso
+                .prefix
+                .get(prefix.len())
+                .ok_or(ZoneCheckRefusal::Fault("undefined-prefix"))?;
+            if let Some(delay) = &taken.delay {
+                stamp = stamp.add(delay);
+                clocks = clocks.delayed(delay);
+            }
+            let steps = self.steps_for(&live.product.vertices[edge.from].state)?;
+            clocks = steps
+                .get(step)
+                .ok_or(ZoneCheckRefusal::Fault("edge-step"))?
+                .reset(&clocks);
+            prefix.push(taken.clone());
+        }
+        let (state_key, _) = self
+            .timed
+            .system()
+            .state_key(&vertex.state, fsl_foundation::IdentityLimits::default())
+            .map_err(|_| ZoneCheckRefusal::Fault("state-key"))?;
+        let present: Vec<Rational> = self
+            .timed
+            .places()
+            .iter()
+            .zip(clocks.values())
+            .filter(|(place, _)| self.timed.live(place, &vertex.state))
+            .map(|(_, value)| value.clone())
+            .collect();
+        Ok(TemporalCounterexample {
+            kind: CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
+                site: UndefinedSite {
+                    position: u64::try_from(prefix.len()).unwrap_or(u64::MAX),
+                    state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(state_key),
+                    locus,
+                    transition: None,
+                    time: Some(Box::new(TimedPoint {
+                        stamp,
+                        clocks: present,
+                    })),
+                },
+                cause,
+            }),
+            prefix,
+            lasso: None,
+            ..lasso
         })
     }
 
@@ -594,7 +720,9 @@ impl Run<'_, '_, '_> {
                 handles
                     .iter()
                     .zip(vertices)
-                    .filter(|(_, at)| live.automaton.is_accepting_in(set, at.q))
+                    .filter(|(_, at)| {
+                        at.undefined.is_some() || live.automaton.is_accepting_in(set, at.q)
+                    })
                     .map(|(handle, _)| *handle)
                     .collect()
             })
@@ -719,17 +847,53 @@ impl Run<'_, '_, '_> {
         Ok(Some(zone))
     }
 
-    /// Explore one instance's product breadth first: the counterexample of
-    /// the first undefined position with a time-divergent continuation.
+    /// How the position at `state` is taken from `q`, `passed` the undefined
+    /// reading the behaviour is already past: the transitions, or, with no
+    /// fairness declared, the undefined reading, which the caller settles at
+    /// once. Under a fairness an undefined reading is entered instead
+    /// ([`LiveVertex::undefined`]), since only the finished product says
+    /// whether a fair behaviour passes through it.
+    fn take(
+        &mut self,
+        live: &mut Live<'_>,
+        q: StateId,
+        passed: &Option<Box<(UndefinedLocus, UndefinedCause)>>,
+        state: &ModelSimState,
+        initial: bool,
+    ) -> Result<Result<Vec<Taken>, (UndefinedLocus, UndefinedCause)>, Halt> {
+        if passed.is_some() {
+            return Ok(Ok(vec![(None, q, passed.clone())]));
+        }
+        Ok(match self.reading(live, state, initial)? {
+            Reading::Defined(letter) => Ok(self
+                .automaton(live.successors(q, letter))?
+                .into_iter()
+                .map(|read| {
+                    let target = read.target;
+                    (Some(read), target, None)
+                })
+                .collect()),
+            Reading::Undefined(locus, cause) => {
+                if live.universal || live.cells.constrained.is_empty() {
+                    Err((locus, cause))
+                } else {
+                    Ok(vec![(None, q, Some(Box::new((locus, cause))))])
+                }
+            }
+        })
+    }
+
+    /// Explore one instance's product breadth first: with no fairness, the
+    /// counterexample of the first undefined position with a time-divergent
+    /// continuation.
     fn build(&mut self, live: &mut Live<'_>) -> Result<Option<TemporalCounterexample>, Halt> {
         let mut queue = VecDeque::new();
         for (index, initial) in self.timed.initial().iter().enumerate() {
             let state = initial.discrete().clone();
             let zero = Dbm::zero(live.dim);
-            let reading = self.reading(live, &state, true)?;
-            let letter = match reading {
-                Reading::Defined(letter) => letter,
-                Reading::Undefined(locus, cause) => {
+            let taken = match self.take(live, live.start, &None, &state, true)? {
+                Ok(taken) => taken,
+                Err((locus, cause)) => {
                     let at = Origin::Initial(index);
                     if let Some(found) = self.undefined(live, at, &state, &zero, locus, cause)? {
                         return Ok(Some(found));
@@ -737,8 +901,12 @@ impl Run<'_, '_, '_> {
                     continue;
                 }
             };
-            for read in self.automaton(live.successors(live.start, letter))? {
-                let Some(read_zone) = self.read_at(&zero, &read)? else {
+            for (read, q, undefined) in taken {
+                let read_zone = match &read {
+                    Some(read) => self.read_at(&zero, read)?,
+                    None => Some(zero.clone()),
+                };
+                let Some(read_zone) = read_zone else {
                     continue;
                 };
                 for (cell, piece) in self.split(&mut live.cells, &state, &[], &read_zone)? {
@@ -747,13 +915,14 @@ impl Run<'_, '_, '_> {
                     };
                     let vertex = LiveVertex {
                         state: state.clone(),
-                        q: read.target,
+                        q,
                         cell: cell.clone(),
                         zone,
                         positioned: true,
                         divergent: false,
                         tail: false,
                         initial: Some(index),
+                        undefined: undefined.clone(),
                     };
                     if let Some(new) = self.add_vertex(live, vertex, None, None)? {
                         queue.push_back(new);
@@ -841,9 +1010,9 @@ impl Run<'_, '_, '_> {
                     step: index,
                     part: part_index,
                 };
-                let letter = match self.reading(live, &post, false)? {
-                    Reading::Defined(letter) => letter,
-                    Reading::Undefined(locus, cause) => {
+                let taken = match self.take(live, vertex.q, &vertex.undefined, &post, false)? {
+                    Ok(taken) => taken,
+                    Err((locus, cause)) => {
                         let origin = Origin::Edge(at, via);
                         let found = self.undefined(live, origin, &post, &next, locus, cause)?;
                         if let Some(found) = found {
@@ -852,11 +1021,15 @@ impl Run<'_, '_, '_> {
                         continue;
                     }
                 };
-                for read in self.automaton(live.successors(vertex.q, letter))? {
-                    let Some(read_zone) = self.read_at(&next, &read)? else {
+                for (read, q, undefined) in taken {
+                    let read_zone = match &read {
+                        Some(read) => self.read_at(&next, read)?,
+                        None => Some(next.clone()),
+                    };
+                    let Some(read_zone) = read_zone else {
                         continue;
                     };
-                    let index = live.product.read(&read);
+                    let index = read.as_ref().map(|read| live.product.read(read));
                     for (cell, piece) in self.split(&mut live.cells, &post, &[], &read_zone)? {
                         let Some(entered) =
                             self.close(&mut live.cells, &post, &[], piece, &cell)?
@@ -865,20 +1038,16 @@ impl Run<'_, '_, '_> {
                         };
                         let next = LiveVertex {
                             state: post.clone(),
-                            q: read.target,
+                            q,
                             cell: cell.clone(),
                             zone: entered,
                             positioned: true,
                             divergent: !dense && tick,
                             tail: false,
                             initial: None,
+                            undefined: undefined.clone(),
                         };
-                        created.extend(self.add_vertex(
-                            live,
-                            next,
-                            Some((at, via)),
-                            Some(index),
-                        )?);
+                        created.extend(self.add_vertex(live, next, Some((at, via)), index)?);
                     }
                 }
             }
@@ -935,13 +1104,17 @@ impl Run<'_, '_, '_> {
     /// again, the zone kept, and the behaviour in the idle tail.
     fn stutter(&mut self, live: &mut Live<'_>, at: usize) -> Result<Vec<usize>, Halt> {
         let vertex = live.product.vertices[at].clone();
-        let Reading::Defined(letter) = self.reading(live, &vertex.state, false)? else {
+        let Ok(taken) = self.take(live, vertex.q, &vertex.undefined, &vertex.state, false)? else {
             return Err(ZoneCheckRefusal::Fault("idle-letter").into());
         };
         let dense = self.timed.tick_period().is_none();
         let mut created = Vec::new();
-        for read in self.automaton(live.successors(vertex.q, letter))? {
-            let Some(read_zone) = self.read_at(&vertex.zone, &read)? else {
+        for (read, q, undefined) in taken {
+            let read_zone = match &read {
+                Some(read) => self.read_at(&vertex.zone, read)?,
+                None => Some(vertex.zone.clone()),
+            };
+            let Some(read_zone) = read_zone else {
                 continue;
             };
             let Some(zone) =
@@ -949,17 +1122,18 @@ impl Run<'_, '_, '_> {
             else {
                 continue;
             };
-            let index = live.product.read(&read);
+            let index = read.as_ref().map(|read| live.product.read(read));
             let next = LiveVertex {
-                q: read.target,
+                q,
                 zone,
                 positioned: true,
                 divergent: !dense,
                 tail: true,
                 initial: None,
+                undefined,
                 ..vertex.clone()
             };
-            created.extend(self.add_vertex(live, next, Some((at, Via::Stutter)), Some(index))?);
+            created.extend(self.add_vertex(live, next, Some((at, Via::Stutter)), index)?);
         }
         Ok(created)
     }
@@ -981,6 +1155,7 @@ impl Run<'_, '_, '_> {
                 .to_be_bytes(),
         );
         key.extend(vertex.cell.iter().map(|sign| *sign as u8));
+        key.push(u8::from(vertex.undefined.is_some()));
         key.push(u8::from(vertex.positioned));
         key.push(u8::from(vertex.divergent));
         key.push(u8::from(vertex.tail));
