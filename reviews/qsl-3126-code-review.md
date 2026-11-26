@@ -60,3 +60,9 @@ Disposition pass 1, head 65a3caaa4cf815c56041f96d5ca00e48f594dcab (fix commit 8e
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-004 | low | The two replicated-role tests carry `FR-125-AC-9`, but neither asserts any clause of that criterion. AC-9 states how the `over` parameter is read, the key-alone identity and the refuted binding. These tests assert the type of a role object and the equality of a role object with the `over` object. The PR itself says a replicated role object is not an `over` instance, which is also why `role_universes` correctly carries no `implements`. They should carry `TC-520` only | fsl-analyze/tests/it/analyze_package_protocol.rs:4024-4026; fsl-eval/tests/it/protocol_over.rs:325-327 |
+
+Disposition pass 2, head 7e8b39a8b5f07fb70422c5ff76b7a93ef01a9c2f (tag fix a5de150d95, then a merge of main that touches none of this PR's files).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-004 | fixed | Both replicated-role tests now carry `#[trace("TC-520")]` alone. The commit changes only those two attribute lines |
