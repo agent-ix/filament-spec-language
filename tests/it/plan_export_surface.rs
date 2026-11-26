@@ -3727,9 +3727,9 @@ temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" o
 synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
 "#;
     for (second_value, settings, status, exit_expected, states, work) in [
-        (0, json!({}), "optimal", 0, 1, 3),
-        (4, json!({}), "infeasible", 10, 1, 1),
-        (0, json!({"limits":{"max_work":1}}), "incomplete", 22, 1, 1),
+        (0, json!({"policy":["NeverFour"]}), "optimal", 0, 1, 3),
+        (4, json!({"policy":["NeverFour"]}), "infeasible", 10, 1, 1),
+        (0, json!({"policy":["NeverFour"], "limits":{"max_work":1}}), "incomplete", 22, 1, 1),
     ] {
         let mut current = snapshot.clone();
         let population = current["populations"]
