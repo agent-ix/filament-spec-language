@@ -2,6 +2,7 @@
 //! Independent gain–bias checking of the closed DTMC long-run profiles.
 
 use super::*;
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 use std::cell::RefCell;
 
@@ -1272,6 +1273,7 @@ fn malformed(member: &'static str) -> ExactProbabilityCertificateCheck {
     })
 }
 
+#[implements("FR-201-AC-2")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

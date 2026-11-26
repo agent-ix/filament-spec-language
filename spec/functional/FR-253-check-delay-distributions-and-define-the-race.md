@@ -53,6 +53,12 @@ ties at a deadline, so that every sampled run is a behaviour of the model.
   intervals with exact rational ends and openness, and the race's
   conditioned distributions.
 - The disposition `Unsupported(NotStochastic{state, identity})`.
+- The dispositions of timed statistical sampling at an idle tail (FR-254):
+  `Unsupported(NotStochasticIdleTail{state})`, wire `not-stochastic` with
+  `state` and `idle_tail` true; and
+  `Incomplete(IdleTailUndecided{state, reason})`, wire `idle-tail-undecided`,
+  `reason` `TimedFormula` or `ClockPredicate` (wire `timed-formula`,
+  `clock-predicate`; FSpec FR-331).
 
 ## Behavior
 
