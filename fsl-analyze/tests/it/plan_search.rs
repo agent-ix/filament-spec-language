@@ -3734,3 +3734,59 @@ fn positive_source_policy_stage_boundary_keeps_required_future_forms_explicit() 
         );
     }
 }
+
+// QSL-3534 probe: `inc`'s guard has no value at the reachable value 2.
+
+fn probe3534(goal: i64) {
+    let document =
+        filament_specification::published_file(&format!("{FIXTURE}model.semantic-ir.json"))
+            .expect("FSpec publishes the counter model")
+            .to_vec();
+    let world = World::with_kernel_functions(
+        Domain {
+            package: "example/plan-counter",
+            object: "Counter",
+            population: "counters",
+            document,
+        },
+        &format!("{CONTRACTS}pre Gap using v on M::Counter::inc {{ q(2 - self.value) >= 0 }}\n"),
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
+        model_world::INFINITE,
+        &[],
+        &[("c", json!({"value": {"integer": "1"}}))],
+    );
+    let system = ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation).expect("admits");
+    let mut rules = Counter::new(&world, &system, goal);
+    let result = run(
+        &mut rules,
+        &system,
+        (0, 5),
+        PlanSearchLimits::default(),
+        None,
+    );
+    let text = match &result {
+        Ok(result) => format!(
+            "status={:?} certified={} plan={:?} certificate={:?}",
+            result.status,
+            result.certified,
+            operations(&rules, result),
+            result.certificate.as_ref().map(|c| (&c.kind, &c.outcome)),
+        ),
+        Err(error) => format!("error={error:?}"),
+    };
+    println!("OBSERVED: {text:.400}");
+    assert!(
+        !matches!(&result, Ok(result) if result.certified),
+        "UE-6: nothing certified past an undefined guard: {text:.400}"
+    );
+}
+
+#[test]
+fn probe3534_plan_found_through_the_state() {
+    probe3534(8);
+}
+
+#[test]
+fn probe3534_plan_infeasible_past_the_state() {
+    probe3534(21);
+}
