@@ -67,10 +67,15 @@ written by one component and read by another.
 For every format in scope, its writer SHALL construct the declared type and
 its strict reader SHALL deserialize that same type. The writer and reader
 SHALL NOT maintain separate mirror structs, hand-built object maps, or member
-walkers that independently encode the format's shape. A type that crosses
-repository boundaries SHALL live in the shared model crate owned by that
-format's contract, and every writer and reader SHALL import that definition.
-The wire schema remains normative; Rust types do not replace or generate it.
+walkers that independently encode the format's shape. When the same typed
+value is read across implementation repositories, that type SHALL live in
+the shared model crate owned by its contract, and every writer and reader in
+those repositories SHALL import that definition. When a typed value is read
+only within one implementation repository, its writers and readers SHALL
+share one type in that repository's wire module. An FSL wire value moves to a
+shared model only if another implementation repository begins reading it; no
+such move is included here. The wire schema remains normative; Rust types do
+not replace or generate it.
 
 The canonical definition SHALL include the complete accepted member shape.
 Schema-specific newtypes and closed variants SHALL encode restrictions that
@@ -111,10 +116,12 @@ as the bare name. FR-120 owns this operation-identity rule.
 For each listed format, every requirement whose implementation writes,
 strictly reads, or checks it SHALL declare a `depends_on` relationship to its
 owner in frontmatter. The requirement that defines the format has no sideways
-relationship to a reader. FSL requirements that implement or check a
-cross-repository value also link to the shared model requirement that owns
-that value. The owner and reader relationships are recorded only in each
-requirement's frontmatter; this ADR does not keep a second list of those links.
+relationship to a reader. FSL requirements that implement or check a value
+shared across implementation repositories also link to its shared model
+requirement, when that requirement exists. FSL-only wire values retain their
+normative owner links and have no shared-model link. The owner and reader
+relationships are recorded only in each requirement's frontmatter; this ADR
+does not keep a second list of those links.
 
 A rule found only in a reader is a gap in the format owner's specification.
 Before consolidating that reader and its writer, the reader-only rule SHALL be
@@ -173,10 +180,11 @@ schema or the implementation tags required by ADR-032.
 
 Writer and reader shape changes now occur at the shared type, and changes to
 an owner's schema or acceptance criteria are detected by the same conformance
-tests that exercise the actual writer and reader. A change to a
-cross-repository format is made in its owner requirement and shared model
-type; consumers adopt that definition rather than reconstructing it. Bounded
-read behavior, incremental meter charging, `NativeRunLimits`, member pointers
+tests that exercise the actual writer and reader. A format shared across
+implementation repositories uses its owner requirement and shared model type;
+consumers adopt that definition rather than reconstructing it. FSL-only wire
+values remain in FSL wire modules. Bounded read behavior, incremental meter
+charging, `NativeRunLimits`, member pointers
 and typed refusal codes remain at the existing admission boundary. Input-depth
 Contract-IR body/details retain their hand `Encode`. Step 1 removes the legacy
 object-operation and `ix://`-rebuild read forms.
