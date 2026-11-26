@@ -52,6 +52,7 @@ use fsl_semantics::check::{
     AbstractionRefusal, AuthoredBinding, CheckedAbstractionRelation, CheckedGraph,
 };
 use fsl_semantics::library::LibraryName;
+use ix_trace_rs::implements;
 
 /// The caller-owned ceiling of one `filament.checked-package/v2` emission
 /// (FR-255 `emit.output_bytes`, FR-264 Behavior 5). It has no `Default`: the
@@ -623,6 +624,7 @@ impl CheckedPackage {
     /// # Errors
     ///
     /// Every refusal of the bindings; a refusal leaves the package unchanged.
+    #[implements("NFR-015-AC-9")]
     pub fn bind_abstraction(
         &mut self,
         bindings: &[AuthoredBinding],
@@ -641,6 +643,7 @@ impl CheckedPackage {
     /// # Errors
     ///
     /// Every refusal of the bindings; a refusal leaves the package unchanged.
+    #[implements("NFR-015-AC-10")]
     pub fn bind_abstraction_at(
         &mut self,
         bindings: &[AuthoredBinding],
