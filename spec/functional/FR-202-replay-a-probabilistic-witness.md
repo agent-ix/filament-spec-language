@@ -624,6 +624,21 @@ timed enumerator.
   only its already-delayed discrete relation. Target predicates are checked
   on observations only; a goal observation terminates the quantity, not
   the original subject continuation required for admissibility.
+- Region bounded-window replay (FR-196 "Idle tail of a timed window
+  monitor") SHALL accept an `EnterIdleTail` step only from a quiescent
+  running state of that product, as FR-196 item 1 enables it, and SHALL
+  check that the step takes no time, reads no letter and reaches the key
+  of its source with `tail` `"idle-entry"`, every other member byte for
+  byte unchanged; any other `EnterIdleTail` step refuses
+  `invalid_runtime_input`/`invalid-value`. A path that reaches a tail-entry
+  state ends there. Replay SHALL evaluate the claim's event on such a path,
+  and SHALL value a tail-entry state of subsystem evidence, as that
+  state's tail value for the item's optimization (1: the event holds; 0:
+  it fails), computed by the checker's own tail search of FR-921 item 7
+  under FR-196 items 3 to 6, never read from the witness or from EN-5. A
+  tail search that reaches its limit stops replay with FR-203's
+  `Incomplete(LimitReached{MaxStates, value, exact_prob.max_states})`; it
+  settles neither `refuted` nor `ReplayParity`.
 - With a fairness set it SHALL check every reachable bottom strongly
   connected component of the induced chain meets FR-200's fair
   end-component condition. For a digital TS-5 subject it SHALL additionally

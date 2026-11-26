@@ -729,7 +729,10 @@ mod tests {
         assert_eq!(race["cause"]["kind"], "not-stochastic");
         assert_eq!(race["cause"]["state"]["key"], "WzAsW11d");
         assert_eq!(race["cause"]["identity"]["type"], "transition");
-        assert_eq!(race["cause"]["identity"]["operation"]["name"], "timeout");
+        assert_eq!(
+            race["cause"]["identity"]["operation"],
+            r#"{"name":"timeout"}"#
+        );
 
         let lock = settle(&StatisticalOutcome::Unsupported {
             cause: StatisticalUnsupported::TimeLockedSample { state },
