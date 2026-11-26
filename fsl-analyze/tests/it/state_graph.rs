@@ -2908,7 +2908,7 @@ fn graph_evidence_states_match_the_provider_schema() {
         &GraphEvidence::Undefined {
             stem: stem.clone(),
             undefined: undefined.clone(),
-            over: None,
+            over: Vec::new(),
         },
         fsl_replay::StateGraphPropertyForm::Possible,
         None,
