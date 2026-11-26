@@ -970,7 +970,7 @@ fn native_result_two_writer_round_trips_extraction_diagnostics_and_clauses() {
         "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
         "binding": {"clause": "check", "package": "fixture/package"},
         "outcome": {
-            "availability": {"state": "available", "lossy": true},
+            "availability": {"state": "available", "reason": "partial", "lossy": true},
             "clause_text": {"check": "true"},
             "diagnostics": [{
                 "code": "unchecked-language", "severity": "advisory", "message": "unchecked",
@@ -986,6 +986,7 @@ fn native_result_two_writer_round_trips_extraction_diagnostics_and_clauses() {
     });
     let mut record: crate::spine::ExtractionRecord =
         serde_json::from_value(expected.clone()).unwrap();
+    record.outcome.availability.reason = Some("partial".to_owned());
     record.outcome.diagnostics = vec![SemanticDiagnostic {
         code: "unchecked-language".to_owned(),
         severity: SemanticSeverity::Advisory,
