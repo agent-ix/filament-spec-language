@@ -6,7 +6,7 @@
 //!
 //! The report is advisory: it never fails, and a person reads each line.
 //! The scan is syntactic. It does not look inside macro invocations, and it
-//! skips `#[cfg(test)]` items and `tests` files.
+//! skips `#[cfg(test)]` items and `tests` and `*_tests` files.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -168,7 +168,8 @@ fn production_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(dir).map_err(|source| Error::io(dir, source))? {
         let path = entry.map_err(|source| Error::io(dir, source))?.path();
         let stem = path.file_stem().and_then(std::ffi::OsStr::to_str);
-        if stem == Some("tests") {
+        // `tests` and `*_tests` modules are compiled under `cfg(test)`.
+        if stem.is_some_and(|stem| stem == "tests" || stem.ends_with("_tests")) {
             continue;
         }
         if path.is_dir() {
