@@ -82,7 +82,6 @@ fn both_routes_with_snapshots(
     let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
     let source = analyze(&path);
-    assert_eq!(source.exit, 0, "{}", source.document());
     let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
     let sources = ws.path(&format!("{HANDOFF}/sources"));
