@@ -13,11 +13,10 @@
 //! reaches this module through the [`WitnessReader`] seam, as FR-128's
 //! replay reaches its `holds` atoms through `ModelLetters`.
 
-use filament_exact::{Cancel, Rational};
+use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::model::{
-    replay_timed_sample, ClauseOutcome, ModelSystem, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedState, TimedSystem, TransitionId,
+    ClauseOutcome, ModelSystem, TimedSampleDisagreement, TimedSystem, TransitionId,
 };
 use fsl_eval::simulation::{
     replay_sampled, SampleStop, SampledDisagreement, SampledRecord, SampledReplay,
@@ -27,39 +26,6 @@ use fsl_semantics::check::{NegotiationOutcome, Workload};
 
 use super::{SampledWitness, StatisticalProvenance, TestProvenance, TimedSampling, WitnessValue};
 use crate::model_check::counterexample::{CounterexampleKind, ModelStep, TemporalCounterexample};
-
-/// FR-254/FR-193: recompute a timed statistical witness's ordered timed
-/// steps from its seed, trace index, delay grid and checked sample horizon.
-/// The timed sample is the witness payload, so delay changes are compared
-/// alongside transitions and successor states.
-#[allow(clippy::too_many_arguments)] // each value is an explicit witness replay input
-pub fn replay_timed_sampled_witness(
-    system: &TimedSystem<'_, '_>,
-    initial: &TimedState,
-    workload: &Workload,
-    seed: u64,
-    trace: u64,
-    q: u32,
-    horizon: &Rational,
-    max_sample_steps: u64,
-    witness: &TimedSample,
-) -> Result<TimedSampleReplay, TimedSampleStop> {
-    replay_timed_sample(
-        system,
-        initial,
-        workload,
-        fsl_eval::simulation::ChoicePoint {
-            seed,
-            trace,
-            step: 0,
-            choice: 0,
-        },
-        q,
-        horizon,
-        max_sample_steps,
-        witness,
-    )
-}
 
 /// What the claim reads on one recomputed sample (FR-193 "Replay"): the
 /// value it would keep as a witness, and the sample's steps.

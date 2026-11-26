@@ -660,41 +660,6 @@ fn stochastic_rpc_exposes_checked_delay_windows() {
     assert!(timed_sample.steps.iter().all(|step| step.delay.is_some()));
     assert!(!timed_sample.steps.is_empty());
     assert!(timed_sample.stamp <= exact(3, 1));
-    let sample_at = fsl_eval::simulation::ChoicePoint {
-        seed: 7,
-        trace: 0,
-        step: 0,
-        choice: 0,
-    };
-    assert_eq!(
-        fsl_eval::simulation::model::replay_timed_sample(
-            &timed,
-            behaviour.last().state(),
-            workload,
-            sample_at,
-            8,
-            &exact(3, 1),
-            100,
-            &timed_sample,
-        )
-        .expect("replay timed sample"),
-        fsl_eval::simulation::model::TimedSampleReplay::Reproduced
-    );
-    let mut altered = timed_sample.clone();
-    altered.steps[0].delay = Some(exact(0, 1));
-    assert!(matches!(
-        fsl_eval::simulation::model::replay_timed_sample(
-            &timed,
-            behaviour.last().state(),
-            workload,
-            sample_at,
-            8,
-            &exact(3, 1),
-            100,
-            &altered,
-        ),
-        Ok(fsl_eval::simulation::model::TimedSampleReplay::Disagrees(_))
-    ));
 
     let mut replied = TimedBehaviour::new(timed.initial().remove(0));
     let send = transition(&timed, &replied, "send");

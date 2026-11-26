@@ -19,6 +19,7 @@
 //! transition system. `sample_probabilistic` samples a probabilistic model
 //! under a workload (FR-188), over FR-187's step structure.
 
+pub mod bounds;
 mod choice;
 mod discovery;
 mod expansion;

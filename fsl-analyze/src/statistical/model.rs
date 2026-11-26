@@ -27,8 +27,9 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_eval::automaton::{translate_body, AutomatonError, Monitor, PropertyAutomaton, StateId};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
-    advance_timed, ModelSimState, ModelSystem, PredicateReading, TimedAdvance, TimedRaceStep,
-    TimedRaceStop, TimedSampleStop, TimedState, TimedStop, TimedSystem, TransitionId,
+    advance_timed, ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading,
+    TimedAdvance, TimedRaceStep, TimedRaceStop, TimedSampleStop, TimedState, TimedStop,
+    TimedSystem, TransitionId,
 };
 use fsl_eval::simulation::{
     ExpansionStop, NotSimulated, Permutation, ProbabilisticSampler, SampleStop, SampledPosition,
@@ -38,9 +39,9 @@ use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
 use fsl_replay::statistical::{
-    ClaimForm, Confidence, MeasureValue, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
-    StatisticalRefusal, TestProvenance, TimedSampling, WitnessReadStop, WitnessReader,
-    WitnessReading, WitnessValue,
+    ClaimForm, Confidence, MeasureValue, OnEachRead, StatisticalLimits, StatisticalMethod,
+    StatisticalOutcome, StatisticalRefusal, TestProvenance, TimedSampling, WitnessReadStop,
+    WitnessReader, WitnessReading, WitnessValue,
 };
 use fsl_replay::{
     ClaimPredicate, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
@@ -48,8 +49,8 @@ use fsl_replay::{
 };
 use fsl_semantics::check::{
     Bound as CheckedBound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim,
-    CheckedTemporalFormula, Event, FractionMeasure, ProbForm, ProbScheduler, TemporalProfile,
-    Weighting, Workload,
+    CheckedTemporalFormula, ClaimActivation, Event, FractionMeasure, ProbForm, ProbScheduler,
+    TemporalProfile, Weighting, Workload,
 };
 use ix_trace_rs::implements;
 
@@ -102,6 +103,34 @@ fn fault(invariant: &'static str) -> StatisticalRefusal {
     StatisticalRefusal::Internal(InternalFault::new("statistical", invariant))
 }
 
+/// FR-875 "Profile boundary": read the instance set of an `on each` claim
+/// requested with statistical evidence. No sample is drawn.
+#[implements("FR-875-AC-1", "FR-875-AC-5")]
+fn read_on_each(
+    simulation: ModelSimulationRequest<'_>,
+    claim: &CheckedProbabilisticClaim,
+    cancel: &Cancel,
+) -> OnEachRead {
+    let probabilistic = simulation.input.probabilistic;
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return OnEachRead::Document(error.into()),
+    };
+    let admitted = ModelSystem::new_with_cancel(simulation, cancel);
+    if let Some(cause) = cancel.tripped() {
+        return OnEachRead::Cancelled(cause);
+    }
+    let system = match admitted {
+        Ok(system) => system,
+        Err(failure) => return OnEachRead::Admission(Box::new(failure)),
+    };
+    match fsl_replay::on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
+        Ok(false) => OnEachRead::NoInstance,
+        Ok(true) => OnEachRead::Unimplemented,
+        Err(error) => OnEachRead::Document(error),
+    }
+}
+
 /// FR-189: decide `request`'s claim over its subject, polling `cancel`
 /// before each draw and each step.
 ///
@@ -136,6 +165,12 @@ pub fn check_statistical(
         symmetry,
         timed_sampling,
     } = request;
+    // The one gate for an `on each` claim, before any check that assumes a
+    // claim a sample can decide.
+    if matches!(claim.activation, ClaimActivation::Each { .. }) {
+        let read = read_on_each(subject.simulation, claim, cancel);
+        return Err(StatisticalRefusal::OnEach(Box::new(read)));
+    }
     if workers == 0 {
         return Err(StatisticalRefusal::Workers);
     }

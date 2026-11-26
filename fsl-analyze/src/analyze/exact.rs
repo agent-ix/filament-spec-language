@@ -351,14 +351,12 @@ const ZERO_WEIGHT_COMPONENT: filament_semantic_value::catalog::CatalogCode =
     );
 
 /// An `on each` claim requested with statistical evidence (FR-875 profile
-/// boundary): `no-instance` over an empty instance set, otherwise
-/// `unsupported`.
+/// boundary): the report of what EN-4's gate read.
 pub(super) fn statistical_on_each(
-    subject: fsl_eval::model_subject::ModelSubject<'_>,
-    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
-    cancel: &Cancel,
+    read: fsl_replay::statistical::OnEachRead,
+    subject: SubjectLimits<'_>,
 ) -> EngineReport {
-    instances::statistical(subject, claim, cancel)
+    instances::statistical(read, subject)
 }
 
 fn not_yet() -> EngineReport {

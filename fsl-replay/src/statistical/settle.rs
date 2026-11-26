@@ -14,9 +14,10 @@ use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_eval::simulation::model::{ClauseOutcome, ExpansionLimits};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_foundation::{BackendId, RequestIndex};
+use ix_trace_rs::implements;
 
 use super::{
-    ClaimForm, Decision, StatisticalLimit, StatisticalMethod, StatisticalOutcome,
+    ClaimForm, Decision, OnEachRead, StatisticalLimit, StatisticalMethod, StatisticalOutcome,
     StatisticalRefusal, StatisticalStop, StatisticalUnsupported, UndecidedCause,
 };
 use crate::model_check::limits::{meter_bound, ModelCheckLimit};
@@ -24,10 +25,12 @@ use crate::proof_result::{
     IncompleteCause, InconclusiveCause, StatisticalRequestRefusal, TerminalRecord, TerminalValue,
     UnavailabilityCause,
 };
+use crate::{ExactProbabilityGraphError, ProbabilityDocumentError};
 
 /// `runtime_invariant`/`established-invariant-broken`: the diagnostic of an
 /// internal failure (ADR-013 O-16).
 const BROKEN: CatalogCode = CatalogCode::new("runtime_invariant", "established-invariant-broken");
+const NOT_YET: CatalogCode = CatalogCode::new("unsupported_construct", "not-yet-implemented");
 
 /// The FR-120 limits of a statistical request's subject: the configured
 /// bound a `Stopped` by an expansion that names a limit takes as its value,
@@ -297,6 +300,7 @@ pub fn settle_statistical_refusal(
         StatisticalRefusal::FractionForEvent => {
             request(StatisticalRequestRefusal::FractionForEvent)
         }
+        StatisticalRefusal::OnEach(read) => settle_on_each(read)?,
         StatisticalRefusal::EveryScheduler => request(StatisticalRequestRefusal::EveryScheduler),
         StatisticalRefusal::ExactOnlyForm => request(StatisticalRequestRefusal::ExactOnlyForm),
         StatisticalRefusal::MissingConfidence => {
@@ -310,6 +314,45 @@ pub fn settle_statistical_refusal(
             InconclusiveCause::NoInitialState,
         )),
         StatisticalRefusal::Internal(fault) => StatisticalRecord::failed(fault.catalog_code()),
+    })
+}
+
+/// FR-875 "Profile boundary": the record of an `on each` claim requested with
+/// statistical evidence.
+#[implements("FR-875-AC-1", "FR-875-AC-5")]
+fn settle_on_each(read: &OnEachRead) -> Result<StatisticalRecord, UnsettledRefusal> {
+    use ExactProbabilityGraphError as Graph;
+    use ProbabilityDocumentError as Document;
+    let not_yet = || StatisticalRecord {
+        diagnostic: Some(NOT_YET),
+        ..StatisticalRecord::of(TerminalValue::Unsupported(UnavailabilityCause::Disposition))
+    };
+    let cancelled = |source| {
+        StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::Cancelled {
+            source,
+        }))
+    };
+    Ok(match read {
+        OnEachRead::NoInstance => {
+            StatisticalRecord::of(TerminalValue::Inconclusive(InconclusiveCause::NoInstance))
+        }
+        OnEachRead::Unimplemented => not_yet(),
+        OnEachRead::Admission(_) => return Err(UnsettledRefusal::Admission),
+        OnEachRead::Cancelled(cause)
+        | OnEachRead::Document(
+            Document::Cancelled(cause) | Document::Graph(Graph::Cancelled(cause)),
+        ) => cancelled(*cause),
+        OnEachRead::Document(Document::Graph(Graph::RequiresBound)) => {
+            return Err(UnsettledRefusal::RequiresBound)
+        }
+        OnEachRead::Document(Document::Graph(Graph::ExtentLimit)) => StatisticalRecord::of(
+            TerminalValue::Incomplete(IncompleteCause::ResourceExhausted),
+        ),
+        OnEachRead::Document(
+            Document::Graph(Graph::UnsupportedBinding | Graph::ExpansionRefused)
+            | Document::Unsupported,
+        ) => not_yet(),
+        OnEachRead::Document(_) => StatisticalRecord::failed(BROKEN),
     })
 }
 

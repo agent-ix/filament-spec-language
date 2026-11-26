@@ -2,6 +2,7 @@
 //! FR-253/FR-254: one exact timed race and the ordered tie steps it takes.
 
 use filament_exact::{Identifier, Integer, Rational, Value};
+use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::{DelayDistribution, Workload};
 use ix_trace_rs::implements;
@@ -101,6 +102,9 @@ pub enum TimedRaceStop {
     /// A sampled tie step is no longer enabled at its turn.
     #[error("a tied transition stopped being enabled")]
     TieDisabled,
+    /// An exact-arithmetic invariant broke.
+    #[error("internal fault: {0:?}")]
+    Internal(InternalFault),
 }
 
 /// A sampled timed run: its positions up to the end of its window, with the
@@ -182,15 +186,6 @@ pub enum TimedSampleDisagreement {
     },
     /// All recorded steps agree but the final time or end does not.
     EndPosition,
-}
-
-/// Replay result for a timed sample witness.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TimedSampleReplay {
-    /// The sample, including every exact delay, recomputes from its seed.
-    Reproduced,
-    /// The recomputed sample differs from the witness.
-    Disagrees(TimedSampleDisagreement),
 }
 
 /// Sample one timed run whose window `[0, horizon]` starts at its first
@@ -471,50 +466,6 @@ pub fn advance_timed(
     }
 }
 
-/// Recompute a recorded timed sample from its seed and compare every draw,
-/// delay, successor and end position (FR-254 witness replay).
-#[allow(clippy::too_many_arguments)] // each value is an explicit replay input
-pub fn replay_timed_sample(
-    system: &TimedSystem<'_, '_>,
-    initial: &TimedState,
-    workload: &Workload,
-    at: ChoicePoint,
-    q: u32,
-    horizon: &Rational,
-    max_sample_steps: u64,
-    record: &TimedSample,
-) -> Result<TimedSampleReplay, TimedSampleStop> {
-    let replayed = sample_timed(system, initial, workload, at, q, horizon, max_sample_steps)?;
-    if let Some((step, _)) = replayed
-        .steps
-        .iter()
-        .zip(&record.steps)
-        .enumerate()
-        .find(|(_, (actual, expected))| actual != expected)
-    {
-        return Ok(TimedSampleReplay::Disagrees(
-            TimedSampleDisagreement::Step {
-                step: u64::try_from(step).unwrap_or(u64::MAX),
-            },
-        ));
-    }
-    let same_state = system.state_key(&replayed.state).ok() == system.state_key(&record.state).ok();
-    let same_start = replayed.start == record.start;
-    if replayed.steps.len() != record.steps.len()
-        || replayed.trace != record.trace
-        || !same_start
-        || replayed.stamp != record.stamp
-        || replayed.window_end != record.window_end
-        || replayed.end != record.end
-        || !same_state
-    {
-        return Ok(TimedSampleReplay::Disagrees(
-            TimedSampleDisagreement::EndPosition,
-        ));
-    }
-    Ok(TimedSampleReplay::Reproduced)
-}
-
 impl TimedSample {
     /// The run's positions as the reference evaluator reads them: complete
     /// through the window's end, since no further position can lie in the
@@ -679,11 +630,8 @@ pub fn sample_timed_race(
         let delay = match draw_timed_delay(distribution, &window.intervals, point, q) {
             Ok(delay) => delay,
             Err(TimedDelayRefusal::NoMass) => continue,
-            Err(
-                TimedDelayRefusal::UnboundedUniform
-                | TimedDelayRefusal::GridExponent { .. }
-                | TimedDelayRefusal::UnsampledWindow,
-            ) => {
+            Err(TimedDelayRefusal::Internal(fault)) => return Err(TimedRaceStop::Internal(fault)),
+            Err(TimedDelayRefusal::UnboundedUniform | TimedDelayRefusal::GridExponent { .. }) => {
                 return Err(TimedRaceStop::NotStochastic {
                     state: key,
                     identity: window.transition.transition().clone(),

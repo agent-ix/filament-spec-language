@@ -1870,12 +1870,11 @@ fn a_bounded_delay_with_no_mass_in_any_window_is_a_time_lock() {
     ));
 }
 
-/// An exponential delay has mass on the bounded window of an invariant, which
-/// the sampler does not condition on: the item is unsupported, never read as
-/// a state where nobody races.
-#[trace("FR-254-AC-3")]
+/// An exponential delay over the bounded window of an invariant is conditioned
+/// on that window (FSpec FR-420), so it always fires before the invariant ends.
+#[trace("FSpec-FR-420-AC-2")]
 #[test]
-fn an_exponential_delay_over_a_bounded_window_is_unsupported() {
+fn an_exponential_delay_over_a_bounded_window_is_conditioned_on_the_window() {
     let world = timed_world_with(
         &[("send", &["phase"])],
         &format!(
@@ -1885,16 +1884,11 @@ fn an_exponential_delay_over_a_bounded_window_is_unsupported() {
              delay M::Call::send ~ exponential(rational(1, 1000));\n\
              workload Even on M {{ weight Call::send = 1; }}\n\
              {}",
-            window_claim("probability >= 0.5 [eventually[0 ms, 8 ms] holds(c.phase = 1)]")
+            window_claim("probability >= 0.5 [eventually[0 ms, 4 ms] holds(c.phase = 1)]")
         ),
     );
-    assert!(matches!(
-        probe(&world),
-        StatisticalOutcome::Unsupported {
-            cause: StatisticalUnsupported::NotStochastic { .. },
-            ..
-        }
-    ));
+    // The law is conditioned on `[0, 4 ms]`, so every sample sends within it.
+    assert_eq!(measured(&world), (Some(ratio(1, 1)), Decision::Accepted));
 }
 
 /// `A` is `send` (`phase = 1`), `B` is `reply` (`phase = 2`) 3 ms later. The

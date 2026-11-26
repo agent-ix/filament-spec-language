@@ -8,11 +8,11 @@
 
 use filament_exact::Cancel;
 use fsl_eval::simulation::model::ModelSystem;
-use fsl_replay::statistical::SubjectLimits;
+use fsl_replay::statistical::{OnEachRead, SubjectLimits};
 use fsl_replay::{
-    check_probability_certificate_document, on_each_has_instance, on_each_outcome,
-    replay_on_each_witness, ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome,
-    ProbabilisticCounterexample, ProbabilityDocumentLimits,
+    check_probability_certificate_document, on_each_outcome, replay_on_each_witness,
+    ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome, ProbabilisticCounterexample,
+    ProbabilityDocumentLimits,
 };
 use ix_trace_rs::implements;
 
@@ -112,37 +112,19 @@ pub(super) fn run(
 
 /// An `on each` claim requested with statistical evidence: `no-instance`
 /// over an empty instance set, and otherwise `unsupported` at FR-875's
-/// profile boundary, which admits only exact evidence. No sample is drawn.
+/// profile boundary, which admits only exact evidence.
 pub(in crate::analyze) fn statistical(
-    subject: fsl_eval::model_subject::ModelSubject<'_>,
-    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
-    cancel: &Cancel,
+    read: OnEachRead,
+    subject: SubjectLimits<'_>,
 ) -> EngineReport {
-    let simulation = subject.simulation;
-    let probabilistic = simulation.input.probabilistic;
-    let meter = simulation.meter;
-    let subject_limits = SubjectLimits {
-        expansion: simulation.expansion,
-        meter: &meter,
-    };
-    let item = match fsl_replay::probabilistic_claim_identity(claim) {
-        Ok(item) => item,
-        Err(error) => return instance_failure(error.into(), subject_limits),
-    };
-    let admitted = ModelSystem::new_with_cancel(simulation, cancel);
-    if let Some(cause) = cancel.tripped() {
-        return settled(&ExactProbBuildIssue::Cancelled(cause), subject_limits);
-    }
-    let system = match admitted {
-        Ok(system) => system,
-        Err(failure) => {
-            return build_refusal(ProductRefusal::Admission(failure), subject_limits);
+    match read {
+        OnEachRead::NoInstance => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
+        OnEachRead::Unimplemented => super::not_yet(),
+        OnEachRead::Cancelled(cause) => settled(&ExactProbBuildIssue::Cancelled(cause), subject),
+        OnEachRead::Admission(failure) => {
+            build_refusal(ProductRefusal::Admission(*failure), subject)
         }
-    };
-    match on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
-        Ok(false) => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
-        Ok(true) => super::not_yet(),
-        Err(error) => instance_failure(error, subject_limits),
+        OnEachRead::Document(error) => instance_failure(error, subject),
     }
 }
 
