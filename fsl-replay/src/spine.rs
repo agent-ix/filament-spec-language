@@ -292,7 +292,6 @@ mod native_result;
 mod protocol_premises;
 mod protocol_proof;
 mod protocol_structure;
-pub use quire_rs::semantic::{AvailabilityState, KindAvailability};
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
     read_native_run_result, read_native_run_result_bounded, read_outcome_diagnostics,
@@ -317,6 +316,7 @@ pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,
 };
+pub use quire_rs::semantic::{AvailabilityState, KindAvailability};
 pub mod query_proof;
 mod request;
 pub use request::{
