@@ -240,6 +240,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 max_cases: None,
                 max_task_product_work: limits.and_then(|limits| limits.max_task_product_work),
                 max_check_work: limits.and_then(|limits| limits.max_check_work),
+                max_states: limits.and_then(|limits| limits.max_states),
+                max_transitions: limits.and_then(|limits| limits.max_transitions),
                 trace: None,
                 traces: None,
                 recording: None,

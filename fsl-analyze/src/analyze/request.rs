@@ -136,6 +136,10 @@ pub struct ItemOptions {
     pub max_task_product_work: Option<std::num::NonZeroU64>,
     /// FR-418's checker work limit, `zone_check.max_check_work` (FR-461).
     pub max_check_work: Option<std::num::NonZeroU64>,
+    /// A schedulability item's `max_states`: EN-6's symbolic states.
+    pub max_states: Option<std::num::NonZeroU64>,
+    /// A schedulability item's `max_transitions`: EN-6's symbolic edges.
+    pub max_transitions: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-739 finite trace population for a finite hyper item.
@@ -1607,8 +1611,7 @@ fn work<'a>(
                     analysis,
                     binding,
                     *limits,
-                    item.options.max_task_product_work,
-                    item.options.max_check_work,
+                    &item.options,
                     &item.claim,
                     item.request_index,
                 )
