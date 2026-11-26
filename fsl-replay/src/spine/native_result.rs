@@ -11,7 +11,10 @@ use fsl_foundation::LocatedSpan;
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
-use quire_rs::semantic::{AvailabilityState, KindAvailability};
+use quire_rs::semantic::{
+    AvailabilityState, ClauseRef, KindAvailability, SemanticDiagnostic, SemanticSeverity,
+    SourceLocus,
+};
 use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -1260,7 +1263,15 @@ macro_rules! extraction_leaf_shape {
     };
 }
 
-extraction_leaf_shape!(String, u8, u64, bool, serde_json::Value);
+extraction_leaf_shape!(
+    String,
+    u8,
+    u64,
+    usize,
+    bool,
+    AvailabilityState,
+    SemanticSeverity
+);
 
 impl<K, V> ExtractionShape for BTreeMap<K, V> {
     fn missing_member(_: NodeRef<'_>, _: &str) -> Option<String> {
@@ -1288,18 +1299,6 @@ impl<T: ExtractionShape> ExtractionShape for Option<T> {
         } else {
             T::missing_member(node, path)
         }
-    }
-}
-
-impl ExtractionShape for KindAvailability {
-    #[implements("FR-267-AC-17")]
-    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
-        if !matches!(node.node(), Node::Object(_)) {
-            return None;
-        }
-        ["state", "lossy"]
-            .into_iter()
-            .find_map(|name| node.get(name).is_none().then(|| format!("{path}.{name}")))
     }
 }
 
@@ -1455,57 +1454,183 @@ extraction_record_type! {
 
 extraction_record_type! {
     ExtractionOutcome {
-        #[serde(
-            serialize_with = "KindAvailabilityWire::serialize",
-            deserialize_with = "availability_object"
-        )]
+        #[serde(deserialize_with = "closed_object")]
         availability: KindAvailability,
         clause_text: std::collections::BTreeMap<String, String>,
-        diagnostics: Vec<serde_json::Value>;
-        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-        clauses: Option<Vec<serde_json::Value>>
+        #[serde(deserialize_with = "closed_objects")]
+        diagnostics: Vec<SemanticDiagnostic>;
+        #[serde(default, deserialize_with = "present_closed_objects", skip_serializing_if = "Option::is_none")]
+        clauses: Option<Vec<ClauseRef>>
     }
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(remote = "KindAvailability", deny_unknown_fields)]
-struct KindAvailabilityWire {
-    #[serde(deserialize_with = "availability_state")]
-    state: AvailabilityState,
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    reason: Option<String>,
-    lossy: bool,
+/// A Quire record this reader decodes as a closed JSON object. Quire's own
+/// derived decoders accept a positional array and unknown members.
+trait ClosedRecord: Sized {
+    fn closed<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error>;
 }
 
-/// Quire's `availability`, admitted only as a JSON object.
-#[implements("FR-267-AC-17")]
-fn availability_object<'de, D: serde::Deserializer<'de>>(
-    decoder: D,
-) -> Result<KindAvailability, D::Error> {
-    struct Decoded(KindAvailability);
-
-    impl<'de> Deserialize<'de> for Decoded {
-        fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-            KindAvailabilityWire::deserialize(decoder).map(Self)
+/// The closed decoder and the missing-member walk of one Quire record, which
+/// Quire writes with its own encoding. Serde's remote derive builds the Quire
+/// type, so a member Quire adds, removes or retypes stops the build.
+macro_rules! quire_record {
+    (
+        $record:ident {
+            $($wire:literal $field:ident: $field_type:ty $(=> $with:literal)?),*
+            ;
+            $($optional_wire:literal $optional_field:ident: $optional_type:ty => $optional_with:literal),*
         }
-    }
+    ) => {
+        const _: () = {
+            type Record = $record;
 
-    fsl_foundation::serde_object::from_object::<D, Decoded>(decoder)
-        .map(|Decoded(availability)| availability)
+            #[derive(Deserialize)]
+            #[serde(remote = "Record", deny_unknown_fields)]
+            #[allow(dead_code, reason = "a Serde remote decoder is never constructed")]
+            struct Members {
+                $(
+                    #[serde(rename = $wire $(, deserialize_with = $with)?)]
+                    $field: $field_type,
+                )*
+                $(
+                    #[serde(rename = $optional_wire, default, deserialize_with = $optional_with)]
+                    $optional_field: Option<$optional_type>,
+                )*
+            }
+
+            struct Decoded(Record);
+
+            impl<'de> Deserialize<'de> for Decoded {
+                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                    Members::deserialize(decoder).map(Self)
+                }
+            }
+
+            impl ClosedRecord for $record {
+                #[implements("FR-267-AC-17")]
+                fn closed<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                    fsl_foundation::serde_object::from_object::<D, Decoded>(decoder)
+                        .map(|Decoded(record)| record)
+                }
+            }
+        };
+
+        impl ExtractionShape for $record {
+            #[implements("FR-267-AC-17")]
+            fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
+                if !matches!(node.node(), Node::Object(_)) {
+                    return None;
+                }
+                $(
+                    let field_path = format!("{path}.{}", $wire);
+                    let Some(value) = node.get($wire) else {
+                        return Some(field_path);
+                    };
+                    if let Some(missing) = <$field_type as ExtractionShape>::missing_member(value, &field_path) {
+                        return Some(missing);
+                    }
+                )*
+                $(
+                    if let Some(value) = node.get($optional_wire) {
+                        let field_path = format!("{path}.{}", $optional_wire);
+                        if let Some(missing) = <$optional_type as ExtractionShape>::missing_member(value, &field_path) {
+                            return Some(missing);
+                        }
+                    }
+                )*
+                None
+            }
+        }
+    };
 }
 
-/// Quire's availability `state`, admitted only as a JSON string: Serde's
-/// derived enum decoder also accepts `{"available": null}`.
-#[implements("FR-267-AC-17")]
-fn availability_state<'de, D: serde::Deserializer<'de>>(
+quire_record! {
+    KindAvailability {
+        "state" state: AvailabilityState => "string_variant",
+        "lossy" lossy: bool
+        ;
+        "reason" reason: String => "present"
+    }
+}
+
+quire_record! {
+    SemanticDiagnostic {
+        "code" code: String,
+        "severity" severity: SemanticSeverity => "string_variant",
+        "message" message: String
+        ;
+        "line" line: usize => "present",
+        "column" column: usize => "present",
+        "reason" reason: String => "present",
+        "sourceSpan" source_span: SourceLocus => "present_closed_object",
+        "section" section: String => "present"
+    }
+}
+
+quire_record! {
+    ClauseRef {
+        "language" language: String,
+        "clauseId" clause_id: String
+        ;
+        "sourceSpan" source_span: SourceLocus => "present_closed_object"
+    }
+}
+
+quire_record! {
+    SourceLocus {
+        "sourceIdentity" source_identity: String,
+        "path" path: String,
+        "startLine" start_line: usize,
+        "startColumn" start_column: usize
+        ;
+        "endLine" end_line: usize => "present",
+        "endColumn" end_column: usize => "present"
+    }
+}
+
+/// One closed record, wherever a decoder needs a `Deserialize` type.
+struct Closed<T>(T);
+
+impl<'de, T: ClosedRecord> Deserialize<'de> for Closed<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        T::closed(decoder).map(Self)
+    }
+}
+
+fn closed_object<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
     decoder: D,
-) -> Result<AvailabilityState, D::Error> {
+) -> Result<T, D::Error> {
+    T::closed(decoder)
+}
+
+fn present_closed_object<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
+    decoder: D,
+) -> Result<Option<T>, D::Error> {
+    T::closed(decoder).map(Some)
+}
+
+#[implements("FR-267-AC-17")]
+fn closed_objects<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
+    decoder: D,
+) -> Result<Vec<T>, D::Error> {
+    Vec::<Closed<T>>::deserialize(decoder)
+        .map(|entries| entries.into_iter().map(|Closed(entry)| entry).collect())
+}
+
+fn present_closed_objects<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
+    decoder: D,
+) -> Result<Option<Vec<T>>, D::Error> {
+    closed_objects(decoder).map(Some)
+}
+
+/// A Quire enum, admitted only as a JSON string: Serde's derived enum decoder
+/// also accepts `{"error": null}`.
+#[implements("FR-267-AC-17")]
+fn string_variant<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    decoder: D,
+) -> Result<T, D::Error> {
     let name = String::deserialize(decoder)?;
-    AvailabilityState::deserialize(serde::de::value::StringDeserializer::new(name))
+    T::deserialize(serde::de::value::StringDeserializer::new(name))
 }
 
 #[implements("FR-267-AC-17")]
@@ -5050,6 +5175,138 @@ mod qsl_3117_deciding_run {
         assert_eq!(
             read_with_extraction(tagged).as_deref(),
             Some("extraction.outcome.availability.state")
+        );
+    }
+
+    /// Quire's extraction outcome with every optional member of a diagnostic,
+    /// a clause reference and its source locus.
+    fn extraction_with_entries() -> Value {
+        let span = json!({
+            "sourceIdentity": "ix://agent-ix/spec", "path": "spec.md",
+            "startLine": 3, "startColumn": 1, "endLine": 4, "endColumn": 2
+        });
+        let mut extraction = complete_extraction();
+        extraction["outcome"]["diagnostics"] = json!([{
+            "code": "unchecked-language", "severity": "advisory", "message": "unchecked",
+            "line": 3, "column": 1, "reason": "unknown-token",
+            "sourceSpan": span.clone(), "section": "Invariants"
+        }]);
+        extraction["outcome"]["clauses"] =
+            json!([{"language": "ix:native", "clauseId": "check", "sourceSpan": span}]);
+        extraction
+    }
+
+    /// FR-267-AC-17: `diagnostics` and `clauses` entries are Quire's closed
+    /// objects.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_refuses_values_of_another_type_among_outcome_entries() {
+        assert_eq!(read_with_extraction(extraction_with_entries()), None);
+        let positional_span = json!(["ix://agent-ix/spec", "spec.md", 3, 1]);
+        for (member, positional) in [
+            ("diagnostics", json!(["code", "error", "message"])),
+            ("clauses", json!(["ix:native", "check"])),
+        ] {
+            let others = [
+                json!(null),
+                json!(1),
+                json!("x"),
+                json!([]),
+                positional,
+                json!({"bogus": true}),
+            ];
+            for other in others {
+                let mut extraction = extraction_with_entries();
+                extraction["outcome"][member] = json!([other.clone()]);
+                let refused = read_with_extraction(extraction)
+                    .unwrap_or_else(|| panic!("{member} accepted {other}"));
+                assert!(
+                    refused.starts_with(&format!("extraction.outcome.{member}[0]")),
+                    "{member} {other}: {refused}"
+                );
+            }
+            let mut extraction = extraction_with_entries();
+            extraction["outcome"][member][0]["sourceSpan"] = positional_span.clone();
+            assert_eq!(
+                read_with_extraction(extraction),
+                Some(format!("extraction.outcome.{member}[0].sourceSpan"))
+            );
+        }
+    }
+
+    /// FR-267-AC-17: an unknown, missing or `null` member, or a member of
+    /// another JSON type, is refused at its path inside an entry.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_malformed_outcome_entry_members() {
+        let objects: [(&str, &str, &[&str], &[&str]); 4] = [
+            (
+                "extraction.outcome.diagnostics[0]",
+                "/outcome/diagnostics/0",
+                &["code", "severity", "message"],
+                &["line", "column", "reason", "sourceSpan", "section"],
+            ),
+            (
+                "extraction.outcome.diagnostics[0].sourceSpan",
+                "/outcome/diagnostics/0/sourceSpan",
+                &["sourceIdentity", "path", "startLine", "startColumn"],
+                &["endLine", "endColumn"],
+            ),
+            (
+                "extraction.outcome.clauses[0]",
+                "/outcome/clauses/0",
+                &["language", "clauseId"],
+                &["sourceSpan"],
+            ),
+            (
+                "extraction.outcome.clauses[0].sourceSpan",
+                "/outcome/clauses/0/sourceSpan",
+                &["sourceIdentity", "path", "startLine", "startColumn"],
+                &["endLine", "endColumn"],
+            ),
+        ];
+        let refused_at = |pointer: &str, member: &str, value: Option<Value>| {
+            let mut extraction = extraction_with_entries();
+            let fields = extraction
+                .pointer_mut(pointer)
+                .unwrap()
+                .as_object_mut()
+                .unwrap();
+            match value {
+                Some(value) => drop(fields.insert(member.to_owned(), value)),
+                None => assert!(fields.remove(member).is_some()),
+            }
+            read_with_extraction(extraction)
+        };
+        for (path, pointer, required, optional) in objects {
+            assert_eq!(
+                refused_at(pointer, "bogus", Some(json!(true))),
+                Some(format!("{path}.bogus"))
+            );
+            for member in required {
+                assert_eq!(
+                    refused_at(pointer, member, None),
+                    Some(format!("{path}.{member}"))
+                );
+            }
+            for member in required.iter().chain(optional) {
+                for value in [json!(null), json!(true)] {
+                    assert_eq!(
+                        refused_at(pointer, member, Some(value.clone())),
+                        Some(format!("{path}.{member}")),
+                        "{path}.{member}: {value}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            refused_at(
+                "/outcome/diagnostics/0",
+                "severity",
+                Some(json!({"error": null}))
+            )
+            .as_deref(),
+            Some("extraction.outcome.diagnostics[0].severity")
         );
     }
 }

@@ -316,7 +316,10 @@ pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,
 };
-pub use quire_rs::semantic::{AvailabilityState, KindAvailability};
+pub use quire_rs::semantic::{
+    AvailabilityState, ClauseRef, KindAvailability, SemanticDiagnostic, SemanticSeverity,
+    SourceLocus,
+};
 pub mod query_proof;
 mod request;
 pub use request::{

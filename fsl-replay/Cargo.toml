@@ -32,8 +32,8 @@ fsl-package = { path = "../fsl-package" }
 fsl-semantics = { path = "../fsl-semantics" }
 fsl-route = { path = "../fsl-route" }
 fsl-source = { path = "../fsl-source", optional = true }
-# `semantic::KindAvailability`, the type of the extraction record's
-# `outcome.availability` (FR-267-AC-17).
+# Quire's `semantic` result types, which the extraction record's `outcome`
+# holds (FR-267-AC-17).
 quire-rs = { workspace = true }
 filament-exact = { workspace = true }
 filament-observation = { workspace = true }

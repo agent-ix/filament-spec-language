@@ -3060,23 +3060,8 @@ fn extraction_record(
         outcome: fsl_replay::spine::ExtractionOutcome {
             availability: outcome.availability.clone(),
             clause_text: outcome.clause_text.clone(),
-            diagnostics: outcome
-                .diagnostics
-                .iter()
-                .map(serde_json::to_value)
-                .collect::<std::result::Result<_, serde_json::Error>>()
-                .map_err(RunCause::Output)?,
-            clauses: outcome
-                .clauses
-                .as_ref()
-                .map(|clauses| {
-                    clauses
-                        .iter()
-                        .map(serde_json::to_value)
-                        .collect::<std::result::Result<Vec<_>, serde_json::Error>>()
-                })
-                .transpose()
-                .map_err(RunCause::Output)?,
+            diagnostics: outcome.diagnostics.clone(),
+            clauses: outcome.clauses.clone(),
         },
         map: fsl_replay::spine::ExtractionMap {
             region: fsl_replay::spine::ExtractionSpan {
