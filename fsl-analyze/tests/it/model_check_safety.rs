@@ -266,14 +266,10 @@ fn a_model_letter_is_read_up_to_its_first_undefined_position_or_its_horizon() {
     assert_eq!(reads, [(0, AtomReading::False), (1, AtomReading::True)]);
 }
 
-/// FR-125-AC-14: a key that is unused at initialization stays excluded from
-/// the claim's instances even after `make` creates a value-1 Counter there.
-/// The temporal proof covers only the initial instances `c` and `d`.
-#[trace("TC-520", "FR-125-AC-14")]
-#[test]
-fn an_operation_created_key_stays_excluded_from_temporal_instances() {
-    use fsl_eval::simulation::TransitionSystem;
-
+/// FR-125-AC-14's subject: `c` and `d` at value 0, `inc` disabled, and
+/// `make`, which creates a `Counter` of value 1, with the clause
+/// `always holds(c.value = 0)`.
+fn counter_with_make() -> World {
     let mut domain = model_world::counter();
     let mut document: Value = serde_json::from_slice(&domain.document).expect("counter JSON");
     let counter = document["types"]
@@ -301,7 +297,18 @@ fn an_operation_created_key_stays_excluded_from_temporal_instances() {
         ("c", json!({"value": {"integer": "0"}})),
         ("d", json!({"value": {"integer": "0"}})),
     ];
-    let world = World::new(domain, unit, INFINITE, &clauses, &initial);
+    World::new(domain, unit, INFINITE, &clauses, &initial)
+}
+
+/// FR-125-AC-14: a key that is unused at initialization stays excluded from
+/// the claim's instances even after `make` creates a value-1 Counter there.
+/// The temporal proof covers only the initial instances `c` and `d`.
+#[trace("TC-520", "FR-125-AC-14")]
+#[test]
+fn an_operation_created_key_stays_excluded_from_temporal_instances() {
+    use fsl_eval::simulation::TransitionSystem;
+
+    let world = counter_with_make();
     let keys = ["c", "d", "z"];
     let system =
         ModelSystem::new(world.subject(&keys, UNLIMITED).simulation).expect("the subject admits");
@@ -370,6 +377,99 @@ fn an_operation_created_key_stays_excluded_from_temporal_instances() {
         matches!(outcome, ModelCheckOutcome::Holds { .. }),
         "{outcome:?}"
     );
+}
+
+/// FR-128-AC-17: over FR-125-AC-14's subject a lasso envelope bound over `z`,
+/// a universe key no initial state admits, is refused before any step is
+/// re-executed, so its altered post-state is never read; the same envelope
+/// bound over `c` gets past its binding and is refused at that post-state.
+#[trace("TC-3219", "FR-128-AC-17")]
+#[test]
+fn a_lasso_bound_over_an_unadmitted_key_is_refused_before_any_step() {
+    let world = counter_with_make();
+    let keys = ["c", "d", "z"];
+    let system =
+        ModelSystem::new(world.subject(&keys, UNLIMITED).simulation).expect("the subject admits");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("the clause has letters");
+    let (transition, _) = system
+        .successors(&system.initial()[0])
+        .expect("the initial state expands")
+        .successors
+        .into_iter()
+        .next()
+        .expect("a successor");
+    let bound = |key: &str| ModelInstance {
+        population: world.domain.key(world.domain.population),
+        key: key.to_owned(),
+    };
+    let payload = TemporalCounterexample {
+        initial_state: 0,
+        prefix: vec![ModelStep {
+            transition,
+            post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(vec![0]),
+            delay: None,
+        }],
+        over_binding: Some(bound("z")),
+        fairness: node.clause().fairness().to_vec(),
+        kind: CounterexampleKind::Formula,
+        lasso: Some(fsl_replay::Lasso {
+            entry: 1,
+            terminal_stutter: true,
+            terminal_stutter_delay: None,
+        }),
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+        closure_stutters: Vec::new(),
+    };
+    let subject = ModelTraceSubject {
+        timed: None,
+        initial: world.subject(&keys, UNLIMITED).simulation.initial,
+        universes: crate::counter::universe(&keys),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        stutter_closure: false,
+    };
+    let replay = |key: &str| {
+        let mut payload = payload.clone();
+        payload.over_binding = Some(bound(key));
+        let refused = replay_model_trace_with_temporal_selections(
+            request(
+                &world.package,
+                &[],
+                world.domain.document.as_slice(),
+                world.snapshot_bytes(),
+                &world.unit,
+            ),
+            &subject,
+            &envelope_at(payload, node.identity().clone(), occurrence(node)),
+            &letters,
+            &[],
+            ReplayLimits::default(),
+        )
+        .expect_err("the post-state is altered");
+        let fsl_replay::ReplayRefusal::ModelTrace(refusal) = refused else {
+            panic!("a model-trace refusal, got {refused:?}");
+        };
+        *refusal
+    };
+    let at_z = replay("z");
+    assert_eq!(at_z, fsl_replay::ModelTraceRefusal::OverBinding);
+    assert_eq!(
+        at_z.code(),
+        fsl_foundation::diagnostic::Code::InvalidRuntimeInput
+    );
+    assert_eq!(at_z.cause(), "invalid-value");
+    assert!(matches!(
+        replay("c"),
+        fsl_replay::ModelTraceRefusal::PostState { step: 0, .. }
+    ));
+}
+
+fn occurrence(node: &fsl_semantics::check::TemporalClauseNode) -> OccurrenceKey {
+    OccurrenceKey::new(node.identity().clone(), node.claim().clone())
 }
 
 /// `c.value` read by `test`; `None` is undefined.
@@ -1236,8 +1336,8 @@ fn an_on_each_past_or_interval_proof_settles_certified() {
         &world.clauses[0],
         vec![value(|v| Some(v <= 3)), value(|v| Some(v <= 3))],
     );
-    let outcome = run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default())
-        .expect("checked");
+    let outcome =
+        run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default()).expect("checked");
     let ModelCheckOutcome::Holds { certificate, .. } = &outcome else {
         panic!("expected Holds, got {outcome:?}");
     };

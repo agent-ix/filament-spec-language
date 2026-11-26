@@ -47,7 +47,7 @@ pub struct HyperScriptRequest<'r, 'a> {
     /// package.
     pub subjects: &'r [ModelSubject<'a>],
     /// One `(parameter, key)` pair per object parameter, in parameter order,
-    /// each key in the parameter's universe.
+    /// each key an instance of its parameter.
     pub instance: &'r [(String, String)],
     /// The budget `μ_U` is evaluated against.
     pub meter: &'r mut Meter,
@@ -244,7 +244,7 @@ pub fn encode_hyper_script(
         let listed = systems
             .get(slot)
             .ok_or_else(|| fault("a system for each alias"))?
-            .hyper_instances(&parameter.population)
+            .hyper_bindable(&parameter.object)
             .map_err(|_| fault("an instance the identity checks list"))?;
         let bound = listed
             .into_iter()

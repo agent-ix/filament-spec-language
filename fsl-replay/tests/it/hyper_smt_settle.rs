@@ -182,6 +182,24 @@ fn an_empty_initial_list_settles_no_initial_state() {
     );
 }
 
+/// With an empty `initial` list every universe key is a binding, and the item
+/// settles `NoInitialState`.
+#[trace("TC-3219", "FR-315-AC-59")]
+#[test]
+fn an_empty_initial_list_settles_no_initial_state_at_every_universe_key() {
+    let mut world = World::new(&["v"], false, &non_interference("", ""));
+    world.universe.push("w".to_owned());
+    let world = world.without_initial_states();
+    for key in ["v", "w"] {
+        let record = settle(&world, key, key, HyperSmtResult::Inductive { depth: 1 })
+            .expect("the outcome answers the item");
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)
+        );
+    }
+}
+
 /// `InductionNotClosed{depth}` settles `inconclusive`, never `proved`.
 #[trace("TC-607", "FR-182-AC-1")]
 #[test]

@@ -1038,9 +1038,21 @@ fn a_universal_package_hyper_form_rebuilds_equal_from_emitted_facts() {
         panic!("one emitted Equal");
     };
     supplied_hyper(&built, &admitted, |bare| {
-        let form = bare
+        let mut form = bare
             .hyper_clause_form(root.occurrence())
             .expect("Equal package facts");
+        // The populations that overlap each parameter's type come from the
+        // supplied domain packages, as the analysis entry reads them.
+        let selections = crate::AnalysisView::model_selections(&bare);
+        let packages = packages_of(&built.documents);
+        let model = fsl_semantics::model::state::StateModel::new(
+            fsl_semantics::model::observation::ModelSelections::new(&selections, &[]),
+            &built.types,
+            &packages,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .expect("the selected packages re-admit");
+        form.bind_populations(&model);
         assert_eq!(form.name, "Equal");
         assert_eq!(
             form.profile,

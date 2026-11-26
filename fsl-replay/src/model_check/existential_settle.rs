@@ -3,8 +3,10 @@
 
 use filament_exact::Cancel;
 use fsl_eval::simulation::model::ModelSystem;
+use ix_trace_rs::implements;
 
 use super::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
+use super::graph_hyper::atom_location;
 use super::graph_settle::{GraphReplaySettlement, StateGraphMethod, StateGraphRecord};
 use super::settle::Row;
 use super::state_graph::{
@@ -12,7 +14,7 @@ use super::state_graph::{
 };
 use crate::{
     Certification, IncompleteCause, InconclusiveCause, ProductClosureCheck, ProductClosureRefusal,
-    ProductClosureRequest, ProofBasis, SettlementBasis, TerminalValue,
+    ProductClosureRequest, ProofBasis, SettlementBasis, TerminalValue, UndefinedLocus,
 };
 
 /// A single-existential settlement and the evidence that its replay reproduced.
@@ -28,6 +30,7 @@ pub struct ExistentialRecord {
 /// # Errors
 ///
 /// Refuses an inconsistent subject, binding or missing proof certificate.
+#[implements("FR-181-AC-5")]
 pub fn settle_existential(
     request: &ProductClosureRequest<'_>,
     instance: &ExistentialInstanceOutcome,
@@ -48,7 +51,7 @@ pub fn settle_existential(
         ([], []) => None,
         ([parameter], [(name, key)]) if name == &parameter.name => Some(
             system
-                .hyper_instances(&parameter.population)
+                .hyper_instances(&parameter.object)
                 .map_err(|_| ProductClosureRefusal::Input("HP-5-universe"))?
                 .into_iter()
                 .find(|instance| &instance.key == key)
@@ -185,7 +188,10 @@ pub fn settle_existential(
                 predicate: Some(fsl_semantics::check::PredicateRole::Target),
                 transition: finding.site.transition.clone(),
                 state_key: finding.site.state_key.clone(),
-                locus: None,
+                locus: match &finding.site.locus {
+                    UndefinedLocus::Atom(atom) => atom_location(clause, *atom).cloned(),
+                    _ => None,
+                },
                 cause: finding.cause.clone(),
             };
             undefined = Some(found.clone());

@@ -12,12 +12,14 @@ use fsl_eval::simulation::model::{
 use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    BoundCovers, HyperOutcome, HyperReplay, IncompleteCause, RunStats, UndecidedCause,
-    replay_hyper_trace_tuple, settle_hyper_check,
+    BoundCovers, HyperOutcome, HyperReplay, IncompleteCause, InconclusiveCause, RunStats,
+    UndecidedCause, replay_hyper_trace_tuple, settle_hyper_check,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
+use ix_trace_rs::implements;
 
+use super::instance_records::{decisive, undecided};
 use super::items::{BROKEN, admission, model_refusal};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
 use crate::model_check::{
@@ -195,7 +197,7 @@ pub(super) fn hyper_item<'a>(
                                 .and_then(|slot| owned.get(slot))
                                 .ok_or_else(|| fault("parameter-alias"))?;
                             let admitted = system
-                                .hyper_instances(&parameter.population)
+                                .hyper_instances(&parameter.object)
                                 .map_err(|_| fault("parameter-universe"))?;
                             let bound = admitted
                                 .into_iter()
@@ -239,6 +241,9 @@ struct SingleControl<'a> {
     cancel: &'a Cancel,
 }
 
+/// Decide and settle an HP-5 item, instance by instance, and report the record
+/// of the instance that decides it.
+#[implements("FR-181-AC-8", "FR-181-AC-11")]
 fn single(
     package: &fsl_package::CheckedPackage,
     clause: &fsl_semantics::check::CheckedHyperClause,
@@ -295,7 +300,7 @@ fn single(
         max_depth,
         seed: run.seed,
     };
-    let mut chosen = None;
+    let mut reports = Vec::with_capacity(run.instances.len());
     for instance in &run.instances {
         let settled = match fsl_replay::settle_existential(&request, instance, &method, cancel) {
             Ok(settled) => settled,
@@ -344,12 +349,23 @@ fn single(
             certificate_document: None,
             checker: proved.then_some(fsl_replay::CertificateChecker::ProductClosure),
         };
-        if !proved {
-            return EngineReport::StateGraph(Box::new(report));
+        reports.push(report);
+        // A refutation decides the item whatever the earlier instances gave.
+        if refuted {
+            break;
         }
-        chosen = Some(report);
     }
-    match chosen {
+    if reports.is_empty() {
+        // FR-125 "Instancing": no initial state settles before no instance.
+        let cause = if subjects[0].simulation.initial.is_empty() {
+            InconclusiveCause::NoInitialState
+        } else {
+            InconclusiveCause::NoInstance
+        };
+        return undecided(cause, &method, budgets.witness_samples);
+    }
+    let records: Vec<_> = reports.iter().map(|report| report.record.clone()).collect();
+    match reports.into_iter().nth(decisive(&records)) {
         Some(report) => EngineReport::StateGraph(Box::new(report)),
         None => EngineReport::Refused(Refusal::Failed(BROKEN)),
     }

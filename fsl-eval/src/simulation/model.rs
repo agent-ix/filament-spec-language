@@ -91,7 +91,7 @@ use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{OperationKey, PopulationDomain};
+use fsl_semantics::check::OperationKey;
 use fsl_semantics::family::ClassifyFailure;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::clause_observation::Observation;
@@ -125,6 +125,40 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
+
+/// A non-empty, canonically ordered set of admitted claim instances.
+///
+/// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
+/// an empty instance list to an exploration engine.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimInstances(Vec<ModelInstance>);
+
+impl ClaimInstances {
+    /// The first instance in canonical order.
+    pub fn first(&self) -> &ModelInstance {
+        // The private field is only constructed after checking non-emptiness.
+        &self.0[0]
+    }
+
+    /// All instances in canonical order.
+    pub fn as_slice(&self) -> &[ModelInstance] {
+        &self.0
+    }
+}
+
+/// Why a claim has no non-empty admitted instance set.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum NoClaimInstances {
+    /// The model could not be simulated or its extent could not be classified.
+    #[error("the model cannot be simulated: {0}")]
+    NotSimulated(#[from] NotSimulated),
+    /// The subject has no initial state.
+    #[error("the subject has no initial state")]
+    NoInitialState,
+    /// No initial record admits a key in the overlapping populations.
+    #[error("the claim has no admitted instance")]
+    NoInstance,
+}
 use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
 use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
 use crate::simulation::footprint::{Footprint, Location};
@@ -991,6 +1025,56 @@ impl ModelSystem<'_> {
 /// holding it, the member, and the count's `min` and `max`.
 pub(crate) type ClockCount = (DeclarationKey, StateField, u64, Option<u64>);
 
+/// The type of the member record an initial state admits for each key of each
+/// bounded population's object universe. FR-125 gives a universe key one type
+/// across the subject's initial states and every bounded population. Equal
+/// keys in two object universes (unrelated type hierarchies) name two objects.
+///
+/// # Errors
+///
+/// `conflicting-identity` for two records of one universe key with different
+/// types; an admission failure for a record with no reference.
+#[implements("FR-125-AC-9")]
+fn admitted_types(
+    model: &StateModel,
+    universes: &BTreeMap<DeclarationKey, Vec<String>>,
+    initial: &[ModelSimState],
+) -> Result<BTreeMap<(UniverseId, String), DeclarationKey>, AdmissionFailure> {
+    let mut admitted = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
+    for state in initial {
+        for (population, objects) in &state.state().populations {
+            if !universes.contains_key(population) {
+                continue;
+            }
+            for (key, object) in objects {
+                let universe = model
+                    .object_reference(&object.type_identity, key)?
+                    .universe()
+                    .clone();
+                let identity = (universe, key.clone());
+                match admitted.get(&identity) {
+                    Some(first_type) if first_type != &object.type_identity => {
+                        return Err(refused(
+                            Code::InvalidRuntimeInput,
+                            "conflicting-identity",
+                            &[
+                                ("key", key.clone()),
+                                ("first_type", first_type.node.clone()),
+                                ("second_type", object.type_identity.node.clone()),
+                            ],
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        admitted.insert(identity, object.type_identity.clone());
+                    }
+                }
+            }
+        }
+    }
+    Ok(admitted)
+}
+
 fn refused(code: Code, cause: &'static str, fields: &[(&'static str, String)]) -> AdmissionFailure {
     AdmissionFailure::Refused(Box::new(record(code, cause, fields)))
 }
@@ -1507,44 +1591,10 @@ impl<'a> ModelSystem<'a> {
             initial.push(ModelSimState::anchored(state, anchor));
         }
 
-        // FR-125 gives an object universe's key one type across the subject's
-        // initial states and every bounded population. Do this before
-        // reference bindings or any instance is formed: otherwise one
+        // Before reference bindings or any instance is formed: otherwise one
         // reference could denote different objects depending on which
-        // population or initial snapshot supplied the row. Equal keys in two
-        // object universes (unrelated type hierarchies) name two objects.
-        let mut admitted_types = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
-        for state in &initial {
-            for (population, objects) in &state.state().populations {
-                if !universes.contains_key(population) {
-                    continue;
-                }
-                for (key, object) in objects {
-                    let universe = model
-                        .object_reference(&object.type_identity, key)?
-                        .universe()
-                        .clone();
-                    let identity = (universe, key.clone());
-                    match admitted_types.get(&identity) {
-                        Some(first_type) if first_type != &object.type_identity => {
-                            return Err(refused(
-                                Code::InvalidRuntimeInput,
-                                "conflicting-identity",
-                                &[
-                                    ("key", key.clone()),
-                                    ("first_type", first_type.node.clone()),
-                                    ("second_type", object.type_identity.node.clone()),
-                                ],
-                            ));
-                        }
-                        Some(_) => {}
-                        None => {
-                            admitted_types.insert(identity, object.type_identity.clone());
-                        }
-                    }
-                }
-            }
-        }
+        // population or initial snapshot supplied the row.
+        let admitted_types = admitted_types(&model, &universes, &initial)?;
 
         let reference_bindings = if let Some(package) = input.source_package() {
             ReferenceBindings::bind(
@@ -2518,37 +2568,65 @@ impl<'a> ModelSystem<'a> {
         Ok(instances)
     }
 
-    /// FR-172 Object parameters: the instances of a hyper clause parameter,
-    /// one per key of the universe of the one population `domain` it resolves
-    /// to, in universe order, whether or not an initial state holds the key.
-    /// `self` is the system of the parameter's alias. No other population
-    /// contributes a key, whatever its member types.
+    /// Return the non-empty admitted instances for a claim's `over` type.
+    ///
+    /// The refusal order is FR-125-AC-13: extent/bound failures from
+    /// [`Self::instances`], then no initial state, then no admitted instance.
+    /// Conflicting identities are rejected by [`Self::new`] before a system
+    /// is available.
+    #[implements("FR-125-AC-13", "FR-125-AC-21")]
+    pub fn claim_instances(
+        &self,
+        over: &ValueType,
+    ) -> Result<ClaimInstances, NoClaimInstances> {
+        let instances = self.instances(over).map_err(NoClaimInstances::NotSimulated)?;
+        if self.initial_base.is_empty() {
+            return Err(NoClaimInstances::NoInitialState);
+        }
+        if instances.is_empty() {
+            return Err(NoClaimInstances::NoInstance);
+        }
+        Ok(ClaimInstances(instances))
+    }
+
+    /// FR-125 Instancing: the instances of a hyper clause parameter of object
+    /// type `object`, under the one rule of [`Self::instances`]. `self` is the
+    /// system of the parameter's alias.
     ///
     /// # Errors
     ///
-    /// [`NotSimulated::RequiresBound`] when that population has no universe;
-    /// [`NotSimulated::Extent`] when this system's model has no one population
-    /// that is `domain`, and as [`Self::instances`].
+    /// As [`Self::instances`].
+    #[implements("FR-125-AC-19", "FR-125-AC-20")]
     pub fn hyper_instances(
         &self,
-        domain: &PopulationDomain,
+        object: &EffectiveId,
     ) -> Result<Vec<ModelInstance>, NotSimulated> {
-        let resolved = self.model.resolved_population(domain).ok_or_else(|| {
-            NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
-                "model-simulation",
-                "parameter-population",
-            )))
-        })?;
+        self.instances(&ValueType::Reference(object.clone()))
+    }
+
+    /// Every key a hyper parameter of object type `object` may name in an
+    /// identity or an encoding (FR-315 `instance-binding`): each of
+    /// [`Self::hyper_instances`]; for a subject whose initial list is empty,
+    /// every key of the universes of the overlapping populations, since the
+    /// item then settles `NoInitialState`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::instances`].
+    #[implements("FR-315-AC-59")]
+    pub fn hyper_bindable(&self, object: &EffectiveId) -> Result<Vec<ModelInstance>, NotSimulated> {
+        if !self.initial_base.is_empty() {
+            return self.hyper_instances(object);
+        }
         let mut seen = BTreeSet::new();
-        let instances = self
-            .universe_members_where(&|population| population.key == resolved)?
+        Ok(self
+            .universe_members(object)?
             .filter(|(_, key)| seen.insert(*key))
             .map(|(population, key)| ModelInstance {
                 population: population.clone(),
                 key: key.to_owned(),
             })
-            .collect();
-        Ok(instances)
+            .collect())
     }
 
     /// [`Self::universe_members_where`] the populations that overlap the
@@ -2851,13 +2929,14 @@ impl<'a> ModelSystem<'a> {
     /// The reference a binding of `instance`, for a parameter of object type
     /// `declared`, is written as (FR-125 "Instancing"): the universe of
     /// `declared`, the type of the member record an initial state admits for
-    /// the key in that universe, and the key. A key with no such record,
-    /// which a hyper parameter's instance may have, is written with `declared`.
+    /// the key in that universe, and the key. Only a subject whose initial
+    /// list is empty, which admits no key, writes `declared`.
     ///
     /// # Errors
     ///
-    /// As [`Self::bound_reference`].
-    #[implements("FR-125-AC-9")]
+    /// As [`Self::bound_reference`]; a fault for a key no initial state of a
+    /// non-empty initial list admits.
+    #[implements("FR-125-AC-9", "FR-125-AC-19")]
     pub fn written_reference(
         &self,
         declared: EffectiveId,
@@ -2866,7 +2945,10 @@ impl<'a> ModelSystem<'a> {
         let declared = self.bound_reference(declared, instance)?;
         let identity = (declared.universe().clone(), instance.key.clone());
         let Some(admitted) = self.admitted_types.get(&identity) else {
-            return Ok(declared);
+            if self.initial_base.is_empty() {
+                return Ok(declared);
+            }
+            return Err(InternalFault::new("model-simulation", "bound-key-admitted"));
         };
         self.model
             .object_reference(admitted, &instance.key)

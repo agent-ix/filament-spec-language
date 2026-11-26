@@ -4,7 +4,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, ScalarLimits};
-use ix_trace_rs::implements;
 use fsl_eval::automaton::PropertyAutomaton;
 use fsl_eval::fairness::{Analysis, Constraint, EdgeLabel, Graph, Identity, Outcome, Strength};
 use fsl_eval::hyper::{
@@ -20,6 +19,8 @@ use fsl_eval::simulation::{StateKey, SymmetryGroup, TransitionSystem};
 use fsl_foundation::IdentityLimits;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedHyperClause, CheckedModelRelation, CopyGroup, HyperForm};
+use fsl_semantics::model::state::StateModel;
+use ix_trace_rs::implements;
 
 mod relation;
 pub use relation::{
@@ -268,12 +269,33 @@ impl<'a> PackageHyperClosureRequest<'a> {
         meter: ScalarLimits,
         position_limit: u64,
     ) -> Result<Self, ProductClosureRefusal> {
-        let form = package
+        let mut form = package
             .hyper_clause_form(occurrence)
             .map_err(|_| ProductClosureRefusal::Input("package-hyper-form"))?;
         let world = package
             .world()
             .map_err(|_| ProductClosureRefusal::Input("package-world"))?;
+        if !form.parameters.is_empty() {
+            // Every subject of a package clause names the package's one set
+            // of model selections.
+            let simulation = &subjects
+                .first()
+                .ok_or(ProductClosureRefusal::Input("package-hyper-subject"))?
+                .simulation;
+            let selections = simulation.input.model_inputs();
+            let selections = match simulation.input.clock_declarations {
+                Some(table) => selections.with_clock_declaration_table(table),
+                None => selections,
+            };
+            let model = StateModel::new(
+                selections,
+                simulation.input.types,
+                simulation.packages,
+                simulation.normalization,
+            )
+            .map_err(|failure| ProductClosureRefusal::Admission(Box::new(failure)))?;
+            form.bind_populations(&model);
+        }
         let clause = CheckedHyperClause::of_package_form(form, world.types(), position_limit)
             .map_err(|_| ProductClosureRefusal::Input("package-hyper-clause"))?;
         package
@@ -345,6 +367,9 @@ pub enum ProductClosureRefusal {
     /// The supplied subject or binding does not admit.
     #[error("hyper certificate input does not admit: {0}")]
     Input(&'static str),
+    /// A subject's model does not admit.
+    #[error("hyper certificate model does not admit: {0}")]
+    Admission(Box<fsl_semantics::model::observation::AdmissionFailure>),
     /// The product could not be constructed or expanded.
     #[error("hyper certificate recomputation failed: {0}")]
     Recompute(&'static str),
@@ -434,7 +459,7 @@ fn complete_hyper_scope(
             .get(slot)
             .ok_or(ProductClosureRefusal::Input("parameter-subject"))?;
         let instances = system
-            .hyper_instances(&parameter.population)
+            .hyper_instances(&parameter.object)
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         domains.push(
             instances
@@ -600,7 +625,7 @@ fn check(
             .get(slot(parameter.alias.as_str())?)
             .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
         let admitted = system
-            .hyper_instances(&parameter.population)
+            .hyper_instances(&parameter.object)
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         let found = admitted
             .into_iter()

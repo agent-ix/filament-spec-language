@@ -111,6 +111,9 @@ impl<'a> PackageHyperSubject<'a> {
             crate::plan::MODEL_BASED_POSITIONS,
         ) {
             Ok(request) => request,
+            Err(fsl_replay::ProductClosureRefusal::Admission(failure)) => {
+                return EngineReport::Refused(admission(&failure))
+            }
             Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
         };
         let clause = certificate.clause();
@@ -191,7 +194,7 @@ impl<'a> PackageHyperSubject<'a> {
                         .and_then(|slot| owned.get(slot))
                         .ok_or_else(|| fault("parameter-alias"))?;
                     let admitted = system
-                        .hyper_instances(&parameter.population)
+                        .hyper_instances(&parameter.object)
                         .map_err(|_| fault("parameter-universe"))?;
                     let bound = admitted
                         .into_iter()

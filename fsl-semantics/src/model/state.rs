@@ -10,7 +10,7 @@
 //! between two states is [`crate::model::population::decide_frame`], called
 //! directly over the model's [`StateModel::population_index`].
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
 use filament_contract_model::{
@@ -544,7 +544,12 @@ impl StateModel {
         budget: &mut NativeJoinBudget,
     ) -> Result<Self, RetainedModelFailure> {
         Self::reserve_retained_wrapper(budget)?;
-        Self::from_retained_parts(selections, StateTypes::Owned(Box::new(types)), owners, budget)
+        Self::from_retained_parts(
+            selections,
+            StateTypes::Owned(Box::new(types)),
+            owners,
+            budget,
+        )
     }
 
     /// Construct a retained model sharing the immutable genuine type environment
@@ -760,33 +765,6 @@ impl StateModel {
             .map(|view| crate::check::lowering::AdmittedModel::from_view(&view.view))
             .collect();
         crate::check::state_clause::populations_overlapping(&models, object, &self.types)
-    }
-
-    /// The declaration key of the one population a checked clause's `domain`
-    /// records: the population at that ordinal of its domain package whose
-    /// canonical member type is the domain's. `None` when no population of
-    /// this model, or more than one, is that one.
-    pub fn resolved_population(
-        &self,
-        domain: &crate::check::PopulationDomain,
-    ) -> Option<DeclarationKey> {
-        let mut found = BTreeSet::new();
-        for view in &self.views {
-            let model = crate::check::lowering::AdmittedModel::from_view(&view.view);
-            found.extend(
-                model
-                    .population_domains()
-                    .filter(|(ordinal, _, canonical)| {
-                        *ordinal == domain.ordinal && *canonical == domain.object
-                    })
-                    .map(|(_, population, _)| population.key.clone()),
-            );
-        }
-        let mut found = found.into_iter();
-        match (found.next(), found.next()) {
-            (Some(key), None) => Some(key),
-            _ => None,
-        }
     }
 
     /// Re-admit and re-normalize the domain packages `model_selections` name

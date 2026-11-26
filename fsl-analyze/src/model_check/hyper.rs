@@ -104,6 +104,7 @@ use std::cell::{Cell, Ref};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 
+use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::FairnessGranularity;
@@ -123,7 +124,7 @@ use fsl_eval::simulation::model::{
     check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem,
 };
 use fsl_eval::simulation::{
-    Expansion, ExpansionLimit, ExpansionStop, Limit, Limits, Outcome, SymmetryGroup,
+    Expansion, ExpansionLimit, ExpansionStop, Limit, Limits, Outcome, SymmetryClass, SymmetryGroup,
     TransitionSystem,
 };
 use fsl_eval::temporal::{
@@ -138,6 +139,7 @@ use fsl_replay::{
     UndecidedCause,
 };
 use fsl_semantics::check::{CheckedHyperClause, CopyGroup, FormulaNodeId, HyperForm};
+use ix_trace_rs::implements;
 
 use super::check::{atom_refusal, fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
 use super::fair_walk::{tree_path, FairModel};
@@ -331,8 +333,9 @@ pub fn check_hyper(
     };
     let symmetric = !request.reductions.symmetry.is_empty();
     let instances = instances(clause, &systems, &slot_of)?;
+    let admitted = admitted_keys(&instances);
     let instances = if symmetric && clause.parameters().len() == 1 {
-        orbit_representatives(instances, &keys)
+        orbit_representatives(instances, &keys, &admitted)
     } else {
         instances
     };
@@ -342,6 +345,7 @@ pub fn check_hyper(
         systems,
         group: copy_symmetry(&copy),
         keys,
+        admitted,
         symmetric,
         copy,
         slots,
@@ -417,19 +421,51 @@ fn admit_reductions(
     Ok(Ok(group))
 }
 
+/// Each population and key some instance of `instances` binds.
+fn admitted_keys(instances: &[Vec<ParameterBinding>]) -> BTreeSet<(DeclarationKey, String)> {
+    instances
+        .iter()
+        .flatten()
+        .map(|binding| {
+            (
+                binding.instance.population.clone(),
+                binding.instance.key.clone(),
+            )
+        })
+        .collect()
+}
+
+/// The keys of `class` that some instance binds: an excluded key is in no
+/// orbit (FR-151 "Instances").
+fn admitted_class(
+    class: &SymmetryClass,
+    admitted: &BTreeSet<(DeclarationKey, String)>,
+) -> Vec<String> {
+    class
+        .keys
+        .iter()
+        .filter(|key| admitted.contains(&(class.population.clone(), (*key).clone())))
+        .cloned()
+        .collect()
+}
+
 /// The instances of a clause with one object parameter, one for each orbit
 /// of `keys` (FR-151 "Instances"): the instance bound to the orbit's least
-/// key stands for every key of it.
+/// admitted key stands for every admitted key of it.
+#[implements("FR-151-AC-5")]
 fn orbit_representatives(
     instances: Vec<Vec<ParameterBinding>>,
     keys: &SymmetryGroup,
+    admitted: &BTreeSet<(DeclarationKey, String)>,
 ) -> Vec<Vec<ParameterBinding>> {
     instances
         .into_iter()
         .filter(|instance| {
             instance.iter().all(|binding| {
                 keys.class_of(&binding.instance.population, &binding.instance.key)
-                    .is_none_or(|class| class.keys.first() == Some(&binding.instance.key))
+                    .is_none_or(|class| {
+                        admitted_class(class, admitted).first() == Some(&binding.instance.key)
+                    })
             })
         })
         .collect()
@@ -449,7 +485,7 @@ fn instances(
             .get(slot_of(parameter.alias.as_str())?)
             .ok_or_else(|| fault("a-parameter-names-an-alias-of-the-clause"))?;
         let keys = system
-            .hyper_instances(&parameter.population)
+            .hyper_instances(&parameter.object)
             .map_err(not_simulated)?;
         lists.push(
             keys.into_iter()
@@ -687,6 +723,50 @@ enum Found {
     },
 }
 
+/// What one instance of a clause gave: its explored product, when it was
+/// built, and the outcome it ends with when it does not hold.
+type InstanceRun<'r, 'a> = (Option<Explored<'r, 'a>>, Option<HyperOutcome>);
+
+/// Whether `outcome` of one instance ends the search over the later ones: a
+/// refutation stands and a cancellation ends the run (FR-177 "Instances").
+fn ends_search(outcome: &HyperOutcome) -> bool {
+    matches!(
+        outcome,
+        HyperOutcome::Violated { .. }
+            | HyperOutcome::Stopped {
+                cause: IncompleteCause::Cancelled { .. },
+                ..
+            }
+    )
+}
+
+/// `outcome` of an earlier instance, with the counts of everything the run
+/// explored.
+fn restated(outcome: HyperOutcome, totals: &Totals) -> HyperOutcome {
+    let stats = totals.stats();
+    match outcome {
+        HyperOutcome::Undecided { cause, .. } => HyperOutcome::Undecided { cause, stats },
+        HyperOutcome::Stopped {
+            cause,
+            limit,
+            count,
+            ..
+        } => HyperOutcome::Stopped {
+            cause,
+            limit,
+            count,
+            stats,
+        },
+        HyperOutcome::BoundReached { depth, covers, .. } => HyperOutcome::BoundReached {
+            depth,
+            covers,
+            stats,
+        },
+        HyperOutcome::Reduction { cause, .. } => HyperOutcome::Reduction { cause, stats },
+        other => other,
+    }
+}
+
 /// A first-phase finding before its counterexample is built.
 enum Candidate {
     /// An undefined evaluation at a state.
@@ -719,18 +799,10 @@ fn sooner(refused: &mut Option<(usize, UndecidedCause)>, depth: usize, cause: Un
     }
 }
 
-/// The explored instances and the first-phase finding that ranks first.
-struct Ranked<'r, 'a> {
-    explored: Vec<Explored<'r, 'a>>,
-    best: Option<(usize, FirstHit)>,
-    /// Whether the search horizon cut an instance explored before any finding.
-    bounded: bool,
-}
-
 /// The second phase's result for one instance.
 enum Second {
-    /// The shortest passing lasso, with its length in joint steps.
-    Lasso(Box<HyperCounterexample>, usize),
+    /// The shortest passing lasso.
+    Lasso(Box<HyperCounterexample>),
     NoneFair,
     Stopped(HyperOutcome),
 }
@@ -769,6 +841,8 @@ struct Run<'r, 'a> {
     /// The key symmetry the request selects, as admitted over the subject
     /// (FR-174 "Key symmetry"); trivial when none is selected.
     keys: SymmetryGroup,
+    /// Each population and key some instance binds.
+    admitted: BTreeSet<(DeclarationKey, String)>,
     /// Whether the request selects a key symmetry.
     symmetric: bool,
     /// The classes of the clause's copy group the run reduces by (FR-174):
@@ -842,7 +916,7 @@ impl<'a> Run<'_, 'a> {
         &self,
         instances: &[Vec<ParameterBinding>],
     ) -> Result<HyperOutcome, ModelCheckRefusal> {
-        let mut totals = Totals::default();
+        let totals = Totals::default();
         if self.cancel.poll() {
             if let Some(source) = self.cancel.cause() {
                 return Ok(stopped(
@@ -882,44 +956,84 @@ impl<'a> Run<'_, 'a> {
         if self.projected {
             return self.decide_projected(instances, totals);
         }
-        let horizon = self.request.max_depth;
-        let ranked = match self.rank_instances(instances, horizon, &mut totals)? {
-            Ok(ranked) => ranked,
-            Err(outcome) => return Ok(outcome),
-        };
-        if let Some((_, hit)) = ranked.best {
-            return Self::finding(hit, &totals);
-        }
-        let (explored, bounded) = (ranked.explored, ranked.bounded);
-        let mut shortest: Option<(Box<HyperCounterexample>, usize)> = None;
-        for run in &explored {
-            match self.second_phase(run, &totals)? {
-                Second::Lasso(counterexample, length) => {
-                    if shortest.as_ref().is_none_or(|(_, known)| length < *known) {
-                        shortest = Some((counterexample, length));
-                    }
+        self.each_instance(
+            instances,
+            totals,
+            |instance, totals| self.universal_instance(instance, totals),
+            |explored, totals| self.clean(explored, totals),
+        )
+    }
+
+    /// FR-176 and FR-177 "Instances": decide each instance in order from its
+    /// own findings alone. The first refuted instance ends the item. An
+    /// instance that is undecided, stopped or cut by a bound does not end
+    /// the search, and when none is refuted the item takes the first such
+    /// outcome. `holds` builds the outcome of a run whose instances all
+    /// held.
+    #[implements("FR-176-AC-8", "FR-177-AC-11", "FR-177-AC-12")]
+    fn each_instance<'x>(
+        &'x self,
+        instances: &'x [Vec<ParameterBinding>],
+        mut totals: Totals,
+        mut decide: impl FnMut(
+            &'x [ParameterBinding],
+            &mut Totals,
+        ) -> Result<InstanceRun<'x, 'a>, ModelCheckRefusal>,
+        holds: impl FnOnce(&[Explored<'x, 'a>], &Totals) -> Result<HyperOutcome, ModelCheckRefusal>,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let mut explored = Vec::with_capacity(instances.len());
+        let mut first_open = None;
+        for instance in instances {
+            let (run, outcome) = decide(instance, &mut totals)?;
+            explored.extend(run);
+            if let Some(outcome) = outcome {
+                if ends_search(&outcome) {
+                    return Ok(outcome);
                 }
-                Second::NoneFair => {}
-                Second::Stopped(outcome) => return Ok(outcome),
+                first_open.get_or_insert(outcome);
             }
         }
-        if let Some((counterexample, _)) = shortest {
-            return Ok(HyperOutcome::Violated {
+        match first_open {
+            Some(outcome) => Ok(restated(outcome, &totals)),
+            None => holds(&explored, &totals),
+        }
+    }
+
+    /// One instance of an HP-2 item: its first phase's finding, else its
+    /// second phase's lasso, else the state constraint or search horizon
+    /// that cut it.
+    fn universal_instance<'x>(
+        &'x self,
+        instance: &'x [ParameterBinding],
+        totals: &mut Totals,
+    ) -> Result<InstanceRun<'x, 'a>, ModelCheckRefusal> {
+        let horizon = self.request.max_depth;
+        let cut = totals.boundary;
+        let run = match self.explore(instance, horizon, totals)? {
+            Ok(run) => run,
+            Err(outcome) => return Ok((None, Some(outcome))),
+        };
+        if let Some((_, hit)) = self.first_phase(&run, totals)? {
+            let outcome = Self::finding(hit, totals)?;
+            return Ok((Some(run), Some(outcome)));
+        }
+        let outcome = match self.second_phase(&run, totals)? {
+            Second::Lasso(counterexample) => Some(HyperOutcome::Violated {
                 counterexample,
                 stats: totals.stats(),
-            });
-        }
-        if totals.boundary > 0 {
-            return Ok(Self::constraint_reached(&totals));
-        }
-        match (bounded, horizon) {
-            (true, Some(depth)) => Ok(HyperOutcome::BoundReached {
-                depth: widen(depth),
-                covers: BoundCovers::JointSteps,
-                stats: totals.stats(),
             }),
-            _ => self.clean(&explored, &totals),
-        }
+            Second::Stopped(outcome) => Some(outcome),
+            Second::NoneFair if totals.boundary > cut => Some(Self::constraint_reached(totals)),
+            Second::NoneFair => match horizon {
+                Some(depth) if run.bounded => Some(HyperOutcome::BoundReached {
+                    depth: widen(depth),
+                    covers: BoundCovers::JointSteps,
+                    stats: totals.stats(),
+                }),
+                _ => None,
+            },
+        };
+        Ok((Some(run), outcome))
     }
 
     /// FR-174 "Outcomes": a run that found no violation but cut a successor at
@@ -931,50 +1045,6 @@ impl<'a> Run<'_, 'a> {
             },
             stats: totals.stats(),
         }
-    }
-
-    /// Explore each instance and rank their first-phase findings as FR-126
-    /// "Bindings and ranking" does: a later instance wins only with a
-    /// strictly shallower finding, so it is explored only through the depth
-    /// that finding would need (every state shallower than the best is
-    /// expanded) and not at all past a finding at depth 0. `horizon` is the
-    /// search horizon of an instance explored before any finding. `Err` is an
-    /// outcome that ended the run, a stopped exploration or evaluator.
-    fn rank_instances<'x>(
-        &'x self,
-        instances: &'x [Vec<ParameterBinding>],
-        horizon: Option<usize>,
-        totals: &mut Totals,
-    ) -> Result<Result<Ranked<'x, 'a>, HyperOutcome>, ModelCheckRefusal> {
-        let mut explored = Vec::with_capacity(instances.len());
-        let mut best: Option<(usize, FirstHit)> = None;
-        let mut bounded = false;
-        for instance in instances {
-            let cap = match best {
-                Some((0, _)) => break,
-                Some((depth, _)) => Some(depth),
-                None => horizon,
-            };
-            let run = match self.explore(instance, cap, totals)? {
-                Ok(run) => run,
-                Err(outcome) => return Ok(Err(outcome)),
-            };
-            bounded |= best.is_none() && run.bounded;
-            if let Some((depth, hit)) = self.first_phase(&run, totals)? {
-                if let FirstHit::Stopped(outcome) = hit {
-                    return Ok(Err(outcome));
-                }
-                if best.as_ref().is_none_or(|(known, _)| depth < *known) {
-                    best = Some((depth, hit));
-                }
-            }
-            explored.push(run);
-        }
-        Ok(Ok(Ranked {
-            explored,
-            best,
-            bounded,
-        }))
     }
 
     /// The outcome of a first-phase finding.
@@ -993,89 +1063,78 @@ impl<'a> Run<'_, 'a> {
         })
     }
 
-    /// Decide an HP-3 item (FR-177): for each instance, the first phase's
-    /// undefined evaluations and refused `match`es, and the second phase's
-    /// empty witness sets with a fair universal cycle, ranked together by the
-    /// joint position they are at (ADR-023 HV-8). As FR-126 ranks bindings, a
-    /// later instance wins only with a strictly earlier finding: a finding
-    /// nothing can precede ends the run, and one at joint position 0 bounds
-    /// the later instances to their first phase at that position.
+    /// Decide an HP-3 item (FR-177), one instance at a time.
     fn decide_witness(
         &self,
         instances: &[Vec<ParameterBinding>],
-        mut totals: Totals,
+        totals: Totals,
     ) -> Result<HyperOutcome, ModelCheckRefusal> {
-        let mut explored = Vec::with_capacity(instances.len());
-        // The least (position, rank) so far: an undefined evaluation ranks
-        // before a refused `match` at one position, and a refused `match`
-        // before an empty witness set, which it may have dropped a member of.
-        let mut best: Option<(usize, u8, Verdict)> = None;
+        self.each_instance(
+            instances,
+            totals,
+            |instance, totals| self.witness_instance(instance, totals),
+            |explored, totals| self.clean(explored, totals),
+        )
+    }
+
+    /// One instance of an HP-3 item: the first phase's undefined evaluations
+    /// and refused `match`es, and the second phase's empty witness sets with
+    /// a fair universal cycle, ranked together by the joint position they
+    /// are at (ADR-023 HV-8). An undefined evaluation ranks before a refused
+    /// `match` at one position, and a refused `match` before an empty
+    /// witness set, which it may have dropped a member of.
+    fn witness_instance<'x>(
+        &'x self,
+        instance: &'x [ParameterBinding],
+        totals: &mut Totals,
+    ) -> Result<InstanceRun<'x, 'a>, ModelCheckRefusal> {
         let horizon = self.request.max_depth;
-        let mut bounded = false;
-        for instance in instances {
-            // Only a finding at position 0 can bound a later instance: an
-            // empty witness set at a later position needs the fair cycle
-            // beyond it. A later instance is explored to its first phase
-            // alone; no later finding of rank 2 can precede one of rank 2.
-            let ranking = match best {
-                Some((0, 0, _)) => break,
-                // Horizon 1 expands the initial states, where a position-0
-                // finding of a later instance is made.
-                Some((0, _, _)) => Some(1),
-                _ => None,
-            };
-            let cap = match (ranking, horizon) {
-                (Some(ranking), Some(horizon)) => Some(ranking.min(horizon)),
-                (ranking, horizon) => ranking.or(horizon),
-            };
-            let run = match self.explore(instance, cap, &mut totals)? {
-                Ok(run) => run,
-                Err(outcome) => return Ok(outcome),
-            };
-            match self.first_phase(&run, &totals)? {
-                Some((depth, FirstHit::Violated(counterexample))) => {
-                    Self::offer(&mut best, depth, 0, Verdict::Violated(counterexample));
-                }
-                Some((_, FirstHit::Stopped(outcome))) => return Ok(outcome),
-                Some((depth, FirstHit::Undecided(cause))) => {
-                    Self::offer(&mut best, depth, 1, Verdict::Undecided(cause));
-                }
-                Some((depth, FirstHit::Unstated)) => {
-                    Self::offer(&mut best, depth, 0, Verdict::Unstated);
-                }
-                None => {}
+        let run = match self.explore(instance, horizon, totals)? {
+            Ok(run) => run,
+            Err(outcome) => return Ok((None, Some(outcome))),
+        };
+        // The least (position, rank) so far.
+        let mut best: Option<(usize, u8, Verdict)> = None;
+        match self.first_phase(&run, totals)? {
+            Some((depth, FirstHit::Violated(counterexample))) => {
+                Self::offer(&mut best, depth, 0, Verdict::Violated(counterexample));
             }
-            if ranking.is_none() {
-                bounded |= best.is_none() && run.bounded;
-                match self.exhaustion(&run, &totals)? {
-                    Exhausted::Lasso(counterexample, position) => {
-                        Self::offer(&mut best, position, 2, Verdict::Violated(counterexample));
-                    }
-                    Exhausted::NoneFair => {}
-                    Exhausted::Stopped(outcome) => return Ok(outcome),
-                }
+            Some((_, FirstHit::Stopped(outcome))) => return Ok((Some(run), Some(outcome))),
+            Some((depth, FirstHit::Undecided(cause))) => {
+                Self::offer(&mut best, depth, 1, Verdict::Undecided(cause));
             }
-            explored.push(run);
+            Some((depth, FirstHit::Unstated)) => {
+                Self::offer(&mut best, depth, 0, Verdict::Unstated);
+            }
+            None => {}
         }
-        match best {
-            Some((_, _, Verdict::Violated(counterexample))) => Ok(HyperOutcome::Violated {
+        match self.exhaustion(&run, totals)? {
+            Exhausted::Lasso(counterexample, position) => {
+                Self::offer(&mut best, position, 2, Verdict::Violated(counterexample));
+            }
+            Exhausted::NoneFair => {}
+            Exhausted::Stopped(outcome) => return Ok((Some(run), Some(outcome))),
+        }
+        let outcome = match best {
+            Some((_, _, Verdict::Violated(counterexample))) => Some(HyperOutcome::Violated {
                 counterexample,
                 stats: totals.stats(),
             }),
-            Some((_, _, Verdict::Undecided(cause))) => Ok(HyperOutcome::Undecided {
+            Some((_, _, Verdict::Undecided(cause))) => Some(HyperOutcome::Undecided {
                 cause,
                 stats: totals.stats(),
             }),
-            Some((_, _, Verdict::Unstated)) => Err(HyperRefusal::NoPartnerPath.into()),
-            None => match (bounded, horizon) {
-                (true, Some(depth)) => Ok(HyperOutcome::BoundReached {
+            Some((_, _, Verdict::Unstated)) => return Err(HyperRefusal::NoPartnerPath.into()),
+            None => match horizon {
+                Some(depth) if run.bounded => Some(HyperOutcome::BoundReached {
                     depth: widen(depth),
                     covers: BoundCovers::ProductDepth,
                     stats: totals.stats(),
                 }),
-                _ => self.clean(&explored, &totals),
+                _ => None,
             },
-        }
+        };
+        Ok((Some(run), outcome))
     }
 
     /// Keep `verdict` when it is at a strictly earlier (position, rank) than
@@ -1605,8 +1664,16 @@ impl<'a> Run<'_, 'a> {
     /// The stabiliser of the keys `instance` binds in the selected key
     /// symmetry (FR-151 "Instances"): the group its product runs under.
     fn stabiliser_of(&self, instance: &[ParameterBinding]) -> SymmetryGroup {
+        // A bound key names one object in every population that holds it, so
+        // it is fixed in each class that lists it.
         instance.iter().fold(self.keys.clone(), |group, binding| {
-            group.stabiliser(&binding.instance.population, &binding.instance.key)
+            self.keys
+                .classes
+                .iter()
+                .filter(|class| class.keys.contains(&binding.instance.key))
+                .fold(group, |group, class| {
+                    group.stabiliser(&class.population, &binding.instance.key)
+                })
         })
     }
 
@@ -1620,7 +1687,7 @@ impl<'a> Run<'_, 'a> {
                 .class_of(&binding.instance.population, &binding.instance.key)
                 .map_or_else(
                     || vec![binding.instance.key.clone()],
-                    |class| class.keys.clone(),
+                    |class| admitted_class(class, &self.admitted),
                 ),
             bound => bound
                 .iter()
@@ -2509,10 +2576,7 @@ impl<'a> Run<'_, 'a> {
             traces,
             trace_position: at,
         };
-        Ok(Second::Lasso(
-            Box::new(counterexample),
-            stem.len().saturating_add(loop_len),
-        ))
+        Ok(Second::Lasso(Box::new(counterexample)))
     }
 
     /// The joint position at which the body's `false` is fixed on the lasso
