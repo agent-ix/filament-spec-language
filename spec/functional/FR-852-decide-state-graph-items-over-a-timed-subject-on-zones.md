@@ -32,7 +32,8 @@ A `possible`, `always possible` or `unique path` item over a timed model
 subject SHALL be decided over the subject's timed state graph, as FSpec
 FR-712 defines it: by EN-6 through symbolic zone search, or, when the item
 names `options.method` `digital-clocks` and the subject is closed, by EN-1
-over the digitized subject (FR-243), as FR-632 routes a timed temporal item.
+over the digitized subject (FR-243), as FR-632 routes a timed temporal item,
+where EN-1 decides `possible` only (FR-243).
 EN-6 SHALL advertise the three state-graph forms in its FSpec FR-331
 `state_graph_forms`, and EN-1 keeps advertising them (FR-628), so
 negotiation routes each item by its `method`, and the item settles `proved` or
@@ -48,8 +49,8 @@ by one of the two routes FR-632 gives every timed item. Without
 `options.method`, or with `zones`, EN-6 decides it on its zone graph. With
 `digital-clocks`, EN-1 decides it over the integer-clock reading of the closed
 subject (FR-243), with basis `exhaustive`; digitization keeps
-the clocks, and over a closed subject it gives the zone verdict, so the route
-is a cross-check of the zone result. `method` is a provider option EN-1
+the clocks, and for a `possible` claim over a closed subject it gives the
+zone verdict, so the route is a cross-check of the zone result. `method` is a provider option EN-1
 publishes as `digital-clocks` and EN-6 as `zones`, so one item reaches one
 engine. The same items over an untimed subject go to EN-1 (FR-628).
 
@@ -79,9 +80,10 @@ and `exploration`.
   `possible` by forward zone reachability of `P`; `always possible` by the
   backward fixpoint of `EF P` over zones, compared with the forward reachable
   zones where `Q` holds; `unique path` by counting realizable discrete-step
-  sequences on the zone graph. On `digital-clocks`, EN-1 SHALL decide each
-  instance by FSpec FR-712 over the digitized timed state graph, with basis
-  `exhaustive` and integer delays that replay.
+  sequences on the zone graph. On `digital-clocks`, EN-1 SHALL decide a
+  `possible` instance by FSpec FR-712 over the digitized timed state graph,
+  with basis `exhaustive` and integer delays that replay, and SHALL decline
+  `always possible` and `unique path` (FR-243).
 - **Witness and counterexample.** A `possible` proof carries, for each
   initial state, a witness path; an `always possible` refutation carries a
   path to a reachable state where `Q` holds and from which no `P` state is
