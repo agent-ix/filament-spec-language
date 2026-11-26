@@ -24,7 +24,7 @@ use crate::statistical::{Decision, StatisticalVerdict};
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::Std001Code;
 use filament_exact::NodeKey;
-use filament_exact::{CancelCause, Integer, Rational};
+use filament_exact::{CancelCause, Integer, ObjectReference, Rational};
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use fsl_eval::simulation::{Permutation, SymmetryClass};
@@ -36,6 +36,7 @@ use fsl_foundation::RequestIndex;
 use fsl_semantics::check::HyperUnsupported;
 use fsl_semantics::family::UnsupportedItem;
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -198,13 +199,19 @@ pub enum Extremum {
     Max,
 }
 
-/// A claim's bound object instance in a terminal exact entry.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ExactBinding {
-    /// The population declaration identity.
-    pub population: String,
-    /// The authored object key.
-    pub key: String,
+/// Spell an entry's binding as the FR-181 reference a counterexample's
+/// `binding` is written as (FR-741 "Binding"), or null.
+#[implements("FR-125-AC-9")]
+fn written_binding<S: serde::Serializer>(
+    reference: &Option<ObjectReference>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let Some(reference) = reference else {
+        return serializer.serialize_none();
+    };
+    fsl_eval::simulation::model::value_json(&filament_exact::Value::Reference(reference.clone()))
+        .ok_or_else(|| serde::ser::Error::custom("an object reference has no canonical form"))?
+        .serialize(serializer)
 }
 
 /// One value for an initial state and optional `over` binding.
@@ -212,11 +219,14 @@ pub struct ExactBinding {
 pub struct ExactEntry {
     /// The initial state's index in subject order.
     pub initial: u32,
-    /// The bound instance, absent when the claim has no `over` parameter.
-    pub binding: Option<ExactBinding>,
+    /// The `over` object as its FR-181 reference, absent when the claim has no
+    /// `over` parameter.
+    #[serde(serialize_with = "written_binding")]
+    pub binding: Option<ObjectReference>,
     /// The `on each` object the entry is read for (FR-741 "Binding"), null
     /// for an `on origin` claim.
-    pub instance: Option<ExactBinding>,
+    #[serde(serialize_with = "written_binding")]
+    pub instance: Option<ObjectReference>,
     /// The exact value or its certified interval.
     pub value: ExactOrBounds,
     /// The scheduler extremum, absent for a workload.
@@ -1812,7 +1822,7 @@ impl TerminalRecord {
         backend: BackendId,
         check: &crate::probability_certificate::ExactProbabilityCertificateCheck,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
         if let crate::ExactProbabilityCertificateCheck::AcceptedVacuous(accepted) = check {
             let mut record = Self::with_backend(
@@ -1914,7 +1924,7 @@ impl TerminalRecord {
         counterpart: &crate::ExactProbabilityCertificateCheck,
         method: BoundsMethod,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
         use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
         let (Accepted(claim), Accepted(counterpart)) = (claim, counterpart) else {
@@ -1977,7 +1987,7 @@ impl TerminalRecord {
         upper: ExactBound,
         method: BoundsMethod,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
         use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
         let Accepted(claim) = claim else {

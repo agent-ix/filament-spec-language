@@ -15,7 +15,7 @@
 //! (ADR-018 UE-5) is a function of the positions alone. A regeneration walk
 //! reads the long-run fraction's predicate at each position and cuts the
 //! behaviour at each return to its initial state's key.
-use ix_trace_rs::implements;
+
 use std::cell::RefCell;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
@@ -53,6 +53,7 @@ use fsl_semantics::check::{
     CheckedTemporalFormula, Event, FractionMeasure, ProbForm, ProbScheduler, TemporalProfile,
     Weighting, Workload,
 };
+use ix_trace_rs::implements;
 
 use super::claim::{reduce_quantile, Bound, Comparison, MeasureEvent, QuantileComparison};
 use super::{
@@ -375,6 +376,7 @@ type Binding = (Option<ModelInstance>, Option<ObjectReference>);
 
 /// Each `over` binding of `claim`, in instance order, with the reference
 /// its predicates read; one unbound test for a claim with no `over`.
+#[implements("FR-125-AC-9")]
 fn bindings(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -395,7 +397,7 @@ fn bindings(
         .into_iter()
         .map(|instance| {
             let reference = system
-                .bound_reference(object.clone(), &instance)
+                .written_reference(object.clone(), &instance)
                 .map_err(StatisticalRefusal::Internal)?;
             Ok((Some(instance), Some(reference)))
         })
