@@ -1260,7 +1260,14 @@ macro_rules! extraction_leaf_shape {
     };
 }
 
-extraction_leaf_shape!(String, u64, bool, serde_json::Value, ExtractionAvailabilityStateRead);
+extraction_leaf_shape!(
+    String,
+    u8,
+    u64,
+    bool,
+    serde_json::Value,
+    ExtractionAvailabilityStateRead
+);
 
 impl ExtractionShape for std::collections::BTreeMap<String, String> {
     fn validate_shape(_value: &serde_json::Value, _path: &str) -> Result<(), NativeRunReadError> {
