@@ -571,6 +571,7 @@ fn execute_clause(
                 trace: &work.trace,
                 over,
                 ledger: work.ledger.as_ref(),
+                emit: fsl_replay::spine::PackageLimits::default().emit(),
             })
             .map_err(selection_not_read)?
         }

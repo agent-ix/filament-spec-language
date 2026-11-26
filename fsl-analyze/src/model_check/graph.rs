@@ -208,25 +208,29 @@ pub(super) struct RetainConfig {
     pub(super) max_depth: Option<usize>,
 }
 
-pub(super) struct RetainHooks<S, Prefetch, Poll, Key>
+pub(super) struct RetainHooks<S, Prefetch, Poll, Key, Admit>
 where
     S: TransitionSystem,
 {
     prefetch: Prefetch,
     poll: Poll,
     key: Key,
+    /// Called with a new state and its key length before the graph stores it;
+    /// a refusal stops the run with its cause.
+    admit: Admit,
     _system: std::marker::PhantomData<fn(&S)>,
 }
 
-impl<S, Prefetch, Poll, Key> RetainHooks<S, Prefetch, Poll, Key>
+impl<S, Prefetch, Poll, Key, Admit> RetainHooks<S, Prefetch, Poll, Key, Admit>
 where
     S: TransitionSystem,
 {
-    pub(super) fn new(prefetch: Prefetch, poll: Poll, key: Key) -> Self {
+    pub(super) fn new(prefetch: Prefetch, poll: Poll, key: Key, admit: Admit) -> Self {
         Self {
             prefetch,
             poll,
             key,
+            admit,
             _system: std::marker::PhantomData,
         }
     }
@@ -315,10 +319,11 @@ pub fn retain_reduced<S: TransitionSystem>(
 where
     S::State: Clone,
 {
-    let hooks = RetainHooks::<S, _, _, _>::new(
+    let hooks = RetainHooks::<S, _, _, _, _>::new(
         |_: &S, _: &[S::State], _: usize| {},
         poll,
         |state: &S::State| encode(&system.key(state), identity),
+        |_: &S::State, _: usize| Ok(()),
     );
     retain_reduced_with_key(
         system,
@@ -336,13 +341,13 @@ where
 
 /// `retain_reduced` with an internal canonical-key provider. The bytes it
 /// returns must be the exact FR-101 encoding of the system's typed key.
-pub(super) fn retain_reduced_with_key<S, Prefetch, Poll, Key>(
+pub(super) fn retain_reduced_with_key<S, Prefetch, Poll, Key, Admit>(
     system: &S,
     group: &SymmetryGroup,
     ample: Option<&dyn Ample<S>>,
     config: RetainConfig,
     workers: usize,
-    hooks: RetainHooks<S, Prefetch, Poll, Key>,
+    hooks: RetainHooks<S, Prefetch, Poll, Key, Admit>,
 ) -> RetainResult<S>
 where
     S: TransitionSystem,
@@ -350,11 +355,13 @@ where
     Prefetch: for<'a, 'b> FnMut(&'a S, &'b [S::State], usize),
     Poll: FnMut() -> bool,
     Key: for<'a> Fn(&'a S::State) -> Result<Vec<u8>, quire_canonical::Error>,
+    Admit: FnMut(&S::State, usize) -> Result<(), CatalogCode>,
 {
     let RetainHooks {
         mut prefetch,
         mut poll,
         key,
+        mut admit,
         ..
     } = hooks;
     let RetainConfig {
@@ -393,6 +400,14 @@ where
     let mut known = BTreeMap::new();
     let too_many_initial = initial.len() > limits.max_states;
     for (key, state) in initial.into_iter().take(limits.max_states) {
+        if let Err(cause) = admit(&state, key.len()) {
+            let outcome = Outcome::Stopped {
+                stats: graph.stats(0),
+                frontier: initial_frontier,
+                cause,
+            };
+            return Ok(GraphExploration { graph, outcome });
+        }
         let id = graph.insert(state, key.clone(), 0);
         known.insert(key, id);
         graph.initial.push(id);
@@ -514,6 +529,13 @@ where
                         limit: Limit::States(limits.max_states),
                     };
                 }
+                if let Err(cause) = admit(&state, key.len()) {
+                    break 'run Outcome::Stopped {
+                        stats: graph.stats(transitions),
+                        frontier: graph.frontier(source, &queue),
+                        cause,
+                    };
+                }
                 // A new state always requires an edge from an existing depth,
                 // so depth is bounded by the number of allocated state records.
                 let id = graph.insert(state, key.clone(), depth.saturating_add(1));
@@ -586,10 +608,11 @@ mod worker_capacity_tests {
                 max_depth: None,
             },
             usize::MAX,
-            RetainHooks::<OneState, _, _, _>::new(
+            RetainHooks::<OneState, _, _, _, _>::new(
                 |_: &OneState, _: &[u8], _: usize| {},
                 || false,
                 |state: &u8| encode(state, IdentityLimits::default()),
+                |_: &u8, _: usize| Ok(()),
             ),
         )
         .expect("the one-state graph has encodable identities");

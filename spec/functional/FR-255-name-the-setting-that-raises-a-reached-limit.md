@@ -757,9 +757,9 @@ these names through the same operand grammar as the stage settings
     per entry kind plus the lengths of the buffers the entry owns (the bytes
     of its keys, 8 bytes for each limb of a big integer, and length times
     element size for a sequence), never an allocator capacity or a resident
-    set size. The retained entries are an EN-6 symbolic vertex, a protocol
-    closure path, an EN-1 stored state and a model-expansion successor. Each
-    entry SHALL be charged before it is stored, the charges of one item SHALL
+    set size. An EN-1 stored state's fixed overhead is 256 bytes. The
+    retained entries are an EN-6 symbolic vertex, a protocol closure path,
+    an EN-1 stored state and a model-expansion successor. Each entry SHALL be charged before it is stored, the charges of one item SHALL
     accumulate and SHALL NOT be refunded, and the item's producer, certificate
     checker and witness replay SHALL charge one shared allowance. A per-engine
     byte setting remains a separate local ceiling.
@@ -838,6 +838,9 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-37 | A `call` run from source and a `clause` run from source, each given the caller setting `export.output_bytes` 1, are refused `invalid-request` naming `export.output_bytes`, exit 20. A `call` run over a package and a synthesis over a package, each given `s1.tokens` 1, are refused naming `s1.tokens`, since neither reads source text. A `version` run given any override member is refused naming it. | Test |
 | FR-255-AC-38 | An export and an export-evidence run, each given the caller override `accounting.work_units=5`, and a compile given `accounting.work_units=5` or an observation setting, are refused `invalid-request` naming the counter or setting. A `check` run given a `clocks` override or an accounting counter is refused naming it; given `s1.tokens` 1 over a source of more than one token, it either stops at that bound or is refused naming `s1.tokens`, and never reports the source as checked. | Test |
 | FR-255-AC-39 | A `clause` run over a selected package, given the caller setting `observation.input_bytes` one byte below the length of its observation file, stops at that bound naming `observation.input_bytes`, as the same run from source does. | Test |
+| FR-255-AC-40 | A deadlock-freedom analyze item over a model subject, decided by EN-1, run with `analysis.retained_bytes=1`, stops before it stores its first state, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. The same item with no setting settles as it does at the published default. | Test |
+| FR-255-AC-41 | A synthesis goal whose typed expression has five nodes, checked under a caller's `s3.nodes` 4, is refused at the typing stage naming the node limit, bound 4 and count 5; under `s3.nodes` 5 it checks. | Test |
+| FR-255-AC-42 | An EN-1 liveness item over a model or protocol subject charges `analysis.retained_bytes` for each product state before storing it: run with `analysis.retained_bytes=1`, it stops with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`; a model liveness item whose product has four states stops likewise at 1024, and with no setting settles as it does at the published default. | Test |
 
 ## Status
 
@@ -845,6 +848,13 @@ The existing setting table, the one-mapping-per-limits-type rule, the
 builders, the settings operation, a request's `stage_limits` and their
 defaults are implemented (TC-720, TC-721). FR-255-AC-15 to FR-255-AC-19 specify native-join
 setting bindings, defaults and refusals; their implementation is not yet complete.
+Of the retained entries, the states of EN-1's safety and reduced searches
+(FR-255-AC-40), the product states of its liveness searches (FR-255-AC-42) and
+EN-6 symbolic vertices charge `analysis.retained_bytes`. The states of EN-1's
+hyper searches, the model states a liveness search keeps where its automaton
+has no move, protocol closure paths and model-expansion successors do not yet
+charge it.
+
 Backing of the criteria:
 
 The `inspect.max_view_entries` row and its typed-view behavior are specified

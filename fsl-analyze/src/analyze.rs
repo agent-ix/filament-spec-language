@@ -67,6 +67,7 @@ use filament_exact::{Cancel, ObjectReference, ScalarLimits};
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_eval::simulation::protocol::ProtocolTransition;
+use fsl_foundation::budget::Budget;
 use fsl_foundation::diagnostic::category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex, Setting};
@@ -853,6 +854,16 @@ impl EngineBounds {
             }
         }
         stated
+    }
+}
+
+impl EngineBounds {
+    /// One analysis item's allowance: every setting at the caller's bound,
+    /// else its published default, polling `cancel`. The retained exploration
+    /// state of the item draws on it (`analysis.retained_bytes`).
+    #[must_use]
+    pub fn item_budget(&self, accounting: ScalarLimits, cancel: &Cancel) -> Budget {
+        Budget::from_settings(self, accounting, cancel)
     }
 }
 
