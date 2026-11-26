@@ -1,36 +1,61 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Cross-route comparison of the object set a claim ranges over.
+//! Cross-route comparison of the object set a claim ranges over (FR-125
+//! "Instancing"): every route and checker is given the same populations and
+//! asked which keys are instances, or why there are none. Expected values
+//! are written from the criteria, never from a route's output.
+//!
+//! An ordered instance list is read from a route by probing: instance `i`
+//! of the expected list is given `age` `i + 1`, and the claim `x.age <= i`
+//! is refuted at the `i`-th instance for each `i < n` and proved at `i = n`.
+//! An excluded key holds no object, so an extra instance changes a verdict.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::model_check::{
-    check_model, check_state_graph, ModelCheckRequest, StateGraphItem, StateGraphRequest,
+    check_model, check_state_graph, ModelCheckRefusal, ModelCheckRequest, StateGraphItem,
+    StateGraphRequest,
 };
-use fsl_analyze::plan_search::{search, PlanLengths, PlanSearchLimits, PlanSearchRequest};
+use fsl_analyze::plan_search::{
+    search, PlanLengths, PlanSearchLimits, PlanSearchRequest, PlanStatus,
+};
 use fsl_analyze::plan_source::SourcePlan;
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     check_closure, check_components, check_product_closure, encode_hyper_query,
     encode_temporal_smt_query, CertificateRequest, ClosureCertificate, HyperQueryRequest,
     ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure, ProductClosureCertificate,
     ProductClosureClause, ProductClosureRequest, ProofCertificate, SmtEncodingLimits, SmtQueryKind,
-    StateGraphCertificate, StateGraphCertificateRequest, StateGraphOutcome,
+    StateGraphCertificateRequest, StateGraphOutcome,
 };
 use fsl_semantics::check::HyperForm;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{document_reference, DocumentRef};
 use serde_json::{json, Value as Json};
 
-use crate::analyze_cli_support::{analyze, request_over, Workspace};
-use crate::counter::{declarations_in, unit_text_in, UNLIMITED};
+use crate::analyze_cli_support::{analyze, request_over, Run, Workspace};
+use crate::counter::{declarations_in, UNLIMITED};
 use crate::model_instances::{document, ident, universes, world, Held, World, PACKAGE};
+use crate::timed_world::{unit_text, DENSE};
 
 type Named = &'static [(&'static str, &'static [&'static str])];
 
+/// The object set a claim over the case's subject ranges over, or why it has
+/// none, in FR-125's order of causes.
+#[derive(Clone, Copy, Debug)]
+enum Expect {
+    Instances(&'static [&'static str]),
+    NoInstance,
+    NoInitialState,
+    Conflict,
+    RequiresBound,
+}
+
+#[derive(Clone, Copy)]
 struct Case {
     name: &'static str,
     populations: Named,
@@ -39,11 +64,11 @@ struct Case {
     initial: bool,
     make: bool,
     over: &'static str,
-    instances: &'static [&'static str],
+    expect: Expect,
 }
 
 const ONE: Named = &[("animals", &["Animal"])];
-const TWO: Named = &[("P1", &["Animal"]), ("P2", &["Animal"])];
+const TWO: Named = &[("P1", &["Animal"]), ("P2", &["Dog"])];
 
 const BASE: Case = Case {
     name: "base",
@@ -53,86 +78,118 @@ const BASE: Case = Case {
     initial: true,
     make: false,
     over: "Animal",
-    instances: &[],
+    expect: Expect::NoInstance,
 };
 
-const CASES: &[Case] = &[
-    Case {
-        name: "empty-universe",
-        held: &[("animals", &[])],
-        listed: &[("animals", &[])],
-        ..BASE
-    },
-    Case {
-        name: "no-initial",
-        initial: false,
-        ..BASE
-    },
-    Case {
-        name: "no-universe",
-        listed: &[],
-        initial: false,
-        ..BASE
-    },
-    Case {
-        name: "only-unadmitted",
-        held: &[("animals", &[])],
-        listed: &[("animals", &["u"])],
-        ..BASE
-    },
-    Case {
-        name: "unadmitted-key",
-        listed: &[("animals", &["u", "a", "v"])],
-        instances: &["a"],
-        ..BASE
-    },
-    Case {
-        name: "unadmitted-across-populations",
-        populations: TWO,
-        held: &[("P1", &[("d", "Animal")]), ("P2", &[("a", "Animal")])],
-        listed: &[("P1", &["d", "u"]), ("P2", &["u", "a"])],
-        instances: &["d", "a"],
-        ..BASE
-    },
-    Case {
-        name: "subtype-only",
-        populations: &[("dogs", &["Dog"])],
-        held: &[("dogs", &[("d", "Dog"), ("e", "Dog")])],
-        listed: &[("dogs", &["e", "d"])],
-        instances: &["e", "d"],
-        ..BASE
-    },
-    Case {
-        name: "two-populations",
-        populations: TWO,
-        held: &[
-            ("P1", &[("d", "Animal"), ("c", "Animal")]),
-            ("P2", &[("c", "Animal"), ("a", "Animal")]),
-        ],
-        listed: &[("P1", &["d", "c"]), ("P2", &["c", "a"])],
-        instances: &["d", "c", "a"],
-        ..BASE
-    },
-    Case {
-        name: "created",
-        held: &[("animals", &[("c", "Animal"), ("d", "Animal")])],
-        listed: &[("animals", &["c", "d", "z"])],
-        make: true,
-        instances: &["c", "d"],
-        ..BASE
-    },
-    Case {
-        name: "orphan",
-        over: "Thing",
-        ..BASE
-    },
-    Case {
-        name: "conflict",
-        populations: TWO,
-        held: &[("P1", &[("c", "Dog")]), ("P2", &[("c", "Cat")])],
-        listed: &[("P1", &["c"]), ("P2", &["c"])],
-        ..BASE
-    },
+const EMPTY_UNIVERSE: Case = Case {
+    name: "empty-universe",
+    held: &[("animals", &[])],
+    listed: &[("animals", &[])],
+    ..BASE
+};
+const ONLY_UNADMITTED: Case = Case {
+    name: "only-unadmitted",
+    held: &[("animals", &[])],
+    listed: &[("animals", &["u"])],
+    ..BASE
+};
+const ORPHAN: Case = Case {
+    name: "orphan",
+    over: "Thing",
+    ..BASE
+};
+const NO_INITIAL: Case = Case {
+    name: "no-initial",
+    initial: false,
+    expect: Expect::NoInitialState,
+    ..BASE
+};
+const EMPTY_UNIVERSE_NO_INITIAL: Case = Case {
+    name: "empty-universe-no-initial",
+    held: &[("animals", &[])],
+    listed: &[("animals", &[])],
+    initial: false,
+    expect: Expect::NoInitialState,
+    ..BASE
+};
+const ORPHAN_NO_INITIAL: Case = Case {
+    name: "orphan-no-initial",
+    over: "Thing",
+    initial: false,
+    expect: Expect::NoInitialState,
+    ..BASE
+};
+const NO_UNIVERSE: Case = Case {
+    name: "no-universe-no-initial",
+    listed: &[],
+    initial: false,
+    expect: Expect::RequiresBound,
+    ..BASE
+};
+const CONFLICT: Case = Case {
+    name: "conflicting-identity",
+    populations: TWO,
+    held: &[("P1", &[("c", "Cat")]), ("P2", &[("c", "Dog")])],
+    listed: &[("P1", &["c"]), ("P2", &["c"])],
+    expect: Expect::Conflict,
+    ..BASE
+};
+const UNADMITTED_KEY: Case = Case {
+    name: "unadmitted-key",
+    listed: &[("animals", &["u", "a", "v"])],
+    expect: Expect::Instances(&["a"]),
+    ..BASE
+};
+const SUBTYPE_ONLY: Case = Case {
+    name: "subtype-only",
+    populations: &[("dogs", &["Dog"])],
+    held: &[("dogs", &[("d", "Dog"), ("e", "Dog")])],
+    listed: &[("dogs", &["e", "d"])],
+    expect: Expect::Instances(&["e", "d"]),
+    ..BASE
+};
+const CREATED: Case = Case {
+    name: "created",
+    held: &[("animals", &[("c", "Animal"), ("d", "Animal")])],
+    listed: &[("animals", &["c", "d", "z"])],
+    make: true,
+    expect: Expect::Instances(&["c", "d"]),
+    ..BASE
+};
+const UNADMITTED_ACROSS: Case = Case {
+    name: "unadmitted-across-populations",
+    populations: TWO,
+    held: &[("P1", &[("d", "Animal")]), ("P2", &[("a", "Dog")])],
+    listed: &[("P1", &["d", "u"]), ("P2", &["u", "a"])],
+    expect: Expect::Instances(&["d", "a"]),
+    ..BASE
+};
+const TWO_POPULATIONS: Case = Case {
+    name: "two-populations",
+    populations: TWO,
+    held: &[
+        ("P1", &[("d", "Animal"), ("c", "Dog")]),
+        ("P2", &[("c", "Dog"), ("a", "Dog")]),
+    ],
+    listed: &[("P1", &["d", "c"]), ("P2", &["c", "a"])],
+    expect: Expect::Instances(&["d", "c", "a"]),
+    ..BASE
+};
+
+const ALL: &[Case] = &[
+    EMPTY_UNIVERSE,
+    ONLY_UNADMITTED,
+    ORPHAN,
+    NO_INITIAL,
+    EMPTY_UNIVERSE_NO_INITIAL,
+    ORPHAN_NO_INITIAL,
+    NO_UNIVERSE,
+    CONFLICT,
+    UNADMITTED_KEY,
+    SUBTYPE_ONLY,
+    CREATED,
+    UNADMITTED_ACROSS,
+    TWO_POPULATIONS,
 ];
 
 fn operation(name: &str, creates: &[String]) -> Json {
@@ -146,10 +203,29 @@ fn operation(name: &str, creates: &[String]) -> Json {
 }
 
 impl Case {
+    fn instances(&self) -> &'static [&'static str] {
+        match self.expect {
+            Expect::Instances(instances) => instances,
+            _ => &[],
+        }
+    }
+
     fn populations(&self) -> Vec<(&str, &[&str])> {
         let mut populations = self.populations.to_vec();
         populations.push(("actors", &["Other"]));
         populations
+    }
+
+    fn held(&self) -> Vec<Held<'static>> {
+        let mut held = self.held.to_vec();
+        held.push(("actors", &[("p", "Other")]));
+        held
+    }
+
+    fn listed(&self) -> Vec<(&str, &[&str])> {
+        let mut listed = self.listed.to_vec();
+        listed.push(("actors", &["p"]));
+        listed
     }
 
     fn model(&self) -> Vec<u8> {
@@ -168,7 +244,7 @@ impl Case {
     }
 
     fn age(&self, key: &str) -> usize {
-        self.instances
+        self.instances()
             .iter()
             .position(|instance| *instance == key)
             .map_or(1, |at| at + 1)
@@ -192,175 +268,372 @@ impl Case {
 
     fn universe_snapshot(&self) -> Vec<u8> {
         let objects: Vec<(&str, Vec<(&str, &str)>)> = self
-            .listed
-            .iter()
+            .listed()
+            .into_iter()
             .map(|(population, keys)| {
                 let member = self
-                    .populations
-                    .iter()
-                    .find(|(name, _)| name == population)
+                    .populations()
+                    .into_iter()
+                    .find(|(name, _)| *name == population)
                     .expect("a declared population")
                     .1[0];
-                (*population, keys.iter().map(|key| (*key, member)).collect())
+                (population, keys.iter().map(|key| (*key, member)).collect())
             })
             .collect();
-        let mut held: Vec<Held<'_>> = objects
+        let held: Vec<Held<'_>> = objects
             .iter()
             .map(|(population, objects)| (*population, objects.as_slice()))
             .collect();
-        held.push(("actors", &[("p", "Other")]));
         self.snapshot("u0", &held)
     }
 
-    fn run(&self, header: &str, body: &str, items: Json) -> crate::analyze_cli_support::Run {
-        let mut held = self.held.to_vec();
-        held.push(("actors", &[("p", "Other")]));
-        let unit = unit_text_in(
-            PACKAGE,
-            &format!("{header}terminal Done using v on M when {{ true }};\n{body}"),
-        );
+    /// `native-analyze/1` over `unit` with this case's subject.
+    fn analyze(&self, unit: &str, items: Vec<Json>) -> Run {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
         let initial = if self.initial {
             json!([{"authority": "test", "identity": "s0"}])
         } else {
             json!([])
         };
-        let ws = Workspace::new(&format!("object-sets-{}", unique()));
+        let ws = Workspace::new(&format!(
+            "object-sets-{}",
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         analyze(&request_over(
             &ws,
-            &unit,
+            unit,
             &self.model(),
-            &[self.snapshot("s0", &held), self.universe_snapshot()],
+            &[self.snapshot("s0", &self.held()), self.universe_snapshot()],
             json!({"items": items, "subject": {
                 "initial_states": initial,
                 "universes": [{"authority": "test", "identity": "u0"}],
                 "proof_bounds": []}}),
         ))
     }
+
+    /// The probes of this case: one per bound `0..=n` over a non-empty set,
+    /// one that reads no field otherwise.
+    fn probes(&self) -> Vec<(usize, String)> {
+        let n = self.instances().len();
+        if n == 0 {
+            return vec![(0, "true".to_owned())];
+        }
+        (0..=n).map(|i| (i, format!("x.age <= {i}"))).collect()
+    }
 }
 
-fn unique() -> usize {
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+#[derive(Clone, Copy)]
+enum Route {
+    Temporal,
+    Liveness,
+    StateGraph,
+    SingleExistential,
+    ForallForall,
+    ForallExists,
+    Zone,
+    Digital,
+    TimedStateGraph,
 }
 
-#[test]
-fn zz_explore() {
-    for route in [
-        "temporal",
-        "liveness",
-        "graph",
-        "hp5",
-        "hpaa",
-        "hpae",
-        "exact",
-        "statistical",
-        "zone",
-        "digital",
-        "tgraph",
-        "conformance",
-    ] {
-        for case in CASES {
-            let over = case.over;
-            let pred = |x: &str| {
-                if case.instances.is_empty() {
-                    format!("{x} = {x}")
-                } else {
-                    format!("{x}.age <= 1")
-                }
-            };
-            let (header, body, item) = match route {
-            "temporal" => (
-                "",
-                format!("temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ always holds({}) }}\n", pred("x")),
-                json!({"claim": "C"}),
+impl Route {
+    fn claim(self, name: &str, over: &str, p: &str) -> String {
+        match self {
+            Self::Temporal => format!(
+                "temporal {name} using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ always holds({p}) }}\n"
             ),
-            "liveness" => (
-                "",
-                format!("temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ eventually holds({}) }}\n", pred("x")),
-                json!({"claim": "C"}),
+            Self::Liveness => format!(
+                "temporal {name} using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ eventually holds({p}) }}\n"
             ),
-            "graph" => (
-                "",
-                format!("possible C using v over (x: M::{over}) {{ {} }}\n", pred("x")),
-                json!({"claim": "C"}),
-            ),
-            "hp5" => (
-                "",
-                format!("hyper C using t0 over behaviours (x: M::{over}) exists trace a of M {{ always holds(({}) @ a) }}\n", pred("x")),
-                json!({"claim": "C"}),
-            ),
-            "hpaa" => (
-                "",
-                format!("hyper C using t0 over behaviours (x: M::{over}) forall trace a of M forall trace b of M {{ always holds(({}) @ a) }}\n", pred("x")),
-                json!({"claim": "C"}),
-            ),
-            "hpae" => (
-                "",
-                format!("hyper C using t0 over behaviours (x: M::{over}) forall trace a of M exists trace b of M {{ always holds(({}) @ b) }}\n", pred("x")),
-                json!({"claim": "C"}),
-            ),
-            "exact" => (
-                "",
-                format!("probabilistic C using t0 on M over (x: M::{over}) under every scheduler on origin {{ probability >= rational(1, 1) [ eventually holds({}) ] }}\n", pred("x")),
-                json!({"claim": "C", "probabilistic": {"evidence": "exact"}}),
-            ),
-            "statistical" => (
-                "",
-                format!("workload Even on M {{ weight Animal::idle = 1; }}\nprofile_placeholder\nprobabilistic C using ev on M over (x: M::{over}) under Even on origin with alpha 0.1, beta 0.1, indifference 0.05 {{ probability >= 0.9 [ eventually[0,1] holds({}) ] }}\n", pred("x")),
-                json!({"claim": "C", "probabilistic": {"evidence": "statistical", "seed": "7"}}),
-            ),
-            "zone" | "digital" => (
-                "profile tt = \"filament.temporal.timed/v1\";\ndimension Time;\nunit ms : Time = rational(1, 1);\ntime M dense unit ms;\n",
-                format!("temporal C using tt over (x: M::{over}) clock \"model-time\" on origin {{ always holds({}) }}\n", pred("x")),
-                if route == "zone" { json!({"claim": "C"}) } else { json!({"claim": "C", "options": {"method": "digital-clocks"}}) },
-            ),
-            "tgraph" => (
-                "dimension Time;\nunit ms : Time = rational(1, 1);\ntime M dense unit ms;\n",
-                format!("possible C using v over (x: M::{over}) {{ {} }}\n", pred("x")),
-                json!({"claim": "C"}),
-            ),
-            "conformance" => (
-                "profile pp = \"filament.protocol.finite-global/v1\";\n",
-                format!("record Ack {{ ok: Boolean; }}\nprotocol Flow using pp over (k: M::{over}) on origin {{\nrole Buyer on M::Other;\nrole Seller on M::Other;\nchannel Order from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\nrun sequence Main {{\nsend Placed via Order as (placed: Ack) {{ true }};\nreceive Got via Order of Placed as (got: Ack) {{ true }};\n}}\nfinish Done2 as (zz: Boolean) {{ true }};\n}}\n"),
-                json!({"claim": "Flow", "kind": "global-conformance"}),
-            ),
-            _ => continue,
-        };
-            let body = body.replace("profile_placeholder\n", "");
-            let run = case.run(header, &body, json!([item]));
-            let document = run.document();
-            let item = &document["items"][0];
-            if item.is_null() {
-                println!("{route} {}: exit {} {document}", case.name, run.exit);
-            } else {
-                println!(
-                    "{route} {}: exit {} record={} cx={} diag={}",
-                    case.name, run.exit, item["record"], item["counterexample"], item["diagnostic"],
-                );
+            Self::StateGraph | Self::TimedStateGraph => {
+                format!("possible {name} using v over (x: M::{over}) {{ {p} }}\n")
             }
+            Self::SingleExistential => format!(
+                "hyper {name} using t0 over behaviours (x: M::{over}) exists trace a of M {{ always holds(({p}) @ a) }}\n"
+            ),
+            Self::ForallForall => format!(
+                "hyper {name} using t0 over behaviours (x: M::{over}) forall trace a of M forall trace b of M {{ always holds(({p}) @ a) }}\n"
+            ),
+            Self::ForallExists => format!(
+                "hyper {name} using t0 over behaviours (x: M::{over}) forall trace a of M exists trace b of M {{ always holds(({p}) @ b) }}\n"
+            ),
+            Self::Zone | Self::Digital => format!(
+                "temporal {name} using tt over (x: M::{over}) clock \"model-time\" on origin {{ always holds({p}) }}\n"
+            ),
+        }
+    }
+
+    fn unit(self, claims: &str) -> String {
+        let terminal = "terminal Done using v on M when { true };\n";
+        match self {
+            Self::Zone | Self::Digital | Self::TimedStateGraph => unit_text(
+                PACKAGE,
+                "profile tt = \"filament.temporal.timed/v1\";\n",
+                &format!("{DENSE}{terminal}{claims}"),
+            ),
+            _ => untimed_unit("", &format!("{terminal}{claims}")),
+        }
+    }
+
+    fn item(self, name: &str) -> Json {
+        match self {
+            Self::Digital => json!({"claim": name, "options": {"method": "digital-clocks"}}),
+            _ => json!({"claim": name}),
         }
     }
 }
 
+fn untimed_unit(profiles: &str, body: &str) -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile t0 = \"filament.temporal.infinite-trace/v1\";\n{profiles}\
+         model M = \"{PACKAGE}\";\n\
+         function Noop using v(): Boolean pure {{ true }}\n{body}"
+    )
+}
+
+/// The key the reported binding names, in whichever form the route writes it.
+fn binding(item: &Json) -> Option<&str> {
+    let cx = &item["counterexample"];
+    [
+        &cx["over_binding"]["identity"],
+        &cx["instance"]["key"]["identity"],
+        &cx["instance"][0]["key"]["value"],
+        &cx["instance"]["identity"],
+    ]
+    .into_iter()
+    .find_map(Json::as_str)
+}
+
+fn short(value: &Json) -> String {
+    value.to_string().chars().take(300).collect()
+}
+
+/// The `conflicting-identity` diagnostic naming `c`, at the request or at
+/// each item.
+fn is_conflict(diagnostic: &Json) -> bool {
+    diagnostic["code"] == "invalid_runtime_input" && diagnostic["cause"] == "conflicting-identity"
+}
+
+/// What is wrong with `item` against a cause or a probe's verdict.
+fn judge(case: &Case, i: usize, document: &Json, at: usize) -> Option<String> {
+    let item = &document["items"][at];
+    let record = &item["record"];
+    let right = match case.expect {
+        Expect::Instances(instances) => match instances.get(i) {
+            Some(key) => record["result"] == "refuted" && binding(item) == Some(*key),
+            None => record["result"] == "proved",
+        },
+        Expect::NoInstance => {
+            record["result"] == "inconclusive" && record["cause"]["kind"] == "no-instance"
+        }
+        Expect::NoInitialState => {
+            record["result"] == "inconclusive" && record["cause"]["kind"] == "no-initial-state"
+        }
+        // FR-281 "RequiresBound".
+        Expect::RequiresBound => {
+            record["result"] == "unsupported"
+                && record["diagnostic"]["code"] == "unsupported_projection"
+                && record["diagnostic"]["cause"] == "unbounded-extent"
+        }
+        Expect::Conflict => {
+            is_conflict(&document["diagnostics"][0]) || is_conflict(&record["diagnostic"])
+        }
+    };
+    if right {
+        return None;
+    }
+    let seen = if item.is_null() {
+        short(&document["diagnostics"])
+    } else {
+        format!("{} binding={:?}", short(record), binding(item))
+    };
+    Some(format!(
+        "{} probe {i}: expected {:?}, got {seen}",
+        case.name, case.expect
+    ))
+}
+
+fn assert_clean(wrong: Vec<String>) {
+    assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
+}
+
+fn check_route(route: Route, cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let probes = case.probes();
+        let claims: String = probes
+            .iter()
+            .map(|(i, p)| route.claim(&format!("C{i}"), case.over, p))
+            .collect();
+        let items = probes
+            .iter()
+            .map(|(i, _)| route.item(&format!("C{i}")))
+            .collect();
+        let document = case.analyze(&route.unit(&claims), items).document();
+        wrong.extend(
+            probes
+                .iter()
+                .enumerate()
+                .filter_map(|(at, (i, _))| judge(case, *i, &document, at)),
+        );
+    }
+    assert_clean(wrong);
+}
+
+#[derive(Clone, Copy)]
+enum Probabilistic {
+    Exact,
+    Statistical,
+}
+
+/// The probabilistic routes list every binding they decided: the exact
+/// route in its basis, the statistical one in its tests.
+fn check_probabilistic(route: Probabilistic, cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let n = case.instances().len();
+        let over = case.over;
+        let p = if n == 0 {
+            "true".to_owned()
+        } else {
+            format!("x.age <= {n}")
+        };
+        let (unit, item) = match route {
+            Probabilistic::Exact => (
+                untimed_unit(
+                    "",
+                    &format!(
+                        "terminal Done using v on M when {{ true }};\nprobabilistic C0 using t0 on M over (x: M::{over}) under every scheduler on origin {{ probability >= 0.5 [ eventually holds({p}) ] }}\n"
+                    ),
+                ),
+                json!({"claim": "C0", "probabilistic": {"evidence": "exact"}}),
+            ),
+            Probabilistic::Statistical => {
+                let make = if case.make {
+                    " weight Animal::make = 1;"
+                } else {
+                    ""
+                };
+                (
+                    untimed_unit(
+                        "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n",
+                        &format!(
+                            "terminal Done using v on M when {{ true }};\nworkload Even on M {{ weight Animal::idle = 1;{make} }}\nprobabilistic C0 using ev on M over (x: M::{over}) under Even on origin with alpha 0.1, beta 0.1, indifference 0.05 {{ probability >= 0.9 [ eventually[0,1] holds({p}) ] }}\n"
+                        ),
+                    ),
+                    json!({"claim": "C0", "probabilistic": {"evidence": "statistical", "seed": "7"}}),
+                )
+            }
+        };
+        let document = case.analyze(&unit, vec![item]).document();
+        let Expect::Instances(expected) = case.expect else {
+            wrong.extend(judge(case, 0, &document, 0));
+            continue;
+        };
+        let item = &document["items"][0];
+        let entries = match route {
+            Probabilistic::Exact => &item["record"]["basis"]["entries"],
+            Probabilistic::Statistical => &item["verdict"]["provenance"]["tests"],
+        };
+        let listed: Vec<&str> = entries
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|entry| {
+                entry["binding"]["identity"]
+                    .as_str()
+                    .or_else(|| entry["binding"]["key"]["identity"].as_str())
+            })
+            .collect();
+        if listed != expected {
+            wrong.push(format!(
+                "{}: expected {expected:?}, listed {listed:?}, item {}",
+                case.name,
+                short(item)
+            ));
+        }
+    }
+    assert_clean(wrong);
+}
+
+/// Global protocol conformance over a protocol whose first control checks
+/// the bound object's age (FR-896 "The objects checked over every
+/// behaviour").
+fn check_conformance(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let over = case.over;
+        for (i, p) in case.probes() {
+            let p = p.replace("x.", "k.");
+            let unit = untimed_unit(
+                "profile pp = \"filament.protocol.finite-global/v1\";\n",
+                &format!(
+                    "record Ack {{ ok: Boolean; }}\n\
+                     protocol Flow using pp over (k: M::{over}) on origin {{\n\
+                     role Buyer on M::Other;\nrole Seller on M::Other;\n\
+                     channel Order from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n\
+                     run sequence Main {{\n\
+                     check Ready using v {{ {p} }};\n\
+                     send Placed via Order as (placed: Ack) {{ true }};\n\
+                     receive Got via Order of Placed as (got: Ack) {{ true }};\n\
+                     }}\n\
+                     finish Done2 as (zz: Boolean) {{ true }};\n}}\n"
+                ),
+            );
+            let item = json!({"claim": "Flow", "kind": "global-conformance"});
+            let document = case.analyze(&unit, vec![item]).document();
+            if matches!(case.expect, Expect::Instances(_)) {
+                let item = &document["items"][0];
+                let result = &item["record"]["result"];
+                let right = match case.instances().get(i) {
+                    // FR-896-AC-7: the counterexample's protocol subject
+                    // names the blocked key.
+                    Some(key) => {
+                        result == "refuted"
+                            && item["counterexample"]
+                                .to_string()
+                                .contains(&format!("\"identity\":\"{key}\""))
+                    }
+                    None => result == "proved",
+                };
+                if !right {
+                    wrong.push(format!("{} probe {i}: {}", case.name, short(item)));
+                }
+            } else {
+                wrong.extend(judge(case, i, &document, 0));
+            }
+        }
+    }
+    assert_clean(wrong);
+}
+
+/// A checked package of `body` with the case's model, snapshots and
+/// universes, for the routes and checkers driven as a library.
 struct Library {
     world: World,
     package: CheckedPackage,
+    universes: Vec<(String, Vec<String>)>,
 }
 
 impl Case {
-    fn library(&self, header: &str, body: &str) -> Library {
+    fn library(&self, body: &str) -> Library {
         let document = self.model();
-        let body = format!("{header}terminal Done using v on M when {{ true }};\n{body}");
-        let graph = declarations_in(PACKAGE, &document, &body)
-            .check(
-                CheckMode::Linked,
-                CheckingLimits::default(),
-                &fsl_eval::value::S6aRewardEvaluator,
+        let body = format!("terminal Done using v on M when {{ true }};\n{body}");
+        let check = |body: &str| {
+            CheckedPackage::link(
+                declarations_in(PACKAGE, &document, body)
+                    .check(
+                        CheckMode::Linked,
+                        CheckingLimits::default(),
+                        &fsl_eval::value::S6aRewardEvaluator,
+                    )
+                    .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}")),
             )
-            .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
-        let mut held = self.held.to_vec();
-        held.push(("actors", &[("p", "Other")]));
-        let bytes = self.snapshot("s0", &held);
+        };
+        let package = check(&body);
+        let bytes = self.snapshot("s0", &self.held());
         let initial = self.initial.then(|| DocumentRef {
             authority: "test".to_owned(),
             identity: "s0".to_owned(),
@@ -372,129 +645,159 @@ impl Case {
                 bytes,
             )]),
             initial: initial.into_iter().collect(),
-            document,
-            package: CheckedPackage::link(
-                declarations_in(PACKAGE, &self.model(), "")
-                    .check(
-                        CheckMode::Linked,
-                        CheckingLimits::default(),
-                        &fsl_eval::value::S6aRewardEvaluator,
-                    )
-                    .expect("the empty unit checks"),
-            ),
+            package: check(""),
+            document: document.clone(),
         };
         Library {
             world,
-            package: CheckedPackage::link(graph),
+            package,
+            universes: self
+                .listed()
+                .into_iter()
+                .map(|(population, keys)| {
+                    (
+                        population.to_owned(),
+                        keys.iter().map(|key| (*key).to_owned()).collect(),
+                    )
+                })
+                .collect(),
         }
-    }
-
-    fn universes(&self) -> Vec<fsl_eval::simulation::model::PopulationUniverse> {
-        let mut listed = self.listed.to_vec();
-        listed.push(("actors", &["p"]));
-        universes(&listed)
     }
 }
 
 impl Library {
-    fn subject(&self, case: &Case) -> ModelSubject<'_> {
-        self.world.subject(&self.package, case.universes())
+    fn universes(&self) -> Vec<PopulationUniverse> {
+        self.universes
+            .iter()
+            .flat_map(|(population, keys)| {
+                let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+                universes(&[(population.as_str(), keys.as_slice())])
+            })
+            .collect()
+    }
+
+    fn subject(&self) -> ModelSubject<'_> {
+        self.world.subject(&self.package, self.universes())
     }
 }
 
-#[test]
-fn zz_explore_library() {
-    for case in CASES {
+/// Whether a library refusal, or an outcome, spells the case's cause.
+fn spells(expect: Expect, seen: &str) -> bool {
+    match expect {
+        Expect::Instances(_) => false,
+        Expect::NoInstance => seen.contains("NoInstance"),
+        Expect::NoInitialState => seen.contains("NoInitialState"),
+        Expect::Conflict => seen.contains("ConflictingIdentity"),
+        Expect::RequiresBound => seen.contains("RequiresBound"),
+    }
+}
+
+/// EN-1 as a library, and the core's closure or component check of the
+/// certificate it writes.
+fn check_certificates(formula: &str, cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let n = case.instances().len();
         let over = case.over;
-        let bound = case.instances.len();
-        let pred = |i: usize| {
-            if bound == 0 {
-                "x = x".to_owned()
-            } else {
-                format!("x.age <= {i}")
+        let p = if n == 0 {
+            "true".to_owned()
+        } else {
+            format!("x.age <= {n}")
+        };
+        let library = case.library(&format!(
+            "temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ {formula} holds({p}) }}\n"
+        ));
+        let node = &library.package.graph().temporal_clauses()[0];
+        let system = match ModelSystem::new(library.subject().simulation) {
+            Ok(system) => system,
+            Err(failure) => {
+                let seen = format!("{failure:?}");
+                if !spells(case.expect, &seen) {
+                    wrong.push(format!("{} admission: {seen}", case.name));
+                }
+                continue;
             }
         };
-        for (route, formula) in [("closure", "always"), ("components", "eventually")] {
-            let library = case.library(
-                "",
-                &format!("temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ {formula} holds({}) }}\n", pred(bound)),
-            );
-            let node = &library.package.graph().temporal_clauses()[0];
-            let system = match ModelSystem::new(library.subject(case).simulation) {
-                Ok(system) => system,
-                Err(error) => {
-                    println!("{route} {}: system {error:?}", case.name);
-                    continue;
-                }
-            };
-            let letters = match system.clause_letters(node) {
-                Ok(letters) => letters,
-                Err(error) => {
-                    println!("{route} {}: letters {error:?}", case.name);
-                    continue;
-                }
-            };
-            let item = || ModelCheckItem::Clause {
-                clause: node.clause(),
-                letters: &letters,
-            };
-            let outcome = check_model(
-                ModelCheckRequest {
-                    workers: 1,
-                    temporal_clock_selections: &[],
-                    subject: library.subject(case),
-                    item: item(),
-                    max_depth: None,
-                    limits: ModelCheckLimits::default(),
-                    smt_encoding: Default::default(),
-                    smt_run: Default::default(),
-                    reductions: Default::default(),
-                },
-                &Cancel::new(),
-            );
-            let certificate = match &outcome {
-                Ok(ModelCheckOutcome::Holds { certificate, .. }) => Some(certificate.clone()),
-                other => {
-                    println!("{route} {}: engine {other:?}", case.name);
-                    None
-                }
-            };
-            let request = CertificateRequest {
+        let letters = system.clause_letters(node).expect("an unguarded clause");
+        let item = || ModelCheckItem::Clause {
+            clause: node.clause(),
+            letters: &letters,
+        };
+        let outcome: Result<ModelCheckOutcome, ModelCheckRefusal> = check_model(
+            ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
-                subject: library.subject(case),
+                subject: library.subject(),
                 item: item(),
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
                 smt_encoding: Default::default(),
-            };
-            let limits = ModelCheckLimits::default();
-            let checked = match certificate {
-                Some(ProofCertificate::Closure(proof)) => {
-                    check_closure(&request, &proof, &limits, &Cancel::new())
-                }
-                Some(ProofCertificate::Component(proof)) => {
-                    check_components(&request, &proof, &limits, &Cancel::new())
-                }
-                None => check_closure(
-                    &request,
-                    &ClosureCertificate { states: Vec::new() },
-                    &limits,
-                    &Cancel::new(),
-                ),
-            };
-            println!(
-                "{route} {}: checker {}",
-                case.name,
-                format!("{checked:?}").chars().take(300).collect::<String>()
-            );
-        }
-
-        let library = case.library(
-            "",
-            &format!("possible C using v over (x: M::{over}) {{ {} }}\n", pred(1)),
+                smt_run: Default::default(),
+                reductions: Default::default(),
+            },
+            &Cancel::new(),
         );
+        let request = CertificateRequest {
+            temporal_clock_selections: &[],
+            subject: library.subject(),
+            item: item(),
+            smt_encoding: Default::default(),
+        };
+        let limits = ModelCheckLimits::default();
+        let (certificate, engine) = match outcome {
+            Ok(ModelCheckOutcome::Holds { certificate, .. }) => (Some(certificate), String::new()),
+            other => (None, format!("{other:?}")),
+        };
+        let checked = match &certificate {
+            Some(ProofCertificate::Component(proof)) => {
+                check_components(&request, proof, &limits, &Cancel::new())
+            }
+            Some(ProofCertificate::Closure(proof)) => {
+                check_closure(&request, proof, &limits, &Cancel::new())
+            }
+            None => check_closure(
+                &request,
+                &ClosureCertificate { states: Vec::new() },
+                &limits,
+                &Cancel::new(),
+            ),
+        };
+        let checked = format!("{checked:?}");
+        let right = match case.expect {
+            Expect::Instances(_) => certificate.is_some() && checked == "Ok(Accepted)",
+            _ => spells(case.expect, &engine) && spells(case.expect, &checked),
+        };
+        if !right {
+            wrong.push(format!(
+                "{}: engine {} checker {}",
+                case.name,
+                engine.chars().take(200).collect::<String>(),
+                checked.chars().take(200).collect::<String>()
+            ));
+        }
+    }
+    assert_clean(wrong);
+}
+
+/// The state-graph engine as a library lists each instance, and the core
+/// checks the certificate of each.
+fn check_state_graph_library(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let n = case.instances().len();
+        let over = case.over;
+        let p = if n == 0 {
+            "true".to_owned()
+        } else {
+            format!("x.age <= {n}")
+        };
+        let library = case.library(&format!(
+            "possible C using v over (x: M::{over}) {{ {p} }}\n"
+        ));
         let claim = &library.package.graph().state_graph_claims()[0];
         let run = check_state_graph(
             StateGraphRequest {
-                subject: library.subject(case),
+                subject: library.subject(),
                 temporal_clock_selections: Vec::new(),
                 items: vec![StateGraphItem::new(claim)],
                 reductions: Default::default(),
@@ -505,143 +808,285 @@ fn zz_explore_library() {
             },
             &Cancel::new(),
         );
-        match run {
-            Ok(run) => {
-                for instance in &run.items[0] {
-                    println!(
-                        "graphlib {}: {} {}",
-                        case.name,
-                        instance.over.as_ref().map_or("-", |o| o.object().as_str()),
-                        format!("{:?}", instance.outcome)
-                            .chars()
-                            .take(80)
-                            .collect::<String>()
-                    );
-                    let certificate = match &instance.outcome {
-                        StateGraphOutcome::Witnessed { certificate, .. } => certificate.clone(),
-                        _ => StateGraphCertificate {
-                            closure: Vec::new(),
-                            ranks: Vec::new(),
-                            counts: Vec::new(),
-                        },
-                    };
-                    let checked = fsl_replay::check_state_graph(
-                        &StateGraphCertificateRequest {
-                            subject: library.subject(case),
-                            claim,
-                            over: instance.over.clone(),
-                        },
-                        &certificate,
-                        &ModelCheckLimits::default(),
-                        &Cancel::new(),
-                    );
-                    println!(
-                        "graphcheck {}: {}",
-                        case.name,
-                        format!("{checked:?}").chars().take(200).collect::<String>()
-                    );
+        let run = match run {
+            Ok(run) => run,
+            Err(refusal) => {
+                let seen = format!("{refusal:?}");
+                if !spells(case.expect, &seen) {
+                    wrong.push(format!("{}: {seen}", case.name));
                 }
+                continue;
             }
-            Err(error) => println!("graphlib {}: {error:?}", case.name),
+        };
+        let instances = &run.items[0];
+        let Expect::Instances(expected) = case.expect else {
+            let seen = format!(
+                "{:?}",
+                instances.iter().map(|i| &i.outcome).collect::<Vec<_>>()
+            );
+            if instances.len() != 1 || !spells(case.expect, &seen) {
+                wrong.push(format!("{}: {seen}", case.name));
+            }
+            continue;
+        };
+        let listed: Vec<&str> = instances
+            .iter()
+            .filter_map(|instance| instance.over.as_ref())
+            .map(|reference| reference.object().as_str())
+            .collect();
+        if listed != expected {
+            wrong.push(format!("{}: listed {listed:?}", case.name));
         }
+        for instance in instances {
+            let StateGraphOutcome::Witnessed { certificate, .. } = &instance.outcome else {
+                wrong.push(format!("{}: {:?}", case.name, instance.outcome));
+                continue;
+            };
+            let checked = fsl_replay::check_state_graph(
+                &StateGraphCertificateRequest {
+                    subject: library.subject(),
+                    claim,
+                    over: instance.over.clone(),
+                },
+                certificate,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            );
+            let checked = format!("{checked:?}");
+            if checked != "Ok(Accepted)" {
+                wrong.push(format!("{}: checker {checked}", case.name));
+            }
+        }
+    }
+    assert_clean(wrong);
+}
 
-        let library = case.library(
-            "",
-            &format!("type Lengths = Int[0,1];\nsynthesis Reach using t0 grammar M::Animal domain Lengths satisfies {{ true }};\ntemporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ always holds({}) }}\n", pred(bound)),
-        );
-        match ModelSystem::over_model(library.subject(case).simulation, "M") {
-            Ok(system) => {
+/// FR-1012 plan policies: one monitor per admitted key, and a plan keeps the
+/// policy only when every monitor accepts it.
+fn check_plan_policies(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let over = case.over;
+        for (i, p) in case.probes() {
+            let library = case.library(&format!(
+                "type Lengths = Int[0,1];\n\
+                 synthesis Reach using t0 grammar M::Animal domain Lengths satisfies {{ true }};\n\
+                 temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ always holds({p}) }}\n"
+            ));
+            let seen = (|| {
+                let system = ModelSystem::over_model(library.subject().simulation, "M")
+                    .map_err(|failure| format!("{failure:?}"))?;
                 let node = &library.package.graph().temporal_clauses()[0];
                 let synthesis = &library.package.graph().syntheses()[0];
-                match SourcePlan::new(&library.package, synthesis, &system, vec![node], UNLIMITED) {
-                    Ok(mut rules) => {
-                        let result = search(
-                            &system,
-                            &mut rules,
-                            PlanSearchRequest {
-                                lengths: PlanLengths::new(0, 1).expect("ordered"),
-                                limits: PlanSearchLimits::default(),
-                                cancel: &Cancel::new(),
-                                fault: None,
-                            },
-                        );
-                        match result {
-                            Ok(result) => println!("plan {}: {:?}", case.name, result.status),
-                            Err(error) => println!("plan {}: {error:?}", case.name),
-                        }
-                    }
-                    Err(error) => println!("plan {}: source {error:?}", case.name),
-                }
+                let mut rules =
+                    SourcePlan::new(&library.package, synthesis, &system, vec![node], UNLIMITED)
+                        .map_err(|error| format!("{error:?}"))?;
+                search(
+                    &system,
+                    &mut rules,
+                    PlanSearchRequest {
+                        lengths: PlanLengths::new(0, 1).expect("ordered"),
+                        limits: PlanSearchLimits::default(),
+                        cancel: &Cancel::new(),
+                        fault: None,
+                    },
+                )
+                .map(|result| result.status)
+                .map_err(|error| format!("{error:?}"))
+            })();
+            let wanted = if i < case.instances().len() {
+                PlanStatus::Infeasible
+            } else {
+                PlanStatus::Optimal
+            };
+            if seen != Ok(wanted) {
+                wrong.push(format!(
+                    "{} probe {i}: expected {wanted:?}, got {seen:?}",
+                    case.name
+                ));
             }
-            Err(error) => println!("plan {}: system {error:?}", case.name),
         }
+    }
+    assert_clean(wrong);
+}
 
-        let library = case.library(
-            "",
-            &format!("temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ always holds({}) }}\n", pred(bound)),
-        );
-        let smt = encode_temporal_smt_query(
-            &library.subject(case),
+/// The SMT temporal encoder: what it refuses over an empty set, and the
+/// script it writes otherwise.
+fn check_smt_temporal(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let over = case.over;
+        let p = if case.instances().is_empty() {
+            "true"
+        } else {
+            "x.age <= 9"
+        };
+        let library = case.library(&format!(
+            "temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ always holds({p}) }}\n"
+        ));
+        let encoded = encode_temporal_smt_query(
+            &library.subject(),
             library.package.graph().temporal_clauses()[0].clause(),
             SmtQueryKind::InductionBase { depth: 1 },
             &SmtEncodingLimits::default(),
         );
-        match smt {
-            Ok(script) => println!(
-                "smt {}: {}",
+        match (case.expect, encoded) {
+            (Expect::Instances(_), Ok(script)) => {
+                println!("{}\n{}", case.name, String::from_utf8_lossy(&script));
+            }
+            (expect, Err(refusal)) if spells(expect, &format!("{refusal:?}")) => {}
+            (_, other) => wrong.push(format!(
+                "{}: {:?}",
                 case.name,
-                String::from_utf8_lossy(&script)
-                    .chars()
-                    .take(900)
-                    .collect::<String>()
-                    .replace('\n', " | ")
-            ),
-            Err(error) => println!("smt {}: {error:?}", case.name),
+                other.map(|script| script.len())
+            )),
         }
-
-        let library = case.library(
-            "",
-            &format!("hyper C using t0 over behaviours (x: M::{over}) forall trace a of M forall trace b of M {{ always holds(({}) @ a) }}\n", pred(bound)),
-        );
-        let clause = &library.package.graph().hyper_clauses()[0];
-        let subjects = vec![library.subject(case), library.subject(case)];
-        let key = case.instances.first().copied().unwrap_or("a");
-        let mut meter = Meter::new(UNLIMITED);
-        let query = encode_hyper_query(
-            HyperQueryRequest {
-                clause,
-                subjects: &subjects,
-                instance: &[("x".to_owned(), key.to_owned())],
-                meter: &mut meter,
-                encoding: SmtEncodingLimits::default(),
-            },
-            SmtQueryKind::InductionBase { depth: 1 },
-        );
-        match query {
-            Ok(_) => println!("smthyper {}: encoded {key}", case.name),
-            Err(error) => println!("smthyper {}: {error:?}", case.name),
-        }
-        let product = check_product_closure(
-            &ProductClosureRequest {
-                package: &library.package,
-                clause: ProductClosureClause::Hyper(clause),
-                subjects: &subjects,
-                meter: UNLIMITED,
-            },
-            &ProductClosureCertificate {
-                form: HyperForm::Universal,
-                instance: Vec::new(),
-                reduction: None,
-                closure: ProductClosure::Product(Vec::new()),
-                components: None,
-            },
-            &ModelCheckLimits::default(),
-            &Cancel::new(),
-        );
-        println!(
-            "product {}: {}",
-            case.name,
-            format!("{product:?}").chars().take(200).collect::<String>()
-        );
     }
+    assert_clean(wrong);
+}
+
+/// The SMT hyper encoder takes one instance: each admitted key encodes and
+/// each excluded key is refused. The product-closure checker refuses an
+/// empty set.
+fn check_hyper_library(cases: &[Case]) {
+    let mut wrong = Vec::new();
+    for case in cases {
+        let over = case.over;
+        let p = if case.instances().is_empty() {
+            "true".to_owned()
+        } else {
+            "x.age <= 9".to_owned()
+        };
+        let library = case.library(&Route::ForallForall.claim("C", over, &p));
+        let clause = &library.package.graph().hyper_clauses()[0];
+        let subjects = vec![library.subject(), library.subject()];
+        let mut keys: Vec<&str> = case
+            .listed
+            .iter()
+            .flat_map(|(_, keys)| keys.iter().copied())
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        for key in keys {
+            let mut meter = Meter::new(UNLIMITED);
+            let encoded = encode_hyper_query(
+                HyperQueryRequest {
+                    clause,
+                    subjects: &subjects,
+                    instance: &[("x".to_owned(), key.to_owned())],
+                    meter: &mut meter,
+                    encoding: SmtEncodingLimits::default(),
+                },
+                SmtQueryKind::InductionBase { depth: 1 },
+            );
+            if encoded.is_ok() != case.instances().contains(&key) {
+                wrong.push(format!(
+                    "{} smt key {key}: {:?}",
+                    case.name,
+                    encoded.map(|query| query.script.len())
+                ));
+            }
+        }
+        if case.instances().is_empty() {
+            let checked = check_product_closure(
+                &ProductClosureRequest {
+                    package: &library.package,
+                    clause: ProductClosureClause::Hyper(clause),
+                    subjects: &subjects,
+                    meter: UNLIMITED,
+                },
+                &ProductClosureCertificate {
+                    form: HyperForm::Universal,
+                    instance: Vec::new(),
+                    reduction: None,
+                    closure: ProductClosure::Product(Vec::new()),
+                    components: None,
+                },
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            );
+            let seen = format!("{checked:?}");
+            if !spells(case.expect, &seen) {
+                wrong.push(format!(
+                    "{} product checker: {}",
+                    case.name,
+                    seen.chars().take(200).collect::<String>()
+                ));
+            }
+        }
+    }
+    assert_clean(wrong);
+}
+
+#[test]
+fn zz_temporal() {
+    check_route(Route::Temporal, ALL);
+}
+#[test]
+fn zz_liveness() {
+    check_route(Route::Liveness, ALL);
+}
+#[test]
+fn zz_graph() {
+    check_route(Route::StateGraph, ALL);
+}
+#[test]
+fn zz_hp5() {
+    check_route(Route::SingleExistential, ALL);
+}
+#[test]
+fn zz_hpaa() {
+    check_route(Route::ForallForall, ALL);
+}
+#[test]
+fn zz_hpae() {
+    check_route(Route::ForallExists, ALL);
+}
+#[test]
+fn zz_zone() {
+    check_route(Route::Zone, ALL);
+}
+#[test]
+fn zz_digital() {
+    check_route(Route::Digital, ALL);
+}
+#[test]
+fn zz_tgraph() {
+    check_route(Route::TimedStateGraph, ALL);
+}
+#[test]
+fn zz_exact() {
+    check_probabilistic(Probabilistic::Exact, ALL);
+}
+#[test]
+fn zz_statistical() {
+    check_probabilistic(Probabilistic::Statistical, ALL);
+}
+#[test]
+fn zz_conformance() {
+    check_conformance(ALL);
+}
+#[test]
+fn zz_closure() {
+    check_certificates("always", ALL);
+}
+#[test]
+fn zz_components() {
+    check_certificates("eventually", ALL);
+}
+#[test]
+fn zz_graph_library() {
+    check_state_graph_library(ALL);
+}
+#[test]
+fn zz_plan() {
+    check_plan_policies(ALL);
+}
+#[test]
+fn zz_smt() {
+    check_smt_temporal(ALL);
+}
+#[test]
+fn zz_hyper_library() {
+    check_hyper_library(ALL);
 }
