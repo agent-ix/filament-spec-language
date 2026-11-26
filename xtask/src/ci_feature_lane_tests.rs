@@ -571,6 +571,7 @@ fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
         "ci-docs",
         "arch-lint-api-surface-fsl",
         "arch-lint-qualified-core",
+        "arch-lint-trusted-base",
         "build-no-std",
         "examples-check",
         "termination-scaling",

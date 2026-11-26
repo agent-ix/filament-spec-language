@@ -25,11 +25,21 @@ pub(crate) fn construct_edges_for_manifest(manifest_path: &Path) -> Result<Vec<C
     parse_construct_edges(&load(manifest_path)?)
 }
 
+/// `cargo metadata --no-deps` for the workspace at `manifest_path`: its
+/// members, their targets and their declared dependencies.
+pub(crate) fn load_members(manifest_path: &Path) -> Result<Value> {
+    run_metadata(manifest_path, "--no-deps")
+}
+
 fn load(manifest_path: &Path) -> Result<Value> {
+    run_metadata(manifest_path, "--locked")
+}
+
+fn run_metadata(manifest_path: &Path, flag: &str) -> Result<Value> {
     let output = Command::new("cargo")
         .arg("metadata")
         .arg("--format-version=1")
-        .arg("--locked")
+        .arg(flag)
         .arg("--manifest-path")
         .arg(manifest_path)
         .output()

@@ -746,7 +746,7 @@ fn forbidden_module_lines(
 
 /// Every leaf of a `use` tree, as its segments (a glob is `*`, a rename
 /// keeps the original name) and the name it binds, with its line.
-fn use_leaves(
+pub(crate) fn use_leaves(
     tree: &syn::UseTree,
     prefix: &mut Vec<String>,
     out: &mut Vec<(Vec<String>, String, usize)>,
