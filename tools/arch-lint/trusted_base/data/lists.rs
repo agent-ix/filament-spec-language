@@ -42,10 +42,15 @@ pub(super) const B11: &[&str] = &[
 pub(super) const B12: &[&str] = &[
     "fsl_replay::outcome::counterexample::state_key_wire",
     "fsl_replay::outcome::counterexample::task_source_transition_wire",
-    "fsl_replay::outcome::TimedStateWire::from",
-    "fsl_replay::outcome::WrittenTransition::from",
     "fsl_replay::result::Verdict::from_category",
     "fsl_replay::result::wire::ProtocolWitnessWire::of",
+    "fsl_replay::shared_wire::state::state_key_from_text",
+    "fsl_replay::shared_wire::state::state_key_text",
+    "fsl_replay::shared_wire::state::StateLocus::from",
+    "fsl_replay::shared_wire::state::StateLocus::into_key",
+    "fsl_replay::shared_wire::state::StateLocus::read",
+    "fsl_replay::shared_wire::transition::TransitionIdentity::owned",
+    "fsl_replay::shared_wire::transition::TransitionIdentity::read_within",
     "fsl_replay::written_operation::WrittenOperation::from_wire",
 ];
 
@@ -328,6 +333,8 @@ pub(super) const CODEC: &[(&str, &str)] = &[
     ("fsl_replay::certificate::zone_certificate::CertificateCheckLimits::default", "C-4"),
     ("fsl_replay::certificate::task_product::wire::ACTIONS", "C-1"),
     ("fsl_replay::certificate::task_product::wire::action_name", "C-1"),
+    ("fsl_replay::certificate::task_product::wire::rational", "C-1"),
+    ("fsl_replay::certificate::task_product::wire::rational_wire", "C-1"),
     ("fsl_replay::hybrid_replay::certificate::wire::read_certificate", "C-1"),
     ("fsl_replay::hybrid_replay::trace::ExactInterval::new", "C-2"),
     ("fsl_replay::hybrid_replay::trace::ExactInterval::point", "C-2"),
