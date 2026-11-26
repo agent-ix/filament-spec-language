@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! refinement integration tests.
 
+mod ue6_ref;
 mod analyze_cli_support;
 mod certificate_rejection_support;
 #[allow(
