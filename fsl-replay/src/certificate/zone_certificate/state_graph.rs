@@ -25,6 +25,7 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint};
 use fsl_eval::simulation::StateKey;
 use fsl_semantics::check::{PredicateRole, StateGraphForm};
+use ix_trace_rs::implements;
 
 use super::{
     at_node, fault, intersect, malformed, reject, CertificateLocus, CertificateMember,
@@ -63,6 +64,7 @@ struct Space {
 impl<O> Checker<'_, '_, O> {
     /// FSpec FR-712's form of the state-graph claim, decided on the timed
     /// states.
+    #[implements("FSpec-FR-712-AC-1", "FSpec-FR-712-AC-2", "FSpec-FR-712-AC-3")]
     pub(super) fn state_graph(&self) -> Step<(), O> {
         let Some(state_graph) = &self.state_graph else {
             return malformed(CertificateMember::Nodes);

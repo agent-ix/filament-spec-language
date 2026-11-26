@@ -22,6 +22,7 @@ use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint, TimedSystem};
 use fsl_replay::{ModelPath, ModelStep};
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 
@@ -161,6 +162,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
 
     /// `possible`: from each initial valuation, a forward search for a state
     /// where `p` holds.
+    #[implements("FR-852-AC-1")]
     pub(super) fn possible(
         &mut self,
         p: &[bool],
@@ -206,6 +208,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
 
     /// `always possible`: every valuation of a node where `q` holds is in
     /// `E(P)`, the backward fixpoint from the states where `p` holds.
+    #[implements("FR-852-AC-2", "FSpec-FR-712-AC-2")]
     pub(super) fn always_possible(
         &mut self,
         q: &[bool],
@@ -240,6 +243,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
 
     /// `unique path`: from every valuation of a node where `x` holds, one
     /// transition sequence leads to a state where `y` holds.
+    #[implements("FR-852-AC-3", "FSpec-FR-712-AC-3")]
     pub(super) fn unique_path(
         &mut self,
         x: &[bool],
@@ -548,6 +552,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
     /// `E(P)`: the least fixpoint of the timed and discrete predecessors of
     /// the states where `p` holds, per model state. It terminates because a
     /// predecessor of a union of regions is one.
+    #[implements("FR-852-AC-2")]
     fn eventually(&mut self, p: &[bool]) -> Result<EventuallyZones, ZoneCheckRefusal> {
         let mut ef: EventuallyZones = self.states.iter().map(|_| Vec::new()).collect();
         let mut queue = VecDeque::new();
