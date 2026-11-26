@@ -36,6 +36,34 @@ use ix_trace_rs::trace;
 
 use crate::counter::{document, document_with_ranged_parameter, value, CONTRACT, UNLIMITED, ZERO};
 
+/// FR-126-AC-2: `eventually p` is already true when its sole initial state
+/// satisfies `p`. The component checker must accept the producer's proof.
+#[trace("TC-521", "FR-126-AC-2")]
+#[test]
+fn eventually_true_at_the_initial_state_proves_for_an_admitted_object() {
+    let one_object = counter(document(false), "", "eventually holds(c.value <= 1)");
+    let _ = one_object.certified(|value| Some(value <= 1));
+}
+
+/// FR-125-AC-7: an empty universe has no instance and must settle
+/// inconclusive, without asking the closure checker to validate a proof.
+#[trace("TC-520", "FR-125-AC-7")]
+#[test]
+fn an_empty_object_population_is_no_instance_not_a_closure_fault() {
+    let no_object = fixture(
+        document(false),
+        CONTRACT,
+        "",
+        "eventually holds(c.value <= 1)",
+        &[],
+    );
+    let cause = match no_object.decide(|value| Some(value <= 1)).expect("checked") {
+        ModelCheckOutcome::Undecided { cause, .. } => cause,
+        other => panic!("expected NoInstance for an empty object set, got {other:?}"),
+    };
+    assert_eq!(cause, fsl_replay::UndecidedCause::NoInstance);
+}
+
 /// FR-126-AC-3's last sentence, with the deadlock half in
 /// `model_check::deadlock_freedom_is_violated_at_the_unintended_terminal_state`:
 /// over the `Counter` subject (no `terminal` declaration), `always
