@@ -2,9 +2,7 @@
 //! FR-1051 mutation registration for value bounds.
 
 use super::*;
-use fsl_certificate_mutation::{
-    AllowedMutation, Fixture, MutationId, MutationKind, Verdict, check_document,
-};
+use fsl_certificate_mutation::{Fixture, Verdict, check_document};
 use ix_trace_rs::trace;
 
 /// Trace: FR-1051-AC-11, FR-1051-AC-13.
@@ -20,13 +18,7 @@ fn value_bounds_certificate_rejects_each_single_mutation() {
             route: "value-bounds/v1",
             name: "cyclic-chain-lower-bound",
             document,
-            allowed_to_survive: vec![AllowedMutation {
-                id: MutationId {
-                    member: "$/ranking/1+2/state".into(),
-                    kind: MutationKind::KeySwapped,
-                },
-                reason: "The exchanged labels retain a valid certificate ranking for this fixture; the ranking only needs to satisfy the checker’s progress inequalities.".into(),
-            }],
+            allowed_to_survive: Vec::new(),
         },
         |bytes| {
             let changed: Value = serde_json::from_slice(bytes).expect("canonical certificate JSON");

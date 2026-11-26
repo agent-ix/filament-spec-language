@@ -2,9 +2,7 @@
 //! FR-1051 mutation registration for finite-horizon measure proofs.
 
 use super::*;
-use fsl_certificate_mutation::{
-    AllowedMutation, Fixture, MutationId, MutationKind, Verdict, check_document,
-};
+use fsl_certificate_mutation::{Fixture, Verdict, check_document};
 use ix_trace_rs::trace;
 
 /// Trace: FR-1051-AC-11, FR-1051-AC-13.
@@ -31,22 +29,7 @@ fn finite_horizon_measure_certificate_rejects_each_single_mutation() {
             route: "finite-horizon-measure/v1",
             name: "finite-horizon-fraction-mean",
             document,
-            allowed_to_survive: vec![
-                AllowedMutation {
-                    id: MutationId {
-                        member: "$/ranking/1+6/state".into(),
-                        kind: MutationKind::KeySwapped,
-                    },
-                    reason: "The exchanged states retain a ranking that satisfies the checker’s progress inequalities, so the witness still proves the same objective.".into(),
-                },
-                AllowedMutation {
-                    id: MutationId {
-                        member: "$/ranking/2+4/state".into(),
-                        kind: MutationKind::KeySwapped,
-                    },
-                    reason: "The exchanged states retain a ranking that satisfies the checker’s progress inequalities, so the witness still proves the same objective.".into(),
-                },
-            ],
+            allowed_to_survive: Vec::new(),
         },
         |bytes| {
             let changed: Value = serde_json::from_slice(bytes).expect("canonical certificate JSON");

@@ -5,8 +5,8 @@ use super::*;
 use filament_exact::{Cancel, ValueType};
 use fsl_certificate_mutation::{Fixture, Verdict, check_document};
 use fsl_replay::{
-    CertificateCheckLimits, CertifiedItem, ZoneCertificate, ZoneCertificateRequest,
-    ZoneCertificateVerdict,
+    CertificateCheckLimits, CertifiedItem, StateGraphCertificateForm, StateGraphPart,
+    ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
@@ -58,7 +58,7 @@ fn check_zone_state_graph_fixture(claim_name: &str, reset: bool, route: &str) {
     let system = world.system();
     let over_parameter = claim.over().expect("the claim binds the call object");
     let instance = system
-        .instances(ValueType::Reference(over_parameter.object.clone()))
+        .instances(&ValueType::Reference(over_parameter.object.clone()))
         .expect("the admitted instances")
         .into_iter()
         .next()
@@ -66,9 +66,15 @@ fn check_zone_state_graph_fixture(claim_name: &str, reset: bool, route: &str) {
     let over = system
         .written_reference(over_parameter.object.clone(), &instance)
         .expect("the instance reference");
-    let (baseline_certificate, baseline_identity) =
-        ZoneCertificate::from_wire(&document, obligation.clone())
+    let mut base_document = document.clone();
+    base_document
+        .as_object_mut()
+        .expect("the certificate is an object")
+        .remove("state_graph");
+    let (mut baseline_certificate, baseline_identity) =
+        ZoneCertificate::from_wire(&base_document, obligation.clone())
             .expect("the route's codec reads its accepted certificate");
+    baseline_certificate.state_graph = Some(state_graph_part(&document["state_graph"]));
     assert_eq!(
         fsl_replay::check_zone_certificate(
             ZoneCertificateRequest {
@@ -99,11 +105,19 @@ fn check_zone_state_graph_fixture(claim_name: &str, reset: bool, route: &str) {
         },
         |bytes| {
             let changed: Value = serde_json::from_slice(bytes).expect("canonical zone certificate");
-            let Ok((certificate, identity)) =
-                ZoneCertificate::from_wire(&changed, obligation.clone())
+            let mut base = changed.clone();
+            let Some(state_graph) = base
+                .as_object_mut()
+                .and_then(|object| object.remove("state_graph"))
             else {
                 return Verdict::Rejected;
             };
+            let Ok((mut certificate, identity)) =
+                ZoneCertificate::from_wire(&base, obligation.clone())
+            else {
+                return Verdict::Rejected;
+            };
+            certificate.state_graph = Some(state_graph_part(&state_graph));
             if identity != baseline_identity {
                 return Verdict::Rejected;
             }
@@ -130,4 +144,23 @@ fn check_zone_state_graph_fixture(claim_name: &str, reset: bool, route: &str) {
     )
     .expect("all unlisted zone-certificate mutations reject");
     assert!(changes > 0, "the zone certificate has generated mutations");
+}
+
+fn state_graph_part(value: &Value) -> StateGraphPart {
+    let form = match value["form"].as_str().expect("state-graph form") {
+        "possible" => StateGraphCertificateForm::Possible,
+        "always-possible" => StateGraphCertificateForm::AlwaysPossible,
+        "unique-path" => StateGraphCertificateForm::UniquePath,
+        other => panic!("unexpected state-graph form {other}"),
+    };
+    let ef_nodes = value["ef_nodes"]
+        .as_array()
+        .expect("E(P) node positions")
+        .iter()
+        .map(|node| {
+            usize::try_from(node.as_u64().expect("node position"))
+                .expect("node position fits usize")
+        })
+        .collect();
+    StateGraphPart { form, ef_nodes }
 }

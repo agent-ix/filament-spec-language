@@ -222,9 +222,7 @@ fn check_mutants(
         .into_iter()
         .map(|entry| (entry.id.clone(), entry))
         .collect::<std::collections::BTreeMap<_, _>>();
-    let mut seen = BTreeSet::new();
     for mutant in &mutants {
-        seen.insert(mutant.id.clone());
         let Some(verdict) = check(&mutant.value) else {
             return Err(HarnessError::AdapterFailed {
                 route,
@@ -273,7 +271,6 @@ fn check_mutants(
             mutation: id.kind,
         });
     }
-    let _ = seen;
     Ok(mutants.len())
 }
 
