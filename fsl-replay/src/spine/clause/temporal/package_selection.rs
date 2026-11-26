@@ -544,9 +544,12 @@ fn run_model(
         disposition,
         None::<crate::ObservedTemporalCounterexample>,
         |atom, meter| {
-            let observed = observation
-                .as_ref()
-                .ok_or_else(|| decisive_fault("decisive-atom-has-an-observation"))?;
+            // A state with no object conforming to the parameter under the key
+            // gives no reference to read the atom over, so there is no
+            // decisive record, as on the source route.
+            let Some(observed) = observation.as_ref() else {
+                return Ok(None);
+            };
             decisive_over(
                 request.package,
                 clause,
