@@ -458,6 +458,7 @@ pub use filament_semantic_value::declaration::EqualityOperator;
 pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
+pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use outcome::undefined_reason;
 pub use outcome::verdict_bound_wire;
 pub use outcome::{
@@ -478,7 +479,6 @@ pub use outcome::{
     ResultLimit, ResultValue, TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
     TemporalCounterexampleReadRefusal, TraceAlphabet, WitnessOmission, OUTCOME_FORMAT,
 };
-pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,
     PlannerResult, PremiseItem, PremiseResult, ResultEntry, SettlementRequest,
@@ -504,7 +504,6 @@ pub use probability_certificate::{
     measure_probability_certificate_document, measure_probability_objective,
     measure_probability_product_key, on_each_has_instance, on_each_outcome,
     partial_lower_measure_probability_certificate_document,
-    timed_certificate_route,
     partial_lower_probability_proof_document, probabilistic_claim_identity,
     probabilistic_formula_monitor_context, probability_certificate_document,
     probability_proof_document, read_long_run_probability_certificate,
@@ -512,7 +511,7 @@ pub use probability_certificate::{
     read_probability_proof_document, read_weighted_long_run_probability_certificate,
     region_probability_product_key, replay_on_each_witness, replay_probabilistic_undefined,
     replay_probabilistic_witness, replay_probabilistic_witness_from_package,
-    vacuous_measure_probability_certificate_document,
+    timed_certificate_route, vacuous_measure_probability_certificate_document,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
     write_measure_probability_certificate, write_value_bounds_measure_certificate,
     write_probability_certificate,
