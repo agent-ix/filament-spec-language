@@ -1307,6 +1307,39 @@ fn invariant_result(
 mod tests {
     use super::*;
 
+    /// FR-267-AC-8: the population refusal's ad hoc `/2` shape is not a
+    /// command-error or clause-run document accepted by the strict reader.
+    #[test]
+    #[ix_trace_rs::trace("FR-267-AC-8")]
+    fn population_refusal_document_is_rejected_by_typed_reader() {
+        let population = population_refusal("all");
+
+        assert!(
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&population).unwrap())
+                .is_err(),
+            "unexpectedly admitted population refusal: {population}"
+        );
+    }
+
+    /// FR-652-AC-3: the value-invariant item result has the typed clause-run
+    /// shape accepted by the `/2` reader.
+    #[test]
+    #[ix_trace_rs::trace("FR-652-AC-3")]
+    fn invariant_item_document_reads_as_clause_result() {
+        let invariant = invariant_result(
+            "success",
+            "evaluate",
+            Some(true),
+            None,
+            &fsl_semantics::model::observation::AdmissionUsage::default(),
+        );
+
+        assert!(matches!(
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&invariant).unwrap()),
+            Ok(fsl_replay::spine::NativeRunResult::Clause(_))
+        ));
+    }
+
     #[test]
     fn internal_item_failure_is_request_fatal() {
         let result = RunResult {

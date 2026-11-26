@@ -316,7 +316,7 @@ fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
 /// checked expressions, retain the `holds(...)` wrapper, and use alias-free
 /// declaration identities for calls and enum literals.
 #[test]
-#[trace("FR-931-AC-11", "FR-931-AC-12")]
+#[trace("FR-931-AC-11", "FR-931-AC-12", "FR-267-AC-8")]
 fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     let directory = tempfile::tempdir().unwrap();
     let mut unit = crate::config_version_spine::spine::unit_text();
@@ -354,6 +354,10 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
         "tl_lowering": {"clause": "Canonical"}});
     let (exit, value) = run(directory.path(), request.clone());
     assert_eq!(exit, 0, "{value}");
+    assert!(
+        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&value).unwrap()).is_err(),
+        "the strict typed reader unexpectedly admitted the TL lowering document: {value}"
+    );
     let atom = value["tl_lowering"]["atoms"]["p0"]
         .as_str()
         .expect("the atom has canonical checked text");

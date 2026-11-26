@@ -1138,6 +1138,25 @@ mod tests {
         FormalSource::new(source, identity)
     }
 
+    /// FR-267-AC-8: direct model-based test and TL lowering documents are
+    /// emitted under `/2`, but the strict typed reader does not admit their
+    /// ad hoc top-level members.
+    #[test]
+    #[trace("FR-267-AC-8")]
+    fn ad_hoc_model_and_tl_documents_are_rejected_by_typed_reader() {
+        let model =
+            NativeResult::model_based_test_document(serde_json::json!({"result": "tested"}));
+        let tl = super::super::tl::document(serde_json::json!({"disposition": "supported"}));
+
+        for document in [model.as_value().clone(), tl] {
+            assert!(
+                fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&document).unwrap())
+                    .is_err(),
+                "unexpectedly admitted ad hoc document: {document}"
+            );
+        }
+    }
+
     /// Assert `spine_run_result`'s whole stdout document and exit code for
     /// an `Undefined` outcome carrying `reason`, isolated from any specific
     /// kernel or family origin (FR-100-AC-9, FND-006). The renderer

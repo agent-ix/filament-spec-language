@@ -2324,6 +2324,7 @@ fn transfer_premise(identity: &Value, result: &str) -> Value {
 #[trace("TC-2920", "FR-1030-AC-1")]
 #[trace("TC-2870", "FR-1020-AC-1")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-1")]
+#[trace("FR-267-AC-8")]
 fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
     let (exit, value) = transfer_run_over(
         &[(
@@ -2338,6 +2339,10 @@ fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
         true,
     );
     assert_eq!(exit, 0, "{value}");
+    assert!(
+        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&value).unwrap()).is_err(),
+        "the strict typed reader unexpectedly admitted the transfer document: {value}"
+    );
     assert_eq!(
         value["refinement_transfer"]["refinement"]["step_for_step"]["holds"], true,
         "{value}"
