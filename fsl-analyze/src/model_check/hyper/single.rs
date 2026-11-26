@@ -1264,17 +1264,7 @@ impl<'a> Decision<'_, '_, 'a> {
             None => true,
             Some(OpenCause::UndecidedSuccessor) => false,
             Some(_) => self.product.graph.state(id).is_some_and(|member| {
-                member.state.property == Property::Dead
-                    && self
-                        .product
-                        .product
-                        .successors(&member.state)
-                        .is_ok_and(|expansion| {
-                            !expansion
-                                .findings
-                                .iter()
-                                .any(HyperFinding::leaves_successors_unknown)
-                        })
+                member.state.property == Property::Dead && !member.state.has_unknown_successors()
             }),
         }
     }

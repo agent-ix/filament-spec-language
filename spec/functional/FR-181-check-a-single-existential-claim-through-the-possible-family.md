@@ -136,7 +136,9 @@ that no trace exists.
   `max_depth` left unexpanded SHALL NOT count against a part being closed for
   `Trapped` when every contract conjunction of its model state has a value.
   It stays open for `Witnessed`. An undefined contract conjunction is never
-  read as a disabled step (ADR-018 UE-6).
+  read as a disabled step (ADR-018 UE-6). Those conjunctions SHALL be read
+  when the product state is created, so that deciding a part closed expands
+  no state the run limits did not admit.
 - A clause with object parameters (`over`) SHALL be checked once per instance
   in FR-125's canonical instance order, the instances sharing the run's
   `max_states` and `max_transitions` as FR-126 shares them across bindings, and
@@ -174,11 +176,11 @@ that no trace exists.
   with the fairness filter: no fair accepting cycle SHALL settle
   `reproduced-with-evaluated-witness`; one found SHALL settle
   `inconclusive`, `Verdicts`; a stopped exploration SHALL return the replay
-  result stopped with its limit. The re-exploration SHALL NOT follow the
-  successors of a state from which the body automaton has no run, nor expand
-  one whose letter has no value, so neither can stop it. A no-run state whose
-  contract conjunction has no value or is refused SHALL NOT reproduce the
-  trap.
+  result stopped with its limit. The re-exploration SHALL NOT expand a state
+  from which the body automaton has no run, nor one whose letter has no
+  value, so neither can stop it. A no-run state whose contract conjunction,
+  read when the state is created, has no value or is refused SHALL NOT
+  reproduce the trap.
 - An `Undefined` path SHALL replay as FR-170 replays undefined-evaluation
   evidence, re-executing the path and evaluating the body's letter at its
   last position.
