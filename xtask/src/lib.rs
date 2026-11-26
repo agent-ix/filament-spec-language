@@ -28,6 +28,7 @@ pub mod published_fspec;
 pub mod qualification;
 pub use qualification::backend_agreement;
 pub mod qualify;
+mod recipe_fingerprint;
 pub mod refinement;
 pub mod route_lint;
 pub mod seam_probe;

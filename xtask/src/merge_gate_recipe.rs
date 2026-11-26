@@ -8,6 +8,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use ix_trace_rs::implements;
+
 use crate::error::{Error, Result};
 
 const LARGE_EMIT_FILTER: &str =
@@ -33,7 +35,8 @@ const ANALYZE_IT_ROOTS: &[(&str, &str)] = &[
         "fsl-analyze/tests/it_refinement_cx1.rs",
     ),
 ];
-const USAGE: &str = "usage: cargo xtask merge-gate-recipe [--preflight] <changed-path>...";
+const USAGE: &str =
+    "usage: cargo xtask merge-gate-recipe [--workspace <path>] [--preflight] <changed-path>...";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TestTarget {
@@ -1278,8 +1281,57 @@ impl CommandRunner for SystemCommandRunner {
 /// By default this only prints the recipe. With `--preflight`, each filter is
 /// checked with normal and ignored filtered `--list` invocations, and a filter
 /// that selects no non-ignored tests fails closed.
+#[implements("NFR-142-AC-1")]
 pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<String> {
-    run_with_runner(workspace_root, operands, &SystemCommandRunner)
+    let (selected_root, selected_operands) = select_workspace(workspace_root, operands)?;
+    ensure_compatible(&selected_root)?;
+    run_with_runner(&selected_root, &selected_operands, &SystemCommandRunner)
+}
+
+#[implements("NFR-142-AC-1")]
+fn select_workspace(
+    default_root: &Path,
+    operands: &[OsString],
+) -> Result<(PathBuf, Vec<OsString>)> {
+    let mut selected = None;
+    let mut remaining = Vec::with_capacity(operands.len());
+    let mut iter = operands.iter();
+    while let Some(operand) = iter.next() {
+        if operand == "--workspace" {
+            if selected.is_some() {
+                return Err(Error::Usage(USAGE));
+            }
+            selected = Some(PathBuf::from(iter.next().ok_or(Error::Usage(USAGE))?));
+        } else {
+            remaining.push(operand.clone());
+        }
+    }
+    let selected = selected.unwrap_or_else(|| default_root.to_path_buf());
+    let selected = selected
+        .canonicalize()
+        .map_err(|error| Error::MergeGateRecipe(format!("cannot select workspace: {error}")))?;
+    if !selected.join("Cargo.toml").is_file() || !selected.join("xtask/Cargo.toml").is_file() {
+        return Err(Error::MergeGateRecipe(format!(
+            "selected workspace {} lacks the workspace and xtask manifests",
+            selected.display()
+        )));
+    }
+    Ok((selected, remaining))
+}
+
+#[implements("NFR-142-AC-2")]
+fn ensure_compatible(workspace_root: &Path) -> Result<()> {
+    let actual = crate::recipe_fingerprint::fingerprint(workspace_root).map_err(|error| {
+        Error::MergeGateRecipe(format!("cannot fingerprint selected xtask inputs: {error}"))
+    })?;
+    let expected = env!("XTASK_RECIPE_INPUT_FINGERPRINT");
+    if actual != expected {
+        return Err(Error::MergeGateRecipe(format!(
+            "prebuilt xtask is incompatible with selected workspace {} (built {expected}, found {actual}); rebuild xtask for this workspace",
+            workspace_root.display()
+        )));
+    }
+    Ok(())
 }
 
 fn run_with_runner(
@@ -2329,6 +2381,7 @@ fn no_run_command(target: &(String, TestTarget)) -> String {
     command
 }
 
+#[implements("NFR-142-AC-3")]
 fn require_main_merged(
     workspace_root: &Path,
     runner: &dyn CommandRunner,
@@ -3859,5 +3912,39 @@ mod tests {
             whole.command(true),
             ["test", "--locked", "-p", "xtask", "--lib", "--", "--list"]
         );
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("NFR-142-AC-1")]
+    fn explicit_workspace_is_selected_and_removed_from_changed_paths() {
+        let root = workspace_root();
+        let args = [
+            OsString::from("--workspace"),
+            root.as_os_str().to_owned(),
+            OsString::from("--preflight"),
+            OsString::from("xtask/src/main.rs"),
+        ];
+        let (selected, remaining) = select_workspace(root, &args).expect("workspace");
+        assert_eq!(selected, root.canonicalize().expect("canonical workspace"));
+        assert_eq!(
+            remaining,
+            [
+                OsString::from("--preflight"),
+                OsString::from("xtask/src/main.rs")
+            ]
+        );
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("NFR-142-AC-2")]
+    fn selected_workspace_with_different_recipe_inputs_is_rejected() {
+        let directory = tempfile::tempdir().expect("workspace");
+        std::fs::create_dir_all(directory.path().join("xtask/src")).expect("xtask sources");
+        std::fs::write(directory.path().join("Cargo.toml"), "[workspace]\n").expect("manifest");
+        std::fs::write(directory.path().join("xtask/Cargo.toml"), "[package]\n")
+            .expect("xtask manifest");
+        std::fs::write(directory.path().join("xtask/src/main.rs"), "fn main() {}\n")
+            .expect("source");
+        assert!(ensure_compatible(directory.path()).is_err());
     }
 }

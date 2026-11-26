@@ -1,14 +1,40 @@
 # Merge gate recipe
 
-Run `cargo run --locked -p xtask -- merge-gate-recipe [--preflight]
-<changed-path>...` from the workspace for a PR head that already contains
-current `origin/main`. Pass
-changed paths relative to the workspace root. The command fetches `origin/main`,
-verifies ancestry, and prints both commit IDs in its header. By default it only
-prints the recipe and does not invoke Cargo. Add `--preflight` before the paths
-to check each name filter with normal and ignored `cargo test -- --list` output;
-an explicit filter with no non-ignored matches then fails closed. A local
-library-module filter with no matches is reported as a note.
+Build the recipe executable once from the PR checkout:
+
+```text
+CARGO_INCREMENTAL=0 cargo build --locked -p xtask
+```
+
+After each update that merges current `origin/main` into the PR head, invoke the
+prebuilt executable directly. From the PR workspace, pass changed paths
+relative to its root:
+
+```text
+target/debug/xtask merge-gate-recipe --preflight <changed-path>...
+```
+
+To use an executable built from a different checkout, explicitly select the PR
+workspace:
+
+```text
+/path/to/xtask merge-gate-recipe --workspace /path/to/pr-worktree --preflight <changed-path>...
+```
+
+The executable fingerprints the workspace manifests, lockfile, xtask build
+script, Rust sources, toolchain file, and Cargo configuration used by this
+recipe. It refuses to print a recipe if those inputs in the selected workspace
+differ from its build inputs; rebuild it in that workspace and repeat. Every
+accepted invocation still fetches `origin/main`, checks that the selected
+workspace `HEAD` contains the fetched revision, and prints both commit IDs in
+its header. Thus a retry after main advances only runs the existing executable
+when its recipe implementation is still compatible.
+
+By default the command only prints the recipe and does not invoke Cargo. Add
+`--preflight` before the paths to check each name filter with normal and
+ignored `cargo test -- --list` output; an explicit filter with no non-ignored
+matches then fails closed. A local library-module filter with no matches is
+reported as a note.
 
 The output is one command per line, with target `--no-run` compilation commands
 first, named-filter test commands next, any external driver note after those,
