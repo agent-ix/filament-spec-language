@@ -752,6 +752,24 @@ fn every_object_frames_navigation_parameters_and_creation_widen_the_footprint() 
     }
 }
 
+/// FR-155's universe-wide footprint includes an excluded key an operation
+/// may create later, so a reduction cannot treat its writes as independent.
+#[trace("TC-574", "FR-155-AC-2")]
+#[test]
+fn every_object_frame_includes_a_key_created_later_by_an_operation() {
+    let mut subject = counters_subject();
+    let start = counters_start(&mut subject);
+    let system = subject.system(start, &COUNTER_KEYS);
+    let receiver = subject.reference("Counter", "a");
+    let created_later = subject.reference("Counter", "d");
+
+    let footprint = footprint_of(&system, "bumpAll", &receiver, &[]);
+
+    assert!(footprint
+        .writes
+        .contains(&field_at(&created_later, "Counter/v")));
+}
+
 // ---------------------------------------------------------------------------
 // TC-575: enforcement
 // ---------------------------------------------------------------------------

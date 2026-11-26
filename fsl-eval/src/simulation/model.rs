@@ -2549,14 +2549,7 @@ impl<'a> ModelSystem<'a> {
         for (population, key) in self.universe_members(parameter)? {
             // Generated stages change field values only. The base states
             // supply every initial object's type identity and population.
-            let admitted = self.initial_base.iter().any(|state| {
-                state
-                    .state()
-                    .populations
-                    .get(population)
-                    .is_some_and(|objects| objects.contains_key(key))
-            });
-            if admitted && seen_instance_keys.insert(key) {
+            if self.initially_admitted(population, key) && seen_instance_keys.insert(key) {
                 instances.push(ModelInstance {
                     population: population.clone(),
                     key: key.to_owned(),
@@ -2564,6 +2557,17 @@ impl<'a> ModelSystem<'a> {
             }
         }
         Ok(instances)
+    }
+
+    /// Whether any initial base state holds `key` in `population`.
+    fn initially_admitted(&self, population: &DeclarationKey, key: &str) -> bool {
+        self.initial_base.iter().any(|state| {
+            state
+                .state()
+                .populations
+                .get(population)
+                .is_some_and(|objects| objects.contains_key(key))
+        })
     }
 
     /// Return the non-empty admitted instances for a claim's `over` type.
@@ -2818,6 +2822,7 @@ impl<'a> ModelSystem<'a> {
             }
         }
         let mut instances = Vec::new();
+        let mut seen_instance_keys = Vec::new();
         for (_, population) in admitting {
             budget.work(1)?;
             for key in self
@@ -2826,6 +2831,24 @@ impl<'a> ModelSystem<'a> {
                 .flatten()
             {
                 budget.work(1)?;
+                budget.work(self.initial_base.len())?;
+                if !self.initially_admitted(population, key) {
+                    continue;
+                }
+                let mut duplicate = false;
+                for seen in &seen_instance_keys {
+                    if budget.compare_bytes(seen.as_bytes(), key.as_bytes())?
+                        == std::cmp::Ordering::Equal
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if duplicate {
+                    continue;
+                }
+                budget.growth(&mut seen_instance_keys, 1)?;
+                seen_instance_keys.push(key.as_str());
                 let population = DeclarationKey {
                     package: budget.text(&population.package)?,
                     node: budget.text(&population.node)?,
@@ -2975,6 +2998,7 @@ impl<'a> ModelSystem<'a> {
             .clone()
     }
 
+    #[implements("FR-155-AC-2")]
     fn compute_universe_declaring(&self, field: &DeclarationKey) -> Option<Vec<ObjectReference>> {
         let mut objects = Vec::new();
         for (type_key, fields) in &self.fields {
@@ -2982,10 +3006,11 @@ impl<'a> ModelSystem<'a> {
                 continue;
             }
             let identity = self.model.type_identity(type_key)?;
-            for instance in self
-                .instances(&ValueType::Reference(identity.clone()))
-                .ok()?
-            {
+            for (population, key) in self.universe_members(&identity).ok()? {
+                let instance = ModelInstance {
+                    population: population.clone(),
+                    key: key.to_owned(),
+                };
                 objects.push(self.bound_reference(identity.clone(), &instance).ok()?);
             }
         }
