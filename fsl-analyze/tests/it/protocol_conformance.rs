@@ -582,6 +582,47 @@ fn global_conformance_declines_a_binding_to_another_protocol() {
     assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
 }
 
+/// FR-896-AC-10: protocol deadlock analysis requires an explicit protocol subject.
+#[trace("TC-2532", "FR-896-AC-10")]
+#[test]
+fn protocol_deadlock_item_declines_without_subject_protocol() {
+    let ws = Workspace::new("gc-deadlock-requires-protocol-subject");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&order_protocol(true)),
+        &crate::litmus::resulting_document(),
+        &[],
+        json!({"items": [{"claim": "Flow",
+            "temporal": {"item_kind": "deadlock-freedom"}}]}),
+    );
+    let item = analyze(&request).item(0);
+    assert_eq!(item["record"]["result"], "declined", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["member"], "temporal.subject.protocol",
+        "{item}"
+    );
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "counterexample",
+    ] {
+        assert!(
+            item[member].is_null(),
+            "declined item omits {member}: {item}"
+        );
+    }
+}
+
 /// FR-992-AC-1 to AC-3: a compiled handoff publishes source bytes by label,
 /// and analyze admits that provision but refuses one without its unit.
 #[trace("TC-2804", "FR-992-AC-1", "FR-992-AC-2", "FR-992-AC-3")]

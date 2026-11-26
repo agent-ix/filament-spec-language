@@ -1828,7 +1828,12 @@ fn requirement_items(
     fsl_route::request::items_from_requirements(package.graph().requirements(), registry, named)
 }
 
-#[implements("FR-940-AC-10", "FR-896-AC-8", "FR-896-AC-9")]
+#[implements(
+    "FR-940-AC-10",
+    "FR-896-AC-8",
+    "FR-896-AC-9",
+    "FR-896-AC-10"
+)]
 fn resolve_one(
     package: &CheckedPackage,
     subject: &SubjectSelection,
