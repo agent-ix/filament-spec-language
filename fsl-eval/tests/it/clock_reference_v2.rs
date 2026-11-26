@@ -59,6 +59,7 @@ fn foreign_clock_reference_hash_identity_uses_place_text() {
     )
     .expect("canonical foreign clock-place reference");
 
+    assert_ne!(left.universe(), right.universe());
     assert_eq!(
         left, right,
         "equal place text defines identity across universes"
@@ -1898,7 +1899,7 @@ fn source_uses_place_text_clock_reference_equality() {
     ));
 
     // FR-829-AC-8: equality remains text-only when clock references are
-    // nested inside options and sequences, and when used as set/map keys.
+    // nested inside options, sequences, and set keys.
     let option =
         |value| filament_exact::OptionValue::from_admitted(ValueType::ClockReference, Some(value));
     let sequence = |value| {
