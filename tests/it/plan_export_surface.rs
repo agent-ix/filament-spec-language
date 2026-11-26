@@ -3474,9 +3474,9 @@ synthesis Reach"#,
         .expect("the hybrid declaration follows its profile")
         .1;
     let wrong_over_unit = unit.replace(
-        "synthesis Reach",
+        "temporal NeverFour",
         &format!(
-            "profile p = \"filament.temporal.infinite-trace/v1\";\nhybrid Braking{braking}\nsynthesis Reach"
+            "profile p = \"filament.temporal.infinite-trace/v1\";\nhybrid Braking{braking}\ntemporal NeverFour"
         ),
     );
     let (exit, value) = plan_in(
@@ -3675,7 +3675,10 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
     const MODEL: &str = r#"language "ix:native" edition "1-draft";
 domain "example/config-version";
 type VersionNumber = Int[0,4];
-object ConfigVersion { versionNumber: VersionNumber; }
+object ConfigVersion {
+  versionNumber: VersionNumber;
+  operation attemptUpdate(): Boolean modifies self.versionNumber;
+}
 population config_history: ConfigVersion;
 "#;
     std::fs::write(
