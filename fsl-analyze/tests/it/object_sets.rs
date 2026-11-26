@@ -40,7 +40,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
 use crate::analyze_cli_support::{analyze, request_over, Run, Workspace};
-use crate::counter::{declarations_in, UNLIMITED};
+use crate::counter::{declarations_in, unit_text_with_profiles, UNLIMITED};
 use crate::model_instances::{document, ident, universes, world, Held, World, PACKAGE};
 use crate::timed_world::{unit_text, DENSE};
 
@@ -435,7 +435,7 @@ impl Route {
                 "profile tt = \"filament.temporal.timed/v1\";\n",
                 &format!("{DENSE}{terminal}{claims}"),
             ),
-            _ => untimed_unit("", &format!("{terminal}{claims}")),
+            _ => unit_text_with_profiles(PACKAGE, "", &format!("{terminal}{claims}")),
         }
     }
 
@@ -445,16 +445,6 @@ impl Route {
             _ => json!({"claim": name}),
         }
     }
-}
-
-fn untimed_unit(profiles: &str, body: &str) -> String {
-    format!(
-        "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"filament.value.complete/v1\";\n\
-         profile t0 = \"filament.temporal.infinite-trace/v1\";\n{profiles}\
-         model M = \"{PACKAGE}\";\n\
-         function Noop using v(): Boolean pure {{ true }}\n{body}"
-    )
 }
 
 /// The key the reported binding names, in whichever form the route writes it.
@@ -578,7 +568,8 @@ fn check_probabilistic(route: Probabilistic, cases: &[Case]) {
         };
         let (unit, item) = match route {
             Probabilistic::Exact => (
-                untimed_unit(
+                unit_text_with_profiles(
+            PACKAGE,
                     "",
                     &format!(
                         "terminal Done using v on M when {{ true }};\nprobabilistic C0 using t0 on M over (x: M::{over}) under every scheduler on origin {{ probability >= 0.5 [ eventually holds({p}) ] }}\n"
@@ -593,7 +584,8 @@ fn check_probabilistic(route: Probabilistic, cases: &[Case]) {
                     ""
                 };
                 (
-                    untimed_unit(
+                    unit_text_with_profiles(
+            PACKAGE,
                         "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n",
                         &format!(
                             "terminal Done using v on M when {{ true }};\nworkload Even on M {{ weight Animal::idle = 1;{make} }}\nprobabilistic C0 using ev on M over (x: M::{over}) under Even on origin with alpha 0.1, beta 0.1, indifference 0.05 {{ probability >= 0.9 [ eventually[0,1] holds({p}) ] }}\n"
@@ -646,7 +638,8 @@ fn check_conformance(cases: &[Case]) {
         let over = case.over;
         for (i, p) in case.probes() {
             let p = p.replace("x.", "k.");
-            let unit = untimed_unit(
+            let unit = unit_text_with_profiles(
+            PACKAGE,
                 "profile pp = \"filament.protocol.finite-global/v1\";\n",
                 &format!(
                     "record Ack {{ ok: Boolean; }}\n\
