@@ -172,8 +172,9 @@ Findings are ranked within one instance only.
   discovery order.
 - The item SHALL take the outcome of the first refuted instance in that
   order (FR-621 "Items over several claim instances"; FSpec FR-361-AC-10,
-  FR-396). A later instance SHALL NOT replace it, whatever its finding, and
-  the engine need not explore a later instance.
+  FR-396). A later instance SHALL NOT replace it, whatever its finding. The
+  engine need not explore a later instance, and the statistics SHALL count
+  only the instances it explored.
 - An instance that is neither refuted nor holds, `Undecided`, bounded by the
   search horizon or `Stopped` on a limit, SHALL NOT end the search: the engine
   SHALL decide each later instance with what remains of the run's limits, and
