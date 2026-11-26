@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use filament_semantic_value::catalog::Category;
+use fsl_command::unique_json::{self, Deep};
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::{AccountingSetting, SettingLimits};
 use fsl_replay::spine;
@@ -139,7 +140,7 @@ pub(super) enum Partition {
 }
 
 pub(super) struct Execution {
-    pub(super) actual: Value,
+    pub(super) actual: Deep,
     pub(super) bytes: Option<Vec<u8>>,
     pub(super) partition: Partition,
 }
@@ -207,10 +208,8 @@ impl<'a> Inputs<'a> {
     }
 }
 
-fn document(bytes: &[u8], schema: &jsonschema::JSONSchema) -> Result<Value, Failure> {
-    let value = super::DeepValue::new(
-        super::parse_unique_json(bytes).map_err(|message| Failure::decode("", message))?,
-    );
+fn document(bytes: &[u8], schema: &jsonschema::JSONSchema) -> Result<Deep, Failure> {
+    let value = unique_json::read(bytes).map_err(|message| Failure::decode("", message))?;
     if let Err(mut errors) = schema.validate(&value) {
         if let Some(error) = errors.next() {
             let mut pointer = error.instance_path.to_string();
@@ -229,7 +228,7 @@ fn document(bytes: &[u8], schema: &jsonschema::JSONSchema) -> Result<Value, Fail
             ));
         }
     }
-    Ok(value.into_inner())
+    Ok(value)
 }
 
 fn unsigned(value: &Value, pointer: &str) -> Result<u64, Failure> {
@@ -267,7 +266,7 @@ fn object<'a>(
         .ok_or_else(|| Failure::decode(pointer, "expected an object"))
 }
 
-fn from_document(document: OutcomeDocument, actual: Option<Value>) -> Result<Execution, Failure> {
+fn from_document(document: OutcomeDocument, actual: Option<Deep>) -> Result<Execution, Failure> {
     let partition = partition(document.category());
     let bytes = document
         .to_bytes()
@@ -279,8 +278,8 @@ fn from_document(document: OutcomeDocument, actual: Option<Value>) -> Result<Exe
             .as_array()
             .and_then(|diagnostics| diagnostics.first())
         {
-            Some(diagnostic) => diagnostic.clone(),
-            None => encoded["result"].clone(),
+            Some(diagnostic) => Deep::copy(diagnostic),
+            None => Deep::copy(&encoded["result"]),
         }
     });
     Ok(Execution {
@@ -334,7 +333,7 @@ fn compile_refusal(refusal: &fsl_replay::ReplayRefusal) -> Result<Execution, Fai
             serde_json::to_value(fields).map_err(|error| Failure::decode("", error.to_string()))?;
     }
     Ok(Execution {
-        actual,
+        actual: Deep::new(actual),
         bytes: None,
         partition: partition(refusal.code().category()),
     })
@@ -368,8 +367,10 @@ pub(super) fn execute(
                 limits.replay,
             ) {
                 Ok(compiled) => Ok(Execution {
-                    actual: serde_json::from_slice(compiled.bytes())
-                        .map_err(|error| Failure::decode("", error.to_string()))?,
+                    actual: Deep::new(
+                        serde_json::from_slice(compiled.bytes())
+                            .map_err(|error| Failure::decode("", error.to_string()))?,
+                    ),
                     bytes: Some(compiled.bytes().to_vec()),
                     partition: Partition::Result,
                 }),
@@ -387,7 +388,7 @@ pub(super) fn execute(
             match result {
                 Ok(parsed) => match fsl_cst::format::format_with_limits(&parsed, limits.format) {
                     Ok(formatted) => Ok(Execution {
-                        actual: json!(formatted),
+                        actual: Deep::new(json!(formatted)),
                         bytes: Some(formatted.into_bytes()),
                         partition: Partition::Result,
                     }),
@@ -405,7 +406,7 @@ pub(super) fn execute(
 
 fn diagnostic(diagnostic: &fsl_cst::diagnostic::CompleteDiagnostic) -> Result<Execution, Failure> {
     Ok(Execution {
-        actual: json!({"code": diagnostic.code.as_str(), "cause": diagnostic.cause.as_str(), "locus": diagnostic.region.as_ref().map(|region| fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(region.clone()))), "message": diagnostic.message}),
+        actual: Deep::new(json!({"code": diagnostic.code.as_str(), "cause": diagnostic.cause.as_str(), "locus": diagnostic.region.as_ref().map(|region| fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(region.clone()))), "message": diagnostic.message})),
         bytes: None,
         partition: partition(diagnostic.code.category()),
     })
@@ -558,10 +559,10 @@ fn run(
             Ok((objects, _)) => objects,
             Err(failure) => return admission_failure(failure),
         };
-        snapshot = Some(super::DeepValue::new(
-            super::parse_unique_json(bytes)
+        snapshot = Some(
+            unique_json::read(bytes)
                 .map_err(|message| Failure::decode("/input/files", message))?,
-        ));
+        );
     }
     let signature = checked.package().graph().callable(function);
     let values = array(&call_input["arguments"], "/arguments")?;
@@ -621,7 +622,7 @@ fn run(
                     AdmissionOutcome::Refused(refusal)
                     | AdmissionOutcome::UnknownClosure(refusal) => {
                         return Ok(Execution {
-                            actual: json!({"code":refusal.code.as_str(), "cause":refusal.catalog_code().cause(), "fields":refusal.cause.catalog_fields()}),
+                            actual: Deep::new(json!({"code":refusal.code.as_str(), "cause":refusal.catalog_code().cause(), "fields":refusal.cause.catalog_fields()})),
                             bytes: None,
                             partition: if refusal.code
                                 == fsl_foundation::diagnostic::Code::IncompletePopulation
@@ -634,7 +635,7 @@ fn run(
                     }
                     AdmissionOutcome::Incomplete(incomplete) => {
                         return Ok(Execution {
-                            actual: json!({"code":"resource_exhausted", "cause":"insufficient-next-charge", "fields":incomplete.denial().catalog_fields()}),
+                            actual: Deep::new(json!({"code":"resource_exhausted", "cause":"insufficient-next-charge", "fields":incomplete.denial().catalog_fields()})),
                             bytes: None,
                             partition: Partition::Incomplete,
                         })
@@ -716,12 +717,12 @@ fn admission_failure(failure: observation::AdmissionFailure) -> Result<Execution
     match failure {
         observation::AdmissionFailure::Refused(record)
         | observation::AdmissionFailure::Incomplete(record) => Ok(Execution {
-            actual: json!({"code": record.catalog.code(), "cause": record.catalog.cause(), "fields": record.fields, "path": record.path.iter().map(|step| match step { observation::PathStep::Field(name) => json!({"kind":"field", "name":name}), observation::PathStep::OptionValue => json!({"kind":"option-value"}), observation::PathStep::Index(index) => json!({"kind":"index", "index":index}) }).collect::<Vec<_>>()}),
+            actual: Deep::new(json!({"code": record.catalog.code(), "cause": record.catalog.cause(), "fields": record.fields, "path": record.path.iter().map(|step| match step { observation::PathStep::Field(name) => json!({"kind":"field", "name":name}), observation::PathStep::OptionValue => json!({"kind":"option-value"}), observation::PathStep::Index(index) => json!({"kind":"index", "index":index}) }).collect::<Vec<_>>()})),
             bytes: None,
             partition,
         }),
         observation::AdmissionFailure::Fault(fault) => Ok(Execution {
-            actual: json!({"code": fault.catalog_code().code(), "cause": fault.catalog_code().cause()}),
+            actual: Deep::new(json!({"code": fault.catalog_code().code(), "cause": fault.catalog_code().cause()})),
             bytes: None,
             partition: Partition::ToolFailure,
         }),

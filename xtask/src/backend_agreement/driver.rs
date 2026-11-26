@@ -453,7 +453,7 @@ fn compile(
             Settlement::NotCompiled
         };
         let detail = match corpus::adapters::front_end_failure(error) {
-            Ok(execution) => execution.actual,
+            Ok(execution) => execution.actual.into_inner(),
             Err(error) => serde_json::to_value(error).unwrap_or(Value::Null),
         };
         Box::new(failed_vector(vector, settlement, detail))

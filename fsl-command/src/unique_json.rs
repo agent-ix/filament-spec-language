@@ -7,13 +7,113 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-/// A JSON tree that is released without recursing, however deeply it nests
-/// (ADR-030 D-1: the derived `Drop` of a [`Value`] recurses once per level).
+/// A JSON tree whose copy, serialization, debug view and release never
+/// recurse over it, however deeply it nests (ADR-030 D-1: those of a
+/// [`Value`] recurse once per level). Serialization writes through
+/// [`serde_json`]'s raw value, so it is for a JSON text writer, not for a
+/// conversion back to a bare [`Value`].
 pub struct Deep(Value);
 
 impl Deep {
-    pub(crate) fn new(value: Value) -> Self {
+    /// Own `value`.
+    #[must_use]
+    pub fn new(value: Value) -> Self {
         Self(value)
+    }
+
+    /// Copy `value`, a tree borrowed from anywhere, into a new owner.
+    #[must_use]
+    pub fn copy(value: &Value) -> Self {
+        enum Task<'a> {
+            Read(&'a Value),
+            Array(usize),
+            Object(Vec<&'a str>),
+        }
+        let mut tasks = vec![Task::Read(value)];
+        let mut values = Vec::<Self>::new();
+        while let Some(task) = tasks.pop() {
+            // Every close task follows exactly its immutable source's
+            // children, so the saturating start is that count.
+            let copied = match task {
+                Task::Read(Value::Array(items)) => {
+                    tasks.push(Task::Array(items.len()));
+                    tasks.extend(items.iter().rev().map(Task::Read));
+                    continue;
+                }
+                Task::Read(Value::Object(members)) => {
+                    tasks.push(Task::Object(members.keys().map(String::as_str).collect()));
+                    tasks.extend(members.values().rev().map(Task::Read));
+                    continue;
+                }
+                Task::Read(scalar) => scalar.clone(),
+                Task::Array(count) => Value::Array(
+                    values
+                        .split_off(values.len().saturating_sub(count))
+                        .into_iter()
+                        .map(Self::into_inner)
+                        .collect(),
+                ),
+                Task::Object(names) => {
+                    let children = values.split_off(values.len().saturating_sub(names.len()));
+                    Value::Object(
+                        names
+                            .into_iter()
+                            .zip(children)
+                            .map(|(name, value)| (name.to_owned(), value.into_inner()))
+                            .collect(),
+                    )
+                }
+            };
+            values.push(Self(copied));
+        }
+        values.pop().unwrap_or(Self(Value::Null))
+    }
+
+    /// The compact JSON text of `value`, byte for byte what
+    /// [`serde_json::to_vec`] writes, with the framing walked on an explicit
+    /// stack.
+    ///
+    /// # Errors
+    ///
+    /// The JSON writer's error for a scalar it cannot write.
+    pub fn text_of(value: &Value) -> serde_json::Result<Vec<u8>> {
+        enum Task<'a> {
+            Value(&'a Value),
+            Name(&'a str),
+            Byte(u8),
+        }
+        let mut bytes = Vec::new();
+        let mut pending = vec![Task::Value(value)];
+        while let Some(task) = pending.pop() {
+            match task {
+                Task::Byte(byte) => bytes.push(byte),
+                Task::Name(name) => serde_json::to_writer(&mut bytes, name)?,
+                Task::Value(Value::Array(items)) => {
+                    bytes.push(b'[');
+                    pending.push(Task::Byte(b']'));
+                    for (index, value) in items.iter().enumerate().rev() {
+                        pending.push(Task::Value(value));
+                        if index != 0 {
+                            pending.push(Task::Byte(b','));
+                        }
+                    }
+                }
+                Task::Value(Value::Object(members)) => {
+                    bytes.push(b'{');
+                    pending.push(Task::Byte(b'}'));
+                    for (index, (name, value)) in members.iter().enumerate().rev() {
+                        pending.push(Task::Value(value));
+                        pending.push(Task::Byte(b':'));
+                        pending.push(Task::Name(name));
+                        if index != 0 {
+                            pending.push(Task::Byte(b','));
+                        }
+                    }
+                }
+                Task::Value(scalar) => serde_json::to_writer(&mut bytes, scalar)?,
+            }
+        }
+        Ok(bytes)
     }
 
     /// Take the tree out. The caller then releases it without recursing, with
@@ -35,6 +135,53 @@ impl std::ops::Deref for Deep {
 impl std::ops::DerefMut for Deep {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl Clone for Deep {
+    fn clone(&self) -> Self {
+        Self::copy(&self.0)
+    }
+}
+
+/// The shape only: a container is named with its length, never walked.
+impl std::fmt::Debug for Deep {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Value::Array(items) => formatter
+                .debug_struct("JsonArray")
+                .field("length", &items.len())
+                .finish(),
+            Value::Object(members) => formatter
+                .debug_struct("JsonObject")
+                .field("length", &members.len())
+                .finish(),
+            scalar => std::fmt::Debug::fmt(scalar, formatter),
+        }
+    }
+}
+
+impl serde::Serialize for Deep {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        let bytes = Self::text_of(&self.0).map_err(serde::ser::Error::custom)?;
+        let text = String::from_utf8(bytes).map_err(serde::ser::Error::custom)?;
+        serde_json::value::RawValue::from_string(text)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Deep {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        // RawValue skips the arbitrary JSON subtree iteratively; `read` then
+        // verifies uniqueness and builds the owned tree.
+        let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
+        read(raw.get().as_bytes()).map_err(serde::de::Error::custom)
     }
 }
 

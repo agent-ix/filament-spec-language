@@ -7,6 +7,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use fsl_command::unique_json::{self, Deep};
 use fsl_foundation::diagnostic::Code;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -219,12 +220,12 @@ struct InputFile {
 #[serde(tag = "disposition", rename_all = "snake_case")]
 enum Expected {
     Value {
-        value: DeepValue,
+        value: Deep,
     },
     Refusal {
         code: String,
         cause: String,
-        details: DeepValue,
+        details: Deep,
     },
 }
 
@@ -257,11 +258,11 @@ impl<'de> Deserialize<'de> for Expected {
                         "disposition" if disposition.is_none() => {
                             disposition = Some(map.next_value::<String>()?)
                         }
-                        "value" if value.is_none() => value = Some(map.next_value::<DeepValue>()?),
+                        "value" if value.is_none() => value = Some(map.next_value::<Deep>()?),
                         "code" if code.is_none() => code = Some(map.next_value::<String>()?),
                         "cause" if cause.is_none() => cause = Some(map.next_value::<String>()?),
                         "details" if details.is_none() => {
-                            let value = map.next_value::<DeepValue>()?;
+                            let value = map.next_value::<Deep>()?;
                             if !value.is_object() {
                                 return Err(serde::de::Error::custom(
                                     "refusal details is an object",
@@ -291,7 +292,7 @@ impl<'de> Deserialize<'de> for Expected {
                     Some("refusal") if value.is_none() => Ok(Expected::Refusal {
                         code: code.ok_or_else(|| serde::de::Error::missing_field("code"))?,
                         cause: cause.ok_or_else(|| serde::de::Error::missing_field("cause"))?,
-                        details: details.unwrap_or_else(|| DeepValue::new(serde_json::json!({}))),
+                        details: details.unwrap_or_else(|| Deep::new(serde_json::json!({}))),
                     }),
                     None => Err(serde::de::Error::missing_field("disposition")),
                     _ => Err(serde::de::Error::custom(
@@ -330,7 +331,7 @@ struct VectorReport {
     id: String,
     outcome: VectorOutcome,
     expected: Expected,
-    actual: DeepValue,
+    actual: Deep,
 }
 
 #[derive(Debug, Serialize)]
@@ -437,9 +438,9 @@ fn prepare(fspec: &Path, operands: &[OsString]) -> Result<PreparedCorpus> {
     let corpus_bytes = fs::read(&corpus_path).map_err(|error| {
         Error::QualificationRefusal(format!("{}: {error}", corpus_path.display()))
     })?;
-    let value = DeepValue::new(parse_unique_json(&corpus_bytes).map_err(|reason| {
+    let value = unique_json::read(&corpus_bytes).map_err(|reason| {
         Error::QualificationRefusal(format!("{}: {reason}", corpus_path.display()))
-    })?);
+    })?;
     let document = quire_canonical::read(
         &corpus_bytes,
         u64::try_from(corpus_bytes.len()).unwrap_or(u64::MAX),
@@ -921,7 +922,7 @@ fn execute_vector(
                     id: vector.id.clone(),
                     outcome,
                     expected: vector.expected.clone(),
-                    actual: DeepValue::new(result.actual),
+                    actual: result.actual,
                 },
                 result.bytes,
             )
@@ -969,7 +970,7 @@ fn vector_failure(
         id: vector.id.clone(),
         outcome,
         expected,
-        actual: DeepValue::new(actual),
+        actual: Deep::new(actual),
     }
 }
 
@@ -1090,134 +1091,6 @@ fn render_text(report: &Report) -> String {
     output
 }
 
-/// [`fsl_command::unique_json::read`], handing the tree to this module's own
-/// owners.
-fn parse_unique_json(bytes: &[u8]) -> std::result::Result<Value, String> {
-    fsl_command::unique_json::read(bytes).map(fsl_command::unique_json::Deep::into_inner)
-}
-
-/// An untrusted JSON tree whose release never uses the native call stack.
-struct DeepValue(Value);
-
-impl DeepValue {
-    fn new(value: Value) -> Self {
-        Self(value)
-    }
-
-    fn into_inner(mut self) -> Value {
-        std::mem::take(&mut self.0)
-    }
-}
-
-impl std::ops::Deref for DeepValue {
-    type Target = Value;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Clone for DeepValue {
-    fn clone(&self) -> Self {
-        enum Task<'a> {
-            Read(&'a Value),
-            Array(usize),
-            Object(Vec<&'a str>),
-        }
-        let mut tasks = vec![Task::Read(&self.0)];
-        let mut values = Vec::<DeepValue>::new();
-        while let Some(task) = tasks.pop() {
-            let value = match task {
-                Task::Read(Value::Array(items)) => {
-                    tasks.push(Task::Array(items.len()));
-                    tasks.extend(items.iter().rev().map(Task::Read));
-                    continue;
-                }
-                Task::Read(Value::Object(members)) => {
-                    tasks.push(Task::Object(members.keys().map(String::as_str).collect()));
-                    tasks.extend(members.values().rev().map(Task::Read));
-                    continue;
-                }
-                Task::Read(scalar) => scalar.clone(),
-                Task::Array(count) => {
-                    // Every close task follows exactly these immutable
-                    // source children; caller data cannot change the count.
-                    let start = values
-                        .len()
-                        .checked_sub(count)
-                        .expect("cloned array children");
-                    Value::Array(
-                        values
-                            .split_off(start)
-                            .into_iter()
-                            .map(Self::into_inner)
-                            .collect(),
-                    )
-                }
-                Task::Object(names) => {
-                    let start = values
-                        .len()
-                        .checked_sub(names.len())
-                        .expect("cloned object children");
-                    Value::Object(
-                        names
-                            .into_iter()
-                            .zip(values.split_off(start))
-                            .map(|(name, value)| (name.to_owned(), value.into_inner()))
-                            .collect(),
-                    )
-                }
-            };
-            values.push(Self::new(value));
-        }
-        values
-            .pop()
-            .expect("a source JSON value produces one clone")
-    }
-}
-
-impl std::fmt::Debug for DeepValue {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.0 {
-            Value::Array(items) => formatter
-                .debug_struct("JsonArray")
-                .field("length", &items.len())
-                .finish(),
-            Value::Object(members) => formatter
-                .debug_struct("JsonObject")
-                .field("length", &members.len())
-                .finish(),
-            scalar => std::fmt::Debug::fmt(scalar, formatter),
-        }
-    }
-}
-
-impl Serialize for DeepValue {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        let bytes = json_bytes(&self.0).map_err(serde::ser::Error::custom)?;
-        let text = String::from_utf8(bytes).map_err(serde::ser::Error::custom)?;
-        let raw =
-            serde_json::value::RawValue::from_string(text).map_err(serde::ser::Error::custom)?;
-        raw.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for DeepValue {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        // RawValue skips the arbitrary JSON subtree iteratively. The shared
-        // reader then verifies uniqueness and constructs the guarded tree.
-        let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
-        parse_unique_json(raw.get().as_bytes())
-            .map(Self::new)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 fn json_equal(left: &Value, right: &Value) -> bool {
     let mut pending = vec![(left, right)];
     while let Some((left, right)) = pending.pop() {
@@ -1243,57 +1116,10 @@ fn json_equal(left: &Value, right: &Value) -> bool {
     true
 }
 
-/// Serialize JSON framing iteratively, delegating each scalar (including
-/// its exact serde number representation) to the existing JSON encoder.
-fn json_bytes(value: &Value) -> serde_json::Result<Vec<u8>> {
-    enum Task<'a> {
-        Value(&'a Value),
-        Name(&'a str),
-        Byte(u8),
-    }
-    let mut bytes = Vec::new();
-    let mut pending = vec![Task::Value(value)];
-    while let Some(task) = pending.pop() {
-        match task {
-            Task::Byte(byte) => bytes.push(byte),
-            Task::Name(name) => serde_json::to_writer(&mut bytes, name)?,
-            Task::Value(Value::Array(items)) => {
-                bytes.push(b'[');
-                pending.push(Task::Byte(b']'));
-                for (index, value) in items.iter().enumerate().rev() {
-                    pending.push(Task::Value(value));
-                    if index != 0 {
-                        pending.push(Task::Byte(b','));
-                    }
-                }
-            }
-            Task::Value(Value::Object(members)) => {
-                bytes.push(b'{');
-                pending.push(Task::Byte(b'}'));
-                for (index, (name, value)) in members.iter().enumerate().rev() {
-                    pending.push(Task::Value(value));
-                    pending.push(Task::Byte(b':'));
-                    pending.push(Task::Name(name));
-                    if index != 0 {
-                        pending.push(Task::Byte(b','));
-                    }
-                }
-            }
-            Task::Value(scalar) => serde_json::to_writer(&mut bytes, scalar)?,
-        }
-    }
-    Ok(bytes)
-}
-
-impl Drop for DeepValue {
-    fn drop(&mut self) {
-        fsl_foundation::node_wire::discard_node_json(std::mem::take(&mut self.0));
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{json_bytes, json_equal, parse_unique_json, DeepValue};
+    use super::json_equal;
+    use fsl_command::unique_json::{self, Deep};
     use ix_trace_rs::trace;
 
     /// Qualification as the command runs it. With `test-support` the
@@ -1318,11 +1144,11 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_object_members() {
-        assert!(parse_unique_json(br#"{"a":1,"a":2}"#)
+        assert!(unique_json::read(br#"{"a":1,"a":2}"#)
             .unwrap_err()
             .contains("duplicate object key a"));
         assert!(
-            parse_unique_json(br#"{"contract_version":1,"contract\u005fversion":2}"#)
+            unique_json::read(br#"{"contract_version":1,"contract\u005fversion":2}"#)
                 .unwrap_err()
                 .contains("duplicate object key contract_version")
         );
@@ -1340,10 +1166,8 @@ mod tests {
                     br#"{"wide":18446744073709551615,"negative_zero":-0.0,"exponent":1e2}"#,
                 );
                 bytes.extend_from_slice(&b"]".repeat(depth));
-                let value = DeepValue::new(
-                    parse_unique_json(&bytes)
-                        .expect("nesting costs input bytes, not a fixed depth cap"),
-                );
+                let value = unique_json::read(&bytes)
+                    .expect("nesting costs input bytes, not a fixed depth cap");
                 let mut leaf = &*value;
                 for _ in 0..depth {
                     leaf = &leaf.as_array().expect("one retained array per layer")[0];
@@ -1358,7 +1182,7 @@ mod tests {
                 let mut duplicate = b"[".repeat(depth);
                 duplicate.extend_from_slice(br#"{"a":1,"\u0061":2}"#);
                 duplicate.extend_from_slice(&b"]".repeat(depth));
-                let error = parse_unique_json(&duplicate)
+                let error = unique_json::read(&duplicate)
                     .expect_err("decoded duplicate names remain refused at depth");
                 assert!(error.contains("duplicate object key"), "{error}");
             })
@@ -1376,14 +1200,14 @@ mod tests {
             "exponent": 1e100,
             "nested": [null, true, {"escaped": "\"\\\n😀"}]
         });
-        let bytes = json_bytes(&value).expect("existing scalar facts encode");
+        let bytes = Deep::text_of(&value).expect("existing scalar facts encode");
         assert_eq!(bytes, serde_json::to_vec(&value).unwrap());
         let document = quire_canonical::read(&bytes, u64::MAX).unwrap();
         assert_eq!(
             quire_canonical::to_vec(&document, quire_canonical::Limits::new(u64::MAX)).unwrap(),
             serde_json_canonicalizer::to_vec(&value).unwrap(),
         );
-        let read = DeepValue::new(parse_unique_json(&bytes).unwrap());
+        let read = unique_json::read(&bytes).unwrap();
         assert!(json_equal(&value, &read));
         assert_eq!(serde_json::to_vec(&read).unwrap(), bytes);
     }
@@ -1398,7 +1222,7 @@ mod tests {
                 let mut nested = b"[".repeat(50_000);
                 nested.push(b'0');
                 nested.extend_from_slice(&b"]".repeat(50_000));
-                let oracle = DeepValue::new(parse_unique_json(&nested).unwrap());
+                let oracle = unique_json::read(&nested).unwrap();
                 let copy = oracle.clone();
                 assert!(json_equal(&oracle, &copy));
                 drop(copy);
@@ -1413,7 +1237,7 @@ mod tests {
                     } else {
                         serde_json::json!({"disposition":"value", "value":null})
                     };
-                    let mut corpus = DeepValue::new(serde_json::json!({
+                    let mut corpus = Deep::new(serde_json::json!({
                         "contract_version":"filament.conformance-corpus/v1",
                         "vectors":[{"id":"V1-TOOL-004-depth", "capability_id":"V1-TOOL-004", "class":"positive", "subject":{"consumer_type":"tool", "operation":"format"}, "applicability":{"consumer_types":["tool"]}, "input":{"files":[{"kind":"source", "path":"unit.native"}]}, "expected":expected}],
                         "results":[],
@@ -1425,14 +1249,14 @@ mod tests {
                     } else {
                         expected["value"] = oracle.clone().into_inner();
                     }
-                    std::fs::write(corpus_root.join("complete-v1.json"), json_bytes(&corpus).unwrap()).unwrap();
+                    std::fs::write(corpus_root.join("complete-v1.json"), Deep::text_of(&corpus).unwrap()).unwrap();
                     let arguments = [
                         "--corpus".into(), corpus_root.as_os_str().to_owned(),
                     ];
                     let execution = qualify(fspec.path(), &arguments)
                         .expect("a mismatching deep oracle settles rather than aborting");
                     assert_eq!(execution.outcome.code, 1);
-                    let report = DeepValue::new(parse_unique_json(execution.outcome.stdout.as_bytes()).unwrap());
+                    let report = unique_json::read(execution.outcome.stdout.as_bytes()).unwrap();
                     assert_eq!(report["capabilities"][0]["vectors"][0]["outcome"], "failed");
                     assert!(report["capabilities"][0]["vectors"][0]["actual"]
                         .as_str()
@@ -1453,7 +1277,7 @@ mod tests {
                         serde_json::json!("not-a-disposition");
                     std::fs::write(
                         corpus_root.join("complete-v1.json"),
-                        json_bytes(&corpus).unwrap(),
+                        Deep::text_of(&corpus).unwrap(),
                     ).unwrap();
                     let failure = match qualify(fspec.path(), &arguments) {
                         Err(failure) => failure,

@@ -27,6 +27,7 @@ use filament_contract_model::{
     NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge, NativeJoinLocus,
 };
 use filament_exact::{InvalidNodeKey, NodeKey, PathSegment};
+use serde::Deserialize;
 
 /// Why a node id could not be converted.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -690,10 +691,11 @@ fn key_with(
     unreachable!("the root frame returns its key")
 }
 
-/// The JSON node id `value` as a [`CheckedNodeId`], which reads raw JSON
-/// text rather than a [`serde_json::Value`].
+/// The JSON node id `value` as a [`CheckedNodeId`], read from the borrowed
+/// tree: writing it out as text first would recurse once per level of
+/// whatever it holds (ADR-030 D-1), and a flat node id does not.
 fn id_of_value(value: &serde_json::Value) -> Result<CheckedNodeId, String> {
-    serde_json::from_str(&value.to_string()).map_err(|error| error.to_string())
+    CheckedNodeId::deserialize(value).map_err(|error| error.to_string())
 }
 
 /// The index segments `id` holds anywhere in its path, in path order.
@@ -1474,8 +1476,8 @@ impl WireGraph {
             return Self::new(&ids).map_err(|error| error.to_string());
         }
         let rows: Vec<Vec<CheckedOperandEntry>> =
-            serde_json::from_value(envelope["semantic_graph"]["operand_rows"].clone())
-                .map_err(|error| error.to_string())?;
+            Deserialize::deserialize(&envelope["semantic_graph"]["operand_rows"])
+                .map_err(|error: serde_json::Error| error.to_string())?;
         Self::with_operand_rows(&ids, &rows).map_err(|error| error.to_string())
     }
 

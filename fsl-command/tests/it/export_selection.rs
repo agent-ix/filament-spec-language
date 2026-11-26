@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use fsl_command::command::{
-    export_with_limits_and_overrides, replay_with_limits, run_with_limits, CommandLimits,
-    ExportSelection, RequestOverrides, RunLimits,
+    export_with_limits_and_overrides, run_with_limits, CommandLimits, ExportSelection,
+    RequestOverrides, RunLimits,
 };
 use fsl_replay::Operation;
 use ix_trace_rs::trace;
@@ -205,46 +205,75 @@ fn deeply_nested_export_inputs_refuse_without_aborting() {
     }
 }
 
-/// The run, replay and export entries read the whole request tree before they
-/// name a request's defects. A deep unknown member beside absent required
-/// members refuses at each, on a 2 MiB stack, from the everyday bar of 1,000
-/// levels up to 100,000.
+/// The run and export entries read the whole request tree before they name a
+/// request's defects. A deep unknown member beside absent required members
+/// refuses at each, on a 2 MiB stack, from the everyday bar of 1,000 levels up
+/// to 100,000. It runs in a child process, so an overflow fails this test
+/// alone.
 #[test]
 #[trace("FR-026-AC-3", "TC-104")]
 fn deeply_nested_requests_refuse_at_every_entry_on_a_small_stack() {
-    std::thread::Builder::new()
-        .stack_size(2 * 1024 * 1024)
-        .spawn(|| {
-            let directory = tempfile::tempdir().unwrap();
-            let path = directory.path().join("request.json");
-            let write = |format: &str, depth: usize| {
-                let deep = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
-                let bytes =
-                    format!(r#"{{"format":"{format}","request":{{"models":[],"z":{deep}}}}}"#);
-                assert!(bytes.len() < RunLimits::default().request_bytes);
-                std::fs::write(&path, bytes).unwrap();
-            };
-            for depth in [1_000, 16_000, 100_000] {
-                write("native-run/1", depth);
-                let export = run(&path, ExportSelection::Ordinary, RunLimits::default());
-                assert_eq!(export["exit"], 20, "export at depth {depth}");
-                let error =
-                    run_with_limits(&path, RunLimits::default(), &crate::negotiation::Fr290)
-                        .err()
-                        .unwrap_or_else(|| panic!("run at depth {depth} must refuse"));
-                assert_eq!(error.category().exit_code(), 20, "run at depth {depth}");
-
-                write("native-replay/1", depth);
-                let error =
-                    replay_with_limits(&path, RunLimits::default(), &CommandLimits::replay())
-                        .err()
-                        .unwrap_or_else(|| panic!("replay at depth {depth} must refuse"));
-                assert_eq!(error.category().exit_code(), 20, "replay at depth {depth}");
-            }
-        })
-        .expect("spawn the small-stack control")
-        .join()
-        .expect("no deep request overflows");
+    use std::process::{Command, Stdio};
+    const INPUT: &str = "FSL_DEEP_ENTRY_CHILD_INPUT";
+    const OUTPUT: &str = "FSL_DEEP_ENTRY_CHILD_OUTPUT";
+    if let Some(input) = std::env::var_os(INPUT) {
+        let output = std::env::var_os(OUTPUT).unwrap();
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                let path = Path::new(&input);
+                let export = run(path, ExportSelection::Ordinary, RunLimits::default());
+                let error = run_with_limits(path, RunLimits::default(), &crate::negotiation::Fr290)
+                    .err()
+                    .expect("run refuses");
+                let observed = json!({
+                    "export": export,
+                    "run": {"exit": error.category().exit_code(), "cause": error.cause.to_string()},
+                });
+                std::fs::write(output, observed.to_string()).unwrap();
+            })
+            .expect("spawn the small-stack control")
+            .join()
+            .expect("the entries return");
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    for depth in [1_000, 16_000, 100_000] {
+        let deep = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
+        let bytes = format!(r#"{{"format":"native-run/1","request":{{"models":[],"z":{deep}}}}}"#);
+        assert!(bytes.len() < RunLimits::default().request_bytes);
+        let input = directory.path().join(format!("request-{depth}.json"));
+        let output = directory.path().join(format!("result-{depth}.json"));
+        std::fs::write(&input, bytes).unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "export_selection::deeply_nested_requests_refuse_at_every_entry_on_a_small_stack",
+                "--test-threads=1",
+            ])
+            .env(INPUT, &input)
+            .env(OUTPUT, &output)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "depth {depth} must return a typed refusal, not abort: {child:?}"
+        );
+        let observed: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+        let export = &observed["export"];
+        assert_eq!(export["exit"], 20, "depth {depth}: {export}");
+        assert_eq!(export["document"]["category"], "refusal", "{export}");
+        assert!(export["document"]["result"].is_null(), "{export}");
+        assert!(export.to_string().contains("unknown field `z`"), "{export}");
+        assert_eq!(observed["run"]["exit"], 20, "depth {depth}: {observed}");
+        assert!(
+            observed["run"]["cause"]
+                .as_str()
+                .is_some_and(|cause| cause.contains("unknown field `z`")),
+            "depth {depth}: {observed}"
+        );
+    }
 }
 
 /// An explicit streamed operand receives the same bounded, required-selection intake.

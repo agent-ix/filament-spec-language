@@ -176,3 +176,37 @@ fn a_package_keeps_the_clock_and_lock_members_it_reads() {
     assert!(super::member(package.document.root(), "semantic_graph").is_none());
     assert!(super::member(package.document.root(), "extra").is_none());
 }
+
+/// A clock configuration nested far past any configuration's shape refuses at
+/// its row's pointer on a small stack, in either clock list.
+#[trace("TC-2182", "FR-640-AC-8")]
+#[test]
+fn a_deeply_nested_clock_refuses_at_its_pointer_on_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            for depth in [1_000, 16_000, 100_000] {
+                let deep = format!("{}0{}", r#"{"a":"#.repeat(depth), "}".repeat(depth));
+                let program = package(&format!(
+                    r#"[{{"declaration":"a","occurrence":0,"clock_name":"plant-ms","clock":{deep}}}]"#
+                ));
+                assert_eq!(
+                    program.clocks().expect_err("no configuration").pointer(),
+                    Some("/package/temporal_bindings/0/clock"),
+                    "depth {depth}"
+                );
+                let bytes = format!(
+                    r#"{{"lock":{{"dependency_clock_selections":[{{"clock_name":"dep-ms","clock":{deep}}}]}}}}"#
+                );
+                let dependency = ReplayPackage::read(bytes.as_bytes(), u64::MAX).expect("JSON");
+                assert_eq!(
+                    dependency.clocks().expect_err("no configuration").pointer(),
+                    Some("/package/lock/dependency_clock_selections/0/clock"),
+                    "depth {depth}"
+                );
+            }
+        })
+        .expect("spawn the small-stack control")
+        .join()
+        .expect("no deep clock overflows");
+}

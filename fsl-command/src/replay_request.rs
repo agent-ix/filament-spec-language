@@ -19,6 +19,8 @@ use fsl_replay::{
     DeclaredDomain, DomainKey, DomainKind, FiniteBound, Integer, ProofBound, ReplayRequestWire,
     ReplaySource, RequestTargetWire, WitnessValue,
 };
+use ix_trace_rs::implements;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::unique_json::Deep;
@@ -84,6 +86,7 @@ impl RequestDefect {
 /// A [`RequestDefect`] (converted into `E`) for a member outside the
 /// mapping, a missing member or a member value that does not decode, and
 /// `provide`'s own error for a byte file it cannot supply.
+#[implements("FR-862-AC-4")]
 pub fn read<E: From<RequestDefect>>(
     request: &[u8],
     input_bytes: u64,
@@ -418,7 +421,9 @@ fn decode<E: From<RequestDefect>>(
                 refinement_internals: dependency
                     .get("refinement_internals")
                     .map(|rows| {
-                        serde_json::from_value(rows.clone()).map_err(|error| {
+                        // Read from the borrowed tree: a copy of it would
+                        // recurse once per level (ADR-030 D-1).
+                        Deserialize::deserialize(rows).map_err(|error: serde_json::Error| {
                             RequestDefect::new(
                                 format!("/dependencies/{index}/refinement_internals"),
                                 error.to_string(),
@@ -670,13 +675,25 @@ fn node_text(
         .map_err(|error| RequestDefect::new(pointer, error.to_string()))
 }
 
-fn wire_object<const N: usize>(members: [(&str, Value); N]) -> Value {
-    Value::Object(
+/// An object of `members`. Each is owned until it is inside, so a refusal
+/// while building the others releases it without recursing.
+fn wire_object<const N: usize>(members: [(&str, Deep); N]) -> Deep {
+    Deep::new(Value::Object(
         members
             .into_iter()
-            .map(|(name, value)| (name.to_owned(), value))
+            .map(|(name, value)| (name.to_owned(), value.into_inner()))
             .collect(),
-    )
+    ))
+}
+
+fn wire_array(items: impl IntoIterator<Item = Deep>) -> Deep {
+    Deep::new(Value::Array(
+        items.into_iter().map(Deep::into_inner).collect(),
+    ))
+}
+
+fn wire_string(text: impl Into<String>) -> Deep {
+    Deep::new(Value::String(text.into()))
 }
 
 fn witness_json(
@@ -736,7 +753,7 @@ fn witness_json(
                         array(&value["elements"], pointer)?.iter().collect()
                     }
                     _ => {
-                        values.push(Deep::new(witness_leaf(value, pointer, graph, form)?));
+                        values.push(witness_leaf(value, pointer, graph, form)?);
                         continue;
                     }
                 };
@@ -758,12 +775,11 @@ fn witness_json(
                 let next = |children: &mut std::vec::IntoIter<Deep>| {
                     children
                         .next()
-                        .map(Deep::into_inner)
                         .ok_or_else(|| RequestDefect::new(pointer, "missing witness child"))
                 };
                 let converted = match form {
                     WitnessForm::Quantity => {
-                        let mut magnitude = Deep::new(next(&mut children)?);
+                        let mut magnitude = next(&mut children)?;
                         let unit = format!(
                             "{{\"declared\":{}}}",
                             node_text(&value["unit"], pointer, graph)?
@@ -772,14 +788,14 @@ fn witness_json(
                             .as_object_mut()
                             .ok_or_else(|| RequestDefect::new(pointer, "invalid magnitude"))?
                             .insert("unit".to_owned(), Value::String(unit));
-                        magnitude.into_inner()
+                        magnitude
                     }
                     WitnessForm::Option => wire_object([
-                        ("type", json!("option")),
+                        ("type", wire_string("option")),
                         (
                             "value",
                             if count == 0 {
-                                Value::Null
+                                Deep::new(Value::Null)
                             } else {
                                 next(&mut children)?
                             },
@@ -791,58 +807,52 @@ fn witness_json(
                         for (field, slot) in array(&value["fields"], pointer)?.iter().zip(slots) {
                             let converted = match slot {
                                 SlotForm::Present => next(&mut children)?,
-                                SlotForm::Absent => Value::Null,
-                                SlotForm::Null => json!({"type":"null"}),
+                                SlotForm::Absent => Deep::new(Value::Null),
+                                SlotForm::Null => Deep::new(json!({"type":"null"})),
                             };
-                            fields.push(Deep::new(wire_object([
-                                ("name", field["name"].clone()),
+                            fields.push(wire_object([
+                                ("name", Deep::copy(&field["name"])),
                                 ("value", converted),
-                            ])));
+                            ]));
                         }
                         wire_object([
-                            ("type", json!("record")),
-                            ("name", Value::String(name)),
-                            (
-                                "fields",
-                                Value::Array(fields.into_iter().map(Deep::into_inner).collect()),
-                            ),
+                            ("type", wire_string("record")),
+                            ("name", wire_string(name)),
+                            ("fields", wire_array(fields)),
                         ])
                     }
-                    WitnessForm::Tuple | WitnessForm::Union => {
-                        let name = declaration.ok_or_else(|| {
-                            RequestDefect::new(pointer, "missing witness declaration")
-                        })?;
-                        let components = Value::Array(children.map(Deep::into_inner).collect());
-                        let mut members = serde_json::Map::new();
-                        members.insert(
-                            "type".into(),
-                            json!(if form == WitnessForm::Union {
-                                "union"
-                            } else {
-                                "tuple"
-                            }),
-                        );
-                        members.insert("name".into(), Value::String(name));
-                        if form == WitnessForm::Union {
-                            members.insert("member".into(), value["member"].clone());
-                        }
-                        members.insert("components".into(), components);
-                        Value::Object(members)
-                    }
+                    WitnessForm::Tuple => wire_object([
+                        ("type", wire_string("tuple")),
+                        (
+                            "name",
+                            wire_string(declaration.ok_or_else(|| {
+                                RequestDefect::new(pointer, "missing witness declaration")
+                            })?),
+                        ),
+                        ("components", wire_array(children)),
+                    ]),
+                    WitnessForm::Union => wire_object([
+                        ("type", wire_string("union")),
+                        (
+                            "name",
+                            wire_string(declaration.ok_or_else(|| {
+                                RequestDefect::new(pointer, "missing witness declaration")
+                            })?),
+                        ),
+                        ("member", Deep::copy(&value["member"])),
+                        ("components", wire_array(children)),
+                    ]),
                     WitnessForm::Collection(kind) => wire_object([
                         (
                             "type",
-                            json!(match kind {
+                            wire_string(match kind {
                                 filament_exact::CollectionKind::Sequence => "sequence",
                                 filament_exact::CollectionKind::OrderedSet => "ordered-set",
                                 filament_exact::CollectionKind::Set => "set",
                                 filament_exact::CollectionKind::Bag => "bag",
                             }),
                         ),
-                        (
-                            "elements",
-                            Value::Array(children.map(Deep::into_inner).collect()),
-                        ),
+                        ("elements", wire_array(children)),
                     ]),
                     _ => {
                         return Err(RequestDefect::new(
@@ -851,7 +861,7 @@ fn witness_json(
                         ))
                     }
                 };
-                values.push(Deep::new(converted));
+                values.push(converted);
             }
         }
     }
@@ -865,31 +875,54 @@ fn witness_leaf(
     pointer: &str,
     graph: &fsl_replay::WireGraph,
     form: WitnessForm,
-) -> Result<Value, RequestDefect> {
+) -> Result<Deep, RequestDefect> {
+    // A request member is copied as it stands for the owner codec to judge,
+    // whatever tree it holds, so the copy does not recurse (ADR-030 D-1).
+    let copy = |name: &str| Deep::copy(&value[name]);
+    let tag = |name: &'static str| ("type", wire_string(name));
     Ok(match form {
-        WitnessForm::Boolean => json!({"type":"boolean", "value":value["value"]}),
+        WitnessForm::Boolean => wire_object([tag("boolean"), ("value", copy("value"))]),
         WitnessForm::Integer | WitnessForm::ExactInteger => {
-            json!({"type":"integer", "value":value["decimal"]})
+            wire_object([tag("integer"), ("value", copy("decimal"))])
         }
-        WitnessForm::Enum => {
-            json!({"type":"enum", "name":node_text(&value["declaration"], pointer, graph)?, "member":value["member"]})
+        WitnessForm::Enum => wire_object([
+            tag("enum"),
+            (
+                "name",
+                wire_string(node_text(&value["declaration"], pointer, graph)?),
+            ),
+            ("member", copy("member")),
+        ]),
+        WitnessForm::Text => wire_object([tag("text"), ("value", copy("value"))]),
+        WitnessForm::String => {
+            wire_object([("kind", wire_string("string")), ("text", copy("value"))])
         }
-        WitnessForm::Text => json!({"type":"text", "value":value["value"]}),
-        WitnessForm::String | WitnessForm::Uuid => {
-            json!({"kind":if form == WitnessForm::String { "string" } else { "uuid" },"text":value["value"]})
-        }
-        WitnessForm::Timestamp => json!({"kind":"timestamp","nanoseconds":value["decimal"]}),
-        WitnessForm::Rational => {
-            json!({"type":"rational","numerator":value["numerator"],"denominator":value["denominator"]})
-        }
-        WitnessForm::Decimal => {
-            json!({"type":"decimal","coefficient":value["coefficient"],"scale":value["scale"]})
-        }
+        WitnessForm::Uuid => wire_object([("kind", wire_string("uuid")), ("text", copy("value"))]),
+        WitnessForm::Timestamp => wire_object([
+            ("kind", wire_string("timestamp")),
+            ("nanoseconds", copy("decimal")),
+        ]),
+        WitnessForm::Rational => wire_object([
+            tag("rational"),
+            ("numerator", copy("numerator")),
+            ("denominator", copy("denominator")),
+        ]),
+        WitnessForm::Decimal => wire_object([
+            tag("decimal"),
+            ("coefficient", copy("coefficient")),
+            ("scale", copy("scale")),
+        ]),
         WitnessForm::Float32 => {
-            json!({"type":"float32", "bits":format!("{:08x}", u32::try_from(unsigned(&value["bits"], pointer)?).map_err(|_| RequestDefect::new(pointer,"float bits outside u32"))?)})
+            let bits = u32::try_from(unsigned(&value["bits"], pointer)?)
+                .map_err(|_| RequestDefect::new(pointer, "float bits outside u32"))?;
+            wire_object([tag("float32"), ("bits", wire_string(format!("{bits:08x}")))])
         }
         WitnessForm::Float64 => {
-            json!({"type":"float64", "bits":format!("{:016x}", unsigned(&value["bits"], pointer)?)})
+            let bits = unsigned(&value["bits"], pointer)?;
+            wire_object([
+                tag("float64"),
+                ("bits", wire_string(format!("{bits:016x}"))),
+            ])
         }
         WitnessForm::Reference => {
             let type_node = node(&value["object_type"], pointer, graph)?;
@@ -904,7 +937,16 @@ fn witness_leaf(
                 .ok_or_else(|| {
                     RequestDefect::new(pointer, "reference type is not a declared type")
                 })?;
-            json!({"type":"reference", "universe":node_text(&value["universe"], pointer, graph)?, "object_type":serde_json::to_string(&json!([{"package":type_node.package(),"node":original}])).map_err(|error| RequestDefect::new(pointer,error.to_string()))?, "identity":value["identity"]})
+            let universe = node_text(&value["universe"], pointer, graph)?;
+            let object_type =
+                serde_json::to_string(&json!([{"package":type_node.package(),"node":original}]))
+                    .map_err(|error| RequestDefect::new(pointer, error.to_string()))?;
+            wire_object([
+                tag("reference"),
+                ("universe", wire_string(universe)),
+                ("object_type", wire_string(object_type)),
+                ("identity", copy("identity")),
+            ])
         }
         _ => return Err(RequestDefect::new(pointer, "unknown witness value")),
     })
