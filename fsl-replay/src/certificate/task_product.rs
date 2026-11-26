@@ -12,7 +12,7 @@ pub use key::{
     TaskProductKeyRefusal, TaskSchedulerControl,
 };
 pub(crate) use wire::{
-    action_name, array, child, count, integer, member, object, rational, rational_wire, refuse,
+    action_name, array, child, count, integer, member, object, rational, refuse,
     shared_defect, source_transition, source_transition_wire, ACTIONS,
 };
 pub use wire::{

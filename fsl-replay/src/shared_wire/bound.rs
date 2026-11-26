@@ -8,8 +8,9 @@ use serde::de::{Deserialize, Deserializer, Error as _};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use serde_json::Value;
 
-use super::{closed_object, member, unique_object, WireDefect, WireDefectKind};
-use crate::certificate::task_product::{rational, rational_wire};
+use super::{
+    closed_object, member, unique_object, RationalObject, WireDefect, WireDefectKind,
+};
 use crate::statistical::{BoundComparison, ClaimForm, VerdictBound};
 
 /// The `type` of a claim bound.
@@ -130,7 +131,7 @@ impl ProbabilisticBound {
 }
 
 fn exact(value: &Value, pointer: &str) -> Result<Rational, WireDefect> {
-    rational(value, pointer).map_err(|_| WireDefect::new(pointer, WireDefectKind::Invalid))
+    RationalObject::read(value).map_err(|_| WireDefect::new(pointer, WireDefectKind::Invalid))
 }
 
 impl From<&VerdictBound> for ProbabilisticBound {
@@ -150,9 +151,9 @@ impl Serialize for ProbabilisticBound {
         let mut object = serializer.serialize_struct("ProbabilisticBound", members)?;
         object.serialize_field("type", self.form.as_str())?;
         object.serialize_field("comparison", self.comparison.as_str())?;
-        object.serialize_field("threshold", &rational_wire(&self.threshold))?;
+        object.serialize_field("threshold", &RationalObject::value(&self.threshold))?;
         if let Some(level) = &self.level {
-            object.serialize_field("level", &rational_wire(level))?;
+            object.serialize_field("level", &RationalObject::value(level))?;
         }
         object.end()
     }
