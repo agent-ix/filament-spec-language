@@ -19,6 +19,9 @@ use fsl_semantics::check::{
 use fsl_semantics::model::domain_package::{DomainPackageRecord, NativeValueType, ValueTypeRef};
 use ix_trace_rs::implements;
 
+mod interpreter;
+pub use interpreter::{evaluate_boolean, ReferenceClockState, ReferenceFiniteState};
+
 /// Maximum horizon enumerated by the reference's finite-horizon solver.
 pub const MAX_HORIZON_STEPS: usize = 256;
 
@@ -50,11 +53,11 @@ pub fn validate_quantile_scheduler(
 ) -> Result<(), ReferenceRefusal> {
     match scheduler {
         ReferenceSchedulerQuantifier::Some => Err(ReferenceRefusal {
-            construct: "quantile claim over some scheduler",
+            construct: "quantile claim over some scheduler".to_owned(),
         }),
         ReferenceSchedulerQuantifier::Every => Ok(()),
         ReferenceSchedulerQuantifier::Workload(_) => Err(ReferenceRefusal {
-            construct: "quantile over an unsupported declared workload",
+            construct: "quantile over an unsupported declared workload".to_owned(),
         }),
     }
 }
@@ -78,13 +81,13 @@ impl TinyMdp {
         for state in &actions {
             if state.is_empty() {
                 return Err(ReferenceRefusal {
-                    construct: "state with no available action",
+                    construct: "state with no available action".to_owned(),
                 });
             }
             for action in state {
                 if action.is_empty() {
                     return Err(ReferenceRefusal {
-                        construct: "empty probabilistic support",
+                        construct: "empty probabilistic support".to_owned(),
                     });
                 }
                 let mut total =
@@ -92,28 +95,29 @@ impl TinyMdp {
                 for (destination, probability) in action {
                     if *destination >= actions.len() {
                         return Err(ReferenceRefusal {
-                            construct: "transition destination outside finite state space",
+                            construct: "transition destination outside finite state space"
+                                .to_owned(),
                         });
                     }
                     if probability
                         < &filament_exact::Rational::from_integer(filament_exact::Integer::zero())
                     {
                         return Err(ReferenceRefusal {
-                            construct: "negative probability weight",
+                            construct: "negative probability weight".to_owned(),
                         });
                     }
                     total = total.add(probability);
                 }
                 if total != filament_exact::Rational::from_integer(filament_exact::Integer::one()) {
                     return Err(ReferenceRefusal {
-                        construct: "probability weights do not sum to one",
+                        construct: "probability weights do not sum to one".to_owned(),
                     });
                 }
             }
         }
         if actions.is_empty() {
             return Err(ReferenceRefusal {
-                construct: "empty finite state space",
+                construct: "empty finite state space".to_owned(),
             });
         }
         Ok(Self { actions })
@@ -132,12 +136,12 @@ impl TinyMdp {
     ) -> Result<filament_exact::Rational, ReferenceRefusal> {
         if horizon > MAX_HORIZON_STEPS {
             return Err(ReferenceRefusal {
-                construct: "horizon exceeds the reference step bound",
+                construct: "horizon exceeds the reference step bound".to_owned(),
             });
         }
         if initial >= self.actions.len() || targets.len() != self.actions.len() {
             return Err(ReferenceRefusal {
-                construct: "initial state or target set outside finite state space",
+                construct: "initial state or target set outside finite state space".to_owned(),
             });
         }
         let zero = filament_exact::Rational::from_integer(filament_exact::Integer::zero());
@@ -168,6 +172,59 @@ impl TinyMdp {
         }
         Ok(values[initial].clone())
     }
+
+    /// Maximum exact accumulated state-action reward over a finite horizon.
+    /// `rewards[state][action]` must have one entry per available action.
+    #[implements("FR-1051-AC-19")]
+    pub fn some_scheduler_expected_reward_within(
+        &self,
+        initial: usize,
+        rewards: &[Vec<filament_exact::Rational>],
+        horizon: usize,
+    ) -> Result<filament_exact::Rational, ReferenceRefusal> {
+        if horizon > MAX_HORIZON_STEPS {
+            return Err(ReferenceRefusal {
+                construct: "horizon exceeds the reference step bound".to_owned(),
+            });
+        }
+        if initial >= self.actions.len()
+            || rewards.len() != self.actions.len()
+            || rewards
+                .iter()
+                .zip(&self.actions)
+                .any(|(state_rewards, actions)| state_rewards.len() != actions.len())
+        {
+            return Err(ReferenceRefusal {
+                construct: "reward table outside finite state/action space".to_owned(),
+            });
+        }
+        let zero = filament_exact::Rational::from_integer(filament_exact::Integer::zero());
+        let mut values = vec![zero; self.actions.len()];
+        for _ in 0..horizon {
+            let next = self
+                .actions
+                .iter()
+                .enumerate()
+                .map(|(state, actions)| {
+                    actions
+                        .iter()
+                        .enumerate()
+                        .map(|(action_index, action)| {
+                            action.iter().fold(
+                                rewards[state][action_index].clone(),
+                                |sum, (destination, probability)| {
+                                    sum.add(&probability.mul(&values[*destination]))
+                                },
+                            )
+                        })
+                        .max()
+                        .expect("model construction requires one action per state")
+                })
+                .collect();
+            values = next;
+        }
+        Ok(values[initial].clone())
+    }
 }
 
 /// Reference-owned evaluator supplied when package checking needs a reward
@@ -177,10 +234,10 @@ pub struct ReferenceRewardEvaluator;
 
 /// A construct the tiny reference does not define. Callers must not attach a
 /// truth value to a package refused with this error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReferenceRefusal {
     /// The unsupported construct, in stable diagnostic wording.
-    pub construct: &'static str,
+    pub construct: String,
 }
 
 /// Refuses an operation guard containing disjunction.
@@ -194,7 +251,7 @@ pub fn validate_conjunctive_guards(graph: &CheckedGraph) -> Result<(), Reference
         for guard in model.guards() {
             if guard.parts().len() > 1 {
                 return Err(ReferenceRefusal {
-                    construct: "disjunctive timed guard",
+                    construct: "disjunctive timed guard".to_owned(),
                 });
             }
         }
@@ -210,7 +267,7 @@ pub fn validate_conjunctive_guards(graph: &CheckedGraph) -> Result<(), Reference
                 NodeKind::Connective(filament_checked::node::Connective::Or, _, _, _)
             ) {
                 return Err(ReferenceRefusal {
-                    construct: "disjunctive operation guard",
+                    construct: "disjunctive operation guard".to_owned(),
                 });
             }
             pending.extend(node.children());
@@ -241,7 +298,7 @@ pub fn validate_tiny_fragment(graph: &CheckedGraph) -> Result<(), ReferenceRefus
             )
         }) {
             return Err(ReferenceRefusal {
-                construct: "unbounded integer field",
+                construct: "unbounded integer field".to_owned(),
             });
         }
     }
@@ -259,7 +316,7 @@ pub fn validate_tiny_fragment(graph: &CheckedGraph) -> Result<(), ReferenceRefus
             .any(|clock| !clock.bound().is_integer());
         if fractional_guard || fractional_invariant {
             return Err(ReferenceRefusal {
-                construct: "clock compared with a non-integer constant",
+                construct: "clock compared with a non-integer constant".to_owned(),
             });
         }
         if model
@@ -269,7 +326,7 @@ pub fn validate_tiny_fragment(graph: &CheckedGraph) -> Result<(), ReferenceRefus
             .any(|reset| !reset.value().is_zero())
         {
             return Err(ReferenceRefusal {
-                construct: "clock reset to a nonzero constant",
+                construct: "clock reset to a nonzero constant".to_owned(),
             });
         }
     }
@@ -281,7 +338,7 @@ pub fn validate_tiny_fragment(graph: &CheckedGraph) -> Result<(), ReferenceRefus
             .any(|rate| !matches!(rate, fsl_semantics::check::HybridTerm::Constant(_)))
         {
             return Err(ReferenceRefusal {
-                construct: "hybrid mode with a non-constant rate",
+                construct: "hybrid mode with a non-constant rate".to_owned(),
             });
         }
     }
@@ -336,6 +393,26 @@ mod tests {
                 .some_scheduler_reachability_within(0, &targets, 2)
                 .expect("valid initial state and target set"),
             ratio(9, 10)
+        );
+    }
+
+    #[trace("FR-1051-AC-19")]
+    #[test]
+    fn finite_horizon_reward_uses_exact_transition_weights() {
+        let model = TinyMdp::new(vec![
+            vec![vec![(1, ratio(1, 2)), (2, ratio(1, 2))]],
+            vec![vec![(1, ratio(1, 1))]],
+            vec![vec![(2, ratio(1, 1))]],
+        ])
+        .expect("each exact support sums to one");
+        // One step earns zero. On step two, state 1 earns 4 and state 2
+        // earns 0, so the exact two-step expected reward is 1/2 * 4 = 2.
+        let rewards = vec![vec![ratio(0, 1)], vec![ratio(4, 1)], vec![ratio(0, 1)]];
+        assert_eq!(
+            model
+                .some_scheduler_expected_reward_within(0, &rewards, 2)
+                .expect("finite exact reward is supported"),
+            ratio(2, 1)
         );
     }
 

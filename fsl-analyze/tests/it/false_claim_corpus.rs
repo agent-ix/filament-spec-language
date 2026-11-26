@@ -3,6 +3,100 @@
 
 use ix_trace_rs::trace;
 
+#[trace("FR-1051-AC-17")]
+#[test]
+fn reference_interprets_a_checked_postcondition_over_pre_and_current_states() {
+    use filament_exact::{
+        Integer, NodeKey, ObjectId, ObjectReference, PathSegment, UniverseId, Value,
+    };
+
+    let mut model = crate::prob_world::coin("");
+    model.body.push_str(
+        "\npost Increment using ev on M::Coin::drop { pre(self.v) = 0 and self.v = 1 }\n",
+    );
+    let world = crate::prob_world::World::try_new_with_evaluator(
+        &model,
+        &fsl_definitional_reference::ReferenceRewardEvaluator,
+    )
+    .expect("the postcondition passes front-end checking");
+    let graph = world.package.graph();
+    let clause = graph
+        .state_clause("Increment")
+        .expect("the named postcondition is in the checked graph");
+    let receiver = Value::Reference(ObjectReference::new(
+        UniverseId::new(
+            NodeKey::new("test/coin", vec![PathSegment::Text("Coin".to_owned())], 0)
+                .expect("the fixture identity is well formed"),
+        ),
+        clause.context(),
+        ObjectId::new("c").expect("the fixture object id is non-empty"),
+    ));
+    let before = fsl_definitional_reference::ReferenceFiniteState::new([(
+        "c".to_owned(),
+        "v".to_owned(),
+        Value::Integer(Integer::from(0_i64)),
+    )])
+    .expect("the pre-state has one value per field");
+    let after = fsl_definitional_reference::ReferenceFiniteState::new([(
+        "c".to_owned(),
+        "v".to_owned(),
+        Value::Integer(Integer::from(1_i64)),
+    )])
+    .expect("the current state has one value per field");
+
+    assert!(fsl_definitional_reference::evaluate_boolean(
+        graph,
+        clause.body(),
+        &[receiver],
+        &before,
+        &after,
+    )
+    .expect("the reference evaluates checked equality and conjunction nodes"));
+}
+
+#[trace("FR-1051-AC-17")]
+#[test]
+fn reference_interprets_checked_clock_guards_invariants_and_zero_resets() {
+    use filament_exact::{Integer, Rational};
+
+    let document = crate::timed_world::document(&["x"], &[("tick", &["x"])]);
+    let body = format!(
+        "{}pre Ready using v on M::Call::tick {{ self.x >= 1 ms }}\n\
+         post Reset using v on M::Call::tick {{ self.x = 0 ms }}\n\
+         time invariant Cap when {{ true }} {{ self.x <= 2 ms }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world(
+        &document,
+        "profile ev = \"filament.temporal.timed/v1\";\n",
+        &body,
+    );
+    let timed = &world.package.graph().timed_models()[0];
+    let clock = |numerator: i64| {
+        Rational::new(Integer::from(numerator), Integer::from(2_i64))
+            .expect("positive rational clock value")
+    };
+    let state = fsl_definitional_reference::ReferenceClockState::new(timed, vec![clock(3)])
+        .expect("one clock at 3/2 ms");
+    assert!(state
+        .satisfies_guard(timed, 0)
+        .expect("the checked guard is a single clock comparison"));
+    assert!(state
+        .satisfies_invariant(timed, 0)
+        .expect("the checked invariant is clock-only with a constant predicate"));
+    assert_eq!(
+        state
+            .apply_zero_resets(timed, 0)
+            .expect("the checked postcondition resets x to zero")
+            .values()[0],
+        Rational::from_integer(Integer::zero())
+    );
+    let delayed = state.delay(&clock(2)).expect("one unit of dense time");
+    assert!(!delayed
+        .satisfies_invariant(timed, 0)
+        .expect("the invariant comparison remains in the checked fragment"));
+}
+
 fn direct_manifest_dependencies(manifest: &str) -> Vec<(String, String)> {
     let mut dependencies = Vec::new();
     let mut dependency_table: Option<String> = None;
