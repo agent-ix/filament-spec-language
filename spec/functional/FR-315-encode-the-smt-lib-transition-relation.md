@@ -43,6 +43,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-952
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: depends_on
 ---
 # FR-315: Encode a model subject's transition relation as SMT-LIB
 
