@@ -102,10 +102,10 @@ as the bare name. FR-120 owns this operation-identity rule.
 | `TransitionIdentity` and its typed value | FSpec FR-181; its wire schema is in FR-331 | FSL wire module; thin wrapper over `filament_semantic_value::ModelTransition` |
 | `ProbabilisticBound` | FSpec FR-413 for probabilistic counterexamples and the statistical verdict | FSL wire module |
 | Certificate identity path segment | FSpec FR-412-AC-34 | Existing `filament_exact::NodeKey` plus the `node_wire` codec; add no type |
-| Certificate rejection locus and rule (`CertificateLocus`, `CertificateRule`) | FSpec FR-331 | `filament-contract-model` |
-| Zone certificate | FSpec FR-418 | `filament-contract-model` |
-| Task-product certificate | FSpec FR-418-AC-11..14; certificate envelope and rejection vocabulary in FSpec FR-331; transition identities use FSpec FR-181 | `filament-contract-model` |
-| Hybrid certificate | FSpec FR-331 | `filament-contract-model` |
+| Certificate rejection locus and rule (`CertificateLocus`, `CertificateRule`) | FSpec FR-331 | FSL wire module |
+| Zone certificate | FSpec FR-418 | FSL wire module |
+| Task-product certificate | FSpec FR-418-AC-11..14; certificate envelope and rejection vocabulary in FSpec FR-331; transition identities use FSpec FR-181 | FSL wire module |
+| Hybrid certificate | FSpec FR-331 | FSL wire module |
 | Probability certificate document | FSpec FR-412; certificate-member vocabulary is FSpec FR-331 and Contract IR FR-070; FSL FR-201 implements the checker | FSL `fsl-replay` probability-certificate document module |
 | `filament.checked-package/v2` node forms and protocol-location ordinals | FSpec FR-322 and FR-375; in particular FR-322-AC-291 and FR-375-AC-36 | `filament-contract-model::checked_package::v2` (implementation home) |
 | Certificate-member vocabulary | FSpec FR-331; Contract IR FR-070 | `filament-contract-model` |

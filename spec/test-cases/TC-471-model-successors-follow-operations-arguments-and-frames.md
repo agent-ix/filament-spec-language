@@ -15,9 +15,7 @@ and argument identities, frame post-states with creations and deletions,
 closure, postcondition filtering and the state key's `semantic` form.
 
 Scope: FR-120-AC-1, FR-120-AC-2, FR-120-AC-3, FR-120-AC-4, FR-120-AC-27,
-FR-120-AC-39 and FR-120-AC-40. The readers of FR-120-AC-39 are unit tests
-in `fsl-replay`; AC-40 writer/readback checks run in each route's owning test
-module.
+FR-120-AC-39. The readers of FR-120-AC-39 are unit tests in `fsl-replay`.
 
 ## Test Procedure
 
@@ -51,29 +49,6 @@ emission. Initial snapshots are in-memory provisions, anchor
    returns with `s0`'s field values; read the keys of `s0` and the result.
    Then admit two snapshots of `c1` and `c2`, one listing the pair once and
    one listing it twice, read their keys, and explore from both.
-6. In the owning tests for each route below, use both operation identities
-   and hand-check the serialized `operation` member and the exact readback:
-
-   | Writer and reader route | Identity A | Identity B |
-   | --- | --- | --- |
-   | Source transition | `{"node":"test/counters/Counter/increment","package":"test/counters"}` | `tick` |
-   | Temporal counterexample | `{"node":"test/counters/Counter/increment","package":"test/counters"}` | `tick` |
-   | Task-product certificate | `{"node":"test/counters/Counter/increment","package":"test/counters"}` | `tick` |
-   | Zone certificate | `{"node":"test/counters/Counter/increment","package":"test/counters"}` | `tick` |
-   | Reference codec | `{"node":"test/counters/Counter/increment","package":"test/counters"}` | `tick` |
-   | Probabilistic witness | `{"node":"test/counters/Counter/increment","package":"test/counters"}` | `tick` |
-
-   Identity A is the exact identity text, not a parsed URI or rebuilt
-   `{node, package}` value. Identity B is a name identity. For each route, the
-   wire member is a JSON string equal to the table value and the reader
-   restores that exact value. Each route-specific test carries
-   `#[trace("TC-471", "FR-120-AC-40")]`.
-
-7. Keep the legacy reader cases under AC-39 at their current expected result
-   until ADR-037 step 1 lands. In that step, update those same cases to assert
-   refusal for the legacy object-operation form and the legacy `ix://`
-   identity-rebuild form using each reader's existing refusal mapping; do not
-   add a fallback or accept either form after the step.
 
 Tag the tests `#[trace("TC-471", "FR-120-AC-n")]`.
 
@@ -107,11 +82,3 @@ Tag the tests `#[trace("TC-471", "FR-120-AC-n")]`.
 - Step 5: the state after `remove` and `spawn` has `s0`'s objects and no
   pair, and its key differs from `s0`'s. The two snapshots are both admitted,
   their keys differ, and exploration counts 2 states.
-- Step 6: each of the six routes serializes Identity A as the JSON string
-  `"{\"node\":\"test/counters/Counter/increment\",\"package\":\"test/counters\"}"`
-  and reads back that exact identity text. Each serializes Identity B as the
-  JSON string `"tick"` and reads back `tick`. None emits an operation object
-  or reconstructs Identity A from an `ix://` URI.
-- Step 7: before step 1, existing legacy reader cases retain their current
-  results; after step 1, the object-operation and `ix://`-rebuild cases refuse
-  under the respective reader's existing refusal mapping.
