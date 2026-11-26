@@ -89,8 +89,8 @@ pub struct RefinementPart {                     // FR-430
 
 ## Behavior
 
-- **Reachability part.** For a TT-1, TT-2 or TT-3 item, or a
-  deadlock-freedom item, the certificate SHALL list nodes, each a discrete
+- **Reachability part.** For a TT-1, TT-2 or TT-3 item that declares no
+  fairness, or a deadlock-freedom item, the certificate SHALL list nodes, each a discrete
   state key, a claim-automaton state and a canonical DBM, and for each node
   and each transition identity enabled from it one edge to a named target
   node whose zone covers the successor under the aLU simulation with the
@@ -102,7 +102,8 @@ pub struct RefinementPart {                     // FR-430
   because its violating points are time-locked, the certificate SHALL list
   the violating part `Z ∩ Bad` as its own node marked `locked`, with its
   edges, so the certificate's edges from it cover its forward closure.
-- **Büchi part.** For a TT-4 item and the time-lock-freedom item, the
+- **Büchi part.** For a TT-4 item, a claim that declares a fairness,
+  whatever its form (FR-239), and the time-lock-freedom item, the
   engine SHALL give each node a component index such that every edge goes
   to a node of equal or greater index, and give each component its reason: the
   acceptance set it lacks (the divergence set included), or a weak

@@ -1306,8 +1306,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
                     start,
                     letters,
                     instances.clone(),
-                    clause.capture_site(),
-                    clause.fairness().to_vec(),
+                    clause,
                     operations,
                 ));
                 None

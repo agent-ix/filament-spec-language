@@ -158,7 +158,8 @@ member forms; the member `lu_bounds` is written `bounds`.
     stated reason holds;
   - for the time-lock-freedom item, each node's divergence path exists in
     the certificate and ends at a divergent target;
-  - for a proof of an item decided on a liveness product, the certificate
+  - for a proof of an item decided on a liveness product, other than a
+    TT-1 or TT-2 claim (FSpec FR-416 "Non-Zeno premise"), the certificate
     carries `non_zeno` (FSpec FR-418), and its value is the one the checker
     recomputes: `Assumed` exactly when some component of its own recomputed
     graph holds a cycle, a node of every acceptance set other than the

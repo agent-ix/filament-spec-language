@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use fsl_eval::fairness::{Analysis, Outcome};
+use fsl_eval::simulation::model::states_non_zeno;
 use fsl_replay::{
     AcceptanceSet, CertEdge, CertNode, ComponentReason, Components, DivergenceWitness,
     DivergentTarget, LuBounds, NonZeno, ProductMark, SilentMove,
@@ -38,11 +39,16 @@ impl Run<'_, '_, '_> {
         proofs: Vec<InstanceProof>,
         admission: Option<Product>,
     ) -> Result<Proof, Halt> {
-        let non_zeno = if proofs.iter().any(has_accepting_cycle_without_divergence) {
-            NonZeno::Assumed
-        } else {
-            NonZeno::NotRequired
-        };
+        let claim = self
+            .claim()
+            .ok_or(ZoneCheckRefusal::Fault("liveness-claim"))?;
+        let non_zeno = states_non_zeno(claim.clause).then(|| {
+            if proofs.iter().any(has_accepting_cycle_without_divergence) {
+                NonZeno::Assumed
+            } else {
+                NonZeno::NotRequired
+            }
+        });
         let total: usize = proofs
             .iter()
             .map(|proof| proof.product.vertices.len())
@@ -155,7 +161,7 @@ impl Run<'_, '_, '_> {
             edges,
             initials,
             components: Some(components),
-            non_zeno: Some(non_zeno),
+            non_zeno,
             divergence: None,
             admitted,
             state_graph: None,

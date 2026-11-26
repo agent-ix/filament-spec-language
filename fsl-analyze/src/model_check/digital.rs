@@ -55,8 +55,8 @@ use fsl_eval::automaton::{
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    admitted_refutation, admitted_start, claim_start, ClockValuation, GuardedStep, ModelSimState,
-    TimedState, TimedStop, TimedSystem, TimedVacuity,
+    admitted_refutation, admitted_start, claim_start, states_non_zeno, ClockValuation, GuardedStep,
+    ModelSimState, TimedState, TimedStop, TimedSystem, TimedVacuity,
 };
 use fsl_eval::simulation::NotSimulated;
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
@@ -188,6 +188,7 @@ pub fn check_digital<L: ModelLetters>(
         Err(Halt::Refusal(refusal)) => return Err(refusal),
     };
     let non_zeno = match &outcome {
+        _ if !states_non_zeno(request.clause) => None,
         ModelCheckOutcome::HoldsReduced { .. } => run.non_zeno,
         ModelCheckOutcome::Violated { counterexample, .. }
             if counterexample.lasso.is_some()
