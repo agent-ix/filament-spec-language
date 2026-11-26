@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use filament_checked::node::{Arithmetic, Connective, NodeKind, OrderedKind};
+use filament_contract_model::{CheckedFieldScope, CheckedFrameModification};
 use filament_exact::{Rational, Value};
 use fsl_semantics::check::{
     CheckedGraph, CheckedNode, StateClauseKind, StatePredicate, TimedModel,
@@ -209,6 +210,8 @@ pub fn checked_random_operation_mdp(
                 for clause in &postconditions {
                     accepted &= evaluate_boolean(graph, clause.body(), &bound, source, target)?;
                 }
+                accepted &=
+                    operation_frame_allows_transition(graph, operation, &bound, source, target)?;
                 if accepted {
                     destinations.push(target_index);
                 }
@@ -305,7 +308,9 @@ impl ReferenceTransitionGraph {
                     }
                     accepted
                 };
-                if accepted {
+                if accepted
+                    && operation_frame_allows_transition(graph, operation, locals, source, target)?
+                {
                     successors[source_index].push(target_index);
                 }
             }
@@ -345,6 +350,75 @@ impl ReferenceTransitionGraph {
         }
         Ok(false)
     }
+}
+
+/// Checks state changes against the admitted operation effect row. The tiny
+/// fragment supports field writes only; object and relationship effects refuse.
+#[implements("FR-1051-AC-17")]
+fn operation_frame_allows_transition(
+    graph: &CheckedGraph,
+    operation: &str,
+    locals: &[Value],
+    before: &ReferenceFiniteState,
+    after: &ReferenceFiniteState,
+) -> Result<bool, ReferenceRefusal> {
+    let rows = graph
+        .operation_effects()
+        .ok_or_else(|| unsupported("operation without checked effects"))?;
+    let mut matching = rows
+        .iter()
+        .filter(|row| row.operation.as_ref() == operation);
+    let row = matching
+        .next()
+        .ok_or_else(|| unsupported("operation without a checked effect row"))?;
+    if matching.next().is_some() {
+        return Err(unsupported("operation name with ambiguous checked effects"));
+    }
+    let effects = &row.effect;
+    if !effects.creates.is_empty()
+        || !effects.deletes.is_empty()
+        || !effects.deletes_scoped.is_empty()
+    {
+        return Err(unsupported("object creation or deletion effect"));
+    }
+    let mut writes = Vec::new();
+    for modification in &effects.modifies {
+        match modification {
+            CheckedFrameModification::Field { name, scope, .. } => {
+                writes.push((name.as_ref(), scope))
+            }
+            CheckedFrameModification::Relationship { .. } => {
+                return Err(unsupported("relationship effect"));
+            }
+        }
+    }
+    let receiver = match locals.first() {
+        Some(Value::Reference(reference)) => Some(reference.object().as_str()),
+        _ => None,
+    };
+    if before.fields.keys().ne(after.fields.keys()) {
+        return Err(unsupported("state shape change without object effect"));
+    }
+    for ((object, field), value) in &before.fields {
+        if after
+            .fields
+            .get(&(object.clone(), field.clone()))
+            .is_some_and(|after| finite_scalar_equal(value, after))
+        {
+            continue;
+        }
+        let granted = writes.iter().any(|(name, scope)| {
+            name == field
+                && match scope {
+                    CheckedFieldScope::EveryObject => true,
+                    CheckedFieldScope::Receiver => receiver == Some(object.as_str()),
+                }
+        });
+        if !granted {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// A finite prefix followed by a nonempty loop, representing an infinite trace.
