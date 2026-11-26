@@ -873,6 +873,42 @@ fn a_synthesis_run_applies_the_callers_accounting_counters() {
     }
 }
 
+/// FR-255-AC-34: a request whose accounting gives `work_units` 0 runs under
+/// the caller's 1000000; a caller naming only another counter keeps the 0.
+#[test]
+#[trace("FR-255-AC-34")]
+fn a_callers_counter_replaces_the_requests_only_when_named() {
+    let unit = pick("Pick * Pick > 48", "");
+    let member = json!({"synthesis": {"declaration": "Pick", "accounting": {"work_units": 0}}});
+    let more = BTreeMap::from([(AccountingSetting::WorkUnits, 1_000_000)]);
+    let other = BTreeMap::from([(AccountingSetting::ValueOccurrences, 1_000_000)]);
+    for package in [false, true] {
+        let (_, replaced) = run_overridden(
+            &unit,
+            package,
+            member.clone(),
+            &RequestOverrides {
+                accounting: Some(&more),
+                ..Default::default()
+            },
+        );
+        assert_ne!(replaced["synthesis"]["cause"], work_stop(), "{replaced}");
+        assert_ne!(replaced["synthesis"]["status"], "incomplete", "{replaced}");
+
+        let (exit, kept) = run_overridden(
+            &unit,
+            package,
+            member.clone(),
+            &RequestOverrides {
+                accounting: Some(&other),
+                ..Default::default()
+            },
+        );
+        assert_eq!(exit, 22, "{package}: {kept}");
+        assert_eq!(kept["synthesis"]["cause"], work_stop(), "{kept}");
+    }
+}
+
 /// FR-255-AC-33: a clocks override beside the request's own `clocks` is
 /// refused on both routes.
 #[test]

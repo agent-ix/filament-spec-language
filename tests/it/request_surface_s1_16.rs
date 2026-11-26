@@ -7,6 +7,7 @@
 //! Separately staged extensions retain named ignores.
 
 use crate::support::config_version_spine::{spine, Case};
+use fsl_foundation::{AccountingSetting, Setting};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -4696,4 +4697,196 @@ fn a_direct_member_refuses_an_override_it_cannot_apply() {
             "{value}"
         );
     }
+}
+
+// ---- FR-255 Behavior 16: package routes apply what source routes apply ----
+
+fn write_request_overridden(
+    directory: &Path,
+    request: &Value,
+    overrides: &fsl_command::command::RequestOverrides<'_>,
+) -> (u8, Value) {
+    let path = directory.join("request.json");
+    std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
+    match fsl_command::command::run_with_overrides(&path, overrides, &crate::negotiation::Fr290) {
+        Ok(result) => (result.exit_code, result.value.as_value().clone()),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
+}
+
+/// Runs `member` over `unit` from source and then from its handoff, each
+/// under `overrides`, with the spine model and `s.json`.
+fn source_and_package(
+    unit: &str,
+    member: (&str, Value),
+    overrides: &fsl_command::command::RequestOverrides<'_>,
+) -> [(u8, Value); 2] {
+    let directory = bump_directory(unit, &["a"], true);
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let mut request = json!({"format": "native-run/1", "request": {
+        "models": models, "program": {"source": source("unit.native")}}});
+    request["request"][member.0] = member.1.clone();
+    let from_source = write_request_overridden(directory.path(), &request, overrides);
+    let models = compile_handoff(directory.path(), unit);
+    let mut request = json!({"format": "native-run/1", "request": {
+        "models": models, "package": {"directory": "handoff"}}});
+    request["request"][member.0] = member.1;
+    let from_package = write_request_overridden(directory.path(), &request, overrides);
+    [from_source, from_package]
+}
+
+fn low_over_a_snapshot(directory: &Path) -> Value {
+    let population = snapshot_of(directory, &["a"], true)["populations"][0]["population"].clone();
+    json!({"selection": {"temporal": {"name": "Low", "trace": {"finite": ["s0"]},
+        "over": {"reference": {"population": population, "key": "a"}}}},
+        "observations": {"s0": "s.json"}})
+}
+
+/// FR-255-AC-39: a clause run over a package stops at the caller's
+/// `observation.input_bytes`, one byte below its observation file, naming the
+/// setting, as the run from source does; and it charges the caller's
+/// accounting counter.
+#[test]
+#[trace("FR-255-AC-39", "FR-255-AC-32")]
+fn a_package_clause_run_applies_the_callers_limits_as_the_source_run_does() {
+    let unit = bump_low();
+    let directory = bump_directory(&unit, &["a"], true);
+    let length = std::fs::read(directory.path().join("s.json")).unwrap().len() as u64;
+    let clause = low_over_a_snapshot(directory.path());
+
+    let control = source_and_package(&unit, ("clause", clause.clone()), &Default::default());
+    for (code, value) in &control {
+        assert_ne!(*code, 20, "{value}");
+        assert!(!value.to_string().contains("observation.input_bytes"), "{value}");
+    }
+
+    let short =
+        std::collections::BTreeMap::from([(Setting::ObservationInputBytes, length - 1)]);
+    for (code, value) in source_and_package(
+        &unit,
+        ("clause", clause.clone()),
+        &fsl_command::command::RequestOverrides {
+            limits: Some(&short),
+            ..Default::default()
+        },
+    ) {
+        assert_ne!(code, 0, "{value}");
+        assert!(value.to_string().contains("observation.input_bytes"), "{value}");
+    }
+
+    let no_work = std::collections::BTreeMap::from([(AccountingSetting::WorkUnits, 0)]);
+    for (code, value) in source_and_package(
+        &unit,
+        ("clause", clause),
+        &fsl_command::command::RequestOverrides {
+            accounting: Some(&no_work),
+            ..Default::default()
+        },
+    ) {
+        assert_eq!(code, 22, "{value}");
+        assert!(value.to_string().contains("work_units"), "{value}");
+    }
+}
+
+/// FR-255-AC-32: a `tl_lowering` cross-evaluation charges the caller's
+/// accounting counter from source and from a package.
+#[test]
+#[trace("FR-255-AC-32")]
+fn a_package_lowering_charges_the_callers_counter_as_the_source_does() {
+    let unit = bump_low();
+    let lowering = json!({"clause": "Low",
+        "cross_evaluate": {"initial": "s.json", "max_steps": 1}});
+    let no_work = std::collections::BTreeMap::from([(AccountingSetting::WorkUnits, 0)]);
+    let control = source_and_package(&unit, ("tl_lowering", lowering.clone()), &Default::default());
+    for (code, value) in &control {
+        assert_eq!(*code, 0, "{value}");
+    }
+    for (code, value) in source_and_package(
+        &unit,
+        ("tl_lowering", lowering),
+        &fsl_command::command::RequestOverrides {
+            accounting: Some(&no_work),
+            ..Default::default()
+        },
+    ) {
+        assert_eq!(code, 22, "{value}");
+    }
+}
+
+/// FR-255-AC-32: a call's snapshot is admitted under the caller's
+/// `observation.input_bytes` from source and from a package.
+#[test]
+#[trace("FR-255-AC-32")]
+fn a_call_snapshot_is_admitted_under_the_callers_observation_limit() {
+    let unit = format!(
+        "{}function one using v(): Integer pure {{ 1 }}\n",
+        bump_low()
+    );
+    let call = json!({"function": "one", "arguments": [], "snapshot": "s.json"});
+    for (code, value) in source_and_package(&unit, ("call", call.clone()), &Default::default()) {
+        assert_eq!(code, 0, "{value}");
+    }
+    let one_byte = std::collections::BTreeMap::from([(Setting::ObservationInputBytes, 1)]);
+    for (code, value) in source_and_package(
+        &unit,
+        ("call", call),
+        &fsl_command::command::RequestOverrides {
+            limits: Some(&one_byte),
+            ..Default::default()
+        },
+    ) {
+        assert_ne!(code, 0, "{value}");
+        assert!(value.to_string().contains("observation.input_bytes"), "{value}");
+    }
+}
+
+/// FR-255-AC-32: a call over a package reads it under the caller's
+/// `i2.nodes`.
+#[test]
+#[trace("FR-255-AC-32")]
+fn a_package_call_reads_the_package_under_the_callers_reader_limit() {
+    let unit = format!("{VALUE_HEADER}function one using v(): Integer pure {{ 1 }}\n");
+    let directory = bump_directory(&unit, &["a"], true);
+    let models = compile_handoff(directory.path(), &unit);
+    let request = json!({"format": "native-run/1", "request": {"models": models,
+        "package": {"directory": "handoff"}, "call": {"function": "one", "arguments": []}}});
+    let (code, value) = write_request_overridden(directory.path(), &request, &Default::default());
+    assert_eq!(code, 0, "{value}");
+    let one_node = std::collections::BTreeMap::from([(Setting::I2Nodes, 1)]);
+    let (code, value) = write_request_overridden(
+        directory.path(),
+        &request,
+        &fsl_command::command::RequestOverrides {
+            limits: Some(&one_node),
+            ..Default::default()
+        },
+    );
+    assert_ne!(code, 0, "{value}");
+    assert!(value.to_string().contains("i2.nodes"), "{value}");
+}
+
+/// FR-255-AC-32: a call selection of an `items` run compiles under the
+/// caller's stage limits; `1 + 1 + 1` is five expression nodes.
+#[test]
+#[trace("FR-255-AC-32")]
+fn an_items_call_selection_compiles_under_the_callers_stage_limit() {
+    let unit = format!("{VALUE_HEADER}function f using v(): Integer pure {{ 1 + 1 + 1 }}\n");
+    let directory = bump_directory(&unit, &["a"], true);
+    let request = json!({"format": "native-run/1", "request": {"models": [],
+        "program": {"source": source("unit.native")},
+        "items": {"selections": [{"call": {"function": "f", "arguments": []}}]}}});
+    let (code, value) = write_request_overridden(directory.path(), &request, &Default::default());
+    assert_eq!(code, 0, "{value}");
+    let four = std::collections::BTreeMap::from([(Setting::S3Nodes, 4)]);
+    let (code, value) = write_request_overridden(
+        directory.path(),
+        &request,
+        &fsl_command::command::RequestOverrides {
+            limits: Some(&four),
+            ..Default::default()
+        },
+    );
+    assert_ne!(code, 0, "{value}");
+    assert!(value.to_string().contains("S3 node limit 4 reached"), "{value}");
 }

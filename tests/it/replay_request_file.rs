@@ -619,6 +619,7 @@ fn a_replay_run_applies_or_refuses_each_override() {
 /// request's `stage_limits` value, also when the caller names the published
 /// default: one token cannot recompile the program, 100000 can.
 #[test]
+#[ix_trace_rs::trace("FR-255-AC-34")]
 fn a_replay_run_applies_a_caller_setting_equal_to_the_default() {
     use fsl_command::command::{run_with_overrides, RequestOverrides};
     use fsl_foundation::Setting;

@@ -42,8 +42,6 @@ pub(in crate::command) struct PackageRun<'a> {
     /// The limits the `initial` snapshot is admitted under.
     pub(in crate::command) observation_limits:
         fsl_semantics::model::observation::ObservationLimits,
-    /// `s3.nodes`, which bounds reading the clause from the package.
-    pub(in crate::command) clause_nodes: u64,
 }
 
 /// The snapshot a `cross_evaluate.initial` request builds its model subject
@@ -157,7 +155,10 @@ pub(super) fn observe(
     let model = PackageModelInput::of(bare, run.packages, run.model_limits)
         .map_err(|refusal| not_read(&refusal))?;
     let clause = model
-        .temporal_run_clause(claim, run.clause_nodes)
+        .temporal_run_clause(
+            claim,
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )
         .map_err(|refusal| clause_not_read(&refusal))?;
     let selection = clause_selection(lowering, initial)?;
     match cross {

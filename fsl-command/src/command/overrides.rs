@@ -105,8 +105,6 @@ impl fmt::Display for RunRoute {
 enum Family {
     /// The S1, S3, assembly and source dependency settings of a compile.
     Compile,
-    /// `s3.nodes`, which a package run also reads for its clause.
-    CheckedNodes,
     /// Model normalization.
     Model,
     /// The v2 package reader, `i2.*`.
@@ -127,7 +125,6 @@ enum Family {
 /// holds: every route refuses it.
 fn family(setting: Setting) -> Option<Family> {
     match setting {
-        Setting::S3Nodes => return Some(Family::CheckedNodes),
         Setting::EmitOutputBytes => return Some(Family::Emit),
         Setting::ExpansionMaxCandidates => return Some(Family::Expansion),
         _ => {}
@@ -185,7 +182,6 @@ macro_rules! compiling {
     ($($more:ident),*) => {
         Some(&[
             Family::Compile,
-            Family::CheckedNodes,
             Family::Model,
             Family::Imports,
             Family::Emit,
@@ -222,14 +218,12 @@ impl RunRoute {
                 Family::Observation,
             ])),
             Self::PackageClause => evaluates(Some(&[
-                Family::CheckedNodes,
                 Family::Model,
                 Family::Imports,
                 Family::Observation,
                 Family::Progress,
             ])),
             Self::PackageTlLowering => evaluates(Some(&[
-                Family::CheckedNodes,
                 Family::Model,
                 Family::Imports,
                 Family::Observation,
@@ -432,4 +426,52 @@ pub(super) fn command_limits(
             .map_err(|_| unapplied(route, setting.name()))?;
     }
     Ok(base)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    /// FR-752-AC-15: with no caller setting a direct `model_based_test`
+    /// member's entry is given the published candidate and work bounds.
+    #[test]
+    #[trace("FR-752-AC-15")]
+    fn a_direct_member_with_no_caller_setting_runs_under_the_published_bounds() {
+        let published = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+        let overrides = RequestOverrides::default();
+        let effective = effective_limits(
+            RunRoute::ModelBasedTest,
+            RequestLimits {
+                accounting: published.accounting,
+                observation: None,
+            },
+            &overrides,
+        )
+        .unwrap();
+        assert_eq!(effective.accounting.0.work_units, 1_000_000);
+        assert_eq!(
+            analyze_limits(published, &overrides).expansion.max_candidates,
+            200_000
+        );
+    }
+
+    /// FR-255 Behavior 16: every setting a compile's stage limits hold is
+    /// read by a source clause run or refused only because it is the export's.
+    #[test]
+    #[trace("FR-255-AC-37")]
+    fn every_stage_setting_a_run_holds_has_a_family() {
+        for setting in Setting::ALL.iter().copied() {
+            let held = SpineLimits::default().set_bound(setting, 0);
+            let family = family(setting);
+            if held {
+                assert!(family.is_some(), "{setting}");
+            }
+            assert_eq!(
+                family == Some(Family::Export),
+                setting.name().starts_with("export."),
+                "{setting}"
+            );
+        }
+    }
 }

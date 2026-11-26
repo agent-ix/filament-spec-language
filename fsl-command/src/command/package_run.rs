@@ -48,7 +48,6 @@ struct LoweringWork {
     snapshot: Option<Vec<u8>>,
     accounting: filament_exact::ScalarLimits,
     observation_limits: fsl_semantics::model::observation::ObservationLimits,
-    clause_nodes: u64,
 }
 
 /// What a package run does once the package is admitted.
@@ -80,8 +79,6 @@ struct ClauseWork {
     selection: fsl_replay::spine::ClauseRunSelection,
     accounting: filament_exact::ScalarLimits,
     progress_capacity: u64,
-    /// `s3.nodes`, which bounds reading the clause from the package.
-    clause_nodes: u64,
 }
 
 /// The package bytes and handoff rows admitted for a selected package. The
@@ -488,7 +485,6 @@ fn prepare_clause(
         selection: selection.clone(),
         accounting: overrides.accounting_over(super::call_accounting(&clause.accounting)),
         progress_capacity: stage.progress.covered_positions,
-        clause_nodes: stage.checking.nodes(),
     };
     Ok(PreparedPackageRun {
         package: admitted.package,
@@ -540,7 +536,10 @@ fn execute_clause(
                 filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
             );
             let clause = model
-                .temporal_run_clause(&claim, work.clause_nodes)
+                .temporal_run_clause(
+                    &claim,
+                    filament_semantic_value::checking::CheckingLimits::default().nodes(),
+                )
                 .map_err(|refusal| not_read(refusal.to_string()))?;
             Ok::<_, RunCause>((clause, key))
         })
@@ -657,7 +656,6 @@ fn prepare_lowering(
             snapshot: admitted.snapshot,
             accounting: overrides.accounting_over(fsl_replay::AccountingLimits::default().0),
             observation_limits: overrides.observation_limits().unwrap_or_default(),
-            clause_nodes: stage.checking.nodes(),
         })),
         item_limits: super::overrides::item_limits(overrides),
         selection: admitted.selection,
@@ -1077,7 +1075,6 @@ fn execute_inner(
                 snapshot,
                 accounting,
                 observation_limits,
-                clause_nodes,
             } = *work;
             let lowered = super::tl::lower_over_package(
                 &bare,
@@ -1089,7 +1086,6 @@ fn execute_inner(
                     snapshot: snapshot.as_deref(),
                     accounting,
                     observation_limits,
-                    clause_nodes,
                 },
             )?;
             let mut result = match lowered {
