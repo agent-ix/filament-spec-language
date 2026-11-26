@@ -237,7 +237,9 @@ bytes, and SHALL report: the first `refuted` instance, when any instance is
 refuted, with its counterexample and replay, an earlier instance that is not
 `proved` notwithstanding; otherwise the first instance whose record is not
 `proved`; otherwise a `proved` record, which stands only when every
-instance's record is `proved` and its certificate was checked. An item with
+instance's record is `proved` and every certificate an instance carries was
+checked, and whose certification and basis "The proved record over several
+instances" chooses. An item with
 no instance reports FR-125's `NoInstance` or `NoInitialState`, never a fault.
 An engine that returns one outcome over all of a hyper item's instances
 SHALL select it by this rule. A temporal clause's engine returns its outcome
@@ -255,6 +257,33 @@ item's record SHALL NOT be `replay-parity` when any instance's refutation is
 confirmed. An engine that returns one outcome over all instances replays only
 the refutation it returns, so when that replay disagrees the item has no
 confirmed refutation and settles `replay-parity`.
+
+### The proved record over several instances
+
+When every instance is `proved`, the item's `certification` SHALL follow the
+rule FSpec FR-492 states for `certification` (FR-354), each instance's proof
+a deciding premise: `trusted` when any instance is `trusted`, else
+`uncertified` when any is, else `certified`.
+
+The item's proof basis, with its payload, its FR-243 basis and its
+`certificate` member SHALL be those of one instance, chosen by these steps in
+turn, each keeping some of the instances the step before it kept:
+
+1. the instances whose certification is the item's;
+2. if any has a depth-bounded proof basis, one stating a depth or horizon
+   that bounds the behaviours it covers (`bounded-complete{depth}`, or a
+   `bounded-solver` horizon), only those, so a depth-bounded basis is
+   preferred over an `exhaustive` one;
+3. of depth-bounded ones, those with the smallest depth or horizon;
+4. if any is reduced or constrained (proof basis `reduced`, or a run under a
+   state constraint, FR-160), only those;
+5. the first in instance order.
+
+An `inductive{depth}` basis is not depth-bounded: its depth is the induction
+length, and the proof covers every behaviour. There is no general ranking of
+proof bases (FSpec FR-243 ranks none); these steps only choose which
+instance's basis the one item record carries. Each instance's own record and
+evidence SHALL keep that instance's own certification and basis.
 
 ### Temporal dispositions, values and engine roles
 
@@ -343,6 +372,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-22 | For the `command::analyze` request defined in AC-19, the three outcome items have `request_index` `[0, 1, 2]` and `claim_name` `["ServedWithoutFairness", "ServedIfAcquireIsStronglyFair", "ServedIfEachAcquireIsStronglyFair"]` in request order, and the document exits 10. | Test (TC-1581) |
 | FR-621-AC-23 | Over the Counter subject with universe list `[b, a]` and both counters at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b`, the first in universe list order, not `a`, the first in key order. | Test (TC-3219) |
 | FR-621-AC-24 | A state-graph item has two instances with their own FR-169 records, and one instance's evidence is altered so that its replay disagrees, giving `inconclusive`, `replay-parity`. When the other instance's refutation replays, the item is `refuted` with that instance's counterexample and replay, whichever of the two is earlier in the instance order. When the other instance is `proved`, the item is `inconclusive`, `replay-parity`, in either order. | Test (TC-3219) |
+| FR-621-AC-25 | Two instances, `p` then `q`, are both `proved`; each case gives their records and the item's. (a) `exhaustive` `certified` and `exhaustive` `uncertified`: `uncertified`, with `q`'s record. (b) `bounded-complete` depth 3 `certified` and `exhaustive` `uncertified`: `exhaustive` `uncertified`, `q`'s, certification being chosen first. (c) `exhaustive` `uncertified` and `exhaustive` `trusted`: `trusted`, `q`'s. (d) `reduced` `uncertified` and `bounded-complete` depth 5 `uncertified`: `bounded-complete` depth 5, `q`'s, a bound being preferred over a reduction. (e) `bounded-complete` depth 5 and depth 3, both `uncertified`: depth 3, `q`'s. (f) `exhaustive` `uncertified` and `reduced` `uncertified`: `reduced`, `q`'s. (g) `exhaustive` `certified` twice, with different certificates: `p`'s record and `certificate`. In every case each instance's own record is unchanged. | Test (TC-3219) |
 
 ## Dependencies
 
