@@ -3792,7 +3792,7 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
         std::fs::write(&path, serde_json::to_vec(&current).unwrap()).unwrap();
         let (exit, value) = plan_in(
             directory.path(),
-            &unit,
+            unit,
             "spine-model.semantic-ir.json",
             "spine-initial.json",
             settings,

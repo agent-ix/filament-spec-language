@@ -682,7 +682,7 @@ pub enum PlanStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanStopCause {
     /// The requested policy set contains a policy with no admitted instance.
-    Inconclusive(fsl_replay::InconclusiveCause),
+    Inconclusive(Box<fsl_replay::InconclusiveCause>),
     /// A planner limit or an evaluation-meter counter denied a charge.
     LimitReached {
         /// The member or counter name, e.g. `max_states`.
@@ -1026,9 +1026,9 @@ pub fn search<R: PlanRules>(
                 certificate: None,
                 certified: false,
                 explored: PlanExplored::default(),
-                cause: Some(PlanStopCause::Inconclusive(
+                cause: Some(PlanStopCause::Inconclusive(Box::new(
                     fsl_replay::InconclusiveCause::NoInstance,
-                )),
+                ))),
                 negative_step: None,
             });
         }
