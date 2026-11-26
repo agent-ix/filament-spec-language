@@ -15,7 +15,8 @@ use fsl_semantics::model::accounting::{
     NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
 };
 use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
-use fsl_semantics::model::normalize::ModelRefusalCause;
+use fsl_semantics::model::domain_package::ValueTypeRef;
+use fsl_semantics::model::normalize::{EffectiveParameterType, ModelRefusalCause};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -1908,5 +1909,97 @@ fn equal_presence_and_equal_multiplicity_engage_no_refinement_obligation() {
             ]
         });
         assert_eq!(check(&bytes, NOOP), Ok(()), "{presence} [{lower},{upper}]");
+    }
+}
+
+/// `Order.note(firstApprover: Staff, secondApprover)` redefined by
+/// `Rush.note`, each `secondApprover` stated as `(type, presence)`. `Staff`
+/// is an object type and `OptStaff` the option value type over it.
+fn optional_parameter_pair(base: (&str, &str), child: (&str, &str)) -> Vec<u8> {
+    let note = |owner: &str, second: (&str, &str), parent: Option<&str>| {
+        let mut value = signed_writer(
+            owner,
+            &[("Staff", 1, 1), (second.0, 1, 1)],
+            None,
+            &[],
+            &[],
+            parent,
+        );
+        value["params"][1]["presence"] = json!(second.1);
+        value
+    };
+    document(|_| {
+        vec![
+            object("Person", &[], vec![], vec![]),
+            object("Staff", &["Person"], vec![], vec![]),
+            json!({"identity": identity("OptStaff"), "displayName": "OptStaff",
+                "kind": "option", "inner": identity("Staff"), "roles": [],
+                "origin": origin("OptStaff"), "constraints": [], "extensions": [],
+                "unknownPolicy": "reject"}),
+            object("Order", &[], vec![], vec![note("Order", base, None)]),
+            object(
+                "Rush",
+                &["Order"],
+                vec![],
+                vec![note("Rush", child, Some("Order/set"))],
+            ),
+        ]
+    })
+}
+
+/// FSpec TC-2054 step 5: the parameter type axis compares the types presence
+/// gives, so `optional Staff` and `required OptStaff` are one type, while an
+/// optional and a required `Staff` differ in either direction. Presence adds
+/// no axis, and a parameter type axis costs the facts of the type walked: two
+/// for `Staff` (it has a supertype) under either spelling of the option, so
+/// the two-parameter operation costs twelve units.
+#[trace("FSpec-TC-2054", "FSpec-FR-151-AC-21")]
+#[test]
+fn optional_parameter_presence_is_compared_by_the_parameter_type_axis() {
+    let optional = ("Staff", "optional");
+    let required = ("Staff", "required");
+    let option_type = ("OptStaff", "required");
+    for (base, child) in [
+        (optional, optional),
+        (optional, option_type),
+        (option_type, optional),
+    ] {
+        let bytes = optional_parameter_pair(base, child);
+        assert_eq!(check(&bytes, NOOP), Ok(()), "{base:?} then {child:?}");
+        assert_eq!(stage_total(&bytes, NOOP), 12, "{base:?} then {child:?}");
+    }
+    let staff = |optional| EffectiveParameterType {
+        optional,
+        value_type: ValueTypeRef::Package(key("Staff")),
+    };
+    for (base, child, expected, actual) in [
+        (required, optional, false, true),
+        (optional, required, true, false),
+        (required, option_type, false, true),
+        (option_type, required, true, false),
+    ] {
+        let bytes = optional_parameter_pair(base, child);
+        let refusals = run(&bytes, NOOP, None)
+            .outcome
+            .expect_err("Option<Staff> and Staff do not conform");
+        let failures = failures(&refusals);
+        let [failure] = failures.as_slice() else {
+            panic!("{base:?} then {child:?}: one failed axis, {failures:?}");
+        };
+        assert_eq!(failure.axis, "parameter-type", "{base:?} then {child:?}");
+        assert_eq!(failure.code, Code::IllTyped);
+        assert_eq!(failure.cause.as_str(), "variance-parameter");
+        assert_eq!(failure.member, key("Rush/set"));
+        assert_eq!(failure.parent, key("Order/set"));
+        // The receiver is parameter 0, so `secondApprover` is parameter 2.
+        assert_eq!(
+            failure.cause,
+            ModelRefusalCause::VarianceParameter {
+                index: 2,
+                declared: staff(expected),
+                redefined: staff(actual),
+            },
+            "{base:?} then {child:?}"
+        );
     }
 }
