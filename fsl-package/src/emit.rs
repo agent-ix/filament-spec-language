@@ -8188,7 +8188,16 @@ fn emit_package_nodes(
         &mut nodes,
         &mut source_map,
     )?;
-    model_correspondence::append(ids, graph, &regions, &mut nodes, &mut source_map)?;
+    // The meter charges the canonical rows that are written below.
+    let mut meter = OutputMeter::new(limits);
+    model_correspondence::append(
+        ids,
+        graph,
+        &regions,
+        &mut nodes,
+        &mut source_map,
+        &mut meter,
+    )?;
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
@@ -8209,8 +8218,6 @@ fn emit_package_nodes(
             .and_then(|candidate| candidate.expression_region(claim.origin().ordinal(), &regions))
             .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
-    // The meter charges the canonical rows that are written below.
-    let mut meter = OutputMeter::new(limits);
     let value_validity = value_validity_requirements::append(
         ids,
         graph,

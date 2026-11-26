@@ -332,6 +332,33 @@ fn a_trace_is_read_before_it_is_replayed() {
     );
 }
 
+/// FR-941-AC-6: a `post_state.key` that is not the canonical unpadded
+/// base64url of any octets is a shape defect of the trace document, read
+/// before replay. `AB` has non-zero unused trailing bits.
+#[trace("TC-2621", "FR-941-AC-6")]
+#[test]
+fn a_non_canonical_post_state_key_is_invalid_value_at_its_member() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let declined = |identity: &str, steps: &[Value], position: u64, path: &str| {
+        let item = replay_item(identity, &trace_document(identity, steps)).item(0);
+        assert_eq!(label(&item), "declined", "{identity}: {item}");
+        assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+        let diagnostic = &item["record"]["diagnostic"];
+        assert_eq!(diagnostic["code"], "invalid_runtime_input", "{item}");
+        assert_eq!(diagnostic["cause"], "invalid-value", "{item}");
+        assert_eq!(diagnostic["detail"]["position"], position, "{item}");
+        assert_eq!(diagnostic["detail"]["path"], path, "{item}");
+    };
+
+    let mut changed = steps.clone();
+    changed[1]["post_state"]["key"] = json!("AB");
+    declined("bad-key", &changed, 1, "/prefix/1/post_state/key");
+
+    let mut late = vec![steps[1].clone(), steps[0].clone(), steps[2].clone()];
+    late[2]["post_state"]["key"] = json!("AB");
+    declined("late-bad-key", &late, 2, "/prefix/2/post_state/key");
+}
+
 /// FR-941-AC-3: a well-formed trace beginning with `Got` declines
 /// `invalid-value` at position 0.
 #[trace("TC-2621", "FR-941-AC-3")]

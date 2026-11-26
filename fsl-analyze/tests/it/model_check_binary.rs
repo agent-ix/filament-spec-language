@@ -93,6 +93,7 @@ mod fixture_ids;
 mod free_delays;
 mod graph_core;
 mod graph_world;
+mod hyper_instances;
 mod invariant_item;
 mod loop_proof;
 mod model_check;

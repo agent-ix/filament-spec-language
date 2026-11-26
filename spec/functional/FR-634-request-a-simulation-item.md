@@ -65,7 +65,8 @@ reader; refusing to report it would hide a real violating run.
   `{"kind": "limit-reached", "limit", "setting", "value"}`; for the candidate
   bound, `limit` `max_candidates` and `setting` `expansion.max_candidates`.
 - `traces`: each trace's states in FSpec FR-181's typed canonical form and
-  the choice taken at each step, as "Traces" below selects them.
+  the choice taken at each step, a written transition (FR-120), as "Traces"
+  below selects them.
 - `coverage`: `{"states", "transitions", "choices"}`, each an ASCII decimal
   count over what the run visited, with one meaning in both modes:
   `states` the distinct state keys visited, `transitions` the distinct
