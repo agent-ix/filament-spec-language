@@ -968,3 +968,64 @@ fn c10_a_zero_family_steps_limit_denies_the_first_followed_edge() {
         );
     }
 }
+
+/// FR-083-AC-5: every published normalization default, the chain's own size.
+/// A chain of `n` links holds `n + 1` types and 0 + 1 + ... + n inherited
+/// members besides its `n + 1` declared ones, so 1,001 + 501,501 = 502,502
+/// effective declarations at `n` = 1,000.
+#[trace("FR-083-AC-5")]
+#[test]
+fn a_thousand_link_chain_normalizes_and_links_at_every_published_default() {
+    const EDGES: u64 = 1_000;
+    let package = chain_package(EDGES);
+    let at = |facts: u64| ModelNormalizationLimits {
+        derivation_facts: facts,
+        ..ModelNormalizationLimits::default()
+    };
+    assert!(matches!(
+        normalize(&package, ModelNormalizationLimits::default()),
+        NormalizeOutcome::Completed(_)
+    ));
+    assert_links_the_chain(
+        link_chain_at_defaults(&package, ModelNormalizationLimits::default()),
+        EDGES,
+    );
+    assert!(matches!(
+        normalize(&package, at(1_504_502)),
+        NormalizeOutcome::Completed(_)
+    ));
+    let NormalizeOutcome::Incomplete(refused) = normalize(&package, at(1_504_501)) else {
+        panic!("one fact short refuses");
+    };
+    assert_eq!(refused.limit_kind, NormalizationLimitKind::DerivationFacts);
+    assert_eq!(refused.limit, 1_504_501);
+}
+
+/// FR-083-AC-6: twice the length is past the default fact budget.
+#[trace("FR-083-AC-6")]
+#[test]
+fn a_two_thousand_link_chain_refuses_the_default_fact_budget() {
+    let NormalizeOutcome::Incomplete(refused) =
+        normalize(&chain_package(2_000), ModelNormalizationLimits::default())
+    else {
+        panic!("the default fact budget refuses a 2,000-link chain");
+    };
+    assert_eq!(refused.limit_kind, NormalizationLimitKind::DerivationFacts);
+    assert_eq!(refused.limit, 1_600_000);
+}
+
+/// [`link_chain`] over a view normalized under the same limits.
+fn link_chain_at_defaults(
+    domain_package: &DomainPackage,
+    limits: ModelNormalizationLimits,
+) -> LinkCheckOutcome {
+    let NormalizeOutcome::Completed(view) = normalize(domain_package, limits) else {
+        panic!("the chain normalizes within the limits");
+    };
+    link_dispatch(
+        &view,
+        &DeclarationKey::fixture(chain_op(0)),
+        GeneralizationClosure::Closed,
+        &mut NormalizationMeter::new(limits),
+    )
+}
