@@ -3247,9 +3247,9 @@ fn a_unit_bound_path_is_spelled_in_the_canonical_form_the_caller_wrote() {
     let many = |optional: &str, set: [&str; 2], mapped: [(&str, &str); 2]| {
         let entry = |(key, value): (&str, &str)| serde_json::json!({"key": {"type": "string", "value": key}, "value": quantity(value)});
         serde_json::json!({"type": "record", "name": name("Many"), "fields": [
+            {"name": "m", "value": {"type": "map", "entries": mapped.map(entry)}},
             {"name": "o", "value": quantity(optional)},
             {"name": "s", "value": {"type": "set", "elements": set.map(quantity)}},
-            {"name": "m", "value": {"type": "map", "entries": mapped.map(entry)}},
         ]})
     };
     let pair = |held: &str| {
@@ -3270,21 +3270,21 @@ fn a_unit_bound_path_is_spelled_in_the_canonical_form_the_caller_wrote() {
         invoke(function, Some(value)).unwrap_or_else(|refusal| panic!("3 ms admits: {refusal:?}"));
     }
     for (function, value, path) in [
-        ("many", many("4", ["3", "1"], within), "/fields/0/value"),
+        ("many", many("4", ["3", "1"], within), "/fields/1/value"),
         (
             "many",
             many("3", ["4", "1"], within),
-            "/fields/1/value/elements/0",
+            "/fields/2/value/elements/0",
         ),
         (
             "many",
             many("3", ["1", "4"], within),
-            "/fields/1/value/elements/1",
+            "/fields/2/value/elements/1",
         ),
         (
             "many",
             many("3", ["3", "1"], [("b", "4"), ("a", "1")]),
-            "/fields/2/value/entries/0/value",
+            "/fields/0/value/entries/0/value",
         ),
         ("pair", pair("4"), "/components/1"),
         ("chosen", choice("4"), "/components/0/fields/0/value"),

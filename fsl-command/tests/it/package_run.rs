@@ -649,12 +649,15 @@ fn a_package_call_refuses_a_record_argument_beyond_its_unit_bound() {
                 "keyword": "max", "bound": "3"}),
             "{selected} {refused}"
         );
+        // Without its domain packages the compiled package does not load, so
+        // no call runs unchecked.
         if selected == "package" {
             let (exit, value) = run(
                 directory.path(),
                 json!({"models": [], "package": from, "call": call("4")}),
             );
-            eprintln!("PROBE no models {exit} {value}");
+            assert_eq!(exit, 20, "{value}");
+            assert_eq!(value["stage"], "request", "{value}");
         }
     }
 }
