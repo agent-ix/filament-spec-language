@@ -14,6 +14,7 @@ use fsl_replay::{
     replay_on_each_witness, ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome,
     ProbabilisticCounterexample, ProbabilityDocumentLimits,
 };
+use ix_trace_rs::implements;
 
 use super::{
     broken, build_refusal, checked_report, document_failure, finish_replay, graph_failure, settled,
@@ -173,6 +174,7 @@ fn instance_failure(
 /// exact route settles them (FR-741 Budgets), an undefined guard or target
 /// read as an item this route does not yet refute by undefined path, and the
 /// rest through the shared document failures.
+#[implements("FR-281-AC-11")]
 fn failure(
     error: fsl_replay::ProbabilityDocumentError,
     limits: &crate::exact_probabilistic::ExactProbLimits,

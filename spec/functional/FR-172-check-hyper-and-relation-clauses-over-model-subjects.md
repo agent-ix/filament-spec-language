@@ -23,6 +23,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-171
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-361
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-395
+    type: depends_on
 ---
 # FR-172: Check hyper clauses over behaviours and relations over model executions at S3
 
@@ -56,7 +60,7 @@ span.
 ```rust
 pub struct CheckedHyperClause {
     pub aliases: Vec<ModelAlias>,                  // distinct aliases, in first-use order
-    pub parameters: Vec<ObjectParameter>,          // (name, alias, population)
+    pub parameters: Vec<ObjectParameter>,          // (name, alias, declared type, overlapping populations)
     pub quantifiers: Vec<CheckedQuantifier>,       // (kind, variable, alias, fairness set)
     pub mu_universal: Vec<CheckedStepPredicate>,   // μ_U conjuncts
     pub mu_existential: Vec<CheckedStepPredicate>, // μ_E conjuncts
@@ -89,12 +93,21 @@ pub struct CheckedModelRelation {
 
 ### Object parameters
 
-- S3 SHALL resolve each object parameter `v: V::T` to a population of alias
-  `V`'s model whose element type is `T`. The clause SHALL check to one
-  instance per key of each parameter's universe, and to the product of the
-  universes for parameters over several aliases (ADR-023 HS-3). A clause
-  one of whose parameters has an empty universe has zero instances and is
-  reported `NoInstance` by FR-125 Instancing, the same as a temporal clause or state-graph claim.
+- S3 SHALL resolve each object parameter `v: V::T` to the object type `T` of
+  alias `V`'s model and to every population of that model that overlaps `T`
+  (FR-125 Instancing; FSpec FR-395 "Object parameters", FR-361 "Instancing").
+  S3 SHALL NOT refuse a parameter as ambiguous because more than one
+  population overlaps `T`.
+- S3 SHALL NOT instantiate: the universes and initial states are request
+  inputs. FR-125 forms one instance per admitted key of each parameter, and
+  the product of those over several parameters (ADR-023 HS-3). A clause with
+  a parameter that has no admitted key, an empty universe included, is
+  reported `NoInstance` by FR-125 Instancing, the same as a temporal clause
+  or state-graph claim.
+- S3 SHALL NOT refuse a parameter whose type no population of the model
+  overlaps. The checked parameter then holds no population, the clause has
+  zero instances, and FR-125 Instancing reports `NoInstance` (FSpec FR-395
+  "Object parameters").
 - If an object parameter names a population of an alias the clause does not
   bind, then S3 SHALL refuse `ill_typed` at the parameter (FSpec FR-395).
 
@@ -219,7 +232,7 @@ pub struct CheckedModelRelation {
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-172-AC-1 | ADR-023 §1's `NonInterference` checks with one alias `V`, two universal quantifiers over it, one instance for universe `{v}`, both `μ` conjuncts in `mu_universal` and none in `mu_existential`. `SavesPower` checks with aliases `S` and `N`. §8.2's `Opaque` checks with its one conjunct in `mu_existential`. | Test (TC-597) |
+| FR-172-AC-1 | ADR-023 §1's `NonInterference` checks with one alias `V`, two universal quantifiers over it, one object parameter `v` of type `Vault`, both `μ` conjuncts in `mu_universal` and none in `mu_existential`. `SavesPower` checks with aliases `S` and `N`. §8.2's `Opaque` checks with its one conjunct in `mu_existential`. | Test (TC-597) |
 | FR-172-AC-2 | Refusals at the named span: `forall trace a` with no `of` in a `behaviours` clause (`unsupported_construct`, the quantifier); `of V` in a finite trace domain clause (the quantifier); `of W` naming no model (`missing_declaration`, the alias); `v.l` with no trace variable and `d.used @ n` with `d: S::Device` (`ill_typed`, the read); a `match` conjunct reading `v.l @ a` (`unsupported_construct`/`expression-form`, the read); an object parameter `d: S::Device` in a clause that binds only `V` (`ill_typed`, the parameter); `fair weak N::Device::tick` on a variable of `S` (`missing_declaration`). | Test (TC-597) |
 | FR-172-AC-3 | §13's clause with `align skip { V::Vault::mix }` checks with `align_skip` holding `mix`; `align skip { }`, `align skip { V::Vault::mix, V::Vault::mix }`, `align skip { N::Device::tick }` in a clause over `V` alone, and `align skip` with `fair weak V::Vault::step` each refuse `unsupported_construct`/`expression-form`. | Test (TC-597) |
 | FR-172-AC-4 | FR-171-AC-3's `Det` checks with two model execution bindings to `step`. `NonInterference` and the same clause with its quantifiers' fairness sets swapped between `a` and `b` (one empty, one `weak step`) have different node identities, as do the clause and the same clause with an extra `match` conjunct. | Test (TC-597) |
@@ -228,6 +241,8 @@ pub struct CheckedModelRelation {
 | FR-172-AC-7 | Over a model whose operations with a receiver are declared by two object types, a `match` conjunct reading `a.step.receiver` refuses `unsupported_construct`/`expression-form` at that read; over the vault, `a.step.receiver = b.step.receiver` checks. `NonInterference` with the conjunct `f(a.step.Vault::step.i)`, for a declared `f(x: Option<Int[0, 1]>): Boolean`, checks with that conjunct in `mu_universal`. With `f(v.l @ a)` it refuses `unsupported_construct`/`expression-form` at `v.l @ a`. | Test (TC-1264) |
 | FR-172-AC-8 | With the `Linked` clause of FR-487's Acceptance Criteria, `B` = `(let r = v.next in present(r) and deref(value(r)).l = 1) @ a` checks: `@ a` scopes over the `let`, so the read of `next` and the read of `l` carry `a`. `B` = `deref(value(v.next @ a)).l = 1` refuses `ill_typed` at the `.l` read, which no `@` encloses, and `B` = `present(v.next @ a) and present(v.next)` refuses `ill_typed` at the bare `v.next`. | Test (TC-1264) |
 | FR-172-AC-9 | Through `command::compile` (`native-compile/1`) with the counter-step model selected, the source clause `hyper IgnoreTick using infinite over behaviours (item: CounterModel::Counter) forall trace left of CounterModel forall trace right of CounterModel align skip {} match { left.step.op = right.step.op } { always holds(item.value @ left = item.value @ right) }` gives a `filament-outcome/1` document with `last_stage` `S3`, category `unsupported`, exit code 21, and one diagnostic `unsupported_construct` with cause `expression-form` whose locus is the span of `align skip {}`; no diagnostic has code `invalid_syntax` and `last_stage` is never `S1`. The same source with the list holding one qualified name of an operation of the counter-step model gives no diagnostic at its `align skip` item. | Test (TC-597) |
+| FR-172-AC-10 | Over a model with two populations that overlap `Thing`, one of member type `Lamp` and one of member type `Switch`, both subtypes of `Thing`, a `hyper` clause with the parameter `v: V::Thing` checks, with no `ambiguous_declaration` refusal, and the checked parameter holds the type `Thing` and both populations. A population whose member types are all unrelated to `Thing` is not among them. | Test (TC-3219) |
+| FR-172-AC-11 | Over a model with an object type `Orphan` that no population overlaps, a `hyper` clause with the parameter `v: V::Orphan` and the body `always holds((v = v) @ a)` checks, with no refusal, and the checked parameter holds no population. Its `native-analyze/1` source item, over a subject with an initial state, settles `inconclusive` with cause `no-instance`, never `proved` and never a fault. | Test (TC-3219) |
 
 ## Dependencies
 
