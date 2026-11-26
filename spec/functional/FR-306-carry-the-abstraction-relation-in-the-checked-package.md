@@ -68,7 +68,8 @@ A binding made on a linked package (`CheckedPackage::bind_abstraction` or
 relation: each guarantee's item refusal (FSpec FR-490-AC-6) and relation
 node, and each step relation's claim node, implementation references,
 occurrences and requirement records. A graph shared before the binding is
-unchanged.
+unchanged. A relation a derivation cannot write as a node refuses with the
+node refusal as its cause, on a binding as on a check.
 
 ### The relation is a premise, not a claim
 
@@ -88,7 +89,8 @@ through S6a (ADR-012 §8; ADR-017 AR-5).
 | FR-306-AC-2 | Recompiling the unit unchanged gives an equal relation node id and body. Changing one `ObjectBinding` field's `RustField` gives a relation node with an equal node id and an unequal body, whose `objects` entry for that type holds the new `RustField` in `fields` where the first holds the old one, and the changed package reads back. | Test (TC-804) |
 | FR-306-AC-3 | The unit's requirement records and their `route` results are equal with and without its relation declaration. | Test (TC-805) |
 | FR-306-AC-4 | A clause run of the unit's ConfigVersion clauses through the spine run entry gives the same disposition with and without its relation declaration. | Test (TC-805) |
-| FR-306-AC-5 | After a successful binding on a linked package, including one that drops a frame or changes the nodes the bindings target, each guarantee's item refusal and relation node, and each step relation's claim node, implementation references and requirement records, equal those of checking a unit that declares the bound relation, and a graph obtained from `shared_graph` before the binding is unchanged. | Test (TC-804) |
+| FR-306-AC-5 | After a successful binding on a linked package, including one that drops a frame or changes the nodes the bindings target, each guarantee's item refusal and relation node, and each step relation's claim node, implementation references and requirement records and claim occurrences, equal those of checking a unit that declares the bound relation, and a graph obtained from `shared_graph` before the binding is unchanged. | Test (TC-804) |
+| FR-306-AC-6 | When a guarantee, or a step relation reading a bound frame, cannot be derived because the relation has no node (a Rust path with an empty segment), a binding and a check of a unit declaring that relation both refuse `invalid_model_binding`/`malformed-declaration` carrying that cause, not an internal fault, and the refused binding leaves the package unchanged. | Test (TC-804) |
 
 ## Dependencies
 

@@ -352,25 +352,18 @@ impl Built {
     /// The retained recursive dependency artifacts in selected-identity order.
     pub(super) fn dependency_artifacts(
         &self,
-    ) -> Vec<(
-        &str,
-        std::sync::Arc<Emission>,
-        &filament_contract_model::CheckedPackageV2,
-    )> {
-        let mut held = BTreeMap::new();
-        let mut pending = vec![self.unit.package()];
-        while let Some(package) = pending.pop() {
-            for (identity, dependency) in package.dependencies() {
-                if held.insert(identity, dependency.as_ref()).is_none() {
-                    pending.push(dependency.as_ref());
-                }
-            }
-        }
-        held.into_iter()
-            .map(|(identity, dependency)| {
+    ) -> Vec<(&str, &Emission, &filament_contract_model::CheckedPackageV2)> {
+        self.unit
+            .package()
+            .dependency_selections()
+            .keys()
+            .map(|identity| {
                 (
                     identity.as_str(),
-                    dependency.remembered_emission().expect("retained emission"),
+                    self.unit
+                        .package()
+                        .dependency_emission(identity)
+                        .expect("retained emission"),
                     self.unit
                         .admitted_libraries()
                         .package(identity)

@@ -1442,18 +1442,14 @@ impl AdmittedPackageRead<'_> {
             })?;
         let mut held = BTreeMap::new();
         hold_closure(self.source, &mut held);
-        let remembered = held
+        let dependencies = held
             .iter()
-            .map(|(identity, source)| {
+            .map(|(identity, (_, linked))| {
                 let admitted = self.dependencies.package(identity).ok_or_else(fault)?;
-                let emission = source.remembered_emission().ok_or_else(fault)?;
+                let emission = linked.ok_or_else(fault)?;
                 Ok((admitted, emission))
             })
             .collect::<Result<Vec<_>, ViewFailure>>()?;
-        let dependencies: Vec<_> = remembered
-            .iter()
-            .map(|(admitted, emission)| (*admitted, &**emission))
-            .collect();
         let slots = project_package(
             &self.read.admitted,
             &self.emission,
@@ -1586,16 +1582,18 @@ pub fn supply_closure(
     .supply(package, evidence)
 }
 
-/// Every package of `package`'s dependency closure, by recomputed
-/// library name.
-fn hold_closure<'p>(
-    package: &'p CheckedPackage,
-    held: &mut BTreeMap<LibraryName, &'p CheckedPackage>,
-) {
-    let mut pending = vec![package];
+/// One library of a closure: its checked package, and the emission the
+/// closure's root linked it at.
+type HeldLibrary<'p> = (&'p CheckedPackage, Option<&'p Emission>);
+
+/// Every library of `root`'s dependency closure, by recomputed library name,
+/// as `root` linked it.
+fn hold_closure<'p>(root: &'p CheckedPackage, held: &mut BTreeMap<LibraryName, HeldLibrary<'p>>) {
+    let mut pending = vec![root];
     while let Some(package) = pending.pop() {
         for (id, dependency) in package.dependencies() {
-            if held.insert(id.clone(), dependency).is_none() {
+            let library = (&**dependency, root.dependency_emission(id));
+            if held.insert(id.clone(), library).is_none() {
                 pending.push(dependency);
             }
         }
@@ -1605,7 +1603,7 @@ fn hold_closure<'p>(
 /// One [`read_import_view`] call's reads: each package of the closure is
 /// admitted at most once.
 struct ClosureReader<'p> {
-    held: BTreeMap<LibraryName, &'p CheckedPackage>,
+    held: BTreeMap<LibraryName, HeldLibrary<'p>>,
     domain_packages: &'p fsl_semantics::model::intake::PackageInput,
     admitted: BTreeMap<LibraryName, Arc<CheckedPackageV2>>,
     limits: V2ReadLimits,
@@ -1613,16 +1611,17 @@ struct ClosureReader<'p> {
 }
 
 impl ClosureReader<'_> {
-    /// `package`, emitted and read under `identity`, with its closure's
-    /// admitted packages supplied first.
+    /// `package` read under `identity` from the emission it was linked at,
+    /// emitted when none was, with its closure's admitted packages supplied
+    /// first.
     fn read(
         &mut self,
         package: &CheckedPackage,
+        linked: Option<&Emission>,
         identity: LibraryName,
     ) -> Result<V2Read, ImportViewRefusal> {
         let fresh;
-        let remembered = package.remembered_emission();
-        let emission = match remembered.as_deref() {
+        let emission = match linked {
             Some(emission) => emission,
             None => {
                 fresh = emit_checked(package, self.emit).map_err(|refusal| {
@@ -1714,7 +1713,7 @@ impl ClosureReader<'_> {
             if self.admitted.contains_key(&identity) {
                 continue;
             }
-            let held =
+            let (held, linked) =
                 *self
                     .held
                     .get(&identity)
@@ -1730,7 +1729,7 @@ impl ClosureReader<'_> {
                 }
                 continue;
             }
-            let read = self.read(held, identity.clone())?;
+            let read = self.read(held, linked, identity.clone())?;
             self.admitted.insert(identity, read.admitted);
         }
         Ok(())

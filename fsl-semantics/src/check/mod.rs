@@ -8949,13 +8949,20 @@ impl CheckedGraph {
                 .collect::<Vec<_>>()
         })?;
         let relations = graph.retract_step_relations();
-        finish_step_relations(&mut graph, relations).map_err(|_| {
-            vec![AbstractionRefusal::Internal(
-                filament_semantic_value::catalog::InternalFault::new(
-                    "check.abstraction",
-                    "step-relations-derive-for-a-bound-relation",
-                ),
-            )]
+        finish_step_relations(&mut graph, relations).map_err(|found| {
+            found
+                .into_iter()
+                .map(|refusal| match *refusal.cause {
+                    CheckCause::Abstraction(cause) => *cause,
+                    // Every other refusal of the derivation is an invariant.
+                    _ => AbstractionRefusal::Internal(
+                        filament_semantic_value::catalog::InternalFault::new(
+                            "check.abstraction",
+                            "step-relations-derive-for-a-bound-relation",
+                        ),
+                    ),
+                })
+                .collect::<Vec<_>>()
         })?;
         graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
         Ok(graph)
@@ -8969,7 +8976,10 @@ impl CheckedGraph {
         for relation in &relations {
             if let Some(key) = relation.identity() {
                 self.semantic_graph.remove_finalized(&key);
-                self.occurrences.remove(&key);
+                self.occurrences
+                    .retract_last(&key, family::OccurrenceRole::Declaration);
+                self.occurrences
+                    .retract_last(&key, family::OccurrenceRole::Claim);
             }
             claims.extend(relation.occurrence().cloned());
         }
@@ -9026,16 +9036,11 @@ fn finish_step_relations(
             Some(
                 graph
                     .abstraction_nodes(relation)
-                    .map_err(|_| {
+                    .map_err(|reason| {
                         vec![CheckRefusal {
                             location: location.clone(),
-                            cause: Box::new(CheckCause::InternalFault(Box::new(
-                                KeyFault::StageFault(
-                                    filament_semantic_value::catalog::InternalFault::new(
-                                        "S4",
-                                        "step-relation-abstraction-node-keyed",
-                                    ),
-                                ),
+                            cause: Box::new(CheckCause::Abstraction(Box::new(
+                                AbstractionRefusal::of_nodes(reason),
                             ))),
                         }]
                     })?

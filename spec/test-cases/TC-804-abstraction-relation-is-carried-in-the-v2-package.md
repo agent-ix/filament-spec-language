@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Scope: FR-306-AC-1, FR-306-AC-2, FR-306-AC-5.
+Scope: FR-306-AC-1, FR-306-AC-2, FR-306-AC-5, FR-306-AC-6.
 
 ## Test Procedure
 
@@ -22,6 +22,8 @@ Scope: FR-306-AC-1, FR-306-AC-2, FR-306-AC-5.
    shared graph, and bind a relation that drops an operation frame, one that
    adds it, and one that targets other nodes. Check, for each, a unit that
    declares the bound relation.
+4. Bind, to a unit with a guarantee and to one with a step relation, a frame
+   whose Rust path ends in `::`; check a unit declaring that path.
 
 ## Expected Results
 
@@ -36,3 +38,6 @@ Scope: FR-306-AC-1, FR-306-AC-2, FR-306-AC-5.
    unit's; dropping the frame of `inc` refuses the guarantee item
    `missing_declaration`/`missing-name`; the graph shared before the binding
    is unchanged.
+4. Each binding and each check refuses `invalid_model_binding`/
+   `malformed-declaration` with the empty-segment cause and the path; the
+   refused binding leaves the package unchanged.

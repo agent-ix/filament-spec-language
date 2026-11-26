@@ -36,6 +36,7 @@ use fsl_foundation::{Code, Span};
 use super::CheckedGraph;
 use super::TemporalClauseNode;
 use super::abstraction::{
+    AbstractionNodeRefusal,
     AbstractionKey, CheckedAbstractionRelation, CheckedBinding, OperationKey, RustPath, name_parts,
 };
 use super::capability::{Capability, DeclarationFamily};
@@ -163,7 +164,7 @@ pub enum GuaranteeRefusal {
         /// The span of the name `A`.
         span: Span,
         /// Why.
-        reason: String,
+        reason: Box<AbstractionNodeRefusal>,
     },
     /// A check invariant is broken.
     Internal(InternalFault),
@@ -1221,9 +1222,12 @@ impl CheckedGraph {
             .ok_or_else(|| internal("guarantee-relation-is-checked"))?;
         let relation_node = self
             .abstraction_nodes(relation)
-            .map_err(|reason| GuaranteeRefusal::RelationNode {
-                span: form.relation.span,
-                reason: reason.to_string(),
+            .map_err(|reason| match reason {
+                AbstractionNodeRefusal::Internal(fault) => GuaranteeRefusal::Internal(*fault),
+                reason => GuaranteeRefusal::RelationNode {
+                    span: form.relation.span,
+                    reason: Box::new(reason),
+                },
             })?
             .relation()
             .key();

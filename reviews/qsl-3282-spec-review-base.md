@@ -25,3 +25,10 @@ Request changes on head 5bb1c4475ad785773df85a9fe765e6075fd955b4. FND-001: name 
 FR-306 also says a rebinding's relation node has an equal `node_id`. The key is derived from the relation's targets, so that holds only while the bound object types and populations stay the same. The new criterion should state which rebinding it covers.
 
 The TC-1111 rename is correct, and step 8 now matches NFR-015-AC-10.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | NFR-015-AC-9 now says `emit_checked` refuses `UnlocatedOccurrence` for the unsited relation's generated occurrence and `emit_package`, whose caller places it, includes the abstraction; TC-1111 step 7 and its expected result match. |
+| FND-002 | fixed | FR-306-AC-5 added (guarantee refusal and relation node, step-relation claim node, implementation references and requirement records equal a fresh check; shared graph unchanged), and the FR-306 `node_id` sentence is limited to bindings that target the same nodes. |

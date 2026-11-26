@@ -38,3 +38,20 @@ What is right:
 - The new tests write their expected occurrences (`[{"role":"declaration","ordinal":0}]`, empty) by hand. Both fail without the fix (`3282-red.log`: 7 passed, 2 failed).
 - `use ix_trace_rs::implements;` with the bare attribute. Tags are in a separate commit (9d58af5237). No new interface type is added.
 - The no-std check and clippy for `fsl-package` pass on the final head.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | The latest emission now replaces the remembered one, but a dependent's remembered emission is not dropped. An importer emitted earlier keeps the `dependency_clock_selections` it read from the dependency's first emission. After the caller re-emits the dependency (an `Arc` it kept from `Import`) under other selections, `emit_checked` of the importer returns bytes that name the first selections, while the closure readers (`checked_v2.rs` closure read, `checked_handoff::acquire_evidence`) hand out the dependency's second emission. Under first-wins the closure stayed consistent. Read only; this is a public-API path, not a shipped one (the lifecycle emits each library once per request, before its importer links) | fsl-package/src/checked.rs:677-682; fsl-package/src/emit.rs:5509-5530; fsl-package/src/checked_v2.rs:1442-1456 |
+| FND-006 | medium | `with_abstraction` maps every `finish_step_relations` refusal to one `AbstractionRefusal::Internal("step-relations-derive-for-a-bound-relation")`. One of them is an `abstraction_nodes` refusal that user input causes: a frame bound to a Rust path with an empty segment (`update::`) gives `EmptyRustSegment`, which `check_abstraction` does not refuse. Before this PR such a bind succeeded and emission refused with the typed `EmitRefusal::Abstraction(EmptyRustSegment)`. Now a package with a step relation over that frame refuses the bind as an internal fault and loses the cause, and a package with a guarantee refuses it as `Guarantee(RelationNode)`. The fresh-check route has the same InternalFault mapping (mod.rs:9036). Read only, not run | fsl-semantics/src/check/mod.rs:8939-8962; fsl-semantics/src/check/mod.rs:9020-9040; fsl-semantics/src/check/abstraction.rs:1176-1180 |
+| FND-007 | low | FR-306 prose and TC-804 step 3 say a rebind derives the step relation's occurrences again, but no test compares the bound graph's occurrences (or the emitted node's `occurrences`) with a fresh check. `retract_step_relations` removes every occurrence of the claim key (`OccurrenceMap::remove`), not only the two `finish_step_relations` records, so a role recorded earlier under that key would vanish without a test noticing | fsl-semantics/src/check/mod.rs:8966-8978; fsl-package/src/emit/tests/step_relation.rs |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | 42c5b1f808: `bind_abstraction_at` installs `CheckedGraph::with_abstraction`, which re-runs `check_declared_guarantees`; `a_rebind_that_drops_a_frame_refuses_the_guarantee_item` asserts `missing_declaration`/`missing-name`, equality with a fresh check, and the shared graph unchanged. |
+| FND-002 | fixed | 42c5b1f808: `with_abstraction` retracts and re-finishes the step relations with `finish_step_relations`, and the guarantee relation key is derived again. Tests cover dropping a frame, adding one, a first binding and a changed target set; implementations reference the new relation node_id. The claim key is `declared_node_key` of the declared name (lowering.rs:1297-1312). Requirement records are re-ranked, the emission is dropped, and `occurrences_by_location` is rebuilt; no other cache is keyed on it. |
+| FND-003 | fixed | 42c5b1f808: `RwLock<Option<Arc<Emission>>>`, and the latest `remember_emission` wins; `a_later_dependency_emission_replaces_the_remembered_one` asserts that the bytes differ and `authority-second`. The dependent consequence is FND-005. |
+| FND-004 | fixed | The PR body now cites FSpec FR-490-AC-6 and FR-306 "Rebinding is a new package value". |

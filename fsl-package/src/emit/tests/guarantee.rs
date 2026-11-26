@@ -10,9 +10,9 @@ use filament_exact::Identifier;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind, PropertyForm};
 use fsl_semantics::check::{
-    AbstractionKey, AbstractionRefusal, AssemblyCause, CheckCause, CheckRefusal,
-    CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot, ModelFamily,
-    SlotBacking, SlotRole,
+    AbstractionKey, AbstractionNodeRefusal, AbstractionRefusal, AssemblyCause, CheckCause,
+    CheckRefusal, CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot,
+    ModelFamily, SlotBacking, SlotRole,
 };
 use fsl_semantics::check::{
     AuthoredBinding, FrameBinding, ObjectBinding, OperationKey, PopulationBinding, RustField,
@@ -747,4 +747,46 @@ fn a_rebind_that_changes_the_targets_rekeys_the_guarantees_relation() {
         .relation()
         .key();
     assert_eq!(sole(&package).relation(), &relation);
+}
+
+/// FR-306-AC-6: a bound Rust path the guarantee's relation node cannot be
+/// written with refuses with that cause, the same on a binding and on a check
+/// of a unit declaring it.
+#[trace("TC-804", "FR-306-AC-6")]
+#[test]
+fn a_path_the_guarantees_relation_cannot_hold_refuses_with_its_cause_on_both_routes() {
+    let assert_empty_segment = |refusal: &GuaranteeRefusal| {
+        let GuaranteeRefusal::RelationNode { reason, .. } = refusal else {
+            panic!("a relation node refusal: {refusal:?}");
+        };
+        assert_eq!(
+            **reason,
+            AbstractionNodeRefusal::EmptyRustSegment {
+                spelling: "counter::Counter::".to_owned(),
+            }
+        );
+        assert_eq!(refusal.code(), fsl_foundation::Code::InvalidModelBinding);
+        assert_eq!(refusal.cause(), "malformed-declaration");
+    };
+
+    let mut package = checked(&unit(LIVENESS, RELATION, CASE_ONE));
+    let mut bindings = bindings_of(RELATION);
+    for binding in &mut bindings {
+        if let AuthoredBinding::Frame { value, .. } = binding {
+            value.function = RustPath::new("counter::Counter::");
+        }
+    }
+    let refusals = package
+        .bind_abstraction(&bindings)
+        .expect_err("the binding refuses");
+    let [AbstractionRefusal::Guarantee(bound)] = &refusals[..] else {
+        panic!("one guarantee refusal: {refusals:?}");
+    };
+    assert_empty_segment(bound);
+
+    let declared = RELATION.replace("counter::Counter::inc_cas", "counter::Counter::");
+    assert_empty_segment(&refused(
+        &unit(LIVENESS, &declared, CASE_ONE),
+        &[fixture::document(&["inc"])],
+    ));
 }

@@ -764,37 +764,21 @@ fn acquire_evidence(
     let mut evidence = compiled.emitted.evidence().clone();
     supply_documents(&mut evidence, &documents, "the unit")?;
     let root = compiled.checked.package();
-    let mut held = BTreeMap::new();
-    let mut pending = vec![root];
-    while let Some(package) = pending.pop() {
-        for (identity, dependency) in package.dependencies() {
-            if held
-                .insert(identity.as_str().to_owned(), dependency.as_ref())
-                .is_none()
-            {
-                pending.push(dependency);
-            }
-        }
-    }
     let mut artifacts: BTreeMap<String, DependencyArtifact> = BTreeMap::new();
-    for (identity, dependency) in held {
-        let remembered = dependency
-            .remembered_emission()
-            .ok_or_else(|| Error::Dependency {
-                identity: identity.clone(),
-                detail: "the checked acquisition retained no library emission".to_owned(),
-            })?;
-        let emission = fsl_package::Emission::clone(&remembered);
-        let selected = fsl_semantics::library::LibraryName::new(&identity).map_err(|error| {
-            Error::Dependency {
-                identity: identity.clone(),
-                detail: error.to_string(),
-            }
-        })?;
+    // The root's closure, each library as the root linked it.
+    for selected in root.dependency_selections().keys() {
+        let identity = selected.as_str().to_owned();
+        let emission =
+            root.dependency_emission(selected)
+                .cloned()
+                .ok_or_else(|| Error::Dependency {
+                    identity: identity.clone(),
+                    detail: "the checked acquisition retained no library emission".to_owned(),
+                })?;
         let package = compiled
             .checked
             .admitted_libraries()
-            .shared_package(&selected)
+            .shared_package(selected)
             .ok_or_else(|| Error::Dependency {
                 identity: identity.clone(),
                 detail: "the checked acquisition retained no library admission".to_owned(),

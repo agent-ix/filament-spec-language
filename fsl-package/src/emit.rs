@@ -5463,9 +5463,12 @@ fn write_external_keys(
                     .dependencies()
                     .get(vacant.key())
                     .ok_or(EmitRefusal::SourceMapInvariant)?;
-                // The dependency's own bytes, held to `limits.output_bytes`
-                // by `emit_checked`, give its graph order.
-                let emission = emit_checked(dependency, limits)?;
+                // The dependency's linked bytes, held to
+                // `limits.output_bytes`, give its graph order.
+                let emission = match emit_linked_dependency(package, vacant.key(), limits) {
+                    Some(linked) => linked?,
+                    None => emit_checked(dependency, limits)?,
+                };
                 let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
                     emission.package().bytes(),
                 )
@@ -5504,15 +5507,15 @@ fn dependency_selections(package: &CheckedPackage) -> Vec<CheckedDependencySelec
         .collect()
 }
 
-/// The caller-selected clocks used by this package's dependency closure, in
-/// ascending byte order of clock name.
+/// The caller-selected clocks used by this package's dependency closure, as
+/// it linked each library, in ascending byte order of clock name.
 fn dependency_clock_selections(
     package: &CheckedPackage,
 ) -> Option<Vec<CheckedDependencyClockSelection>> {
     let mut selections = BTreeMap::new();
-    let mut pending: Vec<_> = package.dependencies().values().map(AsRef::as_ref).collect();
-    while let Some(dependency) = pending.pop() {
-        if let Some(emission) = dependency.remembered_emission() {
+    let mut pending: Vec<_> = package.dependencies().iter().collect();
+    while let Some((identity, dependency)) = pending.pop() {
+        if let Some(emission) = package.dependency_emission(identity) {
             for binding in emission.temporal_rows().bindings() {
                 if !is_model_binding_name(&binding.clock_name) {
                     selections
@@ -5521,7 +5524,7 @@ fn dependency_clock_selections(
                 }
             }
         }
-        pending.extend(dependency.dependencies().values().map(AsRef::as_ref));
+        pending.extend(dependency.dependencies().iter());
     }
     (!selections.is_empty()).then(|| {
         selections
@@ -5567,6 +5570,19 @@ pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emis
         return remembered_within(&emission, limits, package.graph());
     }
     emit_checked_with_cancel(package, &Cancel::new(), limits)
+}
+
+/// The emission of the library `identity` that `package` linked
+/// ([`CheckedPackage::dependency_emission`]), held to `limits` as
+/// [`emit_checked`] holds a remembered one; `None` when `identity` is not in
+/// the closure `package` linked.
+pub fn emit_linked_dependency(
+    package: &CheckedPackage,
+    identity: &fsl_semantics::library::LibraryName,
+    limits: EmitLimits,
+) -> Option<Result<Emission, EmitRefusal>> {
+    let (graph, emission) = package.linked_dependency(identity)?;
+    Some(remembered_within(emission, limits, graph))
 }
 
 /// A remembered `emission`, when its canonical bytes fit `limits`.

@@ -158,6 +158,11 @@ computed over the package compiled with these rows.
   clocks of library units too. Which clock
   names a declaration may write is the rule of FR-233 (model subjects), FR-610
   (trace-subject roles) and FSpec FR-090 "Clock names", not this requirement's.
+- A linked package SHALL keep each library of its closure at the emission it
+  linked. Its own bytes, and the library bytes handed out with them, come from
+  those emissions, so emitting a library again under other selections changes
+  neither. One library reached through two paths at emissions with different
+  bytes is the diamond conflict of FR-307.
 - The emitter SHALL record, in the program package's lock member
   `dependency_clock_selections` (FSpec FR-322), one `{clock_name, clock}`
   entry for every clock name that a clock-bearing declaration of a library
@@ -263,6 +268,7 @@ computed over the package compiled with these rows.
 | FR-640-AC-14 | A request that carries `clocks` and is also handed an override refuses `invalid-request` at stage `request`, exit 20, on the compile entry and on the run entry, with a message naming `clocks` and `--clocks`, before any program is compiled; the same request without the override, and the override without the member, each proceed. Stage `request` is the refusal envelope's `stage`; the emitted `filament-outcome/1` document keeps `last_stage` `null`, since `request` is not an ADR-011 stage (FR-286, FR-287-AC-11). | Test (TC-2245) |
 | FR-640-AC-15 | A protocol under the timed profile with a `compensate` template and an `await`, emitted with a `timed` selection for each, is admitted by the strict reader and holds no `temporal_bindings` member, as is the same protocol emitted with no selection; event-position selections for them refuse as a profile mismatch; and a `timed` selection with an empty `unit` or another definition, for any one of them, refuses as an invalid temporal clock value naming that field at that declaration. | Test (TC-1660) |
 | FR-640-AC-16 | A package emitted by `emit_dependency_with_temporal_selections_and_cancel` and then again under other clock selections remembers the later emission, which a following `emit_checked` of it returns. | Test (TC-2212) |
+| FR-640-AC-17 | A linked package holds each library of its closure at the emission it linked: after a library is emitted again under other clock selections, the importer's `emit_checked` bytes, its lock `dependency_clock_selections` and the library emission it hands out with them hold the linked configuration; a link that reaches one library through two paths at emissions with different bytes refuses `invalid_package`/`conflicting-definition`. | Test (TC-2212) |
 
 ## Dependencies
 

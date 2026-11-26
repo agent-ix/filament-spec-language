@@ -1862,9 +1862,21 @@ impl<S> Default for OccurrenceMap<S> {
 }
 
 impl<S> OccurrenceMap<S> {
-    /// Take out every occurrence of `identity`.
-    pub(crate) fn remove(&mut self, identity: &NodeKey) {
-        self.spans.remove(identity);
+    /// Take out the latest occurrence of `identity` under `role`, undoing
+    /// one [`Self::record`]; every other occurrence stays.
+    pub(crate) fn retract_last(&mut self, identity: &NodeKey, role: OccurrenceRole) {
+        let Some(roles) = self.spans.get_mut(identity) else {
+            return;
+        };
+        if let Some(spans) = roles.get_mut(&role) {
+            spans.0.pop();
+            if spans.0.is_empty() {
+                roles.remove(&role);
+            }
+        }
+        if roles.is_empty() {
+            self.spans.remove(identity);
+        }
     }
 
     /// Record one occurrence of `identity` under `role`, at `span`. Ordinals
@@ -2398,6 +2410,30 @@ mod tests {
     use fsl_forms::{BuiltinType, TypeForm};
 
     const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
+
+    /// FR-306-AC-5: a rebind undoes the records it added under a claim node,
+    /// the latest of each role, and no other occurrence of that node.
+    #[ix_trace_rs::trace("TC-804", "FR-306-AC-5")]
+    #[test]
+    fn retracting_the_latest_occurrence_of_a_role_keeps_the_others() {
+        let node = filament_exact::NodeKey::new(
+            "pkg",
+            vec![filament_exact::PathSegment::Text("claim".to_owned())],
+            0,
+        )
+        .expect("a structural key");
+        let mut map = OccurrenceMap::default();
+        map.record(node.clone(), OccurrenceRole::Anchor, "anchor");
+        map.record(node.clone(), OccurrenceRole::Declaration, "earlier");
+        map.record(node.clone(), OccurrenceRole::Declaration, "added");
+        map.record(node.clone(), OccurrenceRole::Claim, "added");
+
+        map.retract_last(&node, OccurrenceRole::Declaration);
+        map.retract_last(&node, OccurrenceRole::Claim);
+
+        let left: Vec<_> = map.iter().map(|(_, _, span)| *span).collect();
+        assert_eq!(left, ["anchor", "earlier"]);
+    }
 
     /// A `Convert` target that does not resolve is refused while measuring,
     /// with the checker's own missing-name refusal, not measured as spelling.

@@ -22,3 +22,9 @@ Ticket: QSL-3282. Planless gap check of the criteria the PR claims: NFR-015-AC-9
 Request changes on head 5bb1c4475ad785773df85a9fe765e6075fd955b4: settle FND-001 together with the NFR-015-AC-9 wording (spec-review FND-001). Either reword AC-9 and TC-1111 step 7 to name `emit_package` with caller-placed regions and add a hand-valued assertion that `emit_checked` refuses `UnlocatedOccurrence`, or keep the AC and make `emit_checked` place an unsited relation.
 
 The `#[implements("NFR-015-AC-9")]` tag on `bind_abstraction` is honest: what the method implements is the reset, which is tested and holds. `#[implements("NFR-015-AC-10")]` on `bind_abstraction_at` and the AC-10 test are complete. The test binds at a site that the unit's regions resolve, emits through `emit_checked`, asserts the relation occurrence, checks the `MissingDeclaration` refusal, and checks the kept emission.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | 42c5b1f808: `a_binding_after_an_emission_emits_the_relation` asserts `emit_checked` refuses `UnlocatedOccurrence { role: Generated, ordinal: 0 }` with the hand-written population key, then the `emit_package` inclusion; NFR-015-AC-9 and TC-1111 step 7 name both emitters. |

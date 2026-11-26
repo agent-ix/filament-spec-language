@@ -430,9 +430,21 @@ pub enum AbstractionRefusal {
     /// A `compose` declaration refused (FSpec FR-491), a `Relation` family
     /// declaration beside the relation.
     Composition(Box<super::composition::CompositionRefusal>),
+    /// The relation checks but has no nodes, which a step relation reading it
+    /// needs.
+    RelationNodes(Box<AbstractionNodeRefusal>),
 }
 
 impl AbstractionRefusal {
+    /// A relation with no nodes: the one mapping of `reason`, for `check` and
+    /// for a binding.
+    pub(super) fn of_nodes(reason: AbstractionNodeRefusal) -> Self {
+        match reason {
+            AbstractionNodeRefusal::Internal(fault) => Self::Internal(*fault),
+            reason => Self::RelationNodes(Box::new(reason)),
+        }
+    }
+
     /// The catalog code.
     pub fn code(&self) -> Code {
         match self {
@@ -441,7 +453,8 @@ impl AbstractionRefusal {
             }
             Self::ConflictingBinding { .. }
             | Self::ConflictingField { .. }
-            | Self::MalformedDeclaration { .. } => Code::InvalidModelBinding,
+            | Self::MalformedDeclaration { .. }
+            | Self::RelationNodes(_) => Code::InvalidModelBinding,
             Self::Internal(_) => Code::RuntimeInvariant,
             Self::Guarantee(refusal) => refusal.code(),
             Self::Composition(refusal) => refusal.code(),
@@ -455,7 +468,7 @@ impl AbstractionRefusal {
             Self::ConflictingBinding { .. } | Self::ConflictingField { .. } => {
                 "conflicting-binding"
             }
-            Self::MalformedDeclaration { .. } => "malformed-declaration",
+            Self::MalformedDeclaration { .. } | Self::RelationNodes(_) => "malformed-declaration",
             Self::Internal(_) => "established-invariant-broken",
             Self::Guarantee(refusal) => refusal.cause(),
             Self::Composition(refusal) => refusal.cause(),
@@ -1137,7 +1150,7 @@ impl AbstractionNodes {
 }
 
 /// Why a checked relation has no nodes.
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]
 pub enum AbstractionNodeRefusal {
     /// The key names no `model`/`object_type` node of an admitted domain
     /// package: the declaration is not an object type, or its node is a

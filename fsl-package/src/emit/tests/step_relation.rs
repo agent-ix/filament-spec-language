@@ -8,7 +8,8 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::Identifier;
 use filament_semantic_value::checking::CheckMode;
 use fsl_semantics::check::{
-    AuthoredBinding, FrameBinding, OperationKey, PopulationBinding, RustPath, RustReceiver,
+    AbstractionNodeRefusal, AbstractionRefusal, AuthoredBinding, CheckCause, FrameBinding,
+    OperationKey, PopulationBinding, RustPath, RustReceiver,
 };
 use std::collections::BTreeMap;
 
@@ -852,6 +853,13 @@ fn a_step_relation_satisfies_fr180_ac1() {
 
 /// The relation unit with `bindings` declared as its abstraction relation.
 fn checked_graph_declaring(bindings: &str) -> fsl_semantics::check::CheckedGraph {
+    check_declaring(bindings).unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
+}
+
+/// The check of the unit declaring `bindings`.
+fn check_declaring(
+    bindings: &str,
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let unit = format!(
         "{}abstraction A using v {{\n{bindings}}}\n",
@@ -864,7 +872,6 @@ fn checked_graph_declaring(bindings: &str) -> fsl_semantics::check::CheckedGraph
             CheckingLimits::default(),
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
-        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
 }
 
 const HISTORY: &str = "population Config::config_history to \"store::history\";\n";
@@ -1059,5 +1066,110 @@ fn a_first_binding_derives_the_step_relations_code_claim() {
     assert_eq!(
         package.graph().semantic_graph().node(key.clone()),
         fresh.graph().semantic_graph().node(key)
+    );
+}
+
+/// [`update_binding`] bound to a Rust path with an empty segment.
+fn unsegmented_update_binding() -> AuthoredBinding {
+    let AuthoredBinding::Frame { key, mut value } = update_binding() else {
+        panic!("a frame binding");
+    };
+    value.function = RustPath::new("store::");
+    AuthoredBinding::Frame { key, value }
+}
+
+/// The refusal both routes give for [`unsegmented_update_binding`].
+fn assert_empty_segment(refusal: &AbstractionRefusal) {
+    assert_eq!(
+        refusal,
+        &AbstractionRefusal::RelationNodes(Box::new(AbstractionNodeRefusal::EmptyRustSegment {
+            spelling: "store::".to_owned(),
+        }))
+    );
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidModelBinding);
+    assert_eq!(refusal.cause(), "malformed-declaration");
+}
+
+/// FR-306-AC-6: a bound Rust path the step relation cannot be derived with
+/// refuses the binding with that cause, not as an internal fault, and leaves
+/// the package unchanged.
+#[trace("TC-804", "FR-306-AC-6")]
+#[test]
+fn a_binding_a_step_relation_cannot_read_refuses_with_its_cause() {
+    let mut package = CheckedPackage::link(checked_graph_declaring(&format!("{HISTORY}{UPDATE}")));
+    let requirements = package.graph().requirements().clone();
+    let refusals = package
+        .bind_abstraction(&[unsegmented_update_binding()])
+        .expect_err("the binding refuses");
+    let [refusal] = &refusals[..] else {
+        panic!("one refusal: {refusals:?}");
+    };
+    assert_empty_segment(refusal);
+    assert_eq!(package.graph().requirements(), &requirements);
+    assert!(step_claim(package.graph()).1);
+}
+
+/// FR-306-AC-6: checking a unit that declares that path refuses with the same
+/// cause as the binding does.
+#[trace("TC-804", "FR-306-AC-6")]
+#[test]
+fn checking_a_path_a_step_relation_cannot_read_refuses_with_its_cause() {
+    let refusals =
+        check_declaring(&UPDATE.replace("store::update", "store::")).expect_err("the unit refuses");
+    let [refusal] = &refusals[..] else {
+        panic!("one refusal: {refusals:?}");
+    };
+    let CheckCause::Abstraction(cause) = refusal.cause.as_ref() else {
+        panic!("an abstraction refusal: {refusal:?}");
+    };
+    assert_empty_segment(cause);
+}
+
+/// The claim node's occurrences: role, ordinal and location.
+fn claim_occurrences(graph: &fsl_semantics::check::CheckedGraph) -> Vec<(String, u64, String)> {
+    let (claim, _) = step_claim(graph);
+    graph
+        .occurrences()
+        .filter(|(node, _, _)| *node == claim)
+        .map(|(_, origin, location)| {
+            (
+                origin.role().to_string(),
+                origin.ordinal(),
+                format!("{location:?}"),
+            )
+        })
+        .collect()
+}
+
+/// FR-306-AC-5: a rebind leaves the claim node with the occurrences a fresh
+/// check records, one `claim` and one `declaration`.
+#[trace("TC-804", "FR-306-AC-5")]
+#[test]
+fn a_rebind_records_the_claim_occurrences_of_a_fresh_check() {
+    let (_, package) = rebound(update_binding());
+    let fresh = CheckedPackage::link(checked_graph_declaring(UPDATE));
+    let held = claim_occurrences(package.graph());
+    assert_eq!(
+        held.iter()
+            .map(|(role, ordinal, _)| (role.as_str(), *ordinal))
+            .collect::<Vec<_>>(),
+        [("claim", 0), ("declaration", 0)]
+    );
+    assert_eq!(held, claim_occurrences(fresh.graph()));
+    let emitted = |package: &CheckedPackage| {
+        let wire = wire(&emit_checked(package).expect("the package emits"));
+        nodes(&wire)
+            .iter()
+            .find(|node| node["semantic_form"] == "step_relation")
+            .expect("the step-relation node")["occurrences"]
+            .clone()
+    };
+    assert_eq!(emitted(&package), emitted(&fresh));
+    assert_eq!(
+        emitted(&package),
+        json!([
+            {"role": "claim", "ordinal": 0},
+            {"role": "declaration", "ordinal": 0},
+        ])
     );
 }

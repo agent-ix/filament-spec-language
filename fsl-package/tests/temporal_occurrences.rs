@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Temporal occurrence emission, row identity and clock-selection refusals.
 
+use std::sync::Arc;
+
 use filament_contract_model::ClockConfiguration;
 use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{
     emit_checked, emit_checked_with_temporal_selections,
-    emit_dependency_with_temporal_selections_and_cancel, CheckedPackage, EmitLimits, EmitRefusal,
-    TemporalClockSelection,
+    emit_dependency_with_temporal_selections_and_cancel, emit_linked_dependency, CheckedPackage,
+    EmitLimits, EmitRefusal, Import, LinkRefusal, TemporalClockSelection,
 };
 use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::library::LibraryName;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -608,4 +611,120 @@ fn a_later_dependency_emission_replaces_the_remembered_one() {
         wire["temporal_bindings"][0]["clock"]["sequence_authority"],
         "authority-second"
     );
+}
+
+/// FR-640-AC-17: an importer keeps the library emission it linked, in its own
+/// bytes and in the library bytes it hands out, after the library is emitted
+/// again under another sequence authority; a link over two importers that
+/// linked different bytes refuses.
+#[trace("TC-2212", "FR-640-AC-17")]
+#[test]
+fn an_importer_keeps_the_library_emission_it_linked() {
+    // A trace-subject clause writes its own clock name, which the importer's
+    // lock records.
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile w = \"{EVENT}\";\n\
+         record Reading {{ level: Int[0, 9]; }}\n\
+         temporal Late using w over (r: Reading) clock \"lib-ms\" \
+         on origin {{ eventually[0,1] holds(r.level > 0) }}\n"
+    );
+    let model = include_bytes!("fixtures/verification-plan-model.semantic-ir.json");
+    let checked = |source: &str, name: &str| {
+        declarations_named(source, model, name)
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
+            .expect("S3 checks the source")
+    };
+    let library_graph = checked(&source, "test/lib");
+    let span = library_graph.temporal_clauses()[0].clause().span();
+    let source_ref = library_graph.source().clone();
+    let library = Arc::new(CheckedPackage::link(library_graph));
+    let limits = EmitLimits::new(1 << 32);
+    let emit_library_under = |authority: &str| {
+        let selection =
+            TemporalClockSelection::new(source_ref.clone(), span, event_clock(authority));
+        emit_dependency_with_temporal_selections_and_cancel(
+            &library,
+            &[selection],
+            &Cancel::new(),
+            limits,
+        )
+        .expect("the selection emits")
+    };
+    let identity = LibraryName::new("test/lib").expect("a library identity");
+    let plain = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function noop using v(): Boolean pure { true }\n";
+    let importer = |name: &str| {
+        CheckedPackage::link_with(
+            checked(plain, name),
+            vec![Import {
+                identity: identity.clone(),
+                package: Arc::clone(&library),
+            }],
+            limits,
+        )
+        .expect("the importer links")
+    };
+    let authority = |emission: &fsl_package::Emission| {
+        document(emission)["temporal_bindings"][0]["clock"]["sequence_authority"].clone()
+    };
+    let recorded = |emission: &fsl_package::Emission| {
+        document(emission)["lock"]["dependency_clock_selections"][0]["clock"]["sequence_authority"]
+            .clone()
+    };
+
+    let first = emit_library_under("first");
+    let emitted_before = importer("test/left");
+    let emitted_after = importer("test/other");
+    let bytes_before = emit_checked(&emitted_before, limits).expect("the importer emits");
+    let second = emit_library_under("second");
+    let right = importer("test/right");
+
+    assert_eq!(recorded(&bytes_before), "authority-first");
+    for package in [&emitted_before, &emitted_after] {
+        let bytes = emit_checked(package, limits).expect("the importer emits");
+        assert_eq!(recorded(&bytes), "authority-first");
+        let held = package
+            .dependency_emission(&identity)
+            .expect("the linked library");
+        assert_eq!(authority(held), "authority-first");
+        assert_eq!(held.package().bytes(), first.package().bytes());
+        let handed = emit_linked_dependency(package, &identity, limits)
+            .expect("the library is in the closure")
+            .expect("it fits the limit");
+        assert_eq!(handed.package().bytes(), first.package().bytes());
+    }
+    let latest = emit_checked(&library, limits).expect("the library's latest emission");
+    assert_eq!(latest.package().bytes(), second.package().bytes());
+    assert_eq!(authority(&latest), "authority-second");
+    assert_eq!(
+        recorded(&emit_checked(&right, limits).expect("the later importer emits")),
+        "authority-second"
+    );
+
+    let refusal = CheckedPackage::link_with(
+        checked(plain, "test/top"),
+        [("test/left", emitted_before), ("test/right", right)]
+            .into_iter()
+            .map(|(name, package)| Import {
+                identity: LibraryName::new(name).expect("a library identity"),
+                package: Arc::new(package),
+            })
+            .collect(),
+        limits,
+    )
+    .expect_err("two paths hold different bytes of one library");
+    assert!(matches!(
+        &refusal,
+        LinkRefusal::ConflictingDefinition { identity: conflicting, .. }
+            if *conflicting == identity
+    ));
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidPackage);
+    assert_eq!(refusal.cause(), Some("conflicting-definition"));
 }

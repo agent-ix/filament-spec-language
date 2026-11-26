@@ -770,12 +770,14 @@ pub(crate) fn dependency_packages(
 ) -> Option<Vec<fsl_replay::HybridProcessDependency>> {
     let mut closure: Vec<fsl_replay::HybridProcessDependency> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    add_dependencies(package, emit, &mut seen, &mut closure)?;
+    add_dependencies(package, package, emit, &mut seen, &mut closure)?;
     Some(closure)
 }
 
-/// `package`'s dependencies after their own, each once.
+/// `package`'s dependencies after their own, each once, with the bytes `root`
+/// linked each at.
 fn add_dependencies(
+    root: &fsl_package::CheckedPackage,
     package: &fsl_package::CheckedPackage,
     emit: fsl_package::EmitLimits,
     seen: &mut std::collections::BTreeSet<String>,
@@ -785,8 +787,8 @@ fn add_dependencies(
         if !seen.insert(identity.to_string()) {
             continue;
         }
-        add_dependencies(dependency, emit, seen, closure)?;
-        let emission = fsl_package::emit_checked(dependency, emit).ok()?;
+        add_dependencies(root, dependency, emit, seen, closure)?;
+        let emission = fsl_package::emit_linked_dependency(root, identity, emit)?.ok()?;
         closure.push(fsl_replay::HybridProcessDependency {
             identity: identity.to_string(),
             package: emission.package().bytes().to_vec(),
