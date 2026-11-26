@@ -504,7 +504,7 @@ pub(crate) fn package_global_behavior_item<'a>(
             }
             let instances = match claim_over_instances(index, &model, &over_type) {
                 Ok(instances) => instances,
-                Err(report) => return report,
+                Err(report) => return *report,
             };
             let role_bindings = package_role_bindings(&program, &binding, selected_protocol);
             let instances =
@@ -520,16 +520,16 @@ pub(crate) fn package_global_behavior_item<'a>(
             let mut reports = Vec::with_capacity(instances.len());
             let mut remaining = temporal.clone();
             for over in instances {
-                let subject = package_subject(
-                    &input,
-                    &binding,
-                    &limits,
-                    &protocol,
+                let subject = package_subject(PackageSubjectParts {
+                    input: &input,
+                    binding: &binding,
+                    limits: &limits,
+                    protocol: &protocol,
                     over,
-                    role_bindings.clone(),
-                    memory.clone(),
-                    selected_protocol,
-                );
+                    roles: role_bindings.clone(),
+                    memory: memory.clone(),
+                    selected: selected_protocol,
+                });
                 let replay_subject = clone_protocol_subject(&subject);
                 let certificate_subject = clone_protocol_subject(&subject);
                 let scan_subject = clone_protocol_subject(&subject);
@@ -704,7 +704,7 @@ pub(crate) fn global_behavior_item<'a>(
             }
             let instances = match claim_over_instances(index, &model, &over_type) {
                 Ok(instances) => instances,
-                Err(report) => return report,
+                Err(report) => return *report,
             };
             let selected_over = form
                 .protocol
@@ -791,7 +791,7 @@ fn claim_over_instances(
     index: fsl_foundation::RequestIndex,
     model: &ModelSystem<'_>,
     over_type: &filament_exact::ValueType,
-) -> Result<Vec<fsl_eval::model_subject::ModelInstance>, crate::analyze::EngineReport> {
+) -> Result<Vec<fsl_eval::model_subject::ModelInstance>, Box<crate::analyze::EngineReport>> {
     if matches!(over_type, filament_exact::ValueType::Reference(_)) {
         return model
             .claim_instances(over_type)
@@ -802,16 +802,18 @@ fn claim_over_instances(
                     .collect()
             })
             .map_err(|failure| match failure {
-                fsl_eval::simulation::model::NoClaimInstances::NoInstance => {
+                fsl_eval::simulation::model::NoClaimInstances::NoInstance => Box::new({
                     empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance)
-                }
-                fsl_eval::simulation::model::NoClaimInstances::NoInitialState => {
+                }),
+                fsl_eval::simulation::model::NoClaimInstances::NoInitialState => Box::new({
                     empty_population_report(index, fsl_replay::InconclusiveCause::NoInitialState)
-                }
+                }),
                 fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
                     fsl_eval::simulation::NotSimulated::RequiresBound(_),
-                ) => crate::analyze::EngineReport::Refused(crate::analyze::Refusal::RequiresBound),
-                _ => internal_fault(),
+                ) => Box::new(crate::analyze::EngineReport::Refused(
+                    crate::analyze::Refusal::RequiresBound,
+                )),
+                _ => Box::new(internal_fault()),
             });
     }
     Ok(vec![fsl_eval::model_subject::ModelInstance {
@@ -876,16 +878,30 @@ fn package_role_bindings(
         .collect()
 }
 
-fn package_subject<'a>(
-    input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
-    binding: &crate::analyze::SubjectBinding<'a>,
-    limits: &crate::analyze::AnalyzeLimits,
-    protocol: &str,
+struct PackageSubjectParts<'a> {
+    input: &'a fsl_eval::simulation::model::ModelCheckInput<'a>,
+    binding: &'a crate::analyze::SubjectBinding<'a>,
+    limits: &'a crate::analyze::AnalyzeLimits,
+    protocol: &'a str,
     over: fsl_eval::model_subject::ModelInstance,
     roles: Vec<fsl_eval::model_subject::RoleBinding>,
     memory: fsl_eval::simulation::protocol::ResolvedMemory,
-    selected: Option<&crate::analyze::request::ProtocolBinding>,
+    selected: Option<&'a crate::analyze::request::ProtocolBinding>,
+}
+
+fn package_subject<'a>(
+    parts: PackageSubjectParts<'a>,
 ) -> fsl_eval::model_subject::ProtocolSubject<'a> {
+    let PackageSubjectParts {
+        input,
+        binding,
+        limits,
+        protocol,
+        over,
+        roles,
+        memory,
+        selected,
+    } = parts;
     fsl_eval::model_subject::ProtocolSubject {
         model: fsl_eval::model_subject::ModelSubject {
             simulation: fsl_eval::simulation::model::ModelSimulationRequest {

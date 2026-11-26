@@ -14,20 +14,20 @@ use fsl_eval::model_subject::{
 };
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    live_instance_bound, over_reference, send_record_json, transition_json, Capacities,
-    MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
-    ResolvedMemory, SubjectMemory,
+    Capacities, MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
+    ResolvedMemory, SubjectMemory, live_instance_bound, over_reference, send_record_json,
+    transition_json,
 };
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_eval::temporal::{TemporalOutcome, TemporalRefusal};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    evaluate_protocol_trace, settle_protocol_check, undefined_finding, CounterexampleKind,
-    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep,
-    ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceEnd, ProtocolTraceSubject,
-    ProtocolWire, QualifiedName, ReplayTargetMembers, RequestTargetWire, TemporalCounterexample,
-    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    CounterexampleKind, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
+    ModelStep, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceEnd,
+    ProtocolTraceSubject, ProtocolWire, QualifiedName, ReplayTargetMembers, RequestTargetWire,
+    TemporalCounterexample, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    evaluate_protocol_trace, settle_protocol_check, undefined_finding,
 };
 use fsl_semantics::check::{CheckedProtocol, TemporalClauseNode};
 use ix_trace_rs::implements;
@@ -40,8 +40,8 @@ use fsl_semantics::check::{Capability, DeclarationFamily};
 
 use super::manifest::BACKEND_ID;
 use crate::analyze::{
-    derived_target, replay_protocol_over, AnalyzeItem, AnalyzeLimits, EngineReport, NoLetters,
-    ProtocolReplayInputs, Refusal, ReplayShape, SourceProvision, SubjectBinding,
+    AnalyzeItem, AnalyzeLimits, EngineReport, NoLetters, ProtocolReplayInputs, Refusal,
+    ReplayShape, SourceProvision, SubjectBinding, derived_target, replay_protocol_over,
 };
 
 /// The FSpec FR-433 trace document a `finite-replay` item names: a format
@@ -325,8 +325,6 @@ pub(crate) enum ReplayFault {
     Protocol,
     /// The model admission refused the subject.
     Admission(Box<fsl_semantics::model::observation::AdmissionFailure>),
-    /// A claim's object population is empty or has no initial state.
-    ClaimInstances(fsl_eval::simulation::model::NoClaimInstances),
     /// An expansion stopped before the step could be decided.
     Stopped(fsl_eval::simulation::ExpansionStop),
     /// An invariant of the system broke.
@@ -732,25 +730,6 @@ impl<'a> ReplaySubject<'a, '_> {
             .map_err(|_| ReplayFault::Broken)
     }
 
-    /// The non-empty object population for the protocol's `over` input.
-    #[implements("FR-125-AC-13")]
-    pub(crate) fn claim_instances(
-        &self,
-    ) -> Result<fsl_eval::simulation::model::ClaimInstances, ReplayFault> {
-        let input = self
-            .protocol
-            .slots
-            .binders
-            .first()
-            .filter(|binder| binder.node.is_none())
-            .ok_or(ReplayFault::Broken)?;
-        let model = ModelSystem::new(self.simulation())
-            .map_err(|failure| ReplayFault::Admission(Box::new(failure)))?;
-        model
-            .claim_instances(&input.value_type)
-            .map_err(ReplayFault::ClaimInstances)
-    }
-
     /// The temporal clauses the protocol requires (FR-218), in `requires`
     /// order.
     pub(crate) fn required(&self) -> Result<Vec<&'a TemporalClauseNode>, ReplayFault> {
@@ -996,7 +975,7 @@ impl Run<'_, '_> {
         let shape = match clause {
             Some(node) => {
                 let name = QualifiedName::new(vec![
-                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?
+                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?,
                 ])
                 .map_err(|_| ReplayFault::Broken)?;
                 ReplayShape {
@@ -1092,7 +1071,7 @@ fn report_fault(error: ReplayFault) -> EngineReport {
         }
         ReplayFault::Stopped(stop) => EngineReport::Refused(Refusal::Failed(stop.cause)),
         ReplayFault::UnboundCapacity => EngineReport::Refused(Refusal::RequiresBound),
-        ReplayFault::Protocol | ReplayFault::Broken | ReplayFault::ClaimInstances(_) => fault(),
+        ReplayFault::Protocol | ReplayFault::Broken => fault(),
     }
 }
 
@@ -1225,59 +1204,130 @@ pub(crate) fn package_finite_replay_item<'a>(
     protocol: String,
     trace: Result<SuppliedTrace, TraceDefect>,
 ) -> AnalyzeItem<'a> {
-    AnalyzeItem::new(index, Capability::FiniteReplay, Some(DeclarationFamily::Protocol), Mode::Bounded, BACKEND_ID, move |_cancel| {
-        let trace = match trace {
-            Ok(trace) => trace,
-            Err(defect) => return declined(defect.cause(), defect.position(), Some(defect.path().to_owned()).filter(|path| !path.is_empty())),
-        };
-        let Some(form) = input.evaluator.package_protocol(&protocol) else { return fault(); };
-        let memory = match ResolvedMemory::resolve_package(&form, &[]) { Ok(memory) => memory, Err(_) => return fault() };
-        let program = match fsl_eval::simulation::protocol::PackageProtocolProgram::with_memory(&input, form, memory.clone()) {
-            Ok(program) => program,
-            Err(_) => return fault(),
-        };
-        let simulation = || ModelSimulationRequest {
-            input: input.clone(), packages: binding.packages, normalization: limits.normalization,
-            snapshots: binding.snapshots, initial: binding.initial.clone(), universes: binding.universes.clone(),
-            observation: limits.observation, expansion: ExpansionLimits { max_candidates: u64::MAX },
-            meter: limits.accounting, emit: limits.emit,
-        };
-        let model = match ModelSystem::new(simulation()) {
-            Ok(model) => model,
-            Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
-        };
-        let instances = match model.instances(&program.over_type) { Ok(instances) => instances, Err(_) => return fault() };
-        let selected = binding.universes.iter().map(|universe| universe.population.package.as_str()).collect::<std::collections::BTreeSet<_>>();
-        let roles = program.roles.iter().filter(|role| !role.replicated).filter_map(|role| {
-            let model = role.model_identity.original().package();
-            selected.contains(model).then(|| RoleBinding { role: role.name.clone(), model: model.to_owned() })
-        }).collect::<Vec<_>>();
-        let mut furthest = None;
-        for instance in instances {
-            let subject = ProtocolSubject {
-                model: ModelSubject { simulation: simulation(), proof_bounds: Vec::new() },
-                protocol: protocol.clone(), over: instance.clone(), roles: roles.clone(), capacities: Vec::new(), memory: memory.clone(),
+    AnalyzeItem::new(
+        index,
+        Capability::FiniteReplay,
+        Some(DeclarationFamily::Protocol),
+        Mode::Bounded,
+        BACKEND_ID,
+        move |_cancel| {
+            let trace = match trace {
+                Ok(trace) => trace,
+                Err(defect) => {
+                    return declined(
+                        defect.cause(),
+                        defect.position(),
+                        Some(defect.path().to_owned()).filter(|path| !path.is_empty()),
+                    );
+                }
+            };
+            let Some(form) = input.evaluator.package_protocol(&protocol) else {
+                return fault();
+            };
+            let memory = match ResolvedMemory::resolve_package(&form, &[]) {
+                Ok(memory) => memory,
+                Err(_) => return fault(),
+            };
+            let program = match fsl_eval::simulation::protocol::PackageProtocolProgram::with_memory(
+                &input,
+                form,
+                memory.clone(),
+            ) {
+                Ok(program) => program,
+                Err(_) => return fault(),
+            };
+            let simulation = || ModelSimulationRequest {
+                input: input.clone(),
+                packages: binding.packages,
+                normalization: limits.normalization,
+                snapshots: binding.snapshots,
+                initial: binding.initial.clone(),
+                universes: binding.universes.clone(),
+                observation: limits.observation,
+                expansion: ExpansionLimits {
+                    max_candidates: u64::MAX,
+                },
+                meter: limits.accounting,
+                emit: limits.emit,
             };
             let model = match ModelSystem::new(simulation()) {
                 Ok(model) => model,
                 Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
             };
-            let system = match ProtocolSystem::new_package(model, &subject, fsl_eval::simulation::protocol::Sc) {
-                Ok(system) => system.with_max_live_instances(live_instance_bound(None)),
-                Err(_) => return report_fault(ReplayFault::Protocol),
+            let instances = match model.instances(&program.over_type) {
+                Ok(instances) => instances,
+                Err(_) => return fault(),
             };
-            let formula = Formula { required: &[], instance: &instance, accounting: limits.accounting };
-            match replay_steps(&system, &trace, &formula) {
-                Ok(ReplayVerdict::Replayed(steps)) => return finite_report(FiniteReplayReport::Replayed(u64::try_from(steps).unwrap_or(u64::MAX))),
-                Ok(ReplayVerdict::StaleStep(position)) => furthest = Some(furthest.map_or(position, |held: usize| held.max(position))),
-                Ok(ReplayVerdict::NoInitialState) => {},
-                Ok(ReplayVerdict::Undefined(_) | ReplayVerdict::Claimed(_)) => return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new("unsupported_construct", "not-yet-implemented"))),
-                Err(error) => return report_fault(error),
+            let selected = binding
+                .universes
+                .iter()
+                .map(|universe| universe.population.package.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            let roles = program
+                .roles
+                .iter()
+                .filter(|role| !role.replicated)
+                .filter_map(|role| {
+                    let model = role.model_identity.original().package();
+                    selected.contains(model).then(|| RoleBinding {
+                        role: role.name.clone(),
+                        model: model.to_owned(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut furthest = None;
+            for instance in instances {
+                let subject = ProtocolSubject {
+                    model: ModelSubject {
+                        simulation: simulation(),
+                        proof_bounds: Vec::new(),
+                    },
+                    protocol: protocol.clone(),
+                    over: instance.clone(),
+                    roles: roles.clone(),
+                    capacities: Vec::new(),
+                    memory: memory.clone(),
+                };
+                let model = match ModelSystem::new(simulation()) {
+                    Ok(model) => model,
+                    Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
+                };
+                let system = match ProtocolSystem::new_package(
+                    model,
+                    &subject,
+                    fsl_eval::simulation::protocol::Sc,
+                ) {
+                    Ok(system) => system.with_max_live_instances(live_instance_bound(None)),
+                    Err(_) => return report_fault(ReplayFault::Protocol),
+                };
+                let formula = Formula {
+                    required: &[],
+                    instance: &instance,
+                    accounting: limits.accounting,
+                };
+                match replay_steps(&system, &trace, &formula) {
+                    Ok(ReplayVerdict::Replayed(steps)) => {
+                        return finite_report(FiniteReplayReport::Replayed(
+                            u64::try_from(steps).unwrap_or(u64::MAX),
+                        ));
+                    }
+                    Ok(ReplayVerdict::StaleStep(position)) => {
+                        furthest = Some(furthest.map_or(position, |held: usize| held.max(position)))
+                    }
+                    Ok(ReplayVerdict::NoInitialState) => {}
+                    Ok(ReplayVerdict::Undefined(_) | ReplayVerdict::Claimed(_)) => {
+                        return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new(
+                            "unsupported_construct",
+                            "not-yet-implemented",
+                        )));
+                    }
+                    Err(error) => return report_fault(error),
+                }
             }
-        }
-        match furthest {
-            Some(position) => declined("invalid-value", Some(position), None),
-            None => declined("invalid-value", None, Some("/initial_state".to_owned())),
-        }
-    })
+            match furthest {
+                Some(position) => declined("invalid-value", Some(position), None),
+                None => declined("invalid-value", None, Some("/initial_state".to_owned())),
+            }
+        },
+    )
 }
