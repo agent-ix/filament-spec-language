@@ -37,8 +37,9 @@ use filament_exact::{Cancel, Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
     GuardedStep, ModelSimState, PlaceConstraint, TerminalClass, TimedStop, TimedSystem,
+    UndecidedReading,
 };
-use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup};
+use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::ReductionKind;
 use fsl_replay::{
@@ -148,6 +149,9 @@ pub struct TimedStateGraph {
     pub edges: Vec<TimedStateGraphEdge>,
     /// Each initial state's graph node, in the subject's initial order.
     pub initials: Vec<usize>,
+    /// Undefined evaluations encountered at reachable nodes, in breadth-first
+    /// discovery order.
+    pub undefined: Vec<TimedStateGraphUndefined>,
     /// Counts for the exploration.
     pub stats: ZoneStats,
     /// The scale factor shared by the node zones.
@@ -156,6 +160,15 @@ pub struct TimedStateGraph {
     pub(super) lower: Vec<Option<BigInt>>,
     /// The upper LU simulation bounds used to explore and certify the graph.
     pub(super) upper: Vec<Option<BigInt>>,
+}
+
+/// An undefined timed-subject evaluation at one explored state-graph node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimedStateGraphUndefined {
+    /// The node where evaluation was undefined.
+    pub node: usize,
+    /// The timed member and undefined cause.
+    pub reading: UndecidedReading,
 }
 
 /// A request to EN-6.
@@ -408,6 +421,7 @@ pub enum ZoneCheckOutcome<S> {
 ///
 /// [`ZoneCheckRefusal`] if the timed subject cannot be explored or the
 /// caller cancels the run.
+#[implements("FR-852-AC-9", "FR-852-AC-10", "FR-852-AC-11")]
 pub fn explore_timed_state_graph(
     subject: &TimedSystem<'_, '_>,
     limits: ZoneCheckLimits,
@@ -432,7 +446,7 @@ pub fn explore_timed_state_graph(
             _ => return Err(ZoneCheckRefusal::Fault("state-graph-halt")),
         },
     };
-    let nodes = run
+    let nodes: Vec<TimedStateGraphNode> = run
         .nodes
         .iter()
         .map(|node| TimedStateGraphNode {
@@ -440,6 +454,30 @@ pub fn explore_timed_state_graph(
             zone: node.zone.clone(),
         })
         .collect();
+    let mut undefined = run
+        .undefined
+        .iter()
+        .filter_map(|(key, reading)| {
+            let node = run.keys.iter().position(|candidate| candidate == key)?;
+            Some(TimedStateGraphUndefined {
+                node,
+                reading: reading.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    for (node, state) in run.nodes.iter().enumerate() {
+        if undefined.iter().any(|found| found.node == node) {
+            continue;
+        }
+        if let Err(TimedStop::Undecided(reading)) = subject.guarded_steps(&state.state) {
+            if reading.cause.is_some() {
+                undefined.push(TimedStateGraphUndefined {
+                    node,
+                    reading: *reading,
+                });
+            }
+        }
+    }
     let mut edges = Vec::new();
     let graph_edges = run.edges.clone();
     for edge in &graph_edges {
@@ -463,10 +501,37 @@ pub fn explore_timed_state_graph(
     edges.dedup_by(|right, left| {
         right.from == left.from && right.to == left.to && right.transition == left.transition
     });
+    let model_system = subject.system();
+    for (node, graph_node) in nodes.iter().enumerate() {
+        if undefined.iter().any(|found| found.node == node) {
+            continue;
+        }
+        let Ok(expansion) = model_system.successors(&graph_node.state) else {
+            continue;
+        };
+        let Ok(TerminalClass::Undefined { model, cause }) = model_system
+            .terminal_class(&graph_node.state, !expansion.successors.is_empty())
+        else {
+            continue;
+        };
+        undefined.push(TimedStateGraphUndefined {
+            node,
+            reading: UndecidedReading {
+                site: fsl_eval::simulation::model::TimedSite::Terminal {
+                    model: model.identity().to_owned(),
+                },
+                object: None,
+                cause: Some(cause),
+                transition: None,
+                location: model_system.terminal_locus(&model),
+            },
+        });
+    }
     Ok(TimedStateGraph {
         nodes,
         edges,
         initials,
+        undefined,
         stats,
         scale: run.scale,
         lower: run.lower,
@@ -1113,6 +1178,8 @@ pub(super) struct Run<'r, 's, 'a> {
     escape_edges: u64,
     /// The guarded steps of each model state reached, by its key.
     steps: BTreeMap<Vec<u8>, Vec<GuardedStep>>,
+    /// Undefined timed guards retained by state-graph exploration.
+    undefined: Vec<(Vec<u8>, UndecidedReading)>,
     /// The first instance an admitted behaviour read short of data for.
     insufficient: Option<ModelInstance>,
     /// The group the run's states are canonicalised under (FSpec FR-430).
@@ -1172,6 +1239,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             escape_states: 0,
             escape_edges: 0,
             steps: BTreeMap::new(),
+            undefined: Vec::new(),
             insufficient: None,
             group: SymmetryGroup::default(),
             reduced: false,
@@ -1816,7 +1884,16 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         if let Some(steps) = self.steps.get(&key) {
             return Ok(steps.clone());
         }
-        let steps = self.timed(self.timed.guarded_steps(state))?;
+        let steps = match self.timed.guarded_steps(state) {
+            Ok(steps) => steps,
+            Err(TimedStop::Undecided(reading))
+                if matches!(self.judged, Judged::StateGraph) && reading.cause.is_some() =>
+            {
+                self.undefined.push((key.clone(), *reading));
+                Vec::new()
+            }
+            Err(stop) => return self.timed(Err(stop)),
+        };
         self.steps.insert(key, steps.clone());
         Ok(steps)
     }
