@@ -32,8 +32,9 @@ enum Expected {
     /// `inconclusive` with this cause, never proved or refuted.
     Vacuous(&'static str),
     /// EN-1's decline of what it cannot digitise (FR-243), naming the
-    /// `not_digitisable` rule.
-    NotDigitisable(&'static str),
+    /// `not_digitisable` rule and, where given, the byte range of the failing
+    /// operator in the claim's unit.
+    NotDigitisable(&'static str, Option<(usize, usize)>),
 }
 
 impl Expected {
@@ -41,8 +42,11 @@ impl Expected {
         match (self, verdict) {
             (Self::Proved, Verdict::Proved(_)) | (Self::Refuted, Verdict::Refuted(_)) => true,
             (Self::Vacuous(expected), Verdict::Vacuous(found)) => expected == found,
-            (Self::NotDigitisable(rule), Verdict::Declined(found)) => {
-                found == &format!("declined:invalid_runtime_input/invalid-value:{rule}")
+            (Self::NotDigitisable(rule, span), Verdict::Declined(found)) => {
+                let named = format!("declined:invalid_runtime_input/invalid-value:{rule}@");
+                found.strip_prefix(&named).is_some_and(|reported| {
+                    span.is_none_or(|(start, end)| reported == format!("{start}-{end}"))
+                })
             }
             _ => false,
         }
@@ -180,18 +184,31 @@ fn row_3446_two_step_clauses_hand() {
 #[test]
 #[ignore = "QSL-3446: en-1 proves clauses it must decline as not digitisable"]
 fn row_3446_empty_window_clauses_routes() {
-    // The rule each of `EMPTY` breaks (FR-243 "Behavior").
-    let rules = [
-        "two-sided-interval",
-        "two-sided-interval",
-        "second-bounded-operator",
-        "two-sided-interval",
+    // The rule each of `EMPTY` breaks and the operator that breaks it (FR-243
+    // "Behavior"): the whole formula, or the inner `eventually`.
+    const INNER: &str = "eventually[1 ms, 2 ms] holds(c.phase >= 0)";
+    let failing = [
+        ("two-sided-interval", EMPTY[0].1),
+        ("two-sided-interval", EMPTY[1].1),
+        ("second-bounded-operator", INNER),
+        ("two-sided-interval", INNER),
     ];
-    two_step_routes(
-        &EMPTY,
-        Expected::Refuted,
-        &rules.map(Expected::NotDigitisable),
-    );
+    let unit = String::from_utf8(two_step(&EMPTY).unit).expect("a UTF-8 unit");
+    let declines: Vec<Expected> = EMPTY
+        .iter()
+        .zip(failing)
+        .map(|((name, _), (rule, part))| {
+            let claim = unit
+                .find(&format!("temporal {name} "))
+                .expect("the claim is declared");
+            let start = claim
+                + unit[claim..]
+                    .find(part)
+                    .expect("the claim has the operator");
+            Expected::NotDigitisable(rule, Some((start, start + part.len())))
+        })
+        .collect();
+    two_step_routes(&EMPTY, Expected::Refuted, &declines);
 }
 
 #[trace("FR-243-AC-5")]
@@ -289,7 +306,7 @@ fn trap_digital(row: &str, one_guard: &str, claim: &str, rule: &'static str) {
         one_guard,
         claim,
         "en-1",
-        Expected::NotDigitisable(rule),
+        Expected::NotDigitisable(rule, None),
     );
 }
 
