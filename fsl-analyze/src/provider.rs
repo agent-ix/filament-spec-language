@@ -63,6 +63,10 @@ impl ProviderResults {
 
 /// Run the caller's negotiated items over its checked package, source bytes
 /// and subject binding. This boundary chooses no engine and reads no file.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the public boundary takes the checked subject, its items, the engines and the caller's limits, cancellation and certification policy"
+)]
 pub fn run(
     package: &CheckedPackage,
     binding: &SubjectBinding<'_>,
