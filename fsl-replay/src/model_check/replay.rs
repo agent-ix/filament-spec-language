@@ -1007,15 +1007,60 @@ fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> Re
 }
 
 /// FR-531 "Dependency artifact names": a join's refusal of an artifact name is
-/// the refusal handoff admission gives that name. A native join refusal stays
-/// the internal fault.
+/// the refusal handoff admission gives that name. A native join refusal goes
+/// through [`native_join_refusal`].
 #[implements("FR-531-AC-61")]
-pub(super) fn handoff_join_refusal(refusal: fsl_package::DependencyJoinRefusal) -> ReplayRefusal {
+pub(super) fn handoff_join_refusal(
+    refusal: fsl_package::DependencyJoinRefusal,
+    budget: &filament_contract_model::NativeJoinBudget,
+) -> ReplayRefusal {
     match refusal {
         fsl_package::DependencyJoinRefusal::Name { .. } => {
             ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed)
         }
-        fsl_package::DependencyJoinRefusal::Native(_) => fault("handoff-supply-joins"),
+        fsl_package::DependencyJoinRefusal::Native(failure) => {
+            native_join_refusal(failure, budget, "handoff-supply-joins")
+        }
+    }
+}
+
+/// FR-531 "The native join budget": a denied identity-row charge of the
+/// handoff read is the stage-limit refusal of the join; any other refusal of
+/// the identity file stays the internal fault `handoff-identities-admit`.
+pub(super) fn handoff_identities_refusal(
+    refusal: fsl_package::IdentityFileRefusal,
+    budget: &filament_contract_model::NativeJoinBudget,
+) -> ReplayRefusal {
+    match refusal {
+        fsl_package::IdentityFileRefusal::Native(error) => native_join_refusal(
+            fsl_package::NativeJoinFailure::from(error),
+            budget,
+            "handoff-identities-admit",
+        ),
+        fsl_package::IdentityFileRefusal::Rows(error) => native_join_refusal(
+            fsl_package::NativeJoinFailure::Rows(error),
+            budget,
+            "handoff-identities-admit",
+        ),
+        _ => fault("handoff-identities-admit"),
+    }
+}
+
+/// FR-531 "The native join budget": a native failure whose charge `budget`
+/// denied settles as the `stage_limit_exceeded`-class refusal of that charge's
+/// limit, never as an internal fault. A failure that is no resource denial
+/// stays the internal fault `invariant`.
+fn native_join_refusal(
+    failure: fsl_package::NativeJoinFailure,
+    budget: &filament_contract_model::NativeJoinBudget,
+    invariant: &'static str,
+) -> ReplayRefusal {
+    match failure.with_budget(budget).limit() {
+        Some(limit) => ReplayRefusal::Recompile {
+            refusal: Box::new(crate::spine::CompileRefusal::Limit(limit.clone())),
+            pointer: None,
+        },
+        None => fault(invariant),
     }
 }
 
@@ -1128,7 +1173,7 @@ pub fn replay_model_trace_from_package(
         &mut budget,
     )?;
     let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
-        .map_err(|_| fault("handoff-identities-admit"))?;
+        .map_err(|refusal| handoff_identities_refusal(refusal, &budget))?;
     let equality = supply
         .equality
         .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
@@ -1147,7 +1192,7 @@ pub fn replay_model_trace_from_package(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(handoff_join_refusal)?;
+        .map_err(|refusal| handoff_join_refusal(refusal, &budget))?;
     refuse_model_alphabet_for_a_task_item(names_package_task_product_item(
         &bare,
         envelope.occurrence_key(),
@@ -1625,7 +1670,7 @@ pub fn replay_protocol_trace_from_package(
         &mut budget,
     )?;
     let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
-        .map_err(|_| fault("handoff-identities-admit"))?;
+        .map_err(|refusal| handoff_identities_refusal(refusal, &budget))?;
     let equality = supply
         .equality
         .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
@@ -1644,7 +1689,7 @@ pub fn replay_protocol_trace_from_package(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(handoff_join_refusal)?;
+        .map_err(|refusal| handoff_join_refusal(refusal, &budget))?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
             .map_err(|_| fault("package-route-input"))?;

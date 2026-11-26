@@ -27,7 +27,9 @@ use crate::model_check::counterexample::ModelStep;
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
 use crate::model_check::identity::StateGraphIdentity;
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
-use crate::model_check::replay::{fault, handoff_join_refusal, refused, ModelTraceRefusal};
+use crate::model_check::replay::{
+    fault, handoff_identities_refusal, handoff_join_refusal, refused, ModelTraceRefusal,
+};
 use crate::model_check::replay::{ModelTraceSubject, TimedReplay};
 use crate::model_check::state_graph::{GraphEvidence, ModelPath, TrapClosure, WitnessPath};
 use crate::request::{ReplayRequest, ReplayRequestWire};
@@ -379,7 +381,7 @@ pub fn replay_model_graph_from_package(
         &mut budget,
     )?;
     let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
-        .map_err(|_| fault("handoff-identities-admit"))?;
+        .map_err(|refusal| handoff_identities_refusal(refusal, &budget))?;
     let equality = supply
         .equality
         .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
@@ -398,7 +400,7 @@ pub fn replay_model_graph_from_package(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(handoff_join_refusal)?;
+        .map_err(|refusal| handoff_join_refusal(refusal, &budget))?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, caller.spine.model)
             .map_err(|_| fault("package-route-input"))?;
