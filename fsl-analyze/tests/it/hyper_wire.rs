@@ -303,20 +303,19 @@ fn hp4_negotiation_has_no_route_target_and_keeps_its_universal_sibling() {
     assert_eq!(supported["certificate"]["accepted"], true);
 }
 
-/// FR-173-AC-5 / FR-281: package negotiation settles a checked HP-4 clause
-/// without an engine route while retaining the Universal sibling's route.
-#[trace("FR-173-AC-5", "FR-281-AC-3")]
-#[test]
-fn package_hp4_negotiation_has_no_route_and_keeps_its_universal_sibling() {
+fn package_hyper_disposition_case(
+    workspace_name: &str,
+    unsupported_clause: &str,
+) -> crate::analyze_cli_support::Run {
     use crate::analyze_cli_support::{package_selection, HANDOFF};
 
-    let declaration = "hyper Other using inf over behaviours (v: V::Vault) \
-        exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }\n\
-        hyper Universal using inf over behaviours (v: V::Vault) \
-        forall trace a of V { always holds(v.h @ a = v.h @ a) }";
+    let declaration = format!(
+        "{unsupported_clause}\nhyper Universal using inf over behaviours (v: V::Vault) \
+         forall trace a of V {{ always holds(v.h @ a = v.h @ a) }}"
+    );
     let (unit, model, snapshots) =
-        request_files_over_starts(Vault::Secure, false, &STARTS, declaration);
-    let ws = Workspace::new("hyper-wire-package-hp4-sibling");
+        request_files_over_starts(Vault::Secure, false, &STARTS, &declaration);
+    let ws = Workspace::new(workspace_name);
     let source_path = request_over(
         &ws,
         &unit,
@@ -338,7 +337,10 @@ fn package_hp4_negotiation_has_no_route_and_keeps_its_universal_sibling() {
             .to_string()
             .as_bytes(),
     );
-    let run = analyze(&package_path);
+    analyze(&package_path)
+}
+
+fn assert_package_hyper_hp4_has_no_target_and_keeps_universal(run: &crate::analyze_cli_support::Run) {
     let document = run.document();
     let unsupported = run.item(0);
     assert_eq!(label(&unsupported), "unsupported", "{document}");
@@ -355,6 +357,46 @@ fn package_hp4_negotiation_has_no_route_and_keeps_its_universal_sibling() {
         universal["request"]["candidates"]["backends"],
         json!([fsl_route::tie::EN1])
     );
+}
+
+/// FR-173-AC-5 / FR-281-AC-3: package negotiation shares the source
+/// classifier's existential-before-universal HP-4 disposition.
+#[trace("FR-173-AC-5", "FR-281-AC-3")]
+#[test]
+fn package_hp4_existential_before_universal_has_no_route() {
+    let run = package_hyper_disposition_case(
+        "hyper-wire-package-hp4-order",
+        "hyper Other using inf over behaviours (v: V::Vault) \
+         exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }",
+    );
+    assert_package_hyper_hp4_has_no_target_and_keeps_universal(&run);
+}
+
+/// FR-173-AC-5 / FR-281-AC-3: an existential form outside the safety
+/// fragment receives the same package-route disposition as source checking.
+#[trace("FR-173-AC-5", "FR-281-AC-3")]
+#[test]
+fn package_hp4_existential_outside_safety_has_no_route() {
+    let run = package_hyper_disposition_case(
+        "hyper-wire-package-hp4-safety",
+        "hyper Other using inf over behaviours (v: V::Vault) \
+         forall trace a of V exists trace b of V { always eventually holds(v.l @ a = v.l @ b) }",
+    );
+    assert_package_hyper_hp4_has_no_target_and_keeps_universal(&run);
+}
+
+/// FR-173-AC-5 / FR-281-AC-3: a projection outside safety receives the same
+/// package-route disposition as source checking.
+#[trace("FR-173-AC-5", "FR-281-AC-3")]
+#[test]
+fn package_hp4_projection_outside_safety_has_no_route() {
+    let run = package_hyper_disposition_case(
+        "hyper-wire-package-hp4-projection",
+        "hyper Other using inf over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V align skip { V::Vault::step } \
+         { always eventually holds(v.l @ a = v.l @ b) }",
+    );
+    assert_package_hyper_hp4_has_no_target_and_keeps_universal(&run);
 }
 
 /// FR-173-AC-3 / FR-173-AC-5 / FR-182-AC-1: a fixed-sample clause with no

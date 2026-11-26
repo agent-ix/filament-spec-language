@@ -10,12 +10,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use filament_contract_model::{
-    CheckedLiteralValue, CheckedNodeId, CheckedOccurrenceRole, CheckedSemanticNodeV2, CheckedTerm,
+    CheckedLiteralValue, CheckedNodeId, CheckedOccurrenceRole, CheckedOperationInterval,
+    CheckedSemanticNodeV2, CheckedTerm,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{
     AtomSlot, BinaryTemporal, PackageFormulaNode, PackageHyperForm, PackageHyperParameter,
-    PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
+    HyperForm, PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
 };
 use ix_trace_rs::implements;
 
@@ -26,6 +27,48 @@ use crate::protocol_view::{group_member, reference, text};
 use crate::{BareClauseRefusal, BarePackage};
 
 type Nodes<'p> = BTreeMap<&'p CheckedNodeId, &'p CheckedSemanticNodeV2>;
+
+fn package_body_is_safety(
+    nodes: &[super::subject::FormulaNodeUse<'_>],
+    claim: &OccurrenceKey,
+) -> Result<bool, BareClauseRefusal> {
+    let mut negated = vec![false; nodes.len()];
+    for (index, node) in nodes.iter().enumerate() {
+        let here = *negated.get(index).ok_or_else(|| malformed(claim))?;
+        let closed = matches!(
+            node.interval.as_ref(),
+            Some(CheckedOperationInterval::Integer { upper: Some(_), .. })
+                | Some(CheckedOperationInterval::Timed { .. })
+        );
+        let (admitted, polarities): (bool, &[bool]) =
+            match node.kind().ok_or_else(|| malformed(claim))? {
+                FormulaOperation::True
+                | FormulaOperation::False
+                | FormulaOperation::Holds
+                | FormulaOperation::Aggregate
+                | FormulaOperation::And
+                | FormulaOperation::Or => (true, &[here, here]),
+                FormulaOperation::Not => (true, &[!here]),
+                FormulaOperation::Implies => (true, &[!here, here]),
+                FormulaOperation::Always => (!here || closed, &[here]),
+                FormulaOperation::Eventually => (here || closed, &[here]),
+                FormulaOperation::Once | FormulaOperation::Historically => (true, &[here]),
+                FormulaOperation::Until => (here || closed, &[here, here]),
+                FormulaOperation::Release => (!here || closed, &[here, here]),
+                FormulaOperation::Since | FormulaOperation::Triggered => (true, &[here, here]),
+            };
+        if !admitted || node.operands.len() != polarities.len() {
+            return Ok(false);
+        }
+        for (operand, polarity) in node.operands.iter().zip(polarities) {
+            let Some(slot) = negated.get_mut(*operand) else {
+                return Err(malformed(claim));
+            };
+            *slot = *polarity;
+        }
+    }
+    Ok(true)
+}
 
 fn malformed(claim: &OccurrenceKey) -> BareClauseRefusal {
     BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(claim.node().clone())).into()
@@ -147,27 +190,51 @@ impl BarePackage<'_> {
         &self,
         claim: &OccurrenceKey,
     ) -> Result<Option<fsl_semantics::check::HyperUnsupported>, BareClauseRefusal> {
+        let package = self.package();
+        let root = crate::resolve_hyper_root(package, claim).map_err(|_| malformed(claim))?;
         let node = self
             .node_by_key(claim.node())?
             .ok_or_else(|| malformed(claim))?;
         let entries = group_member(&node.body, "quantifiers")
             .and_then(members)
             .ok_or_else(|| malformed(claim))?;
-        let mut first_exists = None;
-        let mut last_forall = None;
-        for (index, entry) in entries.iter().enumerate() {
-            match group_member(entry, "quantifier").and_then(text) {
-                Some("exists") => {
-                    first_exists.get_or_insert(index);
-                }
-                Some("forall") => last_forall = Some(index),
+        let mut quantifiers = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let kind = match group_member(entry, "quantifier").and_then(text) {
+                Some("exists") => fsl_semantics::check::QuantifierKind::Exists,
+                Some("forall") => fsl_semantics::check::QuantifierKind::Forall,
                 _ => return Err(malformed(claim)),
             };
+            let members = members(entry).ok_or_else(|| malformed(claim))?;
+            if members.len() < 3 {
+                return Err(malformed(claim));
+            }
+            quantifiers.push((kind, members.len() > 3));
         }
-        Ok(first_exists
-            .zip(last_forall)
-            .filter(|(exists, forall)| exists < forall)
-            .map(|_| fsl_semantics::check::HyperUnsupported::ExistentialBeforeUniversal))
+        let aligned = group_member(&node.body, "align_skip")
+            .and_then(members)
+            .ok_or_else(|| malformed(claim))?
+            .len()
+            > 0;
+        let preliminary = HyperForm::classify_package_facts(&quantifiers, aligned, true);
+        if preliminary.unsupported_reason().is_some() {
+            return Ok(preliminary.unsupported_reason());
+        }
+        let wrapper_key = root.body().ok_or_else(|| malformed(claim))?;
+        let wrapper = self
+            .node_by_key(wrapper_key)?
+            .ok_or_else(|| malformed(claim))?;
+        let CheckedTerm::Application { arguments, .. } = &wrapper.body else {
+            return Err(malformed(claim));
+        };
+        let formula_root = arguments
+            .get(5)
+            .and_then(reference)
+            .ok_or_else(|| malformed(claim))?;
+        let formula = super::subject::formula_graph_of(package, formula_root)
+            .map_err(|_| malformed(claim))?;
+        let safety = package_body_is_safety(&formula, claim)?;
+        Ok(HyperForm::classify_package_facts(&quantifiers, aligned, safety).unsupported_reason())
     }
 
     /// Read the admitted universal hyper form at its exact claim occurrence.

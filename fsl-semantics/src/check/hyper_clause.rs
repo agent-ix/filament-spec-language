@@ -35,6 +35,7 @@ use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use ix_trace_rs::implements;
 
 use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
@@ -364,6 +365,18 @@ impl HyperForm {
             | Self::SingleExistential
             | Self::ProjectionAligned => None,
         }
+    }
+
+    /// Classify package-read quantifier facts with the same HP-4 rule used by
+    /// source checking. Each pair is the quantifier kind and whether that
+    /// quantifier has a non-empty fairness set.
+    #[implements("FR-173-AC-5")]
+    pub fn classify_package_facts(
+        quantifiers: &[(QuantifierKind, bool)],
+        aligned: bool,
+        safety: bool,
+    ) -> Self {
+        classify_facts(quantifiers, aligned, safety)
     }
 }
 
@@ -3374,21 +3387,54 @@ fn checked_align_skip(
 /// The form of a clause over `behaviours` under infinite-trace (ADR-023 section
 /// 3, in the order FR-173 states).
 fn classify(quantifiers: &[CheckedQuantifier], aligned: bool, safety: bool) -> HyperForm {
-    let exists = |quantifier: &&CheckedQuantifier| quantifier.kind == QuantifierKind::Exists;
+    classify_facts(quantifiers, aligned, safety)
+}
+
+trait QuantifierFacts {
+    fn kind(&self) -> QuantifierKind;
+    fn has_fairness(&self) -> bool;
+}
+
+impl QuantifierFacts for CheckedQuantifier {
+    fn kind(&self) -> QuantifierKind {
+        self.kind
+    }
+
+    fn has_fairness(&self) -> bool {
+        !self.fairness.is_empty()
+    }
+}
+
+impl QuantifierFacts for (QuantifierKind, bool) {
+    fn kind(&self) -> QuantifierKind {
+        self.0
+    }
+
+    fn has_fairness(&self) -> bool {
+        self.1
+    }
+}
+
+fn classify_facts<Q: QuantifierFacts>(
+    quantifiers: &[Q],
+    aligned: bool,
+    safety: bool,
+) -> HyperForm {
     let any_exists = quantifiers
         .iter()
-        .any(|quantifier| quantifier.kind == QuantifierKind::Exists);
-    if let [only] = quantifiers {
-        if only.kind == QuantifierKind::Exists && !aligned {
-            return HyperForm::SingleExistential;
-        }
+        .any(|quantifier| quantifier.kind() == QuantifierKind::Exists);
+    if quantifiers.len() == 1
+        && quantifiers[0].kind() == QuantifierKind::Exists
+        && !aligned
+    {
+        return HyperForm::SingleExistential;
     }
     let first_exists = quantifiers
         .iter()
-        .position(|quantifier| quantifier.kind == QuantifierKind::Exists);
+        .position(|quantifier| quantifier.kind() == QuantifierKind::Exists);
     let last_forall = quantifiers
         .iter()
-        .rposition(|quantifier| quantifier.kind == QuantifierKind::Forall);
+        .rposition(|quantifier| quantifier.kind() == QuantifierKind::Forall);
     if first_exists
         .zip(last_forall)
         .is_some_and(|(exists, forall)| exists < forall)
@@ -3399,8 +3445,9 @@ fn classify(quantifiers: &[CheckedQuantifier], aligned: bool, safety: bool) -> H
     }
     let existential_fairness = quantifiers
         .iter()
-        .filter(exists)
-        .any(|quantifier| !quantifier.fairness.is_empty());
+        .any(|quantifier| {
+            quantifier.kind() == QuantifierKind::Exists && quantifier.has_fairness()
+        });
     if any_exists && quantifiers.len() >= 2 && (!safety || existential_fairness) {
         return HyperForm::Other {
             reason: HyperUnsupported::ExistentialOutsideSafety,
