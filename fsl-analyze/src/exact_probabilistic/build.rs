@@ -25,6 +25,7 @@ use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
 use fsl_semantics::check::{CheckedPredicate, Workload};
+use ix_trace_rs::implements;
 
 use super::plan::{Plan, PlanFault, Reads};
 use super::{
@@ -45,6 +46,19 @@ use super::{FormulaState, MonitorState};
 /// expand or step, the event has no monitor, `max_states` denies an initial
 /// state, or another budget or the cancellation ends the build (FR-196,
 /// FR-203).
+#[implements(
+    "FR-196-AC-1",
+    "FR-196-AC-2",
+    "FR-196-AC-3",
+    "FR-196-AC-4",
+    "FR-196-AC-5",
+    "FR-196-AC-7",
+    "FR-196-AC-8",
+    "FR-196-AC-9",
+    "FR-196-AC-11",
+    "FR-196-AC-12",
+    "FR-196-AC-13"
+)]
 pub fn build_product(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -170,6 +184,7 @@ pub(crate) fn admit_in_scope<'a>(
     })
 }
 
+#[implements("FR-125-AC-9")]
 fn build_configured(
     request: ProductRequest<'_>,
     work: WorkScope,
@@ -233,7 +248,7 @@ fn build_configured(
                 .into_iter()
                 .map(|instance| {
                     let reference = system
-                        .bound_reference(object.clone(), &instance)
+                        .written_reference(object.clone(), &instance)
                         .map_err(ProductRefusal::Internal)?;
                     Ok((Some(instance), Some(reference)))
                 })

@@ -13,6 +13,7 @@ use filament_semantic_value::declaration::{CompositeDeclaration, TypeEnvironment
 use fsl_foundation::{IdentityLimits, Setting};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObject};
 use quire_canonical::{Encode, Error, Limits, NodeRef, Sink, Writer};
+use ix_trace_rs::implements;
 
 use super::super::{ModelKeyBudget, ModelKeyError};
 use super::projection::{self, ArrayOrder, Scalar, StructuralSink, ValueSink};
@@ -1073,6 +1074,7 @@ pub(crate) fn node_bytes(
     scope.canonical(|writer| node.encode_into(writer))
 }
 
+#[implements("FR-120-AC-16")]
 pub(crate) fn value_bytes(
     value: &Value,
     typing: Typing<'_>,
@@ -1092,6 +1094,7 @@ pub(crate) fn value_bytes(
     sink.finish_bytes()
 }
 
+#[implements("FR-120-AC-4")]
 pub(crate) fn model_bytes(
     model: &StateModel,
     state: &ModelState,

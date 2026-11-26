@@ -7,6 +7,8 @@ relationships:
     type: implements
   - target: ix://agent-ix/filament-spec-language/FR-620
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-281
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-282
@@ -22,6 +24,8 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-651
     type: references
   - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-361
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-352
     type: depends_on
@@ -224,17 +228,64 @@ result-settled item in one place, whatever its verdict.
 
 ### Items over several claim instances
 
-A claim whose `over` parameter binds a population has one instance per
-object of the subject's universe, and the item reports one record for all of
-them. The writer SHALL order the instances by the bound object's universe
-key in FSpec FR-181 key order and SHALL report: the first `refuted`
-instance, when any instance is refuted, with its counterexample and replay;
-otherwise the first instance whose record is not `proved`; otherwise a
-`proved` record, whose certificate covers every instance. A claim is false
-when any instance is false, so a single refutation decides the item, and a
-fixed key order makes the reported instance the same on every run. The
-counterexample names the instance it refutes (FSpec FR-364
+A claim whose `over` parameter binds an object type has one instance per
+admitted key, and a hyper claim with object parameters one per tuple of
+admitted keys, as FR-125 Instancing states (FSpec FR-361, FR-395), not one per
+object of a universe. The item reports one record for all of them. The writer
+SHALL order the instances in FR-125's canonical instance order, not by key
+bytes, and SHALL report: the first `refuted` instance, when any instance is
+refuted, with its counterexample and replay, an earlier instance that is not
+`proved` notwithstanding; otherwise the first instance whose record is not
+`proved`; otherwise a `proved` record, which stands only when every
+instance's record is `proved` and every certificate an instance carries was
+checked, and whose certification and basis "The proved record over several
+instances" chooses. An item with
+no instance reports FR-125's `NoInstance` or `NoInitialState`, never a fault.
+An engine that returns one outcome over all of a hyper item's instances
+SHALL select it by this rule. A temporal clause's engine returns its outcome
+as FR-126 "Bindings and ranking" states. A claim is false when any instance
+is false, so a single refutation decides the item, and a fixed order makes the
+reported instance the same on every run.
+The counterexample names the instance it refutes (FSpec FR-364
 `over_binding`; FSpec FR-393 `instance` for state-graph evidence).
+
+An instance is `refuted` for this rule only when replay confirms its
+refutation. A refutation whose replay disagrees leaves its instance
+`inconclusive`, `replay-parity` (FR-127), and SHALL NOT replace or hide a
+confirmed refutation of another instance, earlier or later in the order. The
+item's record SHALL NOT be `replay-parity` when any instance's refutation is
+confirmed. An engine that returns one outcome over all instances replays only
+the refutation it returns, so when that replay disagrees the item has no
+confirmed refutation and settles `replay-parity`.
+
+### The proved record over several instances
+
+When every instance is `proved`, the item's `certification` SHALL follow the
+rule FSpec FR-492 states for `certification` (FR-354), each instance's proof
+a deciding premise: `trusted` when any instance is `trusted`, else
+`uncertified` when any is, else `certified`.
+
+The item's proof basis, with its payload, its FR-243 basis and its
+`certificate` member SHALL be those of one instance, chosen by these steps in
+turn, each keeping some of the instances the step before it kept:
+
+1. the instances whose certification is the item's;
+2. if any has a depth-bounded proof basis, one stating a depth or horizon
+   that bounds the behaviours it covers (`bounded-complete{depth}`, or a
+   `bounded-solver` horizon), only those, so a depth-bounded basis is
+   preferred over an `exhaustive` one;
+3. of depth-bounded ones whose bounds are all in one unit (a step depth, or
+   a horizon in one time unit), those with the smallest bound; where their
+   units differ, this step keeps all of them;
+4. if any is reduced or constrained (proof basis `reduced`, or a run under a
+   state constraint, FR-160), only those;
+5. the first in instance order.
+
+An `inductive{depth}` basis is not depth-bounded: its depth is the induction
+length, and the proof covers every behaviour. There is no general ranking of
+proof bases (FSpec FR-243 ranks none); these steps only choose which
+instance's basis the one item record carries. Each instance's own record and
+evidence SHALL keep that instance's own certification and basis.
 
 ### Temporal dispositions, values and engine roles
 
@@ -274,8 +325,8 @@ counterexample names the instance it refutes (FSpec FR-364
 - The `items` array follows the multi-item rules FR-651 gives a run's
   `items`: entries are ordered, each gives exactly one outcome item in that
   order, and one entry's refusal settles only that entry. An analyze item
-  names a claim, and the claim quantifies over every object of the subject's
-  universes, so an analyze item has no `each` population selector.
+  names a claim, and the claim quantifies over every admitted key of the
+  subject (FR-125 Instancing), so an analyze item has no `each` population selector.
 
 ### Categories and exit
 
@@ -307,7 +358,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-6 | In text mode the AC-2 request prints `0 Bounded refuted` as its first line and exits 10. | Test (TC-1581) |
 | FR-621-AC-7 | The temporal clause `Reaches` (`eventually holds(r.level = 2)` under infinite-trace over a record trace subject), still pending at the end of the `finite` samples 0, 1 it is run over through the FR-641 clause-run request, reports `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; a `finite-replay` analyze item naming a temporal clause settles `invalid-request` `inapplicable-kind` with `detail.family` `temporal-trace`, exit 20; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
 | FR-621-AC-8 | Over the Counter subject, the `proved` EN-1 item of `Bounded` carries `certificate.identity` with exactly the members `node_id`, `model` and `ordinal`, `model` the Counter model's identity text; the `refuted` item of `BelowThree` carries `replay.target` `{"state_clause": Q}` with `Q` ending in `BelowThree`; and, both items required, `aggregate` is `incomplete` with one gap for `BelowThree`'s index, `reason` `not-proved`, `result` `refuted`. | Test (TC-2184) |
-| FR-621-AC-9 | Over the Counter subject provisioned with counters `a` at 1, `b` at 0 and `d` at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b` (the first refuted instance in key order, though `a` precedes it and is proved), and the same document run twice writes equal items; the refuted `always possible (value = 0)` item over the one-counter fixture carries `replay.target` `{"state_clause": Q}` with `Q` ending in the claim's declared name, and `replay.reproduced` `true`. | Test (TC-2292) |
+| FR-621-AC-9 | Over the Counter subject provisioned with counters `a` at 1, `b` at 0 and `d` at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b` (the first refuted instance in the instance order, though `a` precedes it and is proved), and the same document run twice writes equal items; the refuted `always possible (value = 0)` item over the one-counter fixture carries `replay.target` `{"state_clause": Q}` with `Q` ending in the claim's declared name, and `replay.reproduced` `true`. | Test (TC-2292) |
 | FR-621-AC-10 | Over the Counter subject, the `proved` item of `Bounded` and the `refuted` item of `BelowThree` each carry `record.settled_by` `result` and `record.backend` `en-1`; the `invalid-request` item of an unknown claim `Missing` carries `record.settled_by` `disposition` and no `backend` member. | Test (TC-2296) |
 | FR-621-AC-11 | Over the Counter subject, the analyze document of `[{"claim": "Bounded"}]` has `last_stage` `S6c`; of `[{"claim": "Bounded"}, {"claim": "BelowThree"}]`, whose refuted item is replayed, `S8`; of `[{"claim": "Bounded", "temporal": {"limits": {"max_states": 2}}}]`, whose item is `incomplete`, `S6c`; and of `[{"claim": "Nothing", "temporal": {"item_kind": "deadlock-freedom"}}]`, whose only item is an `unknown-claim` disposition, `S4`. | Test (TC-2381) |
 | FR-621-AC-12 | A malformed `native-analyze/1` document gives `last_stage` `null`; a program the checker refuses gives `S3`; a snapshot naming the undeclared population `ix://test/counter/nowhere` gives `S4`; and a request cancelled before its first item gives `null`. | Test (TC-2382) |
@@ -321,6 +372,12 @@ The Counter fixture is FR-620's.
 | FR-621-AC-20 | For the `command::analyze` request defined in AC-19, item 1 has `request_index` `1`, `claim_name` `ServedIfAcquireIsStronglyFair`, `record.result` `refuted`, and a nonempty `counterexample.loop`. | Test (TC-1581) |
 | FR-621-AC-21 | For the `command::analyze` request defined in AC-19, item 2 has `request_index` `2`, `claim_name` `ServedIfEachAcquireIsStronglyFair`, `record.result` `proved`, and `certificate.accepted` `true`. | Test (TC-1581) |
 | FR-621-AC-22 | For the `command::analyze` request defined in AC-19, the three outcome items have `request_index` `[0, 1, 2]` and `claim_name` `["ServedWithoutFairness", "ServedIfAcquireIsStronglyFair", "ServedIfEachAcquireIsStronglyFair"]` in request order, and the document exits 10. | Test (TC-1581) |
+| FR-621-AC-23 | Over the Counter subject with universe list `[b, a]` and both counters at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b`, the first in universe list order, not `a`, the first in key order. | Test (TC-3219) |
+| FR-621-AC-24 | A state-graph item has two instances with their own FR-169 records, and one instance's evidence is altered so that its replay disagrees, giving `inconclusive`, `replay-parity`. When the other instance's refutation replays, the item is `refuted` with that instance's counterexample and replay, whichever of the two is earlier in the instance order. When the other instance is `proved`, the item is `inconclusive`, `replay-parity`, in either order. | Test (TC-3219) |
+| FR-621-AC-25 | Two instances, `p` then `q`, are both `proved`; each case gives their records and the item's. (a) `exhaustive` `certified` and `exhaustive` `uncertified`: `uncertified`, with `q`'s record. (b) `bounded-complete` depth 3 `certified` and `exhaustive` `uncertified`: `exhaustive` `uncertified`, `q`'s, certification being chosen first. (c) `exhaustive` `uncertified` and `exhaustive` `trusted`: `trusted`, `q`'s. (d) `reduced` `uncertified` and `bounded-complete` depth 5 `uncertified`: `bounded-complete` depth 5, `q`'s, a bound being preferred over a reduction. (e) `bounded-complete` depth 5 and depth 3, both `uncertified`: depth 3, `q`'s. (f) `exhaustive` `uncertified` and `reduced` `uncertified`: `reduced`, `q`'s. (g) `exhaustive` `certified` twice, with different certificates: `p`'s record and `certificate`. (h) `exhaustive` and `inductive` depth 1, both `uncertified`: `p`'s `exhaustive`, an inductive basis not being depth-bounded. (i) `inductive` depth 1 and `bounded-complete` depth 5, both `uncertified`: `q`'s. (j) a witness basis and `bounded-complete` depth 5, both `certified`: `q`'s. (k) two `exhaustive` `uncertified` records, `q`'s run under a state constraint and `p`'s not: `q`'s. (l) `bounded-complete` depth 5 and a `bounded-solver` horizon of 3 time units, both `uncertified`: `p`'s, bounds in different units not being compared. In every case each instance's own record is unchanged. | Test (TC-3219) |
+| FR-621-AC-26 | An engine that returns one outcome over all instances. Over FR-176-AC-8's first request (`p` at 0, `q` at 2), `check_hyper` returns `Violated` for `p`. With that counterexample replaced by the lasso for the instance `p`, from the same initial state, that takes `idle` at every step, on which `p` stays at 0, `settle_hyper_check` settles the item `inconclusive`, `replay-parity`, not `refuted`, although `q` is violated at position 0. For FR-177-AC-11's case with `v` violated at position 1 and `w` at position 0, the item likewise settles `inconclusive`, `replay-parity`, when `v`'s returned `WitnessExhausted` counterexample is replaced by one whose replay recomputes a non-empty witness set (FR-183-AC-4). | Test (TC-3219) |
+| FR-621-AC-27 | On a 512 KiB stack, `check_probability_certificate_package` given a package with the deepest operand chain admitted by default checked-package limits (10,000 graph nodes, 9,999 operand links, and at most 1 MiB) and a held certificate whose first value holds an id into node 9,999 and whose next value holds the out-of-range index 10,000 returns typed `Malformed` without overflowing the stack. | Test (TC-3154) |
+| FR-621-AC-28 | On a 512 KiB stack, `check_probability_certificate_source` given source that compiles under default limits to a package with 10,000 graph nodes and 9,999 operand links (within the default 1 MiB package-byte limit), and a held certificate whose first value holds an id into node 9,999 and whose next value holds the out-of-range index 10,000, returns typed `Malformed` without overflowing the stack. | Test (TC-3154) |
 
 ## Dependencies
 
