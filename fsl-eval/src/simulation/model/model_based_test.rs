@@ -3191,6 +3191,10 @@ type PartitionAttempt<'a> =
         &ModelSimState,
     ) -> Option<filament_semantic_value::model_transition::ModelTransition>;
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "these are the search inputs and the retained candidate stop"
+)]
 fn shortest_partition_path(
     system: &ModelSystem<'_>,
     clause: &NodeKey,
