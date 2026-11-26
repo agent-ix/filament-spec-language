@@ -100,7 +100,8 @@ author a matrix or claim whole-runtime allocation qualification.
   because its threshold property happens to hold.
 - Step 5 preserves the actual typed refusal, unsupported, limit or
   cancellation cause with no accepted truth. No evaluation failure becomes
-  zero or a dropped action. Zero direct instances retain
-  UnsupportedBinding/unsupported with no fabricated binding, terminal
-  verdict, certificate or counterexample. No proof becomes an FR-202 or
-  FR-413 refutation.
+  zero or a dropped action. Zero direct instances give `NoInstance` at
+  direct claim binding and the checker and `inconclusive`,
+  `no-instance`, at the direct EN-5 item, never `UnsupportedBinding` or
+  unsupported, with no fabricated binding, certificate or
+  counterexample. No proof becomes an FR-202 or FR-413 refutation.

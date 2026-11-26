@@ -81,7 +81,9 @@ does not qualify external transition/interpreter allocations or all AC-30.
   Extra rows reject coverage and extra targets refuse objective mismatch.
   Existing bytes/verdicts and sealed acceptance are unchanged.
 - Step 5 retains actual typed refusal, unsupported, limit or cancellation
-  causes with no accepted token/truth. Zero instances retain
-  UnsupportedBinding/unsupported without invented binding or evidence.
-  No new bound direction, infinity document, refutation or FR-413 transport
-  is implied.
+  causes with no accepted token/truth. Zero instances give `NoInstance`
+  at direct claim binding and the checker and `inconclusive`,
+  `no-instance`, at the direct EN-5 item, never `UnsupportedBinding` or
+  unsupported, without invented binding or evidence. No new bound
+  direction, infinity document, refutation or FR-413 transport is
+  implied.

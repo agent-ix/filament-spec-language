@@ -78,6 +78,8 @@ Executable assertions SHALL carry criterion attributes such as
   precise rules/loci, and refuses conflicting identity before enumeration.
   No policy, fair-MEC claim or new key component is fabricated.
 - Step 4 preserves each actual typed cause without accepted truth. Zero
-  instances retain UnsupportedBinding/unsupported with no invented
-  evidence. No all-expansion AC-30 or external transition/private-reader/
-  ordinary interpreter allocation guarantee is implied.
+  instances give `NoInstance` at direct claim binding and the checker
+  and `inconclusive`, `no-instance`, at the direct EN-5 item, never
+  `UnsupportedBinding` or unsupported, with no invented evidence. No
+  all-expansion AC-30 or external transition/private-reader/ ordinary
+  interpreter allocation guarantee is implied.

@@ -85,7 +85,9 @@ author a matrix or claim whole-runtime allocation qualification.
   complete stopped coverage and precise inequality/rank/member outcomes.
   Earlier profiles are unchanged; the acyclic producer preference remains.
 - Step 5 preserves the actual typed source refusal, unsupported, limit or
-  cancellation cause without an accepted token or truth value. Zero direct
-  instances preserve UnsupportedBinding/unsupported with no invented
-  binding, terminal verdict, certificate or counterexample. No finite
-  document becomes an infinity document or FR-202/FR-413 refutation.
+  cancellation cause without an accepted token or truth value. Zero
+  direct instances give `NoInstance` at direct claim binding and the
+  checker and `inconclusive`, `no-instance`, at the direct EN-5 item,
+  never `UnsupportedBinding` or unsupported, with no invented binding,
+  certificate or counterexample. No finite document becomes an infinity
+  document or FR-202/FR-413 refutation.

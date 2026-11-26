@@ -91,7 +91,8 @@ authors a matrix nor asserts whole-runtime allocation qualification.
   evidence. Existing profiles are unchanged.
 - Step 4 retains typed stop/refusal/unsupported outcomes and actual caller
   cause/consumption without accepted truth values. No invalid weight is
-  silently zeroed. Zero direct instances retain `UnsupportedBinding` and
-  an unsupported EN-5 disposition without a terminal verdict, certificate,
-  counterexample or invented binding. No weighted proof becomes an
-  unweighted document or native/shared-wire refutation.
+  silently zeroed. Zero direct instances give `NoInstance` at direct
+  claim binding and the checker and `inconclusive`, `no-instance`, at
+  the direct EN-5 item, never `UnsupportedBinding` or unsupported,
+  without a certificate, counterexample or invented binding. No weighted
+  proof becomes an unweighted document or native/shared-wire refutation.

@@ -77,7 +77,8 @@ original-gain assertion; no test should rewrite that result to zero.
 - Step 4 preserves typed limit/cancellation/undefined/refusal or explicit
   unsupported outcomes without truth values or an accepted document.
   A weighted zero-weight case remains `Unsupported(ZeroWeightComponent)`.
-  Zero over instances retain `UnsupportedBinding` at direct claim binding
-  and an unsupported disposition at the direct EN-5 item, without terminal
-  verdict, certificate, counterexample or invented binding/evidence. This
-  procedure asserts no higher-level planner behavior.
+  Zero over instances give `NoInstance` at direct claim binding and the
+  checker and `inconclusive`, `no-instance`, at the direct EN-5 item,
+  never `UnsupportedBinding` or unsupported, without certificate,
+  counterexample or invented binding/evidence. This procedure asserts no
+  higher-level planner behavior.
