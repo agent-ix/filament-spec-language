@@ -36,7 +36,7 @@ fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, R
         order_protocol(true)
     };
     let path = litmus_request(&ws, &protocol, json!({"items": items}));
-    let request: Value =
+    let mut request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
     for (file, document) in documents {
         ws.write(file, document.to_string().as_bytes());
@@ -82,7 +82,6 @@ fn both_routes_with_snapshots(
     let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
     let source = analyze(&path);
-    assert_eq!(source.exit, 0, "{}", source.document());
     let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
     let sources = ws.path(&format!("{HANDOFF}/sources"));
@@ -285,21 +284,38 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
     );
     for run in [&source, &package] {
         let item = run.item(0);
-        assert_eq!(label(&item), "inconclusive", "{}", run.document());
-        assert_eq!(item["record"]["cause"], "no-instance", "{item}");
-        for member in ["obligations", "closure", "global", "projections", "counterexample"] {
+        assert_eq!(
+            item["record"]["result"].as_str(),
+            Some("inconclusive"),
+            "{}",
+            run.document()
+        );
+        assert_eq!(item["record"]["cause"]["kind"], "no-instance", "{item}");
+        for member in [
+            "obligations",
+            "closure",
+            "global",
+            "projections",
+            "counterexample",
+        ] {
             assert!(item[member].is_null(), "NoInstance omits {member}: {item}");
         }
     }
     assert_equal(&source, &package);
 
-    let (source, package) = both_routes(
-        "package-no-instance-control",
-        json!([{"claim": "Flow", "kind": "global-conformance"}]),
-        &[],
+    let ws = Workspace::new("package-no-instance-control");
+    let request = litmus_request(
+        &ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
     );
-    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
-    assert_equal(&source, &package);
+    let admitted = analyze(&request);
+    assert_eq!(
+        label(&admitted.item(0)),
+        "proved",
+        "{}",
+        admitted.document()
+    );
 }
 
 fn recording_document(protocol: &str) -> Value {

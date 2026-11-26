@@ -171,12 +171,23 @@ fn global_conformance_classifies_empty_over_as_no_instance() {
     );
     let item = analyze(&request).item(0);
     assert_eq!(label(&item), "inconclusive", "{item}");
-    assert_eq!(item["record"]["cause"], "no-instance", "{item}");
-    for member in ["obligations", "closure", "global", "projections", "counterexample"] {
+    assert_eq!(item["record"]["cause"]["kind"], "no-instance", "{item}");
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "counterexample",
+    ] {
         assert!(item[member].is_null(), "NoInstance omits {member}: {item}");
     }
 
-    let admitted = conformance("gc-no-instance-control", &order_protocol(true), json!({}), &[]);
+    let admitted = conformance(
+        "gc-no-instance-control",
+        &order_protocol(true),
+        json!({}),
+        &[],
+    );
     assert_eq!(label(&admitted), "proved", "{admitted}");
 
     let every_key = order_protocol(true)
