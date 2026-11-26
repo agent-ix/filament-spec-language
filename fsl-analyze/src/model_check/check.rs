@@ -468,7 +468,7 @@ struct Node<State, Transition> {
 type ProductKey = (Vec<u8>, Vec<StateId>, usize, Vec<BoundedState>);
 
 /// FR-255 "Retained bytes": the fixed overhead of one stored EN-1 state.
-const EN1_STATE_OVERHEAD_BYTES: u64 = 256;
+pub(super) const EN1_STATE_OVERHEAD_BYTES: u64 = 256;
 
 /// Why the run ended before its frontier emptied.
 enum Finish {
@@ -654,7 +654,7 @@ pub(crate) fn check_model_with_stutter_closure(
                     }));
                 }
             }
-            return super::liveness::check(request, cancel, stutter_closure);
+            return super::liveness::check(request, cancel, stutter_closure, retained);
         }
     }
     if !request.reductions.is_empty() {
@@ -1044,7 +1044,7 @@ pub(crate) fn check_protocol_retaining(
     }
     if let ModelCheckItem::Clause { clause, .. } = request.item {
         if clause.property_form() == Some(PropertyForm::Liveness) {
-            return check_protocol_liveness(request, constraint, cancel);
+            return check_protocol_liveness(request, constraint, cancel, retained);
         }
     }
     let max_automaton_states = request.limits.max_automaton_states;
@@ -1273,6 +1273,7 @@ fn check_protocol_liveness(
     request: ProtocolCheckRequest<'_>,
     constraint: Option<&str>,
     cancel: &Cancel,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     let subject = &request.subject;
     let model = ModelSystem::new(subject.model.simulation.clone())
@@ -1360,6 +1361,7 @@ fn check_protocol_liveness(
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
                         constraint,
+                        retained,
                     },
                     cancel,
                 )
@@ -1387,6 +1389,7 @@ fn check_protocol_liveness(
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
                         constraint,
+                        retained,
                     },
                     cancel,
                 )
@@ -1409,6 +1412,7 @@ fn check_protocol_liveness(
                     ignore_memory_constraints: request.ignore_memory_constraints,
                     instance_bound,
                     constraint,
+                    retained,
                 },
                 cancel,
             )

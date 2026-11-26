@@ -801,6 +801,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-33 | A synthesis run given a clocks override both by its request and by its caller, and any run given one `--limit` setting twice, are refused before work starts. A `native-replay/1` run given a clocks override or an output override is refused `invalid-request` naming it. | Test |
 | FR-255-AC-40 | A deadlock-freedom analyze item over a model subject, decided by EN-1, run with `analysis.retained_bytes=1`, stops before it stores its first state, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. The same item with no setting settles as it does at the published default. | Test |
 | FR-255-AC-41 | A synthesis goal whose typed expression has five nodes, checked under a caller's `s3.nodes` 4, is refused at the typing stage naming the node limit, bound 4 and count 5; under `s3.nodes` 5 it checks. | Test |
+| FR-255-AC-42 | An EN-1 liveness item over a model or protocol subject charges `analysis.retained_bytes` for each product state before storing it: run with `analysis.retained_bytes=1`, it stops with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`; a model liveness item whose product has four states stops likewise at 1024, and with no setting settles as it does at the published default. | Test |
 
 ## Status
 
@@ -809,9 +810,11 @@ builders, the settings operation, a request's `stage_limits` and their
 defaults are implemented (TC-720, TC-721). FR-255-AC-15 to FR-255-AC-19 specify native-join
 setting bindings, defaults and refusals; their implementation is not yet complete.
 Of the retained entries, the states of EN-1's safety and reduced searches
-(FR-255-AC-40) and EN-6 symbolic vertices charge `analysis.retained_bytes`.
-The states of EN-1's liveness and hyper searches, protocol closure paths and
-model-expansion successors do not yet charge it.
+(FR-255-AC-40), the product states of its liveness searches (FR-255-AC-42) and
+EN-6 symbolic vertices charge `analysis.retained_bytes`. The states of EN-1's
+hyper searches, the model states a liveness search keeps where its automaton
+has no move, protocol closure paths and model-expansion successors do not yet
+charge it.
 
 Backing of the criteria:
 

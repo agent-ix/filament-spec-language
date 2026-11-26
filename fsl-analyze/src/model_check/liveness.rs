@@ -112,7 +112,8 @@ use fsl_eval::simulation::{
     SubjectTransition, SymmetryGroup, TransitionSystem,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
-use fsl_foundation::IdentityLimits;
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::{IdentityLimits, Setting};
 use fsl_replay::{
     AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
     IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
@@ -121,13 +122,14 @@ use fsl_replay::{
     UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Sink, Writer};
 use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    Admitted, BOUND_POSITIONS, ModelCheckRefusal, ModelCheckRequest, atom_refusal, not_simulated,
-    precheck, refuse_capture_read,
+    Admitted, BOUND_POSITIONS, EN1_STATE_OVERHEAD_BYTES, ModelCheckRefusal, ModelCheckRequest,
+    atom_refusal, not_simulated, precheck, refuse_capture_read,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
 use super::fair_walk::{FairModel, fairness_constraints, tree_path};
@@ -172,6 +174,7 @@ pub(super) fn check(
     request: ModelCheckRequest<'_>,
     cancel: &Cancel,
     stutter_closure: bool,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let ModelCheckItem::Clause { clause, letters } = request.item else {
         return Err(fault("a-liveness-item-is-a-clause"));
@@ -263,6 +266,7 @@ pub(super) fn check(
             message_bound: None,
             instance_bound: None,
             constraint: request.reductions.constraint.as_deref(),
+            retained,
             root_cancelled,
             no_initial,
             certify: Certify {
@@ -310,6 +314,8 @@ pub(super) struct ProtocolLivenessOptions<'c> {
     pub(super) instance_bound: Option<InstanceBound>,
     /// The request's state constraint (FR-158).
     pub(super) constraint: Option<&'c str>,
+    /// The item's `analysis.retained_bytes` allowance.
+    pub(super) retained: &'c Budget,
 }
 
 #[allow(
@@ -395,6 +401,7 @@ where
             }),
             instance_bound: options.instance_bound,
             constraint: options.constraint,
+            retained,
             root_cancelled,
             no_initial: simulation.initial.is_empty(),
             certify: Certify {
@@ -444,6 +451,8 @@ struct Bound<'r, S: LiveSubject> {
     /// The cancellation that stopped the clause identity's resolution.
     /// The request's state constraint (FR-158).
     constraint: Option<&'r str>,
+    /// The item's `analysis.retained_bytes` allowance, one for all bindings.
+    retained: &'r Budget,
     root_cancelled: Option<CancelCause>,
     no_initial: bool,
     certify: Certify<'r>,
@@ -509,6 +518,7 @@ fn decide_bindings<S: LiveSubject>(
         instance_bound: bound.instance_bound,
         request,
         constraint: bound.constraint,
+        retained: bound.retained,
         dead_constrained: RefCell::new(BTreeSet::new()),
         cancel,
         meter: RefCell::new(Meter::new(meter)),
@@ -601,12 +611,13 @@ fn retained<'l, S: LiveSubject>(
     limits: Limits,
 ) -> Result<Exploration<S>, ModelCheckRefusal> {
     let identity = IdentityLimits::default();
-    let hooks = RetainHooks::<LassoSystem<'l, S>, _, _, _>::new(
+    let hooks = RetainHooks::<LassoSystem<'l, S>, _, _, _, _>::new(
         |product: &LassoSystem<'l, S>, states: &[LState<S::State>], workers: usize| {
             product.prefetch_expansions(states, workers)
         },
         || run.cancel.poll() && run.cancel.cause().is_some(),
         |state: &LState<S::State>| product.encoded_key(state, identity),
+        |state: &LState<S::State>, key_len: usize| product.admit(run.retained, state, key_len),
     );
     retain_reduced_with_key(
         product,
@@ -1044,6 +1055,9 @@ enum Halt {
     Automaton(u64),
     /// Another distinct initial product state would exceed the remaining budget.
     InitialStates,
+    /// Storing another product state would exceed `analysis.retained_bytes`
+    /// (FR-255), at this configured bound.
+    RetainedBytes(u64),
     /// An identity has no canonical encoding, or an invariant broke.
     Refusal(ModelCheckRefusal),
 }
@@ -1417,6 +1431,31 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// Record why the run stops, keeping the first reason, and return the
     /// stop the exploration engine takes.
+    /// Charge a product state to the item's `analysis.retained_bytes` before
+    /// the graph stores it: the fixed entry overhead, its key as the graph and
+    /// the index each hold it, and its model state's key.
+    #[implements("FR-255-AC-42")]
+    fn admit(
+        &self,
+        retained: &Budget,
+        state: &LState<S::State>,
+        key_len: usize,
+    ) -> Result<(), CatalogCode> {
+        let bytes = widen(key_len)
+            .saturating_mul(2)
+            .saturating_add(widen(state.model_key.as_bytes().len()))
+            .saturating_add(EN1_STATE_OVERHEAD_BYTES);
+        let halt = match retained.charge(Setting::AnalysisRetainedBytes, bytes) {
+            Ok(()) => return Ok(()),
+            Err(BudgetStop::Limit(limit)) => Halt::RetainedBytes(limit.configured_bound()),
+            Err(BudgetStop::Cancelled(source)) => Halt::Cancelled(source),
+            Err(BudgetStop::Accounting(_)) => {
+                Halt::Refusal(fault("a-byte-charge-is-no-kernel-charge"))
+            }
+        };
+        Err(self.record(halt).cause)
+    }
+
     fn record(&self, halt: Halt) -> ExpansionStop {
         let mut slot = self.halt.borrow_mut();
         if slot.is_none() {
@@ -2327,6 +2366,8 @@ struct Run<'r, S: LiveSubject> {
     message_bound: Option<MemoryBound>,
     /// The request's state constraint (FR-158).
     constraint: Option<&'r str>,
+    /// The item's `analysis.retained_bytes` allowance, one for all bindings.
+    retained: &'r Budget,
     /// The model states the constraint cut in the model-only passes.
     dead_constrained: RefCell<BTreeSet<StateKey>>,
     instance_bound: Option<InstanceBound>,
@@ -2737,6 +2778,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             ),
             Halt::Cancelled(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
             Halt::Automaton(limit) => reached(ModelCheckLimit::MaxAutomatonStates, limit),
+            Halt::RetainedBytes(bound) => reached(ModelCheckLimit::AnalysisRetainedBytes, bound),
             Halt::InitialStates => reached(
                 ModelCheckLimit::MaxStates,
                 widen(self.request.limits.limits.max_states),
