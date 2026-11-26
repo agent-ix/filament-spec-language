@@ -108,6 +108,7 @@ mod provider_test_support;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
 mod repeat_guard;
+mod replay_route_rules;
 mod schedulability;
 mod schedulability_routing;
 mod simulation_findings;
@@ -128,7 +129,6 @@ mod timed_hidden_candidates;
 mod timed_product_certificate;
 mod timed_refinement_certificate;
 mod timed_refinement_liveness;
-mod replay_route_rules;
 mod timed_state_graph;
 mod tso_fairness;
 mod universe_obligation;

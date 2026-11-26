@@ -34,6 +34,7 @@
 use filament_exact::NodeKey;
 use std::collections::BTreeMap;
 
+use filament_contract_model::CheckedSchedulabilityKind;
 use filament_exact::{Meter, Rational, ScalarLimits};
 use filament_semantic_value::catalog::{Category, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
@@ -46,11 +47,12 @@ use fsl_eval::model_subject::{
 };
 use fsl_eval::simulation::model::{
     ClauseLetters, DecisiveObservation, ExpansionLimits, ModelSimState, ModelSimulationRequest,
-    ModelSystem, PopulationUniverse, TerminalClass,
+    ModelSystem, PopulationUniverse, ProtocolDefinition, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    check_protocol_bounds, live_instance_bound, protocol_constraints, Capacities, CapacityRefusal,
-    CarriedComponent, MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolLoopProofKind,
+    check_package_protocol_bounds, check_protocol_bounds, live_instance_bound,
+    protocol_constraints, Capacities, CapacityRefusal, CarriedComponent, MemoryModel,
+    PackageProtocolProgram, ProtocolFairness, ProtocolFairnessError, ProtocolLoopProofKind,
     ProtocolLoopProofTarget, ProtocolRefusal, ProtocolSystem, ProtocolTransition, ResolvedMemory,
     Sc, SendRecord, StepKind, SubjectMemory,
 };
@@ -1504,35 +1506,8 @@ pub fn replay_protocol_trace_with_temporal_selections(
             )?;
             let payload = envelope.family_payload();
             let simulation = simulation(&subject.model);
-            let protocol = package
-                .0
-                .graph()
-                .protocol(&subject.protocol)
-                .ok_or_else(|| {
-                    refused(ModelTraceRefusal::Protocol(
-                        ProtocolRefusal::UnknownProtocol {
-                            protocol: subject.protocol.clone(),
-                        },
-                    ))
-                })?;
             let model = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
-            let capacities =
-                Capacities::admit(protocol, &subject.capacities).map_err(|refusal| {
-                    refused(ModelTraceRefusal::Protocol(ProtocolRefusal::Capacity(
-                        refusal,
-                    )))
-                })?;
-            // FSpec FR-785-AC-5: a counterexample's subject without a
-            // capacity its clause names lacks the member `capacities`.
-            if let Some(unbound) = capacities.unbound().first() {
-                return Err(refused(ModelTraceRefusal::Protocol(
-                    ProtocolRefusal::Capacity(CapacityRefusal::Missing {
-                        name: unbound.name.clone(),
-                    }),
-                )));
-            }
-            check_protocol_bounds(&model, protocol, &capacities, package.0, BOUND_POSITIONS)
-                .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
+            admit_protocol_capacities(&model, &simulation, subject)?;
             let protocol_subject = ProtocolSubject {
                 model: ModelSubject {
                     simulation,
@@ -1808,6 +1783,7 @@ pub fn replay_protocol_trace_from_package(
         }
         Some(clause)
     };
+    admit_protocol_capacities(&model, &protocol_subject.model.simulation, subject)?;
     let replayed = ProtocolReplay {
         payload,
         clause: clause.as_ref(),
@@ -2137,6 +2113,74 @@ fn names_task_product_item(package: &CheckedPackage, occurrence: &OccurrenceKey)
                     .any(|r| r.task_set() == set.name)
             })
     })
+}
+
+/// [`names_task_product_item`] over an admitted package read from its bytes.
+fn names_package_task_product_item(
+    package: &fsl_package::BarePackage<'_>,
+    occurrence: &OccurrenceKey,
+) -> Result<bool, ReplayRefusal> {
+    let roots = fsl_package::schedulability_roots(package.package())
+        .map_err(|_| fault("schedulability-roots"))?;
+    Ok(roots.iter().any(|root| {
+        root.occurrence() == occurrence
+            && root.claim().kind() == CheckedSchedulabilityKind::Schedulable
+            && root.claim().release_bindings().next().is_some()
+    }))
+}
+
+/// FR-237: a task-product item replays over the task alphabet, so a
+/// model-alphabet payload for one is refused before any step, on both routes.
+#[implements("FR-237-AC-13")]
+fn refuse_model_alphabet_for_a_task_item(task_item: bool) -> Result<(), ReplayRefusal> {
+    if task_item {
+        return Err(refused(ModelTraceRefusal::TraceAlphabet {
+            required: "task",
+            supplied: "model",
+        }));
+    }
+    Ok(())
+}
+
+/// FSpec FR-785-AC-5: a protocol counterexample's subject binds every capacity
+/// its protocol names and satisfies every `requires` bound, whether the
+/// protocol was read from source or from package bytes.
+#[implements("FR-217-AC-10")]
+fn admit_protocol_capacities(
+    model: &ModelSystem<'_>,
+    simulation: &ModelSimulationRequest<'_>,
+    subject: &ProtocolTraceSubject,
+) -> Result<(), ReplayRefusal> {
+    let built = |refusal| refused(ModelTraceRefusal::Protocol(refusal));
+    let not_simulated = |refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal)));
+    let input = &simulation.input;
+    let capacities =
+        Capacities::admit_input(input, &subject.protocol, &subject.capacities).map_err(built)?;
+    // A subject without a capacity its clause names lacks `capacities`.
+    if let Some(unbound) = capacities.unbound().first() {
+        return Err(built(ProtocolRefusal::Capacity(CapacityRefusal::Missing {
+            name: unbound.name.clone(),
+        })));
+    }
+    match input.protocol_definition(&subject.protocol) {
+        Some(ProtocolDefinition::Source(protocol)) => check_protocol_bounds(
+            model,
+            protocol,
+            &capacities,
+            input.evaluator,
+            BOUND_POSITIONS,
+        )
+        .map_err(not_simulated),
+        Some(ProtocolDefinition::Package(form)) => {
+            let program = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
+                .map_err(|refusal| built(refusal.into_protocol()))?;
+            check_package_protocol_bounds(model, &program, &capacities, BOUND_POSITIONS)
+                .map_err(not_simulated)
+        }
+        None => Err(built(ProtocolRefusal::UnknownProtocol {
+            protocol: subject.protocol.clone(),
+        })),
+    }
 }
 
 fn resolve_item<'p, T: SubjectTransition>(

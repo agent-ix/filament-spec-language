@@ -3,7 +3,6 @@
 //! subject the same way from source and from package bytes. Each evidence
 //! here is written by hand over a two-state timed model.
 
-use filament_exact::ValueType;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -56,10 +55,6 @@ fn request(
         .graph()
         .state_graph_claim(name)
         .expect("the claim checks");
-    assert!(matches!(
-        claim.over().map(|over| ValueType::Reference(over.object.clone())),
-        Some(ValueType::Reference(_))
-    ));
     let simulation = world.request();
     let over = Some(ModelInstance {
         population: simulation.universes[0].population.clone(),

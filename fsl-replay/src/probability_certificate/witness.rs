@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::ProductAction;
-use ix_trace_rs::implements;
 use crate::{ExactProbLimits, ModelCheckLimit};
 use filament_exact::Value as SemanticValue;
 use filament_semantic_value::model_transition::ModelTransition;
@@ -12,6 +11,7 @@ use fsl_eval::simulation::model::{
     TimedSystem, TransitionId,
 };
 use fsl_package::CheckedPackage;
+use ix_trace_rs::implements;
 
 mod bounded;
 mod measure;

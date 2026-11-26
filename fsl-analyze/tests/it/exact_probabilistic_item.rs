@@ -866,13 +866,7 @@ fn undefined_replay_refuses_a_witness_that_names_an_instance() {
         Ok(ProbabilityWitnessReplay::Reproduced(_))
     ));
     let mut named = witness.clone();
-    named.path.instance = Some(
-        named
-            .path
-            .binding
-            .clone()
-            .expect("the claim binds `c`"),
-    );
+    named.path.instance = Some(named.path.binding.clone().expect("the claim binds `c`"));
     assert!(matches!(
         replay(&named),
         Err(ProbabilityWitnessError::Refused)

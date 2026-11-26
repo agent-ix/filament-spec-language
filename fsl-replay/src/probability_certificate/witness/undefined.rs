@@ -2,9 +2,9 @@
 //! Checked-subject replay of a first undefined probability observation.
 
 use super::*;
-use ix_trace_rs::implements;
 use fsl_eval::automaton::{BoundedState, QualifiedBoundedMonitor, StateId};
 use fsl_semantics::check::Event;
+use ix_trace_rs::implements;
 
 /// Untrusted path and the exact pre-read location it claims is undefined.
 #[derive(Clone, Debug)]
