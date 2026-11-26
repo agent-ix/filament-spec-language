@@ -435,13 +435,12 @@ zero, the first distinct initial state causes the limit refusal.
   symmetry or partial-order reduction, the same completion of both phases over
   the binding's reduced product with no violation. A reduced run SHALL decide
   every binding (under symmetry, one per orbit) before it settles a proof. If
-  a binding is `Undecided`, reaches a bound, a horizon, a state constraint or
-  an ignored fairness constraint, or stops because of a resource limit or
-  cancellation before it is decided, the engine SHALL return that incomplete
-  outcome without reporting a finding from any later binding. This ensures
-  that a refutation names the first refuted instance in canonical order, as
-  FR-125 requires; a binding's own shortest counterexample remains local to
-  that binding.
+  a binding is `Undecided`, reaches a bound, or stops because of a resource
+  limit or cancellation before it is decided, the engine SHALL return that
+  incomplete outcome without reporting a finding from any later binding. This
+  ensures that a refutation names the first refuted instance in canonical
+  order, as FR-125 requires; a binding's own shortest counterexample remains
+  local to that binding.
 - The run's `max_states` and `max_transitions` SHALL be shared by every
   binding; the run's `automaton_states` SHALL be the largest count of any one
   binding; the run's `product_states` SHALL be the sum over bindings.
