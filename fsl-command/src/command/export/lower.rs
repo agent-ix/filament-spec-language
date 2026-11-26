@@ -12,13 +12,18 @@
 
 mod dense;
 mod temporal;
+mod tree;
 
 use self::temporal::{ClauseLow, ClauseRead, Extra, FairLow, FairRead};
+use self::tree::{render, ExprId, Exprs, Piece, E};
 use super::map::{mangle, Graph};
 use super::request::Target;
+use filament_walk::{walk, Children, Walk};
 use fsl_replay::protocol_analysis::node_text;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::ControlFlow;
+use std::rc::Rc;
 
 /// A construct this build does not lower, and why.
 pub(super) struct Refusal {
@@ -364,7 +369,7 @@ fn refusal(construct: &str, detail: &str) -> Refusal {
 
 // ---- Expressions ---------------------------------------------------------
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 enum Op {
     Add,
     Sub,
@@ -385,85 +390,152 @@ enum Op {
     EqFloat,
 }
 
-#[derive(Clone, PartialEq)]
-enum E {
-    Int(String),
-    Bool(bool),
-    Float64Bits(String),
-    Enum {
-        owner: String,
-        case: String,
-    },
-    Param(String),
-    Field {
-        object: usize,
-        key: Box<E>,
-        field: usize,
-        primed: bool,
-    },
-    Neg(Box<E>),
-    FloatNeg(Box<E>),
-    Not(Box<E>),
-    Bin(Op, Box<E>, Box<E>),
-    Conj(Vec<E>),
-}
-
-impl E {
-    fn uses_float64(&self) -> bool {
-        match self {
-            Self::Float64Bits(_) | Self::FloatNeg(_) => true,
-            Self::Field { key, .. } | Self::Neg(key) | Self::Not(key) => key.uses_float64(),
-            Self::Bin(Op::EqFloat, _, _) => true,
-            Self::Bin(_, left, right) => left.uses_float64() || right.uses_float64(),
-            Self::Conj(items) => items.iter().any(Self::uses_float64),
-            Self::Int(_) | Self::Bool(_) | Self::Enum { .. } | Self::Param(_) => false,
-        }
-    }
-}
-
 /// A value and the definedness conditions of its operations, in evaluation
 /// order (FSpec FR-812 "Arithmetic and undefinedness").
 struct Low {
-    value: E,
-    defined: Vec<E>,
+    value: ExprId,
+    defined: Vec<ExprId>,
 }
 
 impl Low {
-    fn clause(self) -> E {
+    fn clause(self, exprs: &mut Exprs) -> ExprId {
         let mut all = self.defined;
         all.push(self.value);
-        E::Conj(all)
+        exprs.add(E::Conj(all))
     }
 }
 
-fn conj(mut items: Vec<E>) -> E {
+fn conj(exprs: &mut Exprs, mut items: Vec<ExprId>) -> ExprId {
     match items.len() {
-        0 => E::Bool(true),
+        0 => exprs.add(E::Bool(true)),
         1 => items.remove(0),
-        _ => E::Conj(items),
+        _ => exprs.add(E::Conj(items)),
     }
 }
 
 struct Lowerer<'a> {
     graph: &'a Graph<'a>,
     objects: &'a [Object],
+    exprs: Exprs,
 }
 
-impl Lowerer<'_> {
-    fn object_of(&self, id: &str) -> Option<usize> {
-        self.objects.iter().position(|object| object.id == id)
+/// One expression still to lower. `primed` reads the post-state.
+enum Visit {
+    Term {
+        term: Value,
+        primed: bool,
+    },
+    Node {
+        position: usize,
+        primed: bool,
+    },
+    /// The argument at `index` of the application `body`.
+    Argument {
+        construct: Rc<str>,
+        body: Rc<Value>,
+        index: usize,
+        primed: bool,
+    },
+}
+
+/// What an entered expression does with the values of its operands.
+enum Combine {
+    /// Nothing: a leaf, or a node whose value is its one operand's.
+    Pass,
+    Binary(Op),
+    Not,
+    Neg,
+    FloatNeg,
+    Field {
+        object: usize,
+        field: usize,
+        primed: bool,
+    },
+    Narrow {
+        lo: String,
+        hi: String,
+    },
+}
+
+/// The walk that lowers one expression: `lows` holds the values of the
+/// operands not yet combined.
+struct Lowering<'l, 'a> {
+    lowerer: &'l mut Lowerer<'a>,
+    lows: Vec<Low>,
+}
+
+impl Walk for Lowering<'_, '_> {
+    type Node = Visit;
+    type Frame = Combine;
+    type Stop = Refusal;
+
+    fn enter(
+        &mut self,
+        visit: Visit,
+        children: &mut Children<'_, Visit>,
+    ) -> ControlFlow<Refusal, Combine> {
+        match self.enter_visit(visit, children) {
+            Ok(combine) => ControlFlow::Continue(combine),
+            Err(refusal) => ControlFlow::Break(refusal),
+        }
     }
 
-    fn term(&mut self, term: &Value, primed: bool) -> Lower<Low> {
+    fn exit(&mut self, combine: Combine) -> ControlFlow<Refusal> {
+        match self.combine(combine) {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(refusal) => ControlFlow::Break(refusal),
+        }
+    }
+}
+
+impl Lowering<'_, '_> {
+    fn leaf(&mut self, value: E) -> Combine {
+        let value = self.lowerer.exprs.add(value);
+        self.lows.push(Low {
+            value,
+            defined: Vec::new(),
+        });
+        Combine::Pass
+    }
+
+    fn enter_visit(&mut self, visit: Visit, children: &mut Children<'_, Visit>) -> Lower<Combine> {
+        match visit {
+            Visit::Term { term, primed } => self.term(&term, primed, children),
+            Visit::Argument {
+                construct,
+                body,
+                index,
+                primed,
+            } => {
+                let term = items(&body, "arguments")
+                    .get(index)
+                    .ok_or_else(|| refusal(&construct, "an application is missing an argument"))?;
+                self.term(term, primed, children)
+            }
+            Visit::Node { position, primed } => self.node(position, primed, children),
+        }
+    }
+
+    fn term(
+        &mut self,
+        term: &Value,
+        primed: bool,
+        children: &mut Children<'_, Visit>,
+    ) -> Lower<Combine> {
         match str_of(term, "term") {
             Some("reference") => {
                 let position = self
+                    .lowerer
                     .graph
                     .position_of(&term["target"])
                     .ok_or_else(|| refusal("checked package", "a reference names no node"))?;
-                self.node(position, primed)
+                children.push(Visit::Node { position, primed });
+                Ok(Combine::Pass)
             }
-            Some("literal") => self.literal(term),
+            Some("literal") => {
+                let value = self.lowerer.literal(term)?;
+                Ok(self.leaf(value))
+            }
             other => refuse(
                 "expression/term",
                 format!("a `{}` term", other.unwrap_or("unknown")),
@@ -471,7 +543,199 @@ impl Lowerer<'_> {
         }
     }
 
-    fn literal(&self, term: &Value) -> Lower<Low> {
+    fn node(
+        &mut self,
+        position: usize,
+        primed: bool,
+        children: &mut Children<'_, Visit>,
+    ) -> Lower<Combine> {
+        let node = self.lowerer.graph.node(position);
+        let body = serde_json::to_value(&node.body)
+            .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
+        let construct = format!("{}/{}", node.node_tag, node.semantic_form);
+        if &*node.node_tag == "value" && &*node.semantic_form == "parameter" {
+            let name = items(&body, "members")
+                .iter()
+                .find(|member| str_of(member, "name") == Some("name"))
+                .and_then(|member| member["value"]["value"].as_str())
+                .ok_or_else(|| refusal(&construct, "a parameter has no name"))?;
+            // The receiver is the operation's object-typed `self` parameter; a
+            // declared parameter spelled `self` is an ordinary `p_` parameter
+            // (FSpec FR-814).
+            let receiver = name == "self" && self.lowerer.is_object_typed(position);
+            return Ok(self.leaf(E::Param(if receiver {
+                "r_self".to_owned()
+            } else {
+                mangle("p_", name)
+            })));
+        }
+        match str_of(&body, "term") {
+            Some("literal") => {
+                let value = self.lowerer.literal(&body)?;
+                Ok(self.leaf(value))
+            }
+            Some("application") => self.application(construct, body, primed, children),
+            _ => refuse(&construct, "a node that is not an application or a literal"),
+        }
+    }
+
+    /// Check the application `body` and name its operands, left first.
+    fn application(
+        &mut self,
+        construct: String,
+        body: Value,
+        primed: bool,
+        children: &mut Children<'_, Visit>,
+    ) -> Lower<Combine> {
+        let identity = body["operation"]["identity"].as_str().unwrap_or_default();
+        let op = match identity {
+            "filament.op.integer.add" => Some(Op::Add),
+            "filament.op.integer.sub" => Some(Op::Sub),
+            "filament.op.integer.mul" => Some(Op::Mul),
+            "filament.op.integer.lt" => Some(Op::Lt),
+            "filament.op.integer.le" => Some(Op::Le),
+            "filament.op.integer.gt" => Some(Op::Gt),
+            "filament.op.integer.ge" => Some(Op::Ge),
+            "filament.op.integer.eq" => Some(Op::EqInt),
+            "filament.op.integer.ne" => Some(Op::NeInt),
+            "filament.op.enum.eq" => Some(Op::EqEnum),
+            "filament.op.enum.ne" => Some(Op::NeEnum),
+            "filament.op.boolean.and" => Some(Op::And),
+            "filament.op.boolean.or" => Some(Op::Or),
+            "filament.op.boolean.implies" => Some(Op::Implies),
+            "filament.op.boolean.eq" => Some(Op::EqBool),
+            "filament.op.boolean.ne" => Some(Op::NeBool),
+            "filament.op.ieee.numeric_equal" => Some(Op::EqFloat),
+            _ => None,
+        };
+        let (combine, operands, primed) = if let Some(op) = op {
+            (Combine::Binary(op), 2, primed)
+        } else {
+            match identity {
+                "filament.op.boolean.not" => (Combine::Not, 1, primed),
+                "filament.op.integer.negate" => (Combine::Neg, 1, primed),
+                "filament.op.ieee.float64.negate" => (Combine::FloatNeg, 1, primed),
+                "filament.op.state.pre" => (Combine::Pass, 1, false),
+                "filament.op.model.deref" => (Combine::Pass, 1, primed),
+                "filament.op.record.project" => {
+                    (self.lowerer.project(&construct, &body, primed)?, 1, primed)
+                }
+                "filament.op.numeric.narrow" => {
+                    (self.lowerer.narrow(&construct, &body)?, 1, primed)
+                }
+                other => return refuse(&construct, format!("the operation `{other}`")),
+            }
+        };
+        let (construct, body) = (Rc::<str>::from(construct), Rc::new(body));
+        for index in 0..operands {
+            children.push(Visit::Argument {
+                construct: Rc::clone(&construct),
+                body: Rc::clone(&body),
+                index,
+                primed,
+            });
+        }
+        Ok(combine)
+    }
+
+    fn operand(&mut self) -> Lower<Low> {
+        self.lows
+            .pop()
+            .ok_or_else(|| refusal("checked package", "an application lost an operand"))
+    }
+
+    fn combine(&mut self, combine: Combine) -> Lower<()> {
+        let low = match combine {
+            Combine::Pass => return Ok(()),
+            Combine::Binary(op) => {
+                let right = self.operand()?;
+                let left = self.operand()?;
+                let exprs = &mut self.lowerer.exprs;
+                let mut defined = left.defined;
+                let value = exprs.add(E::Bin(op, left.value, right.value));
+                // `and`, `or` and `implies` skip the right operand (FR-006), so
+                // its definedness holds only where it is evaluated.
+                let guard = match op {
+                    Op::And | Op::Implies => Some(left.value),
+                    Op::Or => Some(exprs.add(E::Not(left.value))),
+                    _ => None,
+                };
+                match guard {
+                    Some(guard) if !right.defined.is_empty() => {
+                        let held = conj(exprs, right.defined);
+                        defined.push(exprs.add(E::Bin(Op::Implies, guard, held)));
+                    }
+                    _ => defined.extend(right.defined),
+                }
+                Low { value, defined }
+            }
+            Combine::Not => self.wrap(E::Not)?,
+            Combine::Neg => self.wrap(E::Neg)?,
+            Combine::FloatNeg => self.wrap(E::FloatNeg)?,
+            Combine::Field {
+                object,
+                field,
+                primed,
+            } => self.wrap(|key| E::Field {
+                object,
+                key,
+                field,
+                primed,
+            })?,
+            Combine::Narrow { lo, hi } => {
+                let mut inner = self.operand()?;
+                let exprs = &mut self.lowerer.exprs;
+                let lo = exprs.add(E::Int(lo));
+                let hi = exprs.add(E::Int(hi));
+                let above = exprs.add(E::Bin(Op::Le, lo, inner.value));
+                let below = exprs.add(E::Bin(Op::Le, inner.value, hi));
+                inner.defined.push(exprs.add(E::Bin(Op::And, above, below)));
+                inner
+            }
+        };
+        self.lows.push(low);
+        Ok(())
+    }
+
+    /// The one operand's value inside `node`, with its definedness.
+    fn wrap(&mut self, node: impl FnOnce(ExprId) -> E) -> Lower<Low> {
+        let inner = self.operand()?;
+        Ok(Low {
+            value: self.lowerer.exprs.add(node(inner.value)),
+            defined: inner.defined,
+        })
+    }
+}
+
+impl Lowerer<'_> {
+    fn object_of(&self, id: &str) -> Option<usize> {
+        self.objects.iter().position(|object| object.id == id)
+    }
+
+    /// Lower the expression `visit` and everything it reaches.
+    fn lower_visit(&mut self, visit: Visit) -> Lower<Low> {
+        let mut lowering = Lowering {
+            lowerer: self,
+            lows: Vec::new(),
+        };
+        if let ControlFlow::Break(refusal) = walk(&mut lowering, visit) {
+            return Err(refusal);
+        }
+        lowering.operand()
+    }
+
+    fn term(&mut self, term: &Value, primed: bool) -> Lower<Low> {
+        self.lower_visit(Visit::Term {
+            term: term.clone(),
+            primed,
+        })
+    }
+
+    fn node(&mut self, position: usize, primed: bool) -> Lower<Low> {
+        self.lower_visit(Visit::Node { position, primed })
+    }
+
+    fn literal(&self, term: &Value) -> Lower<E> {
         let value = &term["value"];
         let value = match str_of(term, "value_kind") {
             Some("integer") => value.as_str().map(|text| E::Int(text.to_owned())),
@@ -501,12 +765,7 @@ impl Lowerer<'_> {
                     "a literal that is not supported by the state mapper",
                 )
             },
-            |value| {
-                Ok(Low {
-                    value,
-                    defined: Vec::new(),
-                })
-            },
+            Ok,
         )
     }
 
@@ -523,131 +782,8 @@ impl Lowerer<'_> {
         path[0] == "model" && path[1] == "object_type"
     }
 
-    fn node(&mut self, position: usize, primed: bool) -> Lower<Low> {
-        let node = self.graph.node(position);
-        let body = serde_json::to_value(&node.body)
-            .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
-        let construct = format!("{}/{}", node.node_tag, node.semantic_form);
-        if &*node.node_tag == "value" && &*node.semantic_form == "parameter" {
-            let name = items(&body, "members")
-                .iter()
-                .find(|member| str_of(member, "name") == Some("name"))
-                .and_then(|member| member["value"]["value"].as_str())
-                .ok_or_else(|| refusal(&construct, "a parameter has no name"))?;
-            // The receiver is the operation's object-typed `self` parameter; a
-            // declared parameter spelled `self` is an ordinary `p_` parameter
-            // (FSpec FR-814).
-            let receiver = name == "self" && self.is_object_typed(position);
-            return Ok(Low {
-                value: E::Param(if receiver {
-                    "r_self".to_owned()
-                } else {
-                    mangle("p_", name)
-                }),
-                defined: Vec::new(),
-            });
-        }
-        match str_of(&body, "term") {
-            Some("literal") => self.literal(&body),
-            Some("application") => {
-                let identity = body["operation"]["identity"].as_str().unwrap_or_default();
-                self.application(&construct, identity, &body, primed)
-            }
-            _ => refuse(&construct, "a node that is not an application or a literal"),
-        }
-    }
-
-    fn argument(
-        &mut self,
-        construct: &str,
-        body: &Value,
-        index: usize,
-        primed: bool,
-    ) -> Lower<Low> {
-        let term = items(body, "arguments")
-            .get(index)
-            .ok_or_else(|| refusal(construct, "an application is missing an argument"))?;
-        self.term(term, primed)
-    }
-
-    fn application(
-        &mut self,
-        construct: &str,
-        identity: &str,
-        body: &Value,
-        primed: bool,
-    ) -> Lower<Low> {
-        let op = match identity {
-            "filament.op.integer.add" => Some(Op::Add),
-            "filament.op.integer.sub" => Some(Op::Sub),
-            "filament.op.integer.mul" => Some(Op::Mul),
-            "filament.op.integer.lt" => Some(Op::Lt),
-            "filament.op.integer.le" => Some(Op::Le),
-            "filament.op.integer.gt" => Some(Op::Gt),
-            "filament.op.integer.ge" => Some(Op::Ge),
-            "filament.op.integer.eq" => Some(Op::EqInt),
-            "filament.op.integer.ne" => Some(Op::NeInt),
-            "filament.op.enum.eq" => Some(Op::EqEnum),
-            "filament.op.enum.ne" => Some(Op::NeEnum),
-            "filament.op.boolean.and" => Some(Op::And),
-            "filament.op.boolean.or" => Some(Op::Or),
-            "filament.op.boolean.implies" => Some(Op::Implies),
-            "filament.op.boolean.eq" => Some(Op::EqBool),
-            "filament.op.boolean.ne" => Some(Op::NeBool),
-            "filament.op.ieee.numeric_equal" => Some(Op::EqFloat),
-            _ => None,
-        };
-        if let Some(op) = op {
-            let left = self.argument(construct, body, 0, primed)?;
-            let right = self.argument(construct, body, 1, primed)?;
-            let mut defined = left.defined;
-            let value = E::Bin(op, Box::new(left.value.clone()), Box::new(right.value));
-            // `and`, `or` and `implies` skip the right operand (FR-006), so
-            // its definedness holds only where it is evaluated.
-            let guard = match op {
-                Op::And | Op::Implies => Some(left.value),
-                Op::Or => Some(E::Not(Box::new(left.value))),
-                _ => None,
-            };
-            match guard {
-                Some(guard) if !right.defined.is_empty() => defined.push(E::Bin(
-                    Op::Implies,
-                    Box::new(guard),
-                    Box::new(conj(right.defined)),
-                )),
-                _ => defined.extend(right.defined),
-            }
-            return Ok(Low { value, defined });
-        }
-        match identity {
-            "filament.op.boolean.not" | "filament.op.integer.negate" => {
-                let inner = self.argument(construct, body, 0, primed)?;
-                let wrap = if identity.ends_with("not") {
-                    E::Not
-                } else {
-                    E::Neg
-                };
-                Ok(Low {
-                    value: wrap(Box::new(inner.value)),
-                    defined: inner.defined,
-                })
-            }
-            "filament.op.ieee.float64.negate" => {
-                let inner = self.argument(construct, body, 0, primed)?;
-                Ok(Low {
-                    value: E::FloatNeg(Box::new(inner.value)),
-                    defined: inner.defined,
-                })
-            }
-            "filament.op.state.pre" => self.argument(construct, body, 0, false),
-            "filament.op.model.deref" => self.argument(construct, body, 0, primed),
-            "filament.op.record.project" => self.project(construct, body, primed),
-            "filament.op.numeric.narrow" => self.narrow(construct, body, primed),
-            other => refuse(construct, format!("the operation `{other}`")),
-        }
-    }
-
-    fn project(&mut self, construct: &str, body: &Value, primed: bool) -> Lower<Low> {
+    /// The field a projection reads, checked before its key is lowered.
+    fn project(&self, construct: &str, body: &Value, primed: bool) -> Lower<Combine> {
         let member = &body["operation"]["member"];
         let declaration = &member["declaration"]["path"];
         let object = declaration
@@ -661,19 +797,15 @@ impl Lowerer<'_> {
             .get(object)
             .and_then(|object| object.field_index(name))
             .ok_or_else(|| refusal(construct, "a member that is not a field"))?;
-        let key = self.argument(construct, body, 0, primed)?;
-        Ok(Low {
-            value: E::Field {
-                object,
-                key: Box::new(key.value),
-                field,
-                primed,
-            },
-            defined: key.defined,
+        Ok(Combine::Field {
+            object,
+            field,
+            primed,
         })
     }
 
-    fn narrow(&mut self, construct: &str, body: &Value, primed: bool) -> Lower<Low> {
+    /// The bounds of a conversion, checked before its operand is lowered.
+    fn narrow(&self, construct: &str, body: &Value) -> Lower<Combine> {
         let target = self
             .graph
             .position_of(&body["operation"]["member"]["declaration"])
@@ -697,21 +829,7 @@ impl Lowerer<'_> {
         let (Some(lo), Some(hi)) = (bound("min"), bound("max")) else {
             return refuse(construct, "an integer range without both bounds");
         };
-        let mut inner = self.argument(construct, body, 0, primed)?;
-        inner.defined.push(E::Bin(
-            Op::And,
-            Box::new(E::Bin(
-                Op::Le,
-                Box::new(E::Int(lo)),
-                Box::new(inner.value.clone()),
-            )),
-            Box::new(E::Bin(
-                Op::Le,
-                Box::new(inner.value.clone()),
-                Box::new(E::Int(hi)),
-            )),
-        ));
-        Ok(inner)
+        Ok(Combine::Narrow { lo, hi })
     }
 }
 
@@ -797,8 +915,8 @@ fn fairness_of(graph: &Graph<'_>, position: usize) -> Lower<Vec<FairRead>> {
 
 /// One operation's lowered clauses.
 struct OpLow {
-    pre: Vec<E>,
-    post: Vec<E>,
+    pre: Vec<ExprId>,
+    post: Vec<ExprId>,
     node: usize,
 }
 
@@ -809,7 +927,7 @@ struct Input<'a> {
     snapshot: Option<&'a Value>,
     show: &'a Show<'a>,
     first: usize,
-    clauses: &'a [(String, usize, usize, E)],
+    clauses: &'a [(String, usize, usize, ExprId)],
     temporals: &'a [ClauseLow],
     dense: Option<&'a dense::Model>,
 }
@@ -817,6 +935,7 @@ struct Input<'a> {
 struct Show<'a> {
     target: Target,
     objects: &'a [Object],
+    exprs: &'a Exprs,
 }
 
 fn int_text(value: &str) -> String {
@@ -888,26 +1007,31 @@ fn float64_value(bits: &str, target: Target) -> String {
 }
 
 impl Show<'_> {
-    fn exprs(&self, items: &[E]) -> Lower<Vec<String>> {
-        items.iter().map(|item| self.expr(item)).collect()
+    fn exprs(&self, items: &[ExprId]) -> Lower<Vec<String>> {
+        items.iter().map(|&item| self.expr(item)).collect()
     }
 
-    fn expr(&self, e: &E) -> Lower<String> {
+    fn expr(&self, e: ExprId) -> Lower<String> {
+        render(e, |e, out| self.pieces(e, out))
+    }
+
+    /// The pieces of one expression node, its operands in written order.
+    fn pieces(&self, e: ExprId, out: &mut Vec<Piece<ExprId>>) -> Lower<()> {
         let tla = self.target == Target::Tla;
-        Ok(match e {
-            E::Int(value) => int_text(value),
-            E::Float64Bits(bits) => float64_value(bits, self.target),
-            E::Bool(true) => if tla { "TRUE" } else { "True" }.to_owned(),
-            E::Bool(false) => if tla { "FALSE" } else { "False" }.to_owned(),
+        match self.exprs.get(e)? {
+            E::Int(value) => out.push(Piece::text(int_text(value))),
+            E::Float64Bits(bits) => out.push(Piece::text(float64_value(bits, self.target))),
+            E::Bool(true) => out.push(Piece::text(if tla { "TRUE" } else { "True" })),
+            E::Bool(false) => out.push(Piece::text(if tla { "FALSE" } else { "False" })),
             E::Enum { owner, case } => {
                 let member = enum_member_name(owner, case);
-                if tla {
+                out.push(Piece::text(if tla {
                     format!("\"{member}\"")
                 } else {
                     format!("{}.{}", enum_type_name(owner), member)
-                }
+                }));
             }
-            E::Param(name) => name.clone(),
+            E::Param(name) => out.push(Piece::text(name.clone())),
             E::Field {
                 object,
                 key,
@@ -922,71 +1046,82 @@ impl Show<'_> {
                     .fields
                     .get(*field)
                     .ok_or_else(|| refusal("checked package", "a read of an unknown field"))?;
-                let key = self.expr(key)?;
                 let name = object.field(field);
                 if tla {
                     let tick = if *primed { "'" } else { "" };
-                    format!("{}{tick}[{key}].{name}", object.variable())
+                    out.extend([
+                        Piece::text(format!("{}{tick}[", object.variable())),
+                        Piece::Node(*key),
+                        Piece::text(format!("].{name}")),
+                    ]);
                 } else {
                     let state = if *primed { "s'" } else { "s" };
-                    let read = format!(
-                        "({} {key} {state}.{}).{name}",
-                        mangle("F_get_", &object.name),
-                        object.variable()
-                    );
-                    match field.kind {
-                        Kind::Bool => format!("({read} = true)"),
-                        Kind::Int { .. } | Kind::Float64 | Kind::Enum { .. } => read,
-                    }
+                    let (open, close) = match field.kind {
+                        Kind::Bool => ("(", " = true)"),
+                        Kind::Int { .. } | Kind::Float64 | Kind::Enum { .. } => ("", ""),
+                    };
+                    out.extend([
+                        Piece::text(format!("{open}({} ", mangle("F_get_", &object.name))),
+                        Piece::Node(*key),
+                        Piece::text(format!(" {state}.{}).{name}{close}", object.variable())),
+                    ]);
                 }
             }
-            E::Neg(inner) => format!("(-{})", self.expr(inner)?),
-            E::FloatNeg(inner) => format!("F_float64_neg({})", self.expr(inner)?),
-            E::Not(inner) => {
-                if tla {
-                    format!("~{}", self.expr(inner)?)
-                } else {
-                    format!("Not {}", self.expr(inner)?)
-                }
-            }
+            E::Neg(inner) => out.extend([Piece::text("(-"), Piece::Node(*inner), Piece::text(")")]),
+            E::FloatNeg(inner) => out.extend([
+                Piece::text("F_float64_neg("),
+                Piece::Node(*inner),
+                Piece::text(")"),
+            ]),
+            E::Not(inner) => out.extend([
+                Piece::text(if tla { "~" } else { "Not " }),
+                Piece::Node(*inner),
+            ]),
             E::Bin(op, left, right) => {
-                let (left, right) = (self.expr(left)?, self.expr(right)?);
-                if *op == Op::EqFloat {
-                    return Ok(format!("F_float64_eq({left}, {right})"));
-                }
-                match (op, tla) {
-                    (Op::NeBool, true) => format!("~({left} <=> {right})"),
-                    (Op::NeInt, false) => format!("(Ne {left} {right})"),
-                    (Op::NeEnum, false) => format!("(Ne {left} {right})"),
-                    (Op::NeBool, false) => format!("Not ({left} <-> {right})"),
-                    _ => {
-                        let symbol = match (op, tla) {
-                            (Op::Add, _) => "+",
-                            (Op::Sub, _) => "-",
-                            (Op::Mul, _) => "*",
-                            (Op::Lt, _) => "<",
-                            (Op::Le, _) => "<=",
-                            (Op::Gt, _) => ">",
-                            (Op::Ge, _) => ">=",
-                            (Op::EqInt, _) => "=",
-                            (Op::EqEnum, _) => "=",
-                            (Op::And, _) => "/\\",
-                            (Op::Or, _) => "\\/",
-                            (Op::NeInt, _) => "/=",
-                            (Op::NeEnum, _) => "/=",
-                            (Op::Implies, true) => "=>",
-                            (Op::Implies, false) => "->",
-                            (Op::EqBool, true) => "<=>",
-                            (Op::EqBool, false) => "<->",
-                            (Op::NeBool, _) => "<=>",
-                            (Op::EqFloat, _) => "=",
-                        };
-                        format!("({left} {symbol} {right})")
-                    }
-                }
+                let (open, between) = match (op, tla) {
+                    (Op::EqFloat, _) => ("F_float64_eq(", ", "),
+                    (Op::NeBool, true) => ("~(", " <=> "),
+                    (Op::NeInt, false) => ("(Ne ", " "),
+                    (Op::NeEnum, false) => ("(Ne ", " "),
+                    (Op::NeBool, false) => ("Not (", " <-> "),
+                    (Op::Add, _) => ("(", " + "),
+                    (Op::Sub, _) => ("(", " - "),
+                    (Op::Mul, _) => ("(", " * "),
+                    (Op::Lt, _) => ("(", " < "),
+                    (Op::Le, _) => ("(", " <= "),
+                    (Op::Gt, _) => ("(", " > "),
+                    (Op::Ge, _) => ("(", " >= "),
+                    (Op::EqInt, _) => ("(", " = "),
+                    (Op::EqEnum, _) => ("(", " = "),
+                    (Op::And, _) => ("(", " /\\ "),
+                    (Op::Or, _) => ("(", " \\/ "),
+                    (Op::NeInt, true) => ("(", " /= "),
+                    (Op::NeEnum, true) => ("(", " /= "),
+                    (Op::Implies, true) => ("(", " => "),
+                    (Op::Implies, false) => ("(", " -> "),
+                    (Op::EqBool, true) => ("(", " <=> "),
+                    (Op::EqBool, false) => ("(", " <-> "),
+                };
+                out.extend([
+                    Piece::text(open),
+                    Piece::Node(*left),
+                    Piece::text(between),
+                    Piece::Node(*right),
+                    Piece::text(")"),
+                ]);
             }
-            E::Conj(items) => format!("({})", self.exprs(items)?.join(" /\\ ")),
-        })
+            E::Conj(items) => {
+                out.push(Piece::text("("));
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.push(Piece::text(" /\\ "));
+                    }
+                    out.push(Piece::Node(*item));
+                }
+                out.push(Piece::text(")"));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1290,6 +1425,7 @@ pub(super) fn lower(
     let mut lowerer = Lowerer {
         graph,
         objects: &objects,
+        exprs: Exprs::default(),
     };
     let dense = dense::Model::read(&mut lowerer, &reads, &timed_models, wanted)?;
     // Each operation's clauses, lowered once: preconditions in the pre-state,
@@ -1318,8 +1454,8 @@ pub(super) fn lower(
                     .term(&clause.expression, clause.kind == "postcondition")
                     .map_err(attribute)?;
                 match clause.kind.as_str() {
-                    "precondition" => lowered.pre.push(low.clause()),
-                    "postcondition" => lowered.post.push(low.clause()),
+                    "precondition" => lowered.pre.push(low.clause(&mut lowerer.exprs)),
+                    "postcondition" => lowered.post.push(low.clause(&mut lowerer.exprs)),
                     other => {
                         return Err(attribute(refusal(
                             "state/state_clause",
@@ -1350,7 +1486,8 @@ pub(super) fn lower(
             .iter()
             .position(|object| object.id == clause.context)
             .ok_or_else(|| refusal("model/object_type", "an unexported clause context"))?;
-        lowered_clauses.push((name.clone(), *position, object, low.clause()));
+        let formula = low.clause(&mut lowerer.exprs);
+        lowered_clauses.push((name.clone(), *position, object, formula));
     }
     let mut temporals = Vec::new();
     for read in reads {
@@ -1366,8 +1503,9 @@ pub(super) fn lower(
             .map_err(attribute)?;
         let (mut cur, mut next) = (Vec::new(), Vec::new());
         // The binder as the lowerer names it, then as a clause binder (`o_`).
-        let lowered_binder = match lowerer.node(read.over, false).map_err(attribute)?.value {
-            E::Param(name) => name,
+        let over = lowerer.node(read.over, false).map_err(attribute)?.value;
+        let lowered_binder = match lowerer.exprs.get(over).map_err(attribute)? {
+            E::Param(name) => name.clone(),
             _ => {
                 return Err(attribute(refusal(
                     "temporal/temporal_clause",
@@ -1376,19 +1514,23 @@ pub(super) fn lower(
             }
         };
         let binder = format!("o_{}", read.binder.trim_start_matches("p_"));
-        let mut defs: Vec<E> = Vec::new();
+        let mut defs: Vec<ExprId> = Vec::new();
         for &leaf in &read.atoms {
             for (primed, atoms) in [(false, &mut cur), (true, &mut next)] {
                 let low = lowerer.node(leaf, primed).map_err(attribute)?;
                 if !primed {
                     for def in low.defined {
-                        let def = rename_param(def, &lowered_binder, &binder);
+                        let def = lowerer.exprs.rename_param(def, &lowered_binder, &binder);
                         if !defs.iter().any(|seen| seen == &def) {
                             defs.push(def);
                         }
                     }
                 }
-                atoms.push(rename_param(low.value, &lowered_binder, &binder));
+                atoms.push(
+                    lowerer
+                        .exprs
+                        .rename_param(low.value, &lowered_binder, &binder),
+                );
             }
         }
         let mut fairness = Vec::new();
@@ -1427,6 +1569,7 @@ pub(super) fn lower(
             position: read.position,
             object,
             binder: binder.clone(),
+            formulas: read.formulas,
             tf: read.tf,
             formula_sites: read.formula_sites,
             refuse_at: read.refuse_at,
@@ -1437,9 +1580,11 @@ pub(super) fn lower(
         });
     }
 
+    let exprs = lowerer.exprs;
     let show = Show {
         target,
         objects: &objects,
+        exprs: &exprs,
     };
     let mut definitions = Vec::new();
     let first = objects.first().map_or(0, |object| object.node);
@@ -1619,18 +1764,18 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
         .iter()
         .flatten()
         .flat_map(|operation| operation.pre.iter().chain(&operation.post))
-        .any(E::uses_float64)
+        .any(|&e| input.show.exprs.uses_float64(e))
         || input
             .clauses
             .iter()
-            .any(|(_, _, _, clause)| clause.uses_float64())
+            .any(|&(_, _, _, clause)| input.show.exprs.uses_float64(clause))
         || input.temporals.iter().any(|clause| {
             clause
                 .defs
                 .iter()
                 .chain(&clause.cur)
                 .chain(&clause.next)
-                .any(E::uses_float64)
+                .any(|&e| input.show.exprs.uses_float64(e))
         });
     if has_float64 {
         out.push(define(
@@ -1862,7 +2007,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
             format!(
                 "{clause} == \\A r_self \\in DOMAIN {} : {}",
                 object.variable(),
-                input.show.expr(formula)?
+                input.show.expr(*formula)?
             ),
             Some(name),
         ));
@@ -1904,18 +2049,18 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         .iter()
         .flatten()
         .flat_map(|operation| operation.pre.iter().chain(&operation.post))
-        .any(E::uses_float64)
+        .any(|&e| input.show.exprs.uses_float64(e))
         || input
             .clauses
             .iter()
-            .any(|(_, _, _, clause)| clause.uses_float64())
+            .any(|&(_, _, _, clause)| input.show.exprs.uses_float64(clause))
         || input.temporals.iter().any(|clause| {
             clause
                 .defs
                 .iter()
                 .chain(&clause.cur)
                 .chain(&clause.next)
-                .any(E::uses_float64)
+                .any(|&e| input.show.exprs.uses_float64(e))
         });
     if has_float64 {
         out.push(define(
@@ -2292,7 +2437,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 "def {clause} (s : State) : Prop :=\n  forall r_self, {} r_self s.{} -> {}",
                 mangle("F_has_", &object.name),
                 object.variable(),
-                input.show.expr(formula)?
+                input.show.expr(*formula)?
             ),
             Some(name),
         ));
@@ -2525,35 +2670,6 @@ fn operation_parameter_node(
                 && &*node.semantic_form == "parameter"
                 && parameter_name(graph, position).as_deref() == Some(parameter)
         })
-}
-
-/// `e` with the parameter `from` renamed to `to`.
-fn rename_param(e: E, from: &str, to: &str) -> E {
-    let go = |inner: Box<E>| Box::new(rename_param(*inner, from, to));
-    match e {
-        E::Param(name) if name == from => E::Param(to.to_owned()),
-        E::Field {
-            object,
-            key,
-            field,
-            primed,
-        } => E::Field {
-            object,
-            key: go(key),
-            field,
-            primed,
-        },
-        E::Neg(inner) => E::Neg(go(inner)),
-        E::Not(inner) => E::Not(go(inner)),
-        E::Bin(op, left, right) => E::Bin(op, go(left), go(right)),
-        E::Conj(items) => E::Conj(
-            items
-                .into_iter()
-                .map(|item| rename_param(item, from, to))
-                .collect(),
-        ),
-        other => other,
-    }
 }
 
 #[cfg(test)]

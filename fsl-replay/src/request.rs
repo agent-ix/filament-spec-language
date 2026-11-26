@@ -1874,7 +1874,7 @@ mod tests {
             fsl_foundation::BackendId::new("test-backend".to_owned()),
             crate::GraphEvidence::Witness {
                 paths: Vec::new(),
-                over: None,
+                over: Vec::new(),
             },
         )))
     }
