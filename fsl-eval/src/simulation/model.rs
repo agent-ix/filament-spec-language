@@ -100,6 +100,22 @@ use fsl_semantics::model::observation::{
 use fsl_semantics::model::operation::OperationDeclaration;
 use fsl_semantics::model::state::{StateField, StateModel};
 use ix_trace_rs::implements;
+use quire_canonical::Limits as CanonicalLimits;
+
+use crate::model_subject::ModelInstance;
+use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
+use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
+use crate::simulation::footprint::{Footprint, Location};
+use crate::simulation::not_simulated::NotSimulated;
+use crate::simulation::order::{Expanded, expand, sorted_initial};
+use crate::simulation::protocol::WeakAccessShape;
+use crate::simulation::reduction::{ConstraintValue, OfferedReductions, Permutation, SymmetryGroup};
+use crate::simulation::sample::{
+    ObservedSample, ObserverDecision, SampleObservation, SampleRequest, sample_request,
+    sample_request_observed_using, sample_request_until,
+};
+use crate::simulation::trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
+use crate::value::QualifiedName;
 
 struct UnmeteredModelKeyBudget;
 
@@ -120,10 +136,6 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
         Ok(())
     }
 }
-use quire_canonical::Limits as CanonicalLimits;
-
-use crate::model_subject::ModelInstance;
-
 /// A non-empty, canonically ordered set of admitted claim instances.
 ///
 /// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
@@ -157,21 +169,6 @@ pub enum NoClaimInstances {
     #[error("the claim has no admitted instance")]
     NoInstance,
 }
-use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
-use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
-use crate::simulation::footprint::{Footprint, Location};
-use crate::simulation::not_simulated::NotSimulated;
-use crate::simulation::order::{Expanded, expand, sorted_initial};
-use crate::simulation::protocol::WeakAccessShape;
-use crate::simulation::reduction::{
-    ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
-};
-use crate::simulation::sample::{
-    ObservedSample, ObserverDecision, SampleObservation, SampleRequest, sample_request,
-    sample_request_observed_using, sample_request_until,
-};
-use crate::simulation::trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
-use crate::value::QualifiedName;
 
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
 pub use cells::Cell;
