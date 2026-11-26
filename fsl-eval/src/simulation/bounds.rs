@@ -266,13 +266,24 @@ mod tests {
     #[trace("FSpec-FR-420-AC-2")]
     #[test]
     fn exp_neg_brackets_its_true_value() {
+        // Each computed bracket is far narrower than the 39-digit bracket of
+        // the value, so it lies inside it.
+        let inside = |x: i64, lower: Rational, upper: Rational| {
+            let bounds = exp_neg(&int(x)).expect("a bracket");
+            assert!(bounds.lower >= lower && bounds.upper <= upper, "e^-{x}");
+            assert!(bounds.lower <= bounds.upper, "e^-{x} is inverted");
+        };
         // e^-1 = 0.36787944117144232159552377016146086744581113103176…
-        let lower = decimal("367879441171442321595523770161460867445", 39);
-        let upper = decimal("367879441171442321595523770161460867446", 39);
-        within(&exp_neg(&int(1)).expect("e^-1"), &lower, &upper);
+        inside(
+            1,
+            decimal("367879441171442321595523770161460867445", 39),
+            decimal("367879441171442321595523770161460867446", 39),
+        );
         // e^-10 = 0.0000453999297624848515355915155605506102379180888…
-        let lower = decimal("453999297624848515355915155605506102379", 43);
-        let upper = decimal("453999297624848515355915155605506102380", 43);
-        within(&exp_neg(&int(10)).expect("e^-10"), &lower, &upper);
+        inside(
+            10,
+            decimal("453999297624848515355915155605506102379", 43),
+            decimal("453999297624848515355915155605506102380", 43),
+        );
     }
 }
