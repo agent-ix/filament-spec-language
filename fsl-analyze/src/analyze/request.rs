@@ -776,6 +776,7 @@ pub(crate) fn dependency_packages(
 
 /// `package`'s dependencies after their own, each once, with the bytes `root`
 /// linked each at.
+#[implements("FR-640-AC-17")]
 fn add_dependencies(
     root: &fsl_package::CheckedPackage,
     package: &fsl_package::CheckedPackage,

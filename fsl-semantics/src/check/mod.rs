@@ -8991,6 +8991,7 @@ impl CheckedGraph {
 /// QSL-552: finalize FR-180 claims after the checked abstraction relation is
 /// known, because the implementation reference participates in claim
 /// identity and the abstraction node is keyed from the assembled graph.
+#[implements("FR-306-AC-6")]
 fn finish_step_relations(
     graph: &mut CheckedGraph,
     checked: Vec<hyper_clause::CheckedModelRelation>,

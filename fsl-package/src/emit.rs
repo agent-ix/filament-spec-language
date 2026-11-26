@@ -5509,6 +5509,7 @@ fn dependency_selections(package: &CheckedPackage) -> Vec<CheckedDependencySelec
 
 /// The caller-selected clocks used by this package's dependency closure, as
 /// it linked each library, in ascending byte order of clock name.
+#[implements("FR-640-AC-17")]
 fn dependency_clock_selections(
     package: &CheckedPackage,
 ) -> Option<Vec<CheckedDependencyClockSelection>> {
@@ -5576,6 +5577,7 @@ pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emis
 /// ([`CheckedPackage::dependency_emission`]), held to `limits` as
 /// [`emit_checked`] holds a remembered one; `None` when `identity` is not in
 /// the closure `package` linked.
+#[implements("FR-640-AC-17")]
 pub fn emit_linked_dependency(
     package: &CheckedPackage,
     identity: &fsl_semantics::library::LibraryName,

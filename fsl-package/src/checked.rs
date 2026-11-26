@@ -563,6 +563,7 @@ impl CheckedPackage {
     /// ([`Self::dependency_emission`]); two paths holding different bytes of
     /// one library are a [`LinkRefusal::ConflictingDefinition`].
     #[cfg(feature = "std")]
+    #[implements("FR-640-AC-17")]
     pub fn link_with(
         graph: CheckedGraph,
         imports: Vec<Import>,
@@ -709,6 +710,7 @@ impl CheckedPackage {
     /// this package linked. A later emission of that library does not change
     /// it.
     #[cfg(feature = "std")]
+    #[implements("FR-640-AC-17")]
     pub fn dependency_emission(&self, identity: &LibraryName) -> Option<&Emission> {
         self.dependency_emissions.get(identity).map(AsRef::as_ref)
     }
@@ -812,6 +814,7 @@ fn display_path(path: &[LibraryName]) -> String {
 /// linked at. One identity reached twice unifies only when both hold the same
 /// canonical bytes (FR-307).
 #[cfg(feature = "std")]
+#[implements("FR-640-AC-17")]
 fn unify(
     selections: &mut BTreeMap<LibraryName, ResolvedDependency>,
     emissions: &mut BTreeMap<LibraryName, Arc<Emission>>,

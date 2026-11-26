@@ -7,6 +7,7 @@
 //! `NodeKey`, and constructs the import view and package source map. It
 //! returns staged refusals with IR's loci and the caller's exact limits.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -1588,6 +1589,7 @@ type HeldLibrary<'p> = (&'p CheckedPackage, Option<&'p Emission>);
 
 /// Every library of `root`'s dependency closure, by recomputed library name,
 /// as `root` linked it.
+#[implements("FR-640-AC-17")]
 fn hold_closure<'p>(root: &'p CheckedPackage, held: &mut BTreeMap<LibraryName, HeldLibrary<'p>>) {
     let mut pending = vec![root];
     while let Some(package) = pending.pop() {

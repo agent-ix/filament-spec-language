@@ -753,6 +753,7 @@ fn read_evidence(compiled: &Compiled) -> Result<CheckedPackageEvidence, Error> {
     acquire_evidence(compiled).map(|(evidence, _)| evidence)
 }
 
+#[implements("FR-640-AC-17")]
 fn acquire_evidence(
     compiled: &Compiled,
 ) -> Result<(CheckedPackageEvidence, BTreeMap<String, DependencyArtifact>), Error> {

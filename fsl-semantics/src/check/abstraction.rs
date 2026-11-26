@@ -18,6 +18,7 @@
 //! (`fsl_forms::AbstractionDeclarationForm`) carries each spelling as
 //! written.
 
+use ix_trace_rs::implements;
 use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -438,6 +439,7 @@ pub enum AbstractionRefusal {
 impl AbstractionRefusal {
     /// A relation with no nodes: the one mapping of `reason`, for `check` and
     /// for a binding.
+    #[implements("FR-306-AC-6")]
     pub(super) fn of_nodes(reason: AbstractionNodeRefusal) -> Self {
         match reason {
             AbstractionNodeRefusal::Internal(fault) => Self::Internal(*fault),
