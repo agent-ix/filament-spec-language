@@ -1372,11 +1372,9 @@ fn read_diagnostic(value: &Value, pointer: &str) -> Result<Diagnostic, Defect> {
             if code != NotDigitisable::CATALOG.code() || cause != NotDigitisable::CATALOG.cause() {
                 return Err(Defect::unknown(pointer));
             }
-            // A byte range whose end precedes its start names no part.
-            let read = NotDigitisable::deserialize(written)
-                .ok()
-                .filter(|read| read.span.start <= read.span.end);
-            Some(read.ok_or_else(|| Defect::invalid(pointer))?)
+            // The type refuses a byte range whose end precedes its start.
+            let read = NotDigitisable::deserialize(written).map_err(|_| Defect::invalid(pointer))?;
+            Some(read)
         }
     };
     Ok(Diagnostic {

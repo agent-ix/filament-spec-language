@@ -34,13 +34,41 @@ pub enum NotDigitisableRule {
 }
 
 /// The `not_digitisable` member `{rule, span: {start, end}}`.
+///
+/// Reading refuses a span whose `start` exceeds its `end`: such a range names
+/// no part (FSpec FR-272), so no read value carries one.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "WrittenNotDigitisable")]
 pub struct NotDigitisable {
     /// The rule the declined part breaks.
     pub rule: NotDigitisableRule,
     /// The byte range, in the claim's source unit, of the declined part.
     pub span: Span,
+}
+
+/// The member as written, before its span is checked.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenNotDigitisable {
+    rule: NotDigitisableRule,
+    span: Span,
+}
+
+impl TryFrom<WrittenNotDigitisable> for NotDigitisable {
+    type Error = String;
+
+    fn try_from(written: WrittenNotDigitisable) -> Result<Self, String> {
+        if written.span.start > written.span.end {
+            return Err(format!(
+                "span start {} is after its end {}",
+                written.span.start, written.span.end
+            ));
+        }
+        Ok(Self {
+            rule: written.rule,
+            span: written.span,
+        })
+    }
 }
 
 impl NotDigitisable {
@@ -65,5 +93,26 @@ impl NotDigitisable {
             rule,
             span: claim.span(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    use super::NotDigitisable;
+
+    #[trace("TC-2290", "FR-243-AC-5")]
+    #[test]
+    fn a_span_ending_before_it_starts_is_not_read() {
+        let read = |start: u32, end: u32| {
+            serde_json::from_value::<NotDigitisable>(
+                json!({"rule": "two-sided-interval", "span": {"start": start, "end": end}}),
+            )
+        };
+        assert!(read(3, 3).is_ok());
+        assert!(read(3, 9).is_ok());
+        assert!(read(9, 3).is_err());
     }
 }
