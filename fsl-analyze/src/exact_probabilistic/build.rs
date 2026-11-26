@@ -25,6 +25,7 @@ use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
 use fsl_semantics::check::{CheckedPredicate, Workload};
+use ix_trace_rs::implements;
 
 use super::plan::{Plan, PlanFault, Reads};
 use super::{
@@ -170,6 +171,7 @@ pub(crate) fn admit_in_scope<'a>(
     })
 }
 
+#[implements("FR-125-AC-9")]
 fn build_configured(
     request: ProductRequest<'_>,
     work: WorkScope,

@@ -71,6 +71,7 @@ struct Root {
 /// The entry's `binding` and `instance` members (FR-741 "Binding"): the
 /// `over` object, null when the claim has no `over` parameter, and the
 /// `on each` object, each as its written reference.
+#[implements("FR-125-AC-9")]
 fn entry_binding(
     over: Option<&(ModelInstance, ObjectReference)>,
     instance: &ObjectReference,
@@ -196,6 +197,7 @@ fn admit<'a>(
     })
 }
 
+#[implements("FR-125-AC-9")]
 fn instances_of(
     system: &ModelSystem<'_>,
     value_type: &filament_exact::ValueType,

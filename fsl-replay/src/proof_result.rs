@@ -36,6 +36,7 @@ use fsl_foundation::RequestIndex;
 use fsl_semantics::check::HyperUnsupported;
 use fsl_semantics::family::UnsupportedItem;
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -200,6 +201,7 @@ pub enum Extremum {
 
 /// Spell an entry's binding as the FR-181 reference a counterexample's
 /// `binding` is written as (FR-741 "Binding"), or null.
+#[implements("FR-125-AC-9")]
 fn written_binding<S: serde::Serializer>(
     reference: &Option<ObjectReference>,
     serializer: S,

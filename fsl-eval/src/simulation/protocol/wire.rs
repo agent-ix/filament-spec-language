@@ -14,6 +14,7 @@ use crate::model_subject::ModelInstance;
 use crate::simulation::model::encode::Enc;
 use crate::simulation::model::{ModelSimulationRequest, ModelSystem};
 use crate::simulation::Location;
+use ix_trace_rs::implements;
 
 use crate::simulation::model::canonical_json as json;
 
@@ -84,6 +85,7 @@ pub fn blocked_json(blocked: &BlockedThread) -> Option<Json> {
 /// The reference the protocol clause `protocol`'s `over` parameter is bound
 /// to under `over`, over the model `simulation` describes (FSpec FR-433's
 /// `subject.over`), or `None` when the model refuses it.
+#[implements("FR-125-AC-9")]
 pub fn over_reference(
     simulation: ModelSimulationRequest<'_>,
     protocol: &str,

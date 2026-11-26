@@ -1622,6 +1622,7 @@ pub struct ClaimBinding {
 /// [`ExactProbabilityGraphError::ExtentLimit`] when the universe is unbounded or
 /// its classification reached its limit; [`ExactProbabilityGraphError::ExpansionRefused`]
 /// when the subject cannot otherwise enumerate or reference them.
+#[implements("FR-125-AC-9")]
 pub fn claim_binding(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,

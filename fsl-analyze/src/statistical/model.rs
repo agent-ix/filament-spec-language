@@ -53,6 +53,7 @@ use fsl_semantics::check::{
     CheckedTemporalFormula, Event, FractionMeasure, ProbForm, ProbScheduler, TemporalProfile,
     Weighting, Workload,
 };
+use ix_trace_rs::implements;
 
 use super::claim::{reduce_quantile, Bound, Comparison, MeasureEvent, QuantileComparison};
 use super::{
@@ -372,6 +373,7 @@ type Binding = (Option<ModelInstance>, Option<ObjectReference>);
 
 /// Each `over` binding of `claim`, in instance order, with the reference
 /// its predicates read; one unbound test for a claim with no `over`.
+#[implements("FR-125-AC-9")]
 fn bindings(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,

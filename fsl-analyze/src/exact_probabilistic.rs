@@ -278,6 +278,7 @@ impl ProbKey {
     /// Every product-key member is encoded, including absent controls for
     /// unbounded digital forms. The model member is the full encoded model
     /// and clock state; no Rust `Debug` representation participates.
+    #[implements("FR-125-AC-9")]
     pub fn digital_cycle_identity(&self) -> String {
         let mut identity = String::from("filament.probability-digital-cycle-state/v1;");
         match &self.binding {
