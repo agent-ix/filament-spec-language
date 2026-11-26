@@ -748,14 +748,12 @@ fn hyper_parameters_read_the_held_most_specific_type_or_absent_key() {
         )
         .expect_err("an unrelated type has no overlapping population");
     assert!(
-        refusal
-            .iter()
-            .any(|refusal| matches!(
-                refusal.cause.as_ref(),
-                CheckCause::Hyper(cause)
-                    if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
-                        if parameter == "v")
-            )),
+        refusal.iter().any(|refusal| matches!(
+            refusal.cause.as_ref(),
+            CheckCause::Hyper(cause)
+                if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
+                    if parameter == "v")
+        )),
         "the unrelated parameter keeps its typed unresolved-population refusal: {refusal:?}"
     );
 }

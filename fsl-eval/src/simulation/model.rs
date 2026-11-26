@@ -109,7 +109,9 @@ use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
 use crate::simulation::order::{Expanded, expand, sorted_initial};
 use crate::simulation::protocol::WeakAccessShape;
-use crate::simulation::reduction::{ConstraintValue, OfferedReductions, Permutation, SymmetryGroup};
+use crate::simulation::reduction::{
+    ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
+};
 use crate::simulation::sample::{
     ObservedSample, ObserverDecision, SampleObservation, SampleRequest, sample_request,
     sample_request_observed_using, sample_request_until,
@@ -1318,10 +1320,7 @@ impl<'a> ModelSystem<'a> {
         let initial = self.initial_base.first()?;
         self.populations.iter().find(|population| {
             self.overlaps(population, parameter.clone())
-                && !initial
-                    .state()
-                    .populations
-                    .contains_key(&population.key)
+                && !initial.state().populations.contains_key(&population.key)
         })
     }
 

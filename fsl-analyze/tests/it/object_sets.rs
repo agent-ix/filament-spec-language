@@ -15,34 +15,33 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use filament_exact::{Cancel, Meter, ObjectReference};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::model_check::{
-    check_model, check_state_graph, ModelCheckRefusal, ModelCheckRequest, StateGraphItem,
-    StateGraphRequest,
+    ModelCheckRefusal, ModelCheckRequest, StateGraphItem, StateGraphRequest, check_model,
+    check_state_graph,
 };
 use fsl_analyze::plan_search::{
-    search, PlanLengths, PlanSearchLimits, PlanSearchRequest, PlanStatus,
+    PlanLengths, PlanSearchLimits, PlanSearchRequest, PlanStatus, search,
 };
 use fsl_analyze::plan_source::SourcePlan;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    check_closure, check_components, check_product_closure, encode_hyper_query,
-    encode_temporal_smt_query, CertificateRequest, ClosureCertificate, ComponentCertificate,
-    HyperQueryRequest, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure,
-    ProductClosureCertificate, ProductClosureClause, ProductClosureRequest, ProofCertificate,
-    SmtEncodingLimits, SmtQueryKind, StateGraphCertificate, StateGraphCertificateRequest,
-    StateGraphOutcome,
+    CertificateRequest, ClosureCertificate, ComponentCertificate, HyperQueryRequest,
+    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure, ProductClosureCertificate,
+    ProductClosureClause, ProductClosureRequest, ProofCertificate, SmtEncodingLimits, SmtQueryKind,
+    StateGraphCertificate, StateGraphCertificateRequest, StateGraphOutcome, check_closure,
+    check_components, check_product_closure, encode_hyper_query, encode_temporal_smt_query,
 };
 use fsl_semantics::check::{CheckedStateGraphClaim, HyperForm};
 use fsl_semantics::model::intake::package_input;
-use fsl_semantics::model::observation::{document_reference, DocumentRef};
+use fsl_semantics::model::observation::{DocumentRef, document_reference};
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
-use crate::analyze_cli_support::{analyze, request_over, Run, Workspace};
-use crate::counter::{declarations_in, unit_text_with_profiles, UNLIMITED};
-use crate::model_instances::{document, ident, universes, world, Held, World, PACKAGE};
-use crate::timed_world::{unit_text, DENSE};
+use crate::analyze_cli_support::{Run, Workspace, analyze, request_over};
+use crate::counter::{UNLIMITED, declarations_in, unit_text_with_profiles};
+use crate::model_instances::{Held, PACKAGE, World, document, ident, universes, world};
+use crate::timed_world::{DENSE, unit_text};
 
 #[path = "liveness_empty_components.rs"]
 mod liveness_empty_components;
@@ -572,7 +571,7 @@ fn check_probabilistic(route: Probabilistic, cases: &[Case]) {
         let (unit, item) = match route {
             Probabilistic::Exact => (
                 unit_text_with_profiles(
-            PACKAGE,
+                    PACKAGE,
                     "",
                     &format!(
                         "terminal Done using v on M when {{ true }};\nprobabilistic C0 using t0 on M over (x: M::{over}) under every scheduler on origin {{ probability >= 0.5 [ eventually holds({p}) ] }}\n"
@@ -588,7 +587,7 @@ fn check_probabilistic(route: Probabilistic, cases: &[Case]) {
                 };
                 (
                     unit_text_with_profiles(
-            PACKAGE,
+                        PACKAGE,
                         "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n",
                         &format!(
                             "terminal Done using v on M when {{ true }};\nworkload Even on M {{ weight Animal::idle = 1;{make} }}\nprobabilistic C0 using ev on M over (x: M::{over}) under Even on origin with alpha 0.1, beta 0.1, indifference 0.05 {{ probability >= 0.9 [ eventually[0,1] holds({p}) ] }}\n"
@@ -642,7 +641,7 @@ fn check_conformance(cases: &[Case]) {
         for (i, p) in case.probes() {
             let p = p.replace("x.", "k.");
             let unit = unit_text_with_profiles(
-            PACKAGE,
+                PACKAGE,
                 "profile pp = \"filament.protocol.finite-global/v1\";\n",
                 &format!(
                     "record Ack {{ ok: Boolean; }}\n\
