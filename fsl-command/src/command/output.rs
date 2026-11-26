@@ -619,7 +619,10 @@ pub(super) fn clause_report(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, None)
+    settle_correction(&mut report, selection)?;
+    let bytes = fsl_replay::spine::write_clause_run_result_for(&report, Some(selection))
+        .map_err(RunCause::ClauseOutput)?;
+    clause_result(&report, selection, &bytes)
 }
 
 #[cfg(feature = "quire-extraction")]
@@ -627,42 +630,41 @@ pub(super) fn clause_report(
 pub(super) fn clause_report_with_extraction(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: fsl_replay::spine::ExtractionRecord,
+    mut extraction: fsl_replay::spine::ExtractionRecord,
     map: &fsl_foundation::source_map::SourceMap,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, Some((extraction, map)))
-}
-
-#[implements("FR-267-AC-17")]
-fn clause_report_with_record(
-    report: &mut fsl_replay::spine::ClauseRunReport,
-    selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: Option<(
-        fsl_replay::spine::ExtractionRecord,
-        &fsl_foundation::source_map::SourceMap,
-    )>,
-) -> super::Result<RunResult> {
-    // FR-526: a timestamped run settles its correction relation before any
-    // result document is written; a refused relation writes none.
-    fsl_replay::spine::settle_run_correction(report, selection)
-        .map_err(RunCause::TemporalCorrection)?;
-    let report = &*report;
-    let extraction = extraction
-        .map(|(mut record, map)| {
-            if let Some(regions) = extraction_original_regions(report, selection, &record, map)? {
-                record.original_regions = Some(regions);
-            }
-            Ok::<_, RunCause>(record)
-        })
-        .transpose()?;
+    settle_correction(&mut report, selection)?;
+    if let Some(regions) = extraction_original_regions(&report, selection, &extraction, map)? {
+        extraction.original_regions = Some(regions);
+    }
     let bytes = fsl_replay::spine::write_clause_run_result_for_with_extraction(
-        report,
+        &report,
         Some(selection),
-        extraction,
+        Some(extraction),
     )
     .map_err(RunCause::ClauseOutput)?;
+    clause_result(&report, selection, &bytes)
+}
+
+/// FR-526: a timestamped run settles its correction relation before any
+/// result document is written; a refused relation writes none.
+fn settle_correction(
+    report: &mut fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+) -> super::Result<()> {
+    fsl_replay::spine::settle_run_correction(report, selection)
+        .map_err(RunCause::TemporalCorrection)?;
+    Ok(())
+}
+
+/// The command result of a written clause-run document.
+fn clause_result(
+    report: &fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    bytes: &[u8],
+) -> super::Result<RunResult> {
     let outcome = monitor_outcome(std::iter::once((&selection.clause_name()[..], report)));
-    let value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
+    let value = serde_json::from_slice(bytes).map_err(RunCause::Output)?;
     Ok(RunResult {
         // FR-285: a finite-window `pending` exits 0 and `indeterminate` 11.
         exit_code: report.disposition.exit_code(),

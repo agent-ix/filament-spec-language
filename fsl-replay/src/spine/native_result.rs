@@ -1323,17 +1323,42 @@ macro_rules! extraction_record_type {
             $($(#[$optional_attribute:meta])* $optional_field:ident: $optional_type:ty),* $(,)?
         }
     ) => {
-        #[derive(Clone, Debug, Deserialize, Serialize)]
-        #[serde(deny_unknown_fields)]
+        #[derive(Clone, Debug, Serialize)]
         #[allow(missing_docs, reason = "fields implement the native extraction wire record")]
-        #[allow(
-            dead_code,
-            reason = "the closed wire shape is validated during deserialization"
-        )]
         pub struct $name {
             $($(#[$field_attribute])* pub $field: $field_type,)*
             $($(#[$optional_attribute])* pub $optional_field: $optional_type,)*
         }
+
+        // Serde's derived struct decoder also accepts a positional array, so
+        // the members are decoded only after object syntax is confirmed.
+        const _: () = {
+            type Record = $name;
+
+            #[derive(Deserialize)]
+            #[serde(remote = "Record", deny_unknown_fields)]
+            #[allow(dead_code, reason = "a Serde remote decoder is never constructed")]
+            struct Members {
+                $($(#[$field_attribute])* $field: $field_type,)*
+                $($(#[$optional_attribute])* $optional_field: $optional_type,)*
+            }
+
+            struct Decoded(Record);
+
+            impl<'de> Deserialize<'de> for Decoded {
+                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                    Members::deserialize(decoder).map(Self)
+                }
+            }
+
+            impl<'de> Deserialize<'de> for $name {
+                #[implements("FR-267-AC-17")]
+                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                    fsl_foundation::serde_object::from_object::<D, Decoded>(decoder)
+                        .map(|Decoded(record)| record)
+                }
+            }
+        };
 
         impl ExtractionShape for $name {
             #[implements("FR-267-AC-17")]
@@ -1452,7 +1477,10 @@ extraction_record_type! {
 #[cfg(feature = "quire-extraction")]
 extraction_record_type! {
     ExtractionOutcome {
-        #[serde(with = "KindAvailabilityWire")]
+        #[serde(
+            serialize_with = "KindAvailabilityWire::serialize",
+            deserialize_with = "availability_object"
+        )]
         availability: KindAvailability,
         clause_text: std::collections::BTreeMap<String, String>,
         diagnostics: Vec<serde_json::Value>;
@@ -1463,8 +1491,9 @@ extraction_record_type! {
 
 #[cfg(feature = "quire-extraction")]
 #[derive(Deserialize, Serialize)]
-#[serde(remote = "KindAvailability")]
+#[serde(remote = "KindAvailability", deny_unknown_fields)]
 struct KindAvailabilityWire {
+    #[serde(deserialize_with = "availability_state")]
     state: AvailabilityState,
     #[serde(
         default,
@@ -1473,6 +1502,35 @@ struct KindAvailabilityWire {
     )]
     reason: Option<String>,
     lossy: bool,
+}
+
+/// Quire's `availability`, admitted only as a JSON object.
+#[cfg(feature = "quire-extraction")]
+#[implements("FR-267-AC-17")]
+fn availability_object<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<KindAvailability, D::Error> {
+    struct Decoded(KindAvailability);
+
+    impl<'de> Deserialize<'de> for Decoded {
+        fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+            KindAvailabilityWire::deserialize(decoder).map(Self)
+        }
+    }
+
+    fsl_foundation::serde_object::from_object::<D, Decoded>(decoder)
+        .map(|Decoded(availability)| availability)
+}
+
+/// Quire's availability `state`, admitted only as a JSON string: Serde's
+/// derived enum decoder also accepts `{"available": null}`.
+#[cfg(feature = "quire-extraction")]
+#[implements("FR-267-AC-17")]
+fn availability_state<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<AvailabilityState, D::Error> {
+    let name = String::deserialize(decoder)?;
+    AvailabilityState::deserialize(serde::de::value::StringDeserializer::new(name))
 }
 
 #[cfg(feature = "quire-extraction")]
@@ -4340,9 +4398,10 @@ pub fn write_clause_run_result_for(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
+    check_report(report, selection)?;
     #[cfg(feature = "quire-extraction")]
     {
-        write_clause_run_result_for_with_extraction(report, selection, None)
+        write_document(report, selection, None)
     }
     #[cfg(not(feature = "quire-extraction"))]
     {
@@ -4359,6 +4418,18 @@ pub fn write_clause_run_result_for_with_extraction(
     selection: Option<&super::ClauseRunSelection>,
     extraction: Option<ExtractionRecord>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
+    check_report(report, selection)?;
+    write_document(report, selection, extraction)
+}
+
+/// The refusals every writer applies before it writes a clause run: a model
+/// counterexample without its model selection, and a basis that does not
+/// match the witness or the disposition.
+#[implements("FR-267-AC-1")]
+fn check_report(
+    report: &ClauseRunReport,
+    selection: Option<&super::ClauseRunSelection>,
+) -> Result<(), NativeRunResultError> {
     if matches!(
         report.counterexample,
         Some(crate::ClauseRunCounterexample::Model(_))
@@ -4381,7 +4452,7 @@ pub fn write_clause_run_result_for_with_extraction(
     } else if !verdict_basis(report) {
         return Err(NativeRunResultError::BasisDisposition);
     }
-    write_document(report, selection, extraction)
+    Ok(())
 }
 
 /// FR-266: a verdict has a decisive or closed settlement, a non-verdict
@@ -4852,5 +4923,172 @@ mod qsl_3117_deciding_run {
                 "expected refusal naming {expected}, got {observed}"
             );
         }
+    }
+
+    fn read_with_extraction(extraction: Value) -> Option<String> {
+        let mut document: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native-run-result-decisive.json"
+        ))
+        .unwrap();
+        document["extraction"] = extraction;
+        match read_native_run_result(&serde_json::to_vec(&document).unwrap()) {
+            Ok(_) => None,
+            Err(NativeRunReadError::MalformedMember { member, .. }) => Some(member),
+            Err(NativeRunReadError::Invalid { member, .. }) => Some(member.to_owned()),
+            Err(other) => panic!("refused without a member path: {other}"),
+        }
+    }
+
+    /// A record holding every extraction object, `original_regions` included.
+    fn complete_extraction() -> Value {
+        json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": {
+                "availability": {"state": "available", "reason": "why", "lossy": false},
+                "clause_text": {},
+                "diagnostics": []
+            },
+            "map": {
+                "region": {"start": 0, "end": 1},
+                "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
+            },
+            "original_regions": [{
+                "start": {"byte": 0, "line": 1, "column": 1},
+                "end": {"byte": 1, "line": 1, "column": 2}
+            }]
+        })
+    }
+
+    /// FR-267-AC-17: an array where an object is required is a value of
+    /// another JSON type, even when its elements are the members in order.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_refuses_positional_arrays_at_every_level() {
+        assert_eq!(read_with_extraction(complete_extraction()), None);
+        let original = json!(["agent-ix", "ix://agent-ix/spec", "spec.md", []]);
+        let body = json!(["agent-ix", "body", "Body", []]);
+        let binding = json!(["check", "fixture/package"]);
+        let availability = json!(["available", "why", false]);
+        let outcome = json!([{"state": "available", "lossy": false}, {}, []]);
+        let region = json!([0, 1]);
+        let segment = json!([0, 1, 0, 1]);
+        let position = json!([0, 1, 1]);
+        let map = json!([
+            {"start": 0, "end": 1},
+            [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
+        ]);
+        let original_region = json!([
+            {"byte": 0, "line": 1, "column": 1},
+            {"byte": 1, "line": 1, "column": 2}
+        ]);
+        let cases = [
+            ("extraction.original", "/original", original),
+            ("extraction.body", "/body", body),
+            ("extraction.binding", "/binding", binding),
+            ("extraction.outcome", "/outcome", outcome),
+            (
+                "extraction.outcome.availability",
+                "/outcome/availability",
+                availability,
+            ),
+            ("extraction.map", "/map", map),
+            ("extraction.map.region", "/map/region", region),
+            ("extraction.map.segments[0]", "/map/segments/0", segment),
+            (
+                "extraction.original_regions[0]",
+                "/original_regions/0",
+                original_region,
+            ),
+            (
+                "extraction.original_regions[0].start",
+                "/original_regions/0/start",
+                position.clone(),
+            ),
+            (
+                "extraction.original_regions[0].end",
+                "/original_regions/0/end",
+                position,
+            ),
+        ];
+        for (expected, pointer, positional) in cases {
+            let mut extraction = complete_extraction();
+            *extraction.pointer_mut(pointer).unwrap() = positional;
+            assert_eq!(
+                read_with_extraction(extraction).as_deref(),
+                Some(expected),
+                "positional array at {pointer}"
+            );
+        }
+
+        let whole = complete_extraction();
+        let positional = json!([
+            whole["original"],
+            whole["body"],
+            whole["binding"],
+            whole["outcome"],
+            whole["map"]
+        ]);
+        assert_eq!(
+            read_with_extraction(positional).as_deref(),
+            Some("extraction")
+        );
+    }
+
+    /// FR-267-AC-17: a positional array cannot carry an empty `segments` or
+    /// `original_regions` array past the reader.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_refuses_positional_arrays_holding_empty_arrays() {
+        let mut extraction = complete_extraction();
+        extraction["map"] = json!([{"start": 0, "end": 0}, []]);
+        assert_eq!(
+            read_with_extraction(extraction).as_deref(),
+            Some("extraction.map")
+        );
+
+        let whole = complete_extraction();
+        let empty_segments = json!([
+            whole["original"],
+            whole["body"],
+            whole["binding"],
+            whole["outcome"],
+            {"region": {"start": 0, "end": 0}, "segments": []}
+        ]);
+        let empty_regions = json!([
+            whole["original"],
+            whole["body"],
+            whole["binding"],
+            whole["outcome"],
+            whole["map"],
+            []
+        ]);
+        for positional in [empty_segments, empty_regions] {
+            assert_eq!(
+                read_with_extraction(positional).as_deref(),
+                Some("extraction")
+            );
+        }
+    }
+
+    /// FR-267-AC-17: `availability` refuses an unknown member, and its
+    /// `state` is a string.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_closes_the_extraction_availability() {
+        let mut unknown = complete_extraction();
+        unknown["outcome"]["availability"]["source"] = json!("x");
+        assert_eq!(
+            read_with_extraction(unknown).as_deref(),
+            Some("extraction.outcome.availability.source")
+        );
+
+        let mut tagged = complete_extraction();
+        tagged["outcome"]["availability"]["state"] = json!({"available": null});
+        assert_eq!(
+            read_with_extraction(tagged).as_deref(),
+            Some("extraction.outcome.availability.state")
+        );
     }
 }
