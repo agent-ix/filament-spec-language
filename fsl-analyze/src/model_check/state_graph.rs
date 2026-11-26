@@ -33,7 +33,9 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{check_model_bounds, ModelSystem, PredicateReading};
+use fsl_eval::simulation::model::{
+    check_model_bounds, ModelSystem, NoClaimInstances, PredicateReading,
+};
 use fsl_eval::simulation::{
     ExpansionLimit, ExpansionStop, NotSimulated, Permutation, StateKey, SymmetryGroup,
 };
@@ -280,6 +282,7 @@ struct InstanceView<'a> {
 
 /// The instances of `items`, item by item, derived from `system`'s
 /// universes (FR-125 Instancing).
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
 fn instances<'a>(
     items: &[StateGraphItem<'a>],
     system: &ModelSystem<'_>,
@@ -295,17 +298,29 @@ fn instances<'a>(
             let mut bindings: Vec<(Option<ObjectReference>, Option<ModelInstance>)> =
                 match entry.claim.over() {
                     None => vec![(None, None)],
-                    Some(over) => system
-                        .instances(&ValueType::Reference(over.object.clone()))
-                        .map_err(bounds_refusal)?
-                        .iter()
-                        .map(|instance| {
-                            system
-                                .written_reference(over.object.clone(), instance)
-                                .map(|reference| (Some(reference), Some(instance.clone())))
-                                .map_err(|_| fault("state-graph-instance-references"))
-                        })
-                        .collect::<Result<_, _>>()?,
+                    Some(over) => {
+                        match system.claim_instances(&ValueType::Reference(over.object.clone())) {
+                            Ok(instances) => instances
+                                .as_slice()
+                                .iter()
+                                .map(|instance| {
+                                    system
+                                        .written_reference(over.object.clone(), instance)
+                                        .map(|reference| (Some(reference), Some(instance.clone())))
+                                        .map_err(|_| fault("state-graph-instance-references"))
+                                })
+                                .collect::<Result<_, _>>()?,
+                            Err(NoClaimInstances::NotSimulated(refusal)) => match refusal {
+                                NotSimulated::ConflictingIdentity => {
+                                    return Err(ModelCheckRefusal::ConflictingIdentity);
+                                }
+                                refusal => return Err(bounds_refusal(refusal)),
+                            },
+                            Err(
+                                NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance,
+                            ) => Vec::new(),
+                        }
+                    }
                 };
             if let Some(selected) = &entry.binding {
                 bindings.retain(|(_, binding)| binding.as_ref() == Some(selected));

@@ -16,8 +16,8 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::PackageModelInput;
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PendingClauseForm,
-    TimedState, TimedSystem,
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, NoClaimInstances,
+    PendingClauseForm, TimedState, TimedSystem,
 };
 use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -80,6 +80,43 @@ fn item_instance(
         "parameter": parameter.name,
         "key": instance.key,
     }))
+}
+
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
+fn claim_instances(
+    system: &ModelSystem<'_>,
+    claim: &CheckedStateGraphClaim,
+) -> Result<Vec<Option<ModelInstance>>, NoClaimInstances> {
+    let Some(parameter) = claim.over() else {
+        return Ok(vec![None]);
+    };
+    system
+        .claim_instances(&ValueType::Reference(parameter.object.clone()))
+        .map(|instances| instances.as_slice().iter().cloned().map(Some).collect())
+}
+
+fn timed_claim_instance_refusal(read: &Run<'_, '_>, refusal: NoClaimInstances) -> EngineReport {
+    match refusal {
+        NoClaimInstances::NoInitialState => {
+            no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState)
+        }
+        NoClaimInstances::NoInstance => {
+            no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance)
+        }
+        NoClaimInstances::NotSimulated(fsl_eval::simulation::NotSimulated::ConflictingIdentity) => {
+            EngineReport::Refused(Refusal::Declined(
+                fsl_replay::ProofRefusalCause::InvalidInput,
+                fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                fsl_foundation::diagnostic::CatalogCode::new(
+                    "invalid_runtime_input",
+                    "conflicting-identity",
+                ),
+            ))
+        }
+        NoClaimInstances::NotSimulated(_) => {
+            EngineReport::Refused(Refusal::Failed(super::items::BROKEN))
+        }
+    }
 }
 
 /// The EN-1 item that decides the state-graph claim at `key` over the
@@ -321,14 +358,9 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if let Some(refusal) = digital_closed_refusal(&timed) {
         return EngineReport::Refused(refusal);
     }
-    let instances = match read.claim.over() {
-        Some(parameter) => {
-            match system.instances(&ValueType::Reference(parameter.object.clone())) {
-                Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            }
-        }
-        None => vec![None],
+    let instances = match claim_instances(&system, read.claim) {
+        Ok(instances) => instances,
+        Err(refusal) => return timed_claim_instance_refusal(read, refusal),
     };
     // FR-125 Instancing: no initial state settles before no instance.
     if timed.initial().is_empty() {
@@ -1068,14 +1100,9 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         Ok(timed) => timed,
         Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
-    let instances = match read.claim.over() {
-        Some(parameter) => {
-            match system.instances(&ValueType::Reference(parameter.object.clone())) {
-                Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            }
-        }
-        None => vec![None],
+    let instances = match claim_instances(&system, read.claim) {
+        Ok(instances) => instances,
+        Err(refusal) => return timed_claim_instance_refusal(read, refusal),
     };
     // FR-125 Instancing: no initial state settles before no instance.
     if timed.initial().is_empty() {
