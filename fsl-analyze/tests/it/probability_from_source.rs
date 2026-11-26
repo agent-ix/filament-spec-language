@@ -652,8 +652,8 @@ fn probabilistic_on_each_settles_per_instance() {
     let (each, origin) = (entry(item), entry(&document["items"][1]));
     assert_eq!(each["value"], origin["value"], "{document}");
     assert_eq!(each["binding"], Value::Null, "{each}");
-    assert_eq!(each["instance"]["key"], "m", "{each}");
-    assert_eq!(origin["binding"]["key"], "m", "{origin}");
+    assert_eq!(each["instance"]["identity"], "m", "{each}");
+    assert_eq!(origin["binding"]["identity"], "m", "{origin}");
     assert_eq!(origin["instance"], Value::Null, "{origin}");
     assert!(each["value"].to_string().contains("391"), "{each}");
 }
@@ -790,7 +790,7 @@ fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
         .as_array()
         .expect("entries");
     assert_eq!(entries.len(), 1, "{item}");
-    assert_eq!(entries[0]["instance"]["key"], "m", "{item}");
+    assert_eq!(entries[0]["instance"]["identity"], "m", "{item}");
     assert_eq!(entries[0]["binding"], Value::Null, "{item}");
     assert!(entries[0]["value"].to_string().contains("391"), "{item}");
     // `m` activates at position 0, so at its initial key the numerator is the
@@ -901,7 +901,7 @@ fn probabilistic_on_each_product_preserves_multi_initial_keys() {
             panic!("the activation is over a reference type");
         };
         system
-            .bound_reference(over.clone(), instance)
+            .written_reference(over.clone(), instance)
             .expect("the instance has its checked reference")
     };
     let product_key = |instance: &str, phase| {
@@ -998,7 +998,7 @@ fn probabilistic_on_each_product_preserves_multi_initial_keys() {
         entry
             .instance
             .as_ref()
-            .map(|instance| instance.key.as_str()),
+            .map(|instance| instance.object().as_str()),
         Some("m")
     );
     assert!(entry.binding.is_none());
@@ -1862,6 +1862,87 @@ fn an_item_with_no_probabilistic_member_takes_every_default() {
     assert_eq!(request["limits"]["max_samples"], 1_u64 << 24, "{item}");
 }
 
+/// What `Eventually`'s decoded certificate holds, written from the source and
+/// the spec: the claim's identity, and ADR-028 §15.4's values under `Even`
+/// (`391/400` at the start, `17/20` after one loss, 1 once delivered and 0
+/// after two losses; FR-201-AC-12 states the same two exact values) at
+/// FR-196's product keys of the one message `m`.
+fn assert_decoded_eventually_certificate(decoded: &fsl_replay::ProbabilityCertificateDocument) {
+    assert_eq!(
+        decoded.identity.model().map(|model| model.as_str()),
+        Some("test/link")
+    );
+    assert_eq!(decoded.identity.ordinal(), 0);
+    let node = fsl_foundation::node_wire::node_key_to_json(decoded.identity.node())
+        .expect("the claim node key writes");
+    assert_eq!(node["package"], "analyze-unit", "{node}");
+    assert_eq!(node["ordinal"], 0, "{node}");
+    for (index, segment) in ["claim", "probabilistic_claim", "Eventually"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(node["path"][index], segment, "{node}");
+    }
+    assert_eq!(
+        decoded.optimization,
+        fsl_replay::ProbabilityObjective::Workload
+    );
+    assert!(decoded.reward.is_none());
+    assert!(decoded.timed.is_none());
+    assert!(decoded.policy.is_none());
+
+    // The `(delivered, attempts)` of `m` that a product key names.
+    let state_of = |key: &ProbabilityProductKey| -> (bool, String) {
+        let key: Value =
+            serde_json::from_slice(key.as_bytes()).expect("a canonical product key is JSON");
+        assert_eq!(key[0], "filament.probability-product-key/v1", "{key}");
+        assert_eq!(key[1]["identity"], "m", "{key}");
+        let fields = &key[4][1]["semantic"]["entries"][0]["value"]["entries"][0]["value"]["fields"];
+        assert_eq!(fields[0]["name"], "delivered", "{key}");
+        assert_eq!(fields[1]["name"], "attempts", "{key}");
+        (
+            fields[0]["value"]["value"]
+                .as_bool()
+                .expect("delivered is a Boolean"),
+            fields[1]["value"]["value"]
+                .as_str()
+                .expect("attempts is an integer")
+                .to_owned(),
+        )
+    };
+    let rational = |numerator: i64, denominator: i64| {
+        filament_exact::Rational::new(
+            filament_exact::Integer::from(numerator),
+            filament_exact::Integer::from(denominator),
+        )
+        .expect("a nonzero denominator")
+    };
+    let expected = [
+        ((false, "0"), rational(391, 400)),
+        ((false, "1"), rational(17, 20)),
+        ((false, "2"), rational(0, 1)),
+        ((true, "1"), rational(1, 1)),
+        ((true, "2"), rational(1, 1)),
+    ]
+    .into_iter()
+    .map(|((delivered, attempts), value)| ((delivered, attempts.to_owned()), value))
+    .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(decoded.values.len(), expected.len());
+    let values = decoded
+        .values
+        .iter()
+        .map(|row| (state_of(&row.state), row.value.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values, expected);
+    let mut targets: Vec<_> = decoded.targets.iter().map(state_of).collect();
+    targets.sort();
+    assert_eq!(
+        targets,
+        [(true, "1".to_owned()), (true, "2".to_owned())],
+        "the targets are the delivered states"
+    );
+}
+
 /// FR-410, FR-741, FR-322, FSpec FR-412: a real statistical `measured` item's
 /// `verdict` validates against FSpec's backend-provider schema
 /// (`StatisticalVerdict`), and the exact `proved` item's certificate identity
@@ -1921,6 +2002,26 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
         &certificate["document"],
         "the proved item's certificate document",
     );
+    let certificate_bytes =
+        serde_json::to_vec(&certificate["document"]).expect("the emitted certificate is JSON");
+    let model = prob_world::link(EVENTUALLY);
+    let world = prob_world::World::new(&model);
+    let subject = world.subject();
+    let system = ModelSystem::new(subject.simulation).expect("the checked Link model admits");
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        system.meter_limits(),
+    );
+    let cancel = Cancel::new();
+    let decoded = fsl_replay::read_probability_certificate(&certificate_bytes, limits, &cancel)
+        .expect("the emitted certificate passes the strict reader");
+    let rewritten = fsl_replay::write_probability_certificate(&decoded, limits, &cancel)
+        .expect("the admitted certificate writes canonically");
+    assert_eq!(
+        rewritten, certificate_bytes,
+        "the canonical rewrite is the emitted certificate, byte for byte"
+    );
+    assert_decoded_eventually_certificate(&decoded);
     assert_eq!(
         certificate["document"]["identity"], certificate["identity"],
         "{item}"
@@ -2636,4 +2737,164 @@ fn on_each_statistical_evidence_builds_no_product() {
         "unsupported at the profile boundary: {:?}",
         records[0].settlement
     );
+}
+
+/// The `native-analyze/1` document of the claim `OverBase`, whose parameter
+/// of type `M::Base` ranges over the key `m`: the `Link` model with `Msg`
+/// extending a fieldless `Base`, so the admitted record under `m` is a `Msg`.
+/// `scope` is the claim's scheduler and activation, which bind the parameter,
+/// and `event` is the path formula the claim asks to have probability at
+/// least one half.
+fn run_over_base(name: &str, scope: &str, event: &str) -> Value {
+    run_over_base_items(name, scope, event, json!([{"claim": "OverBase"}]))
+}
+
+/// [`run_over_base`] under the request items `items`.
+fn run_over_base_items(name: &str, scope: &str, event: &str, items: Value) -> Value {
+    const BASE: &str = "ix://test/link/Base";
+    let mut model: Value = serde_json::from_slice(LINK_MODEL).expect("the Link model");
+    let types = model["types"].as_array_mut().expect("types");
+    let msg = types
+        .iter_mut()
+        .find(|declared| declared["identity"] == "ix://test/link/Msg")
+        .expect("Msg is declared");
+    msg["supertypes"] = json!([BASE]);
+    let mut base = msg.clone();
+    base["identity"] = json!(BASE);
+    base["displayName"] = json!(BASE);
+    base["supertypes"] = json!([]);
+    base["fields"] = json!([]);
+    base["operations"] = json!([]);
+    base["origin"] = json!({"generated": {"generatorIdentity": BASE,
+        "generatorVersion": "1.0.0", "inputIdentities": [BASE]}});
+    types.push(base);
+    let claim = format!(
+        "probabilistic OverBase {scope} {{ probability >= rational(1, 2) \
+         [ {event} ] }}"
+    );
+    let mut text = unit(&claim);
+    if scope == EACH_BASE {
+        // `on each` takes a type a population names, so `msgs` names `Base`
+        // too; a `terminal when` allows one member type, so the unit drops it.
+        for population in model["populations"].as_array_mut().expect("populations") {
+            population["members"] = json!(["ix://test/link/Msg", BASE]);
+        }
+        text = text
+            .lines()
+            .filter(|line| !line.starts_with("terminal "))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    let ws = Workspace::new(name);
+    analyze(&request_over(
+        &ws,
+        &text,
+        &serde_json::to_vec(&model).expect("model JSON"),
+        &[LINK_START.to_vec()],
+        json!({"items": items}),
+    ))
+    .document()
+}
+
+const OVER_BASE: &str = "using ev on M over (b: M::Base) under Even on origin";
+const EACH_BASE: &str = "using inf on M under Even on each (b: M::Base) when (b = b)";
+
+/// `binding` is the FR-181 reference to the key `m` with the admitted type
+/// `Msg`, with no other member.
+fn assert_admitted_msg_reference(binding: &Value) {
+    let members = binding.as_object().map(|object| {
+        object
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>()
+    });
+    assert_eq!(
+        members,
+        Some(std::collections::BTreeSet::from([
+            "identity",
+            "object_type",
+            "type",
+            "universe"
+        ])),
+        "{binding}"
+    );
+    assert_eq!(binding["type"], "reference", "{binding}");
+    assert_eq!(binding["identity"], "m", "{binding}");
+    assert_eq!(
+        binding["object_type"]["original"],
+        json!({"node": "ix://test/link/Msg", "package": "test/link"}),
+        "{binding}"
+    );
+}
+
+/// FR-125 "Instancing": the refuted binding of `over (b: M::Base)` at the key
+/// `m` carries the admitted type `Msg`, not the declared `over` type `Base`.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_refuted_probability_binding_names_the_admitted_member_type() {
+    let document = run_over_base(
+        "over-base-refuted",
+        OVER_BASE,
+        "eventually[0,2] holds(b != b)",
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "refuted", "{document}");
+    assert_admitted_msg_reference(&item["counterexample"]["binding"]);
+}
+
+/// FR-125 "Instancing", FR-741 "Binding": an exact entry's `over` binding is
+/// the reference with the admitted type and no population.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_probability_entry_over_binding_carries_no_population() {
+    let document = run_over_base("over-base-entry", OVER_BASE, "eventually[0,2] holds(b = b)");
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{document}");
+    let entry = &item["record"]["basis"]["entries"][0];
+    assert_admitted_msg_reference(&entry["binding"]);
+    assert_eq!(entry["instance"], Value::Null, "{entry}");
+}
+
+/// FR-125 "Instancing", FR-741 "Binding": the `on each` object of a refuted
+/// claim and of an exact entry is the reference with the admitted type.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_probability_on_each_instance_names_the_admitted_member_type() {
+    let refuted = run_over_base("each-base-refuted", EACH_BASE, "eventually holds(b != b)");
+    let item = &refuted["items"][0];
+    assert!(item.is_object(), "{refuted}");
+    assert_eq!(label(item), "refuted", "{refuted}");
+    assert_admitted_msg_reference(&item["counterexample"]["instance"]);
+
+    let proved = run_over_base("each-base-entry", EACH_BASE, "eventually holds(b = b)");
+    let item = &proved["items"][0];
+    assert_eq!(label(item), "proved", "{proved}");
+    let entry = &item["record"]["basis"]["entries"][0];
+    assert_admitted_msg_reference(&entry["instance"]);
+    assert_eq!(entry["binding"], Value::Null, "{entry}");
+}
+
+/// FR-125 "Instancing", FR-741 "Binding": each statistical test row's `over`
+/// binding is the reference with the admitted type and no population.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_statistical_test_binding_names_the_admitted_member_type() {
+    let document = run_over_base_items(
+        "over-base-statistical",
+        "using ev on M over (b: M::Base) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.05",
+        "eventually[0,2] holds(b = b)",
+        json!([{"claim": "OverBase", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "sprt"},
+            "seed": "7", "max_witnesses": 8, "workers": 1}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "measured", "{document}");
+    let tests = item["verdict"]["provenance"]["tests"]
+        .as_array()
+        .expect("provenance tests");
+    assert!(!tests.is_empty(), "{document}");
+    for test in tests {
+        assert_admitted_msg_reference(&test["binding"]);
+    }
 }

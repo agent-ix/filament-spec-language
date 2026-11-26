@@ -2,7 +2,9 @@
 //! QSL-3444: the region route's delay move goes to the region's time
 //! successor (FR-922), whatever representative the region was first reached by.
 
+use filament_exact::Cancel;
 use fsl_analyze::analyze::AnalyzeRecord;
+use fsl_analyze::exact_probabilistic::{ProbBuild, build_product};
 use fsl_replay::{ProofBasis, TerminalValue};
 use ix_trace_rs::trace;
 
@@ -19,7 +21,7 @@ fn outcome(record: &AnalyzeRecord) -> String {
             value.value().numerator().as_big(),
             value.value().denominator().as_big()
         ),
-        Some(TerminalValue::Refuted { .. }) => "refuted".to_owned(),
+        Some(TerminalValue::Refuted) => "refuted".to_owned(),
         Some(value) => format!("{value:?}"),
         None => format!("{record:?}"),
     }
@@ -138,4 +140,38 @@ fn a_closed_invariant_keeps_its_last_instant() {
 #[test]
 fn the_two_clock_subject_with_idle_states_reaches_late() {
     assert_eq!(observed(&two_clocks("")), all_refuted());
+}
+
+/// The walk steps inside a region before it reaches the successor. Those steps
+/// are no move, so they take no state or edge slot: the product of a subject
+/// that idles across regions builds with limits of exactly its own size.
+#[test]
+#[trace("FR-203-AC-14")]
+fn a_walk_inside_a_region_takes_no_state_or_edge_slot() {
+    let body = format!(
+        "{}\
+         pre Step using v on M::Call::step {{ self.phase = 0 and self.x > 0 ms and self.x < 1 ms }}\n\
+         post Stepped using v on M::Call::step {{ self.phase = 1 }}\n\
+         probabilistic Never using ev on M over (c: M::Call) under every scheduler on origin \
+         {{ probability >= 0.5 [ eventually[0 ms, 2 ms] holds(c.late) ] }}\n",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world(
+        &timed_world::document(&["x"], &[("step", &["phase"])]),
+        PROFILES,
+        &body,
+    );
+    let built = |limits: Option<(usize, usize)>| {
+        let mut request = super::request(&world, "Never");
+        if let Some((states, transitions)) = limits {
+            request.limits.model.limits.max_states = states;
+            request.limits.model.limits.max_transitions = transitions;
+        }
+        match build_product(request, &Cancel::new()) {
+            Ok(ProbBuild::Built(product)) => (product.states.len(), product.edges.len()),
+            other => panic!("the product builds: {other:?}"),
+        }
+    };
+    let size = built(None);
+    assert_eq!(built(Some(size)), size);
 }

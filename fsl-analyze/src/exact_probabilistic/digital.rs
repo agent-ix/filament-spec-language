@@ -63,6 +63,7 @@ pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
 /// Markov decision process or chain at some digital state, a budget or the
 /// cancellation.
 #[implements("FR-204-AC-1")]
+#[implements("FR-125-AC-9")]
 pub(super) fn build<'s, 'a>(
     system: &'s ModelSystem<'a>,
     timed: TimedSystem<'s, 'a>,
@@ -102,7 +103,7 @@ pub(super) fn build<'s, 'a>(
                 .into_iter()
                 .map(|instance| {
                     let reference = system
-                        .bound_reference(object.clone(), &instance)
+                        .written_reference(object.clone(), &instance)
                         .map_err(ProductRefusal::Internal)?;
                     Ok((Some(instance), Some(reference)))
                 })
@@ -1626,6 +1627,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- exploration ---------------------------------------------------------
 
+    #[implements("FR-204-AC-1")]
     fn explore(&mut self) -> Step<Vec<(u32, Option<ModelInstance>, ProbStateId)>> {
         self.poll()?;
         let deadline = if matches!(self.form, Form::Elapsed { .. }) {
@@ -2104,6 +2106,9 @@ impl<'c> Builder<'_, '_, 'c> {
     /// The region route's delay, taken to the time successor (FR-922): the
     /// first region the walk reaches that differs from the one `state` is in,
     /// both read under the tail `tail`.
+    ///
+    /// Interim: a walk over a finer grid, not the symbolic region MDP of
+    /// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
     #[implements("FR-922-AC-4")]
     fn successor_delay(
         &mut self,
