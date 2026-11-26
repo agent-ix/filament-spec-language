@@ -743,6 +743,25 @@ fn zones_refute_when_only_a_strict_boundary_is_trapped() {
     assert_refuted_and_replayed(&trapped_with("timed-sg-edge-unique", guard, UNIQUE_DONE));
 }
 
+/// TC-2412 step 8's subject on EN-6: with `first` strictly between 0 and
+/// 1 ms, neither `zero` nor `one` is ever taken, so both claims are false.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FR-852-AC-3")]
+#[test]
+fn zones_refute_the_trap_between_two_integer_times() {
+    let guard = "self.y >= 2 ms and self.x <= 1 ms";
+    assert_refuted_and_replayed(&trapped_with(
+        "timed-sg-fraction-always",
+        guard,
+        ALWAYS_DONE,
+    ));
+    assert_refuted_and_replayed(&trapped_with(
+        "timed-sg-fraction-unique",
+        guard,
+        UNIQUE_DONE,
+    ));
+}
+
 /// One step through two overlapping guard parts is one transition sequence.
 #[trace("TC-2412", "FR-852-AC-3")]
 #[test]
