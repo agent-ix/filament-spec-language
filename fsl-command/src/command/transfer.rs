@@ -10,7 +10,7 @@ use fsl_analyze::analyze::document::{
     analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, DocumentSelection,
     ItemSelection, ResolvedItem, SubjectSelection,
 };
-use fsl_analyze::analyze::{AnalyzeLimits, SourceProvision};
+use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, SourceProvision};
 use fsl_foundation::Code;
 use fsl_replay::planner::{
     read_premise_item, read_result_entry, strength_implies, EntryOrigin, ItemKey, TransferFacts,
@@ -181,7 +181,7 @@ impl Transfer<'_> {
         }
         let limits = AnalyzeLimits {
             observation: self.observation_limits,
-            ..AnalyzeLimits::unbounded()
+            ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
         };
         let abstract_binding = subjects
             .abstract_subject
@@ -539,6 +539,7 @@ impl Transfer<'_> {
     /// subject for its model before any premise or transfer settles.
     fn admit_snapshots(&self, refinement: &CheckedRefinement, subjects: &Subjects) -> Result<()> {
         let package = self.checked.package();
+        let published = AnalyzeLimits::published(DeadlineSupply::Unbounded);
         for (side, subject, model) in [
             (
                 "abstract",
@@ -556,16 +557,14 @@ impl Transfer<'_> {
                 let request = fsl_eval::simulation::model::ModelSimulationRequest {
                     input: fsl_eval::simulation::model::ModelCheckInput::source(package),
                     packages: self.packages,
-                    normalization: AnalyzeLimits::unbounded().normalization,
+                    normalization: published.normalization,
                     snapshots: &subjects.documents,
                     initial: vec![initial.clone()],
                     universes: binding.universes.clone(),
                     observation: self.observation_limits,
-                    expansion: fsl_eval::simulation::model::ExpansionLimits {
-                        max_candidates: u64::MAX,
-                    },
-                    meter: AnalyzeLimits::unbounded().accounting,
-                    emit: AnalyzeLimits::unbounded().emit,
+                    expansion: published.expansion,
+                    meter: published.accounting,
+                    emit: published.emit,
                 };
                 // Admitted over the subject's own model, so a snapshot of another
                 // selected model is refused here and not read as a premise.

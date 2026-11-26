@@ -7,7 +7,7 @@ use fsl_analyze::analyze::document::{
     resolve_call_items, settle_run, AnalyzeDocumentError, AnalyzeRun, CallItem, Negotiate,
     SettledRun, SubjectSelection,
 };
-use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision};
+use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engines, SourceProvision};
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::requirements::Requirements;
@@ -92,7 +92,7 @@ pub(super) fn settle_call(
         provision,
         items: resolved,
         engines: settle.engines,
-        limits: AnalyzeLimits::unbounded(),
+        limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
     };
     settle_run(run, settle.negotiate, settle.cancel).map_err(|error| match error {
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
@@ -142,7 +142,7 @@ fn resolve_held_claims<'a>(
     let graph = fsl_analyze::analyze::DocumentGraphs::of_package(
         checked.package(),
         packages,
-        AnalyzeLimits::unbounded().emit,
+        AnalyzeLimits::published(DeadlineSupply::Unbounded).emit,
     )
     .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
     resolve_held_claims_in(&graph, selection)

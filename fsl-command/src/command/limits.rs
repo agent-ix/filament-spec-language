@@ -440,6 +440,7 @@ impl CommandLimits {
     }
 
     /// `limits` with each set setting it carries replaced.
+    #[implements("FR-281-AC-26")]
     pub(super) fn apply_to_analyze(&self, limits: &mut AnalyzeLimits) {
         let mut caller = CallerLimits {
             accounting: AccountingLimits(limits.accounting),
@@ -458,6 +459,11 @@ impl CommandLimits {
         }
         for (setting, bound) in &self.stage {
             limits.engines.set(*setting, *bound);
+            match setting {
+                Setting::ExpansionMaxCandidates => limits.expansion.max_candidates = *bound,
+                Setting::SimulationMaxSteps => limits.simulation.max_steps = *bound,
+                _ => {}
+            }
         }
     }
 
@@ -624,7 +630,7 @@ mod tests {
     }
 
     /// The engine settings `analyze` accepts, and `monitor` beside routed items.
-    /// `expansion.max_candidates` is required of the caller, so no bound is
+    /// `expansion.max_candidates` has a default per operation, so no bound is
     /// reported until it is set.
     fn engine_names() -> Vec<&'static str> {
         ENGINE_SETTINGS
@@ -698,6 +704,27 @@ mod tests {
                 "{setting}"
             );
         }
+    }
+
+    /// FR-281-AC-26: a caller's candidate bound replaces that one limit of
+    /// the analysis, and reaches the items that read an engine bound.
+    #[trace("FR-281-AC-26")]
+    #[test]
+    fn a_caller_candidate_bound_replaces_that_one_analysis_limit() {
+        use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply};
+
+        let published = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+        let mut limits = published;
+        let mut caller = CommandLimits::analyze();
+        caller
+            .set(SettingName::Stage(Setting::ExpansionMaxCandidates), 7)
+            .expect("analyze takes the setting");
+        caller.apply_to_analyze(&mut limits);
+        assert_eq!(limits.expansion.max_candidates, 7);
+        assert_eq!(limits.engines.get(Setting::ExpansionMaxCandidates), Some(7));
+        assert_eq!(limits.simulation, published.simulation);
+        assert_eq!(limits.position_limit, published.position_limit);
+        assert_eq!(limits.accounting, published.accounting);
     }
 
     /// TC-721 step 11, for the settings exposed today: each accepted setting changes only its own bound.

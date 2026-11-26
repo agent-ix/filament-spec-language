@@ -507,6 +507,7 @@ fn undefined_receive_unit() -> String {
 /// the trace document `trace`: the settled outcome items.
 fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> {
     use fsl_analyze::analyze::document::{settle_run, AnalyzeRun, ResolvedClaim, ResolvedItem};
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{
         AnalyzeLimits, ClaimItem, Engines, ItemOptions, SourceProvision, SubjectBinding,
     };
@@ -586,7 +587,7 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
                 unrouted: false,
             }))],
             engines: &engines,
-            limits: AnalyzeLimits::unbounded(),
+            limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),

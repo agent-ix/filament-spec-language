@@ -794,6 +794,7 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
     use fsl_analyze::analyze::document::{
         resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
     };
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::AnalyzeLimits;
     let engines = Engines::fsl().unwrap();
     let mut registry = fsl_route::Registry::new();
@@ -804,7 +805,7 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
         serde_json::from_value(json!([{"claim": name, "probabilistic": {"evidence": "exact"}}]))
             .unwrap();
     let binding = world.binding();
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let units = [world.package.graph().source().clone()];
     let items = resolve_items(
         &world.package,

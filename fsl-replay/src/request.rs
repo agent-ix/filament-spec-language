@@ -163,6 +163,8 @@ pub(crate) const REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES: &[&str] = &[
     "zone_check.max_symbolic_transitions",
     "zone_check.max_automaton_states",
     "zone_check.max_zone_bytes",
+    "zone_check.max_check_work",
+    "analysis.retained_bytes",
     "certificate_check.max_certificate_edges",
     "certificate_check.max_certificate_bytes",
     "certificate_check.max_working_bytes",

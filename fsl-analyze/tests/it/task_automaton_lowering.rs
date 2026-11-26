@@ -782,6 +782,7 @@ fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
     use fsl_analyze::analyze::document::{
         resolve_items, ItemSelection, ResolvedItem, SubjectSelection,
     };
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
     use fsl_route::request::ExtentClassification;
     use fsl_semantics::check::Capability;
@@ -830,7 +831,7 @@ fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
             &registry,
             &[world.package.graph().source().clone()],
             &binding,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         );
         let claims: Vec<_> = resolved
             .iter()

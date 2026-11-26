@@ -4436,3 +4436,120 @@ fn assert_package_refusal_sources(member: &str) {
     }
     std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
 }
+
+// ---- FR-752/FR-753: the expansion candidate bound ----------------------
+
+const CANDIDATE_PLAN: &str =
+    "invariant Ready using v on Config::ConfigVersion at current { true }\n\
+     verify Release using v {\n\
+       check tested claim Ready method model_based_test domain Config::ConfigVersion bound 20;\n\
+     }\n";
+
+/// FR-753-AC-7's fixture: `ConfigVersion` with fields `x` and `y`, each
+/// `Int[0, 1000]`, both modified by `attemptUpdate`; a complete population of
+/// the objects `root` and `child` at 0 as `initial.json`; `Ready` and the
+/// `Release` plan as `unit.native`. One expansion of the initial state has
+/// 2 x 1001 x 1001 = 2004002 candidates.
+fn two_field_directory() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let path = directory.path().join("spine-model.semantic-ir.json");
+    let mut model: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let object = model["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|ty| ty["identity"] == "ix://example/config-version/ConfigVersion")
+        .expect("the ConfigVersion type");
+    let identity = |name: &str| format!("ix://example/config-version/ConfigVersion/{name}");
+    let template = object["fields"][0].clone();
+    let field = |name: &str| {
+        let mut field = template.clone();
+        field["name"] = json!(name);
+        field["identity"] = json!(identity(name));
+        field["origin"]["generated"]["generatorIdentity"] = json!(identity(name));
+        field["origin"]["generated"]["inputIdentities"] = json!([identity(name)]);
+        field
+    };
+    let parent = object["fields"][1].clone();
+    object["fields"] = json!([field("x"), field("y"), parent]);
+    object["operations"][0]["frame"]["modifies"] = json!([identity("x"), identity("y")]);
+    std::fs::write(&path, serde_json::to_vec(&model).unwrap()).unwrap();
+    let mut snapshot = snapshot_of(directory.path(), &["root", "child"], true);
+    for object in snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .unwrap()
+    {
+        let fields = object["fields"].as_object_mut().unwrap();
+        fields.remove("versionNumber");
+        fields.insert("x".to_owned(), json!({"integer": "0"}));
+        fields.insert("y".to_owned(), json!({"integer": "0"}));
+    }
+    std::fs::write(
+        directory.path().join("initial.json"),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{MODEL_HEADER}{CANDIDATE_PLAN}"),
+    )
+    .unwrap();
+    directory
+}
+
+fn run_two_field(member: &str, value: Value) -> (u8, Value) {
+    let directory = two_field_directory();
+    let mut request = json!({
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")}});
+    request[member] = value;
+    write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": request}),
+    )
+}
+
+/// 200000 is the published bound; the expansion's 2004002 candidates pass it.
+fn candidate_limit_reached() -> Value {
+    json!({"kind": "limit-reached", "limit": "max_candidates", "value": 200_000,
+        "setting": "expansion.max_candidates"})
+}
+
+/// FR-753-AC-7 and FR-752-AC-13: a plan step with no caller bound expands
+/// under 200000 candidates and settles `incomplete` at the first expansion
+/// past it, exit 22.
+#[test]
+#[trace("FR-753-AC-7")]
+#[trace("FR-752-AC-13")]
+fn a_plan_step_past_the_candidate_bound_settles_incomplete() {
+    let (exit, value) = run_two_field(
+        "verification_plan",
+        json!({"plan": "Release", "execute": true, "initial": "initial.json",
+            "seed": 7, "max_trace_length": 8}),
+    );
+    let step = &value["verification_plan"]["dispositions"]["tested"];
+    assert_eq!(step["status"], "incomplete", "{value}");
+    assert_eq!(
+        step["result"]["cause"],
+        candidate_limit_reached(),
+        "{value}"
+    );
+    assert_eq!(exit, 22, "{value}");
+}
+
+/// FR-752-AC-16: the same fixture as a direct `model_based_test` member.
+#[test]
+#[trace("FR-752-AC-16")]
+fn a_direct_member_past_the_candidate_bound_settles_incomplete() {
+    let (exit, value) = run_two_field(
+        "model_based_test",
+        json!({"clause": "Ready", "seed": 7, "max_cases": 20, "max_trace_length": 8,
+            "initial": "initial.json"}),
+    );
+    let record = &value["model_based_test"];
+    assert_eq!(record["status"], "incomplete", "{value}");
+    assert_eq!(record["cause"], candidate_limit_reached(), "{value}");
+    assert_eq!(exit, 22, "{value}");
+}

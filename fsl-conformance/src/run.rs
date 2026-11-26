@@ -6,8 +6,8 @@ use filament_eval::{CallFailure, Evaluation, ExecutionBackendChoice};
 use filament_exact::{Cancel, Integer, Value};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::analyze::{
-    analyze, analyze_item, AnalyzeLimits, AnalyzeRequest, ClaimItem, Diagnostic, Engines,
-    ItemCounterexample, ItemForm, ItemOptions, NegotiatedItem, Payload, ProbabilisticItem,
+    analyze, analyze_item, AnalyzeLimits, AnalyzeRequest, ClaimItem, DeadlineSupply, Diagnostic,
+    Engines, ItemCounterexample, ItemForm, ItemOptions, NegotiatedItem, Payload, ProbabilisticItem,
     ProbabilisticLimits, SourceProvision, SubjectBinding, TemporalItem,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
@@ -752,7 +752,7 @@ fn run_analyze(
             let limits = AnalyzeLimits {
                 accounting: parameters.accounting,
                 deadline: *deadline,
-                ..AnalyzeLimits::unbounded()
+                ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
             };
             match analyze(
                 subject.checked.package(),
@@ -834,7 +834,7 @@ fn run_prove(
             let subject = Subject::new(subject, parameters)?;
             let limits = AnalyzeLimits {
                 accounting: parameters.accounting,
-                ..AnalyzeLimits::unbounded()
+                ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
             };
             let records = provider::run(
                 subject.checked.package(),

@@ -271,7 +271,7 @@ fn analyze_refuses_an_undeclared_population_before_running_items() {
         &package,
         &request,
         &engines,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     );
     let record = match result {
@@ -822,7 +822,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
     let engines = Engines::fsl().expect("they register");
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let analyzed = analyze_request(
         &world.package,
@@ -887,7 +887,7 @@ fn provider_entry_settles_an_incomplete_binding_per_item() {
     binding.initial[0].identity.push_str("-missing");
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let records = fsl_analyze::provider::run(
         &world.package,
@@ -959,7 +959,7 @@ fn provider_entry_refuses_undeclared_population_before_running_items_in_input_or
         &Engines::fsl().expect("they register"),
         &AnalyzeLimits {
             accounting: prob_world::UNLIMITED,
-            ..AnalyzeLimits::unbounded()
+            ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
         },
         &cancel,
     )
@@ -1013,7 +1013,7 @@ fn provider_entry_settles_a_zero_millisecond_deadline_as_incomplete() {
         &AnalyzeLimits {
             accounting: prob_world::UNLIMITED,
             deadline: DeadlineSupply::Milliseconds(0),
-            ..AnalyzeLimits::unbounded()
+            ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
         },
         &cancel,
     )
@@ -1046,7 +1046,7 @@ fn finite_deadline_preserves_settled_records_and_cancels_each_open_item() {
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
         deadline: DeadlineSupply::Milliseconds(60_000),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let (completed, charges_before_next_item) = run_one_observed_service_item(
         &world,
@@ -1091,7 +1091,7 @@ fn caller_cancellation_preserves_settled_records_and_cause_for_open_items() {
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
         deadline: DeadlineSupply::Milliseconds(60_000),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let (completed, charges_before_next_item) = run_one_observed_service_item(
         &world,
@@ -1141,7 +1141,7 @@ fn engine_limit_before_deadline_keeps_its_typed_result() {
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
         deadline: DeadlineSupply::Milliseconds(60_000),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let (limited, charges_before_next_item) = run_one_observed_service_item(
         &world,
@@ -1196,7 +1196,7 @@ fn accounting_limit_before_deadline_keeps_its_typed_result() {
             ..prob_world::UNLIMITED
         },
         deadline: DeadlineSupply::Milliseconds(60_000),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
 
     let records = run_provider(&world, &items, &limits, &cancel);
@@ -1232,7 +1232,7 @@ fn analyze_joins_required_items_to_the_aggregate() {
     let world = World::new(&prob_world::service(claim));
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let run = |engines: &Engines, required: &[bool], indices: &[usize]| {
         let items = indices
@@ -1282,4 +1282,34 @@ fn analyze_joins_required_items_to_the_aggregate() {
         run(&present, &[true, false], &[1, 1]).aggregate,
         Err(AggregateGap::Duplicate(index(1)))
     );
+}
+
+/// FR-281-AC-26: the published limits, and a caller's candidate bound
+/// replacing that one field.
+#[trace("FR-281-AC-26")]
+#[test]
+fn published_limits_hold_the_tabulated_defaults() {
+    use fsl_analyze::analyze::SimulationLimits;
+    use fsl_eval::simulation::model::ExpansionLimits;
+
+    let published = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+    assert_eq!(published.expansion.max_candidates, 200_000);
+    assert_eq!(
+        published.simulation,
+        SimulationLimits {
+            max_states: 10_000_000,
+            max_transitions: 100_000_000,
+            max_steps: 16_777_216,
+        }
+    );
+    assert_eq!(published.position_limit, 10_000);
+    let replaced = AnalyzeLimits {
+        expansion: ExpansionLimits { max_candidates: 7 },
+        ..published
+    };
+    assert_eq!(replaced.simulation, published.simulation);
+    assert_eq!(replaced.position_limit, published.position_limit);
+    assert_eq!(replaced.accounting, published.accounting);
+    assert_eq!(replaced.engines, published.engines);
+    assert_eq!(replaced.deadline, DeadlineSupply::Unbounded);
 }

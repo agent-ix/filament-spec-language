@@ -216,6 +216,7 @@ impl World {
         engines: &fsl_analyze::analyze::Engines,
         items: Vec<fsl_analyze::analyze::NegotiatedItem>,
     ) -> fsl_analyze::analyze::AnalyzeOutcome {
+        use fsl_analyze::analyze::DeadlineSupply;
         use fsl_analyze::analyze::{AnalyzeLimits, AnalyzeRequest, SubjectBinding};
         fsl_analyze::analyze::analyze(
             &self.package,
@@ -230,7 +231,7 @@ impl World {
                 items,
             },
             engines,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &filament_exact::Cancel::new(),
         )
         .expect("the empty binding admits")

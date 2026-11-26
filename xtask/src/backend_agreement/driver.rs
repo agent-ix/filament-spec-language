@@ -11,7 +11,7 @@ use filament_exact::{Cancel, Value as RuntimeValue};
 use fsl_analyze::analyze::document::{
     ItemSelection, ResolvedItem, SubjectSelection, resolve_items,
 };
-use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
+use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engines, SubjectBinding};
 use fsl_foundation::{BackendId, SourceIdentity};
 use fsl_replay::spine::{self, CheckedUnit, DependencyInput, ParseRequest};
 use fsl_replay::value_check::{ValueTarget, Verdict};
@@ -510,7 +510,7 @@ fn compile(
         registry,
         &[checked.source().reference().clone()],
         &binding,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
     );
     let (claims, unresolved) = retain_resolution(vector, resolved);
     let models = inputs.iter().filter(|(input,_,_)| input.kind == InputKind::Model).map(|(input,path,_)| json!({"format":"semantic-ir/2.0.0","source":{"file":path,"authority":"agent-ix","identity":input.path,"document":input.path,"formal_revision":1}})).collect::<Vec<_>>();
@@ -734,7 +734,7 @@ mod tests {
             driver.registry(),
             &[compiled.checked.source().reference().clone()],
             &binding,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         );
         assert_eq!(resolved.len(), 1, "the native request names one claim");
         let Some(ResolvedItem::Claim(claim)) = resolved.pop() else {

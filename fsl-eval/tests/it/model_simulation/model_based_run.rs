@@ -1613,7 +1613,7 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
             assert_eq!(
                 result.cause,
                 Some(ModelBasedTestCause::LimitReached {
-                    limit: filament_exact::LimitKind::WorkUnits,
+                    limit: fsl_eval::simulation::ExpansionLimit::EvaluationMeter(filament_exact::LimitKind::WorkUnits),
                     value: work,
                     setting: "accounting.work_units".to_owned(),
                 })

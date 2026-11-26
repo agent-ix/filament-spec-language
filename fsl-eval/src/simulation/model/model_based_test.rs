@@ -9,13 +9,15 @@ use filament_exact::{Integer, IntegerInterval, Meter, NodeKey, Outcome, Value, V
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_foundation::selection::DefinitionRef;
+use fsl_foundation::Setting;
 use fsl_semantics::check::{CallableFunction, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use ix_trace_rs::implements;
 
 use crate::simulation::order::Expanded;
 use crate::simulation::{
     expansion::{ExpansionLimit, ExpansionStop},
-    trace::{Step, Trace},
+    trace::{Step, StopReason, Trace},
     EncodingRefusal, Limits,
 };
 
@@ -262,10 +264,11 @@ impl ModelBasedTestEvidence {
 pub enum ModelBasedTestCause {
     /// No generated case reached an evaluated check point.
     NoEvaluatedCase,
-    /// The scalar accounting budget could not cover generation work.
+    /// The accounting budget could not cover the run's work, or a model
+    /// expansion reached its candidate bound.
     LimitReached {
-        /// Counter whose budget was exhausted.
-        limit: filament_exact::LimitKind,
+        /// The limit reached.
+        limit: ExpansionLimit,
         /// Configured limit, rather than the denied charge.
         value: u64,
         /// Setting that raises the reached limit.
@@ -863,12 +866,15 @@ fn run_model_based_test_with_system_and_admission(
         admission,
     );
     if let Err(ModelBasedTestError::Expansion(ExpansionStop {
-        limit: Some(ExpansionLimit::EvaluationMeter(kind)),
-        ..
+        limit: Some(limit), ..
     })) = &outcome
     {
+        let value = match *limit {
+            ExpansionLimit::EvaluationMeter(kind) => scalar_limit(&system.meter_limits(), kind),
+            ExpansionLimit::MaxCandidates => system.limits.max_candidates,
+        };
         if let Some(name) = clause_name(system, identity) {
-            return Ok(text_limit_record(
+            return Ok(limit_record(
                 Some(system),
                 ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
                 name,
@@ -877,8 +883,8 @@ fn run_model_based_test_with_system_and_admission(
                 max_cases,
                 max_trace_length,
                 max_value_bits,
-                *kind,
-                scalar_limit(&system.meter_limits(), *kind),
+                *limit,
+                value,
             ));
         }
     }
@@ -1201,11 +1207,14 @@ fn prepare_text_roots(
     Ok(())
 }
 
+/// The record of a run that settles `incomplete` at a reached limit: no case
+/// counts, and every operation's coverage undetermined by that limit.
 #[allow(
     clippy::too_many_arguments,
     reason = "the existing internal run inputs"
 )]
-fn text_limit_record(
+#[implements("FR-752-AC-13")]
+fn limit_record(
     model: Option<&ModelSystem<'_>>,
     limits: ModelBasedRunLimits,
     clause: String,
@@ -1214,9 +1223,19 @@ fn text_limit_record(
     max_cases: u64,
     max_trace_length: usize,
     max_value_bits: Option<u64>,
-    limit_kind: filament_exact::LimitKind,
+    reached: ExpansionLimit,
     limit: u64,
 ) -> ModelBasedTestResult {
+    let (coverage_limit, setting) = match reached {
+        ExpansionLimit::EvaluationMeter(kind) => (
+            ModelOperationCoverageLimit::Accounting(kind),
+            format!("accounting.{}", kind.as_str()),
+        ),
+        ExpansionLimit::MaxCandidates => (
+            ModelOperationCoverageLimit::Candidates,
+            Setting::ExpansionMaxCandidates.name().to_owned(),
+        ),
+    };
     let operations = model.map(|system| {
         system
             .operations()
@@ -1228,7 +1247,7 @@ fn text_limit_record(
                 },
                 status: super::ModelOperationCoverageStatus::NotCovered {
                     reason: ModelOperationCoverageReason::Undetermined {
-                        limit: ModelOperationCoverageLimit::Accounting(limit_kind),
+                        limit: coverage_limit,
                         value: u128::from(limit),
                     },
                 },
@@ -1279,9 +1298,9 @@ fn text_limit_record(
         result: ModelBasedTestEvidence::Incomplete,
         evidence: ModelBasedTestEvidence::Incomplete,
         cause: Some(ModelBasedTestCause::LimitReached {
-            limit: limit_kind,
+            limit: reached,
             value: limit,
-            setting: format!("accounting.{}", limit_kind.as_str()),
+            setting,
         }),
         counterexample: None,
     }
@@ -1375,7 +1394,7 @@ fn run_model_based_value_function_entry(
         function.parameters.iter().map(|(_, ty)| ty.clone()),
         &mut meter,
     ) {
-        return Ok(text_limit_record(
+        return Ok(limit_record(
             None,
             limits,
             name,
@@ -1384,7 +1403,7 @@ fn run_model_based_value_function_entry(
             max_cases,
             trace_length,
             max_value_bits,
-            stop.limit_kind,
+            ExpansionLimit::EvaluationMeter(stop.limit_kind),
             stop.limit,
         ));
     }
@@ -1981,7 +2000,7 @@ fn run_model_based_contract_clause(
         system.rooted_domains().into_iter().map(|(_, _, ty)| ty),
         &mut Meter::new(system.meter_limits()),
     ) {
-        return Ok(text_limit_record(
+        return Ok(limit_record(
             Some(system),
             ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
             clause.name.clone(),
@@ -1990,7 +2009,7 @@ fn run_model_based_contract_clause(
             max_cases,
             max_trace_length,
             max_value_bits,
-            stop.limit_kind,
+            ExpansionLimit::EvaluationMeter(stop.limit_kind),
             stop.limit,
         ));
     }
@@ -2060,7 +2079,7 @@ where
         system.rooted_domains().into_iter().map(|(_, _, ty)| ty),
         &mut Meter::new(system.meter_limits()),
     ) {
-        return Ok(text_limit_record(
+        return Ok(limit_record(
             Some(system),
             ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
             clause.to_owned(),
@@ -2069,7 +2088,7 @@ where
             max_cases,
             max_trace_length,
             max_value_bits,
-            stop.limit_kind,
+            ExpansionLimit::EvaluationMeter(stop.limit_kind),
             stop.limit,
         ));
     }
@@ -2216,6 +2235,7 @@ where
                 partitions.push(partition.clone());
             }
         }
+        refuse_candidate_stop(system, &trace, omitted_clause.as_ref())?;
         add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
         let outcome = oracle(&trace)?;
         if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
@@ -3203,6 +3223,11 @@ fn shortest_partition_path(
                     }
                     successors
                 }
+                Ok(Expanded::Stopped(stop))
+                    if stop.limit == Some(ExpansionLimit::MaxCandidates) =>
+                {
+                    return Err(ModelBasedTestError::Expansion(stop));
+                }
                 Ok(Expanded::Stopped(stop)) => {
                     return Ok(PathSearch::Undetermined {
                         limit: format!("{:?}", stop.limit),
@@ -3367,17 +3392,21 @@ fn build_partition_trace(
         ..
     } = path;
     let view = super::ModelRunView::new(system, Some(clause.clone()));
-    let Expanded::Successors {
-        findings: final_findings,
-        ..
-    } = crate::simulation::order::expand(&view, &final_state, super::identity_limits())
-        .map_err(ModelBasedTestError::Key)?
-    else {
-        return Err(ModelBasedTestError::ClauseUndetermined {
-            clause: clause.to_string(),
-            outcome: "a partition trace stopped before its final state".to_owned(),
-        });
-    };
+    let final_findings =
+        match crate::simulation::order::expand(&view, &final_state, super::identity_limits())
+            .map_err(ModelBasedTestError::Key)?
+        {
+            Expanded::Successors { findings, .. } => findings,
+            Expanded::Stopped(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
+                return Err(ModelBasedTestError::Expansion(stop));
+            }
+            Expanded::Stopped(_) => {
+                return Err(ModelBasedTestError::ClauseUndetermined {
+                    clause: clause.to_string(),
+                    outcome: "a partition trace stopped before its final state".to_owned(),
+                });
+            }
+        };
     if !final_findings.is_empty() {
         findings.push(crate::simulation::expansion::StateFindings {
             state: system
@@ -3904,6 +3933,54 @@ impl crate::temporal::TemporalLetters for ModelTemporalLetters<'_, '_, '_> {
     }
 }
 
+/// Refuse a sampled trace whose last expansion reached the candidate bound:
+/// the sampler records only the stop's catalog code, so the trace's final
+/// state is expanded again to read the limit.
+#[implements("FR-752-AC-13")]
+fn refuse_candidate_stop(
+    system: &ModelSystem<'_>,
+    trace: &ModelTrace,
+    omitted_clause: Option<&NodeKey>,
+) -> Result<(), ModelBasedTestError> {
+    let stopped = trace
+        .trace
+        .provenance
+        .as_ref()
+        .is_some_and(|provenance| matches!(provenance.stopped, StopReason::Stopped(_)));
+    if !stopped {
+        return Ok(());
+    }
+    let view = super::ModelRunView::new(system, omitted_clause.cloned());
+    let Some(mut state) = ordered_initial_states(system)?
+        .into_iter()
+        .find(|initial| initial.key == trace.trace.initial)
+        .map(|initial| initial.state)
+    else {
+        return Err(ModelBasedTestError::Coverage);
+    };
+    let mut steps = trace.trace.steps.iter();
+    loop {
+        match crate::simulation::order::expand(&view, &state, super::identity_limits())? {
+            Expanded::Successors { successors, .. } => {
+                let Some(step) = steps.next() else {
+                    return Ok(());
+                };
+                state = successors
+                    .into_iter()
+                    .find(|successor| {
+                        successor.transition == step.transition && successor.key == step.key
+                    })
+                    .ok_or(ModelBasedTestError::Coverage)?
+                    .state;
+            }
+            Expanded::Stopped(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
+                return Err(ModelBasedTestError::Expansion(stop));
+            }
+            Expanded::Stopped(_) => return Ok(()),
+        }
+    }
+}
+
 fn operation_reachability(
     system: &ModelSystem<'_>,
     max_depth: usize,
@@ -3953,18 +4030,7 @@ fn operation_reachability(
             super::identity_limits(),
         )? {
             Expanded::Successors { successors, .. } => successors,
-            Expanded::Stopped(stop) => match stop.limit {
-                Some(ExpansionLimit::MaxCandidates) => {
-                    stopped = Some((
-                        ModelOperationCoverageLimit::Candidates,
-                        u128::from(system.limits.max_candidates),
-                    ));
-                    break;
-                }
-                Some(ExpansionLimit::EvaluationMeter(_)) | None => {
-                    return Err(ModelBasedTestError::Expansion(stop));
-                }
-            },
+            Expanded::Stopped(stop) => return Err(ModelBasedTestError::Expansion(stop)),
         };
         let mut previous = None;
         let mut ordinal = 0_usize;

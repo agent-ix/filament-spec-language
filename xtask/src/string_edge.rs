@@ -26,7 +26,7 @@ use crate::error::{Error, Result};
 /// workspace members listed below and the standalone consumer fixtures under
 /// `tests/fixtures/`.
 #[implements("FR-064-AC-11")]
-fn crate_roots() -> Vec<PathBuf> {
+pub(crate) fn crate_roots() -> Vec<PathBuf> {
     [
         "src",
         "xtask/src",

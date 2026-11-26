@@ -345,9 +345,7 @@ pub fn prepare_analyze(
 
 fn prepare_bytes(directory: &Path, bytes: &[u8], limits: RunLimits) -> Result<PreparedAnalyze> {
     match read(directory, bytes, limits, &CommandLimits::analyze())? {
-        Readout::Source(input, _) => Ok(PreparedAnalyze {
-            input: Box::new(input),
-        }),
+        Readout::Source(input, _) => Ok(PreparedAnalyze { input }),
         // A prepared run holds the source it compiles; a package request
         // has none to prepare (FR-850).
         Readout::Package(_) => Err(RunCause::AnalyzeNotYetImplemented {
@@ -361,8 +359,8 @@ fn prepare_bytes(directory: &Path, bytes: &[u8], limits: RunLimits) -> Result<Pr
 /// What [`read`] read: a `program` request's inputs with the intake that
 /// still charges compilation, or a `package` request's admitted package.
 enum Readout<'d> {
-    Source(AnalyzeInput, super::Intake<'d>),
-    Package(PackageSelection),
+    Source(Box<AnalyzeInput>, super::Intake<'d>),
+    Package(Box<PackageSelection>),
 }
 
 /// A `package` request (FR-850): the package the strict reader admitted
@@ -870,13 +868,13 @@ fn read<'d>(
             admit_package(directory, dependent_bytes, &request, package, caller)?;
         let memory = read_memory(&request.memory)?;
         let members = Box::new(read_run_members(&request, &mut intake, caller)?);
-        return Ok(Readout::Package(PackageSelection {
+        return Ok(Readout::Package(Box::new(PackageSelection {
             admitted,
             members,
             memory,
             items: request.items,
             deadline_ms: request.deadline_ms,
-        }));
+        })));
     }
     let integer_division = request_integer_division(request.integer_division.take())?;
     let Some(program) = &request.program else {
@@ -918,7 +916,7 @@ fn read<'d>(
         check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     Ok(Readout::Source(
-        AnalyzeInput {
+        Box::new(AnalyzeInput {
             source,
             compile,
             documents,
@@ -928,7 +926,7 @@ fn read<'d>(
             limits,
             deadline_ms: request.deadline_ms,
             integer_division,
-        },
+        }),
         intake,
     ))
 }
@@ -1035,9 +1033,9 @@ pub fn analyze_with_providers_and_limits(
         })?;
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         let (input, mut intake) = match read(directory, bytes, limits, caller)? {
-            Readout::Source(input, intake) => (input, intake),
+            Readout::Source(input, intake) => (*input, intake),
             Readout::Package(selection) => {
-                return run_package(selection, negotiate, providers, options, cancel);
+                return run_package(*selection, negotiate, providers, options, cancel);
             }
         };
         let mut result = run_input(
@@ -1862,7 +1860,7 @@ pub(super) fn analyze_limits(
     request: &wire::AnalyzeLimits,
     deadline_ms: Option<u64>,
 ) -> AnalyzeLimits {
-    let mut limits = AnalyzeLimits::unbounded();
+    let mut limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let mut accounting = fsl_replay::AccountingLimits(limits.accounting);
     for (setting, bound) in request.accounting.entries() {
         accounting.set_bound(setting, bound);

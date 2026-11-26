@@ -8,8 +8,8 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeRequest, ClaimItem, Engines, HybridItem, ItemForm, ItemOptions,
-    NegotiatedItem, SourceProvision, SubjectBinding,
+    analyze, AnalyzeLimits, AnalyzeRequest, ClaimItem, DeadlineSupply, Engines, HybridItem,
+    ItemForm, ItemOptions, NegotiatedItem, SourceProvision, SubjectBinding,
 };
 use fsl_analyze::provider::{self, HybridAnswer, HybridVerdict, UnsupportedConstruct};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -143,7 +143,11 @@ impl World {
     /// The item's record through `analyze` and through `provider::run`.
     fn settle(&self, item: NegotiatedItem) -> [TerminalRecord; 2] {
         let engines = Engines::fsl().expect("the layer-A manifests register");
-        self.settle_with(item, &engines, &AnalyzeLimits::unbounded())
+        self.settle_with(
+            item,
+            &engines,
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
+        )
     }
 
     /// [`Self::settle`] on `engines` under `limits`.
@@ -280,7 +284,11 @@ fn settle_on(
         vec![candidate.clone()],
         Disposition::Supported(candidate),
     );
-    world.settle_with(item, &engines, &AnalyzeLimits::unbounded())
+    world.settle_with(
+        item,
+        &engines,
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
+    )
 }
 
 /// FR-750-AC-7 (in process), FSpec FR-272-AC-31: a provider's `Unsupported`
@@ -531,7 +539,7 @@ fn the_providers_deadline_is_the_requests_deadline() {
     ] {
         let (engines, candidate, seen) = fixture(entry_answer(entry.clone()));
         let item = world.item(vec![candidate.clone()], Disposition::Supported(candidate));
-        let mut limits = AnalyzeLimits::unbounded();
+        let mut limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
         limits.deadline = supply;
         world.settle_with(item, &engines, &limits);
         let requests = seen.requests();

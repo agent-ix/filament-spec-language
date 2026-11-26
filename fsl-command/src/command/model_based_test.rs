@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FSpec FR-190: decode a direct `model_based_test` request.
 
+use ix_trace_rs::implements;
 use serde_json::Value;
 
 use fsl_foundation::Code;
@@ -274,7 +275,7 @@ pub(super) fn result_json(
             setting,
         } => serde_json::json!({
             "kind": "limit-reached",
-            "limit": limit.as_str(),
+            "limit": limit.limit_name(),
             "value": value,
             "setting": setting,
         }),
@@ -375,14 +376,7 @@ pub(super) struct Context {
     pub(super) observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 }
 
-/// Candidate bound of each model expansion; the member is closed, so no
-/// request carries it.
-const MAX_CANDIDATES: u64 = 1_000_000;
-/// Work-unit budget of native evaluation.
-const WORK_UNITS: u64 = 10_000;
-/// Position limit of a sampled trace.
-const POSITION_LIMIT: u64 = 10_000;
-
+#[implements("FR-752-AC-16")]
 pub(super) fn prepare(
     intake: &mut Intake<'_>,
     request: &wire::Request,
@@ -593,6 +587,11 @@ pub(super) fn prepare(
         fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
             .map_err(|error| invalid("model_based_test", format!("{error:?}")))?;
     let observation = observation_override.unwrap_or_default();
+    // The member is closed, so no request carries these: they run at the
+    // published defaults.
+    let published = fsl_analyze::analyze::AnalyzeLimits::published(
+        fsl_analyze::analyze::DeadlineSupply::Unbounded,
+    );
     let request = fsl_eval::simulation::model::ModelBasedTestRequest {
         clause: Some(clause_identity),
         profile: sampler,
@@ -608,15 +607,13 @@ pub(super) fn prepare(
                 universes: universes.clone(),
             }
         }),
-        expansion: fsl_eval::simulation::model::ExpansionLimits {
-            max_candidates: MAX_CANDIDATES,
-        },
-        accounting: fsl_replay::spine::default_accounting(WORK_UNITS),
+        expansion: published.expansion,
+        accounting: published.accounting,
         normalization: limits.model,
         observation,
         emit: limits.package.emit(),
         exploration: fsl_eval::simulation::Limits::default(),
-        position_limit: POSITION_LIMIT,
+        position_limit: published.position_limit,
     };
     let record = fsl_eval::simulation::model::run_model_based_test(
         package,

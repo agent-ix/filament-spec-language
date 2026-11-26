@@ -11,8 +11,8 @@ use fsl_analyze::analyze::document::{
     AnalyzeRun, ResolvedClaim, ResolvedItem, SubjectSelection, settle_run_with_smt_proofs,
 };
 use fsl_analyze::analyze::{
-    AnalyzeLimits, ClaimItem, Engines, ItemForm, ItemOptions, SourceProvision, SubjectBinding,
-    TemporalItem,
+    AnalyzeLimits, ClaimItem, DeadlineSupply, Engines, ItemForm, ItemOptions, SourceProvision,
+    SubjectBinding, TemporalItem,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
@@ -237,7 +237,7 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
             })),
         ],
         engines: &engines,
-        limits: AnalyzeLimits::unbounded(),
+        limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
     };
     let mismapped = [(
         RequestIndex::new(1),

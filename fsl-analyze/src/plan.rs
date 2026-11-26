@@ -20,6 +20,7 @@ use fsl_replay::{TerminalRecord, TerminalValue};
 use fsl_route::request::ExtentClassification;
 use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
 use fsl_semantics::check::Capability;
+use ix_trace_rs::implements;
 
 use crate::analyze::document::Negotiate;
 use crate::analyze::{
@@ -486,6 +487,7 @@ fn status(record: &TerminalRecord) -> PlanStatus {
 /// `max_value_bits` reach it only where the step consumes them (FSpec
 /// FR-824), and a clause over a state model runs from the step's admitted
 /// `initial` binding. The FR-190 record is the step's result.
+#[implements("FR-752-AC-13", "FR-753-AC-7")]
 fn model_based_test(
     package: &CheckedPackage,
     node: &VerificationPlanNode,
@@ -572,22 +574,27 @@ fn model_based_test(
         profile,
         seed: inputs.seed.unwrap_or(0),
         max_cases,
-        max_trace_length: state_subject.then_some(inputs.max_trace_length).flatten(),
+        max_trace_length: state_subject
+            .then_some(inputs.max_trace_length)
+            .flatten()
+            .map(|length| length.min(limits.simulation.max_steps)),
         max_value_bits: if consumes(&consumers.max_value_bits) {
             inputs.max_value_bits
         } else {
             None
         },
         subject,
-        expansion: fsl_eval::simulation::model::ExpansionLimits {
-            max_candidates: u64::MAX,
-        },
+        expansion: limits.expansion,
         accounting: limits.accounting,
         normalization: limits.normalization,
         observation: limits.observation,
         emit: limits.emit,
-        exploration: fsl_eval::simulation::Limits::default(),
-        position_limit: MODEL_BASED_POSITIONS,
+        exploration: fsl_eval::simulation::Limits {
+            max_states: usize::try_from(limits.simulation.max_states).unwrap_or(usize::MAX),
+            max_transitions: usize::try_from(limits.simulation.max_transitions)
+                .unwrap_or(usize::MAX),
+        },
+        position_limit: limits.position_limit,
     };
     let record = match run_model_based_test(package, &request, &NativeAdmission, cancel) {
         Ok(record) => record,
@@ -621,8 +628,8 @@ fn model_based_test(
     })
 }
 
-/// The longest generated trace the FR-752 entry admits for a plan step, in
-/// positions; `max_trace_length` is the request's own bound under it.
+/// The published model-domain position bound, the default of
+/// [`AnalyzeLimits::position_limit`].
 pub(crate) const MODEL_BASED_POSITIONS: u64 = 10_000;
 
 struct Execution<'a> {

@@ -7,7 +7,7 @@
 use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::analyze::{
-    AnalyzeLimits, Engines, PackageDeadlockSubject, PackageStateGraphSubject, RunInput,
+    AnalyzeLimits, DeadlineSupply, Engines, PackageDeadlockSubject, PackageStateGraphSubject, RunInput,
     SourceProvision, SubjectBinding, TemporalItem, analyze_items, deadlock_model_item,
 };
 use fsl_analyze::model_check::{StateGraphItem, StateGraphRequest, check_state_graph};
@@ -399,7 +399,7 @@ fn package_state_graph_value(
         &handoff.bytes,
         handoff.supply(),
         world.binding(),
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         occurrence,
     )
     .expect("the package route rebuilds this claim")
@@ -767,7 +767,7 @@ fn an_undefined_terminal_of_two_models_runs_and_replays_as_on_the_source_route()
         deadlock_model_item(
             &run,
             &world.binding(),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &world.source,
             &claim,
             &form,
@@ -784,7 +784,7 @@ fn an_undefined_terminal_of_two_models_runs_and_replays_as_on_the_source_route()
             &handoff.bytes,
             handoff.supply(),
             world.binding(),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &claim,
             &form,
         )
@@ -1028,7 +1028,7 @@ fn one_identity_undefined_terminal_keeps_key_and_source_label_across_routes() {
             deadlock_model_item(
                 &run,
                 &world.binding(),
-                AnalyzeLimits::unbounded(),
+                AnalyzeLimits::published(DeadlineSupply::Unbounded),
                 &world.source,
                 &claim,
                 &form,
@@ -1046,7 +1046,7 @@ fn one_identity_undefined_terminal_keeps_key_and_source_label_across_routes() {
                 &handoff.bytes,
                 handoff.supply(),
                 world.binding(),
-                AnalyzeLimits::unbounded(),
+                AnalyzeLimits::published(DeadlineSupply::Unbounded),
                 &claim,
                 &form,
             )
@@ -1112,7 +1112,7 @@ fn one_identity_refused_terminal_is_inconclusive_and_names_done() {
         deadlock_model_item(
             &run,
             &world.binding(),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &world.source,
             &claim,
             &form,
@@ -1129,7 +1129,7 @@ fn one_identity_refused_terminal_is_inconclusive_and_names_done() {
             &handoff.bytes,
             handoff.supply(),
             world.binding(),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &claim,
             &form,
         )
@@ -1214,7 +1214,7 @@ fn deadlock_outcome<'w>(
     let source_item = deadlock_model_item(
         &run,
         &binding(),
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         source,
         &claim,
         &form,
@@ -1229,7 +1229,7 @@ fn deadlock_outcome<'w>(
         &handoff.bytes,
         handoff.supply(),
         binding(),
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &claim,
         &form,
     )
@@ -1466,7 +1466,7 @@ fn settled_records(world: &Two) -> [fsl_analyze::analyze::AnalyzeRecord; 2] {
         deadlock_model_item(
             &RunInput::source(&world.package),
             &world.binding(),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &world.source,
             &claim,
             &form,
@@ -1477,7 +1477,7 @@ fn settled_records(world: &Two) -> [fsl_analyze::analyze::AnalyzeRecord; 2] {
             &handoff.bytes,
             handoff.supply(),
             world.binding(),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &claim,
             &form,
         )
@@ -1643,7 +1643,7 @@ fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_jso
         &registry,
         &units,
         &binding,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
     );
     settle_run(
         AnalyzeRun {
@@ -1655,7 +1655,7 @@ fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_jso
             ),
             items: resolved,
             engines: &engines,
-            limits: AnalyzeLimits::unbounded(),
+            limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),

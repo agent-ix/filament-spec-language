@@ -835,12 +835,30 @@ pub(crate) fn simulation<'a>(
         initial: binding.initial.clone(),
         universes: binding.universes.clone(),
         observation: limits.observation,
-        expansion: fsl_eval::simulation::model::ExpansionLimits {
-            max_candidates: u64::MAX,
-        },
+        expansion: limits.expansion,
         meter: limits.accounting,
         emit: limits.emit,
     }
+}
+
+/// The expansion bound of a probability item whose caller names none
+/// (FR-255).
+const PROBABILITY_MAX_CANDIDATES: u64 = 1_000_000;
+
+/// [`simulation`] for a probability item of either engine: the caller's
+/// `expansion.max_candidates`, else the item's own default.
+#[implements("FR-255-AC-23")]
+pub(crate) fn probability_simulation<'a>(
+    input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
+    binding: &'a super::SubjectBinding<'a>,
+    limits: &super::AnalyzeLimits,
+) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
+    let mut request = simulation(input, binding, limits);
+    request.expansion.max_candidates = limits
+        .engines
+        .get(fsl_foundation::Setting::ExpansionMaxCandidates)
+        .unwrap_or(PROBABILITY_MAX_CANDIDATES);
+    request
 }
 
 enum ProbabilityWork<'a> {
@@ -855,8 +873,7 @@ fn probability_work<'a>(
     form: &ProbabilisticItem,
     limits: &super::AnalyzeLimits,
 ) -> Option<ProbabilityWork<'a>> {
-    let mut simulation = simulation(&analysis.model, binding, limits);
-    simulation.expansion.max_candidates = 1_000_000;
+    let simulation = probability_simulation(&analysis.model, binding, limits);
     let claim = analysis
         .package
         .graph()
@@ -1870,11 +1887,20 @@ mod tests {
         let snapshots = std::collections::BTreeMap::from([(reference, snapshot.to_vec())]);
         let binding = super::super::document::SubjectSelection::default_over(&snapshots)
             .binding(&packages, &snapshots);
-        let limits = super::super::AnalyzeLimits::unbounded();
+        let limits =
+            super::super::AnalyzeLimits::published(super::super::DeadlineSupply::Unbounded);
         let preflight = super::simulation(&analysis.model, &binding, &limits);
-        assert_eq!(preflight.expansion.max_candidates, u64::MAX);
+        assert_eq!(preflight.expansion.max_candidates, 200_000);
         fsl_eval::simulation::model::ModelSystem::new(preflight)
             .expect("the real native Link subject admits");
+        let mut named = limits;
+        named
+            .engines
+            .set(fsl_foundation::Setting::ExpansionMaxCandidates, 7);
+        named.accounting.work_units = 11;
+        let supplied = super::probability_simulation(&analysis.model, &binding, &named);
+        assert_eq!(supplied.expansion.max_candidates, 7);
+        assert_eq!(supplied.meter.work_units, 11);
         let claim = analysis
             .package
             .graph()
@@ -2031,7 +2057,9 @@ mod tests {
                     &sources,
                     &negotiated,
                     &engines,
-                    &super::super::AnalyzeLimits::unbounded(),
+                    &super::super::AnalyzeLimits::published(
+                        super::super::DeadlineSupply::Unbounded,
+                    ),
                     None,
                 );
                 if backend == crate::contract_check::manifest::BACKEND_ID {

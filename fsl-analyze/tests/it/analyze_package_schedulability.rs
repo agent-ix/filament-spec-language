@@ -362,7 +362,9 @@ fn package_release_backing_admits_task_product_candidates() {
             binding,
             items: Some(&selections),
             engines: &engines,
-            limits: fsl_analyze::analyze::AnalyzeLimits::unbounded(),
+            limits: fsl_analyze::analyze::AnalyzeLimits::published(
+                fsl_analyze::analyze::DeadlineSupply::Unbounded,
+            ),
             budget,
         },
         &capture,
