@@ -128,6 +128,11 @@ mutation harness, the false-claim corpus and review, not by the check. The
 same misreading written twice in separate code (design mechanism B) is
 caught only by the false-claim corpus.
 
+The ratchet is per item: an exception entry covers every site that names its
+item, so a new caller of an item an entry already records passes the check;
+new call sites of a recorded item, and an entry recorded under the wrong one
+of overlapping rows, are for review.
+
 ### Trusted base
 
 Checker code SHALL name, outside checker code, only items of this table or
