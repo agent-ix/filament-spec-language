@@ -10,6 +10,7 @@ use super::*;
 use crate::spine::{check, parse, select, ParseRequest};
 use filament_exact::Cancel;
 use fsl_foundation::diagnostic::StageFailure;
+use fsl_foundation::SettingLimits;
 use fsl_semantics::check::{CheckCause, TemporalCause};
 
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
@@ -42,6 +43,21 @@ fn produce(
         crate::spine::FrontEndFailure,
     >,
 ) {
+    produce_under(profile, declarations, SpineLimits::default())
+}
+
+/// [`produce`] under `limits`.
+fn produce_under(
+    profile: &str,
+    declarations: &str,
+    limits: SpineLimits,
+) -> (
+    String,
+    Result<
+        fsl_foundation::diagnostic::Staged<crate::spine::CheckedUnit>,
+        crate::spine::FrontEndFailure,
+    >,
+) {
     let document = config_version_domain_document_with_operations(Vec::new());
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let text = format!(
@@ -51,7 +67,6 @@ fn produce(
          model Config = {CONFIG_VERSION_PACKAGE_IDENTITY:?};\n\
          {declarations}\n"
     );
-    let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = fsl_foundation::SourceIdentity::new("test", "tc-1026");
     let parsed = parse(
@@ -77,6 +92,26 @@ fn produce(
         &cancel,
     );
     (text, checked)
+}
+
+/// FR-255-AC-31: a hyper clause checked with `s3.nodes` 1 is a limit stop
+/// naming bound 1, the setting `s3.nodes` and the node count it reached; the
+/// default bound admits the same clause.
+#[trace("FR-255-AC-31")]
+#[test]
+fn a_hyper_clause_stops_at_an_s3_node_bound_of_one() {
+    let declarations = hyper("", READ_A_B);
+    let mut one = SpineLimits::default();
+    assert!(one.set_bound(fsl_foundation::Setting::S3Nodes, 1));
+    let (_, checked) = produce_under(INFINITE, &declarations, one);
+    let Err(StageFailure::Limit(denied)) = checked else {
+        panic!("a one-node bound stops the clause: {checked:?}");
+    };
+    assert_eq!(denied.setting(), fsl_foundation::Setting::S3Nodes);
+    assert_eq!(denied.configured_bound(), 1);
+    assert!(denied.actual() > 1);
+    let (_, unbounded) = produce(INFINITE, &declarations);
+    unbounded.expect("the default bound admits the same clause");
 }
 
 /// The checked clause refusals of a unit the producer refused.

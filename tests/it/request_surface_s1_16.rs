@@ -4848,6 +4848,30 @@ fn a_package_clause_run_applies_the_callers_limits_as_the_source_run_does() {
     }
 }
 
+/// FR-255-AC-31: a replay of a clause over a model, with the caller's
+/// `emit.output_bytes` at 1, returns `stage_limit_exceeded` with bound 1 and
+/// that setting. The package route emits nothing, so only the source route is bounded.
+#[test]
+#[trace("FR-255-AC-31")]
+fn a_clause_run_over_a_model_stops_at_the_callers_emit_limit() {
+    let unit = bump_low();
+    let directory = bump_directory(&unit, &["a"], true);
+    let clause = low_over_a_snapshot(directory.path());
+    let one_byte = std::collections::BTreeMap::from([(Setting::EmitOutputBytes, 1)]);
+    let [(code, value), _] = source_and_package(
+        &unit,
+        ("clause", clause),
+        &fsl_command::command::RequestOverrides {
+            limits: Some(&one_byte),
+            ..Default::default()
+        },
+    );
+    assert_eq!(code, 22, "{value}");
+    let text = value.to_string();
+    assert!(text.contains("stage_limit_exceeded"), "{value}");
+    assert!(text.contains("emit.output_bytes"), "{value}");
+}
+
 /// FR-255-AC-32: a `tl_lowering` cross-evaluation charges the caller's
 /// accounting counter from source and from a package.
 #[test]
