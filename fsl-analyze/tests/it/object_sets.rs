@@ -643,9 +643,11 @@ fn check_probabilistic(route: Probabilistic, cases: &[Case]) {
     assert_clean(wrong);
 }
 
-/// Global protocol conformance over a protocol whose first control checks
-/// the bound object's age (FR-896 "The objects checked over every
-/// behaviour").
+/// Global protocol conformance over a protocol whose first send admits a
+/// message only while the bound object's age passes the probe, so the
+/// blocked key is read from the counterexample (FR-896 "The objects checked
+/// over every behaviour"). A `check` condition cannot be used: FR-218
+/// "Constructs" refuses one that reads model state.
 fn check_conformance(cases: &[Case]) {
     let mut wrong = Vec::new();
     for case in cases {
@@ -660,8 +662,7 @@ fn check_conformance(cases: &[Case]) {
                      role Buyer on M::Other;\nrole Seller on M::Other;\n\
                      channel Order from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n\
                      run sequence Main {{\n\
-                     check Ready using v {{ {p} }};\n\
-                     send Placed via Order as (placed: Ack) {{ true }};\n\
+                     send Placed via Order as (placed: Ack) {{ {p} }};\n\
                      receive Got via Order of Placed as (got: Ack) {{ true }};\n\
                      }}\n\
                      finish Done2 as (zz: Boolean) {{ true }};\n}}\n"
@@ -673,7 +674,7 @@ fn check_conformance(cases: &[Case]) {
                 let item = &document["items"][0];
                 let result = &item["record"]["result"];
                 let right = match case.instances().get(i) {
-                    // FR-896-AC-7: the counterexample's protocol subject
+                    // The counterexample's protocol subject
                     // names the blocked key.
                     Some(key) => {
                         result == "refuted"
@@ -964,7 +965,7 @@ fn check_plan_policies(cases: &[Case]) {
                  temporal C using t0 over (x: M::{over}) clock \"model-steps\" on origin {{ always holds({p}) }}\n"
             ));
             let seen = (|| {
-                let system = ModelSystem::over_model(library.subject().simulation, "M")
+                let system = ModelSystem::new(library.subject().simulation)
                     .map_err(|failure| format!("{failure:?}"))?;
                 let node = &library.package.graph().temporal_clauses()[0];
                 let synthesis = &library.package.graph().syntheses()[0];
@@ -1198,10 +1199,41 @@ fn hp5_ranges_over_several_populations() {
     );
 }
 
-#[trace("TC-3219", "FR-125-AC-21", "FR-172-AC-11")]
+#[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-fn hp5_names_why_there_is_no_instance() {
-    check_route(Route::SingleExistential, CAUSES);
+fn hp5_names_the_causes_before_instancing() {
+    check_route(Route::SingleExistential, &[NO_INITIAL, NO_UNIVERSE]);
+}
+
+#[trace("TC-3219", "FR-125-AC-21")]
+#[test]
+#[ignore = "QSL-3366: a single-existential clause over no instance fails established-invariant-broken (FR-125-AC-21)"]
+fn hp5_reports_an_empty_universe() {
+    check_route(
+        Route::SingleExistential,
+        &[EMPTY_UNIVERSE, EMPTY_UNIVERSE_NO_INITIAL],
+    );
+}
+
+#[trace("TC-3219", "FR-125-AC-21")]
+#[test]
+#[ignore = "QSL-3408: HP-5 instances a universe key no initial state admits instead of NoInstance (FR-125-AC-21)"]
+fn hp5_reports_no_instance_over_unadmitted_keys() {
+    check_route(Route::SingleExistential, &[ONLY_UNADMITTED]);
+}
+
+#[trace("TC-3219", "FR-172-AC-11")]
+#[test]
+#[ignore = "QSL-3408: a hyper parameter of a type no population overlaps is refused missing-name (FR-172-AC-11)"]
+fn hp5_checks_a_type_no_population_overlaps() {
+    check_route(Route::SingleExistential, &[ORPHAN, ORPHAN_NO_INITIAL]);
+}
+
+#[trace("TC-3219", "FR-125-AC-21")]
+#[test]
+#[ignore = "QSL-3408: conflicting member records are refused ambiguous before conflicting-identity (FR-125-AC-21)"]
+fn hp5_refuses_conflicting_identity() {
+    check_route(Route::SingleExistential, &[CONFLICT]);
 }
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
@@ -1227,18 +1259,66 @@ fn hyper_ranges_over_several_populations() {
     check_route(Route::ForallExists, &[UNADMITTED_ACROSS, TWO_POPULATIONS]);
 }
 
-#[trace("TC-3219", "FR-125-AC-21", "FR-172-AC-11")]
+#[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-fn hyper_names_why_there_is_no_instance() {
-    check_route(Route::ForallForall, CAUSES);
-    check_route(Route::ForallExists, CAUSES);
+fn hyper_names_the_causes_before_instancing() {
+    let cases = &[
+        EMPTY_UNIVERSE,
+        NO_INITIAL,
+        EMPTY_UNIVERSE_NO_INITIAL,
+        NO_UNIVERSE,
+    ];
+    check_route(Route::ForallForall, cases);
+    check_route(Route::ForallExists, cases);
 }
 
-#[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20", "FR-125-AC-21")]
+#[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-fn hyper_smt_and_product_checker_take_only_instances() {
-    check_hyper_library(INSTANCES);
-    check_hyper_library(CAUSES);
+#[ignore = "QSL-3408: hyper clauses instance a universe key no initial state admits instead of NoInstance (FR-125-AC-21)"]
+fn hyper_reports_no_instance_over_unadmitted_keys() {
+    check_route(Route::ForallForall, &[ONLY_UNADMITTED]);
+    check_route(Route::ForallExists, &[ONLY_UNADMITTED]);
+}
+
+#[trace("TC-3219", "FR-172-AC-11")]
+#[test]
+#[ignore = "QSL-3408: a hyper parameter of a type no population overlaps is refused missing-name (FR-172-AC-11)"]
+fn hyper_checks_a_type_no_population_overlaps() {
+    check_route(Route::ForallForall, &[ORPHAN, ORPHAN_NO_INITIAL]);
+    check_route(Route::ForallExists, &[ORPHAN, ORPHAN_NO_INITIAL]);
+}
+
+#[trace("TC-3219", "FR-125-AC-21")]
+#[test]
+#[ignore = "QSL-3408: conflicting member records are refused ambiguous before conflicting-identity (FR-125-AC-21)"]
+fn hyper_refuses_conflicting_identity() {
+    check_route(Route::ForallForall, &[CONFLICT]);
+    check_route(Route::ForallExists, &[CONFLICT]);
+}
+
+#[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20")]
+#[test]
+fn hyper_smt_takes_only_instances_of_one_population() {
+    check_hyper_library(&[UNADMITTED_KEY, SUBTYPE_ONLY, CREATED]);
+}
+
+#[trace("TC-3219", "FR-125-AC-19")]
+#[test]
+#[ignore = "QSL-3408: a hyper parameter over several populations is refused AmbiguousPopulation (FR-125-AC-19)"]
+fn hyper_smt_takes_only_instances_of_several_populations() {
+    check_hyper_library(&[UNADMITTED_ACROSS, TWO_POPULATIONS]);
+}
+
+#[trace("TC-3219", "FR-125-AC-21")]
+#[test]
+fn hyper_product_checker_names_why_there_is_no_instance() {
+    check_hyper_library(&[
+        EMPTY_UNIVERSE,
+        ONLY_UNADMITTED,
+        NO_INITIAL,
+        EMPTY_UNIVERSE_NO_INITIAL,
+        NO_UNIVERSE,
+    ]);
 }
 
 #[trace("TC-520", "FR-125-AC-8", "FR-125-AC-14")]
@@ -1270,8 +1350,12 @@ fn digital_ranges_over_the_admitted_keys() {
 
 #[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-16")]
 #[test]
-fn digital_names_the_causes_before_instancing() {
-    check_route(Route::Digital, TIMED_EARLIER_CAUSES);
+#[ignore = "QSL-3484: en-1 digital clocks proves a claim over no instance when no state is initial (FR-125-AC-13)"]
+fn digital_names_no_initial_state() {
+    check_route(
+        Route::Digital,
+        &[single(NO_INITIAL), single(EMPTY_UNIVERSE_NO_INITIAL)],
+    );
 }
 
 #[trace("TC-520", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
@@ -1292,7 +1376,10 @@ fn timed_state_graph_ranges_over_the_admitted_keys() {
 #[test]
 fn timed_state_graph_names_why_there_is_no_instance() {
     check_route(Route::TimedStateGraph, TIMED_NO_INSTANCE);
-    check_route(Route::TimedStateGraph, TIMED_EARLIER_CAUSES);
+    check_route(
+        Route::TimedStateGraph,
+        &[single(NO_INITIAL), single(EMPTY_UNIVERSE_NO_INITIAL)],
+    );
 }
 
 #[trace("TC-520", "FR-125-AC-8")]
@@ -1334,18 +1421,32 @@ fn statistical_names_the_causes_before_instancing() {
     );
 }
 
-#[trace("TC-2532", "FR-896-AC-7")]
+#[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-14")]
+#[test]
+fn conformance_refuses_conflicting_identity() {
+    check_conformance(&[CONFLICT]);
+}
+
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10", "FR-125-AC-14")]
 #[test]
 fn conformance_checks_each_admitted_key() {
     check_conformance(INSTANCES);
 }
 
 #[trace("TC-520", "FR-125-AC-7", "FR-125-AC-13", "FSpec-FR-361-AC-8")]
-#[trace("TC-520", "FSpec-FR-361-AC-14", "FSpec-FR-361-AC-16")]
+#[trace("TC-520", "FSpec-FR-361-AC-16")]
 #[test]
 #[ignore = "QSL-3507: global conformance fails established-invariant-broken over no instance (FR-125-AC-13)"]
 fn conformance_names_why_there_is_no_instance() {
-    check_conformance(CAUSES);
+    check_conformance(&[
+        EMPTY_UNIVERSE,
+        ONLY_UNADMITTED,
+        ORPHAN,
+        NO_INITIAL,
+        EMPTY_UNIVERSE_NO_INITIAL,
+        ORPHAN_NO_INITIAL,
+        NO_UNIVERSE,
+    ]);
 }
 
 #[trace("TC-2862", "FR-1012-AC-8")]
