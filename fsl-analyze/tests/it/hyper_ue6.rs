@@ -322,3 +322,63 @@ fn closed_universal_and_forall_exists_do_not_prove_past_the_guard() {
         ));
     }
 }
+
+/// A `match` that has no value on a joint step (the first component's input
+/// is 0, which `quotient` cannot divide by) refutes the clause as undefined
+/// (ADR-023 HV-8); that step is not a match-excluded one.
+fn match_undefined(profile: &str, quantifier: &str, body: &str) -> String {
+    format!(
+        "hyper Mu using {profile} over behaviours (v: V::Vault) \
+         forall trace a of V {quantifier} trace b of V \
+         match {{ quotient(if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) >= 0 }} \
+         {{ {body} }}"
+    )
+}
+
+fn match_run(declaration: &str) -> Result<HyperOutcome, ModelCheckRefusal> {
+    let world = World::new_with_kernel_function(Vault::Secure, false, &[(0, 0)], declaration, QUOTIENT);
+    world.run(ModelCheckLimits::default(), &Cancel::new())
+}
+
+#[trace("TC-602", "FR-176-AC-4")]
+#[test]
+fn an_undefined_match_refutes_the_infinite_universal_and_forall_exists() {
+    for quantifier in ["forall", "exists"] {
+        let outcome = match_run(&match_undefined(
+            "inf",
+            quantifier,
+            "always holds(v.l @ a = v.l @ a)",
+        ))
+        .expect("not refused");
+        let HyperOutcome::Violated { counterexample, .. } = outcome else {
+            panic!("{quantifier}: expected a counterexample, got {outcome:?}");
+        };
+        let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+            panic!("{quantifier}: expected undefined, got {:?}", counterexample.kind);
+        };
+        assert!(
+            matches!(undefined.locus, HyperLocus::Match { .. }),
+            "{quantifier}: {:?}",
+            undefined.locus
+        );
+    }
+}
+
+/// The closed forms stop at `Undecided(MatchUndetermined)`: never `Holds`. A
+/// refuting counterexample (HV-8) needs the tuple search that the closed
+/// forms lack.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn an_undefined_match_never_proves_the_closed_forms() {
+    for quantifier in ["forall", "exists"] {
+        let run = match_run(&match_undefined(
+            "ep",
+            quantifier,
+            "eventually [0, 2] holds(v.l @ a = v.l @ a)",
+        ));
+        assert!(
+            !matches!(run, Ok(HyperOutcome::Holds { .. })),
+            "{quantifier}: {run:?}"
+        );
+    }
+}
