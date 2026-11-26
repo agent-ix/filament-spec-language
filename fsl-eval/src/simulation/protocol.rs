@@ -1956,7 +1956,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     .map_err(|_| refused())?;
                 let mut objects = instances
                     .iter()
-                    .map(|instance| self.model.bound_reference(role.object.clone(), instance))
+                    .map(|instance| self.model.written_reference(role.object.clone(), instance))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|_| refused())?;
                 objects.sort();

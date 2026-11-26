@@ -14,6 +14,7 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::protocol::{
     over_reference, ProtocolSystem, Reachable, ResolvedMemory, Sc, StepKind,
 };
+use fsl_eval::simulation::Location;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -265,6 +266,22 @@ fn the_newly_compiled_forms_are_explored() {
 #[trace("TC-520", "FR-125-AC-9")]
 #[test]
 fn a_protocol_over_binding_names_the_admitted_member_type() {
+    let fixture = base_fixture(SOURCE);
+    let (request, over) = simulation(&fixture);
+    let reference = over_reference(request, "Flow", &over).expect("the instance binds");
+
+    assert_eq!(
+        reference.object_type(),
+        &EffectiveId::new(
+            None,
+            OriginalDeclarationKey::new(tc1070::model::PACKAGE, tc1070::model::id("Node")),
+        )
+    );
+}
+
+/// [`fixture`] with `Node` extending a `Base` that declares `tag`, and the
+/// protocol of `source` over `M::Base`.
+fn base_fixture(source: &str) -> Fixture {
     let mut document = tc1070::document();
     let types = document["types"].as_array_mut().expect("types");
     let node_id = serde_json::Value::from(tc1070::model::id("Node"));
@@ -287,21 +304,66 @@ fn a_protocol_over_binding_names_the_admitted_member_type() {
     base["relationships"] = json!([]);
     base["origin"] = tc1070::model::origin("Base");
     types.push(base);
-    let source = SOURCE.replace("over (view: M::Node)", "over (view: M::Base)");
-    let fixture = fixture_of(
+    // A role takes a type its population names, so every population names
+    // `Base` too.
+    for population in document["populations"].as_array_mut().expect("populations") {
+        population["members"]
+            .as_array_mut()
+            .expect("members")
+            .push(json!(tc1070::model::id("Base")));
+    }
+    let source = source.replace("over (view: M::Node)", "over (view: M::Base)");
+    fixture_of(
         &source,
         &document,
         json!({"total": {"integer": "5"}, "tag": {"integer": "1"}}),
+    )
+}
+
+/// FR-125 "Instancing": a replicated role over `M::Base` holds the admitted
+/// `Node` reference, so `w = view` holds for the `over` object and the
+/// role's footprint covers a field read of that reference.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_replicated_role_object_is_the_over_binding() {
+    let source = SOURCE.replace(
+        "  role Service on M::Node;\n",
+        "  role Service on M::Node;\n  \
+         role w each M::Base from nodes max 1 lifetime until(w = view and w.tag = 1);\n",
     );
-
-    let (request, over) = simulation(&fixture);
-    let reference = over_reference(request, "Flow", &over).expect("the instance binds");
-
-    assert_eq!(
-        reference.object_type(),
-        &EffectiveId::new(
-            None,
-            OriginalDeclarationKey::new(tc1070::model::PACKAGE, tc1070::model::id("Node")),
+    let fixture = base_fixture(&source);
+    let system = system(&fixture);
+    let reachable = system
+        .reachable(
+            NonZeroUsize::new(1).expect("one worker"),
+            fsl_eval::simulation::Limits::default().max_states,
         )
+        .expect("finite exploration completes");
+    let admitted = EffectiveId::new(
+        None,
+        OriginalDeclarationKey::new(tc1070::model::PACKAGE, tc1070::model::id("Node")),
+    );
+    let (state, retire) = reachable
+        .states
+        .iter()
+        .find_map(|state| {
+            state
+                .steps
+                .iter()
+                .find(|(step, _)| step.kind() == StepKind::Retire)
+                .map(|(step, _)| (state, step))
+        })
+        .expect("`w = view` holds, so the spawned object retires");
+    let footprint = system
+        .footprint(&state.state, retire)
+        .expect("the retire step has a footprint");
+    // The footprint of a read through `w` lists the field of the admitted
+    // reference, so it covers the reference the role holds.
+    assert!(
+        footprint.enabling.iter().any(|location| matches!(
+            location,
+            Location::Field { object, .. } if *object.object_type() == admitted
+        )),
+        "{footprint:?}"
     );
 }

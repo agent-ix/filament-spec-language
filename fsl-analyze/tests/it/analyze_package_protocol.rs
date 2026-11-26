@@ -4019,3 +4019,65 @@ fn a_protocol_over_subject_names_the_admitted_member_type_on_both_routes() {
         assert_eq!(item["replay"]["reproduced"], true);
     }
 }
+
+/// FR-125 "Instancing": on the source and the package constructor, a
+/// replicated role over `M::Base` spawns objects of the admitted type `Cell`.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_replicated_role_object_names_the_admitted_member_type_on_both_routes() {
+    use fsl_eval::simulation::protocol::{Sc, StepKind};
+
+    let ws = Workspace::new("package-role-admitted-type");
+    let path = workflow_roles_request(&ws, 1, "workflow", false, "", "closing");
+    let unit = std::fs::read_to_string(ws.path("program.fsl"))
+        .expect("the role unit")
+        .replace("over (k: M::Cell)", "over (k: M::Base)")
+        .replace("each M::Cell from", "each M::Base from");
+    ws.write("program.fsl", unit.as_bytes());
+    let mut model: Value =
+        serde_json::from_slice(&std::fs::read(ws.path("model.json")).expect("the model"))
+            .expect("the model is JSON");
+    add_base_supertype(&mut model);
+    // A role takes a type its population names, so `cells` names `Base` too.
+    for population in model["populations"].as_array_mut().expect("populations") {
+        population["members"]
+            .as_array_mut()
+            .expect("members")
+            .push(json!("ix://test/fill/Base"));
+    }
+    ws.write("model.json", model.to_string().as_bytes());
+    package_protocol_graph(
+        &ws,
+        &path,
+        Sc,
+        &["Planning"],
+        false,
+        false,
+        |source, package| {
+            let one = std::num::NonZeroUsize::new(1).expect("one worker");
+            for system in [source, package] {
+                let reached = crate::fill::reachable_with_workers(system, one).0;
+                let spawned: Vec<String> = reached
+                    .iter()
+                    .flat_map(|state| &state.steps)
+                    .filter(|(step, _)| step.kind() == StepKind::Spawn)
+                    .map(|(step, _)| {
+                        let bytes =
+                            quire_canonical::to_vec(step, quire_canonical::Limits::new(u64::MAX))
+                                .expect("transition identity");
+                        String::from_utf8(bytes).expect("canonical JSON")
+                    })
+                    .collect();
+                assert!(!spawned.is_empty(), "a worker spawns");
+                for step in spawned {
+                    let step: Value = serde_json::from_str(&step).expect("canonical JSON");
+                    assert_eq!(
+                        step["object"]["object_type"]["original"],
+                        json!({"node": "ix://test/fill/Cell", "package": "test/fill"}),
+                        "{step}"
+                    );
+                }
+            }
+        },
+    );
+}
