@@ -116,6 +116,11 @@ impl Default for ExactProbLimits {
 }
 
 impl ExactProbLimits {
+    /// Create a meter under the caller's ordinary accounting ceilings.
+    pub fn accounting_meter(&self, limits: filament_exact::ScalarLimits) -> filament_exact::Meter {
+        filament_exact::Meter::new(limits)
+    }
+
     /// The configured value for a limit owned by this EN-5 request. Limits
     /// owned by the subject or by operation context have no value here.
     pub fn value_of(&self, limit: ExactProbLimit) -> Option<u64> {
