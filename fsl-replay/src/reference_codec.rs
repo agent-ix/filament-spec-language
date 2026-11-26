@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The package-bound boundary between native and backend reference identities.
 
+use crate::shared_wire::{EMPTY_NAME, TransitionIdentity};
 use filament_exact::{
     Cancel, EffectiveId, IdentityCopyError, IntegerDecimalBudget, ObjectId, ObjectReference,
 };
@@ -1355,35 +1356,38 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         scope: &mut Scope<'_, 'm>,
         limits: quire_canonical::Limits,
     ) -> Result<ModelTransition, ReferenceCodecError> {
-        let map = scope.closed(value, &["type", "operation", "receiver", "arguments"])?;
-        if map["type"].as_str() != Some("transition") {
-            return Err(scope.fail(ReferenceFailure::MalformedWire));
-        }
+        // The one transition type checks the shape; the scope charges for the
+        // walk and spells the locus.
+        let map = scope.closed(value, &TransitionIdentity::MEMBERS)?;
+        let members = TransitionIdentity::members(value).map_err(|defect| {
+            scope.path.push_str(&defect.pointer);
+            scope.fail(ReferenceFailure::MalformedWire)
+        })?;
         // FR-120's reader rule: a string holding an identity text is that
-        // text and any other string a name.
-        let operation = scope.member("operation", |s| match &map["operation"] {
-            Value::String(text)
-                if crate::written_operation::WrittenOperation::is_identity_text(text) =>
-            {
-                s.text(text)
-            }
-            Value::String(_) => {
+        // text and any other string a name. The empty name is none.
+        let operation = scope.member("operation", |s| {
+            let operation = if crate::written_operation::WrittenOperation::is_identity_text(
+                members.operation,
+            ) {
+                s.text(members.operation)?
+            } else {
                 let operation = s.json(&map["operation"], 0)?;
-                canonical_text(&operation, s, limits)
+                canonical_text(&operation, s, limits)?
+            };
+            if operation == EMPTY_NAME {
+                return Err(s.fail(ReferenceFailure::MalformedWire));
             }
-            _ => Err(s.fail(ReferenceFailure::MalformedWire)),
+            Ok(operation)
         })?;
         let receiver = scope.member("receiver", |s| {
-            if map["receiver"].is_null() {
+            let Some(receiver) = members.receiver else {
                 return Ok(None);
-            }
-            let restored = self.value(&map["receiver"], true, 0, s)?;
+            };
+            let restored = self.value(receiver, true, 0, s)?;
             canonical_text(&restored, s, limits).map(Some)
         })?;
         let arguments = scope.member("arguments", |s| {
-            let array = map["arguments"]
-                .as_array()
-                .ok_or_else(|| s.fail(ReferenceFailure::MalformedWire))?;
+            let array = members.arguments;
             let bytes = array
                 .len()
                 .checked_mul(size_of::<String>())
@@ -2576,7 +2580,7 @@ mod tests {
                 quire_canonical::Limits::new(100000),
             )
         };
-        for name in ["tick", "true", "false", "null", "1", "[1]"] {
+        for name in ["tick", "true", "false", "null", "1", "[1]", "ix://a/b/C/d"] {
             assert_eq!(
                 restore_written(json!(name)).unwrap().operation(),
                 format!("\"{name}\"")
@@ -2584,6 +2588,8 @@ mod tests {
         }
         for other in [
             json!({"name": "tick"}),
+            json!(""),
+            json!(r#""""#),
             json!(true),
             json!(1),
             json!([1]),
@@ -2596,6 +2602,37 @@ mod tests {
                     ..
                 })
             ));
+        }
+        // FR-120-AC-39: the restore reads the whole closed transition.
+        for (member, replacement) in [
+            ("receiver", None),
+            ("arguments", None),
+            ("receiver", Some(json!(1))),
+            ("receiver", Some(json!("c1"))),
+        ] {
+            let mut written = encoded.clone();
+            let members = written.as_object_mut().expect("an object");
+            match &replacement {
+                Some(replacement) => members.insert(member.to_owned(), replacement.clone()),
+                None => members.remove(member),
+            };
+            let refused = codec.restore_transition(
+                &written,
+                &mut budget,
+                &cancel,
+                64,
+                quire_canonical::Limits::new(100000),
+            );
+            assert!(
+                matches!(
+                    refused,
+                    Err(super::ReferenceCodecError::Refused {
+                        reason: super::ReferenceFailure::MalformedWire,
+                        ..
+                    })
+                ),
+                "{member} {replacement:?}"
+            );
         }
         assert_eq!(system.state_key_of(&initial).unwrap().0, before);
         let (environment, _, views) = admit_current_snapshot_with_views(

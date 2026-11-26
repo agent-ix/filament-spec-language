@@ -2535,6 +2535,35 @@ mod tests {
         );
     }
 
+    /// FSpec FR-400 `UndefinedEvaluation`: `where.state_keys` is one State
+    /// object per component. `[1,[]]` is `WzEsW11d` and `[2,[]]` is
+    /// `WzIsW11d`.
+    #[trace("FSpec-FR-400")]
+    #[test]
+    fn a_hyper_undefined_locus_writes_state_objects() {
+        let counterexample = crate::HyperCounterexample {
+            kind: crate::HyperCounterexampleKind::Undefined(crate::HyperUndefined {
+                position: 0,
+                state_keys: vec![key(1), key(2)],
+                variables: vec![
+                    ("a".to_owned(), "M".to_owned()),
+                    ("b".to_owned(), "M".to_owned()),
+                ],
+                locus: crate::HyperLocus::RelationBody,
+                transition: None,
+                cause: fsl_eval::temporal::UndefinedCause::Kernel(Undefined::DivisionByZero),
+            }),
+            instance: Vec::new(),
+            traces: Vec::new(),
+            trace_position: 0,
+        };
+        let wire = hyper_counterexample_wire(&counterexample, Some(&claim())).expect("spelled");
+        assert_eq!(
+            wire["undefined"]["where"]["state_keys"],
+            json!([{"key": "WzEsW11d"}, {"key": "WzIsW11d"}])
+        );
+    }
+
     /// FSpec FR-712 timed state-graph paths retain the chosen exact delay
     /// before each discrete step. Untimed paths keep the FR-393 shape.
     #[test]
@@ -2572,7 +2601,7 @@ mod tests {
             read_temporal_counterexample::<ModelTransition>(&written)
                 .map(|read| read.prefix[0].transition.operation().to_owned())
         };
-        for name in ["tick", "true", "false", "null", "1", "[1]"] {
+        for name in ["tick", "true", "false", "null", "1", "[1]", "ix://a/b/C/d"] {
             assert_eq!(read(json!(name)).expect("a name"), format!("\"{name}\""));
         }
         assert_eq!(
@@ -2591,6 +2620,37 @@ mod tests {
                 Err(TemporalCounterexampleReadRefusal::MalformedWire {
                     cause: "wrong-value-kind",
                     pointer: "/loop/0/transition/operation".to_owned(),
+                })
+            );
+        }
+        for empty in [json!(""), json!(r#""""#)] {
+            assert_eq!(
+                read(empty),
+                Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause: "invalid-value",
+                    pointer: "/loop/0/transition/operation".to_owned(),
+                })
+            );
+        }
+        for (member, replacement, cause) in [
+            ("receiver", None, "missing-member"),
+            ("arguments", None, "missing-member"),
+            ("receiver", Some(json!(1)), "wrong-value-kind"),
+        ] {
+            let mut written = wire.clone();
+            let members = written["loop"][0]["transition"]
+                .as_object_mut()
+                .expect("a transition");
+            match replacement {
+                Some(replacement) => members.insert(member.to_owned(), replacement),
+                None => members.remove(member),
+            };
+            assert_eq!(
+                read_temporal_counterexample::<ModelTransition>(&written)
+                    .map(|read| read.prefix.len()),
+                Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause,
+                    pointer: format!("/loop/0/transition/{member}"),
                 })
             );
         }

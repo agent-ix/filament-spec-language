@@ -30,6 +30,7 @@ pub use relation::{
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
 use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
 use super::{CertificateLocus, CertificateRule};
+use crate::shared_wire::state_key_text;
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};
 
 /// The full canonical tuple and property key, including HP-3 witness members.
@@ -45,9 +46,8 @@ impl serde::Serialize for ProductStateKey {
 }
 
 pub(super) fn product_key_wire(key: &StateKey) -> Result<serde_json::Value, ProductClosureRefusal> {
-    use base64::Engine as _;
     use serde_json::json;
-    let encode = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let encode = |bytes: &[u8]| state_key_text(&StateKey::from_canonical_bytes(bytes.to_vec()));
     let value: serde_json::Value = serde_json::from_slice(key.as_bytes())
         .map_err(|_| ProductClosureRefusal::Input("product-key"))?;
     let pair = value

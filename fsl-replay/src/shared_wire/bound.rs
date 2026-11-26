@@ -172,8 +172,9 @@ mod tests {
     use super::ProbabilisticBound;
     use crate::shared_wire::{WireDefect, WireDefectKind};
 
-    // FSpec FR-413's claim-bound table, by hand.
-    #[trace("FSpec-FR-413", "FR-192-AC-9")]
+    // FSpec FR-413's claim-bound table, by hand. `expected-total` is the one
+    // form that table does not list yet.
+    #[trace("FSpec-FR-413")]
     #[test]
     fn each_claim_bound_form_reads_back_as_it_was_written() {
         let half = json!({"numerator": "1", "denominator": "2"});

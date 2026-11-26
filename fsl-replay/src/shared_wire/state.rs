@@ -104,7 +104,7 @@ mod tests {
 
     // FSpec FR-331: `[0,[]]` is the octets `5b 30 2c 5b 5d 5d`, whose unpadded
     // base64url is `WzAsW11d`.
-    #[trace("FR-290-AC-9")]
+    #[trace("FSpec-FR-331")]
     #[test]
     fn a_state_locus_is_the_key_object_both_ways() {
         let locus = StateLocus::from(StateKey::from_canonical_bytes(b"[0,[]]".to_vec()));

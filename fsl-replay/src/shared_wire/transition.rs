@@ -15,6 +15,19 @@ use super::{closed_object, member, unique_object, WireDefect, WireDefectKind};
 use crate::written_operation::WrittenOperation;
 
 const KIND: &str = "transition";
+/// The identity text of the empty name, which is no name (FR-120).
+pub(crate) const EMPTY_NAME: &str = r#""""#;
+
+/// The members of a written transition: checked for shape, with no identity
+/// text admitted yet.
+pub(crate) struct TransitionMembers<'v> {
+    /// The `operation` string, never empty.
+    pub(crate) operation: &'v str,
+    /// The receiver object, `None` for `null`.
+    pub(crate) receiver: Option<&'v Value>,
+    /// The arguments.
+    pub(crate) arguments: &'v [Value],
+}
 
 /// A written source or model transition.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,8 +52,8 @@ impl<'a> TransitionIdentity<'a> {
         self.0.into_owned()
     }
 
-    /// The transition `value` holds. The operation is one string, read by
-    /// FR-120's reader rule; an object operation is refused. The receiver is
+    /// The transition `value` holds. The operation is one non-empty string,
+    /// read by FR-120's reader rule; an object operation is refused. The receiver is
     /// null or an object and the arguments an array; a format that checks them
     /// against FSpec's `TypedValue` does so after this read.
     ///
@@ -48,6 +61,42 @@ impl<'a> TransitionIdentity<'a> {
     /// [`WireDefect`] naming the member at fault.
     pub fn read(value: &Value) -> Result<TransitionIdentity<'static>, WireDefect> {
         Self::read_within(value, quire_canonical::Limits::new(u64::MAX))
+    }
+
+    /// The shape of the written transition `value`, for a reader that admits
+    /// the identity texts itself: the closed four members, `type`
+    /// `transition`, a non-empty `operation` string, a `receiver` that is null
+    /// or an object and an `arguments` array.
+    ///
+    /// # Errors
+    /// [`WireDefect`] naming the member at fault.
+    #[implements("FR-120-AC-39")]
+    pub(crate) fn members(value: &Value) -> Result<TransitionMembers<'_>, WireDefect> {
+        let refuse = |pointer: &str, kind| WireDefect::new(pointer, kind);
+        let map = closed_object(value, &Self::MEMBERS, &[])?;
+        match member(map, "type")?.as_str() {
+            Some(KIND) => {}
+            Some(_) => return Err(refuse("/type", WireDefectKind::UnknownVariant)),
+            None => return Err(refuse("/type", WireDefectKind::WrongKind)),
+        }
+        let operation = match member(map, "operation")?.as_str() {
+            Some("") => return Err(refuse("/operation", WireDefectKind::Invalid)),
+            Some(operation) => operation,
+            None => return Err(refuse("/operation", WireDefectKind::WrongKind)),
+        };
+        let receiver = match member(map, "receiver")? {
+            Value::Null => None,
+            receiver @ Value::Object(_) => Some(receiver),
+            _ => return Err(refuse("/receiver", WireDefectKind::WrongKind)),
+        };
+        let arguments = member(map, "arguments")?
+            .as_array()
+            .ok_or_else(|| refuse("/arguments", WireDefectKind::WrongKind))?;
+        Ok(TransitionMembers {
+            operation,
+            receiver,
+            arguments,
+        })
     }
 
     /// [`Self::read`], admitting each identity text under `limits`.
@@ -60,30 +109,23 @@ impl<'a> TransitionIdentity<'a> {
         limits: quire_canonical::Limits,
     ) -> Result<TransitionIdentity<'static>, WireDefect> {
         let refuse = |pointer: &str, kind| WireDefect::new(pointer, kind);
-        let map = closed_object(value, &Self::MEMBERS, &[])?;
-        match member(map, "type")?.as_str() {
-            Some(KIND) => {}
-            Some(_) => return Err(refuse("/type", WireDefectKind::UnknownVariant)),
-            None => return Err(refuse("/type", WireDefectKind::WrongKind)),
+        let members = Self::members(value)?;
+        let operation = WrittenOperation::from_wire(members.operation.to_owned())
+            .into_identity_text()
+            .map_err(|_| refuse("/operation", WireDefectKind::Invalid))?;
+        // The identity text of the empty name is the empty name too.
+        if operation == EMPTY_NAME {
+            return Err(refuse("/operation", WireDefectKind::Invalid));
         }
-        let operation = match member(map, "operation")?.as_str() {
-            Some("") => return Err(refuse("/operation", WireDefectKind::Invalid)),
-            Some(operation) => WrittenOperation::from_wire(operation.to_owned())
-                .into_identity_text()
-                .map_err(|_| refuse("/operation", WireDefectKind::Invalid))?,
-            None => return Err(refuse("/operation", WireDefectKind::WrongKind)),
-        };
         let text = |value: &Value, pointer: &str| {
             serde_json::to_string(value).map_err(|_| refuse(pointer, WireDefectKind::Invalid))
         };
-        let receiver = match member(map, "receiver")? {
-            Value::Null => None,
-            receiver @ Value::Object(_) => Some(text(receiver, "/receiver")?),
-            _ => return Err(refuse("/receiver", WireDefectKind::WrongKind)),
-        };
-        let arguments = member(map, "arguments")?
-            .as_array()
-            .ok_or_else(|| refuse("/arguments", WireDefectKind::WrongKind))?
+        let receiver = members
+            .receiver
+            .map(|receiver| text(receiver, "/receiver"))
+            .transpose()?;
+        let arguments = members
+            .arguments
             .iter()
             .map(|argument| text(argument, "/arguments"))
             .collect::<Result<Vec<_>, _>>()?;
@@ -180,6 +222,11 @@ mod tests {
                 WireDefectKind::WrongKind,
             ),
             (written(json!("")), "/operation", WireDefectKind::Invalid),
+            (
+                written(json!(r#""""#)),
+                "/operation",
+                WireDefectKind::Invalid,
+            ),
             (
                 json!({"type": "transition", "operation": "tick", "receiver": 1,
                     "arguments": []}),
