@@ -286,4 +286,23 @@ mod tests {
             decimal("453999297624848515355915155605506102380", 43),
         );
     }
+
+    #[trace("FSpec-FR-408-AC-21")]
+    #[test]
+    fn exp_neg_is_exact_at_zero_cut_off_at_512_and_narrow_between() {
+        // e^-0 = 1 exactly.
+        let zero = exp_neg(&int(0)).expect("a bracket");
+        assert_eq!((zero.lower, zero.upper), (int(1), int(1)));
+        // From x = 512 on, the bracket is [0, 2^-512].
+        for x in [512, 513, 4000] {
+            let bounds = exp_neg(&int(x)).expect("a bracket");
+            assert_eq!(bounds.lower, int(0), "e^-{x}");
+            assert_eq!(bounds.upper, epsilon(512), "e^-{x}");
+        }
+        // Between, the bracket is narrower than 2^-480.
+        for x in [1, 10, 100, 511] {
+            let bounds = exp_neg(&int(x)).expect("a bracket");
+            assert!(bounds.upper.sub(&bounds.lower) < epsilon(480), "e^-{x}");
+        }
+    }
 }
