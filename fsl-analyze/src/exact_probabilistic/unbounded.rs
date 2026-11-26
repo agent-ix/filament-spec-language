@@ -229,7 +229,7 @@ pub fn decide_reachability(
 }
 
 /// Decide `A until B`, fixing states where neither predicate holds to zero.
-#[implements("FR-198-AC-1", "FR-198-AC-3", "FR-198-AC-5")]
+#[implements("FR-201-AC-15")]
 pub fn decide_until(
     product: &ProbProduct,
     from: &[bool],
@@ -251,7 +251,7 @@ pub fn decide_until(
 
 /// Decide `always P` as the complement of eventual `not P`, exchanging the
 /// minimum and maximum objective.
-#[implements("FR-198-AC-1", "FR-198-AC-3", "FR-198-AC-5")]
+#[implements("FR-201-AC-16")]
 pub fn decide_always(
     product: &ProbProduct,
     predicate: &[bool],
@@ -440,7 +440,7 @@ fn reachability(
 
 /// Run outward-rounded Bellman iteration and use exact policy iteration when
 /// the interval cannot decide `threshold` within the configured budgets.
-#[implements("FR-198-AC-7", "FR-198-AC-8", "FR-198-AC-9")]
+#[implements("FR-198-AC-7", "FR-198-AC-8")]
 pub fn decide_reachability_threshold(
     product: &ProbProduct,
     target: &[bool],
@@ -455,7 +455,7 @@ pub fn decide_reachability_threshold(
 }
 
 /// Threshold form of [`decide_until`].
-#[implements("FR-198-AC-7", "FR-198-AC-8", "FR-198-AC-9")]
+#[implements("FR-201-AC-15")]
 pub fn decide_until_threshold(
     product: &ProbProduct,
     from: &[bool],
@@ -1000,7 +1000,7 @@ pub fn decide_long_run_workload(
 
 /// Decide a long-run fraction over every scheduler by MEC optima and exact
 /// Dinkelbach updates (FR-199).
-#[implements("FR-199-AC-1", "FR-199-AC-2", "FR-199-AC-3", "FR-199-AC-4")]
+#[implements("FR-199-AC-2")]
 pub fn decide_long_run_mdp(
     product: &ProbProduct,
     predicate: &[bool],
