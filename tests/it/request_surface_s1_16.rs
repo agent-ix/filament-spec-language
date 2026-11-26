@@ -4450,7 +4450,7 @@ const CANDIDATE_PLAN: &str =
 /// the objects `root` and `child` at 0 as `initial.json`; `Ready` and the
 /// `Release` plan as `unit.native`. One expansion of the initial state has
 /// 2 x 1001 x 1001 = 2004002 candidates.
-fn two_field_directory() -> tempfile::TempDir {
+fn two_field_directory(ready_body: &str) -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     let path = directory.path().join("spine-model.semantic-ir.json");
@@ -4492,14 +4492,22 @@ fn two_field_directory() -> tempfile::TempDir {
     .unwrap();
     std::fs::write(
         directory.path().join("unit.native"),
-        format!("{MODEL_HEADER}{CANDIDATE_PLAN}"),
+        format!(
+            "{MODEL_HEADER}{}",
+            CANDIDATE_PLAN.replace("{ true }", &format!("{{ {ready_body} }}"))
+        ),
     )
     .unwrap();
     directory
 }
 
 fn run_two_field(member: &str, value: Value) -> (u8, Value) {
-    let directory = two_field_directory();
+    run_two_field_with("true", member, value)
+}
+
+/// [`run_two_field`] with `ready_body` as the body of `Ready`.
+fn run_two_field_with(ready_body: &str, member: &str, value: Value) -> (u8, Value) {
+    let directory = two_field_directory(ready_body);
     let mut request = json!({
         "models": [{"format": "semantic-ir/2.0.0",
             "source": source("spine-model.semantic-ir.json")}],
@@ -4552,4 +4560,48 @@ fn a_direct_member_past_the_candidate_bound_settles_incomplete() {
     assert_eq!(record["status"], "incomplete", "{value}");
     assert_eq!(record["cause"], candidate_limit_reached(), "{value}");
     assert_eq!(exit, 22, "{value}");
+}
+
+/// A refuted record over the candidate fixture: the false claim fails at the
+/// initial state, whose expansion is past the candidate bound.
+fn assert_refuted_past_the_candidate_bound(record: &Value, value: &Value) {
+    assert_eq!(record["status"], "refuted", "{value}");
+    let counterexample = &record["counterexample"];
+    assert_eq!(counterexample["minimality"], "1-minimal", "{value}");
+    assert_eq!(counterexample["replay"], "reproduced", "{value}");
+    assert_eq!(counterexample["invocations"], json!([]), "{value}");
+    let operation = &record["operations"][0];
+    assert_eq!(operation["status"], "uncovered", "{value}");
+    assert_eq!(operation["reason"], "undetermined", "{value}");
+    assert_eq!(operation["limit"], "candidates", "{value}");
+    assert_eq!(operation["value"], 200_000, "{value}");
+}
+
+/// FR-752-AC-17: the direct member keeps its counterexample past the bound.
+#[test]
+#[trace("FR-752-AC-17")]
+fn a_direct_member_counterexample_stays_refuted_past_the_candidate_bound() {
+    let (exit, value) = run_two_field_with(
+        "false",
+        "model_based_test",
+        json!({"clause": "Ready", "seed": 7, "max_cases": 20, "max_trace_length": 8,
+            "initial": "initial.json"}),
+    );
+    assert_refuted_past_the_candidate_bound(&value["model_based_test"], &value);
+    assert_eq!(exit, 10, "{value}");
+}
+
+/// FR-752-AC-17: the plan step keeps its counterexample past the bound.
+#[test]
+#[trace("FR-752-AC-17")]
+fn a_plan_step_counterexample_stays_refuted_past_the_candidate_bound() {
+    let (exit, value) = run_two_field_with(
+        "false",
+        "verification_plan",
+        json!({"plan": "Release", "execute": true, "initial": "initial.json",
+            "seed": 7, "max_trace_length": 8}),
+    );
+    let step = &value["verification_plan"]["dispositions"]["tested"];
+    assert_refuted_past_the_candidate_bound(&step["result"], &value);
+    assert_eq!(exit, 10, "{value}");
 }

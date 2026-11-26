@@ -773,6 +773,7 @@ pub fn run_model_based_state_invariant_with_value_bits(
         reachability_limits,
         None,
         None,
+        None,
         |trace| invariant_result(system, trace, clause),
     )
 }
@@ -1974,6 +1975,7 @@ fn run_model_based_temporal_clause(
         reachability_limits,
         None,
         None,
+        None,
         |trace| temporal_result(system, clause, trace),
     )
 }
@@ -2013,6 +2015,7 @@ fn run_model_based_contract_clause(
             stop.limit,
         ));
     }
+    let mut candidate_stop = None;
     let partitions = match contract_partition_cases(
         system,
         clause,
@@ -2020,6 +2023,7 @@ fn run_model_based_contract_clause(
         max_trace_length,
         reachability_limits,
         admission,
+        &mut candidate_stop,
     ) {
         Ok(partitions) => partitions,
         Err(ModelBasedTestError::OracleDisagreement { .. }) => {
@@ -2050,6 +2054,7 @@ fn run_model_based_contract_clause(
         reachability_limits,
         Some(identity.clone()),
         Some(partitions),
+        candidate_stop,
         |trace| contract_result(system, clause, &identity, trace),
     )
 }
@@ -2058,6 +2063,7 @@ fn run_model_based_contract_clause(
     clippy::too_many_arguments,
     reason = "these are the model-based request inputs"
 )]
+#[implements("FR-752-AC-13", "FR-752-AC-17")]
 fn run_model_based_with_oracle<F>(
     system: &ModelSystem<'_>,
     clause: &str,
@@ -2070,6 +2076,7 @@ fn run_model_based_with_oracle<F>(
     reachability_limits: Limits,
     omitted_clause: Option<NodeKey>,
     partition_cases: Option<Vec<PartitionRunCase>>,
+    mut candidate_stop: Option<ExpansionStop>,
     mut oracle: F,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError>
 where
@@ -2235,7 +2242,9 @@ where
                 partitions.push(partition.clone());
             }
         }
-        refuse_candidate_stop(system, &trace, omitted_clause.as_ref())?;
+        if candidate_stop.is_none() {
+            candidate_stop = sampled_candidate_stop(system, &trace, omitted_clause.as_ref())?;
+        }
         add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
         let outcome = oracle(&trace)?;
         if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
@@ -2294,7 +2303,15 @@ where
             name: name.to_owned(),
         })
         .collect();
-    let reachability = operation_reachability(system, max_trace_length, reachability_limits)?;
+    let (reachability, coverage_stop) =
+        operation_reachability(system, max_trace_length, reachability_limits)?;
+    // A retained counterexample stands on its own replay; without one, a run
+    // that reached the candidate bound has not tested the clause.
+    if counterexample.is_none() {
+        if let Some(stop) = candidate_stop.or(coverage_stop) {
+            return Err(ModelBasedTestError::Expansion(stop));
+        }
+    }
     let operation_coverage = model_operation_coverage(&declared, &generated_cases, &reachability)
         .ok_or(ModelBasedTestError::Coverage)?;
     let evidence = if counterexample.is_some() {
@@ -2829,6 +2846,7 @@ fn contract_partition_cases(
     max_trace_length: usize,
     limits: Limits,
     admission: &dyn RootAdmission,
+    candidate_stop: &mut Option<ExpansionStop>,
 ) -> Result<Vec<PartitionRunCase>, ModelBasedTestError> {
     let mut cases = Vec::new();
     for mut partition in system.boundary_partitions() {
@@ -2878,6 +2896,7 @@ fn contract_partition_cases(
                     limits,
                     |state| state_has_field_value(system, state, &field, &partition),
                     None,
+                    candidate_stop,
                 )? {
                     PathSearch::Found(trace) => cases.push(PartitionRunCase {
                         partition,
@@ -2930,7 +2949,7 @@ fn contract_partition_cases(
                     partition_attempt(system, state, identity, &operation, parameter, &partition)
                 };
                 let result = if clause.kind == ContractClauseKind::Precondition {
-                    first_partition_attempt(system, identity, &partition, attempt)?
+                    first_partition_attempt(system, identity, &partition, attempt, candidate_stop)?
                 } else {
                     shortest_partition_path(
                         system,
@@ -2940,6 +2959,7 @@ fn contract_partition_cases(
                         limits,
                         |_| false,
                         Some(&attempt),
+                        candidate_stop,
                     )?
                 };
                 match result {
@@ -3088,7 +3108,7 @@ fn tool_failure_record(
             name: name.to_owned(),
         })
         .collect();
-    let reachability = operation_reachability(system, max_trace_length, reachability_limits)?;
+    let (reachability, _) = operation_reachability(system, max_trace_length, reachability_limits)?;
     let operation_coverage = model_operation_coverage(&declared, &[], &reachability)
         .ok_or(ModelBasedTestError::Coverage)?;
     let value_bound_cuts = system.value_bound_cuts();
@@ -3142,6 +3162,7 @@ fn first_partition_attempt(
     attempt: impl Fn(
         &ModelSimState,
     ) -> Option<filament_semantic_value::model_transition::ModelTransition>,
+    candidate_stop: &mut Option<ExpansionStop>,
 ) -> Result<PathSearch, ModelBasedTestError> {
     for initial in ordered_initial_states(system)? {
         if let Some(attempted) = attempt(&initial.state) {
@@ -3157,6 +3178,7 @@ fn first_partition_attempt(
                 },
                 Some(attempted),
                 partition,
+                candidate_stop,
             )
             .map(PathSearch::Attempted);
         }
@@ -3177,6 +3199,7 @@ fn shortest_partition_path(
     limits: Limits,
     target: impl Fn(&ModelSimState) -> bool,
     attempt: Option<PartitionAttempt<'_>>,
+    candidate_stop: &mut Option<ExpansionStop>,
 ) -> Result<PathSearch, ModelBasedTestError> {
     let view = super::ModelRunView::new(system, Some(clause.clone()));
     let initial = ordered_initial_states(system)?;
@@ -3223,21 +3246,17 @@ fn shortest_partition_path(
                     }
                     successors
                 }
-                Ok(Expanded::Stopped(stop))
-                    if stop.limit == Some(ExpansionLimit::MaxCandidates) =>
-                {
-                    return Err(ModelBasedTestError::Expansion(stop));
-                }
                 Ok(Expanded::Stopped(stop)) => {
-                    return Ok(PathSearch::Undetermined {
-                        limit: format!("{:?}", stop.limit),
-                        value: 0,
-                    });
+                    let limit = format!("{:?}", stop.limit);
+                    if stop.limit == Some(ExpansionLimit::MaxCandidates) {
+                        candidate_stop.get_or_insert(stop);
+                    }
+                    return Ok(PathSearch::Undetermined { limit, value: 0 });
                 }
                 Err(error) => return Err(ModelBasedTestError::Key(error)),
             };
         if target(&current.state) {
-            return build_partition_trace(system, clause, current, None, partition)
+            return build_partition_trace(system, clause, current, None, partition, candidate_stop)
                 .map(PathSearch::Found);
         }
         if let Some(attempt) = attempt {
@@ -3275,6 +3294,7 @@ fn shortest_partition_path(
                         },
                         None,
                         partition,
+                        candidate_stop,
                     )
                     .map(PathSearch::Found);
                 }
@@ -3342,6 +3362,7 @@ fn shortest_partition_path(
             },
             Some(attempted),
             partition,
+            candidate_stop,
         )
         .map(PathSearch::Attempted);
     }
@@ -3359,6 +3380,7 @@ fn shortest_partition_path(
                 },
                 Some(attempted),
                 partition,
+                candidate_stop,
             )
             .map(PathSearch::Attempted);
         }
@@ -3383,6 +3405,7 @@ fn build_partition_trace(
     path: PartitionPath,
     attempted: Option<filament_semantic_value::model_transition::ModelTransition>,
     partition: &ModelBoundaryPartition,
+    candidate_stop: &mut Option<ExpansionStop>,
 ) -> Result<ModelTrace, ModelBasedTestError> {
     let PartitionPath {
         initial,
@@ -3397,8 +3420,11 @@ fn build_partition_trace(
             .map_err(ModelBasedTestError::Key)?
         {
             Expanded::Successors { findings, .. } => findings,
+            // The path to the final state is complete; only its findings are
+            // unread.
             Expanded::Stopped(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
-                return Err(ModelBasedTestError::Expansion(stop));
+                candidate_stop.get_or_insert(stop);
+                Vec::new()
             }
             Expanded::Stopped(_) => {
                 return Err(ModelBasedTestError::ClauseUndetermined {
@@ -3933,22 +3959,22 @@ impl crate::temporal::TemporalLetters for ModelTemporalLetters<'_, '_, '_> {
     }
 }
 
-/// Refuse a sampled trace whose last expansion reached the candidate bound:
-/// the sampler records only the stop's catalog code, so the trace's final
-/// state is expanded again to read the limit.
+/// The candidate stop of a sampled trace whose last expansion reached the
+/// candidate bound: the sampler records only the stop's catalog code, so the
+/// trace's final state is expanded again to read the limit.
 #[implements("FR-752-AC-13")]
-fn refuse_candidate_stop(
+fn sampled_candidate_stop(
     system: &ModelSystem<'_>,
     trace: &ModelTrace,
     omitted_clause: Option<&NodeKey>,
-) -> Result<(), ModelBasedTestError> {
+) -> Result<Option<ExpansionStop>, ModelBasedTestError> {
     let stopped = trace
         .trace
         .provenance
         .as_ref()
         .is_some_and(|provenance| matches!(provenance.stopped, StopReason::Stopped(_)));
     if !stopped {
-        return Ok(());
+        return Ok(None);
     }
     let view = super::ModelRunView::new(system, omitted_clause.cloned());
     let Some(mut state) = ordered_initial_states(system)?
@@ -3963,7 +3989,7 @@ fn refuse_candidate_stop(
         match crate::simulation::order::expand(&view, &state, super::identity_limits())? {
             Expanded::Successors { successors, .. } => {
                 let Some(step) = steps.next() else {
-                    return Ok(());
+                    return Ok(None);
                 };
                 state = successors
                     .into_iter()
@@ -3974,18 +4000,25 @@ fn refuse_candidate_stop(
                     .state;
             }
             Expanded::Stopped(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
-                return Err(ModelBasedTestError::Expansion(stop));
+                return Ok(Some(stop));
             }
-            Expanded::Stopped(_) => return Ok(()),
+            Expanded::Stopped(_) => return Ok(None),
         }
     }
 }
+
+/// Each operation's reachability reason, and the stop when the exploration
+/// reached the candidate bound.
+type OperationReachability = (
+    Vec<(String, ModelOperationCoverageReason)>,
+    Option<ExpansionStop>,
+);
 
 fn operation_reachability(
     system: &ModelSystem<'_>,
     max_depth: usize,
     limits: Limits,
-) -> Result<Vec<(String, ModelOperationCoverageReason)>, ModelBasedTestError> {
+) -> Result<OperationReachability, ModelBasedTestError> {
     struct Pending {
         state: super::ModelSimState,
         initial: crate::simulation::StateKey,
@@ -3997,6 +4030,7 @@ fn operation_reachability(
     let mut visited = HashMap::<Vec<u8>, usize>::new();
     let mut queue = VecDeque::new();
     let mut stopped = None;
+    let mut candidate_stop = None;
     for initial in ordered_initial_states(system)? {
         let (key, _) =
             system.state_key(&initial.state, fsl_foundation::IdentityLimits::default())?;
@@ -4030,6 +4064,14 @@ fn operation_reachability(
             super::identity_limits(),
         )? {
             Expanded::Successors { successors, .. } => successors,
+            Expanded::Stopped(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
+                stopped = Some((
+                    ModelOperationCoverageLimit::Candidates,
+                    u128::from(system.limits.max_candidates),
+                ));
+                candidate_stop = Some(stop);
+                break;
+            }
             Expanded::Stopped(stop) => return Err(ModelBasedTestError::Expansion(stop)),
         };
         let mut previous = None;
@@ -4093,7 +4135,7 @@ fn operation_reachability(
         .max_value_bits
         .load(std::sync::atomic::Ordering::Relaxed)
         > 0;
-    Ok(operations
+    let reasons = operations
         .into_iter()
         .map(|(_, _, identity)| {
             let reason = if let Some(path) = enabled.get(identity) {
@@ -4116,7 +4158,8 @@ fn operation_reachability(
             };
             (identity.to_owned(), reason)
         })
-        .collect())
+        .collect();
+    Ok((reasons, candidate_stop))
 }
 
 fn replayed_invocation_prefix(
