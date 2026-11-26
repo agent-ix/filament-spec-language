@@ -10,9 +10,9 @@ use filament_semantic_value::catalog::UndefinedReason;
 use fsl_analyze::exact_probabilistic::{
     backward_induction, build_product, decide_bounded_event, decide_fair_long_run_mdp,
     decide_fair_reachability, maximal_fair_end_components, Accumulator, Amount, ExactProbLimits,
-    FhObjective, FhResult, FormulaState, MeasurePhase, MonitorState, MonitorVerdict, PredicateRole,
-    ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction, ProductKind,
-    ProductRefusal, ProductRequest, ProductStop, UnboundedObjective, UndefinedRead,
+    ExtRational, FhObjective, FhResult, FormulaState, MeasurePhase, MonitorState, MonitorVerdict,
+    PredicateRole, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction,
+    ProductKind, ProductRefusal, ProductRequest, ProductStop, UnboundedObjective, UndefinedRead,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::Limits;
@@ -5076,6 +5076,93 @@ fn until_avoidance_cannot_cross_an_already_reached_target() {
             ExtRational::Finite(ratio(1, 1)),
             ExtRational::Finite(ratio(0, 1))
         ]
+    );
+}
+
+/// FR-200 "Reach" with an infimum, FR-1041 "Check": both routes take fair end
+/// components on non-target states only. `go` takes `s` to the target `g` and
+/// `back` returns, so by hand `U` is empty and `v(s) = v(g) = 1`. A component
+/// through the target would put `s` in `U` and reject that vector.
+#[trace("TC-3150", "TC-635")]
+#[test]
+fn a_cycle_through_a_target_leaves_the_fair_minimum_at_one() {
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_replay::ExactProbabilityCertificateCheck;
+
+    const CLAIM: &str = "probabilistic Returns using inf on M over (w: M::W) \
+         under every scheduler fair weak W::go on origin \
+         { probability >= rational(2,5) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_returning_target(CLAIM));
+    let product = built(&world, "Returns");
+    assert_eq!(product.states.len(), 2);
+    let target = product
+        .labels
+        .iter()
+        .map(|labels| labels[0])
+        .collect::<Vec<_>>();
+    let values = decide_fair_reachability(
+        &product,
+        None,
+        &target,
+        UnboundedObjective::Min,
+        &ExactProbLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the product has a fair minimum")
+    .values;
+    assert_eq!(values, [(); 2].map(|()| ExtRational::Finite(ratio(1, 1))));
+
+    let system = ModelSystem::new(world.subject().simulation).expect("the model is admitted");
+    let claims = world.package.graph().probabilistic_model().claims();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("Returns"))
+        .expect("canonical claim identity");
+    let binding = fsl_replay::claim_binding(&system, world.claim("Returns"))
+        .expect("the claim binding is checked")
+        .map(|binding| binding.reference);
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    let mut rows = product
+        .ids()
+        .map(|state| fsl_replay::ExactProbabilityValue {
+            state: fsl_replay::ProbabilityProductKey::for_model_state_with_limits(
+                binding.as_ref(),
+                &product.states[state.index()].model,
+                fsl_replay::ProbabilityDocumentIoLimits {
+                    bytes: limits.bytes,
+                    storage_bytes: limits.storage_bytes,
+                },
+                &Cancel::new(),
+            )
+            .expect("canonical product key"),
+            value: ratio(1, 1),
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| left.state.cmp(&right.state));
+    let proof = fsl_replay::probability_proof_document(
+        &system,
+        claims,
+        &item,
+        &fsl_replay::ExactProbabilityCertificate { values: rows },
+        limits,
+        &Cancel::new(),
+    )
+    .expect("the vector satisfies the local equations and ranks");
+    assert!(proof.is_fair_mdp());
+    let exact = fsl_replay::write_probability_proof_document(&proof, limits, &Cancel::new())
+        .expect("canonical exact document");
+    let checked = fsl_replay::check_probability_certificate_document(
+        &system,
+        claims,
+        &item,
+        &exact,
+        limits,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(checked, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+        "the vector of ones holds: {checked:?}"
     );
 }
 
