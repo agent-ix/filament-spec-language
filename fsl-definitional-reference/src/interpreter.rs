@@ -598,7 +598,7 @@ impl ReferenceClockState {
                 .clocks
                 .get(constraint.clock().index())
                 .ok_or_else(|| unsupported("clock constraint outside valuation"))?;
-            satisfied &= clock_comparison(value, constraint.op(), constraint.bound());
+            satisfied &= clock_comparison(value, constraint.op(), constraint.bound())?;
         }
         Ok(satisfied)
     }
@@ -635,7 +635,7 @@ impl ReferenceClockState {
                 .clocks
                 .get(constraint.clock().index())
                 .ok_or_else(|| unsupported("clock invariant outside valuation"))?;
-            satisfied &= clock_comparison(value, constraint.op(), constraint.bound());
+            satisfied &= clock_comparison(value, constraint.op(), constraint.bound())?;
         }
         Ok(satisfied)
     }
@@ -682,15 +682,18 @@ fn clock_comparison(
     value: &Rational,
     operator: fsl_semantics::check::ClockOp,
     bound: &Rational,
-) -> bool {
+) -> Result<bool, ReferenceRefusal> {
+    if *bound.denominator() != filament_exact::Integer::one() {
+        return Err(unsupported("clock compared with a non-integer constant"));
+    }
     use fsl_semantics::check::ClockOp;
-    match operator {
+    Ok(match operator {
         ClockOp::Less => value < bound,
         ClockOp::LessOrEqual => value <= bound,
         ClockOp::Equal => value == bound,
         ClockOp::GreaterOrEqual => value >= bound,
         ClockOp::Greater => value > bound,
-    }
+    })
 }
 
 impl ReferenceFiniteState {
@@ -1106,5 +1109,18 @@ mod tests {
         ))
         .expect_err("state-dependent transition weights are outside the fragment");
         assert_eq!(refusal.construct, "non-literal probability weight");
+    }
+
+    #[trace("FR-1051-AC-19")]
+    #[test]
+    fn refuses_a_non_integer_clock_comparison_constant() {
+        let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
+        let value = Rational::from_integer(Integer::zero());
+        let refusal = super::clock_comparison(&value, fsl_semantics::check::ClockOp::Less, &half)
+            .expect_err("the reference fragment admits only integer clock constants");
+        assert_eq!(
+            refusal.construct,
+            "clock compared with a non-integer constant"
+        );
     }
 }
