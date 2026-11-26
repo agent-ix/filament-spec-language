@@ -950,6 +950,7 @@ fn each_mistyped_use_of_a_variant_type_refuses_with_its_cause() {
 /// QSL-2009: absent fields are unknown names with an owner and a token-only
 /// source span; a real arithmetic mismatch retains its existing cause.
 #[test]
+#[trace("FR-363-AC-8", "FR-363-AC-9")]
 fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
     let source = "function record_field using v(s: Config::Settings): Boolean pure { s.paid = 0 }\n\
                   function model_field using v(a: Reference<Config::Account>): Integer pure { deref(a).paid }\n\
@@ -981,17 +982,25 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         }
     );
     assert_eq!(record.location.path(), [0]);
+    assert_eq!(
+        (record.cause.code(), record.cause.cause()),
+        (
+            fsl_foundation::diagnostic::Code::IllTyped,
+            Some("type-mismatch")
+        ),
+        "an absent record field remains ill_typed/type-mismatch: {record:?}"
+    );
 
     let object = refusals
         .iter()
-        .find(|refusal| matches!(refusal.cause.as_ref(), CheckCause::StateModel(cause) if matches!(&cause.cause, CheckCause::UnknownField { .. })))
+        .find(|refusal| matches!(refusal.cause.as_ref(), CheckCause::StateModel(cause) if matches!(&cause.cause, CheckCause::UnknownField { owner, .. } if &**owner == "Config::Account")))
         .unwrap_or_else(|| panic!("the absent model field is refused: {refusals:?}"));
     assert!(
         matches!(
             object.cause.as_ref(),
             CheckCause::StateModel(cause)
                 if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
-                    if &**owner == "Account" && &**field == "paid"
+                    if &**owner == "Config::Account" && &**field == "paid"
                         && *span == Some(fsl_foundation::Span {
                             start: model_start,
                             end: model_start + "paid".len(),
@@ -1000,6 +1009,14 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         "{object:?}"
     );
     assert!(object.location.path().is_empty());
+    assert_eq!(
+        (object.cause.code(), object.cause.cause()),
+        (
+            fsl_foundation::diagnostic::Code::IllTyped,
+            Some("type-mismatch")
+        ),
+        "an absent model field remains ill_typed/type-mismatch: {object:?}"
+    );
 
     let arithmetic = refusals
         .iter()
