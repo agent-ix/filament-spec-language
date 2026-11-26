@@ -37,7 +37,7 @@ pub use relation_input::{ModelRelationDescriptor, ModelRelationTuple};
 mod sim_state;
 pub use sim_state::ModelSimState;
 mod outcome;
-pub use outcome::{TimedVacuity, admitted_refutation, admitted_start};
+pub use outcome::{TimedVacuity, admitted_refutation, admitted_start, claim_start};
 mod operation_coverage;
 pub use operation_coverage::{
     ModelOperation, ModelOperationCase, ModelOperationCoverage, ModelOperationCoverageEntry,

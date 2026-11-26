@@ -96,6 +96,7 @@ impl From<TimedVacuity> for UndecidedCause {
     fn from(vacuity: TimedVacuity) -> Self {
         match vacuity {
             TimedVacuity::NoInitialState => Self::NoInitialState,
+            TimedVacuity::NoInstance => Self::NoInstance,
             TimedVacuity::NoAdmittedBehaviour => Self::NoAdmittedBehaviour,
         }
     }

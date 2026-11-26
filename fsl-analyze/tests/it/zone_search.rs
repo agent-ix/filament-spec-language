@@ -998,6 +998,16 @@ pub(crate) fn check(
     certificate: &Certificate,
     limits: CertificateCheckLimits,
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<ItemObligation<&'static str>>> {
+    check_over(world, world.request(), certificate, limits)
+}
+
+/// [`check`] of `world`'s item over the subject `simulation` admits.
+pub(crate) fn check_over(
+    world: &World,
+    simulation: fsl_eval::simulation::model::ModelSimulationRequest<'_>,
+    certificate: &Certificate,
+    limits: CertificateCheckLimits,
+) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<ItemObligation<&'static str>>> {
     let system = world.system();
     let node = &world.package.graph().temporal_clauses()[0];
     let letters = system.clause_letters(node).expect("letters");
@@ -1011,7 +1021,7 @@ pub(crate) fn check(
     };
     check_zone_certificate(
         ZoneCertificateRequest {
-            simulation: world.request(),
+            simulation,
             model: "M",
             max_clocks: fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS,
             item,

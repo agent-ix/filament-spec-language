@@ -54,8 +54,8 @@ use fsl_eval::automaton::{
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    admitted_refutation, admitted_start, ClockValuation, GuardedStep, ModelSimState, TimedState,
-    TimedStop, TimedSystem, TimedVacuity,
+    admitted_refutation, admitted_start, claim_start, ClockValuation, GuardedStep, ModelSimState,
+    TimedState, TimedStop, TimedSystem, TimedVacuity,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::source::Span;
@@ -1000,24 +1000,25 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     /// is classified first, once, by the timed outcome layer: a subject with
     /// no admitted behaviour has no counterexample either, so no claim
     /// product is built over it.
-    #[implements("FR-232-AC-3")]
+    #[implements("FR-125-AC-7", "FR-232-AC-3")]
     fn decide(&mut self, automaton: &mut PositionAutomaton) -> Result<ModelCheckOutcome, Halt> {
         let system = self.timed().system();
-        let instances = system
-            .instances(&self.request.clause.over().1)
-            .map_err(|_| DigitalRefusal::Fault("instances"))?;
         let initial_states = self.timed().initial().len();
-        let start = admitted_start(initial_states, || match instances.first() {
-            // QSL-3484: an empty instance set is FR-125's `NoInstance`,
-            // which the instance set's own computation states; it is not
-            // decided here.
-            None => Ok::<_, Halt>(Some(())),
-            Some(instance) => Ok(self.admits_behaviour(automaton, instance)?.then_some(())),
+        let over = system.claim_instances(&self.request.clause.over().1);
+        let instances = match claim_start(initial_states, over)
+            .map_err(|_| DigitalRefusal::Fault("instances"))?
+        {
+            Ok(instances) => instances,
+            Err(vacuity) => return Ok(self.vacuous(vacuity)),
+        };
+        let start = admitted_start(initial_states, || {
+            let admitted = self.admits_behaviour(automaton, instances.first())?;
+            Ok::<_, Halt>(admitted.then_some(()))
         })?;
         if let Err(vacuity) = start {
             return Ok(self.vacuous(vacuity));
         }
-        for instance in &instances {
+        for instance in instances.as_slice() {
             let mut product = Product::default();
             let built = self.build(&mut product, automaton, false, instance)?;
             let automaton_states: BTreeSet<usize> = product

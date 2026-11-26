@@ -12,8 +12,10 @@ use filament_exact::{Cancel, Meter, Undefined};
 use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
 use fsl_analyze::zone_check::ZoneCheckLimits;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
+use fsl_eval::simulation::model::TimedVacuity;
 use fsl_eval::simulation::model::{ModelSimState, TimedSystem};
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
+use fsl_replay::ZoneCertificateRefusal;
 use fsl_replay::{CounterexampleKind, ModelCheckOutcome};
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -978,6 +980,7 @@ fn routes_over_both_inputs(
         (0..claims.len() * 2)
             .map(|n| {
                 let item = run.item(n);
+                assert!(!item.is_null(), "{}", run.document());
                 (
                     item["record"]["backend"]
                         .as_str()
@@ -1324,4 +1327,65 @@ fn digital_clocks_read_no_claim_over_a_stalled_subject() {
         "{outcome:?}"
     );
     assert_eq!(atoms, 0);
+}
+
+/// FR-125 "Instancing": a claim whose `over` type admits no key settles
+/// `inconclusive` `no-instance`, the false one included, on both timed
+/// routes and both input shapes.
+#[trace("FR-125-AC-7")]
+#[test]
+fn timed_claims_over_no_instance_are_never_proved() {
+    let mut snapshot: Value = serde_json::from_slice(&rpc_snapshot()).expect("the snapshot");
+    snapshot["populations"][0]["objects"] = json!([]);
+    let expected = expected_on_both_routes([
+        ("inconclusive", "no-instance"),
+        ("inconclusive", "no-instance"),
+    ]);
+    let found = routes_over_both_inputs(
+        "timed-no-instance",
+        &locking_document(),
+        LOCKING,
+        &[
+            ("Safe", "always holds(true)"),
+            ("Never", "always holds(false)"),
+        ],
+        &[snapshot.to_string().into_bytes()],
+        None,
+    );
+    assert_eq!(found, [expected.clone(), expected]);
+}
+
+/// The EN-6 certificate checker accepts no certificate over a subject with no
+/// instance: the proof of a claim over one object, checked where the
+/// population is empty.
+#[trace("FR-125-AC-7")]
+#[test]
+fn a_zone_certificate_over_no_instance_is_refused() {
+    let world = partial_world("always holds(c.phase <= 2)");
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_edges_cover(&world, &certificate);
+    let mut snapshot: Value = serde_json::from_slice(&rpc_snapshot()).expect("the snapshot");
+    snapshot["populations"][0]["objects"] = json!([]);
+    snapshot["identity"]["identity"] = json!("empty");
+    let empty = snapshot.to_string().into_bytes();
+    let reference = fsl_semantics::model::observation::document_reference(&empty)
+        .expect("a document names itself");
+    let mut snapshots = world.snapshots.clone();
+    snapshots.insert(reference, empty);
+    let mut request = world.request();
+    request.snapshots = &snapshots;
+    request.initial = vec![fsl_semantics::model::observation::DocumentRef {
+        authority: "test".to_owned(),
+        identity: "empty".to_owned(),
+    }];
+    let checked = crate::zone_search::check_over(
+        &world,
+        request,
+        &certificate,
+        fsl_replay::CertificateCheckLimits::default(),
+    );
+    assert_eq!(
+        checked,
+        Err(ZoneCertificateRefusal::Vacuous(TimedVacuity::NoInstance))
+    );
 }

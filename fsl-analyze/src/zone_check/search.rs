@@ -36,7 +36,7 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    admitted_refutation, admitted_start, GuardedStep, ModelSimState, PlaceConstraint,
+    admitted_refutation, admitted_start, claim_start, GuardedStep, ModelSimState, PlaceConstraint,
     TerminalClass, TimedStop, TimedSystem, TimedVacuity,
 };
 use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup};
@@ -228,6 +228,8 @@ pub enum ZoneStop {
 pub enum ZoneUndecided {
     /// The subject has no initial state.
     NoInitialState,
+    /// The claim's `over` type admits no key.
+    NoInstance,
     /// An expansion or a timed member's reading had no value.
     UndecidedSuccessor(TimedStop),
     /// No initial symbolic state has a time-divergent behaviour (ADR-026
@@ -620,6 +622,7 @@ impl From<TimedVacuity> for ZoneUndecided {
     fn from(vacuity: TimedVacuity) -> Self {
         match vacuity {
             TimedVacuity::NoInitialState => Self::NoInitialState,
+            TimedVacuity::NoInstance => Self::NoInstance,
             TimedVacuity::NoAdmittedBehaviour => Self::NoAdmittedBehaviour,
         }
     }
@@ -757,10 +760,18 @@ pub fn check_timed_model<S: Clone>(
     // run over every instance.
     let plans = match request.item {
         ZoneCheckItem::Clause { clause, .. } => {
-            let instances = system.instances(&clause.over().1).map_err(not_simulated)?;
-            // With no instance there is no orbit to reduce: the item runs
-            // unreduced, so its proof is certified.
-            symmetric &= !instances.is_empty();
+            let over = system.claim_instances(&clause.over().1);
+            let started = claim_start(request.subject.initial().len(), over);
+            let instances = match started.map_err(not_simulated)? {
+                Ok(instances) => instances.as_slice().to_vec(),
+                Err(vacuity) => {
+                    return Ok(ZoneCheckOutcome::Undecided {
+                        cause: vacuity.into(),
+                        non_zeno: None,
+                        stats: ZoneStats::default(),
+                    });
+                }
+            };
             if symmetric {
                 instance_groups(Some(&instances), &group)
                     .into_iter()

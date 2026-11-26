@@ -104,8 +104,8 @@ use fsl_eval::automaton::{
 use fsl_eval::fairness::{components, EdgeLabel, FairnessError, Graph, Identity};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
-    TerminalClass, TimedSubjectRefusal, TimedSystem,
+    claim_start, GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
+    TerminalClass, TimedSubjectRefusal, TimedSystem, TimedVacuity,
 };
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::diagnostic::Code;
@@ -771,6 +771,9 @@ pub enum ZoneCertificateRefusal<O> {
     TaskProductPlan(Box<fsl_eval::simulation::model::TaskProductPlanRefusal>),
     /// The item is not one this checker reads yet (see the module).
     UnsupportedItem,
+    /// The clause item has no initial state or no instance (FR-125
+    /// "Instancing"), so no certificate proves it.
+    Vacuous(TimedVacuity),
     /// The clause's instances are not finite.
     Unbounded,
     /// A reading the check needs has no value: a guard, invariant, urgency,
@@ -793,6 +796,7 @@ impl<O> ZoneCertificateRefusal<O> {
             Self::TaskProductPlan(_)
             | Self::Admission(_)
             | Self::TimedSubject(_)
+            | Self::Vacuous(_)
             | Self::Unbounded
             | Self::Undecided => Code::InvalidRuntimeInput,
         }
@@ -1228,9 +1232,12 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
             ) {
                 return Err(ZoneCertificateRefusal::UnsupportedItem);
             }
-            let instances = concrete
-                .instances(&clause.over().1)
-                .map_err(|_| ZoneCertificateRefusal::Unbounded)?;
+            let over = concrete.claim_instances(&clause.over().1);
+            let instances = claim_start(timed.initial().len(), over)
+                .map_err(|_| ZoneCertificateRefusal::Unbounded)?
+                .map_err(ZoneCertificateRefusal::Vacuous)?
+                .as_slice()
+                .to_vec();
             let atom = fsl_eval::automaton::invariant_atom(clause);
             // A TT-2 window nesting no interval operator under another has
             // FR-242's horizon automaton; any other clause is read on the

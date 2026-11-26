@@ -5,22 +5,48 @@
 //! abstraction and hands the answer here; no product, zone or integer-clock
 //! code lives here.
 //!
-//! The instancing causes that come first (FR-125 "Instancing": requires
-//! bound, no initial state, refused identity, no instance) belong to the
-//! instance set of a claim's `over` parameter. [`TimedVacuity`] holds what is
-//! left for a run that reads its subject: the two reasons a search that found
-//! no violation is still not a proof.
+//! The instance set of a claim's `over` parameter is
+//! [`ModelSystem::claim_instances`](super::ModelSystem::claim_instances);
+//! [`claim_start`] places its causes among a timed item's, in FR-125
+//! "Instancing" order.
 
 use ix_trace_rs::implements;
+
+use super::{ClaimInstances, NoClaimInstances, NotSimulated};
 
 /// Why a timed item that found no violation is not proved.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TimedVacuity {
     /// The subject has no initial state.
     NoInitialState,
+    /// The claim's `over` type admits no key.
+    NoInstance,
     /// No initial state has a fair time-divergent behaviour, so a proof
     /// would be vacuous.
     NoAdmittedBehaviour,
+}
+
+/// Start a timed claim over its instance set: `initial_states` is the timed
+/// subject's, `instances` what
+/// [`ModelSystem::claim_instances`](super::ModelSystem::claim_instances)
+/// returned for the claim's `over` type. In order: the extent refusal, then
+/// no initial state, then no instance; otherwise the instances.
+///
+/// # Errors
+///
+/// [`NotSimulated`] where the instance set has no bounded extent.
+#[implements("FR-125-AC-7", "FR-125-AC-13")]
+pub fn claim_start(
+    initial_states: usize,
+    instances: Result<ClaimInstances, NoClaimInstances>,
+) -> Result<Result<ClaimInstances, TimedVacuity>, NotSimulated> {
+    match instances {
+        Err(NoClaimInstances::NotSimulated(refusal)) => Err(refusal),
+        Err(NoClaimInstances::NoInitialState) => Ok(Err(TimedVacuity::NoInitialState)),
+        _ if initial_states == 0 => Ok(Err(TimedVacuity::NoInitialState)),
+        Err(NoClaimInstances::NoInstance) => Ok(Err(TimedVacuity::NoInstance)),
+        Ok(instances) => Ok(Ok(instances)),
+    }
 }
 
 /// Classify the start of a would-be proof, in order: a subject with no
