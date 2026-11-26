@@ -3710,9 +3710,12 @@ fn positive_source_policy_stage_boundary_keeps_required_future_forms_explicit() 
     }
 }
 
-// QSL-3534 probe: `inc`'s guard has no value at the reachable value 2.
-
-fn probe3534(goal: i64) {
+/// A contract conjunction with no value at a reachable state is no disabled
+/// step (ADR-018 UE-6). `inc`'s guard `6 mod (2 - value) >= 0` has no value
+/// at the reachable value 2, so a goal at 8 and a goal at 21 are each
+/// `incomplete` with the `ContractUndefined` cause naming `Gap`, never
+/// `optimal`, `infeasible` or certified.
+fn undefined_guard(goal: i64) {
     let document =
         filament_specification::published_file(&format!("{FIXTURE}model.semantic-ir.json"))
             .expect("FSpec publishes the counter model")
@@ -3738,30 +3741,25 @@ fn probe3534(goal: i64) {
         (0, 5),
         PlanSearchLimits::default(),
         None,
-    );
-    let text = match &result {
-        Ok(result) => format!(
-            "status={:?} certified={} plan={:?} certificate={:?}",
-            result.status,
-            result.certified,
-            operations(&rules, result),
-            result.certificate.as_ref().map(|c| (&c.kind, &c.outcome)),
-        ),
-        Err(error) => format!("error={error:?}"),
-    };
-    println!("OBSERVED: {text:.400}");
-    assert!(
-        !matches!(&result, Ok(result) if result.certified),
-        "UE-6: nothing certified past an undefined guard: {text:.400}"
-    );
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Incomplete);
+    assert!(!result.certified);
+    assert!(result.certificate.is_none());
+    assert!(matches!(
+        &result.cause,
+        Some(PlanStopCause::ContractUndefined { clause, .. }) if clause == "Gap"
+    ));
 }
 
 #[test]
-fn probe3534_plan_found_through_the_state() {
-    probe3534(8);
+#[trace("FR-1012-AC-9")]
+fn a_goal_reached_through_an_undefined_guard_is_incomplete() {
+    undefined_guard(8);
 }
 
 #[test]
-fn probe3534_plan_infeasible_past_the_state() {
-    probe3534(21);
+#[trace("FR-1012-AC-9")]
+fn a_goal_past_an_undefined_guard_is_not_infeasible() {
+    undefined_guard(21);
 }

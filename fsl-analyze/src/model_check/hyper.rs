@@ -718,6 +718,13 @@ enum Found {
         guard_of: Option<ModelTransition>,
         cause: fsl_eval::temporal::UndefinedCause,
     },
+    /// HP-3: a contract conjunction of an existential member's component is
+    /// undefined at the member's state (ADR-018 UE-6).
+    MemberContract {
+        component: usize,
+        contract: fsl_eval::simulation::model::UndefinedContract,
+        partner: Rc<Partner>,
+    },
     /// HP-6: `μ_U` has no value on the visible move that reached the state.
     MatchAt {
         conjunct: usize,
@@ -1934,6 +1941,22 @@ impl<'a> Run<'_, 'a> {
                             UndecidedCause::MatchUndetermined,
                         );
                     }
+                    HyperFinding::MemberUndefined {
+                        component,
+                        contract,
+                        partner,
+                    } => offer(
+                        state.depth,
+                        0,
+                        Candidate::Found(
+                            id,
+                            Found::MemberContract {
+                                component: *component,
+                                contract: contract.clone(),
+                                partner: partner.clone(),
+                            },
+                        ),
+                    ),
                     HyperFinding::MemberContract => {
                         sooner(
                             &mut refused,
@@ -2260,6 +2283,34 @@ impl<'a> Run<'_, 'a> {
                 cause,
                 None,
             ),
+            Found::MemberContract {
+                component,
+                contract,
+                partner: member,
+            } => {
+                let slot = component
+                    .checked_sub(universals)
+                    .ok_or_else(|| fault("a-member-contract-is-of-an-existential-component"))?;
+                let state_key = member
+                    .state_keys()
+                    .get(slot)
+                    .cloned()
+                    .ok_or_else(|| fault("a-member-names-its-component-state"))?;
+                let named = variables
+                    .get(component)
+                    .cloned()
+                    .ok_or_else(|| fault("a-contract-finding-names-a-variable"))?;
+                partner = Some(member);
+                (
+                    stem,
+                    vec![state_key],
+                    vec![named],
+                    HyperLocus::Contract(contract.clause),
+                    contract.guard_of,
+                    contract.cause,
+                    None,
+                )
+            }
             Found::Contract {
                 component,
                 clause,

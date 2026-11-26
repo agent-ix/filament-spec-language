@@ -1162,13 +1162,15 @@ const GUARDED: Vault = Vault::Custom(
      post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
 );
 
-/// A state whose expansion evaluated a contract conjunction with no value is
-/// open with cause `UndecidedSuccessor` (ADR-022 GM-6): the lasso that reaches
-/// the claim there is not a witness, since what the state enables is unknown,
-/// and the instance is `NoDecision`, never `Witnessed`.
-#[trace("TC-616")]
+/// A contract conjunction with no value at a reachable state refutes the
+/// instance as an undefined evaluation (ADR-018 UE-6): `(0, 1)` is reached
+/// by `step(1)` from `(0, 0)`, where `1 div (1 - 1 + 0)` has no value, so the
+/// item is `Undefined` there although the stutter loop at `(0, 1)` would
+/// satisfy the claim. The stem is the one step, `where` names position 1,
+/// the guard's clause and the transition it guards.
+#[trace("TC-616", "FR-181-AC-5")]
 #[test]
-fn a_contract_with_no_value_leaves_its_state_open() {
+fn a_contract_with_no_value_refutes_its_state() {
     let world = World::new_with_kernel_function(
         GUARDED,
         false,
@@ -1177,15 +1179,57 @@ fn a_contract_with_no_value_leaves_its_state_open() {
         KERNEL_QUOTIENT,
     );
     let result = single(&world, unsampled());
-    // `(0, 1)` looks terminal, but whether its `step` is enabled is unknown,
-    // so the stutter loop there is no witness and nothing is decided.
+    let ExistentialOutcome::Undefined { stem, undefined } = &result.outcome else {
+        panic!("expected Undefined, got {:?}", result.outcome);
+    };
+    assert_eq!(stem.initial, 0);
+    assert_eq!(stem.steps.len(), 1);
+    assert_eq!(input(&stem.steps[0]), 1);
+    assert_eq!(undefined.site.position, 1);
+    assert_eq!(undefined.site.state_key, stem.steps[0].post_state);
     assert_eq!(
-        result.outcome,
-        ExistentialOutcome::NoDecision {
-            end: RunEnd::Completed,
-            open: [OpenCause::UndecidedSuccessor].into(),
-        }
+        undefined.site.locus,
+        fsl_replay::UndefinedLocus::Contract("Guard".to_owned())
     );
+    assert_eq!(
+        undefined
+            .site
+            .transition
+            .as_ref()
+            .map(|guarded| guarded.operation().contains("Vault/step")),
+        Some(true)
+    );
+    assert_eq!(
+        undefined.cause,
+        UndefinedCause::Kernel(Undefined::DivisionByZero)
+    );
+}
+
+/// ADR-018 UE-6: an initial state whose guard has no value ends the instance
+/// at path length 0 with `where` at position 0.
+#[trace("TC-616", "FR-181-AC-5")]
+#[test]
+fn ue6_an_undefined_guard_refutes_the_hyper_instance_as_undefined() {
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 1)],
+        &clause("", "eventually holds(v.l @ b = 1)"),
+        KERNEL_QUOTIENT,
+    );
+    for limits in [unsampled(), ModelCheckLimits::default()] {
+        let result = single(&world, limits);
+        let ExistentialOutcome::Undefined { stem, undefined } = &result.outcome else {
+            panic!("expected Undefined, got {:?}", result.outcome);
+        };
+        assert_eq!(stem.initial, 0);
+        assert!(stem.steps.is_empty());
+        assert_eq!(undefined.site.position, 0);
+        assert_eq!(
+            undefined.site.locus,
+            fsl_replay::UndefinedLocus::Contract("Guard".to_owned())
+        );
+    }
 }
 
 /// The run's limits and cancellation stop it: a witness-sample count whose
@@ -1411,14 +1455,14 @@ const GUARDED_RESET: Vault = Vault::Custom(
      post Reset using v on V::Vault::reset { self.l = 1 }\n",
 );
 
-/// A loop through a state whose expansion evaluated a contract with no value
-/// is not shown fair: whether `step` is enabled at `(0, 1)` is unknown, so the
-/// `reset` loop there is no witness under `fair weak step`, in the explored
-/// product and in phase 0 alike. The state is open, the run completed, and
-/// nothing is decided.
-#[trace("TC-606")]
+/// A loop through a state whose guard has no value is no witness, and the
+/// state refutes the instance (ADR-018 UE-6): whether `step` is enabled at
+/// `(0, 1)` is undefined, so the `reset` loop there under `fair weak step`
+/// settles `Undefined` at position 0 in the explored product and in the
+/// sampled run alike, and phase 0 keeps no candidate through the state.
+#[trace("TC-606", "FR-181-AC-5")]
 #[test]
-fn a_loop_through_an_undecided_state_is_not_a_witness() {
+fn a_loop_through_an_undefined_state_is_refuted_not_witnessed() {
     let world = World::new_with_kernel_function(
         GUARDED_RESET,
         true,
@@ -1426,19 +1470,19 @@ fn a_loop_through_an_undecided_state_is_not_a_witness() {
         &clause("fair weak V::Vault::step;", "always holds(v.l @ b = 1)"),
         KERNEL_QUOTIENT,
     );
-    let undecided = ExistentialOutcome::NoDecision {
-        end: RunEnd::Completed,
-        open: [OpenCause::UndecidedSuccessor].into(),
-    };
-    let result = single(&world, unsampled());
-    assert_eq!(result.outcome, undecided);
-    let result = single(&world, ModelCheckLimits::default());
-    assert_eq!(result.outcome, undecided);
-    assert_eq!(
-        result.sampled,
-        vec![None],
-        "phase 0 drops the candidate through the undecided state"
-    );
+    for limits in [unsampled(), ModelCheckLimits::default()] {
+        let result = single(&world, limits);
+        let ExistentialOutcome::Undefined { stem, undefined } = &result.outcome else {
+            panic!("expected Undefined, got {:?}", result.outcome);
+        };
+        assert!(stem.steps.is_empty());
+        assert_eq!(undefined.site.position, 0);
+        assert_eq!(
+            undefined.site.locus,
+            fsl_replay::UndefinedLocus::Contract("Guard".to_owned())
+        );
+        assert!(result.sampled.iter().all(Option::is_none));
+    }
 }
 
 /// A run that stops before it has a product graph, here `max_automaton_states`

@@ -146,7 +146,8 @@ pub(super) fn replay_evidence(
         } => {
             let positions = replay_path(system, stem)?;
             let reproduced = replay_undefined(
-                clause, &letters, &bindings, &positions, undefined, accounting, cancel,
+                system, package, clause, &letters, &bindings, &positions, undefined, accounting,
+                cancel,
             )?;
             Ok(if reproduced {
                 result(GraphReplaySettlement::Reproduced, Vec::new(), None, None)
@@ -361,6 +362,8 @@ pub(super) fn atom_location(
 }
 
 fn replay_undefined(
+    system: &ModelSystem<'_>,
+    package: &fsl_package::CheckedPackage,
     clause: &CheckedHyperClause,
     letters: &CheckedHyperLetters<'_, '_>,
     bindings: &[ParameterBinding],
@@ -369,9 +372,6 @@ fn replay_undefined(
     accounting: ScalarLimits,
     cancel: &Cancel,
 ) -> Result<bool, ReplayRefusal> {
-    if undefined.predicate != Some(PredicateRole::Target) || undefined.transition.is_some() {
-        return Ok(false);
-    }
     let Some(expected_locus) = undefined.locus.as_ref() else {
         return Ok(false);
     };
@@ -379,6 +379,42 @@ fn replay_undefined(
         return Err(fault("an-HP-5-undefined-path-has-an-initial-state"));
     };
     if *state_key != undefined.state_key {
+        return Ok(false);
+    }
+    // A contract conjunction with no value: no claim predicate, and the
+    // transition whose guard has none (ADR-018 UE-6).
+    if undefined.predicate.is_none() {
+        let (Some(transition), Some(clause_name)) = (
+            undefined.transition.as_ref(),
+            package
+                .graph()
+                .state_clauses()
+                .iter()
+                .find(|candidate| candidate.body().location() == expected_locus)
+                .map(|candidate| candidate.name().to_owned()),
+        ) else {
+            return Ok(false);
+        };
+        for (index, (state, _)) in positions.iter().enumerate() {
+            let expansion = system
+                .successors(state)
+                .map_err(|_| fault("an-HP-5-undefined-guard-expansion"))?;
+            let matched = expansion
+                .findings
+                .iter()
+                .filter_map(|finding| finding.undefined_contract())
+                .any(|contract| {
+                    contract.clause == clause_name
+                        && contract.guard_of.as_ref() == Some(transition)
+                        && contract.cause == undefined.cause
+                });
+            if matched {
+                return Ok(index + 1 == positions.len());
+            }
+        }
+        return Ok(false);
+    }
+    if undefined.predicate != Some(PredicateRole::Target) || undefined.transition.is_some() {
         return Ok(false);
     }
     let mut meter = Meter::new(accounting).with_cancel(cancel.clone());
