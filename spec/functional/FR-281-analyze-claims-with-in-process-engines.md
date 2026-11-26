@@ -439,7 +439,7 @@ pub enum DeadlineSupply {
   bound on model-domain positions used by model-based testing, default 10000;
   it is not the trace-step limit `simulation.max_steps` and has no
   FR-255 caller-limit setting. `expansion.max_candidates`
-  defaults to 750,000 even in `AnalyzeLimits::unbounded`; a caller may
+  defaults to 200000 in `AnalyzeLimits::published`; a caller may
   replace it through FR-255's `expansion.max_candidates` setting.
   `DeadlineSupply` has no `Default`, so `AnalyzeLimits` has none and the
   caller supplies `deadline` explicitly, as FR-277 has callers supply
@@ -636,7 +636,7 @@ registry reaches EN-7 (FR-620, FR-633).
 | FR-281-AC-24 | When an external provider reports a refuted verdict with each FR-290 unusable-counterexample reason in turn, the item settles `inconclusive` with cause `replay-parity`, carries one item diagnostic with code `invalid_result`, cause `invalid-value` and that typed reason, and carries neither `counterexample` nor `replay`; a refuted verdict with mapped assignments still follows the existing replay rule. | Test (TC-774) |
 
 | FR-281-AC-25 | If an engine returns `undefined` while evaluating a claim at a state or step, the item settles `refuted` with `UndefinedEvaluation{where, cause}` identifying that state or step. It is not settled with an `undefined` label. | Test (TC-763) |
-| FR-281-AC-26 | `AnalyzeLimits::unbounded()` sets `expansion.max_candidates` to `200000`, `simulation.max_states` to `10000000`, `simulation.max_transitions` to `100000000`, `simulation.max_steps` to `16777216` and `position_limit` to `10000`; replacing only `expansion.max_candidates` with caller value `B` changes only that field. The `AnalyzeLimits` fields are `accounting`, `observation`, `normalization`, `expansion`, `simulation`, `position_limit`, `deadline`, `emit`, `replay` and `engines`. | Test |
+| FR-281-AC-26 | `AnalyzeLimits::published(deadline)` sets `expansion.max_candidates` to `200000`, `simulation.max_states` to `10000000`, `simulation.max_transitions` to `100000000`, `simulation.max_steps` to `16777216` and `position_limit` to `10000`; replacing only `expansion.max_candidates` with caller value `B` changes only that field. The `AnalyzeLimits` fields are `accounting`, `observation`, `normalization`, `expansion`, `simulation`, `position_limit`, `deadline`, `emit`, `replay` and `engines`. | Test |
 ## Dependencies
 
 - ADR-029 OP-2, CB-3: the operation and layer A.

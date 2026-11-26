@@ -29,6 +29,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-249
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-364
@@ -174,6 +176,18 @@ edges, automaton states and stored zone bytes.
   SHALL stop and return `Stopped(LimitReached, limit)` naming the limit, its
   value and its setting. When the `Cancel` handle is cancelled, it SHALL
   return `Stopped(Cancelled, …)`.
+- **Budget sources.** EN-6's bounds SHALL take the caller's `zone_check.*`
+  values, otherwise the FR-255 defaults of those settings, and SHALL never
+  take the value or the default of a `model_check.*` setting. A timed item's
+  own `temporal.limits.max_states` and `max_transitions` bound its symbolic
+  states and symbolic edges; its `max_check_work` is the work bound. A bound
+  stated both by an item member and by the caller's `zone_check.*` setting is
+  refused as FR-255 states.
+- **Task-product symbolic pass.** The symbolic pass over a task product SHALL
+  charge each symbolic state, symbolic transition, stored zone byte and
+  retained byte (`analysis.retained_bytes`) before storing it, and each unit
+  of work against `zone_check.max_check_work`, and SHALL stop at the first
+  denied charge naming that bound.
 - If an atom of the claim evaluates `Undefined` at a point of a symbolic
   state the search creates, and that point has a time-divergent
   continuation, then the engine SHALL end the search with `Violated` at the
@@ -211,6 +225,9 @@ edges, automaton states and stored zone bytes.
 | FR-239-AC-4 | `Settles` over `Rpc` with `max_symbolic_states` 2 returns `Stopped(LimitReached, MaxSymbolicStates)` naming the value 2; with a cancelled `Cancel` handle, `Stopped(Cancelled, …)`; a subject with an unbounded population root refuses `RequiresBound` with no state explored. Two runs of each request give equal outcomes and byte-equal certificates and counterexamples. | Test (TC-694) |
 | FR-239-AC-5 | Over a `Ticker` model (`time dense`; object `t` with `n: Int[0, 2]` and clock `x`; operation `step` with precondition `self.n < 2`, guard `x >= 1`, reset `x` and postcondition `self.n = pre(self.n) + 1`; time invariant `when self.n < 2 { x <= 1 }`; initial `n = 0`) and `always holds(mod_defined(t.n))`, with the function `mod_defined using v(n: Int[0, 3]): Boolean pure { 6 mod (2 - n) >= 0 }` whose body is checked under `Kernel` (FR-495-AC-3; S3 refuses a possibly-zero `mod` written in a declared clause, FR-337-AC-7), under `model-time`, the state with `n = 2` is quiescent and diverges by its idle tail, and the search returns `Violated` with the timed prefix `step` after delay 1, `step` after delay 1, and `kind: UndefinedEvaluation{where, cause: division-by-zero}`, `where` naming position 2, time stamp 2, the state with `n = 2`, `x = 0` and the locus of the atom `mod_defined(t.n)`. With the unconditional invariant `x <= 1`, the `n = 2` state is a local time-lock: the search returns `Undecided(NoAdmittedBehaviour)` for the claim, since no behaviour diverges, and the time-lock-freedom item is refuted. | Test (TC-710) |
 | FR-239-AC-6 | EN-6 passes an exact fixed-work task product to the FSpec FR-418 reader and returns `Holds` only on its accepted complete certificate. For a product outside that exact gate, a limit stop returns `Stopped` with the FSpec FR-331 task-search record; FR-235 settles it incomplete. A candidate miss without the FSpec FR-364 checked continuation does not settle `Violated`. | Test (TC-704) |
+| FR-239-AC-7 | A timed item with no stated limit and no caller setting runs EN-6 with `max_symbolic_states` 1048576, `max_symbolic_transitions` 16777216, `max_automaton_states` 1048576 and `max_zone_bytes` 1073741824, and with `max_check_work` 100000000 for a task product; changing a `model_check.*` setting changes none of them. | Test |
+| FR-239-AC-8 | Over a task set of one task with period 2, worst-case execution time 1 and deadline 2, the task-product symbolic pass with `max_symbolic_states` 1 stops with `LimitReached{limit: max_symbolic_states, value: 1, setting: zone_check.max_symbolic_states}` having stored at most one symbolic state. | Test |
+| FR-239-AC-9 | An `analyze` request over a timed item accepts `--limit zone_check.max_symbolic_states=2` and `--limit zone_check.max_check_work=2`, and each bounds that item; either setting given twice is refused before any item runs. | Test |
 
 ## Dependencies
 

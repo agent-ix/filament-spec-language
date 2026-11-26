@@ -113,7 +113,14 @@ catalog has no `family-steps` cause.
 | FR-083-AC-1 | Given a redefinition family with two branches applicable to one concrete subtype where one branch's owner is a proper descendant of the other's, the linked table selects the descendant's redefinition for that subtype; permuting the family members' declaration order does not change the selection. | Test (TC-222) |
 | FR-083-AC-2 | Given a concrete subtype with no applicable family member, linking reports a no-applicable-candidate failure for it; given a concrete subtype with two undominated candidates, linking reports a multiple-undominated-candidates failure naming both candidates and the dominance relation among the family. | Test (TC-223) |
 | FR-083-AC-3 | Given a family where one subtype is ambiguous and a second subtype in the same family would resolve cleanly on its own, the outcome carries no dispatch table at all — not even an entry for the second, cleanly-resolving subtype. | Test (TC-224) |
-| FR-083-AC-4 | Given a redefinition family whose walks follow `n` `redefines` edges in total, and whose walk past edge `n − 1` would find a second undominated candidate, linking with `family_steps` at `n − 1` stops `Incomplete` naming `family_steps`, bound `n − 1` and count `n`, and reports neither a linked table nor an ambiguity result; with `family_steps` at `n` it links and reports the ambiguity. A 10,000-long `redefines` chain links on a thread with a 512 KiB stack with `family_steps` raised to fit it. | Test (TC-225) |
+| FR-083-AC-4 | Given a redefinition family whose walks follow `n` `redefines` edges in total, and whose walk past edge `n − 1` would find a second undominated candidate, linking with `family_steps` at `n − 1` stops `Incomplete` naming `family_steps`, bound `n − 1` and count `n`, and reports neither a linked table nor an ambiguity result; with `family_steps` at `n` it links and reports the ambiguity. A 10,000-long `redefines` chain links on a thread with a 512 KiB stack with `family_steps`, `derivation_facts` and `effective_declarations` raised to fit it. | Test (TC-225) |
+| FR-083-AC-5 | A 1,000-long `redefines` chain (1,001 types, each declaring one query operation that redefines its parent's, only the deepest type concrete) normalizes and links at every published default, with 502,502 effective declarations and 1,504,502 derivation facts. It completes with `model.derivation_facts` at 1504502 and refuses with it at 1504501. | Test |
+| FR-083-AC-6 | A 2,000-long chain of that shape at the published defaults refuses `resource_exhausted`/`insufficient-next-charge` naming `model.derivation_facts` with limit 1600000, before the over-limit entry is built. | Test |
+
+The effective view of a linear redefinition chain grows with the square of its
+length. Linking the 10,000-long chain of AC-4 is a required capability;
+holding it within an achievable memory size depends on a representation of
+identity that does not repeat the inherited members for each type.
 
 ## Dependencies
 

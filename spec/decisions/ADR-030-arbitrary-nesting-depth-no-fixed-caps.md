@@ -104,10 +104,11 @@ wire format.
    A representation whose depth its schema fixes needs neither, and
    `filament-exact`, a leaf with no dependency, keeps hand-written iterative
    traits (D-4.7).
-3. **Heap stacks are charged.** Every heap stack, and every recursion through
-   the `maybe_grow` wrapper (item 6), grows by at most a constant per node
-   already charged against a node, byte or work limit, so the configured
-   limits bound memory.
+3. **Heap stacks and retained state are charged.** Every heap stack, and
+   every recursion through the `maybe_grow` wrapper (item 6), grows by at most
+   a constant per node already charged against a node, byte or work limit.
+   Retained exploration state is charged against a byte or count limit before
+   it is allocated. So the configured limits bound memory.
 4. **Reaching a limit is a stated outcome.** A stage limit settles as
    `stage_limit_exceeded` (ADR-014 B-3, FR-096), and an execution budget as
    `incomplete { limit_kind, ... }` at the denied charge (ADR-014 B-2). Each
