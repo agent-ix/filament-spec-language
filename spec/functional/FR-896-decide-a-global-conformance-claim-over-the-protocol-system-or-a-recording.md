@@ -87,9 +87,17 @@ modes, selected by the item.
 
 Over every behaviour, a protocol clause whose `over` parameter binds an
 object type is checked over protocol subjects, each binding `over` to one
-object (FR-205).
+object (FR-205). The protocol deadlock item (`temporal.item_kind`
+`deadlock-freedom`, FR-636) is given no subject per object; the first rule
+below applies to it too.
 
-- When the item's subject (FR-1033) carries a `protocol` member naming the
+- When the item's subject (FR-1033) carries a `protocol` member naming a
+  clause other than the claimed one, FSL SHALL settle the item `declined`
+  `invalid-input` with `invalid_runtime_input`/`invalid-value` naming
+  `temporal.subject.protocol`, before it explores a state; the request's
+  other items run. A request-level `subject.protocol` an item inherits is
+  read the same way.
+- When the item's subject carries a `protocol` member naming the
   claimed clause, FSL SHALL decide the item over the protocol subject built
   from that binding, its `over` object the only object checked.
 - When the item's subject carries no `protocol` member, FSL SHALL check one
@@ -145,6 +153,7 @@ recording, where replay mode reports it as `unexpected`.
 | FR-896-AC-6 | An `on each` protocol recording of two instances `a` and `b`, listed one after the other, with an activated population naming both, assessed with `assessment` `incremental` settles `proved` with six `prefixes`; no prefix is refused for naming an unrecorded instance, each prefix holding the population of the instances it has begun, and the last prefix's `obligations` equal the `batch` item's. A refused prefix refuses the whole item `invalid_runtime_input`, with the refusal's cause, its detail and the `prefix` index. | Test (TC-2531) |
 | FR-896-AC-7 | The keyed order fixture is the FR-636 order fixture with `check Ready { k.r1 = 0 }` as the first control of `Main`, over the universe `cores` `[p, q]` with an initial state holding `p.r1 = 0` and `q.r1 = 1`. With no `subject.protocol`, `global-conformance` settles `refuted`, `p` being proved and `q` blocked at `Ready`: the counterexample is the deadlock with the empty prefix, its protocol subject's `over` names `q`, it replays, and `closure.state` is `open`. With `q.r1 = 0` too, the item settles `proved` with `closure.state` `closed`. | Test (TC-2532) |
 | FR-896-AC-8 | Over AC-7's first state, with `subject.protocol` naming `Flow` and binding both roles, `over` `p` settles `proved`, and `over` `q` settles `refuted` with AC-7's counterexample. | Test (TC-2532) |
+| FR-896-AC-9 | Over AC-7's fixture with a second protocol clause `Other` declared, a request whose `subject.protocol` binds `Other` holds two `global-conformance` items claiming `Flow`: the first inherits that subject and settles `declined` `invalid-input` with `invalid_runtime_input`/`invalid-value` naming `temporal.subject.protocol`, carrying no `obligations`, `closure`, `global`, `projections` or `counterexample`; the second, whose `temporal.subject` binds `Flow` to `p`, settles `proved`. | Test (TC-2532) |
 
 ## Dependencies
 

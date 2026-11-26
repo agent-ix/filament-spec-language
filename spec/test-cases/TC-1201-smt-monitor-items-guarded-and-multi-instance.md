@@ -21,7 +21,7 @@ instance, with one monitor per instance, the false-extension end letter,
 the past-the-end distinctness form and the reading of satisfiable models
 by rules 4, 4b and 4c.
 
-Scope: FR-315-AC-33 to FR-315-AC-39, FR-315-AC-58, FR-314-AC-8 and
+Scope: FR-315-AC-33 to FR-315-AC-39, FR-315-AC-58, FR-315-AC-60, FR-314-AC-8 and
 FR-127-AC-15.
 
 S4 emits an `on each` clause, guarded or not (FR-337-AC-6). The test
@@ -70,7 +70,7 @@ printed script.
    and `Unrolling{depth: 2}` for FR-315-AC-23's TP-3 item.
 7. With a solver, take FR-315-AC-39's two models of step 6's
    `Unrolling{depth: 2}` (by asserting each model's steps), read each by
-   rules 4 and 4c, and replay the prefix with its `over_binding`.
+   rules 4, 4c and 4d, and replay the prefix with its `over_binding`.
 8. Check FR-314-AC-8's `BoundedComplete` bases below the horizon and for a
    TP-1 item, with and without a certificate, and FR-314-AC-1's accepted
    bounded certificate; settle FR-127-AC-15's results, with and without a
@@ -85,6 +85,10 @@ printed script.
    source unit's request, its condition read by the hand-built package's
    production letters, once as read and once with `over_binding` `c`. Run
    EN-1 over the same package with those letters.
+
+10. With a solver, check FR-315-AC-60's item at `Unrolling{depth: 2}` and
+    `Unrolling{depth: 1}`, reading each model by rules 4 to 4d, and compare
+    the `First(1)` script with the `All` script.
 
 Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
 
@@ -125,7 +129,8 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
   refused.
 - Step 7: the `c.inc`, `d.inc` model fails at position 2 with only
   instance 0 rejecting and is replayed to `refuted` with `over_binding`
-  `c`; the `d.inc`, `c.inc` model names `d`.
+  `c`; rule 4c reads the `d.inc`, `c.inc` model as `d`, and rule 4d's
+  `First(1)` search then reports `c`.
 - Step 8: each basis below the horizon, and the TP-1 basis, rejected
   `ShapeMismatch` at `Query { part: Unrolling }` before any encoding and
   settled `inconclusive`, `CertificateRejected`, with or without a
@@ -139,3 +144,5 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
   `over_binding` `c` settles `inconclusive`, `ReplayParity`. EN-1, which
   searches every depth, reports a formula violation with `over_binding` `c`,
   the first instance in canonical order with a finding (FR-126-AC-11).
+- Step 10: `c` with two `inc` steps at depth 2; `d` with one at depth 1;
+  the scripts differ in the negated property only.

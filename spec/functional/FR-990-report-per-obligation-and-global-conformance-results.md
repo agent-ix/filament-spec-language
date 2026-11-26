@@ -48,7 +48,8 @@ never computed from the global result or from any per-obligation verdict.
 
 An item over every behaviour that FR-125 "Instancing" settles before any
 state is explored (`RequiresBound`, `NoInitialState`,
-`conflicting-identity` or `NoInstance`) is decided over no protocol subject,
+`conflicting-identity` or `NoInstance`), or that is declined before any
+state is explored (FR-896, FR-1033), is decided over no protocol subject,
 and SHALL carry none of `obligations`, `closure`, `global`, `projections`
 and `counterexample`.
 
