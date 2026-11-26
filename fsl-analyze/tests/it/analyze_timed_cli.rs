@@ -1692,6 +1692,82 @@ fn requires_bound_on_all_four() -> Vec<(String, String, String)> {
     ]
 }
 
+/// `rest` loops at `phase` 0; `block` enters `phase` 2, which `spin` loops
+/// at and `go` leaves for the time-locked `phase` 1. Only a behaviour that
+/// ignores the enabled `go` for ever stays at `phase` 2.
+fn unfair_phase_world(formula: &str) -> crate::timed_world::World {
+    kernel_world(
+        &[
+            ("block", &["phase"]),
+            ("rest", &["x"]),
+            ("spin", &["x"]),
+            ("go", &["phase", "x"]),
+        ],
+        "pre Block using v on M::Call::block { self.phase = 0 }\n\
+         post Blocked using v on M::Call::block { self.phase = 2 }\n\
+         pre Rest using v on M::Call::rest { self.phase = 0 }\n\
+         post Rested using v on M::Call::rest { self.x = 0 ms }\n\
+         pre Spin using v on M::Call::spin { self.phase = 2 }\n\
+         post Spun using v on M::Call::spin { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 2 }\n\
+         post Gone using v on M::Call::go { self.phase = 1 and self.x = 0 ms }\n\
+         time invariant Busy when { self.phase = 2 } { self.x <= 1 ms }\n\
+         time invariant Done when { self.phase = 1 } { self.x <= 0 ms }\n",
+        formula,
+    )
+}
+
+/// FSpec FR-416 "Undefined evaluation" refutes only at a position of an
+/// admitted behaviour. By hand: `fair weak go` rejects staying at `phase` 2,
+/// and `go` leads into a time-lock, so no admitted behaviour reaches the
+/// undefined reading; `rest` for ever is admitted. Both routes prove, and the
+/// FR-245 checker accepts the certificate, for an invariant claim and an
+/// eventuality alike.
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+#[test]
+fn an_undefined_reading_only_on_unfair_behaviours_refutes_nothing() {
+    for formula in [
+        "fair weak M::Call::go; always holds(mod_defined(c.phase))",
+        "fair weak M::Call::go; always eventually holds(mod_defined(c.phase))",
+    ] {
+        let world = unfair_phase_world(formula);
+        let system = world.system();
+        let digital = digital_on(&world, &system);
+        assert!(
+            matches!(digital, ModelCheckOutcome::HoldsReduced { .. }),
+            "{formula}: {digital:?}"
+        );
+        let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+        assert_edges_cover(&world, &certificate);
+    }
+}
+
+/// The same model under `fair weak spin`: looping at `phase` 2 is now fair,
+/// so `block` reaches the undefined reading on an admitted behaviour and both
+/// routes refute there, with a counterexample that replays.
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+#[test]
+fn an_undefined_reading_on_a_fair_behaviour_still_refutes() {
+    let world = unfair_phase_world("fair weak M::Call::spin; always holds(mod_defined(c.phase))");
+    let system = world.system();
+    let ModelCheckOutcome::Violated { counterexample, .. } = digital_on(&world, &system) else {
+        panic!("en-1 refutes");
+    };
+    let zones = violated(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    for counterexample in [*counterexample, zones] {
+        assert!(
+            matches!(
+                counterexample.kind,
+                CounterexampleKind::UndefinedEvaluation(_)
+            ),
+            "{counterexample:?}"
+        );
+        assert_eq!(operations(&counterexample), ["block"]);
+        let settlement = replay(&world, &counterexample).expect("replays");
+        assert!(reproduced(&settlement), "{settlement:?}");
+    }
+}
+
 /// FR-125-AC-13: a subject with no clock whose population has no universe is
 /// refused for the missing bound, ahead of its empty initial list.
 #[trace("FR-125-AC-13")]

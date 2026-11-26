@@ -220,7 +220,7 @@ pub use certificate::zone_certificate::{
     QuotientInitial, QuotientStop, QuotientVertex, RefinementIdentity, RefinementPart, SilentMove,
     StateGraphCertificateForm, StateGraphPart, TaskProductQuotient, ZoneCertificate,
     ZoneCertificateReferenceError, ZoneCertificateRefusal, ZoneCertificateRequest,
-    ZoneCertificateVerdict, ZoneCertificateWireError,
+    ZoneCertificateVerdict, ZoneCertificateWireError, UNDEFINED_POSITION_STATE,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.

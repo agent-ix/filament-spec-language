@@ -343,6 +343,8 @@ struct Digital<'q, 'r, 's, 'a, L> {
     steps: BTreeMap<Vec<u8>, Vec<(GuardedStep, TimedState)>>,
     /// Each searched state's [`Digital::diverges`].
     divergence: BTreeMap<Vec<u8>, bool>,
+    /// Each state's [`Digital::continues`] under the clause's fairness.
+    fair_continuation: BTreeMap<Vec<u8>, bool>,
 }
 
 impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
@@ -386,6 +388,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             non_zeno: None,
             steps: BTreeMap::new(),
             divergence: BTreeMap::new(),
+            fair_continuation: BTreeMap::new(),
         })
     }
 
@@ -693,8 +696,8 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             let state = self.capped_state(initial);
             match self.reading(instance, automaton, universal, state.discrete(), true)? {
                 Reading::Undefined(locus, cause) => {
-                    let diverges = self.diverges(&state)?;
-                    let found = admitted_refutation(diverges, || {
+                    let admitted = self.continues(automaton, instance, &state)?;
+                    let found = admitted_refutation(admitted, || {
                         Ok::<_, Halt>(UndefinedAt {
                             path: Vec::new(),
                             initial: index,
@@ -723,6 +726,19 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 }
             }
         }
+        self.grow(product, automaton, universal, instance, queue)
+    }
+
+    /// [`Self::build`] from the vertices `queue` holds: every vertex they
+    /// reach, then the idle tails and theirs.
+    fn grow(
+        &mut self,
+        product: &mut Product,
+        automaton: &mut PositionAutomaton,
+        universal: bool,
+        instance: &ModelInstance,
+        mut queue: VecDeque<usize>,
+    ) -> Result<Option<UndefinedAt>, Halt> {
         while let Some(at) = queue.pop_front() {
             self.poll()?;
             match self.expand(product, automaton, universal, instance, at)? {
@@ -774,8 +790,8 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 let post = self.capped_state(&post);
                 match self.reading(instance, automaton, universal, post.discrete(), false)? {
                     Reading::Undefined(locus, cause) => {
-                        let diverges = self.diverges(&post)?;
-                        let found = admitted_refutation(diverges, || {
+                        let admitted = self.continues(automaton, instance, &post)?;
+                        let found = admitted_refutation(admitted, || {
                             let mut path = Self::path_to(product, at);
                             let initial = root(product, &path, at)?;
                             // The step to the undefined position closes the path.
@@ -1294,6 +1310,50 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             final_delay: None,
             closure_stutters: Vec::new(),
         })
+    }
+
+    /// Whether an admitted behaviour passes through `start`: a
+    /// time-divergent one ([`Self::diverges`]) and, where the clause declares
+    /// a fairness, a fair one. Fairness reads a behaviour's tail only, so the
+    /// subject read by no claim from `start` decides it. This route's
+    /// evidence for an undefined reading, searched once per state.
+    #[implements("FSpec-FR-161-AC-16")]
+    fn continues(
+        &mut self,
+        automaton: &mut PositionAutomaton,
+        instance: &ModelInstance,
+        start: &TimedState,
+    ) -> Result<bool, Halt> {
+        if self.request.clause.fairness().is_empty() {
+            return self.diverges(start);
+        }
+        let mut from = self.discrete_key(start.discrete())?;
+        push_clocks(&mut from, start.clocks());
+        if let Some(&known) = self.fair_continuation.get(&from) {
+            return Ok(known);
+        }
+        let mut product = Product::default();
+        let root = DVertex {
+            state: start.clone(),
+            q: self.automaton_stop(automaton.initial())?,
+            clocks: ClockValuation::new(vec![zero(); automaton.clock_count()]),
+            positioned: true,
+            divergent: false,
+            tail: false,
+            initial: None,
+        };
+        let queue = self.add_vertex(&mut product, root, None)?;
+        self.grow(
+            &mut product,
+            automaton,
+            true,
+            instance,
+            queue.into_iter().collect(),
+        )?;
+        let model = self.fair_model(&product, automaton, true, true)?;
+        let found = self.fair_cycle(&product, &model)?.is_some();
+        self.fair_continuation.insert(from, found);
+        Ok(found)
     }
 
     /// Whether `start` has a time-divergent continuation: it reaches a

@@ -111,6 +111,11 @@ pub struct RefinementPart {                     // FR-430
   taken by no edge inside it. A strong fairness constraint SHALL state its
   reason by a nested numbering of the component with the nodes that enable
   it removed.
+- **Undefined positions.** Under a declared fairness, a node past an
+  undefined reading (FR-239) SHALL carry the reserved automaton state
+  `4294967295`, which names no claim automaton state. It is in every
+  automaton acceptance set, so the component reasons show that no fair
+  behaviour passes through the reading.
 - **Divergence part.** For the time-lock-freedom item, each node SHALL name
   a path in the certificate to a divergent target: a quiescent node, or a
   component that does not fail for want of the divergence set.

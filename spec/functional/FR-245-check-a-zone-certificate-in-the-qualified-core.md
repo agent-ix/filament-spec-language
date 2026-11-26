@@ -142,7 +142,10 @@ member forms; the member `lu_bounds` is written `bounds`.
     `InitialMismatch` at its `ZoneNode`.
   Every other check below applies unchanged.
 - The checker SHALL recompute every successor of every node by every
-  enabled transition identity with DBM code separate from EN-6's.
+  enabled transition identity with DBM code separate from EN-6's. In a
+  liveness product under a declared fairness, it SHALL take an undefined
+  reading, and every step after it, into a node of FR-244's reserved
+  automaton state, and count that node in every automaton acceptance set.
 - The checker SHALL check each of the following:
   - the listed edges cover every enabled identity from each node;
   - each successor is covered by its named target under the aLU simulation
