@@ -22,6 +22,7 @@ use fsl_analyze::model_check::{
     admit, generators, instance_groups, not_preserving, preserves, unoffered, ModelCheckRefusal,
     SubjectContext, TableForm,
 };
+use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{explore_model, ModelSimState, ModelSystem};
 use fsl_eval::simulation::{
     ConstraintValue, Expansion, ExpansionStop, Limits, OfferedReductions, Outcome, Permutation,
@@ -1797,4 +1798,69 @@ fn reductions_but_the_constraint_enter_the_obligation_identity() {
         panic!("expected a reduction cause, got {outcome:?}");
     };
     assert_eq!(*stats, RunStats::default());
+}
+
+/// FR-151-AC-5: over universe `{a, b, c, d}` with a start holding `a` and `b`
+/// alone, `[[a, b], [c, d]]` admits; the `over` parameter gives one instance,
+/// `a`, with orbit `[a, b]`, and `c` and `d` are excluded keys in no orbit.
+#[trace("TC-3219", "FR-151-AC-5")]
+#[test]
+fn an_excluded_key_is_in_no_orbit() {
+    let two: Vec<_> = start([0, 0, 0]).into_iter().take(2).collect();
+    let world = World::new(
+        shape(true, 2),
+        CYCLE,
+        &[infinite("always holds(x.v <= 2)")],
+        &[two],
+        &["a", "b", "c", "d"],
+    );
+    let system = world.system();
+    let declared = symmetry(&[&["a", "b"], &["c", "d"]]);
+    let group = admit(&system, &declared.symmetry).expect("the declaration admits");
+    let over = world.clauses[0].over().1.clone();
+    let bindings = system.instances(&over).expect("the clause has instances");
+    let instances = instance_groups(Some(&bindings), &group);
+    let [instance] = instances.as_slice() else {
+        panic!("one instance: {}", instances.len());
+    };
+    assert_eq!(
+        instance
+            .representative
+            .as_ref()
+            .map(|binding| binding.key.as_str()),
+        Some("a")
+    );
+    assert_eq!(instance.orbit, keys(&["a", "b"]));
+    assert_eq!(
+        system.excluded_keys(&over).expect("excluded keys"),
+        ["c", "d"]
+    );
+}
+
+/// FR-151 "Instances": a key two populations list is one instance, of the
+/// first. A class of the second population naming it still gives its other
+/// admitted keys an instance, bound to one of them, never to the key that is
+/// no instance of that population.
+#[trace("TC-3219", "FR-151-AC-5")]
+#[test]
+fn a_class_whose_least_key_is_bound_elsewhere_keeps_its_other_instances() {
+    let bound = |population, key: &str| ModelInstance {
+        population,
+        key: key.to_owned(),
+    };
+    let bindings = [bound(counters(), "a"), bound(spares(), "b")];
+    let group = fsl_eval::simulation::SymmetryGroup {
+        classes: vec![class(&spares(), &["a", "b"])],
+    };
+    let listed: Vec<_> = instance_groups(Some(&bindings), &group)
+        .into_iter()
+        .map(|instance| (instance.representative, instance.orbit))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (Some(bindings[0].clone()), keys(&["a"])),
+            (Some(bindings[1].clone()), keys(&["b"])),
+        ]
+    );
 }

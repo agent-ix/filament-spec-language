@@ -703,14 +703,15 @@ fn a_body_false_at_the_initial_position_is_refuted_with_empty_traces() {
     assert_eq!(starts, [0, 1]);
 }
 
-/// Two instances rank as FR-126 ranks bindings. With the vaults `k1` and `k2`
-/// in every state, the initial states differ in `l` for `k1` alone: `k1` is
-/// refuted at depth 0 and `k2` is not explored at all, so the run counts the
-/// product states of `k1` alone; with the order reversed, a later instance
-/// with a shallower finding wins over an earlier one that holds.
-#[trace("TC-603")]
+/// FR-176 "Instances": the first refuted instance in order decides. With the
+/// vaults `k1` and `k2` in every state and the initial states differing in
+/// `l` for `k1` alone, `k1` is refuted at depth 0 and `k2` is not explored, so
+/// the run counts the product states of `k1` alone. With the difference moved
+/// to `k2`, `k1` is still refuted, later, and `k2`'s depth-0 finding does not
+/// replace it.
+#[trace("TC-603", "FR-176-AC-8")]
 #[test]
-fn instances_are_ranked_and_a_finding_at_depth_zero_ends_the_search() {
+fn the_first_refuted_instance_ends_the_search_whatever_its_depth() {
     let both = |first: (i64, i64), second: (i64, i64), universe: &[&str]| {
         World::with_snapshots(
             Vault::Busy,
@@ -752,7 +753,7 @@ fn instances_are_ranked_and_a_finding_at_depth_zero_ends_the_search() {
     );
 
     let (instance, _) = refuted_instance(&both((1, 0), (1, 1), &["k1", "k2"]));
-    assert_eq!(instance, [("v".to_owned(), "k2".to_owned())]);
+    assert_eq!(instance, [("v".to_owned(), "k1".to_owned())]);
 }
 
 /// `align skip` names an operation of the subject's model by its declaring
