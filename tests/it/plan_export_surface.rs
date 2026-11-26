@@ -3668,21 +3668,26 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
     crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
     let path = directory.path().join("spine-initial.json");
     let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let population = snapshot["populations"]
-        .as_array_mut()
-        .expect("population records")
-        .iter_mut()
-        .find(|row| row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY))
-        .expect("config_history population");
-    let objects = population["objects"].as_array_mut().expect("objects");
-    assert!(objects.len() >= 2, "the fixture starts with two objects");
-    let mut first = objects[0].clone();
-    let mut second = objects[1].clone();
-    first["key"] = json!("b");
-    first["fields"]["versionNumber"] = json!({"integer":"0"});
-    second["key"] = json!("a");
-    second["fields"]["versionNumber"] = json!({"integer":"0"});
-    *objects = vec![first.clone(), second.clone()];
+    let (first, second) = {
+        let population = snapshot["populations"]
+            .as_array_mut()
+            .expect("population records")
+            .iter_mut()
+            .find(|row| {
+                row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)
+            })
+            .expect("config_history population");
+        let objects = population["objects"].as_array_mut().expect("objects");
+        assert!(objects.len() >= 2, "the fixture starts with two objects");
+        let mut first = objects[0].clone();
+        let mut second = objects[1].clone();
+        first["key"] = json!("b");
+        first["fields"]["versionNumber"] = json!({"integer":"0"});
+        second["key"] = json!("a");
+        second["fields"]["versionNumber"] = json!({"integer":"0"});
+        *objects = vec![first.clone(), second.clone()];
+        (first, second)
+    };
 
     let unit = plan_unit("Int[0,0]", "", "true").replace(
         "synthesis Reach",
@@ -3695,7 +3700,7 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
         (0, json!({"limits":{"max_work":1}}), "incomplete", 22, 1, 1),
     ] {
         let mut current = snapshot.clone();
-        current["populations"]
+        let population = current["populations"]
             .as_array_mut()
             .expect("population records")
             .iter_mut()
