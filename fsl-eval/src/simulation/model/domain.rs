@@ -2231,6 +2231,7 @@ mod tests {
     /// ADR-027 ST-11: a union over finite members enumerates every member
     /// with every combination of its payload, in declaration order, and is
     /// written as FR-120's union form.
+    #[trace("TC-1270", "FR-120-AC-25")]
     #[test]
     fn a_union_attempt_type_enumerates_every_member() {
         use filament_exact::UnionMember;
@@ -2277,7 +2278,7 @@ mod tests {
     /// FR-120 "Applications": a model-variant union's cases are ordered by
     /// ascending UTF-8 bytes of their names, whatever their declared order:
     /// `Zed` declared before `Alpha` still lists `Alpha` first.
-    #[trace("TC-1270")]
+    #[trace("TC-1270", "FR-120-AC-25")]
     #[test]
     fn a_variant_union_orders_its_cases_by_name() {
         use filament_exact::UnionMember;
