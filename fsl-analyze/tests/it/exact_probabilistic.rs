@@ -5087,6 +5087,9 @@ fn until_avoidance_cannot_cross_an_already_reached_target() {
 /// `v(s) = min(v(s), 1/2 v(g) + 1/2 v(u), v(u)) = 0`. The all-ones vector
 /// satisfies every Bellman equation and inequality and meets the threshold, so
 /// only the refined component rejects it, as `InequalityFails` at `u`.
+///
+/// Without `drift`, `s` is not in `U` and `z_go` is its only way to leave, so
+/// `v(s) = 1/2 v(g) + 1/2 v(u) = 1/2` with `v(u) = 0`: that vector is accepted.
 #[trace("TC-3150", "TC-635")]
 #[test]
 fn fair_checker_rejects_positive_values_on_a_component_refined_out_of_its_scc() {
@@ -5099,123 +5102,152 @@ fn fair_checker_rejects_positive_values_on_a_component_refined_out_of_its_scc() 
     const CLAIM: &str = "probabilistic FairGo using inf on M over (w: M::W) \
          under every scheduler fair strong W::z_go on origin \
          { probability >= rational(2,5) [ eventually holds(w.g) ] }";
-    let world = World::new(&prob_world::fair_mec_refinement(CLAIM));
-    let product = built(&world, "FairGo");
-    assert_eq!(product.states.len(), 3);
-    let target = product
-        .labels
-        .iter()
-        .map(|labels| labels[0])
-        .collect::<Vec<_>>();
-    let s = start(&product);
-    let [g] = product
-        .ids()
-        .filter(|id| target[id.index()])
-        .collect::<Vec<_>>()[..]
-    else {
-        panic!("one target state: {target:?}");
-    };
-    let [u] = product
-        .ids()
-        .filter(|id| *id != s && *id != g)
-        .collect::<Vec<_>>()[..]
-    else {
-        panic!("one other state");
-    };
+    for drift in [true, false] {
+        let mut model = prob_world::fair_mec_refinement(CLAIM);
+        if !drift {
+            model
+                .operations
+                .retain(|operation| operation.name != "drift");
+            model.body = model
+                .body
+                .replace("pre DriftAtS using v on M::W::drift { self.s }\n", "")
+                .replace(
+                    "post Drifted using v on M::W::drift { self.s = false and self.u = true }\n",
+                    "",
+                )
+                .replace(" weight W::drift = 1;", "");
+        }
+        let world = World::new(&model);
+        let product = built(&world, "FairGo");
+        assert_eq!(product.states.len(), 3);
+        let target = product
+            .labels
+            .iter()
+            .map(|labels| labels[0])
+            .collect::<Vec<_>>();
+        let s = start(&product);
+        let [g] = product
+            .ids()
+            .filter(|id| target[id.index()])
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("one target state: {target:?}");
+        };
+        let [u] = product
+            .ids()
+            .filter(|id| *id != s && *id != g)
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("one other state");
+        };
 
-    let system = ModelSystem::new(world.subject().simulation).expect("the model is admitted");
-    let claims = world.package.graph().probabilistic_model().claims();
-    let item = fsl_replay::probabilistic_claim_identity(world.claim("FairGo"))
-        .expect("canonical claim identity");
-    let binding = fsl_replay::claim_binding(&system, world.claim("FairGo"))
-        .expect("the claim binding is checked")
-        .map(|binding| binding.reference);
-    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
-        &ExactProbLimits::default(),
-        fsl_replay::AccountingLimits::default().0,
-    );
-    let key = |state: ProbStateId| {
-        fsl_replay::ProbabilityProductKey::for_model_state_with_limits(
-            binding.as_ref(),
-            &product.states[state.index()].model,
-            fsl_replay::ProbabilityDocumentIoLimits {
-                bytes: limits.bytes,
-                storage_bytes: limits.storage_bytes,
-            },
-            &Cancel::new(),
-        )
-        .expect("canonical product key")
-    };
-    // The exact document and the `lower` value-bounds document of one vector.
-    let check = |at_s: i64, at_u: i64, at_g: i64| {
-        let mut values = [(s, at_s), (u, at_u), (g, at_g)]
-            .map(|(state, value)| fsl_replay::ExactProbabilityValue {
-                state: key(state),
-                value: ratio(value, 1),
-            })
-            .to_vec();
-        values.sort_by(|left, right| left.state.cmp(&right.state));
-        let proof = fsl_replay::probability_proof_document(
-            &system,
-            claims,
-            &item,
-            &fsl_replay::ExactProbabilityCertificate { values },
-            limits,
-            &Cancel::new(),
-        )
-        .expect("the vector satisfies the local equations and ranks");
-        assert!(proof.is_fair_mdp());
-        let exact = fsl_replay::write_probability_proof_document(&proof, limits, &Cancel::new())
-            .expect("canonical exact document");
-        let lower = fsl_replay::write_value_bounds_proof_document(
-            &proof,
-            SubsystemBoundKind::Lower,
-            limits,
-            &Cancel::new(),
-        )
-        .expect("canonical lower document");
-        [
-            fsl_replay::check_probability_certificate_document(
+        let system = ModelSystem::new(world.subject().simulation).expect("the model is admitted");
+        let claims = world.package.graph().probabilistic_model().claims();
+        let item = fsl_replay::probabilistic_claim_identity(world.claim("FairGo"))
+            .expect("canonical claim identity");
+        let binding = fsl_replay::claim_binding(&system, world.claim("FairGo"))
+            .expect("the claim binding is checked")
+            .map(|binding| binding.reference);
+        let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+            &ExactProbLimits::default(),
+            fsl_replay::AccountingLimits::default().0,
+        );
+        let key = |state: ProbStateId| {
+            fsl_replay::ProbabilityProductKey::for_model_state_with_limits(
+                binding.as_ref(),
+                &product.states[state.index()].model,
+                fsl_replay::ProbabilityDocumentIoLimits {
+                    bytes: limits.bytes,
+                    storage_bytes: limits.storage_bytes,
+                },
+                &Cancel::new(),
+            )
+            .expect("canonical product key")
+        };
+        // The exact document and the `lower` value-bounds document of one vector.
+        let check = |at_s: (i64, i64), at_u: (i64, i64), at_g: (i64, i64)| {
+            let mut values = [(s, at_s), (u, at_u), (g, at_g)]
+                .map(|(state, value)| fsl_replay::ExactProbabilityValue {
+                    state: key(state),
+                    value: ratio(value.0, value.1),
+                })
+                .to_vec();
+            values.sort_by(|left, right| left.state.cmp(&right.state));
+            let proof = fsl_replay::probability_proof_document(
                 &system,
                 claims,
                 &item,
-                &exact,
+                &fsl_replay::ExactProbabilityCertificate { values },
                 limits,
                 &Cancel::new(),
-            ),
-            fsl_replay::check_probability_certificate_document_as(
-                &system,
-                claims,
-                &item,
-                &lower,
-                CertificateRole::Claim,
+            )
+            .expect("the vector satisfies the local equations and ranks");
+            assert!(proof.is_fair_mdp());
+            let exact =
+                fsl_replay::write_probability_proof_document(&proof, limits, &Cancel::new())
+                    .expect("canonical exact document");
+            let lower = fsl_replay::write_value_bounds_proof_document(
+                &proof,
+                SubsystemBoundKind::Lower,
                 limits,
                 &Cancel::new(),
-            ),
-        ]
-    };
-    for (route, checked) in ["exact", "lower"].into_iter().zip(check(1, 1, 1)) {
-        assert!(
-            matches!(
-                &checked,
-                Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
-                    if rejection.rule == ProbabilityCertificateRule::InequalityFails
-                        && rejection.at == ProbabilityCertificateLocus::ProductState(key(u))
-            ),
-            "{route}: a positive value on the refined component: {checked:?}"
-        );
-    }
-    // The hand-derived vector passes every condition but the threshold.
-    for (route, checked) in ["exact", "lower"].into_iter().zip(check(0, 0, 1)) {
-        assert!(
-            matches!(
-                &checked,
-                Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
-                    if rejection.rule == ProbabilityCertificateRule::ThresholdMissed
-                        && rejection.at == ProbabilityCertificateLocus::ProductState(key(s))
-            ),
-            "{route}: {checked:?}"
-        );
+            )
+            .expect("canonical lower document");
+            [
+                fsl_replay::check_probability_certificate_document(
+                    &system,
+                    claims,
+                    &item,
+                    &exact,
+                    limits,
+                    &Cancel::new(),
+                ),
+                fsl_replay::check_probability_certificate_document_as(
+                    &system,
+                    claims,
+                    &item,
+                    &lower,
+                    CertificateRole::Claim,
+                    limits,
+                    &Cancel::new(),
+                ),
+            ]
+        };
+        let (zero, half, one) = ((0, 1), (1, 2), (1, 1));
+        if drift {
+            for (route, checked) in ["exact", "lower"].into_iter().zip(check(one, one, one)) {
+                assert!(
+                    matches!(
+                        &checked,
+                        Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+                            if rejection.rule == ProbabilityCertificateRule::InequalityFails
+                                && rejection.at == ProbabilityCertificateLocus::ProductState(key(u))
+                    ),
+                    "{route}: a positive value on the refined component: {checked:?}"
+                );
+            }
+            // The hand-derived vector passes every condition but the threshold.
+            for (route, checked) in ["exact", "lower"].into_iter().zip(check(zero, zero, one)) {
+                assert!(
+                    matches!(
+                        &checked,
+                        Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+                            if rejection.rule == ProbabilityCertificateRule::ThresholdMissed
+                                && rejection.at == ProbabilityCertificateLocus::ProductState(key(s))
+                    ),
+                    "{route}: {checked:?}"
+                );
+            }
+        } else {
+            // Without `drift` only `u` is in `U`; a checker that counts the whole
+            // SCC `{s, u}` as fair would reject the positive value at `s`.
+            for (route, checked) in ["exact", "lower"].into_iter().zip(check(half, zero, one)) {
+                assert!(
+                    matches!(&checked, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+                    "{route}: the removed state keeps its value: {checked:?}"
+                );
+            }
+        }
     }
 }
 
@@ -5224,6 +5256,9 @@ fn fair_checker_rejects_positive_values_on_a_component_refined_out_of_its_scc() 
 /// reaches, so its constraint is retained and the value stays `1/2`. A cancel
 /// at meter charges across the run and work budgets short of the whole run
 /// settle `incomplete`.
+///
+/// No stop here is pinned to a refinement round: neither checker nor producer
+/// charges or polls in those rounds yet (QSL-3488).
 #[trace("TC-3150", "FR-1041-AC-6")]
 #[test]
 fn fair_eventual_stops_settle_incomplete_and_an_unused_constraint_changes_nothing() {
