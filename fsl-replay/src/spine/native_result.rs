@@ -4469,10 +4469,16 @@ mod qsl_3117_deciding_run {
             }
             document["extraction"] = extraction;
             let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+            let observed = match &result {
+                Err(NativeRunReadError::Invalid { member, .. }) => *member,
+                Err(NativeRunReadError::MalformedMember { member, .. }) => member.as_str(),
+                Ok(_) => "accepted",
+                Err(_) => "refused without a member path",
+            };
             assert!(
                 matches!(result, Err(NativeRunReadError::Invalid { member, .. }) if member == expected)
                     || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
-                "expected refusal naming {expected}, got {result:?}"
+                "expected refusal naming {expected}, got {observed}"
             );
         }
     }
