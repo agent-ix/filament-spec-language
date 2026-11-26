@@ -95,6 +95,15 @@ item's FSpec FR-331 `memory`), so it can be re-requested exactly.
   the binding, with each outermost `parallel` of the protocol resolved by
   FR-219 from the request's `memory` member; otherwise FSL SHALL decide it over
   the model subject, as FR-625 states.
+- A `global-conformance` item with no `recording` follows FR-896 "The
+  objects checked over every behaviour": a `protocol` that names a clause
+  other than the item's claim declines it `invalid-input` with
+  `invalid_runtime_input`/`invalid-value` naming `temporal.subject.protocol`,
+  and with no `protocol` FSL SHALL decide it over one protocol subject for
+  each admitted key of the claim's `over` type, not over the model subject,
+  each outermost `parallel` resolved from the request's `memory` member. The
+  protocol deadlock item (FR-636) takes the first of these rules, and with
+  no `protocol` is declined the same way, as FR-896 states.
 - A race-freedom item whose `claim` is the scoped path of an outermost
   `parallel` SHALL be decided over the protocol its path names. When the
   item's subject carries no `protocol`, the item SHALL settle `declined`
@@ -139,7 +148,7 @@ item's FSpec FR-331 `memory`), so it can be re-requested exactly.
 - A protocol binding the subject builder refuses (FR-205: a protocol the
   package does not declare, `invalid_runtime_input`/`invalid-value`; a role
   binding missing, extra or naming a model the role does not admit,
-  `wrong-role-mapping`; an `over` object outside its population universe,
+  `wrong-role-mapping`; an `over` object that is not an admitted key of its type (FR-205),
   `invalid-value`; a capacity entry naming no capacity, `unknown-member`, or
   repeated, `duplicate-member`) SHALL settle each item over that subject
   `declined` `invalid-input` with that code, naming the member, as FR-625
