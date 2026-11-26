@@ -115,6 +115,26 @@ The decision bullets cover bounded horizons, unbounded probability and reward ov
 
 AC-10 detects an omitted check entry only through a producer call or an empty route; a second entry on a route called by settling code alone drops out of the data, and of the mutation obligation, silently. AC-4 is fixtures only and AC-9 does not compare the "No producer objects" list, so the data may omit a type from it. Extend AC-10 to settling-code calls and AC-9 to that list.
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-015 | medium | AC-8 fails an entry that "has a site outside the modules its row concerns", but the rows list defining modules and every naming site lies elsewhere | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:398 |
+| FND-016 | low | A codec label now exempts a function from the both-sides rule, and nothing says who checks that it derives no member value | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:180 |
+| FND-017 | low | AC-18 expects the path check to see a reference "pass" an fsl-eval RewardEvaluator, which is a value it does not see | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:408 |
+
+### FND-015 detail
+
+Elsewhere a site is the place that names the item (AC-1, AC-7). S rows concern modules such as fsl_eval::automaton, and the sites are in fsl-replay and fsl-analyze; P rows concern checker modules and the sites are producer files. Read that way every entry fails and AC-7 and AC-8 cannot both pass. Blocking. One-line fix: replace "has a site outside the modules its row concerns" with "names an item defined outside the modules its row concerns (for an O row, a check entry defined outside them)".
+
+### FND-016 detail
+
+The review obligation is stated for B-9, B-11 and B-12 only. Not blocking. One-line fix, append to the codec bullet: "That a codec function derives no member value is checked by the review of the change that records it."
+
+### FND-017 detail
+
+The check reads paths only. Not blocking, since a fixture can name the evaluator by path. One-line fix: replace "or passes an `fsl-eval` `RewardEvaluator` to package checking" with "or an `fsl-eval` path to a `RewardEvaluator` implementation".
+
 ## Dispositions
 
 | FND | outcome | reason |
@@ -127,3 +147,9 @@ AC-10 detects an omitted check entry only through a producer call or an empty ro
 | FND-006 | fixed | Checked at 2483104d1e |
 | FND-007 | fixed | Checked at 2483104d1e |
 | FND-008 | fixed | Checked at 2483104d1e |
+| FND-009 | accepted-no-change | Code lead decision: no entry counts in the spec. AC-8 now fails an entry outside its row modules or with another rule, so what remains is a new sharing inside an already excepted module, left to review. The wording of the new check is SR-96742 FND-015. |
+| FND-010 | accepted-no-change | Code lead decision: "derives no member value" is a review obligation for B-9, B-11 and B-12, now stated under "Trusted base". The B-10 machine check is restored in AC-8. |
+| FND-011 | fixed | Checked at 6808d45edd |
+| FND-012 | fixed | Checked at 6808d45edd |
+| FND-013 | fixed | Checked at 6808d45edd |
+| FND-014 | fixed | Checked at 6808d45edd |

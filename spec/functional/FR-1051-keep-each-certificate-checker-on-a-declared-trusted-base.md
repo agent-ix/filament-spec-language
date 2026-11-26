@@ -108,6 +108,7 @@ from these paths only:
   patterns, including associated-function paths `T::f`;
 - path token runs written inside macro arguments, as the api-surface rule
   matches them;
+- a bare path bound by a `use` leaf or glob import, and a path through a `type` alias, each naming the item it stands for;
 
 each resolved through the `pub use` re-exports of the workspace crates to
 the item it names. The check SHALL scan every non-test file with every
@@ -170,6 +171,7 @@ not caught by mutation; the false-claim corpus is the evidence against them.
 
 - Outside the trusted base, no function or method SHALL be named both by
   checker code and by producer code.
+- A function defined in checker code is judged only by the producer-call rule; the shared-semantics rule covers functions defined outside checker code.
 - Producer code SHALL name checker code only through a check entry, a codec
   function or a type item of checker code.
 - A codec function SHALL belong to one codec class: C-1 a reader or writer
@@ -179,7 +181,7 @@ not caught by mutation; the false-claim corpus is the evidence against them.
   it; C-4 a constructor of limits, meters or refusal codes. A function that
   derives a member value is in no codec class. A codec function may be
   named by both checker code and producer code: the one-type rule keeps it
-  shared, and neither rule above counts it.
+  shared, and neither rule above counts it. That a codec function derives no member value is checked by the review of the change that records it.
 - A check entry is a public function of checker code that returns a
   checker's verdict on a certificate, witness or counterexample, and SHALL
   belong to at least one route.
@@ -234,6 +236,7 @@ other exception is allowed.
 | P-10 | Producer call into checker | `certificate/product.rs` | The product-closure writer (fairness components, canonical closure), its key and the package-hyper subject binding, called by `fsl-analyze` hyper search | QSL-3501 |
 | P-11 | Producer call into checker | `hybrid_replay/**` | The hybrid checker's model reader, interval machine, box operations, flowpipe rule probe and class admission, used by `fsl-hybrid-reference` to build and probe boxes | QSL-3501 |
 | P-12 | Producer call into checker | `contract_check.rs` | The operation-contract arm in `fsl-analyze` selects the claim, builds the target, enumerates declared and initial cases, evaluates each case and writes and reads its counterexample with the code its replay uses | QSL-3501 |
+| P-13 | Producer call into checker | `certificate/zone.rs` | Zone construction and DBM closure (`Zone::zero`, `Zone::from_matrix`), used by the zone producers to write certificates | QSL-3501 |
 | O-1 | Producer object | `probability_certificate/**` | The checked-subject form of the EN-5 checker and the probability witness replays take the producer's `ModelSystem` and compare it by pointer | QSL-3501 |
 | O-2 | Producer object | `model_check/replay.rs`, `certificate/zone_certificate.rs` | Counterexample replay and the zone checker read atoms through the producer's letters, and the reference-literal and timed replays step the producer's system | QSL-3501 |
 | O-3 | Producer object | `outcome/counterexample.rs` | Task-product trace replay checks keys of the producer's own product object | QSL-3501 |
@@ -389,13 +392,13 @@ part of the fragment:
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1051-AC-1 | Over fixture crates, the arch-lint check fails when checker code names an item outside the trusted base and in no exception row, naming the file, line and the named item (for example a checker module that names `fsl_analyze::...` or `fsl_eval::probabilistic::MeasurePlan`), and passes when every named item is in the trusted base. | Test |
-| FR-1051-AC-2 | Over fixture crates, the check fails when a function outside the trusted base is named both by checker code and by producer code, naming the item and one site on each side, including when the producer names it by an associated-function path `T::f`; with the function named on one side only, or when it is a codec function, it reports nothing for it. | Test |
+| FR-1051-AC-2 | Over fixture crates, the check fails when a function defined outside checker code and outside the trusted base is named both by checker code and by producer code, naming the item and one site on each side, including when the producer names it by an associated-function path `T::f`; with the function named on one side only, or when it is a codec function, it reports nothing for it. | Test |
 | FR-1051-AC-3 | Over fixture crates, the check fails when producer code names a function or method of checker code that is neither a check entry nor a codec function, naming the item and the site; naming `check_probability_certificate_document`, `write_probability_certificate` or a checker type item passes. | Test |
 | FR-1051-AC-4 | Over fixture crates, the check fails when a check entry takes a producer-built value of "No producer objects" as a parameter, as `self` or through a field of a checker type it takes, including a closure parameter, naming the entry, the parameter or field and the type. | Test |
 | FR-1051-AC-5 | Over fixture crates, the check reports a sharing whose only path is in code under `#[cfg(feature = "test-support")]`, one written inside a macro argument, one reached through a glob import and one through an `as` alias or a `pub use` re-export. | Test |
 | FR-1051-AC-6 | Over fixture crates, the check fails, naming the crate or file, when a workspace member crate or a non-test file of `fsl-replay` is in no class of "Classes of code" or in two. | Test |
 | FR-1051-AC-7 | On the repository, every finding of the check matches an entry of the check's data that names an exception row and the rule it breaks; a finding that matches no entry fails, naming the item and site. An exception entry that matches no finding fails as stale, naming the entry and its row. | Test |
-| FR-1051-AC-8 | The check fails, naming the entry, when an entry of its data names an item that does not exist (an entry recorded as planned, such as B-10 before QSL-3494, is exempt until its item exists), names a row, route or codec class that is not in this requirement's tables, has a site outside the modules its row concerns, or breaks a rule other than its row's; naming the row, when an exception row of this requirement has no entry and is not recorded as planned; and, naming the item, when an item recorded under B-10 is a function or method. | Test |
+| FR-1051-AC-8 | The check fails, naming the entry, when an entry of its data names an item that does not exist (an entry recorded as planned, such as B-10 before QSL-3494, is exempt until its item exists), names a row, route or codec class that is not in this requirement's tables, names an item defined outside the modules its row concerns (for an O row, a check entry defined outside them), or breaks a rule other than its row's; naming the row, when an exception row of this requirement has no entry and is not recorded as planned; and, naming the item, when an item recorded under B-10 is a function or method. | Test |
 | FR-1051-AC-9 | A spec-consistency test reads this requirement's "Classes of code", Trusted base, exception, Routes and "No producer objects" text and fails, naming the difference, when the check's class paths, base rows with their extents, exception row IDs with their modules and rules, route IDs or producer-built type list differ from them. | Test |
 | FR-1051-AC-10 | The check fails, naming the entry, when a check entry of its data names no route, or a route of the Routes table has no check entry; and, naming the function, when producer code or settling code names a public checker-code function that is in neither its check-entry nor its codec data. | Test |
 | FR-1051-AC-11 | For every registered fixture of every route, every single mutation that is not on the route's allowed-to-survive list is refused or rejected by the route's check entry (or not reproduced by a replay route); a mutation the entry accepts fails the harness, naming the route, the fixture, the member path and the mutation. Verified by the harness's own tests, including one where a deliberately weakened check closure accepts a changed value, run once over a canonical document and once through a typed adapter. | Test |
@@ -405,7 +408,7 @@ part of the fragment:
 | FR-1051-AC-15 | The spec-consistency test fails, naming ADR-028 CE-7, when the check's data holds no entry for row S-1 and the text of CE-7 still says the product construction is shared with EN-1. | Test |
 | FR-1051-AC-16 | A test fails, naming each route, when a route of the Routes table has no corpus entry. For each proof-route entry, the route's check entry rejects the self-consistent certificate with the semantic rule the entry states, and the test fails on a rejection by any other rule or by a decoding, identity or shape refusal; analysis does not settle the claim `proved`. For each replay-route entry, the forged witness or counterexample is not reproduced. A covered route's entry has its truth from the reference or, for a replay route, a hand-derived argument; a not-yet route's entry carries a hand-derived value with its derivation. | Test |
 | FR-1051-AC-17 | The corpus holds the six seeds of the seed table, each on its route with the model and witness given there; for each, the reference computes false, the check entry rejects the self-consistent certificate with the semantic rule its corpus entry states, and analysis does not settle `proved`. | Test |
-| FR-1051-AC-18 | The reference crate's manifest has no direct dependency on a workspace crate other than `fsl-package`, `fsl-semantics` and `fsl-foundation`, and is a dev-dependency only; the arch-lint check fails on a reference fixture that names `fsl_eval::simulation::model::ModelSystem` or passes an `fsl-eval` `RewardEvaluator` to package checking. | Test |
+| FR-1051-AC-18 | The reference crate's manifest has no direct dependency on a workspace crate other than `fsl-package`, `fsl-semantics` and `fsl-foundation`, and is a dev-dependency only; the arch-lint check fails on a reference fixture that names `fsl_eval::simulation::model::ModelSystem` or an `fsl-eval` path to a `RewardEvaluator` implementation. | Test |
 | FR-1051-AC-19 | The reference refuses, naming the construct, a corpus model with an unbounded integer field, a guard that is a disjunction, a non-literal probability weight, a clock compared with a non-integer constant, or a hybrid mode with a non-constant rate, and a quantile claim over some scheduler; it returns no truth value for it. On a two-step MDP where the optimal choice at the first state depends on the steps left, its value for a horizon-bounded some-scheduler reachability claim equals the hand-derived optimum. | Test |
 
 ## Status

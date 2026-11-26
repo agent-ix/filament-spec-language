@@ -84,6 +84,16 @@ Zone::zero is called by fsl-analyze zone_check/task_certificate.rs:253 and by th
 
 Only paths and x.m(..) are said to name an item. Operator, Deref, From via ?, and formatting calls into checker or non-base trait impls (hybrid_replay and certificate define such impls) are neither named nor listed as unseen. Nothing says calls written inside macro arguments (assert!, matches!, format!, local macro_rules as in hybrid_replay/eval.rs) are found; a source walk that does not expand macros never sees them and so never reports them unresolved. The list also allows missing code behind a non-default feature, while "Classes of code" makes test-support code non-test (over 100 cfg sites). Require analysis with all features and expanded macro calls, and list implicit calls as covered or unseen.
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-011 | low | The path list names no bare path bound by an import and no type alias, though AC-5 expects a glob-reached sharing to be reported | spec/functional/FR-1051-keep-each-certificate-checker-on-a-declared-trusted-base.md:105 |
+
+### FND-011 detail
+
+After use m::*, a call f() is not a qualified path, and a use leaf of * names no item; a type alias declared with "type K = T;" hides K::f. Not blocking. One-line fix, add to the list: "- a bare path bound by a `use` leaf or glob import, and a path through a `type` alias, each naming the item it stands for;"
+
 ## Dispositions
 
 | FND | outcome | reason |
@@ -96,3 +106,5 @@ Only paths and x.m(..) are said to name an item. Operator, Deref, From via ?, an
 | FND-006 | fixed | Checked at 2483104d1e |
 | FND-007 | fixed | Checked at 2483104d1e |
 | FND-008 | fixed | Checked at 2483104d1e |
+| FND-009 | still-open | Codec functions are now allowed on both sides, which clears ProbabilityDocumentLimits::for_exact. AC-7 still cannot pass on main. (a) A checker-defined function that producer and checker both name breaks both rules, but only a P row concerns it and AC-8 now fails an entry whose rule differs from its row: ProbabilityProductKey::for_model_state_with_budget (analyze/exact/candidate.rs:56 and probability_certificate/reward.rs:196, row P-2). Fix, under "No other shared semantics": "- A function defined in checker code is judged only by the producer-call rule; the shared-semantics rule covers functions defined outside checker code." and in AC-2 say "a function defined outside checker code and outside the trusted base". (b) Zone::from_matrix closes the DBM (zone.close()), so it is in no codec class, and Zone::zero is not a limits, meter or refusal constructor; producer (zone_check/certificate.rs:305, task_certificate.rs:253) and checker (zone_certificate/wire.rs:159, product.rs:309) name them and no row concerns certificate/zone.rs. Fix, add the row: "/ P-13 / Producer call into checker / `certificate/zone.rs` / Zone construction and DBM closure (`Zone::zero`, `Zone::from_matrix`), used by the zone producers to write certificates / QSL-3501 /" |
+| FND-010 | fixed | Checked at 6808d45edd |
