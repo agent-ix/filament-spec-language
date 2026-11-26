@@ -121,7 +121,8 @@ use fsl_foundation::diagnostic::{Code, JsonPointer};
 /// is lower-level than this one so [`crate::model::key`] can depend on the
 /// cause type without a cycle. This path is unchanged for every caller.
 pub use crate::model::refusal::{
-    MemberPath, MemberRoot, ModelRefusalCause, OfferedSelection, OwnedMemberPath,
+    EffectiveParameterType, MemberPath, MemberRoot, ModelRefusalCause, OfferedSelection,
+    OwnedMemberPath,
 };
 
 /// A refusal FR-150 normalization returns for a real defect (never a

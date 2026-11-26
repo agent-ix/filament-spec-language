@@ -100,14 +100,16 @@ pub struct InstanceGroup {
   key SHALL settle the item `SymmetryBroken{population,
   InitialStatesNotClosed{initial, generator}}`, with `initial` the index in
   `subject.initial`, and no state is expanded.
-- **Instances.** For a clause with an `over` parameter whose population has
-  a class, the pre-check SHALL partition the universe into orbits of `G`
-  (each class is one orbit; each fixed key is its own), check one instance
-  per orbit, bound to the orbit's least key, and run that instance under the
-  stabiliser of the bound key: `G` with the bound key removed from its
-  class. A class reduced to one key by the removal SHALL drop out of the
-  group. Every other instance SHALL be one `InstanceGroup` with the run's
-  `G`.
+- **Instances.** For a clause with an `over` parameter, or a hyper clause with
+  one object parameter, whose instances (FR-125's admitted keys) include keys
+  of a class, the pre-check SHALL partition those instances into orbits of `G`
+  (each class's admitted keys are one orbit; each fixed admitted key is its
+  own), check one instance per orbit, bound to the orbit's least key, and run
+  that instance under the stabiliser of the bound key: `G` with the bound key
+  removed from its class. An excluded key SHALL be in no orbit and give no
+  instance. Closed initial states admit all of a class's keys or none of them.
+  A class reduced to one key by the removal SHALL drop out of the group. Every
+  other instance SHALL be one `InstanceGroup` with the run's `G`.
 - **Verdict per instance.** The verdict of an instance SHALL be the verdict
   of every key in its orbit (FR-160 records the orbit).
 - **Determinism.** Admission, the group and the instance list SHALL be
@@ -121,6 +123,7 @@ pub struct InstanceGroup {
 | FR-151-AC-2 | The same declaration over the unit without the annotation refuses `invalid_runtime_input`/`invalid-value` naming the declaration's population. `[[a, b, d]]` refuses naming `d`; `[[a, b], [b, c]]` refuses naming `b`; a declaration for a population with no universe refuses naming the population. Each refuses before any state is expanded. | Test (TC-567) |
 | FR-151-AC-3 | An initial state with `a` at version 1 and `b`, `c` at 0 settles `SymmetryBroken{config_history, InitialStatesNotClosed{0, (a b)}}` under `[[a, b, c]]`, with no state expanded. Under `[[a], [b, c]]` it admits: `a` is fixed, the group is `{id, (b c)}`, and `ReachesTwo` gives two instances, `a` (group `{id, (b c)}`) and `b` (orbit `[b, c]`, group trivial). | Test (TC-568) |
 | FR-151-AC-4 | Two initial states, all-zero and `(1, 0, 0)`, are not closed under `[[a, b, c]]` (`(a b)` maps the second to `(0, 1, 0)`, which is no initial state); adding `(0, 1, 0)` and `(0, 0, 1)` makes the set closed and the declaration admits. | Test (TC-568) |
+| FR-151-AC-5 | Over the annotated ConfigVersion unit with universe `{a, b, c, d}` and one initial state holding `a` and `b` at version 0 and no `c` or `d`, `[[a, b], [c, d]]` admits. `ReachesTwo`'s `over` parameter gives one instance, bound to `a`, with orbit `[a, b]`, no instance bound to `c` or `d`, and the excluded keys `[c, d]`. | Test (TC-3219) |
 
 ## Dependencies
 
