@@ -1300,7 +1300,8 @@ impl OutcomeItem {
                 match cause {
                     UnavailabilityCause::NotMarkov(cause) => {
                         item.state = Some((&cause.state).into());
-                        item.transition = Some(TransitionIdentity::owned(cause.drawn_transition.clone()));
+                        item.transition =
+                            Some(TransitionIdentity::owned(cause.drawn_transition.clone()));
                         item.post_state_count = Some(cause.post_states);
                         item.post_states =
                             Some(cause.post_state_examples.iter().map(Into::into).collect());

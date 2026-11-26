@@ -118,6 +118,7 @@ mod refinement_query;
 mod request;
 mod result;
 mod scalar;
+pub mod shared_wire;
 pub mod source_inventory;
 pub mod spine;
 mod spine_eval_api;
@@ -129,7 +130,6 @@ pub mod value_check;
 mod witness;
 mod witness_entry_name;
 mod written_operation;
-pub mod shared_wire;
 
 use fsl_package::{ModelIdentity, ObligationIdentity};
 
