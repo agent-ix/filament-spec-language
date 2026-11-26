@@ -160,7 +160,13 @@ fn strict_ir_reader_admits_the_genuine_float_source_packages() {
     }
 }
 
-#[trace("TC-1091", "FR-397-AC-7", "FR-397-AC-12", "FR-397-AC-15", "FR-093-AC-51")]
+#[trace(
+    "TC-1091",
+    "FR-397-AC-7",
+    "FR-397-AC-12",
+    "FR-397-AC-15",
+    "FR-093-AC-51"
+)]
 #[test]
 fn strict_ir_reader_admits_fma_relations_and_float_orderings() {
     for (width, ty) in [

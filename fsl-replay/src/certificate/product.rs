@@ -4,7 +4,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, ScalarLimits};
-use ix_trace_rs::implements;
 use fsl_eval::automaton::PropertyAutomaton;
 use fsl_eval::fairness::{Analysis, Constraint, EdgeLabel, Graph, Identity, Outcome, Strength};
 use fsl_eval::hyper::{
@@ -20,6 +19,7 @@ use fsl_eval::simulation::{StateKey, SymmetryGroup, TransitionSystem};
 use fsl_foundation::IdentityLimits;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedHyperClause, CheckedModelRelation, CopyGroup, HyperForm};
+use ix_trace_rs::implements;
 
 mod relation;
 pub use relation::{
@@ -28,7 +28,7 @@ pub use relation::{
 };
 
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
-use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
+use super::scc::{check_partition, CertificateState, Component, ComponentWitness, ProductGraph};
 use super::{CertificateLocus, CertificateRule};
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};
 

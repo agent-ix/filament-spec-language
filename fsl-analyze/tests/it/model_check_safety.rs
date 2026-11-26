@@ -1236,8 +1236,8 @@ fn an_on_each_past_or_interval_proof_settles_certified() {
         &world.clauses[0],
         vec![value(|v| Some(v <= 3)), value(|v| Some(v <= 3))],
     );
-    let outcome = run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default())
-        .expect("checked");
+    let outcome =
+        run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default()).expect("checked");
     let ModelCheckOutcome::Holds { certificate, .. } = &outcome else {
         panic!("expected Holds, got {outcome:?}");
     };

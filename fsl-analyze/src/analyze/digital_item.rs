@@ -10,26 +10,26 @@
 
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{DEFAULT_MAX_CLOCKS, ModelSystem, TimedSystem};
-use fsl_foundation::RequestIndex;
+use fsl_eval::simulation::model::{ModelSystem, TimedSystem, DEFAULT_MAX_CLOCKS};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    CertificateRequest, DeclineCode, ModelCheckItem, ProofRefusalCause, ReplayTargetMembers,
-    RequestTargetWire, TimedReplay, settle_model_check,
+    settle_model_check, CertificateRequest, DeclineCode, ModelCheckItem, ProofRefusalCause,
+    ReplayTargetMembers, RequestTargetWire, TimedReplay,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::Capability;
-use serde_json::{Map, json};
+use serde_json::{json, Map};
 
-use super::clause_item::{CLAUSE_TRANSCRIPT, ReplayInputs, ReplayShape, clause_name, replay_over};
-use super::items::{BROKEN, CLAUSE_FAMILY, NOT_YET, admission};
+use super::clause_item::{clause_name, replay_over, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
+use super::items::{admission, BROKEN, CLAUSE_FAMILY, NOT_YET};
 use super::timed_item::{certificate_simulation, subject_refusal, timed_model};
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SourceProvision, SubjectBinding,
     TemporalItem,
 };
 use crate::model_check::digital::{
-    DigitalLimits, DigitalRefusal, DigitalRequest, Strict, check_digital,
+    check_digital, DigitalLimits, DigitalRefusal, DigitalRequest, Strict,
 };
 use crate::model_check::manifest as en1;
 

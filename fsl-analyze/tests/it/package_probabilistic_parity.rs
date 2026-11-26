@@ -381,7 +381,10 @@ fn caller_exact_prob_max_states_bounds_the_item_and_refuses_a_duplicate() {
         &[(Setting::ExactProbMaxStates, 1)],
     );
     assert_eq!(refused.exit, 20, "{}", refused.document());
-    assert!(refused.document().to_string().contains("exact_prob.max_states"));
+    assert!(refused
+        .document()
+        .to_string()
+        .contains("exact_prob.max_states"));
 }
 
 /// FR-255-AC-25 on the package route: the caller's `exact_prob.max_states`
@@ -452,9 +455,21 @@ fn a_statistical_item_and_the_caller_may_not_both_state_a_limit() {
     use fsl_foundation::Setting;
 
     for (member, value, setting) in [
-        ("limits", json!({"max_samples": 100}), Setting::StatisticalMaxSamples),
-        ("limits", json!({"max_draws": 100}), Setting::StatisticalMaxDraws),
-        ("limits", json!({"max_cycle_steps": 100}), Setting::StatisticalMaxCycleSteps),
+        (
+            "limits",
+            json!({"max_samples": 100}),
+            Setting::StatisticalMaxSamples,
+        ),
+        (
+            "limits",
+            json!({"max_draws": 100}),
+            Setting::StatisticalMaxDraws,
+        ),
+        (
+            "limits",
+            json!({"max_cycle_steps": 100}),
+            Setting::StatisticalMaxCycleSteps,
+        ),
         (
             "timed_sampling",
             json!({"q": 8, "max_sample_steps": 100}),

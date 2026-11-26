@@ -3,12 +3,12 @@
 //! to filament-observation without adding correlation semantics here.
 
 use filament_observation::{
-    AdmissionOutcome, AdmissionRequest, AdmittedBundleKey, AdmittedRecord, AdmittedStaticBundle,
-    Anchor, ClockRange, Digest, Identity, Member, NATIVE_LINKED_PACKAGE_FORMAT, ObservationBinding,
+    admit, AdmissionOutcome, AdmissionRequest, AdmittedBundleKey, AdmittedRecord,
+    AdmittedStaticBundle, Anchor, ClockRange, Digest, Identity, Member, ObservationBinding,
     PackageSelection, ProducerDigest, QualifiedSubject, Relationship, RelationshipExtent,
     RelationshipExtentState, RequiredRelationship, ResourceLimits, Revision, ScopeKind,
     ScopeSelection, StaticProducerBundle, SubjectIdentity, SubjectKind, ValueState, Visibility,
-    admit,
+    NATIVE_LINKED_PACKAGE_FORMAT,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -1253,21 +1253,22 @@ pub fn package_selection(name: String, digest: [u8; 32]) -> PackageSelection {
 #[cfg(test)]
 mod tests {
     use super::{
-        RelationshipIdentityMapping, RelationshipSelection, invalid_snapshot_relationship_identity,
-        read_extents, unknown_snapshot_relationship,
+        invalid_snapshot_relationship_identity, read_extents, unknown_snapshot_relationship,
+        RelationshipIdentityMapping, RelationshipSelection,
     };
     use filament_exact::{
         EffectiveId, NodeKey, ObjectId, ObjectReference, OriginalDeclarationKey, PathSegment,
         UniverseId,
     };
     use filament_observation::{
-        PRODUCER_INTERFACE_VERSION, ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
+        ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
         RelationshipEndpointDeclaration, Revision, StaticProducerBundle,
+        PRODUCER_INTERFACE_VERSION,
     };
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use ix_trace_rs::trace;
-    use serde_json::Value;
     use serde_json::json;
+    use serde_json::Value;
     use std::collections::{BTreeMap, BTreeSet};
 
     const ORDER: &str = "ix://test/workflow/Order";

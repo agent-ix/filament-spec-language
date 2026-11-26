@@ -4,7 +4,7 @@
 use super::*;
 use filament_exact::{Identifier, NodeKey, NodePathIter};
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
-use fsl_foundation::node_wire::{NodeIdentitySink, project_node_key};
+use fsl_foundation::node_wire::{project_node_key, NodeIdentitySink};
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 /// Actual bounded fair-proof checking stages, for default-off observation.

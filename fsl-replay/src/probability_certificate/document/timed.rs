@@ -11,7 +11,7 @@ use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use ix_trace_rs::implements;
 use num_traits::Zero;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 mod elapsed;
 
@@ -1082,10 +1082,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [
-            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-            | fsl_eval::simulation::model::PredicateReading::Refused(_),
-        ] => Err(ProbabilityDocumentError::Unsupported),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -2541,7 +2541,10 @@ fn enumerate_region_deadline(
         // A quiescent state's idle tail: it waits to the time successor, and
         // after a wait may observe the unchanged state as a position. Interim: part
         // of a walk over a finer grid, not the symbolic region MDP of ADR-038
-        // RL-3 (QSL-3495), and no claim of exactness.
+        // RL-3 (QSL-3495), and no claim of exactness. Known contradiction: FR-196
+        // "Idle tail of a timed window monitor" item 1 has a bounded-window
+        // region product take one move to a decided "idle-entry" state and hold
+        // no "idle-ready" or "idle-delayed" state, as this walk does.
         if current.tail != DigitalTail::Running {
             let mut choices = Vec::new();
             let waiting = RegionState {
@@ -2595,9 +2598,6 @@ fn enumerate_region_deadline(
                     deadline,
                     cancel,
                 )?;
-                if phase == Phase::Active {
-                    activated.insert(key.clone());
-                }
                 let observed = RegionState {
                     timed: current.timed.clone(),
                     elapsed,
@@ -4604,7 +4604,9 @@ fn digital_state_after_delay(
 /// monitor reads concrete times, so its representative stays.
 ///
 /// Interim: part of a walk over a finer grid, not the symbolic region MDP of
-/// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
+/// ADR-038 RL-3 (QSL-3495), and no claim of exactness. The walk's idle states
+/// contradict FR-196 "Idle tail of a timed window monitor" item 1, which has a
+/// bounded-window region product take one move to a decided idle-entry state.
 #[implements("FR-922-AC-4")]
 fn lower_fractions(
     watch: &Watch<'_>,
@@ -5257,7 +5259,11 @@ impl Payoff<'_> {
             Self::Deadline { failing, .. } => verdict == !*failing,
             Self::Elapsed { violating, .. } => violating.contains(key),
         };
-        if counted { one() } else { zero() }
+        if counted {
+            one()
+        } else {
+            zero()
+        }
     }
 
     fn activation(&self, key: &ProbabilityProductKey) -> Rational {
