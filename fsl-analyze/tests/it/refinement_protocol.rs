@@ -1600,6 +1600,27 @@ fn assert_refuted_and_replayed(
     protocol_name: &str,
     expected_position: u64,
 ) {
+    let settled = refuted_and_replayed_under(
+        source,
+        variant,
+        refinement_name,
+        protocol_name,
+        expected_position,
+        &fsl_replay::ModelCheckLimits::default(),
+    );
+    assert!(matches!(settled, RefinementTraceSettlement::Reproduced { .. }));
+}
+
+/// The settlement of replaying the protocol refinement's counterexample under
+/// `limits`, after checking that the run refutes it at `expected_position`.
+fn refuted_and_replayed_under(
+    source: String,
+    variant: Variant,
+    refinement_name: &str,
+    protocol_name: &str,
+    expected_position: u64,
+    limits: &fsl_replay::ModelCheckLimits,
+) -> RefinementTraceSettlement {
     let world = World::with_internals(
         variant,
         &source,
@@ -1638,9 +1659,43 @@ fn assert_refuted_and_replayed(
         &[],
     )
     .expect("replay opens the same abstract protocol system");
+    replay_refinement_trace(world.refinement(), &systems, &counterexample, limits)
+        .expect("counterexample replay runs")
+}
+
+/// FR-255-AC-30: a replay bounded to two protocol transitions stops at the
+/// first closure that needs more, naming `max_transitions` and its value,
+/// where the same replay at the default reproduces the counterexample.
+#[trace("FR-255-AC-30")]
+#[test]
+fn a_replay_with_a_two_transition_allowance_stops_a_protocol_refinement_step() {
+    let at = |transitions: usize| {
+        let mut limits = fsl_replay::ModelCheckLimits::default();
+        limits.limits.max_transitions = transitions;
+        refuted_and_replayed_under(
+            cas_twice(false, true),
+            Variant {
+                peek: false,
+                ..Variant::LOST_UPDATE
+            },
+            "CasTwice",
+            "Twice",
+            4,
+            &limits,
+        )
+    };
+    let RefinementTraceSettlement::Stopped(reached) = at(2) else {
+        panic!("two transitions stop the replay");
+    };
+    assert_eq!(
+        reached,
+        fsl_replay::ReachedLimit {
+            limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+            value: 2
+        }
+    );
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
-            .expect("counterexample replay runs"),
+        at(usize::MAX),
         RefinementTraceSettlement::Reproduced { .. }
     ));
 }
@@ -1755,7 +1810,7 @@ fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
+        replay_refinement_trace(world.refinement(), &systems, &counterexample, &fsl_replay::ModelCheckLimits::default())
             .expect("protocol divergence replay runs"),
         RefinementTraceSettlement::Reproduced { .. }
     ));
@@ -1825,7 +1880,7 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
+        replay_refinement_trace(world.refinement(), &systems, &counterexample, &fsl_replay::ModelCheckLimits::default())
             .expect("counterexample replay runs"),
         RefinementTraceSettlement::Reproduced {
             failure: fsl_replay::RefinementFailure::RefusalNotPermitted { .. },
@@ -1839,7 +1894,7 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
         label.step.push_str("/forged");
     }
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &wrong_label)
+        replay_refinement_trace(world.refinement(), &systems, &wrong_label, &fsl_replay::ModelCheckLimits::default())
             .expect("wrong refusal label replay runs"),
         RefinementTraceSettlement::Inconclusive(_)
     ));
@@ -1850,7 +1905,7 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
         *position = position.saturating_add(1);
     }
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &wrong_position)
+        replay_refinement_trace(world.refinement(), &systems, &wrong_position, &fsl_replay::ModelCheckLimits::default())
             .expect("wrong refusal position replay runs"),
         RefinementTraceSettlement::Inconclusive(_)
     ));
@@ -2043,7 +2098,7 @@ fn an_intended_protocol_terminal_mismatch_replays() {
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
+        replay_refinement_trace(world.refinement(), &systems, &counterexample, &fsl_replay::ModelCheckLimits::default())
             .expect("counterexample replay runs"),
         RefinementTraceSettlement::Reproduced {
             failure: fsl_replay::RefinementFailure::TerminalSuccessMismatch { .. },
@@ -2057,7 +2112,7 @@ fn an_intended_protocol_terminal_mismatch_replays() {
         *position = 1;
     }
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &wrong_position)
+        replay_refinement_trace(world.refinement(), &systems, &wrong_position, &fsl_replay::ModelCheckLimits::default())
             .expect("wrong terminal position replay runs"),
         RefinementTraceSettlement::Inconclusive(_)
     ));
@@ -2068,7 +2123,7 @@ fn an_intended_protocol_terminal_mismatch_replays() {
         *direction = fsl_replay::TerminalSuccessDirection::ConcreteOnly;
     }
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &wrong_direction)
+        replay_refinement_trace(world.refinement(), &systems, &wrong_direction, &fsl_replay::ModelCheckLimits::default())
             .expect("wrong terminal direction replay runs"),
         RefinementTraceSettlement::Inconclusive(_)
     ));
@@ -2149,7 +2204,7 @@ fn a_concrete_terminal_success_mismatch_replays() {
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
+        replay_refinement_trace(world.refinement(), &systems, &counterexample, &fsl_replay::ModelCheckLimits::default())
             .expect("counterexample replay runs"),
         RefinementTraceSettlement::Reproduced {
             failure: fsl_replay::RefinementFailure::TerminalSuccessMismatch { .. },
@@ -3008,7 +3063,7 @@ fn a_protocol_enabled_class_the_concrete_loop_never_takes_is_hidden_unfair_and_r
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(unfair.refinement(), &systems, &counterexample)
+        replay_refinement_trace(unfair.refinement(), &systems, &counterexample, &fsl_replay::ModelCheckLimits::default())
             .expect("counterexample replay runs"),
         RefinementTraceSettlement::Reproduced { .. }
     ));

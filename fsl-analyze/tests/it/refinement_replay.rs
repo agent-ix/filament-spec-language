@@ -119,7 +119,7 @@ fn replay(
         subject.abstract_initials.clone(),
     )
     .expect("the subjects open");
-    replay_refinement_trace(subject.refinement, &systems, payload)
+    replay_refinement_trace(subject.refinement, &systems, payload, &fsl_replay::ModelCheckLimits::default())
 }
 
 fn settle(subject: &Subject<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {

@@ -160,7 +160,7 @@ fn run(
                     "the-refinement-subjects-reopen",
                 ))
             })?;
-        let settled = replay_refinement_trace(refinement, &systems, payload)?;
+        let settled = replay_refinement_trace(refinement, &systems, payload, &form.limits)?;
         if let RefinementTraceSettlement::Reproduced { mapped, .. } = &settled {
             steps = Some(counterexample_steps(refinement, &systems, mapped)?);
         }

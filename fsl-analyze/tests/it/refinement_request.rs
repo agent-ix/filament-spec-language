@@ -317,7 +317,7 @@ fn settle(world: &World, initial: &DocumentRef) -> TerminalValue {
             abstract_initial: vec![initial.clone()].into(),
         },
         &Cancel::new(),
-        |payload| replay_refinement_trace(world.refinement(), &systems, payload),
+        |payload| replay_refinement_trace(world.refinement(), &systems, payload, &fsl_replay::ModelCheckLimits::default()),
     )
     .value
 }

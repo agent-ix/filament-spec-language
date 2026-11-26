@@ -63,7 +63,7 @@ fn replay(
         vec![world.abstract_initial()],
     )
     .expect("the subjects open");
-    replay_refinement_trace(world.refinement(), &systems, payload)
+    replay_refinement_trace(world.refinement(), &systems, payload, &fsl_replay::ModelCheckLimits::default())
 }
 
 fn settle(world: &World<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {

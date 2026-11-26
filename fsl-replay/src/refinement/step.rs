@@ -440,17 +440,20 @@ pub fn check_protocol_initial(
     index: usize,
     concrete_initial: &ModelState,
 ) -> Result<StepResult, ProtocolRefusal> {
-    check_protocol_initial_with_transition_limit(
+    let (max, consumed) = protocol.replay_transitions();
+    let result = check_protocol_initial_with_transition_limit(
         refinement,
         concrete_system,
         abstract_system,
         protocol,
         index,
         concrete_initial,
-        u64::MAX,
-        0,
+        max,
+        consumed,
         None,
-    )
+    )?;
+    protocol.charge_replay_transitions(result.abstract_successors);
+    Ok(result)
 }
 
 /// FR-148: check an initial state while charging protocol closure to the
@@ -566,17 +569,20 @@ pub fn check_protocol_step(
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
 ) -> StepResult {
-    check_protocol_step_with_transition_limit(
+    let (max, consumed) = protocol.replay_transitions();
+    let result = check_protocol_step_with_transition_limit(
         refinement,
         concrete_system,
         abstract_system,
         protocol,
         pre,
         step,
-        u64::MAX,
-        0,
+        max,
+        consumed,
         None,
-    )
+    );
+    protocol.charge_replay_transitions(result.abstract_successors);
+    result
 }
 
 /// FR-148: decide a protocol step while charging closure to the caller's
