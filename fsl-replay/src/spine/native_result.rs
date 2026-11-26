@@ -4476,8 +4476,8 @@ mod qsl_3117_deciding_run {
                 Err(_) => "refused without a member path",
             };
             assert!(
-                matches!(result, Err(NativeRunReadError::Invalid { member, .. }) if member == expected)
-                    || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
+                matches!(&result, Err(NativeRunReadError::Invalid { member, .. }) if *member == expected)
+                    || matches!(&result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
                 "expected refusal naming {expected}, got {observed}"
             );
         }
