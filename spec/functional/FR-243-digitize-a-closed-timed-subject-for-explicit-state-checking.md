@@ -98,11 +98,13 @@ decided on the digital-clock route with an exact value.
 - When EN-1's digital-clock route declines a claim that is not digitisable or
   a state-graph form, it SHALL carry the diagnostic member `not_digitisable`,
   an object `{rule, span: {start, end}}` (FSpec FR-272): `span` is the byte
-  range in the unit source of the named part, or of the claim's declaration
-  for a state-graph form, and `rule` is one of the spellings below. No other
-  decline carries the member. A strict interval is declined by the
-  strict-constraint rule above before (a) is read, with that decline's own
-  member.
+  range of the named part, or of the claim's declaration for a state-graph
+  form, and `rule` is one of the spellings below. For rule (f) the range is
+  in the subject's source unit, the one that declares the named clock
+  constraint; otherwise it is in the claim's source unit. No other decline
+  carries the member. A strict interval is declined by the strict-constraint
+  rule above before (a) is read, and that decline carries no
+  `not_digitisable`.
 - Of the state-graph forms (FR-852), EN-1's digital-clock route SHALL decide
   `possible` and SHALL decline `always possible` and `unique path`
   `invalid-input` naming the form: each quantifies over every reachable
@@ -125,7 +127,6 @@ The `not_digitisable` rule spellings are a closed set:
 
 | `rule` | What is declined |
 |--------|------------------|
-| `interval-not-closed` | (a) |
 | `clock-atom` | (b) |
 | `second-bounded-operator` | (c) |
 | `two-sided-interval` | (d) |
