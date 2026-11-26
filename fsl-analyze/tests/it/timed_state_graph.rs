@@ -963,8 +963,13 @@ fn zones_take_the_trap_stem_from_a_node_a_step_lands_in() {
     ] {
         let item = escape_run(name, Some("late"), claim);
         assert_refuted_and_replayed(&item);
+        assert_eq!(item["counterexample"]["arm"], "trap", "{item}");
         let stem = &item["counterexample"]["stem"]["steps"];
         assert_eq!(stem.as_array().map(Vec::len), Some(2), "{item}");
+        // The last step is `slide`, whose post-state is phase 3, a trapped
+        // state: the stem ends there, not at a point before a delay.
+        let last = stem[1]["transition"]["operation"].as_str().unwrap_or("");
+        assert!(last.contains("Call/slide"), "{item}");
     }
 }
 
@@ -981,6 +986,7 @@ fn zones_refute_by_two_sequences_beside_a_trap_with_no_stem() {
          from (c.phase = 0 or c.phase = 1) to (c.phase = 2);",
     );
     assert_refuted_and_replayed(&item);
+    assert_eq!(item["counterexample"]["arm"], "path-pair", "{item}");
 }
 
 /// A certificate over the explored graph of the trap subject, listing
@@ -1335,6 +1341,59 @@ fn a_budget_the_graph_fills_stops_the_decision() {
     let item = run.item(0);
     assert_eq!(label(&item), "incomplete", "{item}");
     assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
+}
+
+/// Each zone pair a subtraction reads is charged to
+/// `max_symbolic_transitions` by the producer: on the trap subject the
+/// decision completes at `TOTAL` transitions, the two of the graph's edges
+/// and the work of the decision, and stops at one fewer.
+#[trace("TC-2412", "FR-852-AC-33")]
+#[test]
+fn the_producer_charges_each_pair_a_subtraction_reads() {
+    use filament_exact::Cancel;
+    use fsl_analyze::zone_check::{
+        decide_timed_state_graph, explore_timed_state_graph, ZoneCheckLimit, ZoneCheckLimits,
+        ZoneCheckRefusal, ZoneStop,
+    };
+    use fsl_eval::simulation::model::TimedSystem;
+
+    const TOTAL: u64 = 9;
+
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x", "y"], &PHASE_OPS),
+        crate::zone_search::TIMED,
+        &trap_body("false", ALWAYS_DONE),
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed subject");
+    let graph = explore_timed_state_graph(&timed, ZoneCheckLimits::default(), &Cancel::new())
+        .expect("closed graph");
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("Done")
+        .expect("Done");
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: world.request().universes[0].population.clone(),
+        key: "c".to_owned(),
+    };
+    let over = system
+        .bound_reference(claim.over().expect("over").object.clone(), &instance)
+        .expect("bound c");
+    let decide = |budget: u64| {
+        let limits = ZoneCheckLimits {
+            max_symbolic_transitions: budget,
+            ..ZoneCheckLimits::default()
+        };
+        decide_timed_state_graph(&timed, &graph, claim, Some(&over), limits, &Cancel::new())
+    };
+    assert!(decide(TOTAL).is_ok());
+    assert_eq!(
+        decide(TOTAL - 1),
+        Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(
+            ZoneCheckLimit::MaxSymbolicTransitions(TOTAL - 1)
+        )))
+    );
 }
 
 /// FR-125 "Instancing": on the digital probabilistic route, the proved entry
