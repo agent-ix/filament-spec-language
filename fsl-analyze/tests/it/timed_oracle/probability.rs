@@ -620,7 +620,6 @@ fn row_3444_two_clock_regions_minimum_routes() {
 }
 
 #[test]
-#[ignore = "QSL-3443: en-5 certificate is rejected where the maximum is 1"]
 fn row_3444_two_clock_regions_maximum_routes() {
     assert_routes(&two_clocks(false).only(&["Max", "Half"]));
 }
@@ -631,7 +630,6 @@ fn row_3444_two_clock_regions_bounded_minimum_routes() {
 }
 
 #[test]
-#[ignore = "QSL-3444: en-5 proves maximum 0 where it is 1"]
 fn row_3444_two_clock_regions_bounded_maximum_routes() {
     assert_routes(&two_clocks(true).only(&["Max", "Half"]));
 }
