@@ -50,3 +50,32 @@ Hand trace, unrun. phase 0 under "x <= 1 ms"; idle (0 to 0, resets x); go (0 to 
 ### FND-003
 
 On main EN-1 built the claim product first, so an undefined reading refuted before vacuity; the PR classifies vacuity first. EN-6 returns on an undefined reading as soon as time diverges, both in judge (TT-1) and in the liveness decide, before admits_fair. EN-1's new answer matches FSpec FR-161 (fairness restricts the admitted behaviours), but the two routes now disagree, the PR body names EN-1 only, and no added test exercises it. admitted_refutation also takes divergence only on both routes, so where some behaviour is fair, an undefined reading lying only on unfair runs still refutes.
+
+## New findings (disposition pass 1)
+
+Checked at 6cf78369a61fceb593f57374bd8eff9e3bf97c15 by reading the four new commits and the merge; no cargo was run by this review.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | With some fair behaviour elsewhere, an undefined reading lying only on unfair runs refutes on both routes, where FSpec FR-161 and FR-416 admit no such behaviour | fsl-analyze/src/model_check/digital.rs:681-775, fsl-analyze/src/zone_check/liveness.rs:467 |
+| FND-005 | medium | A clock owner's population with no universe is failed invalid-value, where FR-239 requires RequiresBound before exploring | fsl-eval/src/simulation/model/timed.rs:743-746 |
+
+### FND-004
+
+FSpec FR-161 restricts the admitted traces by fairness before evaluation, and FSpec FR-416 "Undefined evaluation" refutes only at a position of an admitted timed behaviour. Both routes test the undefined position for divergence only. The FSL FR-239 undefined bullet says "time-divergent continuation" and carries the same gap. Pre-existing on main and disclosed in the PR body.
+
+Hand trace, unrun. Operations block (phase 0 to 2), rest (phase 0, resets x), spin (phase 2, resets x), go (phase 2 to 1, resets x); invariants "phase 2: x <= 1 ms" and "phase 1: x <= 0 ms"; claim "fair weak go; always holds(mod_defined(c.phase))". The rest loop at phase 0 is fair and divergent. From phase 2 a run either spins for ever with go always enabled (unfair) or takes go into a time-lock. No admitted behaviour reaches phase 2, so the claim is proved; both routes refute undefined-evaluation.
+
+### FND-005
+
+instances_of maps every universe_members error, RequiresBound included, to TimedSubjectRefusal::Unbounded, which subject_refusal settles failed invalid-value. FR-239 "An unbounded population root SHALL refuse RequiresBound before any state is explored", FR-230 (a context population with no universe is refused RequiresBound by the timed engines) and, where the population overlaps the claim's type, FR-125-AC-13 all require requires-bound. Carrying the NotSimulated through as NotSimulated(...) gives it.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Delay edges pass through their own vertex, which is the acceptance set |
+| FND-002 | fixed | Fair clauses are decided on the liveness product by producer and checker |
+| FND-003 | fixed | Fair vacuity is classified before any claim product |
+| FND-004 | still-open: no fix landed | Found this pass |
+| FND-005 | still-open: no fix landed | Found this pass |

@@ -30,3 +30,19 @@ CONDITIONAL: trace tags that claim more than their tests assert.
 ## Coverage
 
 Plan completion: not assessed. implements marks: claim_start (FR-125-AC-7, AC-13), admitted_start (FR-125-AC-13, FR-232-AC-3, FR-240-AC-4), admitted_refutation (FR-239-AC-5), Digital::decide, check_timed_model and check_zone_certificate_with_time_source (FR-125-AC-7) match their bodies. Every criterion in scope has a tagged test. Expected values of the added tests were re-derived by hand from their models and agree. Missing cases are in the code review (SR-34920): a time-lock reached after a delay, and fairness with no fair behaviour.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | medium | The new liveness-product route for fair TT-1 and TT-2 claims has no test of a refutation, of a TT-2 window past vacuity, or of the symmetry refusal | fsl-analyze/tests/it/analyze_timed_cli.rs:1456-1520 |
+
+The new tests settle fair claims by vacuity (decided before any claim product) and one TT-1 proof. FR-239 now requires every fair claim to be decided on the liveness product, whatever its form; no timed test elsewhere declares a fairness on an always or windowed claim.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The FR-632-AC-2 and TC-1592 tags are removed |
+| FND-002 | fixed | The TC-1170 tag is removed |
+| FND-003 | still-open: no fix landed | Found this pass |
