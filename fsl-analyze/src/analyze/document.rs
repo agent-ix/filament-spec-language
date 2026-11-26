@@ -2189,6 +2189,7 @@ fn resolve_one(
                     None => return invalid_value(index, name, "capacities"),
                 }
             }
+            (Some(_), None) if protocol_global_kind => None,
             (Some(_), _) if protocol_analysis_kind => {
                 return invalid_member(index, name, "temporal.subject.protocol");
             }

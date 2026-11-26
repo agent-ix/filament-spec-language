@@ -836,6 +836,9 @@ fn missing_package_role(
     program: &fsl_eval::simulation::protocol::PackageProtocolProgram<'_>,
     binding: &crate::analyze::SubjectBinding<'_>,
 ) -> Option<String> {
+    if binding.universes.is_empty() {
+        return None;
+    }
     let selected: std::collections::BTreeSet<_> = binding
         .universes
         .iter()

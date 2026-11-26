@@ -1160,7 +1160,9 @@ fn work<'a>(
                 });
                 match protocol {
                     Some(protocol) => {
-                        let missing_role = if item.options.recording.is_some() {
+                        let missing_role = if item.options.recording.is_some()
+                            || binding.universes.is_empty()
+                        {
                             None
                         } else {
                             let selected_model_packages: std::collections::BTreeSet<&str> = binding
