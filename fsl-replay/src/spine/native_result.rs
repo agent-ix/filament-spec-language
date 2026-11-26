@@ -11,7 +11,7 @@ use fsl_foundation::LocatedSpan;
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error as _};
 use serde_json::value::RawValue;
 
 use super::call::{CallOutcome, CallRefusal, CallValue};
@@ -1354,14 +1354,58 @@ struct ExtractionPositionRead {
 
 #[implements("FR-267-AC-17")]
 fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadError> {
-    if value
-        .as_object()
-        .is_some_and(|members| !members.contains_key("map"))
+    require_extraction_members(value, "extraction", &["original", "body", "binding", "outcome", "map"])?;
+    if let Some(original) = value.get("original") {
+        require_extraction_members(
+            original,
+            "extraction.original",
+            &["authority", "identity", "path", "bytes"],
+        )?;
+    }
+    if let Some(body) = value.get("body") {
+        require_extraction_members(
+            body,
+            "extraction.body",
+            &["authority", "identity", "document", "bytes"],
+        )?;
+    }
+    if let Some(binding) = value.get("binding") {
+        require_extraction_members(binding, "extraction.binding", &["clause", "package"])?;
+    }
+    if let Some(map) = value.get("map") {
+        require_extraction_members(map, "extraction.map", &["region", "segments"])?;
+        if let Some(region) = map.get("region") {
+            require_extraction_members(region, "extraction.map.region", &["start", "end"])?;
+        }
+        if let Some(segments) = map.get("segments").and_then(serde_json::Value::as_array) {
+            for (index, segment) in segments.iter().enumerate() {
+                let path = format!("extraction.map.segments[{index}]");
+                require_extraction_members(
+                    segment,
+                    &path,
+                    &["body_start", "body_end", "original_start", "original_end"],
+                )?;
+            }
+        }
+    }
+    if let Some(regions) = value
+        .get("original_regions")
+        .and_then(serde_json::Value::as_array)
     {
-        return Err(NativeRunReadError::Invalid {
-            member: "extraction.map",
-            reason: "a map record is required",
-        });
+        for (index, region) in regions.iter().enumerate() {
+            let path = format!("extraction.original_regions[{index}]");
+            require_extraction_members(region, &path, &["start", "end"])?;
+            for endpoint in ["start", "end"] {
+                let endpoint_path = format!("{path}.{endpoint}");
+                if let Some(position) = region.get(endpoint) {
+                    require_extraction_members(
+                        position,
+                        &endpoint_path,
+                        &["byte", "line", "column"],
+                    )?;
+                }
+            }
+        }
     }
     let extraction: ExtractionRead =
         serde_path_to_error::deserialize(value.clone()).map_err(|error| {
@@ -1390,6 +1434,25 @@ fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadErr
             member: "extraction.original_regions",
             reason: "a non-empty region array",
         });
+    }
+    Ok(())
+}
+
+fn require_extraction_members(
+    value: &serde_json::Value,
+    path: &str,
+    required: &[&str],
+) -> Result<(), NativeRunReadError> {
+    let Some(object) = value.as_object() else {
+        return Ok(());
+    };
+    for name in required {
+        if !object.contains_key(*name) {
+            return Err(NativeRunReadError::MalformedMember {
+                member: format!("{path}.{name}"),
+                source: serde_json::Error::custom(format!("missing required member `{name}`")),
+            });
+        }
     }
     Ok(())
 }
@@ -4540,5 +4603,78 @@ mod qsl_3117_deciding_run {
                 || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.original_regions"),
             "empty extraction.original_regions must be reported at that member"
         );
+    }
+
+    /// FR-267-AC-17: missing members are reported at every extraction nesting level.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_missing_extraction_members_at_nested_levels() {
+        let cases = [
+            ("extraction.original", "/original"),
+            ("extraction.body", "/body"),
+            ("extraction.binding", "/binding"),
+            ("extraction.outcome", "/outcome"),
+            ("extraction.original.authority", "/original/authority"),
+            ("extraction.body.identity", "/body/identity"),
+            ("extraction.binding.clause", "/binding/clause"),
+            ("extraction.map.region", "/map/region"),
+            ("extraction.map.region.start", "/map/region/start"),
+            ("extraction.map.segments", "/map/segments"),
+            (
+                "extraction.map.segments[0].body_start",
+                "/map/segments/0/body_start",
+            ),
+            (
+                "extraction.original_regions[0].start.byte",
+                "/original_regions/0/start/byte",
+            ),
+        ];
+        let valid = json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+            "binding": {"clause": "check", "package": "fixture/package"},
+            "outcome": {},
+            "map": {
+                "region": {"start": 0, "end": 1},
+                "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
+            },
+            "original_regions": [{
+                "start": {"byte": 0, "line": 1, "column": 1},
+                "end": {"byte": 1, "line": 1, "column": 2}
+            }]
+        });
+
+        for (expected, pointer) in cases {
+            let mut extraction = valid.clone();
+            let (parent, member) = pointer.rsplit_once('/').unwrap();
+            let Some(container) = extraction.pointer_mut(parent) else {
+                panic!("missing test container at {parent}");
+            };
+            match container {
+                Value::Object(fields) => assert!(fields.remove(member).is_some()),
+                Value::Array(entries) => {
+                    let index = member.parse::<usize>().unwrap();
+                    entries.remove(index);
+                }
+                other => panic!("expected object or array at {parent}, got {other}"),
+            }
+
+            let mut document: Value = serde_json::from_str(include_str!(
+                "../../../tests/fixtures/native-run-result-decisive.json"
+            ))
+            .unwrap();
+            document["extraction"] = extraction;
+            let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+            let observed = match &result {
+                Err(NativeRunReadError::MalformedMember { member, .. }) => member.as_str(),
+                Err(NativeRunReadError::Invalid { member, .. }) => *member,
+                Ok(_) => "accepted",
+                Err(_) => "refused without a member path",
+            };
+            assert!(
+                matches!(&result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
+                "expected refusal naming {expected}, got {observed}"
+            );
+        }
     }
 }
