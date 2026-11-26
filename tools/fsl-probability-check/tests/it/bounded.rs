@@ -160,6 +160,31 @@ pub(super) fn request_with(
     request_with_mode(source, snapshot, exact, domain, false)
 }
 
+pub(super) fn request_with_accounting(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    accounting: filament_exact::ScalarLimits,
+    kernel: bool,
+) -> (Option<Value>, Settlement) {
+    let (mut requests, settlement) =
+        requests_with_accounting(source, snapshot, exact, domain, accounting, kernel);
+    let first = (!requests.is_empty()).then(|| requests.remove(0));
+    (first, settlement)
+}
+
+pub(super) fn requests_with_accounting(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    accounting: filament_exact::ScalarLimits,
+    kernel: bool,
+) -> (Vec<Value>, Settlement) {
+    requests_for(source, snapshot, exact, domain, kernel, None, accounting)
+}
+
 fn request_with_mode(
     source: &str,
     snapshot: &[u8],
@@ -167,9 +192,14 @@ fn request_with_mode(
     domain: &[u8],
     kernel: bool,
 ) -> (Option<Value>, Settlement) {
-    let (mut requests, settlement) = requests_with_mode(source, snapshot, exact, domain, kernel);
-    let first = (!requests.is_empty()).then(|| requests.remove(0));
-    (first, settlement)
+    request_with_accounting(
+        source,
+        snapshot,
+        exact,
+        domain,
+        fsl_replay::AccountingLimits::default().0,
+        kernel,
+    )
 }
 
 /// One checker request for the settled record's certificate document and, for a
@@ -181,7 +211,15 @@ pub(super) fn requests_with_mode(
     domain: &[u8],
     kernel: bool,
 ) -> (Vec<Value>, Settlement) {
-    requests_for(source, snapshot, exact, domain, kernel, None)
+    requests_for(
+        source,
+        snapshot,
+        exact,
+        domain,
+        kernel,
+        None,
+        fsl_replay::AccountingLimits::default().0,
+    )
 }
 
 /// The solver's certificate, altered before the core's checker sees it.
@@ -197,7 +235,15 @@ pub(super) fn requests_offering(
     domain: &[u8],
     offered: Tamper<'_>,
 ) -> (Vec<Value>, Settlement) {
-    requests_for(source, snapshot, exact, domain, false, Some(offered))
+    requests_for(
+        source,
+        snapshot,
+        exact,
+        domain,
+        false,
+        Some(offered),
+        fsl_replay::AccountingLimits::default().0,
+    )
 }
 
 fn requests_for(
@@ -207,6 +253,7 @@ fn requests_for(
     domain: &[u8],
     kernel: bool,
     offered: Option<Tamper<'_>>,
+    accounting: filament_exact::ScalarLimits,
 ) -> (Vec<Value>, Settlement) {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
@@ -259,7 +306,7 @@ fn requests_for(
         expansion: ExpansionLimits {
             max_candidates: 100_000,
         },
-        meter: fsl_replay::AccountingLimits::default().0,
+        meter: accounting,
         emit: limits.package.emit(),
     };
     let system = fsl_eval::simulation::model::ModelSystem::new(simulation.clone()).unwrap();
@@ -549,12 +596,6 @@ pub(super) fn proof(source: &str, snapshot: &[u8]) -> Value {
             source.lines().last().unwrap_or(source)
         )
     })
-}
-
-pub(super) fn kernel_proof(source: &str, snapshot: &[u8]) -> Value {
-    let (request, settlement) =
-        request_with_mode(source, snapshot, ExactProbLimits::default(), DOMAIN, true);
-    request.unwrap_or_else(|| panic!("Kernel fixture carries no proof: {settlement:?}"))
 }
 
 pub(super) fn document_limits(request: &Value) -> fsl_replay::ProbabilityDocumentLimits {

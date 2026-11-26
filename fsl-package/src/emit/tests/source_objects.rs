@@ -740,7 +740,7 @@ fn fixture_e_s_checks_and_emits_object_node() {
 // back through FSL's I2 reader, and the owner forms that read refuses.
 
 /// Fixture S checked and linked, ready for S4.
-fn fixture_s_package() -> CheckedPackage {
+pub(in crate::emit) fn fixture_s_package() -> CheckedPackage {
     let text = format!("{HEADER}{S}");
     let packages =
         fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();

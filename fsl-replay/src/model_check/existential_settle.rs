@@ -191,12 +191,21 @@ pub fn settle_existential(
             stem,
             undefined: finding,
         } => {
+            let contract = matches!(finding.site.locus, UndefinedLocus::Contract(_));
             let found = GraphUndefined {
-                predicate: Some(fsl_semantics::check::PredicateRole::Target),
+                // A contract conjunction with no value is no claim predicate.
+                predicate: (!contract).then_some(fsl_semantics::check::PredicateRole::Target),
                 transition: finding.site.transition.clone(),
                 state_key: finding.site.state_key.clone(),
                 locus: match &finding.site.locus {
                     UndefinedLocus::Atom(atom) => atom_location(clause, *atom).cloned(),
+                    UndefinedLocus::Contract(name) => request
+                        .package
+                        .graph()
+                        .state_clauses()
+                        .iter()
+                        .find(|candidate| candidate.name() == name)
+                        .map(|candidate| candidate.body().location().clone()),
                     _ => None,
                 },
                 cause: finding.cause.clone(),
@@ -293,6 +302,11 @@ fn settle_closed(
         cancel,
     ) {
         Err(ClosedStop::Encoding(_)) => Row::failed(),
+        // A witness or trap past a contract conjunction with no value is no
+        // result (ADR-018 UE-6): the engine's outcome disagrees with this
+        // recomputation.
+        Err(ClosedStop::Undefined { .. }) => Row::failed(),
+        Err(ClosedStop::Refused) => Row::inconclusive(InconclusiveCause::UndecidedSuccessor),
         // A state that cannot be expanded leaves the successor relation unknown.
         Err(ClosedStop::Expansion(_)) => Row::inconclusive(InconclusiveCause::UndecidedSuccessor),
         Err(ClosedStop::Executions { limit }) => Row::stopped_run(
