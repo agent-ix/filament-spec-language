@@ -8356,7 +8356,9 @@ fn emit_package_nodes(
                     .iter()
                     .map(|(key, id)| (key.clone(), id.clone())),
             );
-            value_validity.renumbering.relabel_term_data(&row_ids, data);
+            value_validity
+                .renumbering
+                .relabel_term_data(&row_ids, data);
         }
     }
     let selected_operation_member_rows = selected_operation_member_rows
@@ -8440,6 +8442,11 @@ fn emit_package_nodes(
         &value_validity,
         &relation_rows,
         &omitted_causes,
+    )?;
+    value_validity_requirements::renumber_records(
+        &requirement_rows,
+        &mut nodes,
+        &mut source_map,
     )?;
     meter.charge(&requirement_rows)?;
     let path_condition_frames =
