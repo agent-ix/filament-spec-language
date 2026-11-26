@@ -486,6 +486,7 @@ pub enum SimulationRefusal {
 /// [`SimulationRefusal`] when the certificate names another refinement, a
 /// subject does not open, a root is unbounded, or the concrete subject has no
 /// initial state. A refusal is never an acceptance.
+#[implements("FR-149-AC-1")]
 pub fn check_simulation_certificate(
     request: &SimulationCertificateRequest<'_>,
     certificate: &SimulationCertificate,

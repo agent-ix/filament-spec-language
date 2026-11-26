@@ -2039,6 +2039,7 @@ fn construct_document(
 /// The document is checked as the claim side
 /// ([`check_probability_certificate_document_as`] with
 /// [`CertificateRole::Claim`]).
+#[implements("FR-201-AC-1")]
 pub fn check_probability_certificate_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2063,6 +2064,7 @@ pub fn check_probability_certificate_document(
 /// claim's threshold, and one of the wrong kind is rejected `Malformed` at
 /// `kind`; a counterpart is a `lower` or `upper` document that meets its
 /// conditions and no threshold.
+#[implements("FR-1042-AC-1")]
 pub fn check_probability_certificate_document_as(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
