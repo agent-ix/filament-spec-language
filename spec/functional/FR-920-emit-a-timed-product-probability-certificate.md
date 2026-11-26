@@ -93,6 +93,13 @@ would have refused the certificate before reading a value.
   increasing order of the state's nonzero fractional parts, equal fractions
   sharing a position. `deadline` is `["deadline",D,t,fraction]` with the same
   reading. Clock identity, order and caps are FR-196's.
+- For `bounded-window`, whose route is always `"region"` (FR-204 Admission
+  "Route"), the key SHALL be the region key with the monitor member FR-196's
+  `["window",residual]`. Each obligation's `[kind,o,integer,fraction]` reads
+  `integer` and `fraction` as a region clock entry does, and the obligation
+  clocks are among "the state's nonzero fractional parts" that order every
+  `fraction` of the key: model clocks, the deadline clock and obligations
+  alike. Two keys whose residuals differ in any byte are different states.
 - For `expected-elapsed` on the region route, the key SHALL be the region key
   with the model member's tag `"boundary-region"` and a trailing `corner`, one
   canonical integer string per clock entry in entry order, then the deadline

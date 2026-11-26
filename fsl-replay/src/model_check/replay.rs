@@ -1868,6 +1868,24 @@ struct ProtocolReplay<'r> {
 impl ProtocolReplay<'_> {
     /// FR-217 over `system`, under whichever memory model the subject's
     /// resolved models need (FR-227).
+    #[implements(
+        "FR-217-AC-1",
+        "FR-217-AC-2",
+        "FR-217-AC-3",
+        "FR-217-AC-4",
+        "FR-217-AC-5",
+        "FR-217-AC-6",
+        "FR-217-AC-7",
+        "FR-217-AC-8",
+        "FR-217-AC-9",
+        "FR-227-AC-1",
+        "FR-227-AC-2",
+        "FR-227-AC-3",
+        "FR-227-AC-4",
+        "FR-227-AC-5",
+        "FR-227-AC-6",
+        "FR-227-AC-7"
+    )]
     fn settle<M: MemoryModel>(
         &self,
         system: &ProtocolSystem<'_, M>,
@@ -3022,7 +3040,9 @@ fn check_formula<S: SubjectSystem>(
 /// behaviour supplied as a request, not as a counterexample to settle.
 #[derive(Debug)]
 pub struct ModelTraceRun {
-    /// The typed reference actually bound in the admitted initial state.
+    /// The written binding of the clause's `over` parameter (FSpec FR-364's
+    /// `over_binding`), with the admitted member type, when the behaviour
+    /// names an instance.
     pub bound_over: Option<filament_exact::ObjectReference>,
     /// The actual final state's canonical key, including an initial terminal state.
     pub terminal_state: fsl_eval::simulation::StateKey,
@@ -3060,6 +3080,7 @@ pub enum ModelTraceEnd {
 ///
 /// [`ReplayRefusal`] as [`replay_model_trace`] refuses a model counterexample's
 /// initial state, steps, loop closure and fairness.
+#[implements("FR-125-AC-9")]
 pub fn evaluate_model_trace(
     system: &ModelSystem<'_>,
     payload: &TemporalCounterexample,
@@ -3122,19 +3143,15 @@ pub fn evaluate_model_trace(
         }
         _ => None,
     };
-    let initial = positions
-        .first()
-        .ok_or_else(|| fault("a-replayed-initial-state-exists"))?;
     let bound_over = payload
         .over_binding
         .as_ref()
         .map(|instance| {
             letters
-                .over_reference(instance, &system.atom_state(&initial.state))
-                .map_err(|_| fault("the-replayed-clause-binding-is-readable"))
+                .instance_reference(instance)
+                .ok_or_else(|| fault("the-replayed-clause-binding-is-readable"))
         })
-        .transpose()?
-        .flatten();
+        .transpose()?;
     let terminal_state = positions
         .last()
         .ok_or_else(|| fault("a-replayed-final-state-exists"))?
@@ -3185,6 +3202,7 @@ pub enum BehaviourValuationEnd {
 /// [`ReplayRefusal`] when the system is not simulated (an unbounded root or
 /// an unencodable key) or the evaluator broke an invariant or refused a
 /// trace.
+#[implements("FR-931-AC-4", "FR-931-AC-6")]
 pub fn behaviour_valuations(
     system: &ModelSystem<'_>,
     clause: &CheckedTemporalClause,
