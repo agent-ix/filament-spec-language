@@ -3005,15 +3005,16 @@ fn a_run_of_zero_delay_cycles_takes_the_unweighted_fraction() {
     assert_eq!(verdict.estimate, Some(ratio(1, 2)));
 }
 
-/// FSpec FR-407 "Time windows": a delay adds no position. `send` is the only
-/// step. At 5 ms and 6 ms it lands after the window; at 4 ms it is the position
-/// at 4 ms; under a time invariant the state after `send` at 2 ms is not
-/// quiescent, so it has no stutter position either. The exact route is asserted
-/// where it reads the same value on main; its other five cases are PR #4001's.
+/// FSpec FR-407 "Time windows": a delay adds no position. The sampled and the
+/// exact route read the same hand-computed value on each one-behaviour model.
+/// `send` is the only step. At 5 ms and 6 ms it lands after the window; at
+/// 4 ms it is the position at 4 ms; under a time invariant the state after
+/// `send` at 2 ms is not quiescent, so it has no stutter position either.
 #[test]
-fn a_timed_formula_reads_no_position_inside_a_delay() {
+fn a_timed_formula_reads_no_position_inside_a_delay_on_either_route() {
     const HELD: &str = "time invariant Held when { self.phase = 1 } { self.x <= 10 ms }\n";
     let mut sampled = Vec::new();
+    let mut exact = Vec::new();
     let mut expected = Vec::new();
     for (name, send_ms, invariant, formula, holds) in [
         (
@@ -3083,12 +3084,15 @@ fn a_timed_formula_reads_no_position_inside_a_delay() {
             verdict.estimate,
             verdict.decision == Decision::Accepted,
         ));
-        if name == "AtHorizon" {
-            assert_eq!(exact_outcome(&world, name), "proved", "exact route");
-        }
+        exact.push((name, exact_outcome(&world, name)));
         expected.push((name, Some(ratio(i64::from(holds), 1)), holds));
     }
     assert_eq!(sampled, expected, "sampled route");
+    let exact_expected: Vec<_> = expected
+        .iter()
+        .map(|(name, _, holds)| (*name, if *holds { "proved" } else { "refuted" }.to_owned()))
+        .collect();
+    assert_eq!(exact, exact_expected, "exact route");
 }
 
 /// The exact route's outcome word for the claim `name`.
