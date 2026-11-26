@@ -28,7 +28,10 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
             .split_once('=')
             .map(|(name, _)| name.trim())
             .expect("dependency rows have a name");
-        assert!(allowed.contains(&name), "unexpected direct dependency {name}");
+        assert!(
+            allowed.contains(&name),
+            "unexpected direct dependency {name}"
+        );
     }
     for required in [
         "fsl-foundation =",
@@ -44,21 +47,28 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
             "reference dependency section omits required crate {required}"
         );
     }
-    for forbidden in ["fsl-eval", "fsl-analyze", "fsl-replay", "fsl-hybrid-reference"] {
+    for forbidden in [
+        "fsl-eval",
+        "fsl-analyze",
+        "fsl-replay",
+        "fsl-hybrid-reference",
+    ] {
         assert!(
             !dependencies.contains(forbidden),
             "reference dependency section names forbidden crate {forbidden}"
         );
     }
-    let reference_source =
-        include_str!("../../../fsl-definitional-reference/src/lib.rs");
+    let reference_source = include_str!("../../../fsl-definitional-reference/src/lib.rs");
     assert!(reference_source.contains("impl RewardEvaluator for ReferenceRewardEvaluator"));
     assert!(!reference_source.contains("S6aRewardEvaluator"));
 
     let analyze_manifest = include_str!("../../../fsl-analyze/Cargo.toml");
     let reference_entry = analyze_manifest
         .lines()
-        .find(|line| line.trim_start().starts_with("fsl-definitional-reference ="))
+        .find(|line| {
+            line.trim_start()
+                .starts_with("fsl-definitional-reference =")
+        })
         .expect("analyze manifest registers the oracle");
     let dev_dependencies = analyze_manifest
         .split_once("[dev-dependencies]")
@@ -76,18 +86,77 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
 #[test]
 fn reference_refuses_disjunctive_operation_guards() {
     let mut model = crate::prob_world::coin("");
-    model.body.push_str(
-        "\npre Disjunctive using v on M::Coin::drop { self.v = 0 or self.v = 1 }\n",
-    );
+    model
+        .body
+        .push_str("\npre Disjunctive using v on M::Coin::drop { self.v = 0 or self.v = 1 }\n");
     let world = crate::prob_world::World::try_new_with_evaluator(
         &model,
         &fsl_definitional_reference::ReferenceRewardEvaluator,
     )
     .expect("the model with a disjunctive guard passes front-end checking");
 
-    let refusal = fsl_definitional_reference::validate_conjunctive_guards(
+    let refusal = fsl_definitional_reference::validate_conjunctive_guards(world.package.graph())
+        .expect_err("the tiny reference refuses disjunctive guards");
+    assert_eq!(refusal.construct, "disjunctive operation guard");
+}
+
+/// FR-1051-AC-19: some-scheduler quantiles are refused without producing a
+/// truth value; the reference does not yet enumerate quantile distributions.
+#[trace("FR-1051-AC-19")]
+#[test]
+fn reference_refuses_some_scheduler_quantiles() {
+    let model = crate::prob_world::tossed_coin(
+        "probabilistic Q using ev on M over (c: M::Coin) under Even on origin \
+         { quantile 0.5 of (steps from holds(c.v = 0) until holds(c.v = 1) within 2) <= 1 }",
+    );
+    let world = crate::prob_world::World::try_new_with_evaluator(
+        &model,
+        &fsl_definitional_reference::ReferenceRewardEvaluator,
+    )
+    .expect("the checked package admits the quantile claim");
+
+    let refusal = fsl_definitional_reference::validate_tiny_fragment(world.package.graph())
+        .expect_err("some-scheduler quantile is outside the reference fragment");
+    assert_eq!(refusal.construct, "quantile claim over some scheduler");
+}
+
+/// FR-1051-AC-19: region constraints in the admitted reference fragment use
+/// integer constants, even though the exact clock valuation is rational.
+#[trace("FR-1051-AC-19")]
+#[test]
+fn reference_refuses_non_integer_clock_constants() {
+    const PROFILES: &str = "profile ev = \"filament.temporal.timed/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n";
+    let document = crate::timed_world::document(&["x"], &[("send", &["phase"])]);
+    let body = format!(
+        "{}pre Half using v on M::Call::send {{ self.x > rational(1, 2) ms }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world(&document, PROFILES, &body);
+
+    let refusal = fsl_definitional_reference::validate_tiny_fragment(world.package.graph())
+        .expect_err("a half-unit clock boundary is outside the region fragment");
+    assert_eq!(
+        refusal.construct,
+        "clock compared with a non-integer constant"
+    );
+}
+
+/// FR-1051-AC-19: an unbounded native integer has infinitely many valuations.
+#[trace("FR-1051-AC-19")]
+#[test]
+fn reference_refuses_unbounded_integer_fields() {
+    let mut model = crate::prob_world::coin("");
+    model.fields[0].1 = "ix://filament/native/Integer".to_owned();
+    let world = crate::prob_world::World::try_new_with_evaluator(
+        &model,
+        &fsl_definitional_reference::ReferenceRewardEvaluator,
+    )
+    .expect("the front end admits an unbounded integer field");
+
+    let refusal = fsl_definitional_reference::validate_tiny_fragment(
         world.package.graph(),
     )
-    .expect_err("the tiny reference refuses disjunctive guards");
-    assert_eq!(refusal.construct, "disjunctive operation guard");
+    .expect_err("the reference does not enumerate an unbounded integer field");
+    assert_eq!(refusal.construct, "unbounded integer field");
 }
