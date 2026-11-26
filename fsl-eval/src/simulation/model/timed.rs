@@ -43,6 +43,7 @@ use fsl_semantics::check::{
 use filament_checked::key::DeclarationKey;
 use fsl_semantics::model::object_environment::PlacePresences;
 use fsl_semantics::model::state::ModelState;
+use ix_trace_rs::implements;
 
 use super::encode::declaration_text;
 use super::state_predicate::PredicateReading;
@@ -550,7 +551,7 @@ pub enum TimedSubjectRefusal {
         /// The clock place's name.
         clock: String,
     },
-    /// A clock owner's population has no universe, so its clocks cannot be
+    /// A clock owner's objects cannot be named, so its clocks cannot be
     /// listed.
     #[error("the clocks of `{clock}` have no universe to range over")]
     Unbounded {
@@ -690,6 +691,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     ///
     /// As [`Self::new`], and [`TimedSubjectRefusal::NestedUnboundedCollection`]
     /// for a clock under two collections with no declared maximum.
+    #[implements("FR-125-AC-13")]
     pub fn with_max_clocks(
         system: &'s ModelSystem<'a>,
         model: &str,
@@ -744,7 +746,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             let unbounded = || TimedSubjectRefusal::Unbounded {
                 clock: name.to_owned(),
             };
-            let members = system.universe_members(&owner).map_err(|_| unbounded())?;
+            // A population with no universe refuses `RequiresBound`, naming
+            // it (FR-239, FR-230).
+            let members = system.universe_members(&owner)?;
             // Overlapping populations can list the same object key. Keep
             // one placement and allow its object to be held in any of them.
             let mut by_key = std::collections::BTreeMap::new();
