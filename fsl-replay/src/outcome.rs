@@ -623,18 +623,18 @@ pub(crate) fn is_identity_text(wire: &str) -> bool {
         && serde_json::from_str::<serde::de::IgnoredAny>(wire).is_ok()
 }
 
-/// Select the existing task-source operation spelling without copying it.
+/// The one `operation` string a task-source writer writes (FR-120): the
+/// identity text `text` itself, except that a name (a JSON string whose content
+/// is not itself an identity text) is written as that name, which the reader
+/// rule restores. Neither case copies.
 pub(crate) fn task_source_operation<'a>(
     operation: &'a serde_json::Value,
     text: &'a str,
 ) -> &'a str {
-    // Keep a checked operation's node as the task-source string spelling;
-    // other canonical identities retain their original text.
-    operation
-        .as_str()
-        .or_else(|| operation.get("name").and_then(serde_json::Value::as_str))
-        .or_else(|| operation.get("node").and_then(serde_json::Value::as_str))
-        .unwrap_or(text)
+    match operation.as_str() {
+        Some(name) if !is_identity_text(name) => name,
+        _ => text,
+    }
 }
 
 impl From<&filament_semantic_value::model_transition::ModelTransition>
@@ -3913,22 +3913,33 @@ mod tests {
         assert_eq!(generic.hint, None);
     }
 
-    /// FR-181 source transitions retain their canonical operation node when
-    /// the checked identity carries a node/package pair instead of a name.
-    #[trace("FR-237-AC-10", "FSpec-FR-364-AC-23")]
+    /// FR-120-AC-40 (TC-471): the task-source writer writes a declaration
+    /// identity text as itself, and a name identity as the name unless the
+    /// name is spelled like an identity text.
+    #[trace("TC-471", "FR-120-AC-40", "FR-237-AC-10", "FSpec-FR-364-AC-23")]
     #[test]
-    fn task_source_transition_wire_accepts_canonical_operation_nodes() {
-        let transition = filament_semantic_value::model_transition::ModelTransition::new(
-            r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#.to_owned(),
-            None,
-            Vec::new(),
-            quire_canonical::Limits::new(u64::MAX),
-        )
-        .expect("valid canonical model transition");
+    fn task_source_transition_wire_writes_the_declaration_identity_text() {
+        for (identity, written) in [
+            (
+                r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#,
+                r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#,
+            ),
+            (r#"{"name":"send"}"#, r#"{"name":"send"}"#),
+            (r#""Call::send""#, "Call::send"),
+            (r#""{}""#, r#""{}""#),
+        ] {
+            let transition = filament_semantic_value::model_transition::ModelTransition::new(
+                identity.to_owned(),
+                None,
+                Vec::new(),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .expect("valid canonical model transition");
 
-        let wire = task_source_transition_wire(&transition).expect("canonical operation node");
+            let wire = task_source_transition_wire(&transition).expect("a spelling");
 
-        assert_eq!(wire["operation"], "ix://test/timed/Call/send");
+            assert_eq!(wire["operation"], written, "{identity}");
+        }
     }
 
     #[trace("FR-237-AC-10")]

@@ -15,7 +15,10 @@ and argument identities, frame post-states with creations and deletions,
 closure, postcondition filtering and the state key's `semantic` form.
 
 Scope: FR-120-AC-1, FR-120-AC-2, FR-120-AC-3, FR-120-AC-4, FR-120-AC-27,
-FR-120-AC-39. The readers of FR-120-AC-39 are unit tests in `fsl-replay`.
+FR-120-AC-39, FR-120-AC-40, FR-120-AC-41. The readers of FR-120-AC-39 are unit
+tests in `fsl-replay`; the writers and readers of FR-120-AC-40 are unit tests in
+`fsl-replay` and one run-result test in `tests/it/`, and FR-120-AC-41 is a test
+in `fsl-analyze/tests/it/`.
 
 ## Test Procedure
 

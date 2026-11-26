@@ -2020,6 +2020,7 @@ mod tests {
     }
 
     /// Trace: FSpec-FR-181, FSpec-FR-418-AC-11
+    #[trace("TC-471", "FR-120-AC-40")]
     #[test]
     fn call_reference_adapter_uses_checked_admission_and_environment() {
         use super::{ReferenceCodec, reference_fixture};
@@ -2142,7 +2143,7 @@ mod tests {
         )
         .unwrap();
         let transition = ModelTransition::new(
-            r#"{"name":"keep"}"#.to_owned(),
+            r#"{"node":"ix://test/tasks/Task/keep","package":"test/tasks"}"#.to_owned(),
             Some(native_text.clone()),
             vec![native_text],
             quire_canonical::Limits::new(100000),
@@ -2166,7 +2167,10 @@ mod tests {
             quire_canonical::Limits::new(100000),
         );
         let mut task_wire = carrier.encode_task_template(&template).unwrap();
-        assert_eq!(task_wire["release"]["operation"], "keep");
+        assert_eq!(
+            task_wire["release"]["operation"],
+            r#"{"node":"ix://test/tasks/Task/keep","package":"test/tasks"}"#
+        );
         assert_eq!(task_wire["release"]["receiver"], wire);
         assert_eq!(task_wire["source_transition"]["arguments"][0], wire);
         let restored = carrier.restore_task_template(&task_wire).unwrap();

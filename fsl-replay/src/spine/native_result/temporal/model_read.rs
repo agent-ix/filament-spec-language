@@ -188,6 +188,24 @@ mod tests {
         Ok(counterexample)
     }
 
+    /// FR-267-AC-30, FR-120-AC-40: the model arm reads a source step's
+    /// declaration identity text as that identity.
+    #[test]
+    #[trace("TC-1160", "FR-267-AC-30", "TC-471", "FR-120-AC-40")]
+    fn a_source_step_reads_back_its_declaration_identity() {
+        let identity =
+            r#"{"node":"ix://test/counters/Counter/increment","package":"test/counters"}"#;
+        let mut value = model();
+        value["prefix"][0]["transition"] = json!({"type": "transition", "operation": identity,
+            "receiver": null, "arguments": []});
+        let read = read(&value, 1, None).expect("a structurally valid model counterexample");
+        let step = read.model_prefix().next().expect("the prefix step");
+        let ModelTransitionRead::Transition(transition) = &step.transition else {
+            panic!("a transition");
+        };
+        assert_eq!(transition.operation(), identity);
+    }
+
     #[test]
     #[trace("TC-1160", "FR-267-AC-30")]
     fn model_reader_retains_typed_steps_binding_boundary_and_report_position() {

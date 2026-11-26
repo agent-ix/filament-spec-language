@@ -451,9 +451,8 @@ fn read_document(
             });
         }
         let operation_wire = required(value, "operation", pointer)?;
-        // FR-364 carries source operations as their stable node URI. Recover
-        // the canonical node/package identity used by ModelTransition. Any
-        // other member is read by FR-120's reader rule.
+        // FR-120's reader rule; this reader also rebuilds a string beginning
+        // `ix://` as the `{node, package}` identity.
         let operation_value = match operation_wire {
             Json::String(operation) => match serde_json::from_str::<Json>(operation) {
                 Ok(value) if super::is_identity_text(operation) => value,
@@ -2102,11 +2101,10 @@ fn probabilistic_wire_using(
             .and_then(|key| state(&key))
     };
     let identity = |identity: &fsl_eval::simulation::model::ScheduledIdentity| {
-        let operation: Json = serde_json::from_str(&identity.operation)
-            .map_err(|_| Unspelled("scheduled operation"))?;
         Ok::<_, CounterexampleWireError>(json!({
             "type": "transition",
-            "operation": operation,
+            // The identity text itself, as one string (FR-120).
+            "operation": identity.operation,
             "receiver": reference(&identity.receiver)?,
             "arguments": identity.arguments.iter().map(typed).collect::<Result<Vec<_>, _>>()?,
         }))
@@ -2619,6 +2617,33 @@ mod tests {
                 })
             );
         }
+    }
+
+    /// FR-120-AC-40 (TC-471): the temporal counterexample writes a source
+    /// step's declaration identity text as itself, and its reader reads that
+    /// string as the same identity.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_temporal_source_step_keeps_its_declaration_identity() {
+        let identity =
+            r#"{"node":"ix://test/counters/Counter/increment","package":"test/counters"}"#;
+        let mut found = counterexample(1, CounterexampleKind::Formula);
+        found.prefix[0].transition = ModelTransition::new(
+            identity.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("a canonical transition");
+        found.lasso = Some(Lasso {
+            entry: 0,
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
+        });
+        let wire = temporal_wire(&found, None, None).expect("lasso spelling");
+        assert_eq!(wire["loop"][0]["transition"]["operation"], identity);
+        let read = read_temporal_counterexample::<ModelTransition>(&wire).expect("reads");
+        assert_eq!(read.prefix[0].transition.operation(), identity);
     }
 
     fn counterexample(steps: usize, kind: CounterexampleKind) -> TemporalCounterexample {
@@ -3212,7 +3237,10 @@ mod tests {
 
         let with_priority = task_transition_wire(&identity(Some(3))).expect("spelled task step");
         assert_eq!(with_priority["priority"], json!(3));
-        assert_eq!(with_priority["release"]["operation"], "release");
+        assert_eq!(
+            with_priority["release"]["operation"],
+            r#"{"name":"release"}"#
+        );
 
         let without_priority = task_transition_wire(&identity(None)).expect("spelled task step");
         assert!(without_priority.get("priority").is_none());
