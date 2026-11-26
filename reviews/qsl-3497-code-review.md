@@ -84,3 +84,8 @@ An exact item whose subject has an empty `initial` list and bounded universes se
 An exact item whose subject has a non-empty `initial` list and no admitted key for the claim's `over` parameter, or none for its `on each` activation type, settles `inconclusive` with cause `no-instance`, `Inconclusive(NoInstance)`, never `proved`, `unsupported` or `failed`, with no certificate, counterexample or numeric entry. This holds also when the claim's form is outside what EN-5 admits.
 ```
 
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |

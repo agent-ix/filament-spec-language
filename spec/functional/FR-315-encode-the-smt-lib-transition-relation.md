@@ -142,10 +142,10 @@ limits is rebuilt as the solver received it.
 | 1 | `item-form` | The item is a TP-4 liveness clause, guarded or not, whose refutations are EN-2's lassos (Monitors); a clause with no recorded property form; or a clause whose property-automaton translation refuses, carrying that refusal | the clause |
 | 2 | `profile` | The clause binds a profile other than infinite-trace and event-position false-extension, such as ADR-026's `model-time` | the clause |
 | 3 | `query-kind` | `InductionBase` or `InductionStep` for a TP-2 `on origin` item, whose V-2 verdict needs no induction; `Unrolling{depth}` with `depth < u` for `eventually[0,u] holds(I)` (Finite behaviours); `Unrolling{depth}` with `depth < h` for an `on origin` monitor item, `h` its ADR-014 TR-4 horizon (Monitors); `InductionStep` with `SmtInstances::First` | the clause |
-| 4 | `subject-admission` | FR-120's admission of the subject refuses, carrying that refusal, other than for a universe and key with two types (row 7) | the subject |
+| 4 | `subject-admission` | FR-120's admission of the subject refuses, carrying that refusal, other than for a universe and key with two types in different populations or initial states (row 7) | the subject |
 | 5 | `requires-bound` | A population that admits the clause's `over` type has no universe (FR-125 `RequiresBound`) | the population |
 | 6 | `no-initial-state` | The subject's `initial` list is empty (FR-125), so every query would be unsatisfiable | the subject |
-| 7 | `subject-admission` | Two member records, in populations that overlap the clause's `over` type, give one universe and key two types (FR-125), carrying `invalid_runtime_input`/`conflicting-identity` | the subject |
+| 7 | `subject-admission` | Two member records, in different populations or different initial states, among the populations that overlap the clause's `over` type, give one universe and key two types (FR-125), carrying `invalid_runtime_input`/`conflicting-identity` | the subject |
 | 8 | `no-instance` | The clause has zero instances (FR-125 `NoInstance`), so every query would be unsatisfiable | the clause |
 | 9 | `object-lifecycle` | An operation's frame creates or deletes objects, or a universe object is not held by every initial state at one type, so the objects of a state copy are not fixed | the operation, or the object |
 | 10 | `constant-name` | A name cannot be printed as an SMT-LIB symbol, or two constants would print the same name (two objects under one key, or a dotted key that prints as another object's field) | the name |

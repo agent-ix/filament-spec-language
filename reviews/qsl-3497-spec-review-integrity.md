@@ -127,3 +127,19 @@ pub enum CertificateCheck { Accepted { bound_side: Bound }, Rejected(Certificate
      of an initial state admits a key of their univ
 ```
 
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-005 | low | `ModelSystem::new` SHALL admit two-typed records contradicts FR-106 check 6.3 for one population of one snapshot | spec/functional/FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md:92-94 | wrong-requirement |
+
+- FND-005: The new sentence requires ModelSystem::new to admit member records that give one key two types, without qualification. FR-120 "Initial states" item 2 runs FR-106 check 6 on each initial document, and check 6.3 refuses a repeated key within one population `conflicting-identity` at admission (FR-084-AC-4 likewise refuses two types at binding admission). For one initial state whose one population holds `c` as `Animal` and as `Dog`, FR-106 requires a refusal and FR-125 requires admission, then RequiresBound or NoInitialState reported first; FR-315 row 4 likewise moves that case to row 7. Limit the sentence (and row 4) to records in different populations or different initial states.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |

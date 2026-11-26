@@ -118,3 +118,17 @@ Scope: FR-189-AC-1 to FR-189-AC-5, FR-189-AC-7 to FR-189-AC-12, FR-189-AC-13 to 
 4. For the subjects of steps 1 and 3, call the certificate checker d
 ```
 
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-003 | low | No criterion for the checker's RequiresBound and conflicting-identity refusals or their order | spec/functional/FR-201-check-a-probability-certificate.md:803-811 | correct-requirement-no-evidence |
+
+- FND-003: The checker is now required to decide all of FR-125's outcomes in order and to refuse RequiresBound and conflicting-identity, but FR-201-AC-85, FR-203-AC-35 and TC-3241 steps 4 and 7 exercise only NoInitialState and NoInstance. A checker that returns NoInitialState over an empty initial list with a universe missing, or that accepts or rejects a document over two-typed records, passes every criterion. Add a criterion for the checker on those two subjects.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |

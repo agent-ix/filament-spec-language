@@ -90,9 +90,11 @@ reports.
   `NotSimulated(RequiresBound)`, `NoInitialState`, the conflicting identity
   as `NotSimulated(ConflictingIdentity)` naming the key and both types, then
   `NoInstance`. `ModelSystem::new` SHALL admit member records that give one
-  key two types; this call, not admission, refuses them, so it can report
-  `RequiresBound` and `NoInitialState` first. A claim with no `over` makes
-  no call for it.
+  universe and key two types when they stand in different populations or in
+  different initial states; this call, not admission, refuses them, so it can
+  report `RequiresBound` and `NoInitialState` first. Two such records in one
+  population of one initial state stay FR-106 check 6.3's admission refusal
+  (FR-120 "Initial states"). A claim with no `over` makes no call for it.
 - `ModelSystem::instances` and `ModelSystem::excluded_keys` for a claim, and
   for the object type of a hyper object parameter: its
   instances in the canonical order, and the universe keys no initial record
@@ -181,7 +183,9 @@ bullets state how FSL applies them over FR-120's subject.
   universe and key and different types, in one population or in two, in one
   initial state or in two, SHALL refuse the item
   `invalid_runtime_input`/`conflicting-identity`, naming the key and both
-  types, before it forms any instance.
+  types, before it forms any instance. Two such records in one population of
+  one initial state are refused earlier, at admission (FR-106 check 6.3), so
+  the order below does not apply to them.
 - An instance whose admitted record does not conform to `T` (an `Animal` key
   holding a `Cat` under `over (x: Dog)`) is an instance. Where no overlapping
   population holds under the key an object whose most-specific type conforms

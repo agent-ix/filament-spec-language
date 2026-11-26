@@ -1806,6 +1806,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-83 | On AC-81's document, omitting the `ranking` member rejects `Malformed` at `CertificateMember("ranking")` before graph enumeration. | Test (TC-639) |
 | FR-201-AC-84 | On AC-81's document, changing only K0's rank from 3 to 2 while K1 remains rank 2 rejects `RankBroken` at K0, the initial pretarget key and first failing key in canonical order. | Test (TC-639) |
 | FR-201-AC-85 | Over a subject with an empty `initial` list, the document form called with a document of another item's identity refuses `IdentityMismatch`, and with truncated bytes refuses `Malformed`; with a well-formed document of the claim's identity, whatever its kind, it returns `NoInitialState`, the wire form returns `CertificateCheck::NoInitialState`, and `fsl-probability-check` writes `status` `no-initial-state`. Over a subject with no admitted key the three give `NoInstance` and `no-instance`. | Test (TC-3241) |
+| FR-201-AC-86 | The wire form, the document form and `fsl-probability-check`, given a well-formed document of the claim's identity, refuse `RequiresBound` over a subject with a universe missing and an empty `initial` list, never returning `NoInitialState`; and refuse `invalid_runtime_input/conflicting-identity` over records typing `c` as `Animal` in `animals` and `Dog` in `dogs`, never accepting or rejecting the document. | Test (TC-3241) |
 
 ## Dependencies
 

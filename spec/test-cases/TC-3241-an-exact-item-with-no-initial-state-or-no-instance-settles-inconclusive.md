@@ -16,7 +16,7 @@ Verify that an exact probabilistic item over an empty `initial` list or an
 empty instance set settles FR-125's cause, and that the certificate checker
 derives the same cause from its own reading of the subject.
 
-Scope: FR-203-AC-20, FR-203-AC-34 to FR-203-AC-37 and FR-201-AC-85.
+Scope: FR-203-AC-20, FR-203-AC-34 to FR-203-AC-37, FR-201-AC-85 and FR-201-AC-86.
 
 ## Test Procedure
 
@@ -37,6 +37,10 @@ Scope: FR-203-AC-20, FR-203-AC-34 to FR-203-AC-37 and FR-201-AC-85.
 7. Over an empty `initial` list and over a subject with no admitted key, call
    the wire form, the document form and `fsl-probability-check`; then give
    the document form another item's identity and truncated bytes.
+8. Call the wire form, the document form and `fsl-probability-check` with a
+   well-formed document over a subject with a universe missing and an empty
+   `initial` list, then over records typing `c` as `Animal` in `animals` and
+   `Dog` in `dogs`.
 
 Tag the tests `#[trace("TC-3241", "<criterion>")]`.
 
@@ -54,3 +58,5 @@ Tag the tests `#[trace("TC-3241", "<criterion>")]`.
 - Step 6: `inconclusive`, `no-initial-state`.
 - Step 7: the typed member and `status` for each outcome; `IdentityMismatch`
   and `Malformed` for the two bad documents.
+- Step 8: each refuses `RequiresBound`, never `NoInitialState`; then each
+  refuses `conflicting-identity`, with no acceptance or rejection.
