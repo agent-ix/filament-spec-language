@@ -1241,172 +1241,227 @@ struct ClauseRead {
     _evidence_ledger: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionRead {
-    original: ExtractionOriginalRead,
-    body: ExtractionBodyRead,
-    binding: ExtractionBindingRead,
-    outcome: serde_json::Value,
-    map: ExtractionMapRead,
-    #[serde(default, deserialize_with = "present")]
-    original_regions: Option<Vec<ExtractionRegionRead>>,
+trait ExtractionShape {
+    fn validate_shape(value: &serde_json::Value, path: &str) -> Result<(), NativeRunReadError>;
+}
+
+macro_rules! extraction_leaf_shape {
+    ($($type:ty),* $(,)?) => {
+        $(
+            impl ExtractionShape for $type {
+                fn validate_shape(
+                    _value: &serde_json::Value,
+                    _path: &str,
+                ) -> Result<(), NativeRunReadError> {
+                    Ok(())
+                }
+            }
+        )*
+    };
+}
+
+extraction_leaf_shape!(String, u64, bool, serde_json::Value, ExtractionAvailabilityStateRead);
+
+impl ExtractionShape for std::collections::BTreeMap<String, String> {
+    fn validate_shape(_value: &serde_json::Value, _path: &str) -> Result<(), NativeRunReadError> {
+        Ok(())
+    }
+}
+
+impl<T: ExtractionShape> ExtractionShape for Vec<T> {
+    fn validate_shape(value: &serde_json::Value, path: &str) -> Result<(), NativeRunReadError> {
+        if let Some(entries) = value.as_array() {
+            for (index, entry) in entries.iter().enumerate() {
+                T::validate_shape(entry, &format!("{path}[{index}]"))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<T: ExtractionShape> ExtractionShape for Option<T> {
+    fn validate_shape(value: &serde_json::Value, path: &str) -> Result<(), NativeRunReadError> {
+        if !value.is_null() {
+            T::validate_shape(value, path)?;
+        }
+        Ok(())
+    }
+}
+
+macro_rules! extraction_read_type {
+    (
+        $name:ident {
+            $($field:ident: $field_type:ty),* $(,)?
+            ;
+            $($(#[$optional_attribute:meta])* $optional_field:ident: $optional_type:ty),* $(,)?
+        }
+    ) => {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        #[allow(
+            dead_code,
+            reason = "the closed wire shape is validated during deserialization"
+        )]
+        struct $name {
+            $($field: $field_type,)*
+            $($(#[$optional_attribute])* $optional_field: $optional_type,)*
+        }
+
+        impl ExtractionShape for $name {
+            fn validate_shape(
+                value: &serde_json::Value,
+                path: &str,
+            ) -> Result<(), NativeRunReadError> {
+                let Some(object) = value.as_object() else {
+                    return Ok(());
+                };
+                $(
+                    let name = stringify!($field);
+                    let Some(child) = object.get(name) else {
+                        return Err(NativeRunReadError::MalformedMember {
+                            member: format!("{path}.{name}"),
+                            source: serde_json::Error::custom(format!(
+                                "missing required member `{name}`"
+                            )),
+                        });
+                    };
+                    <$field_type as ExtractionShape>::validate_shape(
+                        child,
+                        &format!("{path}.{name}"),
+                    )?;
+                )*
+                $(
+                    if let Some(child) = object.get(stringify!($optional_field)) {
+                        <$optional_type as ExtractionShape>::validate_shape(
+                            child,
+                            &format!("{path}.{}", stringify!($optional_field)),
+                        )?;
+                    }
+                )*
+                Ok(())
+            }
+        }
+    };
+}
+
+extraction_read_type! {
+    ExtractionRead {
+        original: ExtractionOriginalRead,
+        body: ExtractionBodyRead,
+        binding: ExtractionBindingRead,
+        outcome: ExtractionOutcomeRead,
+        map: ExtractionMapRead;
+        #[serde(default, deserialize_with = "present")]
+        original_regions: Option<Vec<ExtractionRegionRead>>
+    }
+}
+
+extraction_read_type! {
+    ExtractionOriginalRead {
+        authority: String,
+        identity: String,
+        path: String,
+        bytes: Vec<u8>;
+    }
+}
+
+extraction_read_type! {
+    ExtractionBodyRead {
+        authority: String,
+        identity: String,
+        document: String,
+        bytes: Vec<u8>;
+    }
+}
+
+extraction_read_type! {
+    ExtractionBindingRead {
+        clause: String,
+        package: String;
+    }
+}
+
+extraction_read_type! {
+    ExtractionMapRead {
+        region: ExtractionSpanRead,
+        segments: Vec<ExtractionSegmentRead>;
+    }
+}
+
+extraction_read_type! {
+    ExtractionSpanRead {
+        start: u64,
+        end: u64;
+    }
+}
+
+extraction_read_type! {
+    ExtractionSegmentRead {
+        body_start: u64,
+        body_end: u64,
+        original_start: u64,
+        original_end: u64;
+    }
+}
+
+extraction_read_type! {
+    ExtractionRegionRead {
+        start: ExtractionPositionRead,
+        end: ExtractionPositionRead;
+    }
+}
+
+extraction_read_type! {
+    ExtractionPositionRead {
+        byte: u64,
+        line: u64,
+        column: u64;
+    }
+}
+
+extraction_read_type! {
+    ExtractionOutcomeRead {
+        availability: ExtractionAvailabilityRead,
+        clause_text: Option<std::collections::BTreeMap<String, String>>,
+        diagnostics: Vec<serde_json::Value>;
+        #[serde(default, deserialize_with = "present")]
+        clauses: Option<Vec<serde_json::Value>>
+    }
+}
+
+extraction_read_type! {
+    ExtractionAvailabilityRead {
+        fields: ExtractionKindAvailabilityRead,
+        clauses: ExtractionKindAvailabilityRead,
+        operations: ExtractionKindAvailabilityRead;
+        #[serde(default)]
+        model: Option<ExtractionKindAvailabilityRead>,
+        #[serde(default)]
+        relations: Option<ExtractionKindAvailabilityRead>
+    }
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionOriginalRead {
-    authority: String,
-    identity: String,
-    path: String,
-    bytes: Vec<u8>,
+#[serde(rename_all = "snake_case")]
+enum ExtractionAvailabilityStateRead {
+    Available,
+    NotApplicable,
+    Missing,
+    Unavailable,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionBodyRead {
-    authority: String,
-    identity: String,
-    document: String,
-    bytes: Vec<u8>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionBindingRead {
-    clause: String,
-    package: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionMapRead {
-    region: ExtractionSpanRead,
-    segments: Vec<ExtractionSegmentRead>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionSpanRead {
-    start: u64,
-    end: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionSegmentRead {
-    body_start: u64,
-    body_end: u64,
-    original_start: u64,
-    original_end: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionRegionRead {
-    start: ExtractionPositionRead,
-    end: ExtractionPositionRead,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed wire shape is validated during deserialization"
-)]
-struct ExtractionPositionRead {
-    byte: u64,
-    line: u64,
-    column: u64,
+extraction_read_type! {
+    ExtractionKindAvailabilityRead {
+        state: ExtractionAvailabilityStateRead,
+        lossy: bool;
+        #[serde(default)]
+        reason: Option<String>
+    }
 }
 
 #[implements("FR-267-AC-17")]
 fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadError> {
-    require_extraction_members(value, "extraction", &["original", "body", "binding", "outcome", "map"])?;
-    if let Some(original) = value.get("original") {
-        require_extraction_members(
-            original,
-            "extraction.original",
-            &["authority", "identity", "path", "bytes"],
-        )?;
-    }
-    if let Some(body) = value.get("body") {
-        require_extraction_members(
-            body,
-            "extraction.body",
-            &["authority", "identity", "document", "bytes"],
-        )?;
-    }
-    if let Some(binding) = value.get("binding") {
-        require_extraction_members(binding, "extraction.binding", &["clause", "package"])?;
-    }
-    if let Some(map) = value.get("map") {
-        require_extraction_members(map, "extraction.map", &["region", "segments"])?;
-        if let Some(region) = map.get("region") {
-            require_extraction_members(region, "extraction.map.region", &["start", "end"])?;
-        }
-        if let Some(segments) = map.get("segments").and_then(serde_json::Value::as_array) {
-            for (index, segment) in segments.iter().enumerate() {
-                let path = format!("extraction.map.segments[{index}]");
-                require_extraction_members(
-                    segment,
-                    &path,
-                    &["body_start", "body_end", "original_start", "original_end"],
-                )?;
-            }
-        }
-    }
-    if let Some(regions) = value
-        .get("original_regions")
-        .and_then(serde_json::Value::as_array)
-    {
-        for (index, region) in regions.iter().enumerate() {
-            let path = format!("extraction.original_regions[{index}]");
-            require_extraction_members(region, &path, &["start", "end"])?;
-            for endpoint in ["start", "end"] {
-                let endpoint_path = format!("{path}.{endpoint}");
-                if let Some(position) = region.get(endpoint) {
-                    require_extraction_members(
-                        position,
-                        &endpoint_path,
-                        &["byte", "line", "column"],
-                    )?;
-                }
-            }
-        }
-    }
+    ExtractionRead::validate_shape(value, "extraction")?;
     let extraction: ExtractionRead =
         serde_path_to_error::deserialize(value.clone()).map_err(|error| {
             let member = error.path().to_string();
@@ -1434,25 +1489,6 @@ fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadErr
             member: "extraction.original_regions",
             reason: "a non-empty region array",
         });
-    }
-    Ok(())
-}
-
-fn require_extraction_members(
-    value: &serde_json::Value,
-    path: &str,
-    required: &[&str],
-) -> Result<(), NativeRunReadError> {
-    let Some(object) = value.as_object() else {
-        return Ok(());
-    };
-    for name in required {
-        if !object.contains_key(*name) {
-            return Err(NativeRunReadError::MalformedMember {
-                member: format!("{path}.{name}"),
-                source: serde_json::Error::custom(format!("missing required member `{name}`")),
-            });
-        }
     }
     Ok(())
 }
@@ -4468,6 +4504,18 @@ mod qsl_3117_deciding_run {
     use ix_trace_rs::trace;
     use serde_json::{Value, json};
 
+    fn valid_extraction_outcome() -> Value {
+        json!({
+            "availability": {
+                "fields": {"state": "available", "lossy": false},
+                "clauses": {"state": "available", "lossy": false},
+                "operations": {"state": "available", "lossy": false}
+            },
+            "clause_text": null,
+            "diagnostics": []
+        })
+    }
+
     /// The strict-reader decision case from QSL-3117: an empty map must be
     /// refused with its member path, rather than admitted as a valid extraction.
     #[test]
@@ -4481,7 +4529,7 @@ mod qsl_3117_deciding_run {
             "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
             "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
             "binding": {"clause": "check", "package": "fixture/package"},
-            "outcome": {},
+            "outcome": valid_extraction_outcome(),
             "map": {"region": {"start": 0, "end": 0}, "segments": []}
         });
 
@@ -4528,7 +4576,7 @@ mod qsl_3117_deciding_run {
                 "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
                 "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
                 "binding": {"clause": "check", "package": "fixture/package"},
-                "outcome": {},
+                "outcome": valid_extraction_outcome(),
                 "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
             });
             if malformed.get("source").is_some() {
@@ -4568,7 +4616,7 @@ mod qsl_3117_deciding_run {
             "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
             "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
             "binding": {"clause": "check", "package": "fixture/package"},
-            "outcome": {},
+            "outcome": valid_extraction_outcome(),
             "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
         });
         extraction.as_object_mut().unwrap().remove("map");
@@ -4594,7 +4642,7 @@ mod qsl_3117_deciding_run {
             "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
             "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
             "binding": {"clause": "check", "package": "fixture/package"},
-            "outcome": {},
+            "outcome": valid_extraction_outcome(),
             "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]},
             "original_regions": []
         });
@@ -4605,6 +4653,85 @@ mod qsl_3117_deciding_run {
                 || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.original_regions"),
             "empty extraction.original_regions must be reported at that member"
         );
+    }
+
+    /// FR-267-AC-17: the Quire extraction outcome retains its required shape.
+    #[test]
+    #[trace("TC-109", "FR-267-AC-17")]
+    fn strict_reader_names_malformed_extraction_outcome_members() {
+        let cases = [
+            ("extraction.outcome.availability", "/outcome/availability", None),
+            ("extraction.outcome.clause_text", "/outcome/clause_text", None),
+            ("extraction.outcome.diagnostics", "/outcome/diagnostics", None),
+            (
+                "extraction.outcome.availability",
+                "/outcome/availability",
+                Some(Value::Null),
+            ),
+            (
+                "extraction.outcome.clause_text",
+                "/outcome/clause_text",
+                Some(json!(1)),
+            ),
+            (
+                "extraction.outcome.diagnostics",
+                "/outcome/diagnostics",
+                Some(json!({})),
+            ),
+            (
+                "extraction.outcome.clauses",
+                "/outcome/clauses",
+                Some(json!({})),
+            ),
+            (
+                "extraction.outcome.availability.fields",
+                "/outcome/availability/fields",
+                None,
+            ),
+            (
+                "extraction.outcome.availability.fields.state",
+                "/outcome/availability/fields/state",
+                Some(json!("unknown")),
+            ),
+        ];
+        for (expected, pointer, replacement) in cases {
+            let mut extraction = json!({
+                "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+                "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+                "binding": {"clause": "check", "package": "fixture/package"},
+                "outcome": valid_extraction_outcome(),
+                "map": {"region": {"start": 0, "end": 0}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+            });
+            let (parent, member) = pointer.rsplit_once('/').unwrap();
+            let Some(container) = extraction.pointer_mut(parent) else {
+                panic!("missing test container at {parent}");
+            };
+            let Value::Object(fields) = container else {
+                panic!("expected object at {parent}");
+            };
+            if let Some(replacement) = replacement {
+                fields.insert(member.to_owned(), replacement);
+            } else {
+                assert!(fields.remove(member).is_some());
+            }
+
+            let mut document: Value = serde_json::from_str(include_str!(
+                "../../../tests/fixtures/native-run-result-decisive.json"
+            ))
+            .unwrap();
+            document["extraction"] = extraction;
+            let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
+            let observed = match &result {
+                Err(NativeRunReadError::MalformedMember { member, .. }) => member.as_str(),
+                Err(NativeRunReadError::Invalid { member, .. }) => *member,
+                Ok(_) => "accepted",
+                Err(_) => "refused without a member path",
+            };
+            assert!(
+                matches!(&result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == expected),
+                "expected refusal naming {expected}, got {observed}"
+            );
+        }
     }
 
     /// FR-267-AC-17: missing members are reported at every extraction nesting level.
@@ -4635,7 +4762,7 @@ mod qsl_3117_deciding_run {
             "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
             "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
             "binding": {"clause": "check", "package": "fixture/package"},
-            "outcome": {},
+            "outcome": valid_extraction_outcome(),
             "map": {
                 "region": {"start": 0, "end": 1},
                 "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
