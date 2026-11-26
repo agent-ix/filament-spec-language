@@ -103,6 +103,7 @@ mod model_check_safety;
 mod model_instances;
 mod model_trace_run;
 mod model_world;
+mod object_sets;
 mod por_world;
 mod provider_test_support;
 #[path = "../../../tests/support/published_fspec.rs"]
