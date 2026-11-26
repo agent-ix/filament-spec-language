@@ -36,7 +36,7 @@ fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, R
         order_protocol(true)
     };
     let path = litmus_request(&ws, &protocol, json!({"items": items}));
-    let request: Value =
+    let mut request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
     for (file, document) in documents {
         ws.write(file, document.to_string().as_bytes());
