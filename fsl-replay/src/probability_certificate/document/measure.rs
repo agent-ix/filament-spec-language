@@ -8,6 +8,7 @@ use fsl_eval::probabilistic::{
 };
 use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, PredicateReading};
 use fsl_semantics::check::{BoundedMeasure, CheckedPredicate, Event, Weighting};
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Node, Sink, Writer};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -92,6 +93,49 @@ struct Plan<'a> {
     payoff: MeasurePayoff,
     bound: Bound,
     strict: bool,
+}
+
+impl Plan<'_> {
+    /// The bound a claim-side document's initial value meets (FR-1042
+    /// "Pairing"): the claim's own, or, for the `shifted` payoff, at least 0
+    /// for a `<= c` quantile and at most 0 for a `>= c` one. Its direction is
+    /// the kind such a document has.
+    fn certified_bound(&self, payoff: MeasurePayoffKind) -> Bound {
+        match (payoff, self.strict) {
+            (MeasurePayoffKind::Shifted, true) => Bound::AtMost(super::rational(0)),
+            (MeasurePayoffKind::Shifted, false) => Bound::AtLeast(super::rational(0)),
+            _ => self.bound.clone(),
+        }
+    }
+}
+
+/// Which product states one enumeration expands.
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    /// Every reachable state.
+    Whole,
+    /// A mean-refutation `lower`: each named state, restored from its key, and
+    /// its successors. All of them count against the state limit.
+    Restored(&'a BTreeSet<ProbabilityProductKey>),
+    /// A partial `lower` proof: the named states the initial states reach
+    /// through named states, and their successors. A successor left unnamed
+    /// does not count against the state limit.
+    Reached(&'a BTreeSet<ProbabilityProductKey>),
+}
+
+impl<'a> Scope<'a> {
+    /// The states a partial enumeration expands.
+    fn named(self) -> Option<&'a BTreeSet<ProbabilityProductKey>> {
+        match self {
+            Self::Whole => None,
+            Self::Restored(named) | Self::Reached(named) => Some(named),
+        }
+    }
+
+    /// Whether a successor that reaches `states` states exceeds `limit`.
+    fn refuses(self, states: usize, limit: usize) -> bool {
+        !matches!(self, Self::Reached(_)) && states > limit
+    }
 }
 
 pub(super) struct CheckOptions<'a> {
@@ -617,6 +661,81 @@ fn restore_named(
     Ok((model, control, accumulator, resolution))
 }
 
+/// The whole graph, or, where `max_states` stops it and `lower` gives the
+/// payoff and rows of a `lower` proof, the part those rows show: the named
+/// states the initial states reach through named states, and their successors
+/// (FSpec FR-411 "Evidence on a partial product"). The stop stands wherever
+/// that part cannot show the proof: a payoff other than `shifted` or a
+/// comparison event, a fair claim, more states named than `max_states`
+/// admits, or a named state the part does not reach.
+#[implements("FSpec-FR-412-AC-5")]
+#[allow(clippy::too_many_arguments)]
+fn whole_or_lower_part(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    plan: &Plan<'_>,
+    lower: Option<(MeasurePayoffKind, &[ExactProbabilityValue])>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<Graph, ProbabilityDocumentError> {
+    let exhausted = match enumerate(
+        system,
+        claim,
+        plan,
+        limits,
+        cancel,
+        meter,
+        storage,
+        Scope::Whole,
+    ) {
+        Err(
+            error @ ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::States,
+                ..
+            },
+        ) => error,
+        whole => return whole,
+    };
+    let Some((MeasurePayoffKind::Shifted | MeasurePayoffKind::Event, rows)) = lower else {
+        return Err(exhausted);
+    };
+    if !claim.fairness.is_empty() || rows.len() > limits.states {
+        return Err(exhausted);
+    }
+    let mut named = BTreeSet::new();
+    for row in rows {
+        poll(cancel)?;
+        charge(
+            storage,
+            limits.storage_bytes,
+            u64::try_from(
+                row.state
+                    .as_bytes()
+                    .len()
+                    .saturating_add(std::mem::size_of::<ProbabilityProductKey>()),
+            )
+            .unwrap_or(u64::MAX),
+        )?;
+        named.insert(row.state.clone());
+    }
+    let part = enumerate(
+        system,
+        claim,
+        plan,
+        limits,
+        cancel,
+        meter,
+        storage,
+        Scope::Reached(&named),
+    )?;
+    if named.iter().any(|key| !part.states.contains_key(key)) {
+        return Err(exhausted);
+    }
+    Ok(part)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn enumerate(
     system: &ModelSystem<'_>,
@@ -626,7 +745,7 @@ fn enumerate(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
-    named: Option<&BTreeSet<ProbabilityProductKey>>,
+    scope: Scope<'_>,
 ) -> Result<Graph, ProbabilityDocumentError> {
     let binding = claim_binding(system, claim)?;
     let binding = binding.as_ref().map(|binding| &binding.reference);
@@ -754,7 +873,7 @@ fn enumerate(
         .first()
         .cloned()
         .ok_or(ProbabilityDocumentError::Malformed)?;
-    if let Some(named) = named {
+    if let Scope::Restored(named) = scope {
         for key in named {
             if seen.contains(key) {
                 continue;
@@ -797,7 +916,7 @@ fn enumerate(
             )
             .unwrap_or(u64::MAX),
         )?;
-        if named.is_some_and(|named| !named.contains(&key)) {
+        if scope.named().is_some_and(|named| !named.contains(&key)) {
             // A lower certificate assigns zero to this frontier key. Its
             // descendants and terminal payoff are outside the named proof.
             states.insert(
@@ -1102,7 +1221,7 @@ fn enumerate(
                             .unwrap_or(u64::MAX),
                         )?;
                         if seen.insert(target.clone()) {
-                            if seen.len() > limits.states {
+                            if scope.refuses(seen.len(), limits.states) {
                                 return Err(exceeded(
                                     ProbabilityDocumentLimit::States,
                                     u64::try_from(limits.states).unwrap_or(u64::MAX),
@@ -1189,7 +1308,7 @@ fn enumerate(
                         .unwrap_or(u64::MAX),
                     )?;
                     if seen.insert(target.clone()) {
-                        if seen.len() > limits.states {
+                        if scope.refuses(seen.len(), limits.states) {
                             return Err(exceeded(
                                 ProbabilityDocumentLimit::States,
                                 u64::try_from(limits.states).unwrap_or(u64::MAX),
@@ -1840,6 +1959,55 @@ pub fn measure_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    producer_document(
+        system,
+        claims,
+        item,
+        certificate,
+        payoff,
+        false,
+        limits,
+        cancel,
+    )
+}
+
+/// [`measure_probability_certificate_document`], or, where `max_states` stops
+/// the whole graph, the document of a `lower` proof ranking the states
+/// `certificate` names, over the states it names and their successors
+/// (FR-1042 "Document"). Only a `shifted` payoff and a comparison event have
+/// that part. This does not grant acceptance.
+pub fn partial_lower_measure_probability_certificate_document(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    payoff: MeasurePayoffKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    producer_document(
+        system,
+        claims,
+        item,
+        certificate,
+        payoff,
+        true,
+        limits,
+        cancel,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn producer_document(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    payoff: MeasurePayoffKind,
+    partial_lower: bool,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     let claim = bind_claim(claims, item, cancel)?;
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let mut storage = 0;
@@ -1852,15 +2020,15 @@ pub fn measure_probability_certificate_document(
         &mut meter,
         &mut storage,
     )?;
-    let graph = enumerate(
+    let graph = whole_or_lower_part(
         system,
         claim,
         &plan,
+        partial_lower.then_some((payoff, certificate.values.as_slice())),
         limits,
         cancel,
         &mut meter,
         &mut storage,
-        None,
     )?;
     Ok(MeasureProbabilityDocument {
         identity: item.clone(),
@@ -2203,6 +2371,8 @@ fn acceptance(
     })
 }
 
+#[implements("FR-1043-AC-1")]
+#[implements("FR-1042-AC-27")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2268,7 +2438,7 @@ pub(super) fn check(
                 cancel,
                 &mut meter,
                 &mut storage,
-                None,
+                Scope::Whole,
             )?;
             if graph.states.values().any(|state| state.activated) {
                 return Ok(rejected(
@@ -2327,7 +2497,7 @@ pub(super) fn check(
                     cancel,
                     &mut meter,
                     &mut storage,
-                    None,
+                    Scope::Whole,
                 )?);
             } else {
                 // Both independently checked objectives name the same measure and
@@ -2459,10 +2629,7 @@ pub(super) fn check(
             bytes,
         );
         if let ExactProbabilityCertificateCheck::Accepted(token) = &mut accepted {
-            let binding = claim_binding(system, claim)?.map(|binding| crate::ExactBinding {
-                population: binding.instance.population.node,
-                key: binding.instance.key,
-            });
+            let binding = claim_binding(system, claim)?.map(|binding| binding.reference);
             token.initial_values = Some(CheckedInitialValues {
                 bindings: vec![binding; coverage.len()],
                 instances: vec![None; coverage.len()],
@@ -2476,20 +2643,25 @@ pub(super) fn check(
     {
         return Err(ProbabilityDocumentError::MalformedMember("conditional"));
     }
-    let graph = enumerate(
+    if super::ValueRelation::of(bound_side, role).misplaced(&plan.certified_bound(document.payoff))
+    {
+        return Ok(super::misplaced_kind());
+    }
+    // Only a claim-side `lower` is read over the part of the graph it names.
+    let claim_lower = bound_side == Some(super::SubsystemBoundKind::Lower)
+        && role == super::CertificateRole::Claim;
+    let graph = whole_or_lower_part(
         system,
         claim,
         &plan,
+        claim_lower.then_some((document.payoff, document.values.as_slice())),
         limits,
         cancel,
         &mut meter,
         &mut storage,
-        None,
     )?;
-    let partial_lower = partial_lower
-        || (bound_side == Some(super::SubsystemBoundKind::Lower)
-            && role == super::CertificateRole::Claim
-            && document.values.len() < graph.states.len());
+    let partial_lower =
+        partial_lower || (claim_lower && document.values.len() < graph.states.len());
     if let Some(side) = bound_side.filter(|_| !partial_lower) {
         return check_value_bounds(
             &document, &graph, &plan, side, role, bytes, limits, cancel, &mut meter,
@@ -2728,33 +2900,14 @@ fn check_value_bounds(
     let initial = values
         .get(&graph.initial)
         .ok_or(ProbabilityDocumentError::MalformedMember("values"))?;
+    let certified = plan.certified_bound(document.payoff);
     if role == super::CertificateRole::Claim {
-        let meets = if document.payoff == MeasurePayoffKind::Shifted {
-            if plan.strict {
-                ordered(
-                    Order::LessOrEqual,
-                    initial,
-                    &super::rational(0),
-                    meter,
-                    cancel,
-                )?
-            } else {
-                ordered(
-                    Order::GreaterOrEqual,
-                    initial,
-                    &super::rational(0),
-                    meter,
-                    cancel,
-                )?
+        let meets = match &certified {
+            Bound::AtLeast(threshold) => {
+                ordered(Order::GreaterOrEqual, initial, threshold, meter, cancel)?
             }
-        } else {
-            match &plan.bound {
-                Bound::AtLeast(threshold) => {
-                    ordered(Order::GreaterOrEqual, initial, threshold, meter, cancel)?
-                }
-                Bound::AtMost(threshold) => {
-                    ordered(Order::LessOrEqual, initial, threshold, meter, cancel)?
-                }
+            Bound::AtMost(threshold) => {
+                ordered(Order::LessOrEqual, initial, threshold, meter, cancel)?
             }
         };
         if !meets {
@@ -2766,17 +2919,9 @@ fn check_value_bounds(
             ));
         }
     }
-    let accepted_side = if document.payoff == MeasurePayoffKind::Shifted {
-        if plan.strict {
-            ProbabilityBoundSide::AtMost
-        } else {
-            ProbabilityBoundSide::AtLeast
-        }
-    } else {
-        match plan.bound {
-            Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
-            Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
-        }
+    let accepted_side = match certified {
+        Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
+        Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
     };
     Ok(acceptance(document, initial.clone(), accepted_side, bytes))
 }
@@ -3017,7 +3162,7 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
         cancel,
         &mut meter,
         &mut storage,
-        None,
+        Scope::Whole,
     )?;
     let values = match checked_values(&document, &graph, limits, cancel, &mut meter, None)? {
         Ok(values) => values,

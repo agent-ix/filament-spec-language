@@ -117,9 +117,10 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
 use fsl_semantics::model::state::ModelState;
+use ix_trace_rs::implements;
 
 use super::closure::CertificateRejection;
-use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome};
+use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome, FailedStep};
 use super::zone::{LuBounds, Zone, ZoneError};
 use super::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::node_occurrence;
@@ -859,6 +860,7 @@ fn malformed_verdict(member: CertificateMember) -> ZoneCertificateVerdict {
 fn at_edge(edge: usize) -> CertificateLocus {
     CertificateLocus::ZoneEdge {
         edge: u64::try_from(edge).unwrap_or(u64::MAX),
+        verdict: None,
     }
 }
 
@@ -895,6 +897,7 @@ struct Refined<'c, 'a> {
 /// `item` or the recompiled one, the subject does not admit, its timed
 /// reading does not build, the item is not supported, or a reading has no
 /// value.
+#[implements("FR-245-AC-1")]
 pub fn check_zone_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
@@ -973,6 +976,7 @@ fn package_state_graph_identity(
 
 /// FR-245: check a refinement certificate whose concrete subject admits
 /// arbitrary free delays and has no concrete clock placements (FR-900-AC-5).
+#[implements("FR-900-AC-5")]
 pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
@@ -3095,6 +3099,7 @@ impl<O> Checker<'_, '_, O> {
     /// `Taken::Failing` (`PostDiffers` otherwise); out of the locked region,
     /// the edge stays in it with no `taken` (`PostDiffers`). The first
     /// rejection out of a node is kept for the node's turn.
+    #[implements("FR-245-AC-8", "FR-245-AC-12")]
     fn refine_edge(
         &mut self,
         node: usize,
@@ -3117,10 +3122,10 @@ impl<O> Checker<'_, '_, O> {
         let target = &certificate.nodes[edge.to];
         let taken = part.taken.get(index).and_then(Option::as_ref);
         let entry = target.locked && target.automaton_state == reserved;
-        let rule = if source.automaton_state == reserved {
+        let failure = if source.automaton_state == reserved {
             // The locked region, on concrete steps only.
             (taken.is_some() || target.automaton_state != reserved)
-                .then_some(CertificateRule::PostDiffers)
+                .then_some((CertificateRule::PostDiffers, None))
         } else {
             let Some(pre) = self.known.get(source.automaton_state).cloned().flatten() else {
                 // A node entered by a rejected edge has no position; that
@@ -3169,29 +3174,38 @@ impl<O> Checker<'_, '_, O> {
                     if holds {
                         self.know(target.automaton_state, expected_position.clone());
                     }
-                    (!holds).then_some(CertificateRule::PostDiffers)
+                    (!holds).then_some((CertificateRule::PostDiffers, None))
                 }
                 failed => {
                     self.unsound(&failed)?;
                     if !entry {
-                        Some(CertificateRule::StepFails)
+                        let verdict =
+                            FailedStep::of(failed, Some(step.transition())).ok_or_else(|| {
+                                Halt::Refusal(ZoneCertificateRefusal::Fault(
+                                    CheckerFault::RefinementStep,
+                                ))
+                            })?;
+                        Some((CertificateRule::StepFails, Some(Box::new(verdict))))
                     } else if taken == Some(&Taken::Failing) {
                         None
                     } else {
                         // The failing edge into the entry lists
                         // `Taken::Failing` (FR-245-AC-12): `None` or any
                         // other `taken` differs.
-                        Some(CertificateRule::PostDiffers)
+                        Some((CertificateRule::PostDiffers, None))
                     }
                 }
             }
         };
-        if let Some(rule) = rule {
+        if let Some((rule, verdict)) = failure {
             self.refinement_failures
                 .entry(node)
                 .or_insert(CertificateRejection {
                     rule,
-                    at: at_edge(index),
+                    at: CertificateLocus::ZoneEdge {
+                        edge: u64::try_from(index).unwrap_or(u64::MAX),
+                        verdict,
+                    },
                 });
         }
         Ok(())
@@ -4095,7 +4109,7 @@ impl<O> Checker<'_, '_, O> {
                 let bound = instances.iter().any(|instance| {
                     self.timed
                         .system()
-                        .bound_reference(parameter.object.clone(), instance)
+                        .written_reference(parameter.object.clone(), instance)
                         .is_ok_and(|candidate| candidate == *reference)
                 });
                 if !bound {

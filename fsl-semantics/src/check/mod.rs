@@ -2405,6 +2405,9 @@ impl PackageDeclarations {
 
     /// [`Self::check_with_protocol_results`] under a caller-owned
     /// [`Cancel`] handle.
+    #[implements("FR-503-AC-5")]
+    #[implements("FR-503-AC-6")]
+    #[implements("FR-276-AC-2")]
     pub fn check_with_protocol_results_and_cancel(
         self,
         mode: CheckMode,

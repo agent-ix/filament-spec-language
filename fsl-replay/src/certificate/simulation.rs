@@ -44,6 +44,7 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::temporal::UndefinedCause;
+use ix_trace_rs::implements;
 use serde::{Serialize, Serializer};
 
 use crate::certificate::check::{
@@ -272,7 +273,35 @@ impl UndeterminedStep {
 }
 
 impl FailedStep {
+    /// The rejection verdict of what `check_step` gave an edge over the
+    /// concrete `transition`, `None` for the stutter step. No verdict is a
+    /// rejection for `Passes`, `Stopped` or `Fault`, nor for an unmatched step
+    /// that names no transition.
+    #[implements("FR-149-AC-3", "FR-245-AC-8")]
+    pub(crate) fn of(verdict: StepVerdict, transition: Option<&ModelTransition>) -> Option<Self> {
+        Some(match verdict {
+            StepVerdict::Fails(failure) => match *failure {
+                RefinementFailure::NoAbstractMatch { position } => Self::NoAbstractMatch {
+                    position,
+                    transition: transition?.clone(),
+                },
+                failure => Self::Fails(failure),
+            },
+            StepVerdict::Undefined(evaluation) => Self::Undefined(evaluation),
+            StepVerdict::Undetermined(undetermined) => {
+                Self::Undetermined(UndeterminedStep::new(undetermined))
+            }
+            StepVerdict::ProtocolContractUndetermined { .. } => {
+                Self::Undetermined(UndeterminedStep::new(Undetermined::UndecidedSuccessor))
+            }
+            StepVerdict::Passes { .. } | StepVerdict::Stopped(_) | StepVerdict::Fault(_) => {
+                return None
+            }
+        })
+    }
+
     /// The verdict as the locus writes it (FR-149 "Wire form").
+    #[implements("FR-149-AC-8")]
     fn wire(&self) -> Result<serde_json::Value, String> {
         use serde_json::json;
         let decimal = |value: u64| value.to_string();
@@ -344,8 +373,8 @@ impl FailedStep {
                 "kind": "UndefinedEvaluation",
                 "where": {
                     "position": decimal(evaluation.site.position),
-                    "state_key": base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .encode(evaluation.site.state_key.as_bytes()),
+                    "state_key": {"key": base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(evaluation.site.state_key.as_bytes())},
                     "locus": locus_kind(&evaluation.site.locus)?,
                 },
                 "cause": undefined_cause_kind(&evaluation.cause),
@@ -457,6 +486,7 @@ pub enum SimulationRefusal {
 /// [`SimulationRefusal`] when the certificate names another refinement, a
 /// subject does not open, a root is unbounded, or the concrete subject has no
 /// initial state. A refusal is never an acceptance.
+#[implements("FR-149-AC-1")]
 pub fn check_simulation_certificate(
     request: &SimulationCertificateRequest<'_>,
     certificate: &SimulationCertificate,
@@ -801,36 +831,19 @@ impl Run<'_, '_> {
             };
             let (post, taken) = match verdict {
                 StepVerdict::Passes { post, taken } => (post, taken),
-                StepVerdict::Fails(failure) => match *failure {
-                    RefinementFailure::NoAbstractMatch { position } => {
-                        let Some(transition) = transition.clone() else {
-                            return Err(Self::fault("an-unmatched-abstract-step-has-a-transition"));
-                        };
-                        return Err(failed(FailedStep::NoAbstractMatch {
-                            position,
-                            transition,
-                        }));
-                    }
-                    failure => return Err(failed(FailedStep::Fails(failure))),
-                },
-                StepVerdict::Undefined(evaluation) => {
-                    return Err(failed(FailedStep::Undefined(evaluation)))
-                }
-                StepVerdict::Undetermined(undetermined) => {
-                    if let Some(counter) = Self::meter_counter(&undetermined) {
-                        return Err(self.meter_stop(counter));
-                    }
-                    return Err(failed(FailedStep::Undetermined(UndeterminedStep::new(
-                        undetermined,
-                    ))));
-                }
-                StepVerdict::ProtocolContractUndetermined { .. } => {
-                    return Err(failed(FailedStep::Undetermined(UndeterminedStep::new(
-                        Undetermined::UndecidedSuccessor,
-                    ))));
-                }
                 StepVerdict::Stopped(reached) => return Err(stopped(reached.limit, reached.value)),
                 StepVerdict::Fault(_) => return Err(Self::fault("refinement-step")),
+                failure => {
+                    if let StepVerdict::Undetermined(undetermined) = &failure {
+                        if let Some(counter) = Self::meter_counter(undetermined) {
+                            return Err(self.meter_stop(counter));
+                        }
+                    }
+                    let Some(verdict) = FailedStep::of(failure, transition.as_ref()) else {
+                        return Err(Self::fault("an-unmatched-abstract-step-has-a-transition"));
+                    };
+                    return Err(failed(verdict));
+                }
             };
             let differs = || Self::reject(CertificateRule::PostDiffers, at, Some(number), None);
             let slot = usize::try_from(edge.post).ok().and_then(|post_at| {

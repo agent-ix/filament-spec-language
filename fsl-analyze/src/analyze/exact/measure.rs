@@ -7,7 +7,8 @@ use crate::exact_probabilistic::{
 use fsl_replay::{
     conditional_measure_probability_certificate, measure_probability_certificate_document,
     measure_probability_objective, measure_probability_product_key,
-    write_measure_probability_certificate, MeasurePayoffKind,
+    partial_lower_measure_probability_certificate_document, write_measure_probability_certificate,
+    MeasurePayoffKind,
 };
 
 pub(super) fn run(
@@ -374,14 +375,20 @@ pub(super) fn run(
         );
     }
     if lower_product.is_some() {
-        if !matches!(
-            claim.form,
-            ProbForm::Quantile { .. } | ProbForm::MeanOfFraction { .. }
-        ) {
+        // A partial product shows only a `lower`: the claim side of `>= θ`
+        // and of a `<= c` quantile.
+        let lower_side = match &claim.form {
+            ProbForm::Probability { bound, .. } | ProbForm::MeanOfFraction { bound, .. } => {
+                matches!(bound, Bound::AtLeast(_))
+            }
+            ProbForm::Quantile { threshold, .. } => matches!(threshold, Bound::AtMost(_)),
+            _ => false,
+        };
+        if !lower_side {
             return max_states_limit(&limits, subject);
         }
         let checked = (|| {
-            let document = measure_probability_certificate_document(
+            let document = partial_lower_measure_probability_certificate_document(
                 &system,
                 claims,
                 &item,
@@ -410,6 +417,12 @@ pub(super) fn run(
             Ok(check) => check,
             Err(error) => return document_failure(error, subject),
         };
+        // A prefix whose bound misses the threshold settles nothing (FR-196).
+        if matches!(&check, ExactProbabilityCertificateCheck::Rejected(rejection)
+            if rejection.rule == ProbabilityCertificateRule::ThresholdMissed)
+        {
+            return max_states_limit(&limits, subject);
+        }
         let ExactProbabilityCertificateCheck::Accepted(accepted) = &check else {
             return checked_report(Ok(check), certificate, binding, None, subject);
         };
@@ -430,10 +443,7 @@ pub(super) fn run(
             value: accepted.value().clone(),
             side: accepted.side(),
         });
-        let binding = binding.map(|bound| ExactBinding {
-            population: bound.instance.population.node,
-            key: bound.instance.key,
-        });
+        let binding = binding.map(|bound| bound.reference);
         let extremum = match optimization {
             ProbabilityObjective::Maximum => Some(Extremum::Max),
             ProbabilityObjective::Minimum => Some(Extremum::Min),
@@ -442,7 +452,11 @@ pub(super) fn run(
         return EngineReport::Exact(Box::new(ExactReport::ProvedPartialBounds {
             claim: check,
             upper,
-            method: fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 0 },
+            // The values are exact; FSpec's method still states the
+            // run's positive starting precision.
+            method: fsl_replay::BoundsMethod::BackwardInduction {
+                precision_bits: limits.precision_bits,
+            },
             extremum,
             binding,
             evidence,
@@ -689,10 +703,7 @@ fn finish_measure_interval(
         value: accepted.value().clone(),
         side: accepted.side(),
     });
-    let binding = binding.map(|bound| ExactBinding {
-        population: bound.instance.population.node.clone(),
-        key: bound.instance.key.clone(),
-    });
+    let binding = binding.map(|bound| bound.reference.clone());
     let extremum = match optimization {
         ProbabilityObjective::Maximum => Some(Extremum::Max),
         ProbabilityObjective::Minimum => Some(Extremum::Min),

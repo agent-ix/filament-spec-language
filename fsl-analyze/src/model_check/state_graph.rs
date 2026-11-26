@@ -301,7 +301,7 @@ fn instances<'a>(
                         .iter()
                         .map(|instance| {
                             system
-                                .bound_reference(over.object.clone(), instance)
+                                .written_reference(over.object.clone(), instance)
                                 .map(|reference| (Some(reference), Some(instance.clone())))
                                 .map_err(|_| fault("state-graph-instance-references"))
                         })

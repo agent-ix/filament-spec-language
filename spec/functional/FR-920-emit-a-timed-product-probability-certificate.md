@@ -93,6 +93,25 @@ would have refused the certificate before reading a value.
   increasing order of the state's nonzero fractional parts, equal fractions
   sharing a position. `deadline` is `["deadline",D,t,fraction]` with the same
   reading. Clock identity, order and caps are FR-196's.
+- For `bounded-window`, whose route is always `"region"` (FR-204 Admission
+  "Route"), the key SHALL be the region key with the monitor member FR-196's
+  `["window",residual]`. Each obligation's `[kind,o,integer,fraction]` reads
+  `integer` and `fraction` as a region clock entry does, and the obligation
+  clocks are among "the state's nonzero fractional parts" that order every
+  `fraction` of the key: model clocks, the deadline clock and obligations
+  alike. Two keys whose residuals differ in any byte are different states.
+- A bounded-window document SHALL hold a row for every tail-entry state of
+  FR-196 "Idle tail of a timed window monitor": the region key with `tail`
+  `"idle-entry"` and every other member, the unfolded residual included,
+  byte for byte that of the quiescent state it is entered from, valued with its tail value for the document's
+  optimization (0 or 1). It is a decided state: an entry of value 1 is a
+  target and one of value 0 a rejecting decided state (FR-201), neither
+  expanded, each with FR-201's decided-state rank 0. The document SHALL carry no stutter time, tail path, layer or
+  tail-search member, and no row for an `"idle-ready"` or `"idle-delayed"`
+  state of that product; the checker computes the tail value itself. A
+  `policy` names a state's move to its tail-entry state by the action body
+  `["enter-idle-tail"]` (FR-196 `ProductAction::EnterIdleTail`), never a
+  stutter time.
 - For `expected-elapsed` on the region route, the key SHALL be the region key
   with the model member's tag `"boundary-region"` and a trailing `corner`, one
   canonical integer string per clock entry in entry order, then the deadline
