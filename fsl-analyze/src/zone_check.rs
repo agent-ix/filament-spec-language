@@ -42,10 +42,10 @@ pub mod manifest;
 pub use dbm::{Bound, Dbm, DbmError};
 pub use scale::{scale_constants, ScaledConstants};
 pub use search::{
-    canonical_symbolic_state, check_timed_model,
-    explore_timed_state_graph, TimedStateGraph, TimedStateGraphEdge, TimedStateGraphNode,
-    ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
-    ZoneCheckRequest, ZoneReduction, ZoneStats, ZoneStop, ZoneUndecided,
+    canonical_symbolic_state, check_timed_model, explore_timed_state_graph, TimedStateGraph,
+    TimedStateGraphEdge, TimedStateGraphNode, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
+    ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneReduction, ZoneStats, ZoneStop,
+    ZoneUndecided,
 };
 pub use settle::{
     settle_timed_refinement, settle_zone_check, ZoneCheckRecord, ZoneItem, ZONE_CERTIFIED,
