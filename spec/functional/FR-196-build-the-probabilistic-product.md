@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-195
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
 ---
 # FR-196: Build the probabilistic product
 
@@ -25,9 +27,12 @@ FSL's `exact_probabilistic` module in layer A, crate `fsl-analyze`
 claim, the finite product on which EN-5 computes (ADR-028 §2, SCH-2): the
 MDP over FR-187's actions and draws, or under a workload the DTMC over
 FR-187's step probabilities, in product with FR-126's deterministic monitor
-for a bounded event and with an accumulator for a bounded measure. It SHALL
-reuse `model_check`'s product `TransitionSystem`, monitor translations, edge
-retention and SCC decomposition, and SHALL retain every product edge with
+for a bounded event and with an accumulator for a bounded measure. Over a
+timed subject it SHALL run on the qualified core's one concrete timed run and
+SHALL write its own abstraction, product, claim monitors and component
+decomposition (ADR-038 RL-1, RL-2); over an untimed subject it SHALL reuse
+`model_check`'s product `TransitionSystem`, monitor translations, edge
+retention and SCC decomposition. It SHALL retain every product edge with
 its action, draw and exact probability.
 
 ## Use case
@@ -948,7 +953,8 @@ sums satisfy `0<=true_sum<=total_sum`. Imported violations refuse.
 `["drawn",schedule,random]` for a discrete draw at the current model state.
 A timed every-scheduler residual choice uses this same ordinary drawn
 alternative at the **already delayed** digital source state. Under every
-scheduler, delay distributions are unsupported; the admitted digital route
+scheduler a `discrete` delay distribution applies as under a workload (FR-204
+Admission, FR-923), and a continuous one is unsupported; the digital product
 has separate unit-delay moves then enabled discrete draws. Under a workload,
 a given-delay race outcome is one edge with its exact probability, delay and
 discrete endpoint. When the winning delay ties multiple identities, the edge
