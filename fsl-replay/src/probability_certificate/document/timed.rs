@@ -2539,7 +2539,9 @@ fn enumerate_region_deadline(
             }
         }
         // A quiescent state's idle tail: it waits to the time successor, and
-        // after a wait may observe the unchanged state as a position.
+        // after a wait may observe the unchanged state as a position. Interim: part
+        // of a walk over a finer grid, not the symbolic region MDP of ADR-038
+        // RL-3 (QSL-3495), and no claim of exactness.
         if current.tail != DigitalTail::Running {
             let mut choices = Vec::new();
             let waiting = RegionState {
