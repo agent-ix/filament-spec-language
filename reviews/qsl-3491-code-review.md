@@ -55,3 +55,6 @@ xtask string-edge, xtask canonical-types and arch-lint qualified-core exit 1 on 
 | FND-005 | fixed | QSL-3494 comment fa0691ea records the Split row as a done condition. |
 | FND-006 | fixed | A locked behaviour is a closed trace with no later position. |
 | FND-007 | fixed | The undefined reading is keyed to the block state, asserted time-locked. |
+| FND-008 | fixed | Both rows expect the hand value or incomplete and are ignored under QSL-3318. |
+| FND-009 | fixed | The EN-5 rows expect the hand value, or hand or incomplete for region forms, and are ignored under QSL-3531. EN-4 runs in separate sampled tests. |
+| FND-010 | fixed | The empty-window declines compare the failing operator's byte range. |
