@@ -3043,6 +3043,7 @@ impl PackageDeclarations {
             self.model_type_aliases.clone(),
         )
         .with_model_records(self.model_records)
+        .with_unit_bounds(&self.models)
         .with_relationships(self.relationships)
         .with_imports(self.imports)
         .with_integer_division(self.integer_division)

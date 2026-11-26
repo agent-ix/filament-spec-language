@@ -628,6 +628,20 @@ pub enum ReplayRefusal {
         /// The universe the reference names.
         supplied: filament_exact::UniverseId,
     },
+    /// FSpec FR-154 "Unit bounds": a replayed recorded value holds a quantity
+    /// beyond a bound on the slot of a model record or tuple
+    /// (`invalid_runtime_input`/`invalid-value`), before the call.
+    #[error(
+        "invalid_runtime_input/{}: the argument at position {position} violates a unit bound at {}",
+        defect.cause,
+        defect.path
+    )]
+    UnitBound {
+        /// The parameter's zero-based declared position.
+        position: usize,
+        /// The violated bound and the path to the quantity.
+        defect: Box<crate::spine::ArgumentDefect>,
+    },
     /// FR-098 steps 3 and 4: FR-106 admission of the environment document, or
     /// FR-364's `resolve` of a reference argument, refused.
     #[error("the object environment is refused: {0}")]
@@ -708,6 +722,7 @@ impl ReplayRefusal {
                 Code::InvalidRuntimeInput
             }
             Self::ForeignReference { .. } => Code::ForeignReference,
+            Self::UnitBound { defect, .. } => defect.code,
             Self::ObjectEnvironment(failure) => failure.code(),
             Self::ParityBound(refusal) => refusal.code(),
             Self::WrongObservation { .. } => Code::WrongSnapshot,
@@ -812,6 +827,7 @@ impl ReplayRefusal {
                 Some("unknown-member")
             }
             Self::ForeignReference { .. } => Some("foreign-universe"),
+            Self::UnitBound { defect, .. } => Some(defect.cause),
             Self::ObjectEnvironment(failure) => failure.cause(),
             Self::Input(refusal) => Some(refusal.cause()),
             Self::NativePayload { .. } | Self::UnfairLasso { .. } => Some("invalid-value"),

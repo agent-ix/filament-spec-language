@@ -230,6 +230,8 @@ mod call;
 mod identity_form;
 mod package_call;
 mod run_value;
+#[cfg(test)]
+pub(crate) use call::tests::bounded_record_fixture;
 pub use call::{
     default_accounting, run, run_with_integer_division, run_with_profile_catalog,
     run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
@@ -246,6 +248,7 @@ pub use package_call::{
     run_package_with_sources_and_budget, DomainPackages, PackageCallResult,
     PackageSourceAttributionFailure,
 };
+pub(crate) use run_value::unit_bound_defect;
 pub use run_value::{ArgumentDefect, UnitBoundDefect};
 
 pub(crate) mod clause;

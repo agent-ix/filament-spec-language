@@ -3796,3 +3796,45 @@ fn typed_nested_steps_are_identical_under_a_field_and_a_parameter() {
         );
     }
 }
+
+/// FSpec FR-154 "Unit bounds" (TC-465): a field of an initial state that
+/// violates the bound refuses the state; the bound itself admits.
+#[trace("TC-465", "FR-106-AC-85", "FSpec-FR-154-AC-28")]
+#[test]
+fn an_initial_state_field_beyond_its_unit_bound_refuses() {
+    let replay = bounded_quantity_replay();
+    let model = fsl_semantics::model::state::StateModel::new(
+        replay.graph.model_selections(),
+        replay.graph.scope().types(),
+        &replay.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("model views");
+    let admit = |magnitude: &str| {
+        let fields = with(quantity_fields(), "reach", ms(ratio(magnitude, "1")));
+        let mut document: Value =
+            serde_json::from_str(&snapshot_text(&replay, "current", "start", &fields))
+                .expect("the snapshot is JSON");
+        document["anchor"] = json!({"kind": "initialization", "name": "start"});
+        let bytes = document.to_string().into_bytes();
+        let reference = document_ref("start");
+        let provision = BTreeMap::from([(reference.clone(), bytes)]);
+        model.admit_initial(&provision, &reference, ObservationLimits::default())
+    };
+    admit("3").unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+    let record = record_of(admit("4"));
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "invalid-value");
+    for (name, value) in [
+        ("constraint", "ix://test/orders/Item/max"),
+        ("keyword", "max"),
+        ("bound", "3"),
+        ("field", "reach"),
+    ] {
+        assert_eq!(
+            record.fields.get(name).map(String::as_str),
+            Some(value),
+            "{name}"
+        );
+    }
+}

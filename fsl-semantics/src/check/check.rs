@@ -66,6 +66,7 @@ mod typing;
 use typing::{TypedOperand, is_option_some_constructor};
 
 use super::ir::{BodyBuilder, DispatchTable, EqualityProducerData, Node, NodeId, Slot};
+use super::lowering::AdmittedModel;
 use super::model_spelling::{ModelSpellings, Spelled};
 use super::navigation::Relationships;
 use super::refusal::{
@@ -73,6 +74,7 @@ use super::refusal::{
     IdentityObserving, KeyFault, Obligation, ReservedSlotName, SlotTag, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
+use crate::model::state::{CompositeBounds, MemberBound};
 use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
 use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
 use filament_checked::key::DeclarationKey;
@@ -1101,6 +1103,9 @@ pub struct Scope {
     types: TypeEnvironment,
     /// Where a record value keeps the fields its ancestors name (FR-359).
     model_records: ModelRecords,
+    /// The unit bounds on the slots of the admitted models' records and
+    /// tuples (FSpec FR-154 "Unit bounds").
+    unit_bounds: CompositeBounds,
     /// The relationship ends a receiver type navigates (FR-363).
     relationships: Relationships,
     /// Fixed once built, like `types`.
@@ -1519,6 +1524,7 @@ impl Scope {
             decimal_literal_total: fsl_foundation::tally::Tally::default(),
             types,
             model_records: ModelRecords::default(),
+            unit_bounds: CompositeBounds::default(),
             relationships: Relationships::default(),
             enums,
             variant_types: Vec::new(),
@@ -1773,6 +1779,22 @@ impl Scope {
     pub(crate) fn with_history_names(mut self, names: Vec<String>) -> Self {
         self.history_names = names;
         self
+    }
+
+    /// This scope with the unit bounds on the slots of `models`' records and
+    /// tuples.
+    pub(crate) fn with_unit_bounds(mut self, models: &[AdmittedModel]) -> Self {
+        let packages: Vec<_> = models
+            .iter()
+            .filter_map(AdmittedModel::records_with_unit_bounds)
+            .collect();
+        self.unit_bounds = CompositeBounds::of_records(packages.iter().map(Vec::as_slice));
+        self
+    }
+
+    /// The unit bounds on the slots of the composite `declaration`.
+    pub(crate) fn slot_bounds(&self, declaration: &filament_exact::NodeKey) -> &[MemberBound] {
+        self.unit_bounds.slot_bounds(declaration)
     }
 
     /// This scope with where its record values keep the fields their

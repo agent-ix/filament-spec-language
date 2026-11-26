@@ -46,7 +46,9 @@ use filament_exact::{
 };
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::call::WrongSnapshotCause;
-use filament_semantic_value::declaration::{EqualityOperand, EqualityOperator, FieldDeclaration};
+use filament_semantic_value::declaration::{
+    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration,
+};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, CaseForm, ClauseKind, ExprNode, ExprRef, Expression,
@@ -1256,12 +1258,151 @@ impl<'a> Typer<'a> {
         loop {
             step = match step {
                 Step::Descend(goal) => self.descend(goal, &mut frames)?,
-                Step::Typed(typed) => match frames.pop() {
-                    None => return Ok(typed),
-                    Some(frame) => self.accept(frame, typed, &mut frames)?,
-                },
+                Step::Typed(typed) => {
+                    self.admit_unit_bounds(&typed)?;
+                    match frames.pop() {
+                        None => return Ok(typed),
+                        Some(frame) => self.accept(frame, typed, &mut frames)?,
+                    }
+                }
             };
         }
+    }
+
+    /// FSpec FR-154 "Unit bounds": a constant written into a bounded slot of
+    /// a record or tuple, as the value itself, an element, a present payload
+    /// or a branch, satisfies every bound on the slot. A value that is not
+    /// constant is left to the run-time invariant.
+    #[implements("FR-056-AC-74")]
+    fn admit_unit_bounds(&self, built: &Node) -> Result<(), CheckRefusal> {
+        let declaration = match &built.kind {
+            NodeKind::Record { declaration, .. } | NodeKind::Tuple { declaration, .. } => {
+                declaration
+            }
+            _ => return Ok(()),
+        };
+        for bound in self.scope.slot_bounds(declaration) {
+            let Some(slot) = bound.path.first() else {
+                continue;
+            };
+            let written = match &built.kind {
+                NodeKind::Record { slots, .. } => self
+                    .scope
+                    .types()
+                    .composite(declaration.clone())
+                    .and_then(|declared| match declared.shape() {
+                        CompositeShape::Record(fields) => {
+                            fields.iter().position(|field| field.name() == slot)
+                        }
+                        CompositeShape::Tuple(_) | CompositeShape::Union(_) => None,
+                    })
+                    .and_then(|position| match slots.get(position) {
+                        Some(RecordSlot::<NodeId>::Present(value)) => Some(*value),
+                        _ => None,
+                    }),
+                NodeKind::Tuple { arguments, .. } => slot
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|position| arguments.get(position).copied()),
+                _ => None,
+            };
+            let mut pending: Vec<NodeId> = written.into_iter().collect();
+            while let Some(id) = pending.pop() {
+                let Some(held) = self.body.get(id) else {
+                    continue;
+                };
+                if let Some(magnitude) = self.constant_magnitude(id) {
+                    if !bound.admits_magnitude(&magnitude) {
+                        return Err(refuse(
+                            &held.location,
+                            CheckCause::UnitBound {
+                                member: bound.member.clone(),
+                                constraint: bound.constraint.clone(),
+                                keyword: bound.keyword(),
+                                bound: bound.canonical_bound(),
+                            },
+                        ));
+                    }
+                    continue;
+                }
+                match &held.kind {
+                    NodeKind::Collection { elements, .. } => {
+                        pending.extend(elements.iter().rev().copied());
+                    }
+                    NodeKind::OptionSome(payload) => pending.push(*payload),
+                    NodeKind::ConvertCollection { operand, .. } => pending.push(*operand),
+                    NodeKind::If {
+                        then, otherwise, ..
+                    } => pending.extend([*otherwise, *then]),
+                    NodeKind::Let { body, .. } => pending.push(*body),
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The magnitude of an exact constant quantity expression: literals under
+    /// negation, addition, subtraction and scaling by a literal factor.
+    /// `None` for any other expression. Walked on an explicit stack.
+    fn constant_magnitude(&self, root: NodeId) -> Option<Rational> {
+        enum Fold {
+            Visit(NodeId),
+            Negate,
+            Combine(ArithmeticOperator),
+        }
+        let mut pending = vec![Fold::Visit(root)];
+        let mut held: Vec<Rational> = Vec::new();
+        while let Some(step) = pending.pop() {
+            match step {
+                Fold::Visit(id) => match &self.body.get(id)?.kind {
+                    NodeKind::Literal(CheckedLiteral(value)) => held.push(match value {
+                        Value::Quantity(quantity) => quantity.magnitude().clone(),
+                        Value::Integer(integer) => Rational::from_integer(integer.clone()),
+                        Value::Rational(rational) => rational.clone(),
+                        _ => return None,
+                    }),
+                    NodeKind::QuantityNegate(operand) => {
+                        pending.extend([Fold::Negate, Fold::Visit(*operand)]);
+                    }
+                    NodeKind::Quantity(
+                        operator @ (ArithmeticOperator::Add | ArithmeticOperator::Subtract),
+                        left,
+                        right,
+                    ) => pending.extend([
+                        Fold::Combine(*operator),
+                        Fold::Visit(*right),
+                        Fold::Visit(*left),
+                    ]),
+                    NodeKind::QuantityScale { quantity, factor } => pending.extend([
+                        Fold::Combine(ArithmeticOperator::Multiply),
+                        Fold::Visit(*factor),
+                        Fold::Visit(*quantity),
+                    ]),
+                    NodeKind::QuantityScaleDiv { quantity, factor } => pending.extend([
+                        Fold::Combine(ArithmeticOperator::Divide),
+                        Fold::Visit(*factor),
+                        Fold::Visit(*quantity),
+                    ]),
+                    _ => return None,
+                },
+                Fold::Negate => {
+                    let operand = held.pop()?;
+                    held.push(operand.neg());
+                }
+                Fold::Combine(operator) => {
+                    let right = held.pop()?;
+                    let left = held.pop()?;
+                    held.push(match operator {
+                        ArithmeticOperator::Add => left.add(&right),
+                        ArithmeticOperator::Subtract => left.sub(&right),
+                        ArithmeticOperator::Multiply => left.mul(&right),
+                        ArithmeticOperator::Divide => left.div(&right)?,
+                    });
+                }
+            }
+        }
+        held.pop()
     }
 
     /// Start `goal`: a form with no operand to type is typed now; any other

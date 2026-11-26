@@ -689,6 +689,14 @@ pub struct ForeignView {
 }
 
 impl AdmittedModel {
+    /// The package's records where it declares a unit bound.
+    pub(crate) fn records_with_unit_bounds(&self) -> Option<Vec<DomainPackageRecord>> {
+        self.records
+            .values()
+            .any(|record| matches!(record, DomainPackageRecord::ValueBound(_)))
+            .then(|| self.records.values().cloned().collect())
+    }
+
     /// The selected model's Port roles, each keyed by its package identity
     /// and source artifact, with its declaration key and owning effective
     /// object type.

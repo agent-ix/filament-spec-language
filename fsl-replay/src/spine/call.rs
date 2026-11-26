@@ -1974,6 +1974,7 @@ pub(crate) fn is_identifier(segment: &str) -> bool {
 /// parameter's declared type, after the binding-name checks of FR-100 and in
 /// declared parameter order, stopping at the first defect. Returns every
 /// argument as a typed one.
+#[implements("FR-650-AC-25")]
 pub(crate) fn admit_wire_arguments(
     forms: &Forms<'_>,
     parameters: &[(String, ValueType)],

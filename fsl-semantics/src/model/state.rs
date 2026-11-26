@@ -112,17 +112,23 @@ impl MemberBound {
         }
     }
 
+    /// Whether a quantity of `magnitude` satisfies the bound, equality
+    /// satisfying.
+    pub(crate) fn admits_magnitude(&self, magnitude: &filament_exact::Rational) -> bool {
+        if self.upper {
+            magnitude <= &self.bound
+        } else {
+            magnitude >= &self.bound
+        }
+    }
+
     /// Whether the quantity `value` satisfies the bound, equality
     /// satisfying; `true` for any value that is no quantity.
     pub fn admits(&self, value: &Value) -> bool {
         let Value::Quantity(quantity) = value else {
             return true;
         };
-        if self.upper {
-            quantity.magnitude() <= &self.bound
-        } else {
-            quantity.magnitude() >= &self.bound
-        }
+        self.admits_magnitude(quantity.magnitude())
     }
 
     /// The first quantity the member's value `value` holds at [`Self::path`]
@@ -204,6 +210,7 @@ fn violation_at(
 /// event it holds, every bound on `u` itself and every bound on an alias the
 /// quantity's type passes. A bound on an alias bounds no other member of `u`.
 #[implements("FR-106-AC-85")]
+#[implements("FR-106-AC-87")]
 #[implements("FR-106-AC-89")]
 pub(crate) fn member_bounds(views: &[ModelView]) -> Vec<MemberBound> {
     let mut bounds = Vec::new();
@@ -253,9 +260,20 @@ pub struct CompositeBounds {
 impl CompositeBounds {
     /// The slot bounds of every composite the packages of `views` declare.
     pub fn of<'v>(views: impl IntoIterator<Item = &'v EffectiveView>) -> Self {
+        Self::of_records(
+            views
+                .into_iter()
+                .map(|view| view.domain_package().records.as_slice()),
+        )
+    }
+
+    /// The slot bounds of every composite declared by `packages`, each one
+    /// package's records.
+    pub(crate) fn of_records<'r>(
+        packages: impl IntoIterator<Item = &'r [DomainPackageRecord]>,
+    ) -> Self {
         let mut slots = BTreeMap::new();
-        for view in views {
-            let records = &view.domain_package().records;
+        for records in packages {
             if !records
                 .iter()
                 .any(|record| matches!(record, DomainPackageRecord::ValueBound(_)))
@@ -276,6 +294,12 @@ impl CompositeBounds {
             }
         }
         Self { slots }
+    }
+
+    /// The bounds on the slots of the composite `node`, each path naming its
+    /// slot; empty for a composite no package bounds.
+    pub(crate) fn slot_bounds(&self, node: &filament_exact::NodeKey) -> &[MemberBound] {
+        self.slots.get(node).map_or(&[], Vec::as_slice)
     }
 
     /// The first bound a quantity held by a composite inside `value`

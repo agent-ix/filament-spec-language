@@ -3767,6 +3767,16 @@ fn run_function(
         bound.push(converted);
     }
 
+    if let Err(refusal) = super::call::admit_unit_bounds(
+        &fsl_semantics::model::state::CompositeBounds::of(models.iter().map(|model| &model.view)),
+        package.graph().scope().types(),
+        selected.parameters,
+        &bound,
+        None,
+    ) {
+        return Ok(report(ClauseDisposition::ArgumentRefusal(refusal)));
+    }
+
     let mut meter = Meter::new(accounting);
     let disposition = match package.call(&selected.name, bound, &environment, &mut meter) {
         Ok(evaluation) => match convert_outcome(evaluation, package.graph(), sources) {

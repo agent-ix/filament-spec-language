@@ -18,7 +18,7 @@ replays a nested-record counterexample from both arms. Each kind, identity
 and domain defect refuses `WrongValueKind` before the call, and the
 `value_occurrences` and `work_units` limits stop the replay before the call, settling `Incomplete` by counter name.
 
-Scope: FR-098-AC-8, FR-098-AC-9, FR-098-AC-10, FR-098-AC-12,
+Scope: FR-098-AC-8, FR-098-AC-9, FR-098-AC-10, FR-098-AC-12, FR-098-AC-35,
 FR-277-AC-4, FR-277-AC-5, FR-277-AC-6, FR-277-AC-7. Steps 8-9 are source-proof
 qualification Analysis; their negative control is not a runtime error test.
 All claimed supported family paths, including Decimal set membership in
@@ -157,6 +157,9 @@ claimed for that source-proof analysis.
 
 The union cases depend on QSL-503; a quantity-typed parameter in source
 depends on FSpec FR-142's `Quantity<u>`, S1's `Quantity<qualified-name>` production and FR-091's unit-namespace type lookup.
+
+Replay FR-098-AC-35's function from both arms with `r.d` at `3 ms`, then `4 ms`;
+`3 ms` runs and `4 ms` refuses as AC-35 states (`fsl-replay/src/execute/tests/composite.rs`).
 
 ## Expected Results
 

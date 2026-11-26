@@ -1513,6 +1513,12 @@ fn evaluate_declaration(
 /// `pkg.call(..)` and `CheckedPackage::call(&pkg, ..)` resolve through it.
 ///
 /// Sealed: [`CheckedPackage`] is the one implementor.
+///
+/// Its callers pass admitted values. Argument values and the object
+/// environment are checked here for type and closure, not for the unit bounds
+/// of FSpec FR-154 "Unit bounds": a caller that builds either from external
+/// input (a package read, the command line, a wire document) must check the
+/// bounds at its own admission before it calls.
 pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// Call the named function: `function.call`, then its body. Refused
     /// `InputRefusal::UnknownFunction` for a name `function` finds

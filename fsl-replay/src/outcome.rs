@@ -3846,6 +3846,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::UnusedObjectEnvironment
         | ReplayRefusal::UnusedProfileSelections { .. }
         | ReplayRefusal::ForeignReference { .. }
+        | ReplayRefusal::UnitBound { .. }
         | ReplayRefusal::ObjectEnvironment(_)
         | ReplayRefusal::UnknownParameter(_)
         | ReplayRefusal::DuplicateArgument(_)

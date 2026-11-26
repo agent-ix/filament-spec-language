@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-650
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-056
+    type: verifies
 ---
 # TC-1702: A mistyped argument refuses with its cause, position and path
 
@@ -12,18 +14,20 @@ relationships:
 
 A mistyped argument refuses with its cause, position and path.
 
-Scope: FR-650-AC-3, FR-650-AC-24, FR-650-AC-25.
+Scope: FR-650-AC-3, FR-650-AC-24, FR-650-AC-25, FR-056-AC-74.
 
 ## Test Procedure
 
 Run each defective argument FR-650-AC-3 lists over the identity fixture. Run
 FR-650-AC-24's function with its record argument holding `3 ms`, then `4 ms`.
 Run the same function through the command over the source and from the compiled
-package, and composite arguments in canonical form (FR-650-AC-25).
+package, and composite arguments in canonical form (FR-650-AC-25). Check each
+function body FR-056-AC-74 lists.
 
 Tag the tests `#[trace("TC-1702", "FR-650-AC-3")]`; they live in `tests/it/run_values.rs`.
 The FR-650-AC-24 tests live in `fsl-replay/src/spine/call/tests.rs`; the FR-650-AC-25
-tests live there and in `fsl-command/tests/it/package_run.rs`.
+tests live there and in `fsl-command/tests/it/package_run.rs`. The FR-056-AC-74
+test lives in `fsl-replay/src/spine/call/tests.rs`.
 
 ## Expected Results
 

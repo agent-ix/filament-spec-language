@@ -42,11 +42,13 @@ use filament_semantic_value::supplied_stop::{
 };
 use fsl_package::CheckedPackage;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::observation::population_universe_for;
+use fsl_semantics::model::observation::{composite_bounds, population_universe_for};
 use fsl_semantics::value::enumeration::mint_variant_id;
+use ix_trace_rs::implements;
 use std::collections::BTreeMap;
 
 use super::ReplayRefusal;
+use crate::spine::unit_bound_defect;
 use crate::witness::{QuantityMagnitude, WitnessSlot, WitnessValue};
 
 /// The meter a conversion builds values under: no counter limits it.
@@ -240,6 +242,38 @@ pub(crate) struct ReferenceModel<'a> {
 }
 
 impl<'a> ReferenceModel<'a> {
+    /// FSpec FR-154 "Unit bounds": refuse a replayed value holding a quantity
+    /// beyond a bound on the slot of a model record or tuple. The models are
+    /// read only when a value is a container.
+    #[implements("FR-098-AC-35")]
+    fn admit_unit_bounds(&self, types: &TypeEnvironment, values: &[Value]) -> Result<(), Stopped> {
+        let holds_container = values.iter().any(|value| {
+            matches!(
+                value,
+                Value::Composite(_)
+                    | Value::Union(_)
+                    | Value::Option(_)
+                    | Value::Collection(_)
+                    | Value::Map(_)
+            )
+        });
+        if !holds_container {
+            return Ok(());
+        }
+        let bounds = composite_bounds(self.selections, self.packages, self.limits)
+            .map_err(super::object_environment::environment_refusal)?;
+        for (position, value) in values.iter().enumerate() {
+            if let Some(defect) = unit_bound_defect(&bounds, types, value, None) {
+                return Err(ReplayRefusal::UnitBound {
+                    position,
+                    defect: Box::new(defect),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     /// The models `package` selects, over the domain `packages` the request
     /// carries.
     pub(crate) fn new(
@@ -284,7 +318,7 @@ pub(super) fn convert_arguments(
     run: &mut SuppliedRun,
     model: &ReferenceModel<'_>,
 ) -> Result<Converted, Stopped> {
-    convert_arguments_in(
+    let converted = convert_arguments_in(
         package.graph().scope().types(),
         enum_declarations(package),
         declared,
@@ -292,7 +326,9 @@ pub(super) fn convert_arguments(
         limits,
         run,
         model,
-    )
+    )?;
+    model.admit_unit_bounds(package.graph().scope().types(), &converted.values)?;
+    Ok(converted)
 }
 
 /// [`convert_arguments`] over a type environment and its enum declarations

@@ -343,6 +343,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::UndeclaredVariantCase { .. }
         | CheckCause::OperandTypeMismatch { .. }
         | CheckCause::ReferenceLiteralTypeMismatch { .. }
+        | CheckCause::UnitBound { .. }
         | CheckCause::EmptyReferenceLiteralKey { .. }
         | CheckCause::IdentityObservingForm(_)
         | CheckCause::WrongSnapshot(_)

@@ -389,9 +389,11 @@ fn catalog_free_integer_division_preserves_header_agreement_and_conflict() {
     );
 }
 
-pub(in crate::spine) struct LookupDriverFixture {
-    pub(in crate::spine) source: String,
-    pub(in crate::spine) packages: fsl_semantics::model::intake::PackageInput,
+pub(crate) struct LookupDriverFixture {
+    pub(crate) source: String,
+    pub(crate) packages: fsl_semantics::model::intake::PackageInput,
+    /// The model document `packages` was read from.
+    pub(crate) document: Vec<u8>,
 }
 
 pub(in crate::spine) fn lookup_driver_fixture(functions: &str) -> LookupDriverFixture {
@@ -431,7 +433,11 @@ pub(in crate::spine) fn lookup_driver_fixture(functions: &str) -> LookupDriverFi
          model M = \"acme/orders\";\n{functions}\n"
     );
     let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
-    LookupDriverFixture { source, packages }
+    LookupDriverFixture {
+        source,
+        packages,
+        document: bytes,
+    }
 }
 
 pub(in crate::spine) fn lookup_driver_context(
@@ -2894,7 +2900,7 @@ fn tc_792_reference_completions_serialize_the_returned_reference() {
 /// The lookup driver model with a unit alias `Delay` of `ms` bounded `max` `3`
 /// and, over it, a record `Span { d: Delay }`, a record `Many` with an optional
 /// field, a set and a map, a tuple `Pair` and a variant `Choice`.
-fn bounded_record_fixture(functions: &str) -> LookupDriverFixture {
+pub(crate) fn bounded_record_fixture(functions: &str) -> LookupDriverFixture {
     let sourced = |line: u64| {
         serde_json::json!({"source": {"sourceIdentity": "ix://acme/orders/spec",
             "path": "spec.fspec", "startLine": line, "startColumn": 3}})
@@ -2978,6 +2984,19 @@ fn bounded_record_fixture(functions: &str) -> LookupDriverFixture {
             member("ix://acme/orders/Many/m", "m", delays, "required", 1),
         ]}),
     ));
+    let maybe_delay = "ix://acme/orders/MaybeDelay";
+    types.push(node(
+        maybe_delay,
+        serde_json::json!("option"),
+        serde_json::json!({"inner": delay}),
+    ));
+    types.push(node(
+        "ix://acme/orders/Maybe",
+        serde_json::json!({"module": "acme/orders", "name": "value_record"}),
+        serde_json::json!({"supertypes": [], "operations": [], "fields": [
+            member("ix://acme/orders/Maybe/p", "p", maybe_delay, "required", 1),
+        ]}),
+    ));
     types.push(node(
         pair,
         serde_json::json!({"module": "acme/orders", "name": "tuple_type"}),
@@ -3021,7 +3040,11 @@ fn bounded_record_fixture(functions: &str) -> LookupDriverFixture {
          unit ms : Time = rational(1, 1000) * s;\n{functions}\n"
     );
     let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
-    LookupDriverFixture { source, packages }
+    LookupDriverFixture {
+        source,
+        packages,
+        document: bytes,
+    }
 }
 
 /// FSpec FR-154 "Unit bounds": a record value type's field is a member of
@@ -3301,5 +3324,93 @@ fn a_unit_bound_path_is_spelled_in_the_canonical_form_the_caller_wrote() {
             (refusal.code(), defect.cause, defect.path.as_str()),
             (Code::InvalidRuntimeInput, "invalid-value", path)
         );
+    }
+}
+
+/// FSpec FR-154 "Unit bounds": a constant a function body writes into a
+/// bounded record field or tuple position refuses where it is written; the
+/// bound itself, a constant that folds within it and a value that is not
+/// constant check.
+#[test]
+#[trace("TC-1702", "FR-056-AC-74")]
+fn a_constant_beyond_a_unit_bound_is_refused_where_a_body_writes_it() {
+    let check = |function: &str| {
+        let fixture = bounded_record_fixture(&format!(
+            "{function}\nfunction probe using v(): Boolean pure {{ true }}"
+        ));
+        run(
+            source(),
+            "fixture".to_owned(),
+            "bounded.native",
+            fixture.source.as_bytes(),
+            &fixture.packages,
+            &DependencyInput::default(),
+            SpineLimits::default(),
+            &call("probe", Vec::new()),
+            &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+            &Cancel::new(),
+        )
+    };
+    let span = |written: &str| {
+        format!("function f using v(): M::Span pure {{ M::Span {{ d: {written} }} }}")
+    };
+    let pair =
+        |written: &str| format!("function f using v(): M::Pair pure {{ M::Pair(9, {written}) }}");
+    let branch = |written: &str| {
+        format!(
+            "function f using v(c: Boolean): M::Span pure {{ \
+             M::Span {{ d: if c then 1 ms else {written} }} }}"
+        )
+    };
+    let set = |written: &str| {
+        format!(
+            "function f using v(x: M::Many): M::Many pure {{ \
+             M::Many {{ s: set[1 ms, {written}], m: x.m }} }}"
+        )
+    };
+    let some = |written: &str| {
+        format!("function f using v(): M::Maybe pure {{ M::Maybe {{ p: Some({written}) }} }}")
+    };
+
+    for accepted in [
+        span("3 ms"),
+        span("4 ms - 2 ms"),
+        pair("3 ms"),
+        branch("3 ms"),
+        set("3 ms"),
+        some("3 ms"),
+        "function f using v(x: M::Span): M::Span pure { M::Span { d: x.d } }".to_owned(),
+        "function f using v(x: M::Span): M::Span pure { M::Span { d: x.d + 4 ms } }".to_owned(),
+    ] {
+        let outcome = check(&accepted);
+        assert!(
+            matches!(outcome, Ok(CallOutcome::Completed(_))),
+            "{accepted}: {outcome:?}"
+        );
+    }
+    for refused in [
+        span("4 ms"),
+        span("2 ms + 2 ms"),
+        span("2 ms * 2"),
+        pair("4 ms"),
+        branch("4 ms"),
+        set("4 ms"),
+        some("4 ms"),
+    ] {
+        let refusal = check(&refused).expect_err(&refused);
+        let RunRefusal::Compile(compile) = *refusal else {
+            panic!("{refused}: a constant beyond the bound refuses at checking: {refusal:?}");
+        };
+        assert_eq!(compile.code(), Code::IllTyped, "{refused}");
+        assert_eq!(compile.cause(), Some("type-mismatch"), "{refused}");
+        let named = format!("{compile:?}");
+        for expected in [
+            "UnitBound",
+            "ix://acme/orders/Delay/max",
+            "keyword: \"max\"",
+            "bound: \"3\"",
+        ] {
+            assert!(named.contains(expected), "{refused}: {expected}: {named}");
+        }
     }
 }

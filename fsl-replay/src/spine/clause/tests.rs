@@ -5316,3 +5316,81 @@ fn tc_792_a_reference_completion_is_not_a_clause_truth() {
         .is_none_or(serde_json::Value::is_null));
     assert!(disposition.get("outcome").is_none());
 }
+
+/// FSpec FR-154 "Unit bounds": a function claim's composite argument that
+/// violates a bound refuses before the call; the bound itself evaluates.
+#[test]
+#[trace("TC-1702", "FR-650-AC-24")]
+fn a_function_claim_argument_beyond_its_unit_bound_refuses() {
+    let evaluate = |magnitude: &str| {
+        let model = crate::spine::bounded_record_fixture(
+            "function span using v(r: M::Span): Boolean pure { true }",
+        );
+        let label = DocumentRef {
+            authority: "test".to_owned(),
+            identity: "snap".to_owned(),
+        };
+        let bytes = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": document_identity_json(&label),
+            "observation": "current",
+            "anchor": {"kind": "initialization", "name": "init"},
+            "model": {"identity": "acme/orders"},
+            "populations": [],
+        })
+        .to_string()
+        .into_bytes();
+        let mut request = request(ClauseRunSelection::Function {
+            name: "span".to_owned(),
+            arguments: vec![ClauseArgument {
+                parameter: "r".to_owned(),
+                value: ClauseArgumentValue::Form(json!({"record": {
+                    "type": "ix://acme/orders/Span",
+                    "fields": {"d": {"kind": "quantity", "unit": "ms",
+                        "magnitude": {"kind": "rational",
+                            "numerator": magnitude, "denominator": "1"}}},
+                }})),
+            }],
+            snapshot: label,
+            snapshot_path: None,
+        });
+        request.source = ClauseRunSource::Program {
+            identity: source(),
+            path: "bounded.native".to_owned(),
+            bytes: model.source.into_bytes(),
+        };
+        request.packages = model.packages;
+        request.snapshots.insert(
+            fsl_semantics::model::observation::document_reference(&bytes)
+                .expect("a document names itself"),
+            bytes,
+        );
+        run_clause(request)
+            .expect("the fixture compiles")
+            .disposition
+    };
+    let within = evaluate("3");
+    assert!(
+        matches!(
+            within,
+            ClauseDisposition::Evaluate(super::CallOutcome::Completed(super::CallValue::Boolean(
+                true
+            )))
+        ),
+        "{within:?}"
+    );
+    let beyond = evaluate("4");
+    let ClauseDisposition::ArgumentRefusal(refusal) = beyond else {
+        panic!("4 ms refuses before the call: {beyond:?}");
+    };
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidRuntimeInput);
+    let crate::spine::RunRefusal::Argument {
+        position: 0,
+        defect,
+    } = refusal.as_ref()
+    else {
+        panic!("an argument refusal at position 0: {refusal:?}");
+    };
+    assert_eq!(defect.cause, "invalid-value");
+    assert_eq!(defect.path, "/record/fields/d");
+}

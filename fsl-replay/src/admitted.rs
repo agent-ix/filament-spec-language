@@ -722,6 +722,7 @@ impl From<ReplayRefusal> for AdmittedRefusal {
             | ReplayRefusal::UnusedObjectEnvironment
             | ReplayRefusal::UnusedProfileSelections { .. }
             | ReplayRefusal::ForeignReference { .. }
+            | ReplayRefusal::UnitBound { .. }
             | ReplayRefusal::ObjectEnvironment(_)
             | ReplayRefusal::ModelTrace(_)
             | ReplayRefusal::HybridTrace(_)
