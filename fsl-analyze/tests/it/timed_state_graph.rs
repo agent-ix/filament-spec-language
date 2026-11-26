@@ -479,10 +479,9 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
             _ => None,
         })
         .expect("the unit declares one population");
-    let mut snapshot: Value = serde_json::from_slice(
-        world.snapshots.values().next().expect("one snapshot"),
-    )
-    .expect("snapshot JSON");
+    let mut snapshot: Value =
+        serde_json::from_slice(world.snapshots.values().next().expect("one snapshot"))
+            .expect("snapshot JSON");
     snapshot["populations"]
         .as_array_mut()
         .expect("snapshot populations")
@@ -614,6 +613,533 @@ fn a_zone_temporal_over_binding_names_the_admitted_member_type() {
         the_admitted_derived(),
         "{item}"
     );
+}
+
+const PHASE_OPS: [(&str, &[&str]); 3] = [
+    ("first", &["phase", "x"]),
+    ("zero", &["phase"]),
+    ("one", &["phase"]),
+];
+
+/// The declarations of the trap subject. `first` runs at a time `t` in
+/// [0, 1] ms and resets `x`; `y` reads the time. Phase 1 ends by `y = 2 ms`,
+/// where `zero` needs `x >= 2 ms` (`t` is 0) and `one` has the guard
+/// `one_guard`; there `x` reads `2 ms - t`.
+fn trap_body(one_guard: &str, claim: &str) -> String {
+    format!(
+        "{}\
+         pre First using v on M::Call::first {{ self.phase = 0 }}\n\
+         post FirstDone using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Zero using v on M::Call::zero {{ self.phase = 1 and self.y >= 2 ms and self.x >= 2 ms }}\n\
+         post ZeroDone using v on M::Call::zero {{ self.phase = 2 }}\n\
+         pre One using v on M::Call::one {{ self.phase = 1 and {one_guard} }}\n\
+         post OneDone using v on M::Call::one {{ self.phase = 3 }}\n\
+         time invariant Early when {{ self.phase = 0 }} {{ self.y <= 1 ms }}\n\
+         time invariant Late when {{ self.phase = 1 }} {{ self.y <= 2 ms }}\n\
+         {claim}\n",
+        crate::timed_world::DENSE,
+    )
+}
+
+/// `analyze` of the claim `Done` over a dense subject of `body`.
+fn timed_run(
+    name: &str,
+    body: &str,
+    clocks: &[&str],
+    ops: &[(&str, &[&str])],
+    items: Value,
+) -> Run {
+    let unit =
+        crate::timed_world::unit_text(crate::timed_world::PACKAGE, crate::zone_search::TIMED, body);
+    analyze(&request_over(
+        &Workspace::new(name),
+        &unit,
+        &crate::timed_world::document(clocks, ops),
+        &[rpc_snapshot()],
+        json!({"items": items}),
+    ))
+}
+
+fn trapped_with(name: &str, one_guard: &str, claim: &str) -> Value {
+    let run = timed_run(
+        name,
+        &trap_body(one_guard, claim),
+        &["x", "y"],
+        &PHASE_OPS,
+        json!([{"claim": "Done"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    item
+}
+
+const ALWAYS_DONE: &str = "always possible Done using v over (c: M::Call) { c.phase >= 2 }";
+const UNIQUE_DONE: &str =
+    "unique path Done using v over (c: M::Call) from (c.phase = 1) to (c.phase >= 2);";
+const POSSIBLE_THREE: &str = "possible Done using v over (c: M::Call) { c.phase = 3 }";
+
+fn assert_refuted_and_replayed(item: &Value) {
+    assert_eq!(label(item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    assert_eq!(item["certificate"]["accepted"], false, "{item}");
+}
+
+fn assert_proved_and_certified(item: &Value) {
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+}
+
+/// With `one` never enabled, every `first` after time 0 leaves a reachable
+/// state from which no run reaches phase 2, so the claim is false.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FSpec-FR-712-AC-2")]
+#[test]
+fn zones_refute_always_possible_when_part_of_a_zone_is_trapped() {
+    let item = trapped_with("timed-sg-part-zone-trap", "false", ALWAYS_DONE);
+    assert_refuted_and_replayed(&item);
+}
+
+/// `unique path` counts the ways from every reachable `X` state: a trapped
+/// state has none, so the claim is false although every other state has one.
+#[trace("TC-2412", "FR-852-AC-3")]
+#[trace("TC-2412", "FSpec-FR-712-AC-3")]
+#[test]
+fn zones_refute_unique_path_when_part_of_a_zone_has_no_path() {
+    let item = trapped_with("timed-sg-part-zone-unique", "false", UNIQUE_DONE);
+    assert_refuted_and_replayed(&item);
+}
+
+/// `zero` takes `t = 0` and `one` exactly the other times, so every state has
+/// a way, and one way, although two steps leave the node of phase 1.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FR-852-AC-3")]
+#[test]
+fn zones_prove_over_steps_that_split_a_zone_between_them() {
+    let guard = "self.y >= 2 ms and self.x < 2 ms";
+    assert_proved_and_certified(&trapped_with("timed-sg-split-always", guard, ALWAYS_DONE));
+    assert_proved_and_certified(&trapped_with("timed-sg-split-unique", guard, UNIQUE_DONE));
+}
+
+/// At `t = 0` both `zero` and `one` run: two sequences from one state.
+#[trace("TC-2412", "FR-852-AC-3")]
+#[test]
+fn zones_refute_unique_path_with_two_sequences_from_part_of_a_zone() {
+    let item = trapped_with(
+        "timed-sg-split-overlap",
+        "self.y >= 2 ms and self.x <= 2 ms",
+        UNIQUE_DONE,
+    );
+    assert_refuted_and_replayed(&item);
+}
+
+/// `one` takes `t` strictly inside (0, 1) ms only, so the one time `t = 1`
+/// is trapped: a strict bound's boundary.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FR-852-AC-3")]
+#[test]
+fn zones_refute_when_only_a_strict_boundary_is_trapped() {
+    let guard = "self.y >= 2 ms and self.x < 2 ms and self.x > 1 ms";
+    assert_refuted_and_replayed(&trapped_with("timed-sg-edge-always", guard, ALWAYS_DONE));
+    assert_refuted_and_replayed(&trapped_with("timed-sg-edge-unique", guard, UNIQUE_DONE));
+}
+
+/// TC-2412 step 8's subject on EN-6: with `first` strictly between 0 and
+/// 1 ms, neither `zero` nor `one` is ever taken, so both claims are false.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FR-852-AC-3")]
+#[test]
+fn zones_refute_the_trap_between_two_integer_times() {
+    let guard = "self.y >= 2 ms and self.x <= 1 ms";
+    assert_refuted_and_replayed(&trapped_with(
+        "timed-sg-fraction-always",
+        guard,
+        ALWAYS_DONE,
+    ));
+    assert_refuted_and_replayed(&trapped_with(
+        "timed-sg-fraction-unique",
+        guard,
+        UNIQUE_DONE,
+    ));
+}
+
+/// One step through two overlapping guard parts is one transition sequence.
+#[trace("TC-2412", "FR-852-AC-3")]
+#[test]
+fn zones_count_one_sequence_for_a_step_through_two_guard_parts() {
+    let item = trapped_with(
+        "timed-sg-two-parts",
+        "self.y >= 2 ms and self.x < 2 ms and (self.x <= 1 ms or self.x >= 1 ms)",
+        UNIQUE_DONE,
+    );
+    assert_proved_and_certified(&item);
+}
+
+/// `possible` is read from the initial state alone: phase 3 is reachable
+/// when `one` can run and not when it never can.
+#[trace("TC-2412", "FR-852-AC-1")]
+#[test]
+fn zones_decide_possible_from_the_initial_valuation() {
+    let never = trapped_with("timed-sg-possible-never", "false", POSSIBLE_THREE);
+    assert_eq!(label(&never), "refuted", "{never}");
+    let some = trapped_with(
+        "timed-sg-possible-some",
+        "self.y >= 2 ms and self.x <= 1 ms",
+        POSSIBLE_THREE,
+    );
+    assert_proved_and_certified(&some);
+}
+
+/// `renew` leaves `x` behind the time, where `finish`'s lower bound is out of
+/// reach before phase 1 ends. The aLU simulation covers that state by
+/// `keep`'s and would hide it.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[test]
+fn zones_refute_a_trap_that_lower_bound_coverage_would_hide() {
+    let body = format!(
+        "{}\
+         pre Keep using v on M::Call::keep {{ self.phase = 0 }}\n\
+         post KeepDone using v on M::Call::keep {{ self.phase = 1 }}\n\
+         pre Renew using v on M::Call::renew {{ self.phase = 0 }}\n\
+         post RenewDone using v on M::Call::renew {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Finish using v on M::Call::finish {{ self.phase = 1 and self.x >= 2 ms }}\n\
+         post FinishDone using v on M::Call::finish {{ self.phase = 2 }}\n\
+         time invariant Early when {{ self.phase = 0 }} {{ self.y <= 1 ms }}\n\
+         time invariant Late when {{ self.phase = 1 }} {{ self.y <= 2 ms }}\n\
+         {ALWAYS_DONE}\n",
+        crate::timed_world::DENSE,
+    );
+    let run = timed_run(
+        "timed-sg-lower-cover",
+        &body,
+        &["x", "y"],
+        &[
+            ("keep", &["phase"]),
+            ("renew", &["phase", "x"]),
+            ("finish", &["phase"]),
+        ],
+        json!([{"claim": "Done"}]),
+    );
+    assert_refuted_and_replayed(&run.item(0));
+}
+
+/// `enter` reaches phase 1 with `x >= 5 ms`, and `join` goes on to a phase 2
+/// whose node `skip` already stored with any `x`. The edge into that wider
+/// node leads on to phase 3; no run from phase 1 does.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FR-852-AC-3")]
+#[test]
+fn zones_refute_where_a_covering_edge_leads_further_than_any_run() {
+    for (name, claim) in [
+        (
+            "timed-sg-covered-always",
+            "always possible Done using v over (c: M::Call) from (c.phase = 1) { c.phase = 3 }",
+        ),
+        (
+            "timed-sg-covered-unique",
+            "unique path Done using v over (c: M::Call) from (c.phase = 1) to (c.phase = 3);",
+        ),
+    ] {
+        let body = format!(
+            "{}\
+             pre Skip using v on M::Call::skip {{ self.phase = 0 }}\n\
+             post SkipDone using v on M::Call::skip {{ self.phase = 2 }}\n\
+             pre Enter using v on M::Call::enter {{ self.phase = 0 and self.x >= 5 ms }}\n\
+             post EnterDone using v on M::Call::enter {{ self.phase = 1 }}\n\
+             pre Join using v on M::Call::join {{ self.phase = 1 }}\n\
+             post JoinDone using v on M::Call::join {{ self.phase = 2 }}\n\
+             pre Last using v on M::Call::done {{ self.phase = 2 and self.x <= 1 ms }}\n\
+             post LastDone using v on M::Call::done {{ self.phase = 3 }}\n\
+             {claim}\n",
+            crate::timed_world::DENSE,
+        );
+        let run = timed_run(
+            name,
+            &body,
+            &["x"],
+            &[
+                ("skip", &["phase"]),
+                ("enter", &["phase"]),
+                ("join", &["phase"]),
+                ("done", &["phase"]),
+            ],
+            json!([{"claim": "Done"}]),
+        );
+        assert_refuted_and_replayed(&run.item(0));
+    }
+}
+
+/// A certificate over the explored graph of the trap subject, listing
+/// `ef_nodes`, and the checker's verdict on it.
+fn check_listing(
+    one_guard: &str,
+    claim: &str,
+    ef_nodes: &[usize],
+    max_certificate_edges: u64,
+) -> fsl_replay::ZoneCertificateVerdict {
+    use filament_exact::{Cancel, Integer};
+    use fsl_analyze::zone_check::{explore_timed_state_graph, Bound, ZoneCheckLimits};
+    use fsl_eval::simulation::model::TimedSystem;
+    use fsl_route::deadlock::{ItemObligation, ObligationKind};
+
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x", "y"], &PHASE_OPS),
+        crate::zone_search::TIMED,
+        &trap_body(one_guard, claim),
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed subject");
+    let graph = explore_timed_state_graph(&timed, ZoneCheckLimits::default(), &Cancel::new())
+        .expect("closed graph");
+    // Phase 0 holds every time up to 1 ms, in units of 1 ms.
+    for clock in 1..3 {
+        assert_eq!(
+            graph.nodes[0].zone.bound(clock, 0).expect("a clock"),
+            &Bound::le(1.into())
+        );
+    }
+    let nodes = graph
+        .nodes
+        .iter()
+        .map(|node| {
+            let mut bounds = Vec::new();
+            for i in 0..3 {
+                for j in 0..3 {
+                    bounds.push(match node.zone.bound(i, j).expect("a clock") {
+                        Bound::Finite { value, strict } => {
+                            Some((Integer::from_big(value.clone()), *strict))
+                        }
+                        Bound::Infinite => None,
+                    });
+                }
+            }
+            fsl_replay::CertNode {
+                state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(
+                    system
+                        .state_key(&node.state, fsl_foundation::IdentityLimits::default())
+                        .expect("state key")
+                        .0,
+                ),
+                automaton_state: 0,
+                zone: fsl_replay::Zone::from_matrix(3, bounds).expect("a node zone"),
+                locked: false,
+                product: None,
+            }
+        })
+        .collect();
+    let edges = graph
+        .edges
+        .iter()
+        .map(|edge| fsl_replay::CertEdge {
+            from: edge.from,
+            to: edge.to,
+            transition: Some(edge.transition.clone()),
+            part: Some(edge.part_index),
+            task_transition: None,
+            horizon: None,
+            silent: None,
+        })
+        .collect();
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("Done")
+        .expect("Done");
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: world.request().universes[0].population.clone(),
+        key: "c".to_owned(),
+    };
+    let over = system
+        .bound_reference(claim.over().expect("over").object.clone(), &instance)
+        .expect("bound c");
+    let certificate = fsl_replay::ZoneCertificate {
+        obligation: ItemObligation {
+            subject: (),
+            kind: ObligationKind::StateGraphAuthored(
+                claim.occurrence().expect("occurrence").clone(),
+            ),
+            reductions: Default::default(),
+        },
+        scale: Integer::one(),
+        lu_bounds: fsl_replay::LuBounds {
+            lower: vec![Some(Integer::from_big(10.into())); 2],
+            upper: vec![Some(Integer::from_big(10.into())); 2],
+        },
+        nodes,
+        edges,
+        initials: graph.initials.clone(),
+        components: None,
+        non_zeno: None,
+        divergence: None,
+        admitted: None,
+        state_graph: matches!(
+            claim.form(),
+            fsl_semantics::check::StateGraphForm::AlwaysPossible { .. }
+        )
+        .then(|| fsl_replay::StateGraphPart {
+            form: fsl_replay::StateGraphCertificateForm::AlwaysPossible,
+            ef_nodes: ef_nodes.to_vec(),
+        }),
+        refinement: None,
+        task_product: None,
+    };
+    fsl_replay::check_zone_certificate(
+        fsl_replay::ZoneCertificateRequest {
+            simulation: world.request(),
+            model: "M",
+            max_clocks: fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS,
+            item: fsl_replay::CertifiedItem::StateGraph {
+                claim,
+                over: Some(&over),
+            },
+        },
+        &certificate.obligation,
+        |obligation| match &obligation.kind {
+            ObligationKind::StateGraphAuthored(occurrence) => {
+                fsl_replay::CertificateItem::StateGraph(occurrence)
+            }
+            _ => fsl_replay::CertificateItem::Other,
+        },
+        &certificate,
+        fsl_replay::CertificateCheckLimits {
+            max_certificate_edges,
+            ..fsl_replay::CertificateCheckLimits::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("a checked certificate")
+}
+
+fn rule(verdict: fsl_replay::ZoneCertificateVerdict) -> fsl_replay::CertificateRule {
+    match verdict {
+        fsl_replay::ZoneCertificateVerdict::Rejected(rejection) => rejection.rule,
+        other => panic!("a rejection: {other:?}"),
+    }
+}
+
+/// The checker, on certificates written here. Nodes 0, 1 and 2 are phases 0,
+/// 1 and 2 when `one` never runs; closing over whole nodes lists all three,
+/// but only phase 2's zone lies in `E(P)`.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FSpec-FR-712-AC-2")]
+#[test]
+fn the_checker_rejects_a_node_level_closure() {
+    use fsl_replay::CertificateRule;
+    assert_eq!(
+        rule(check_listing("false", ALWAYS_DONE, &[0, 1, 2], u64::MAX)),
+        CertificateRule::RankBroken
+    );
+    assert_eq!(
+        rule(check_listing("false", ALWAYS_DONE, &[2], u64::MAX)),
+        CertificateRule::SuccessorMissing
+    );
+    assert_eq!(
+        check_listing(
+            "self.y >= 2 ms and self.x < 2 ms",
+            ALWAYS_DONE,
+            &[0, 1, 2, 3],
+            u64::MAX
+        ),
+        fsl_replay::ZoneCertificateVerdict::Accepted
+    );
+}
+
+/// The checker's own `unique path` and `possible`, and its budget.
+#[trace("TC-2412", "FR-852-AC-1")]
+#[trace("TC-2412", "FR-852-AC-3")]
+#[trace("TC-2412", "FSpec-FR-712-AC-3")]
+#[test]
+fn the_checker_decides_unique_path_and_possible_on_valuations() {
+    use fsl_replay::{CertificateRule, ZoneCertificateVerdict};
+    assert_eq!(
+        rule(check_listing("false", UNIQUE_DONE, &[], u64::MAX)),
+        CertificateRule::CountBroken
+    );
+    assert_eq!(
+        rule(check_listing(
+            "self.y >= 2 ms and self.x <= 2 ms",
+            UNIQUE_DONE,
+            &[],
+            u64::MAX
+        )),
+        CertificateRule::CountBroken
+    );
+    assert_eq!(
+        check_listing(
+            "self.y >= 2 ms and self.x < 2 ms",
+            UNIQUE_DONE,
+            &[],
+            u64::MAX
+        ),
+        ZoneCertificateVerdict::Accepted
+    );
+    assert_eq!(
+        rule(check_listing("false", POSSIBLE_THREE, &[], u64::MAX)),
+        CertificateRule::InitialMissing
+    );
+    let stopped = check_listing("self.y >= 2 ms and self.x < 2 ms", UNIQUE_DONE, &[], 6);
+    assert!(
+        matches!(stopped, ZoneCertificateVerdict::Stopped(_)),
+        "{stopped:?}"
+    );
+}
+
+/// The producer's own result on the trap subject: only the phase-2 node's
+/// whole zone lies in `E(P)`, and the initial node holds a trapped state,
+/// reached by waiting.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[test]
+fn the_decision_lists_whole_nodes_of_e_p_and_a_trapped_node() {
+    use filament_exact::Cancel;
+    use fsl_analyze::zone_check::{
+        decide_timed_state_graph, explore_timed_state_graph, TimedStateGraphDecision,
+        ZoneCheckLimits,
+    };
+    use fsl_eval::simulation::model::TimedSystem;
+
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x", "y"], &PHASE_OPS),
+        crate::zone_search::TIMED,
+        &trap_body("false", ALWAYS_DONE),
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed subject");
+    let graph = explore_timed_state_graph(&timed, ZoneCheckLimits::default(), &Cancel::new())
+        .expect("closed graph");
+    assert_eq!((graph.nodes.len(), graph.edges.len()), (3, 2));
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("Done")
+        .expect("Done");
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: world.request().universes[0].population.clone(),
+        key: "c".to_owned(),
+    };
+    let over = system
+        .bound_reference(claim.over().expect("over").object.clone(), &instance)
+        .expect("bound c");
+    let decision = decide_timed_state_graph(
+        &timed,
+        &graph,
+        claim,
+        Some(&over),
+        ZoneCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("decided");
+    let TimedStateGraphDecision::Refuted {
+        stem,
+        node,
+        ef_nodes,
+        paths,
+    } = decision
+    else {
+        panic!("refuted: {decision:?}");
+    };
+    assert_eq!(ef_nodes, [2]);
+    assert_eq!(node, 0);
+    assert!(stem.steps.is_empty(), "{stem:?}");
+    assert_eq!(paths, None);
 }
 
 /// FR-125 "Instancing": on the digital probabilistic route, the proved entry

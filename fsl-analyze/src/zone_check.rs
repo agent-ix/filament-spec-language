@@ -26,6 +26,7 @@ mod scale;
 mod search;
 mod settle;
 mod state_graph;
+mod state_graph_zones;
 mod task_certificate;
 mod task_product;
 mod task_symbolic;
@@ -41,7 +42,7 @@ pub mod manifest;
 pub use dbm::{Bound, Dbm, DbmError};
 pub use scale::{scale_constants, ScaledConstants};
 pub use search::{
-    canonical_symbolic_state, check_timed_model, concretise_timed_state_graph_path,
+    canonical_symbolic_state, check_timed_model,
     explore_timed_state_graph, TimedStateGraph, TimedStateGraphEdge, TimedStateGraphNode,
     ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
     ZoneCheckRequest, ZoneReduction, ZoneStats, ZoneStop, ZoneUndecided,
