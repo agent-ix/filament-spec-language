@@ -363,6 +363,20 @@ impl World {
         }
     }
 
+    /// The binding `analyze` takes over this world's subject, with the
+    /// universe `keys` of its population.
+    pub(crate) fn binding(&self, keys: &[&str]) -> fsl_analyze::analyze::SubjectBinding<'_> {
+        fsl_analyze::analyze::SubjectBinding {
+            packages: &self.packages,
+            snapshots: &self.snapshots,
+            initial: self.initial.clone(),
+            universes: vec![PopulationUniverse {
+                population: self.model.key(self.model.population),
+                keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+            }],
+        }
+    }
+
     /// The subject over the world's initial snapshots with universe `keys`.
     pub(crate) fn subject(&self, keys: &[&str], meter: ScalarLimits) -> ModelSubject<'_> {
         ModelSubject {
@@ -409,7 +423,7 @@ impl World {
             claim,
             GraphEvidence::Witness {
                 paths: vec![(WitnessPath::Path(path), source)],
-                over,
+                over: over.into_iter().collect(),
             },
             keys,
             ReplayLimits::default(),
