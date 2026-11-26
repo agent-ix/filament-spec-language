@@ -2,7 +2,6 @@
 //! FR-201's exact cyclic MDP values, independently checked against all actions.
 
 use super::*;
-#[cfg(feature = "test-support")]
 use ix_trace_rs::implements;
 
 /// Unchecked exact document with its closed wire-profile selection retained.
@@ -1362,6 +1361,7 @@ pub(super) fn check_with_value_bound_control<'a, 'control>(
 }
 
 #[implements("FR-1042-AC-19")]
+#[implements("FR-201-AC-3")]
 fn check_with_context(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2058,7 +2058,6 @@ fn fair_upper_bound_failure(
 /// Observe real MDP action, closure and progress work without replacing cancellation.
 #[cfg(feature = "test-support")]
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-201-AC-3")]
 pub fn check_cyclic_mdp_probability_certificate_observing<'a>(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2074,7 +2073,6 @@ pub fn check_cyclic_mdp_probability_certificate_observing<'a>(
 /// Exercise this profile's real owner identity ceiling, without changing wire limits.
 #[cfg(feature = "test-support")]
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-201-AC-3")]
 pub fn check_cyclic_mdp_probability_certificate_with_identity(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
