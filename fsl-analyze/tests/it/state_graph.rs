@@ -2652,21 +2652,26 @@ fn undefined_terminal_aliases_refute_with_replayed_first_declaration() {
         undefined.cause,
         fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
     );
-    let model_identity = format!("ix://{}/{}", world.model.package, world.model.object);
+    let terminal_state = positions(&world, &["v"], stem)
+        .pop()
+        .expect("terminal state is the initial state");
+    let model_system = system(&world, &["v"]);
+    let TerminalClass::Undefined {
+        model: first_terminal,
+        ..
+    } = model_system
+        .terminal_class(&terminal_state, false)
+        .expect("terminal declarations are read")
+    else {
+        panic!("the first declaration defines the undefined terminal row");
+    };
+    assert_eq!((first_terminal.label(), first_terminal.ordinal()), ("M", 0));
     assert_eq!(
         undefined.locus,
-        system(&world, &["v"]).terminal_locus(
-            &TerminalModel::new(model_identity, "M").with_ordinal(0)
-        )
+        model_system.terminal_locus(&first_terminal)
     );
     assert_eq!(
-        world.value(
-            positions(&world, &["v"], stem)
-                .last()
-                .expect("terminal state in the undefined stem"),
-            "v",
-            "l"
-        ),
+        world.value(&terminal_state, "v", "l"),
         1
     );
     assert!(matches!(
