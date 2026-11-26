@@ -7,16 +7,19 @@
 use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::analyze::{
-    deadlock_model_item, AnalyzeLimits, PackageDeadlockSubject, RunInput, SourceProvision,
-    SubjectBinding, TemporalItem,
+    AnalyzeLimits, Engines, PackageDeadlockSubject, PackageStateGraphSubject, RunInput,
+    SourceProvision, SubjectBinding, TemporalItem, analyze_items, deadlock_model_item,
 };
-use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelSimulationRequest, ModelSystem, PackageModelInput, PopulationUniverse,
-    TerminalClass,
-};
+use fsl_analyze::model_check::{StateGraphItem, StateGraphRequest, check_state_graph};
+use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::TransitionSystem;
-use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_eval::simulation::model::{
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
+    PopulationUniverse, TerminalClass,
+};
+use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
+use fsl_replay::ModelCheckLimits;
 use fsl_route::request::ItemKind;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::package_input;
@@ -25,8 +28,8 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{
-    declarations, document, key, other_document, other_key, snapshot, unit_text_with_functions,
-    Vault,
+    Vault, declarations, document, key, other_document, other_key, snapshot,
+    unit_text_with_functions,
 };
 
 /// Each vault steps once to `l = i` while `l = 0`, so it is terminal at `l = 1`.
@@ -333,6 +336,353 @@ fn classes(system: &ModelSystem<'_>) -> Vec<(Vec<u8>, TerminalClass)> {
         queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
     }
     classes
+}
+
+/// Check one state-graph claim through the strict package route. The subject
+/// rebuilds its claim from the admitted package, preserving the exact
+/// declaration occurrence instead of combining package tables with a source
+/// graph claim.
+fn package_state_graph_value(
+    world: &Two,
+    handoff: &Handoff,
+    claim: &str,
+) -> (
+    fsl_replay::TerminalValue,
+    fsl_analyze::model_check::StateGraphRun,
+    fsl_replay::StateGraphRecord,
+) {
+    let selections = world.package.graph().model_selections();
+    assert_eq!(selections.len(), 2, "two selected model identities");
+    assert_ne!(selections[0].identity, selections[1].identity);
+    let bare = handoff.bare();
+    let input = PackageModelInput::of(&bare, &world.packages, ModelNormalizationLimits::default())
+        .expect("the strict package read reconstructs model and claim inputs");
+    let checked = world
+        .package
+        .graph()
+        .state_graph_claims()
+        .iter()
+        .find(|checked| checked.name() == claim)
+        .expect("source claim is checked");
+    let occurrence = checked.occurrence().expect("claim occurrence");
+    let package_claim = input
+        .state_graph_claim(occurrence, CheckingLimits::default().nodes())
+        .expect("package claim reconstructs from the checked occurrence");
+    assert_eq!(package_claim.occurrence(), checked.occurrence());
+    assert_eq!(input.input().model_selections.len(), 2);
+    assert_ne!(
+        input.input().model_selections[0].identity,
+        input.input().model_selections[1].identity
+    );
+    let package_run = check_state_graph(
+        StateGraphRequest {
+            subject: ModelSubject {
+                simulation: world.simulation(input.input()),
+                proof_bounds: Vec::new(),
+            },
+            temporal_clock_selections: Vec::new(),
+            items: vec![StateGraphItem::new(&package_claim)],
+            reductions: Default::default(),
+            deadlock_freedom: false,
+            max_depth: None,
+            limits: ModelCheckLimits {
+                witness_samples: 0,
+                ..ModelCheckLimits::default()
+            },
+            seed: None,
+        },
+        &Cancel::new(),
+    )
+    .unwrap_or_else(|error| panic!("direct package state-graph check failed: {error:?}"));
+    let item = PackageStateGraphSubject::new(
+        &input,
+        &handoff.bytes,
+        handoff.supply(),
+        world.binding(),
+        AnalyzeLimits::unbounded(),
+        occurrence,
+    )
+    .expect("the package route rebuilds this claim")
+    .configured(TemporalItem {
+        witness_samples: Some(0),
+        ..TemporalItem::default()
+    })
+    .item(RequestIndex::new(0));
+    let record = analyze_items(
+        &Engines::fsl().expect("the linked engines admit"),
+        vec![item],
+        &Cancel::new(),
+    )
+    .into_iter()
+    .next()
+    .expect("one package-route record");
+    let terminal = record
+        .terminal()
+        .expect("the package claim has a terminal outcome");
+    if *terminal.value() == fsl_replay::TerminalValue::Failed {
+        panic!(
+            "the package state-graph route failed: {:?}",
+            terminal.diagnostic()
+        );
+    }
+    let state_graph_record = record
+        .state_graph
+        .as_ref()
+        .expect("the package analysis retains its state-graph record")
+        .record
+        .clone();
+    (terminal.value().clone(), package_run, state_graph_record)
+}
+
+fn reset_start(world: &mut Two, vault_l: i64, other_l: i64) {
+    world.snapshots = DocumentProvision::new();
+    world.initial = vec![snapshot(
+        &mut world.snapshots,
+        "state-graph-terminal-start",
+        &[("v", (0, vault_l))],
+        None,
+        Some(&[("v", (0, other_l))]),
+    )];
+}
+
+/// FR-391's source oracle over the exact same checked occurrence that the
+/// strict package route rebuilds.
+fn source_state_graph_run(
+    world: &Two,
+    claim_name: &str,
+) -> fsl_analyze::model_check::StateGraphRun {
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claims()
+        .iter()
+        .find(|claim| claim.name() == claim_name)
+        .expect("source claim is checked");
+    let request = StateGraphRequest {
+        subject: ModelSubject {
+            simulation: world.simulation(ModelCheckInput::source(&world.package)),
+            proof_bounds: Vec::new(),
+        },
+        temporal_clock_selections: Vec::new(),
+        items: vec![StateGraphItem::new(claim)],
+        reductions: Default::default(),
+        deadlock_freedom: false,
+        max_depth: None,
+        limits: ModelCheckLimits {
+            witness_samples: 0,
+            ..ModelCheckLimits::default()
+        },
+        seed: None,
+    };
+    check_state_graph(request, &Cancel::new()).expect("the source state graph runs")
+}
+
+/// The one unknown terminal is discovered by the fixture's one transition;
+/// it is the only open node, at depth one, reached from the sole initial node.
+fn assert_terminal_node_is_the_only_open_successor(
+    world: &Two,
+    run: &fsl_analyze::model_check::StateGraphRun,
+) {
+    let system = ModelSystem::new(world.simulation(ModelCheckInput::source(&world.package)))
+        .expect("the source model system admits");
+    let unknown_terminal = classes(&system)
+        .into_iter()
+        .filter(|(_, class)| matches!(class, TerminalClass::Undecided { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(unknown_terminal.len(), 1, "one unknown terminal state");
+    assert_eq!(run.graph.initial().len(), 1);
+    assert_eq!(run.graph.initial()[0].index(), 0);
+    assert_eq!(run.graph.open.len(), 1);
+    assert_eq!(run.graph.edges.len(), 2);
+    let (open_node, cause) = run.graph.open.first_key_value().expect("one open node");
+    assert_eq!(*cause, fsl_replay::OpenCause::UndecidedSuccessor);
+    assert_eq!(run.graph.nodes[open_node.index()].depth, 1);
+    assert_eq!(
+        run.graph.nodes[open_node.index()].key.as_bytes(),
+        unknown_terminal[0].0.as_slice(),
+        "the open node is the terminal state whose predicate refuses"
+    );
+    assert!(
+        run.graph
+            .edges
+            .iter()
+            .any(|edge| { edge.source.index() == 0 && edge.target == *open_node })
+    );
+}
+
+/// FSpec FR-391-AC-13/15/16/17: source hand outcomes and strict package-read
+/// outcomes agree for each terminal class, with two distinct selected model
+/// identities and package claims rebuilt from their exact occurrences.
+#[trace(
+    "FSpec-FR-391-AC-13",
+    "FSpec-FR-391-AC-15",
+    "FSpec-FR-391-AC-16",
+    "FSpec-FR-391-AC-17",
+    "FR-940-AC-49",
+    "FR-940-AC-50",
+    "FR-940-AC-51",
+    "FR-940-AC-52"
+)]
+#[test]
+fn terminal_state_graph_settlements_match_strict_package_claim_route() {
+    let rows = [
+        (
+            "unknown-witness",
+            "terminal Done using v on V when { b(self.l) = 0 };\n",
+            "possible AlwaysTrue using v over (v: V::Vault) { true }\n",
+            "AlwaysTrue",
+        ),
+        (
+            "unknown-no-witness",
+            "terminal Done using v on V when { b(self.l) = 0 };\n",
+            "possible Never using v over (v: V::Vault) { false }\n",
+            "Never",
+        ),
+        (
+            "intended-v-terminal",
+            "terminal Done using v on V when { q(1 - self.l) = 0 };\n\
+             terminal Stop using v on N when { true };\n",
+            "possible AlwaysTrue using v over (v: V::Vault) { true }\n",
+            "AlwaysTrue",
+        ),
+        (
+            "intended-n-terminal",
+            "terminal Done using v on N when { q(1 - self.l) = 0 };\n\
+             terminal Stop using v on V when { true };\n",
+            "possible AlwaysTrue using v over (v: N::Vault) { true }\n",
+            "AlwaysTrue",
+        ),
+        (
+            "all-undefined",
+            "terminal Done using v on V when { q(1 - self.l) = 0 };\n\
+             terminal Stop using v on N when { q(1 - self.l) = 0 };\n",
+            "possible Never using v over (v: V::Vault) { false }\n",
+            "Never",
+        ),
+    ];
+
+    for (name, terminals, claim, claim_name) in rows {
+        let mut world = two_models(&format!("{terminals}{claim}"));
+        let terminal_at_start = matches!(
+            name,
+            "all-undefined" | "intended-v-terminal" | "intended-n-terminal"
+        );
+        reset_start(&mut world, if terminal_at_start { 1 } else { 0 }, 1);
+        let source_run = source_state_graph_run(&world, claim_name);
+        let source = source_run.items[0][0].outcome.clone();
+        let (package, package_run, package_record) =
+            package_state_graph_value(&world, &handoff(&world), claim_name);
+        match name {
+            "unknown-witness" => {
+                assert!(
+                    matches!(
+                        source,
+                        fsl_replay::StateGraphOutcome::WitnessedUnchecked { .. }
+                    ),
+                    "source: {source:?}"
+                );
+                assert_eq!(
+                    package,
+                    fsl_replay::TerminalValue::Inconclusive(
+                        fsl_replay::InconclusiveCause::WellDefinednessUnchecked {
+                            sources: vec![fsl_replay::WitnessSource::Explored],
+                        }
+                    )
+                );
+                assert_eq!(
+                    package_record.value,
+                    fsl_replay::TerminalValue::Inconclusive(
+                        fsl_replay::InconclusiveCause::WellDefinednessUnchecked {
+                            sources: vec![fsl_replay::WitnessSource::Explored],
+                        }
+                    )
+                );
+                assert_eq!(package_record.method, "explicit-state");
+                assert_eq!(package_record.end, Some(fsl_replay::RunEnd::Completed));
+                assert_eq!(
+                    package_record.limits,
+                    [
+                        (fsl_replay::ModelCheckLimit::MaxStates, 10_000_000),
+                        (fsl_replay::ModelCheckLimit::MaxTransitions, 100_000_000),
+                        (fsl_replay::ModelCheckLimit::MaxAutomatonStates, 1_048_576),
+                    ]
+                );
+                assert_eq!(package_record.max_depth, None);
+                assert_eq!(package_record.seed, 0);
+                assert_eq!(package_record.witness_samples, 0);
+                assert_eq!(package_record.walks_stopped, 0);
+                let fsl_replay::StateGraphOutcome::WitnessedUnchecked { paths, end, open } =
+                    &source
+                else {
+                    unreachable!("the exact source outcome was checked above")
+                };
+                assert_eq!(paths.len(), 1, "one path for the one initial state");
+                assert_eq!(paths[0].path.initial, 0);
+                assert!(
+                    paths[0].path.steps.is_empty(),
+                    "true holds at the initial state"
+                );
+                assert_eq!(paths[0].source, fsl_replay::WitnessSource::Explored);
+                assert_eq!(*end, fsl_replay::RunEnd::Completed);
+                assert_eq!(
+                    *open,
+                    std::collections::BTreeSet::from([fsl_replay::OpenCause::UndecidedSuccessor])
+                );
+                assert_terminal_node_is_the_only_open_successor(&world, &source_run);
+
+                let fsl_replay::StateGraphOutcome::WitnessedUnchecked {
+                    paths: package_paths,
+                    end: package_end,
+                    open: package_open,
+                } = &package_run.items[0][0].outcome
+                else {
+                    panic!(
+                        "package graph outcome: {:?}",
+                        package_run.items[0][0].outcome
+                    )
+                };
+                assert_eq!(
+                    package_paths, paths,
+                    "package retains the exact witness path"
+                );
+                assert_eq!(*package_end, fsl_replay::RunEnd::Completed);
+                assert_eq!(*package_open, *open);
+                assert_terminal_node_is_the_only_open_successor(&world, &package_run);
+            }
+            "unknown-no-witness" => {
+                assert_eq!(
+                    source,
+                    fsl_replay::StateGraphOutcome::NoDecision {
+                        end: fsl_replay::RunEnd::Completed,
+                        open: std::collections::BTreeSet::from([
+                            fsl_replay::OpenCause::UndecidedSuccessor
+                        ]),
+                    }
+                );
+                assert_eq!(
+                    package,
+                    fsl_replay::TerminalValue::Inconclusive(
+                        fsl_replay::InconclusiveCause::UndecidedSuccessor,
+                    )
+                );
+            }
+            "intended-v-terminal" | "intended-n-terminal" => {
+                assert!(
+                    matches!(source, fsl_replay::StateGraphOutcome::Witnessed { .. }),
+                    "{name}: {source:?}"
+                );
+                assert!(matches!(package, fsl_replay::TerminalValue::Proved { .. }));
+            }
+            "all-undefined" => {
+                assert!(
+                    matches!(source, fsl_replay::StateGraphOutcome::Undefined { .. }),
+                    "source: {source:?}"
+                );
+                assert_eq!(package, fsl_replay::TerminalValue::Refuted);
+            }
+            other => panic!("unknown fixture {other}"),
+        }
+    }
 }
 
 /// FR-411, FR-940-AC-6: over a unit that selects two model identities, the
