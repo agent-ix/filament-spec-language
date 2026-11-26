@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
+use crate::written_operation::WrittenOperation;
 use filament_exact::{CollectionKind, Identifier, Integer, Rational, ScalarLimits};
 use fsl_eval::temporal::{LateCutoff, StampInterval};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
@@ -987,11 +988,9 @@ fn operation_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestR
         Some(b'"') => {
             let wire: String =
                 serde_json::from_str(&text).map_err(|error| invalid(member, error.to_string()))?;
-            Ok(if crate::outcome::is_identity_text(&wire) {
-                wire
-            } else {
-                text
-            })
+            WrittenOperation::from_wire(wire)
+                .into_identity_text()
+                .map_err(|error| invalid(member, error.to_string()))
         }
         Some(b'{') => Ok(text),
         _ => Err(invalid(member, "an operation is a string or an object")),
@@ -2154,7 +2153,7 @@ mod tests {
             super::model_step(&step, "trace.steps[0]")
                 .map(|step| step.expect("not the terminal stutter").transition)
         };
-        for name in ["true", "false", "null", "1", "[1]"] {
+        for name in ["tick", "true", "false", "null", "1", "[1]"] {
             let transition = read(serde_json::json!(name)).expect("a name");
             assert_eq!(transition.operation(), format!("\"{name}\""));
         }
