@@ -79,7 +79,6 @@ pub fn validate_tiny_fragment(graph: &CheckedGraph) -> Result<(), ReferenceRefus
                 CheckedStatePredicate::ConstantTrue => {}
                 CheckedStatePredicate::Checked(body) => {
                     expression(body.body(), Position::Combination)?;
-                    no_pre_state(body.body())?;
                 }
                 CheckedStatePredicate::Package(_) => {
                     return Err(refuse("state-graph predicate without a source body"));
@@ -455,18 +454,6 @@ fn effects(graph: &CheckedGraph) -> Result<(), ReferenceRefusal> {
         {
             return Err(refuse("relationship effect"));
         }
-    }
-    Ok(())
-}
-
-/// A state-graph predicate reads one state (ADR-022 GM-3): no pre-state read.
-fn no_pre_state(root: CheckedNode<'_>) -> Result<(), ReferenceRefusal> {
-    let mut pending = vec![root];
-    while let Some(node) = pending.pop() {
-        if matches!(node.kind(), NodeKind::Pre(_)) {
-            return Err(refuse("pre-state read in a state-graph predicate"));
-        }
-        pending.extend(node.children());
     }
     Ok(())
 }

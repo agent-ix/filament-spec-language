@@ -1077,7 +1077,8 @@ fn reference_refuses_infinite_fields_and_object_deletion() {
 
 /// The grammar admits only literal weights, so a state-dependent weight is
 /// refused by the parser and no checked model carries one to the reference.
-#[trace("FR-1051-AC-19")]
+// AC-19 is partial here: the parser refuses the weight before the reference sees it.
+#[trace("FR-1051")]
 #[test]
 fn the_parser_refuses_a_non_literal_probability_weight() {
     let parses = |weight: &str| {
