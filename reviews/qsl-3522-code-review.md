@@ -42,3 +42,17 @@ process (FND-001 to FND-003), and the PR's sweep reports the replay reader as sa
 | FND-005 | medium | The new test sends only requests with absent required members, which stop at `envelope_defect`. No case carries all fourteen replay members, so the typed decode of a deep tree is untested and FND-001 to FND-004 pass it | fsl-command/tests/it/export_selection.rs:208-247 |
 | FND-006 | low | `xtask` keeps `DeepValue`, a second owner beside the now public `Deep`, and its new `parse_unique_json` wrapper hands every caller a bare `Value` again, so the PR's statement that no caller can drop a bare deep tree does not hold there | xtask/src/qualification.rs:1093-1097 |
 | FND-007 | low | The new test asserts only exit 20, so a refusal for any other reason passes. It also overflows in a thread of the shared `it` process, so a regression aborts the whole binary and hides other results, unlike the child-process test beside it | fsl-command/tests/it/export_selection.rs:216-247 |
+
+## Dispositions
+
+Disposition pass 1 at head 384e419a307c77d417a158b399bc7fb6a2a8f358. Mergeable: yes. No new findings.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | rows are read from the borrowed value; the 100,000-level reproducer on 2 MiB refuses, exit 20 |
+| FND-002 | fixed | witness copies go through Deep::copy; the text-witness reproducer and the name and member positions refuse, exit 20 |
+| FND-003 | fixed | operand_rows are read from the borrowed value; the reproducer refuses at /package |
+| FND-004 | fixed | id_of_value deserializes the borrowed value; the 100,000-level node ids refuse; accept set unchanged over 1,328 documents |
+| FND-005 | fixed | new replay_depth tests send all fourteen members with one deep, 1,000 to 100,000 levels; passed at head |
+| FND-006 | fixed | xtask DeepValue and parse_unique_json are gone; xtask uses unique_json::read and Deep |
+| FND-007 | fixed | the test runs in a child process and asserts the typed refusal of run and export |

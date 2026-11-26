@@ -30,3 +30,11 @@ accepted size`; `quire matrix` and `quire trace` were used instead. Changed prod
 (`unique_json::read`, `Deep::into_inner`, `parse_unique_json`) carry no `implements` marker; the
 PR says none implements a criterion it can name, which is accepted. No dependency version moved.
 No stubs in the diff. Semantic review was not run.
+
+## Dispositions
+
+Disposition pass 1 at head 384e419a307c77d417a158b399bc7fb6a2a8f358. Mergeable: yes. No new findings.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | the FR-026 test now drives only run and export; the replay entry is covered by tests tagged FR-862-AC-4 and TC-2443 |
