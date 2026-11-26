@@ -58,6 +58,7 @@ use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
     CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
 };
+use ix_trace_rs::implements;
 
 use crate::emit_checked_v2::{self, Compiled};
 
