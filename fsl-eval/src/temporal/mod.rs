@@ -55,6 +55,7 @@ mod tape;
 mod tick_monitor;
 mod tick_shape;
 mod timed;
+mod timed_measure;
 mod tuple;
 mod window;
 
@@ -101,9 +102,8 @@ pub use tick_monitor::{
     TickStepError, definitely_before, within_bound,
 };
 pub use tick_shape::{NodeShape, TickShape, operator_parts, temporal_leaves};
-pub use timed::{
-    TimedMeasureReading, TimedTrace, evaluate_timed_at, timed_elapsed, timed_fraction, timed_steps,
-};
+pub use timed::{TimedTrace, evaluate_timed_at};
+pub use timed_measure::{MeasureReading, timed_elapsed, timed_fraction, timed_steps};
 pub use tuple::{
     ComponentPosition, ComponentTrace, TupleLetters, evaluate_closed_tuple,
     evaluate_projected_prefix, evaluate_tuple,

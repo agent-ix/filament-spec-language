@@ -7,10 +7,10 @@ use ix_trace_rs::trace;
 
 use filament_exact::{Integer, Meter, Rational, ScalarLimits};
 use fsl_eval::temporal::{
-    timed_elapsed, timed_fraction, timed_steps, TemporalPosition, TimedMeasureReading, TimedTrace,
+    timed_elapsed, timed_fraction, timed_steps, MeasureReading, TemporalPosition, TimedTrace,
 };
 
-use TimedMeasureReading::{Censored, NotActivated, Pending, Value};
+use MeasureReading::{Censored, NotActivated, Pending, Value};
 
 fn number(value: u64) -> Rational {
     Rational::from_integer(Integer::from(value))
@@ -47,7 +47,7 @@ fn meter() -> Meter {
     })
 }
 
-fn fraction(trace: &TimedTrace, from: u64, holds: &[bool], horizon: u64) -> TimedMeasureReading {
+fn fraction(trace: &TimedTrace, from: u64, holds: &[bool], horizon: u64) -> MeasureReading {
     timed_fraction(
         trace,
         TemporalPosition::new(from),
@@ -58,7 +58,7 @@ fn fraction(trace: &TimedTrace, from: u64, holds: &[bool], horizon: u64) -> Time
     .expect("a represented position")
 }
 
-fn steps(trace: &TimedTrace, from: &[bool], until: &[bool], horizon: u64) -> TimedMeasureReading {
+fn steps(trace: &TimedTrace, from: &[bool], until: &[bool], horizon: u64) -> MeasureReading {
     timed_steps(
         trace,
         TemporalPosition::new(0),
@@ -70,7 +70,7 @@ fn steps(trace: &TimedTrace, from: &[bool], until: &[bool], horizon: u64) -> Tim
     .expect("a represented position")
 }
 
-fn elapsed(trace: &TimedTrace, from: &[bool], until: &[bool], horizon: u64) -> TimedMeasureReading {
+fn elapsed(trace: &TimedTrace, from: &[bool], until: &[bool], horizon: u64) -> MeasureReading {
     timed_elapsed(
         trace,
         TemporalPosition::new(0),

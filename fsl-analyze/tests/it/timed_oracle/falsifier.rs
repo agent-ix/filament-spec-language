@@ -21,8 +21,8 @@ use filament_exact::{Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem, TimedState, TimedSystem};
 use fsl_eval::temporal::{
-    evaluate_timed_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
-    TimedMeasureReading, TimedTrace,
+    evaluate_timed_at, AtomReading, LetterStop, MeasureReading, TemporalLetters, TemporalOutcome,
+    TemporalPosition, TimedTrace,
 };
 use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 
@@ -142,9 +142,10 @@ impl Extrema {
     }
 }
 
-/// Whether the operation spelled `operation` is the one named `name`.
+/// Whether the operation whose declaration identity text (FR-181) is
+/// `operation` is the one named `name`: the identity's last path segment.
 fn named(operation: &str, name: &str) -> bool {
-    operation.rsplit([':', '/', '.']).next() == Some(name)
+    operation.contains(&format!("/{name}\""))
 }
 
 type Payoff<'p> = dyn Fn(&Behaviour) -> Rational + 'p;
@@ -403,11 +404,11 @@ pub(super) fn truths(
 
 /// A measure reading as an amount: `None` for a behaviour that does not
 /// activate it, and `Some(None)` for a censored one.
-pub(super) fn amount(reading: TimedMeasureReading) -> Option<Option<Rational>> {
+pub(super) fn amount(reading: MeasureReading) -> Option<Option<Rational>> {
     match reading {
-        TimedMeasureReading::NotActivated => None,
-        TimedMeasureReading::Censored => Some(None),
-        TimedMeasureReading::Value(value) => Some(Some(value)),
+        MeasureReading::NotActivated => None,
+        MeasureReading::Censored => Some(None),
+        MeasureReading::Value(value) => Some(Some(value)),
         other => panic!("a lasso decides a measure: {other:?}"),
     }
 }

@@ -5,19 +5,23 @@
 //!
 //! The behaviour is a [`TimedTrace`] and each predicate its truth at each
 //! represented position; a lasso's later position reads the position it
-//! repeats. A finite trace is a prefix of unknown continuation, so a reading
-//! it does not decide is [`TimedMeasureReading::Pending`].
+//! repeats. A reader of a concrete run takes the trace and the truths from
+//! the run; this module is the one reading of a measure over them. A finite trace is a prefix of unknown continuation, so a reading
+//! it does not decide is [`MeasureReading::Pending`].
 //!
 //! Work: one `temporal.visit` unit for each position read.
 
 use filament_exact::{Charge, Incomplete, Integer, Meter, Rational};
 use ix_trace_rs::implements;
 
-use super::{PositionRefusal, TemporalPosition, TemporalRefusal, TimedTrace, VISIT, fault};
+use super::outcome::TemporalRefusal;
+use super::plan::fault;
+use super::position::{PositionRefusal, TemporalPosition};
+use super::timed::{TimedTrace, VISIT};
 
 /// What one measure reads on one behaviour.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TimedMeasureReading {
+pub enum MeasureReading {
     /// The behaviour has no position that starts the measure.
     NotActivated,
     /// The horizon ended the measure before its end predicate held: greater
@@ -141,12 +145,10 @@ fn truth(truths: &[bool], image: usize) -> Result<bool, Stop> {
     })
 }
 
-fn settled(
-    reading: Result<TimedMeasureReading, Stop>,
-) -> Result<TimedMeasureReading, TemporalRefusal> {
+fn settled(reading: Result<MeasureReading, Stop>) -> Result<MeasureReading, TemporalRefusal> {
     match reading {
         Ok(reading) => Ok(reading),
-        Err(Stop::Incomplete(incomplete)) => Ok(TimedMeasureReading::Incomplete(incomplete)),
+        Err(Stop::Incomplete(incomplete)) => Ok(MeasureReading::Incomplete(incomplete)),
         Err(Stop::Refused(refusal)) => Err(refusal),
     }
 }
@@ -172,7 +174,7 @@ pub fn timed_elapsed(
     until: &[bool],
     horizon: &Rational,
     meter: &mut Meter,
-) -> Result<TimedMeasureReading, TemporalRefusal> {
+) -> Result<MeasureReading, TemporalRefusal> {
     let mut reader = Reader { trace, meter };
     settled((|| {
         let (mut start, _) = reader.represented(activation)?;
@@ -185,20 +187,20 @@ pub fn timed_elapsed(
             .saturating_add(trace.stamps.len());
         let started = loop {
             let Some((image, stamp)) = reader.at(start)? else {
-                return Ok(TimedMeasureReading::Pending);
+                return Ok(MeasureReading::Pending);
             };
             if truth(from, image)? {
                 break stamp;
             }
             start += 1;
             if trace.is_lasso() && start > reachable {
-                return Ok(TimedMeasureReading::NotActivated);
+                return Ok(MeasureReading::NotActivated);
             }
         };
         Ok(match reader.first(start, &started, horizon, until)? {
-            Ok((_, ended)) => TimedMeasureReading::Value(ended.sub(&started)),
-            Err(Missed::Closed) => TimedMeasureReading::Censored,
-            Err(Missed::Open) => TimedMeasureReading::Pending,
+            Ok((_, ended)) => MeasureReading::Value(ended.sub(&started)),
+            Err(Missed::Closed) => MeasureReading::Censored,
+            Err(Missed::Open) => MeasureReading::Pending,
         })
     })())
 }
@@ -219,19 +221,19 @@ pub fn timed_steps(
     until: &[bool],
     horizon: &Rational,
     meter: &mut Meter,
-) -> Result<TimedMeasureReading, TemporalRefusal> {
+) -> Result<MeasureReading, TemporalRefusal> {
     let mut reader = Reader { trace, meter };
     settled((|| {
         let (start, origin) = reader.represented(activation)?;
         let first = match reader.first(start, &origin, horizon, from)? {
             Ok((first, _)) => first,
-            Err(Missed::Closed) => return Ok(TimedMeasureReading::NotActivated),
-            Err(Missed::Open) => return Ok(TimedMeasureReading::Pending),
+            Err(Missed::Closed) => return Ok(MeasureReading::NotActivated),
+            Err(Missed::Open) => return Ok(MeasureReading::Pending),
         };
         Ok(match reader.first(first, &origin, horizon, until)? {
-            Ok((last, _)) => TimedMeasureReading::Value(count(last - first)),
-            Err(Missed::Closed) => TimedMeasureReading::Censored,
-            Err(Missed::Open) => TimedMeasureReading::Pending,
+            Ok((last, _)) => MeasureReading::Value(count(last - first)),
+            Err(Missed::Closed) => MeasureReading::Censored,
+            Err(Missed::Open) => MeasureReading::Pending,
         })
     })())
 }
@@ -250,7 +252,7 @@ pub fn timed_fraction(
     holds: &[bool],
     horizon: &Rational,
     meter: &mut Meter,
-) -> Result<TimedMeasureReading, TemporalRefusal> {
+) -> Result<MeasureReading, TemporalRefusal> {
     let mut reader = Reader { trace, meter };
     settled((|| {
         let (start, origin) = reader.represented(activation)?;
@@ -259,7 +261,7 @@ pub fn timed_fraction(
         loop {
             let Some((image, stamp)) = reader.at(k)? else {
                 if matches!(reader.end_of_prefix(&origin, horizon), Missed::Open) {
-                    return Ok(TimedMeasureReading::Pending);
+                    return Ok(MeasureReading::Pending);
                 }
                 break;
             };
@@ -272,9 +274,8 @@ pub fn timed_fraction(
         }
         // The activating position is in its own window, so only a negative
         // horizon leaves the window empty.
-        Ok(count(held).div(&count(read)).map_or(
-            TimedMeasureReading::NotActivated,
-            TimedMeasureReading::Value,
-        ))
+        Ok(count(held)
+            .div(&count(read))
+            .map_or(MeasureReading::NotActivated, MeasureReading::Value))
     })())
 }

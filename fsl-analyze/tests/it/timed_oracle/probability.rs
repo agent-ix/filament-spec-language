@@ -619,6 +619,49 @@ fn row_window_starting_after_position_zero_routes() {
     assert_routes(&skew_nested());
 }
 
+/// The same subject read by an activation after position 0: `on each` call,
+/// activated at the first position where `inflight` holds and `late` does
+/// not, `late` within 1 ms. The activating positions and the position where
+/// `late` first holds are those of [`skew_nested`], so the extrema are the
+/// same: minimum 0, maximum 1/2.
+fn skew_each() -> Row {
+    let claim = "probabilistic Each using ev on M under every scheduler \
+         on each (k: M::Call) when (k.inflight and not k.late) \
+         { probability >= 0.4 [ eventually[0 ms, 1 ms] holds(k.late) ] }\n";
+    let from_activation = "holds(not (c.inflight and not c.late)) until[0 ms, 10 ms] \
+         (holds(c.inflight and not c.late) and eventually[0 ms, 1 ms] holds(c.late))";
+    let mut space = Space::new(3, Lock::Frozen);
+    space.drawn = vec!["first"];
+    Row {
+        name: "3445-on-each-later-activation",
+        world: models::skew(&format!("{claim}{}", formula("F", from_activation))),
+        space,
+        claims: vec![claim_each()],
+    }
+}
+
+fn claim_each() -> Claim {
+    claim(
+        "Each",
+        Payoff::Holds("F"),
+        AtLeast(ratio(2, 5)),
+        zero(),
+        half(),
+    )
+}
+
+#[trace("FR-204-AC-26")]
+#[test]
+fn row_activation_after_position_zero_hand() {
+    assert_hand(&skew_each());
+}
+
+#[trace("FR-204-AC-26")]
+#[test]
+fn row_activation_after_position_zero_routes() {
+    assert_routes(&skew_each());
+}
+
 // --- QSL-3447, FR-254: sampled measures and windows -------------------------
 
 /// The exact and sampled claims of one `form` under the workload `Even`.

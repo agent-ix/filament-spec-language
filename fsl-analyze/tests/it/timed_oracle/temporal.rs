@@ -168,9 +168,9 @@ fn row_3446_nested_true_clause_routes() {
 
 // --- QSL-3446, QSL-3478: state-graph claims over a fractional trap ----------
 
-const POSSIBLE: &str = "always possible Done using ev over (c: M::Call) { c.phase >= 2 }\n";
+const POSSIBLE: &str = "always possible Done using v over (c: M::Call) { c.phase >= 2 }\n";
 const UNIQUE: &str =
-    "unique path Done using ev over (c: M::Call) from (c.phase = 1) to (c.phase >= 2);\n";
+    "unique path Done using v over (c: M::Call) from (c.phase = 1) to (c.phase >= 2);\n";
 
 /// `first` at a time `t` in [0, 1] resets `x`; `y` reads the time. Phase 1
 /// ends by `y = 2 ms`, where `zero` needs `x >= 2 ms` (`t = 0`).

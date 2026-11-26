@@ -49,29 +49,26 @@ use super::position::{PositionRefusal, TemporalPosition};
 
 /// The named point every unit of work charges, as the step evaluator does:
 /// `temporal.visit`.
-const VISIT: ChargePoint = ChargePoint::TemporalVisit;
-
-mod measure;
-pub use measure::{TimedMeasureReading, timed_elapsed, timed_fraction, timed_steps};
+pub(super) const VISIT: ChargePoint = ChargePoint::TemporalVisit;
 
 /// A finite timed trace (FR-231 "Inputs"): the time stamp of each position,
 /// in the clause binding's unit, non-negative and non-decreasing. It is a
 /// prefix of a time-divergent behaviour whose continuation is unknown.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimedTrace {
-    stamps: Vec<Rational>,
+    pub(super) stamps: Vec<Rational>,
     /// The latest time through which a finite recording is complete.
-    through: Option<Rational>,
+    pub(super) through: Option<Rational>,
     /// The loop a timed lasso repeats forever; none for a finite prefix.
-    looping: Option<TimedLoop>,
+    pub(super) looping: Option<TimedLoop>,
 }
 
 /// The loop of a timed lasso (ADR-026 CT-2): the position its end re-enters
 /// and its total delay.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct TimedLoop {
-    start: usize,
-    delay: Rational,
+pub(super) struct TimedLoop {
+    pub(super) start: usize,
+    pub(super) delay: Rational,
 }
 
 impl TimedTrace {
