@@ -854,6 +854,11 @@ EN-6 symbolic vertices charge `analysis.retained_bytes`. The states of EN-1's
 hyper searches, the model states a liveness search keeps where its automaton
 has no move, protocol closure paths and model-expansion successors do not yet
 charge it.
+FR-255-AC-29 (a protocol closure path), FR-255-AC-30 (a replay request's
+`stage_limits` at a protocol refinement step) and FR-255-AC-31 (a replay's
+`emit.output_bytes`, `s3.nodes` and `observation.input_bytes` stops) are
+specified here and not implemented or tested in QSL-3508's limits
+consolidation; each waits on its own ticket.
 
 Backing of the criteria:
 

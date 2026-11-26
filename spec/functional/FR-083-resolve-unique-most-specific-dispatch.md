@@ -122,6 +122,13 @@ length. Linking the 10,000-long chain of AC-4 is a required capability;
 holding it within an achievable memory size depends on a representation of
 identity that does not repeat the inherited members for each type.
 
+## Status
+
+FR-083-AC-5 and FR-083-AC-6 (the 1,000-link and 2,000-link `redefines`
+chains at the published `model.derivation_facts`) are specified here and not
+implemented or tested in QSL-3508's limits consolidation; they wait on their
+own ticket.
+
 ## Dependencies
 
 - **Upstream:** [FR-081](FR-081-preserve-model-correspondence-and-declaration-identity.md)
