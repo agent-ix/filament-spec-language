@@ -48,6 +48,11 @@ admitted for forms that no cited theorem covers.
 | RL-3 | **A region MDP is symbolic.** The region route's state is a symbolic region key (each clock's integer part, whether its fraction is zero, and the order of the fractions) and its delay move is the region's time successor. A walk over a finer grid of clock values is not a region MDP and settles no exact probabilistic timed claim. While the region MDP a claim needs is not built, the item settles a typed `Incomplete`, never a digital-clock value and never `unsupported`. |
 | RL-4 | **A dense-time falsification oracle, in tests only.** Tests hold an oracle that enumerates rational delay schedules over the RL-1 run layer and compares the probability or verdict each gives with the value a route claims. It can only refute a value. No product path calls it and it emits no certificate. |
 
+RL-2 does not decide one sharing that exists today: the zone producer and the
+zone checker both translate a clause with `fsl-eval`'s position automaton and
+window claim, a reading of the formula and not of the clocks. The requirement
+that declares each certificate checker's trusted base decides it.
+
 ### Route admission
 
 A route decides a claim only where a row admits it. A subject is **closed**
