@@ -17,7 +17,7 @@ use fsl_semantics::check::ProtocolNodeId;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde::{Deserialize, Serialize};
 
-const FORMAT: &str = "filament.protocol-recording/1";
+const FORMAT: &str = fsl_foundation::wire_format::WireFormat::ProtocolRecording.as_str();
 
 /// A verdict for one protocol obligation in a recorded execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

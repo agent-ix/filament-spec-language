@@ -95,7 +95,7 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 }
 
 /// The document's `format` member.
-pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
+pub const OUTCOME_FORMAT: &str = fsl_foundation::wire_format::WireFormat::Outcome.as_str();
 /// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
 pub const OUTCOME_SCHEMA_1: &str = include_str!("../schemas/filament-outcome-1.schema.json");
 

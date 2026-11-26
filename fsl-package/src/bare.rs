@@ -44,7 +44,7 @@ use filament_exact::Presence;
 use source_enum::SourceEnumJson;
 
 /// The format of `identities.json` (FR-531 "The identity file").
-pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/7";
+pub const IDENTITIES_FORMAT: &str = fsl_foundation::wire_format::WireFormat::HandoffIdentities.as_str();
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///

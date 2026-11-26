@@ -76,7 +76,7 @@ pub(super) fn item<'a>(
             let Ok(document) = serde_json::from_slice::<PopulationDocument>(bytes) else {
                 return invalid_population(None);
             };
-            if document.format != "filament.trace-population/1"
+            if document.format != fsl_foundation::wire_format::WireFormat::TracePopulation.as_str()
                 || !matches!(document.closure.as_str(), "closed" | "open")
                 || document.record_type != record_type_name(package, form.clause.record())
             {

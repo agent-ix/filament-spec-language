@@ -44,7 +44,7 @@ use crate::monitor::{
 };
 
 /// The format member of a checkpoint.
-pub const STATE_FORMAT: &str = "filament.monitor-state/1";
+pub const STATE_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorState.as_str();
 
 /// The trace kind a session's observations form (FR-641).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -134,7 +134,7 @@ impl NativeResult {
     /// The FR-190 result record of a direct model-based test request.
     pub(super) fn model_based_test_document(record: Value) -> Self {
         Self(serde_json::json!({
-            "format": "native-run-result/2",
+            "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
             "model_based_test": record,
         }))
     }
@@ -1204,7 +1204,7 @@ mod tests {
         assert_eq!(
             result.value.as_value(),
             &serde_json::json!({
-                "format": "spine-run-result/1",
+                "format": fsl_foundation::wire_format::WireFormat::SpineRunResult.as_str(),
                 "source": {
                     "authority": "agent-ix",
                     "identity": "test:spine-run",
