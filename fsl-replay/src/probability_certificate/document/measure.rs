@@ -2352,6 +2352,24 @@ fn tight_activation(
     }
     Ok(activated.into_iter().next())
 }
+/// The rejection of a `>= c` quantile's claim-side document whose initial
+/// shifted maximum is exactly 0 and whose tight actions reach an activated
+/// state, so some scheduler may meet the level while activating (FR-1042
+/// "Pairing"). Tight actions are those that attain the document's own values.
+fn tight_zero_rejection(
+    plan: &Plan<'_>,
+    graph: &Graph,
+    values: &BTreeMap<ProbabilityProductKey, Rational>,
+    initial: &Rational,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<Option<ExactProbabilityCertificateCheck>, ProbabilityDocumentError> {
+    if !(plan.strict && initial.is_zero()) {
+        return Ok(None);
+    }
+    Ok(tight_activation(graph, values, meter, cancel)?
+        .map(|key| rejected(ProbabilityCertificateRule::InequalityFails, key)))
+}
 fn acceptance(
     document: &MeasureProbabilityDocument,
     value: Rational,
@@ -2664,11 +2682,9 @@ pub(super) fn check(
     )?;
     let partial_lower =
         partial_lower || (claim_lower && document.values.len() < graph.states.len());
-    if let Some(side) = bound_side.filter(|_| !partial_lower) {
-        return check_value_bounds(
-            &document, &graph, &plan, side, role, bytes, limits, cancel, &mut meter,
-        );
-    }
+    // These rules are the claim's, so they hold for an exact document and for
+    // either bound alike: a threshold is read at one initial key, and no
+    // numeric document stands where activation is unreachable.
     if graph.initials.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
     }
@@ -2679,6 +2695,11 @@ pub(super) fn check(
             ProbabilityCertificateRule::InequalityFails,
             graph.initial,
         ));
+    }
+    if let Some(side) = bound_side.filter(|_| !partial_lower) {
+        return check_value_bounds(
+            &document, &graph, &plan, side, role, bytes, limits, cancel, &mut meter,
+        );
     }
     let partial_floor = if partial_lower {
         if document.payoff == MeasurePayoffKind::Shifted {
@@ -2711,10 +2732,10 @@ pub(super) fn check(
         .ok_or(ProbabilityDocumentError::Malformed)?
         .clone();
     let (holds, side) = if document.payoff == MeasurePayoffKind::Shifted {
-        if plan.strict && value.is_zero() {
-            if let Some(key) = tight_activation(&graph, &values, &mut meter, cancel)? {
-                return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
-            }
+        if let Some(rejection) =
+            tight_zero_rejection(&plan, &graph, &values, &value, &mut meter, cancel)?
+        {
+            return Ok(rejection);
         }
         (
             if plan.strict {
@@ -2919,6 +2940,10 @@ fn check_value_bounds(
                     at: ProbabilityCertificateLocus::ProductState(graph.initial.clone()),
                 },
             ));
+        }
+        if let Some(rejection) = tight_zero_rejection(plan, graph, &values, initial, meter, cancel)?
+        {
+            return Ok(rejection);
         }
     }
     let accepted_side = match certified {

@@ -19,7 +19,7 @@ alike, that settlement checks the pairing, and that the long-run form, which
 has no dyadic method, settles a typed incomplete result.
 
 Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7 to FR-1042-AC-14, FR-1042-AC-25 to
-FR-1042-AC-27 and FR-203-AC-9.
+FR-1042-AC-28 and FR-203-AC-9.
 
 ## Test Procedure
 
@@ -58,6 +58,11 @@ FR-1042-AC-27 and FR-203-AC-9.
 15. Over the cyclic `link` chain's measure claims, `probability` and `quantile` in
     both directions, offer FR-1042-AC-27's claim-side documents of the wrong
     kind, over the whole graph and naming the initial key alone.
+16. Offer FR-1042-AC-28's claim-side `upper` documents of initial value 0 for
+    a `>= c` quantile, with and without an activated state on a tight path.
+17. Offer numeric quantile bound documents, in each role, where activation is
+    unreachable (FR-1043 "Forms and documents"), and settle measure bounds
+    over two initial states.
 
 Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
 
@@ -101,3 +106,5 @@ Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
   and EN-5's own subset `lower` accepted; the changed bounded rank is
   rejected `RankBroken` at that state.
 - Step 15: every one rejected `Malformed` at `kind`.
+- Step 16: `InequalityFails` at the activated state; accepted.
+- Step 17: `InequalityFails` at the initial key; nothing is proved.
