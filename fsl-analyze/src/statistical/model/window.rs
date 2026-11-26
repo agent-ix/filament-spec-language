@@ -104,6 +104,8 @@ pub(super) fn tail_fraction(
 /// The cut points of a formula whose temporal operators each have a bounded
 /// time interval and no temporal operator inside them, or `None` for any
 /// other formula.
+#[implements("FR-254-AC-7")]
+#[implements("FR-254-AC-8")]
 pub(super) fn flat_interval_bounds(formula: &CheckedFormula) -> Option<Vec<Rational>> {
     fn is_state(nodes: &[FormulaNode], id: FormulaNodeId) -> bool {
         match nodes.get(id.index()) {
@@ -157,6 +159,8 @@ const MAX_PIECES: usize = 12;
 /// intervals, so a formula with no nested temporal operator reads each
 /// completion as one choice of which pieces hold a stutter. `None` where
 /// there are more than [`MAX_PIECES`].
+#[implements("FR-254-AC-7")]
+#[implements("FR-254-AC-8")]
 pub(super) fn piece_stamps(
     bounds: &[Rational],
     from: &Rational,
@@ -182,4 +186,32 @@ pub(super) fn piece_stamps(
         previous = cut;
     }
     Some(pieces)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rational(numerator: i64, denominator: i64) -> Rational {
+        Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("a ratio")
+    }
+
+    /// One position of two holds and the idle state does not, so the value is
+    /// `1 / (2 + m)`, falling from `1/2` towards 0 and never reaching it.
+    #[test]
+    fn a_falling_fraction_is_decided_only_where_every_completion_agrees() {
+        let read = |event: CheckedBound| tail_fraction(1, 2, false, Some(&event));
+        let first = Some(rational(1, 2));
+        // True for every `m`.
+        assert_eq!(read(CheckedBound::AtMost(rational(3, 5))), first);
+        assert_eq!(read(CheckedBound::AtLeast(rational(0, 1))), first);
+        // False for every `m`: the value never reaches 0.
+        assert_eq!(read(CheckedBound::AtMost(rational(0, 1))), first);
+        assert_eq!(read(CheckedBound::AtLeast(rational(3, 5))), first);
+        // The truth changes with `m`.
+        assert_eq!(read(CheckedBound::AtMost(rational(2, 5))), None);
+        assert_eq!(read(CheckedBound::AtLeast(rational(2, 5))), None);
+        // A mean reads the value itself, which changes with `m`.
+        assert_eq!(tail_fraction(1, 2, false, None), None);
+    }
 }

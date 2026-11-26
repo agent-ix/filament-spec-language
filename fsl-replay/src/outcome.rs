@@ -5219,7 +5219,7 @@ mod tests {
 
     #[trace("TC-709", "FR-254-AC-8")]
     #[test]
-    fn idle_tail_causes_keep_their_detail_on_the_wire() {
+    fn the_idle_tail_not_stochastic_cause_names_no_identity_on_the_wire() {
         let state = fsl_eval::simulation::StateKey::from_canonical_bytes(b"[0,[]]".to_vec());
         let cause = |value: TerminalValue| {
             serde_json::to_value(record(1, value)).expect("serializes")["cause"].clone()
@@ -5233,6 +5233,14 @@ mod tests {
         assert_eq!(not_stochastic["state"]["key"], "WzAsW11d");
         assert_eq!(not_stochastic["idle_tail"], true);
         assert_eq!(not_stochastic.get("identity"), None);
+    }
+
+    #[test]
+    fn the_idle_tail_undecided_cause_keeps_its_detail_on_the_wire() {
+        let state = fsl_eval::simulation::StateKey::from_canonical_bytes(b"[0,[]]".to_vec());
+        let cause = |value: TerminalValue| {
+            serde_json::to_value(record(1, value)).expect("serializes")["cause"].clone()
+        };
         for (reason, name) in [
             (
                 crate::statistical::IdleTailReason::TimedFormula,

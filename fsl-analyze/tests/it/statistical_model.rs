@@ -3432,3 +3432,104 @@ fn accumulate_and_elapsed_on_a_dense_idle_tail_are_decided() {
         );
     }
 }
+
+/// Whether `claim` on the `Idle` fixture stops `idle-tail-undecided` as a
+/// timed formula, at the state after `send`.
+fn stops_undecided(claim: &str) {
+    let world = window_world(2, None, "", claim);
+    let expected = state_after_send(&world);
+    match probe(&world) {
+        StatisticalOutcome::Stopped {
+            stop: StatisticalStop::IdleTailUndecided(stopped),
+            ..
+        } => assert_eq!(
+            (stopped.state, stopped.reason),
+            (
+                expected,
+                fsl_replay::statistical::IdleTailReason::TimedFormula
+            ),
+            "{claim}"
+        ),
+        other => panic!("{claim}: {other:?}"),
+    }
+}
+
+/// A past operator on a dense idle tail is not decided.
+#[test]
+fn a_past_operator_on_a_dense_idle_tail_stops_incomplete() {
+    for claim in [
+        "probability >= 0.5 [once[0 ms, 5 ms] holds(c.phase = 0)]",
+        "probability >= 0.5 [historically[0 ms, 5 ms] holds(c.phase = 0)]",
+        "probability >= 0.5 [holds(c.phase = 0) since[0 ms, 5 ms] holds(c.phase = 0)]",
+        "probability >= 0.5 [holds(c.phase = 0) triggered[0 ms, 5 ms] holds(c.phase = 0)]",
+    ] {
+        stops_undecided(claim);
+    }
+}
+
+/// A window aggregate atom is not admitted in a probabilistic event, so it
+/// never reaches the idle-tail reading.
+#[test]
+fn a_window_aggregate_event_does_not_check() {
+    let checked = std::panic::catch_unwind(|| {
+        window_world(
+            2,
+            None,
+            "",
+            "probability >= 0.5 [count where holds(c.phase = 1) over past[0 ms, 5 ms] >= 1]",
+        )
+    });
+    let refusal = checked.err().expect("the unit does not check");
+    let refusal = refusal.downcast_ref::<String>().expect("a message");
+    assert!(refusal.contains("CheckRefusal"), "{refusal}");
+}
+
+/// Five distinct interval bounds inside the idle tail are decided and six are
+/// not. No position holds `phase = 0` after 0 ms, so the decided event is
+/// false: the bounds inside `(2, 8)` are 3, 4, 5, 6 and 7; `[3 ms, 9 ms]`
+/// moves the window's end to 9 and puts 8 inside too.
+#[test]
+fn six_interval_bounds_inside_a_dense_idle_tail_stop_incomplete() {
+    let five = "eventually[3 ms, 4 ms] holds(c.phase = 0) \
+                or eventually[5 ms, 6 ms] holds(c.phase = 0) \
+                or eventually[7 ms, 8 ms] holds(c.phase = 0)";
+    assert_eq!(
+        measured(&window_world(
+            2,
+            None,
+            "",
+            &format!("probability >= 0.5 [{five}]")
+        )),
+        (Some(ratio(0, 1)), Decision::Rejected)
+    );
+    stops_undecided(&format!(
+        "probability >= 0.5 [{five} or eventually[3 ms, 9 ms] holds(c.phase = 0)]"
+    ));
+}
+
+/// A falling fraction: `phase = 0` holds at 0 ms and not in the idle state, so
+/// with `m` stutters the value is `1 / (2 + m)`. It is at most `3/5` for every
+/// `m`; it is at least `2/5` at `m = 0` and not for large `m`.
+#[test]
+fn a_falling_fraction_on_a_dense_idle_tail_is_read_over_every_completion() {
+    let below = "probability >= 0.5 [fraction holds(c.phase = 0) over [0, 5 ms] <= rational(3, 5)]";
+    assert_eq!(
+        measured(&window_world(2, None, "", below)),
+        (Some(ratio(1, 1)), Decision::Accepted)
+    );
+    for claim in [
+        "probability >= 0.5 [fraction holds(c.phase = 0) over [0, 5 ms] >= rational(2, 5)]",
+        "mean of (fraction holds(c.phase = 0) over [0, 5 ms]) <= 0.25",
+    ] {
+        assert!(
+            matches!(
+                probe(&window_world(2, None, "", claim)),
+                StatisticalOutcome::Unsupported {
+                    cause: StatisticalUnsupported::NotStochasticIdleTail { .. },
+                    ..
+                }
+            ),
+            "{claim}"
+        );
+    }
+}

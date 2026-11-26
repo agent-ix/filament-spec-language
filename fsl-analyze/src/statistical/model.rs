@@ -1239,6 +1239,7 @@ impl<'c> Shared<'_, '_, 'c> {
     /// time window (FSpec FR-407 "Time windows"). A stutter position changes
     /// no predicate and has reward 0, so every completion of a dense idle tail
     /// gives the same reading.
+    #[implements("FR-254-AC-7")]
     fn timed_measure(
         &self,
         test: &TestSubject,
