@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fsl_forms::{BuiltinType, DeclarationForm, FunctionDeclaration, TypeForm, TypeFormHead};
 use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 use fsl_forms::{ExprNode, Expression, ExpressionSpans};
 
@@ -357,6 +358,7 @@ fn clocks<'f>(forms: impl IntoIterator<Item = &'f TypeForm>) -> Vec<Span> {
 }
 
 /// Classify the clock-bearing declarations among `forms`.
+#[implements("FR-230-AC-19")]
 pub(super) fn classify(
     forms: &[fsl_forms::ParsedForm],
     package_bearing: BTreeSet<String>,
@@ -471,6 +473,7 @@ pub(super) fn classify(
 }
 
 /// `function` as a clock-reading declaration under `classified`.
+#[implements("FR-230-AC-13")]
 pub(super) fn reading(
     classified: &ClockForms,
     function: FunctionDeclaration,
@@ -492,6 +495,7 @@ pub(super) fn reading(
 /// pure clock field and tuple element removed, and each union case whose
 /// payload is a pure clock type left with no payload. Any other form is
 /// returned unchanged.
+#[implements("FR-230-AC-63")]
 pub(super) fn data_part(classified: &ClockForms, form: DeclarationForm) -> DeclarationForm {
     match form {
         DeclarationForm::Record(mut record) => {
