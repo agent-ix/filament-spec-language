@@ -19,12 +19,13 @@ use ix_trace_rs::implements;
 use serde_json::{json, Value as Json};
 use std::any::{Any, TypeId};
 
-use super::{undefined_reason, TimedStateWire, TimedTransitionWire};
+use super::{undefined_reason, TimedStateWire, WrittenTransition};
 use crate::model_check::counterexample::{
     ClosureStutter, CounterexampleKind, ModelStep, Race, StepSite, TemporalCounterexample,
     UndefinedEvaluation, UndefinedLocus,
 };
 use crate::refinement::{RefinementFailure, StepRejection};
+use crate::written_operation::WrittenOperation;
 
 /// Why a counterexample has no wire spelling here.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -434,7 +435,7 @@ fn read_document(
         Rational::new(integer("numerator")?, integer("denominator")?)
             .map_err(|_| malformed("invalid-value", pointer))
     }
-    #[implements("FR-120-AC-39")]
+    #[implements("FR-120-AC-39", "FR-120-AC-40")]
     fn source_transition(
         value: &Json,
         pointer: &str,
@@ -451,29 +452,29 @@ fn read_document(
             });
         }
         let operation_wire = required(value, "operation", pointer)?;
-        // FR-364 carries source operations as their stable node URI. Recover
-        // the canonical node/package identity used by ModelTransition. Any
-        // other member is read by FR-120's reader rule.
+        // FR-120's reader rule; this reader also rebuilds a string beginning
+        // `ix://` as the `{node, package}` identity.
         let operation_value = match operation_wire {
-            Json::String(operation) => match serde_json::from_str::<Json>(operation) {
-                Ok(value) if super::is_identity_text(operation) => value,
-                _ if operation.starts_with("ix://") => {
-                    let mut parts = operation
-                        .strip_prefix("ix://")
-                        .unwrap_or_default()
-                        .split('/');
-                    let owner = parts.next().filter(|part| !part.is_empty());
-                    let repository = parts.next().filter(|part| !part.is_empty());
-                    let package = owner
-                        .zip(repository)
-                        .map(|(owner, repository)| format!("{owner}/{repository}"))
-                        .ok_or_else(|| {
-                            malformed("invalid-value", format!("{pointer}/operation"))
-                        })?;
-                    json!({"node": operation, "package": package})
-                }
-                _ => Json::String(operation.clone()),
-            },
+            Json::String(operation)
+                if !WrittenOperation::is_identity_text(operation)
+                    && operation.starts_with("ix://") =>
+            {
+                let mut parts = operation
+                    .strip_prefix("ix://")
+                    .unwrap_or_default()
+                    .split('/');
+                let owner = parts.next().filter(|part| !part.is_empty());
+                let repository = parts.next().filter(|part| !part.is_empty());
+                let package = owner
+                    .zip(repository)
+                    .map(|(owner, repository)| format!("{owner}/{repository}"))
+                    .ok_or_else(|| malformed("invalid-value", format!("{pointer}/operation")))?;
+                json!({"node": operation, "package": package})
+            }
+            Json::String(operation) => WrittenOperation::from_wire(operation.clone())
+                .into_identity_text()
+                .and_then(|text| serde_json::from_str(&text))
+                .map_err(|_| malformed("invalid-value", format!("{pointer}/operation")))?,
             Json::Object(_) => operation_wire.clone(),
             _ => {
                 return Err(malformed(
@@ -958,7 +959,7 @@ fn state(key: &fsl_eval::simulation::StateKey) -> Result<Json, CounterexampleWir
 }
 
 fn model_transition(identity: &ModelTransition) -> Result<Json, CounterexampleWireError> {
-    serde_json::to_value(TimedTransitionWire::from(identity))
+    serde_json::to_value(WrittenTransition::from(identity))
         .map_err(|_| CounterexampleWireError::Unspelled("transition"))
 }
 
@@ -1825,12 +1826,19 @@ fn zero_rational() -> Rational {
     Rational::from_integer(filament_exact::Integer::zero())
 }
 
-/// FSpec FR-181's source-transition identity spelling for a task queue-growth
-/// cycle or release template.
+/// The written form of a source or model transition: FSpec FR-181's
+/// `{type, operation, receiver, arguments}`, with `operation` spelled by
+/// FR-120's one writer rule.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError::Unspelled`] when the receiver or an argument
+/// text cannot be read as JSON.
 pub fn task_source_transition_wire(
     identity: &ModelTransition,
 ) -> Result<Json, CounterexampleWireError> {
-    serde_json::to_value(super::TaskSourceTransitionWire::from(identity))
+    WrittenTransition::read(identity)
+        .and_then(serde_json::to_value)
         .map_err(|_| CounterexampleWireError::Unspelled("source transition"))
 }
 
@@ -2081,6 +2089,27 @@ pub fn probabilistic_wire(
     })
 }
 
+/// The written transition of one scheduled identity of a witness scheduler,
+/// each argument spelled by `encode`.
+#[implements("FR-120-AC-41")]
+fn scheduled_transition(
+    identity: &fsl_eval::simulation::model::ScheduledIdentity,
+    encode: &dyn Fn(&Value) -> Option<Json>,
+) -> Result<WrittenTransition, CounterexampleWireError> {
+    Ok(WrittenTransition {
+        kind: "transition",
+        operation: WrittenOperation::of(&identity.operation),
+        receiver: Some(reference(&identity.receiver)?),
+        arguments: identity
+            .arguments
+            .iter()
+            .map(|value| {
+                encode(value).ok_or(CounterexampleWireError::Unspelled("probabilistic value"))
+            })
+            .collect::<Result<_, _>>()?,
+    })
+}
+
 fn probabilistic_wire_using(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
@@ -2102,14 +2131,8 @@ fn probabilistic_wire_using(
             .and_then(|key| state(&key))
     };
     let identity = |identity: &fsl_eval::simulation::model::ScheduledIdentity| {
-        let operation: Json = serde_json::from_str(&identity.operation)
-            .map_err(|_| Unspelled("scheduled operation"))?;
-        Ok::<_, CounterexampleWireError>(json!({
-            "type": "transition",
-            "operation": operation,
-            "receiver": reference(&identity.receiver)?,
-            "arguments": identity.arguments.iter().map(typed).collect::<Result<Vec<_>, _>>()?,
-        }))
+        serde_json::to_value(scheduled_transition(identity, &encode)?)
+            .map_err(|_| Unspelled("probabilistic scheduled identity"))
     };
     let paths = witness
         .paths
@@ -2601,7 +2624,7 @@ mod tests {
             read_temporal_counterexample::<ModelTransition>(&written)
                 .map(|read| read.prefix[0].transition.operation().to_owned())
         };
-        for name in ["true", "false", "null", "1", "[1]"] {
+        for name in ["tick", "true", "false", "null", "1", "[1]"] {
             assert_eq!(read(json!(name)).expect("a name"), format!("\"{name}\""));
         }
         for spelled in [json!(r#"{"name":"s1"}"#), json!({"name": "s1"})] {
@@ -2618,6 +2641,59 @@ mod tests {
                     pointer: "/loop/0/transition/operation".to_owned(),
                 })
             );
+        }
+    }
+
+    /// FR-120-AC-40 (TC-471): the temporal counterexample writes a source
+    /// step's declaration identity text as itself and a name identity as the
+    /// bare name, and its reader reads each back as the same identity.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_temporal_source_step_keeps_its_declaration_identity() {
+        let object = r#"{"node":"ix://test/counters/Counter/increment","package":"test/counters"}"#;
+        for (identity, written) in [(object, object), (r#""tick""#, "tick")] {
+            let mut found = counterexample(1, CounterexampleKind::Formula);
+            found.prefix[0].transition = ModelTransition::new(
+                identity.to_owned(),
+                None,
+                Vec::new(),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .expect("a canonical transition");
+            found.lasso = Some(Lasso {
+                entry: 0,
+                terminal_stutter: false,
+                terminal_stutter_delay: None,
+            });
+            let wire = temporal_wire(&found, None, None).expect("lasso spelling");
+            assert_eq!(wire["loop"][0]["transition"]["operation"], written);
+            let read = read_temporal_counterexample::<ModelTransition>(&wire).expect("reads");
+            assert_eq!(read.prefix[0].transition.operation(), identity);
+        }
+    }
+
+    /// FR-120-AC-41 (TC-471): a scheduled identity of a witness scheduler
+    /// writes its identity text, and a name identity as the bare name.
+    #[trace("TC-471", "FR-120-AC-41")]
+    #[test]
+    fn a_scheduled_identity_writes_operation_by_the_one_rule() {
+        let object = r#"{"node":"ix://a/b/C/d","package":"a/b"}"#;
+        for (identity, written) in [(object, object), (r#""tick""#, "tick")] {
+            let scheduled = fsl_eval::simulation::model::ScheduledIdentity {
+                operation: identity.to_owned(),
+                receiver: filament_exact::ObjectReference::new(
+                    crate::fixture_universe(1),
+                    crate::fixture_effective(2),
+                    filament_exact::ObjectId::new("n").expect("a key"),
+                ),
+                arguments: Vec::new(),
+            };
+            let wire = serde_json::to_value(
+                scheduled_transition(&scheduled, &|_| None).expect("no argument to encode"),
+            )
+            .expect("JSON");
+            assert_eq!(wire["type"], "transition");
+            assert_eq!(wire["operation"], written, "{identity}");
         }
     }
 
@@ -3184,7 +3260,7 @@ mod tests {
 
     /// FSpec FR-364-AC-15: task-transition spelling preserves a checked
     /// declared priority and omits priority when the task has none.
-    #[trace("FSpec-FR-364-AC-15")]
+    #[trace("FSpec-FR-364-AC-15", "TC-471", "FR-120-AC-40")]
     #[test]
     fn task_transition_wire_preserves_optional_priority() {
         let release = ModelTransition::new(
@@ -3212,7 +3288,10 @@ mod tests {
 
         let with_priority = task_transition_wire(&identity(Some(3))).expect("spelled task step");
         assert_eq!(with_priority["priority"], json!(3));
-        assert_eq!(with_priority["release"]["operation"], "release");
+        assert_eq!(
+            with_priority["release"]["operation"],
+            r#"{"name":"release"}"#
+        );
 
         let without_priority = task_transition_wire(&identity(None)).expect("spelled task step");
         assert!(without_priority.get("priority").is_none());
