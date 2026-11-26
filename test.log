@@ -1,0 +1,71 @@
+   Compiling fsl-foundation v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-foundation)
+   Compiling arch-lint v0.1.0 (/mnt/build/dev/worktrees/q-3844/tools/arch-lint)
+   Compiling fsl-string-edge v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-string-edge)
+   Compiling fsl-cst v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-cst)
+   Compiling fsl-source v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-source)
+   Compiling fsl-forms v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-forms)
+   Compiling fsl-semantics v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-semantics)
+   Compiling fsl-package v0.3.0 (/mnt/build/dev/worktrees/q-3844/fsl-package)
+   Compiling fsl-route v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-route)
+   Compiling fsl-eval v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-eval)
+   Compiling fsl-replay v0.3.0 (/mnt/build/dev/worktrees/q-3844/fsl-replay)
+   Compiling fsl-hybrid-reference v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-hybrid-reference)
+   Compiling filament-spec-language v0.3.0 (/mnt/build/dev/worktrees/q-3844)
+   Compiling fsl-analyze v0.3.0 (/mnt/build/dev/worktrees/q-3844/fsl-analyze)
+warning: method `expand` is never used
+    --> fsl-analyze/src/model_check/check.rs:1843:8
+     |
+1841 | trait Chooser<State, Transition> {
+     |       ------- method in this trait
+1842 |     /// `state`'s expansion, holding every step to its footprint.
+1843 |     fn expand(
+     |        ^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling fsl-inspect v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-inspect)
+   Compiling fsl-conformance v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-conformance)
+   Compiling fsl-command v0.1.0 (/mnt/build/dev/worktrees/q-3844/fsl-command)
+warning: `fsl-analyze` (lib) generated 1 warning
+   Compiling xtask v0.1.0 (/mnt/build/dev/worktrees/q-3844/xtask)
+    Finished `test` profile [unoptimized] target(s) in 27.56s
+     Running tests/it/main.rs (/home/peter/dev/worktrees/q-shared-target/debug/deps/it-6e97bf480fe0bddb)
+
+running 3 tests
+test request_surface_s1_16::the_verification_plan_member_selects_one_plan_or_refuses ... FAILED
+test request_surface_s1_16::the_checker_ieee_operand_binder_never_prints ... FAILED
+test request_surface_s1_16::a_reading_clause_with_a_capture_lowers_alike_on_both_routes ... FAILED
+
+failures:
+
+---- request_surface_s1_16::the_verification_plan_member_selects_one_plan_or_refuses stdout ----
+
+thread 'request_surface_s1_16::the_verification_plan_member_selects_one_plan_or_refuses' (1057851) panicked at tests/it/request_surface_s1_16.rs:699:5:
+assertion `left == right` failed
+  left: String("unsupported")
+ right: "refuted"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- request_surface_s1_16::the_checker_ieee_operand_binder_never_prints stdout ----
+
+thread 'request_surface_s1_16::the_checker_ieee_operand_binder_never_prints' (1057850) panicked at tests/it/request_surface_s1_16.rs:1557:5:
+assertion `left == right` failed: {"basis":"unavailable","code":"runtime_invariant","details":null,"format":"native-run-result/2","message":"the TL lowering faulted: an atom has no reader projection: Unsupported(UnsupportedView { package: \"test:s1-16:unit.native\", locus: Node { key: NodeKey(test:s1-16:unit.native:[\"value\",\"literal\",node(test:s1-16:unit.native:[\"scalar_type\",\"float64\",]:0),\"3ff0000000000000\",]:0), location: None }, reason: MissingTypeRepresentation })","stage":"output"}
+  left: 30
+ right: 0
+
+---- request_surface_s1_16::a_reading_clause_with_a_capture_lowers_alike_on_both_routes stdout ----
+
+thread 'request_surface_s1_16::a_reading_clause_with_a_capture_lowers_alike_on_both_routes' (1057849) panicked at tests/it/request_surface_s1_16.rs:2054:9:
+assertion `left == right` failed: Direct: {"basis":"unavailable","code":"runtime_invariant","details":null,"format":"native-run-result/2","message":"the TL lowering faulted: an atom has no reader projection: Unsupported(UnsupportedView { package: \"test:s1-16:unit.native\", locus: Node { key: NodeKey(test:s1-16:unit.native:[\"value\",\"literal\",node(test:s1-16:unit.native:[\"scalar_type\",\"float64\",]:0),\"3ff0000000000000\",]:0), location: None }, reason: MissingTypeRepresentation })","stage":"output"}
+  left: 30
+ right: 0
+
+
+failures:
+    request_surface_s1_16::a_reading_clause_with_a_capture_lowers_alike_on_both_routes
+    request_surface_s1_16::the_checker_ieee_operand_binder_never_prints
+    request_surface_s1_16::the_verification_plan_member_selects_one_plan_or_refuses
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 1250 filtered out; finished in 0.13s
+
+error: test failed, to rerun pass `--test it`
