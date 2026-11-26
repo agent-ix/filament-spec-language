@@ -152,10 +152,14 @@ pub struct TimedStateGraph {
     pub stats: ZoneStats,
     /// The scale factor shared by the node zones.
     pub(super) scale: BigInt,
-    /// The LU simulation bounds used to explore and certify the graph.
+    /// The bounds the graph is covered under and certified with: `L = U =
+    /// max(L, U)` per clock, the aM bisimulation.
     pub(super) lower: Vec<Option<BigInt>>,
-    /// The upper LU simulation bounds used to explore and certify the graph.
+    /// The upper bounds, equal to [`Self::lower`].
     pub(super) upper: Vec<Option<BigInt>>,
+    /// The node, step and guard part that created each node, `None` for an
+    /// initial one. A node's zone is exactly its parent's successor.
+    pub(super) parents: Vec<Option<(usize, usize, usize)>>,
 }
 
 /// A request to EN-6.
@@ -463,6 +467,16 @@ pub fn explore_timed_state_graph(
     edges.dedup_by(|right, left| {
         right.from == left.from && right.to == left.to && right.transition == left.transition
     });
+    let parents = run
+        .parent
+        .iter()
+        .map(|parent| {
+            parent.and_then(|edge| {
+                let edge = &run.edges[edge];
+                edge.step.map(|(step, part)| (edge.from, step, part))
+            })
+        })
+        .collect();
     Ok(TimedStateGraph {
         nodes,
         edges,
@@ -471,90 +485,8 @@ pub fn explore_timed_state_graph(
         scale: run.scale,
         lower: run.lower,
         upper: run.upper,
+        parents,
     })
-}
-
-/// Concretise a path in `graph` to one exact rational delay before each
-/// discrete step. `edges` contains indices into the graph's edge list, in
-/// path order.
-///
-/// # Errors
-///
-/// [`ZoneCheckRefusal`] if the edge sequence is not contiguous or no exact
-/// timed path satisfies its recorded zones and guards.
-pub fn concretise_timed_state_graph_path(
-    subject: &TimedSystem<'_, '_>,
-    graph: &TimedStateGraph,
-    edges: &[usize],
-) -> Result<Vec<fsl_replay::ModelStep>, ZoneCheckRefusal> {
-    if edges.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut stages = Vec::with_capacity(edges.len());
-    let mut last = None;
-    for &edge_index in edges {
-        let edge = graph
-            .edges
-            .get(edge_index)
-            .ok_or(ZoneCheckRefusal::Fault("state-graph-edge-index"))?;
-        if last.is_some_and(|node| node != edge.from) {
-            return Err(ZoneCheckRefusal::Fault("state-graph-path-contiguity"));
-        }
-        let source = graph
-            .nodes
-            .get(edge.from)
-            .ok_or(ZoneCheckRefusal::Fault("state-graph-source-index"))?;
-        let target = graph
-            .nodes
-            .get(edge.to)
-            .ok_or(ZoneCheckRefusal::Fault("state-graph-target-index"))?;
-        let steps = subject
-            .guarded_steps(&source.state)
-            .map_err(|_| ZoneCheckRefusal::Fault("state-graph-guarded-steps"))?;
-        let step = steps
-            .get(edge.step_index)
-            .ok_or(ZoneCheckRefusal::Fault("state-graph-step-index"))?;
-        if step.transition() != &edge.transition {
-            return Err(ZoneCheckRefusal::Fault("state-graph-transition"));
-        }
-        stages.push(super::concretise::Stage {
-            invariants: subject
-                .invariants(&source.state)
-                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-invariants"))?,
-            elapses: subject.tick_period().is_none()
-                && !subject
-                    .is_urgent(&source.state)
-                    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-elapses"))?,
-            target: subject
-                .invariants(step.post())
-                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-target-invariants"))?,
-            step: Some((step.clone(), edge.part_index)),
-            position: Vec::new(),
-            position_resets: Vec::new(),
-            before: Some(source.zone.clone()),
-            after: None,
-            auxiliary_carries: Vec::new(),
-            auxiliary_resets: Vec::new(),
-            auxiliary_advances: Vec::new(),
-            piece: Some(target.zone.clone()),
-            silent: false,
-            fixed: None,
-        });
-        last = Some(edge.to);
-    }
-    let target = graph
-        .nodes
-        .get(last.ok_or(ZoneCheckRefusal::Fault("state-graph-path-end"))?)
-        .ok_or(ZoneCheckRefusal::Fault("state-graph-path-end"))?;
-    super::concretise::concretise(
-        subject,
-        subject.places().len(),
-        &stages,
-        &super::concretise::Target::Within(target.zone.clone()),
-        &graph.scale,
-    )
-    .map(|concrete| concrete.prefix)
-    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-path-concretisation"))
 }
 
 /// Why EN-6 does not take the request.
@@ -729,9 +661,7 @@ pub fn check_timed_model<S: Clone>(
         }
         Err(ClosureRefusal::Encoding(_)) => return Err(ZoneCheckRefusal::Fault("state-key")),
         Err(
-            ClosureRefusal::Unordered
-            | ClosureRefusal::Stopped(_)
-            | ClosureRefusal::Initial(_),
+            ClosureRefusal::Unordered | ClosureRefusal::Stopped(_) | ClosureRefusal::Initial(_),
         ) => {
             return Err(ZoneCheckRefusal::Fault("symmetry-closure"));
         }
@@ -1132,13 +1062,16 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     ) -> Self {
         let (scale, mut lower, mut upper) =
             scaled_bounds(timed, window.as_ref(), automaton_constants);
-        if matches!(judged, Judged::DeadlockFreedom | Judged::TimeLockFreedom) {
-            // The deadlock-freedom and time-lock-freedom items read
-            // valuations whose absence of behaviour the aLU simulation does
-            // not preserve: they cover under the aM bisimulation,
-            // `L = U = max(L, U)` per clock, which the deadlock item's
-            // certificate checker reads (FR-245) and FR-240's trap search
-            // needs (`super::time_lock`).
+        if matches!(
+            judged,
+            Judged::StateGraph | Judged::DeadlockFreedom | Judged::TimeLockFreedom
+        ) {
+            // The state-graph forms and the deadlock-freedom and
+            // time-lock-freedom items read valuations whose absence of
+            // behaviour the aLU simulation does not preserve: they cover
+            // under the aM bisimulation, `L = U = max(L, U)` per clock,
+            // which the certificate checker reads (FR-245) and FR-240's trap
+            // search needs (`super::time_lock`).
             for (lower, upper) in lower.iter_mut().zip(&mut upper) {
                 let most = lower.clone().max(upper.clone());
                 lower.clone_from(&most);

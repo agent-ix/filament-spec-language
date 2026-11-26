@@ -19,8 +19,8 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PendingClauseForm,
     TimedState, TimedSystem,
 };
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
@@ -30,12 +30,12 @@ use fsl_replay::{
     StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,
     ZoneCertificateRequest, ZoneCertificateVerdict,
 };
-use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
+use fsl_route::StateGraphFormKind;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
 
-use super::items::{INVALID_VALUE, model_refusal};
+use super::items::{model_refusal, INVALID_VALUE};
 use super::timed_item::subject_refusal;
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
@@ -43,11 +43,11 @@ use super::{
 };
 use crate::model_check::manifest as en1;
 use crate::model_check::{
-    StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest, check_and_settle_state_graph,
+    check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
 };
 use crate::zone_check::{
-    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, certificate_item,
-    decide_timed_state_graph, explore_timed_state_graph,
+    certificate_item, decide_timed_state_graph, explore_timed_state_graph, TimedStateGraphDecision,
+    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop,
 };
 
 /// The property form of a checked claim.
@@ -1061,46 +1061,10 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if instances.is_empty() {
         return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
     }
-    let graph = match explore_timed_state_graph(
-        &timed,
-        super::timed_item::zone_limits(read.form),
-        cancel,
-    ) {
+    let limits = super::timed_item::zone_limits(read.form);
+    let graph = match explore_timed_state_graph(&timed, limits, cancel) {
         Ok(graph) => graph,
-        Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(limit))) => {
-            let (limit, value) = match limit {
-                ZoneCheckLimit::MaxSymbolicStates(value) => {
-                    (fsl_replay::ModelCheckLimit::MaxStates, value)
-                }
-                ZoneCheckLimit::MaxSymbolicTransitions(value) => (
-                    fsl_replay::ModelCheckLimit::ZoneMaxSymbolicTransitions,
-                    value,
-                ),
-                ZoneCheckLimit::MaxAutomatonStates(value) => {
-                    (fsl_replay::ModelCheckLimit::ZoneMaxAutomatonStates, value)
-                }
-                ZoneCheckLimit::MaxZoneBytes(value) => {
-                    (fsl_replay::ModelCheckLimit::ZoneMaxZoneBytes, value)
-                }
-                ZoneCheckLimit::MaxClocks(value) => (fsl_replay::ModelCheckLimit::MaxClocks, value),
-            };
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(ZoneCheckRefusal::Stopped(ZoneStop::Cancelled)) => match cancel.cause() {
-            Some(source) => {
-                return EngineReport::Refused(Refusal::Incomplete(
-                    fsl_replay::IncompleteCause::Cancelled { source },
-                ));
-            }
-            None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
-        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        Err(refusal) => return stopped(refusal, cancel),
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
@@ -1118,11 +1082,17 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             }
             _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
-        let decision =
-            match decide_timed_state_graph(&system, &graph, read.claim, over.as_ref(), cancel) {
-                Ok(decision) => decision,
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            };
+        let decision = match decide_timed_state_graph(
+            &timed,
+            &graph,
+            read.claim,
+            over.as_ref(),
+            limits,
+            cancel,
+        ) {
+            Ok(decision) => decision,
+            Err(refusal) => return stopped(refusal, cancel),
+        };
         let held = matches!(decision, TimedStateGraphDecision::Holds { .. });
         let form = certificate_form(read.claim.form());
         let ef_nodes = match &decision {
@@ -1160,6 +1130,9 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             CertificateCheckLimits::default(),
             cancel,
         );
+        if let Ok(ZoneCertificateVerdict::Stopped(cause)) = &check {
+            return EngineReport::Refused(Refusal::Incomplete(cause.clone()));
+        }
         let accepted = matches!(check, Ok(ZoneCertificateVerdict::Accepted));
         let refuted = matches!(
             check,
@@ -1174,11 +1147,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         if (held && !accepted) || (!held && !refuted) {
             return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
         }
-        let evidence = match timed_evidence(&timed, &graph, read.claim, &decision, instance.clone())
-        {
-            Ok(evidence) => evidence,
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        };
+        let evidence = timed_evidence(read.claim, decision, instance.clone());
         if let Some(evidence) = evidence.as_ref() {
             match replay_instance(read, evidence.clone(), Some(&certificate), false) {
                 Ok(replay) if replay.settlement == GraphReplaySettlement::Reproduced => {}
@@ -1291,83 +1260,72 @@ fn certificate_form(form: &StateGraphForm) -> StateGraphCertificateForm {
     }
 }
 
+/// A timed exploration or decision that returned no verdict.
+fn stopped(refusal: ZoneCheckRefusal, cancel: &Cancel) -> EngineReport {
+    let incomplete = |cause| EngineReport::Refused(Refusal::Incomplete(cause));
+    let broken = || EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+    match refusal {
+        ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(limit)) => {
+            let (limit, value) = match limit {
+                ZoneCheckLimit::MaxSymbolicStates(value) => {
+                    (fsl_replay::ModelCheckLimit::MaxStates, value)
+                }
+                ZoneCheckLimit::MaxSymbolicTransitions(value) => (
+                    fsl_replay::ModelCheckLimit::ZoneMaxSymbolicTransitions,
+                    value,
+                ),
+                ZoneCheckLimit::MaxAutomatonStates(value) => {
+                    (fsl_replay::ModelCheckLimit::ZoneMaxAutomatonStates, value)
+                }
+                ZoneCheckLimit::MaxZoneBytes(value) => {
+                    (fsl_replay::ModelCheckLimit::ZoneMaxZoneBytes, value)
+                }
+                ZoneCheckLimit::MaxClocks(value) => (fsl_replay::ModelCheckLimit::MaxClocks, value),
+            };
+            incomplete(fsl_replay::IncompleteCause::LimitReached {
+                limit,
+                value,
+                required: None,
+            })
+        }
+        ZoneCheckRefusal::Stopped(ZoneStop::Cancelled) => match cancel.cause() {
+            Some(source) => incomplete(fsl_replay::IncompleteCause::Cancelled { source }),
+            None => broken(),
+        },
+        _ => broken(),
+    }
+}
+
 fn timed_evidence(
-    timed: &TimedSystem<'_, '_>,
-    graph: &crate::zone_check::TimedStateGraph,
     claim: &CheckedStateGraphClaim,
-    decision: &TimedStateGraphDecision,
+    decision: TimedStateGraphDecision,
     over: Option<ModelInstance>,
-) -> Result<Option<GraphEvidence>, crate::zone_check::ZoneCheckRefusal> {
+) -> Option<GraphEvidence> {
     match decision {
         TimedStateGraphDecision::Holds { witness_paths, .. }
             if matches!(claim.form(), StateGraphForm::Possible { .. }) =>
         {
             let paths = witness_paths
-                .iter()
-                .enumerate()
-                .map(|(initial, edges)| {
-                    let steps =
-                        crate::zone_check::concretise_timed_state_graph_path(timed, graph, edges)?;
-                    let path = fsl_replay::ModelPath {
-                        initial: u32::try_from(initial).map_err(|_| {
-                            crate::zone_check::ZoneCheckRefusal::Fault("state-graph-initial")
-                        })?,
-                        steps,
-                    };
-                    Ok((WitnessPath::Path(path), fsl_replay::WitnessSource::Explored))
-                })
-                .collect::<Result<Vec<_>, crate::zone_check::ZoneCheckRefusal>>()?;
-            Ok(Some(GraphEvidence::Witness { paths, over }))
+                .into_iter()
+                .map(|path| (WitnessPath::Path(path), fsl_replay::WitnessSource::Explored))
+                .collect();
+            Some(GraphEvidence::Witness { paths, over })
         }
-        TimedStateGraphDecision::Holds { .. } => Ok(None),
-        TimedStateGraphDecision::Refuted {
-            stem, node, paths, ..
-        } => {
-            let stem = model_path(timed, graph, stem, *node)?;
-            if let Some((first, second)) = paths {
-                let first =
-                    crate::zone_check::concretise_timed_state_graph_path(timed, graph, first)?;
-                let second =
-                    crate::zone_check::concretise_timed_state_graph_path(timed, graph, second)?;
-                Ok(Some(GraphEvidence::PathPair {
-                    stem,
-                    first,
-                    second,
-                    over,
-                }))
-            } else {
-                Ok(Some(GraphEvidence::Trap {
-                    stem,
-                    closure: TrapClosure::StateGraph,
-                    over,
-                }))
-            }
-        }
+        TimedStateGraphDecision::Holds { .. } => None,
+        TimedStateGraphDecision::Refuted { stem, paths, .. } => Some(match paths {
+            Some((first, second)) => GraphEvidence::PathPair {
+                stem,
+                first,
+                second,
+                over,
+            },
+            None => GraphEvidence::Trap {
+                stem,
+                closure: TrapClosure::StateGraph,
+                over,
+            },
+        }),
     }
-}
-
-fn model_path(
-    timed: &TimedSystem<'_, '_>,
-    graph: &crate::zone_check::TimedStateGraph,
-    edges: &[usize],
-    endpoint: usize,
-) -> Result<fsl_replay::ModelPath, crate::zone_check::ZoneCheckRefusal> {
-    let initial_node = edges
-        .first()
-        .and_then(|&edge| graph.edges.get(edge).map(|edge| edge.from))
-        .unwrap_or(endpoint);
-    let initial = graph
-        .initials
-        .iter()
-        .position(|&node| node == initial_node)
-        .ok_or(crate::zone_check::ZoneCheckRefusal::Fault(
-            "state-graph-path-initial",
-        ))?;
-    Ok(fsl_replay::ModelPath {
-        initial: u32::try_from(initial)
-            .map_err(|_| crate::zone_check::ZoneCheckRefusal::Fault("state-graph-initial"))?,
-        steps: crate::zone_check::concretise_timed_state_graph_path(timed, graph, edges)?,
-    })
 }
 
 /// The index of the instance that decides the item.
