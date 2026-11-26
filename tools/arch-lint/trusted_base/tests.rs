@@ -45,7 +45,6 @@ const BARE: Policy = Policy {
     exceptions: &[],
     routes: &[],
     producer_types: data::FSL.producer_types,
-    object_type_rows: data::FSL.object_type_rows,
     check_entries: &[],
     codec: &[],
     codec_classes: data::FSL.codec_classes,
@@ -274,6 +273,9 @@ pub struct Request<'a> {
 pub struct Checker {
     system: ModelSystem,
 }
+pub struct MeasurePlan;
+pub struct FiniteQuantifier;
+pub struct AutomatonStateKey;
 impl Checker {
     pub fn on_self(&self) {}
 }
@@ -282,7 +284,9 @@ pub fn by_field(request: Request<'_>) {}
 pub fn by_closure(item_of: impl Fn(u32) -> u32) {}
 pub fn by_generic<L: ModelLetters>(letters: L) {}
 pub fn by_object(letters: &dyn ModelLetters) {}
-pub fn clean(bytes: &[u8]) {}
+pub fn by_behaviour(plan: &MeasurePlan) {}
+pub fn by_reading(quantifiers: &[FiniteQuantifier]) {}
+pub fn clean(bytes: &[u8], key: AutomatonStateKey) {}
 ",
     );
     let policy = Policy {
@@ -294,6 +298,8 @@ pub fn clean(bytes: &[u8]) {}
             ("fsl_replay::certificate::by_closure", &["R-1"]),
             ("fsl_replay::certificate::by_generic", &["R-1"]),
             ("fsl_replay::certificate::by_object", &["R-1"]),
+            ("fsl_replay::certificate::by_behaviour", &["R-1"]),
+            ("fsl_replay::certificate::by_reading", &["R-1"]),
             ("fsl_replay::certificate::clean", &["R-1"]),
         ],
         ..BARE
@@ -311,6 +317,10 @@ pub fn clean(bytes: &[u8]) {}
             format!("{entry}::by_closure takes producer-built closure through item_of"),
             format!("{entry}::by_generic takes producer-built ModelLetters through letters"),
             format!("{entry}::by_object takes producer-built ModelLetters through letters"),
+            format!("{entry}::by_behaviour takes producer-built MeasurePlan through plan"),
+            format!(
+                "{entry}::by_reading takes producer-built FiniteQuantifier through quantifiers"
+            ),
         ]
     );
 }
@@ -666,28 +676,17 @@ fn a_changed_table_is_named() {
 
 #[trace("FR-1051-AC-15")]
 #[test]
-fn ce_7_may_not_claim_a_shared_product_without_an_s_1_entry() {
-    const S_1: &[Entry] = &[shared("S-1", "fsl_eval::automaton::translate")];
-    let shared_text = "| CE-7 | The product construction is shared with EN-1. |\n";
-    let none = Policy {
-        entries: &[],
-        ..data::FSL
-    };
-    assert_eq!(
-        spec::product_sharing_difference(shared_text, &none).as_deref(),
-        Some(
-            "ADR-028 CE-7 still says the product construction is shared with EN-1, and the data \
-             holds no S-1 entry"
-        )
-    );
-    let recorded = Policy {
-        entries: S_1,
-        ..data::FSL
-    };
-    assert_eq!(
-        spec::product_sharing_difference(shared_text, &recorded),
-        None
-    );
+fn ce_7_must_say_the_checker_shares_the_concrete_run_alone() {
+    let named =
+        Some("ADR-028 CE-7 does not limit what the checker shares to the concrete run alone");
+    let silent = "| CE-7 | The checker is small. |\n";
+    let shared_product = "| CE-7 | What the checker shares is the concrete run alone, and the \
+                          product construction is shared with EN-1. |\n";
+    let narrowed = "| CE-7 | What the checker shares is the concrete run alone. |\n";
+    assert_eq!(spec::ce_7_difference(silent).as_deref(), named);
+    assert_eq!(spec::ce_7_difference(shared_product).as_deref(), named);
+    assert_eq!(spec::ce_7_difference("").as_deref(), named);
+    assert_eq!(spec::ce_7_difference(narrowed), None);
     let adr = read("spec/decisions/ADR-028-exact-probabilistic-engine.md");
-    assert_eq!(spec::product_sharing_difference(&adr, &data::FSL), None);
+    assert_eq!(spec::ce_7_difference(&adr), None);
 }

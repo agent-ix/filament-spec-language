@@ -127,8 +127,6 @@ pub(crate) struct Policy {
     pub(crate) routes: &'static [&'static str],
     /// The producer-built types of "No producer objects".
     pub(crate) producer_types: &'static [&'static str],
-    /// Rows whose recorded sharing bars a check entry from taking their types.
-    pub(crate) object_type_rows: &'static [&'static str],
     /// Each check entry with the routes it serves.
     pub(crate) check_entries: &'static [(&'static str, &'static [&'static str])],
     /// Each codec function with its codec class.
@@ -515,7 +513,7 @@ impl Check<'_> {
 
     /// The producer-built types and closures `ty` carries, each with the
     /// parameter or field that carries it.
-    fn taken(&self, walk: &mut Taken<'_>, ty: &syn::Type, module: usize, at: &str) {
+    fn taken(&self, walk: &mut Taken, ty: &syn::Type, module: usize, at: &str) {
         match ty {
             syn::Type::Reference(inner) => self.taken(walk, &inner.elem, module, at),
             syn::Type::Slice(inner) => self.taken(walk, &inner.elem, module, at),
@@ -552,9 +550,7 @@ impl Check<'_> {
                 };
                 let record = &self.index.types[id];
                 let name = record.item.path.rsplit("::").next().unwrap_or_default();
-                if self.policy.producer_types.contains(&name)
-                    || walk.barred.contains(record.item.path.as_str())
-                {
+                if self.policy.producer_types.contains(&name) {
                     walk.hit(name, at);
                 } else if walk.seen.insert(id) {
                     if let Some(alias) = self.index.alias_of(id) {
@@ -572,13 +568,7 @@ impl Check<'_> {
         }
     }
 
-    fn arguments(
-        &self,
-        walk: &mut Taken<'_>,
-        arguments: &syn::PathArguments,
-        module: usize,
-        at: &str,
-    ) {
+    fn arguments(&self, walk: &mut Taken, arguments: &syn::PathArguments, module: usize, at: &str) {
         if let syn::PathArguments::AngleBracketed(arguments) = arguments {
             for argument in &arguments.args {
                 match argument {
@@ -594,7 +584,7 @@ impl Check<'_> {
 
     fn bounds<'b>(
         &self,
-        walk: &mut Taken<'_>,
+        walk: &mut Taken,
         bounds: impl Iterator<Item = &'b syn::TypeParamBound>,
         module: usize,
         at: &str,
@@ -621,18 +611,6 @@ impl Check<'_> {
     /// fields carrying it.
     #[implements("FR-1051-AC-4")]
     fn objects(&self) -> Vec<(String, String, String)> {
-        let barred: BTreeSet<&str> = self
-            .policy
-            .entries
-            .iter()
-            .filter(|entry| self.policy.object_type_rows.contains(&entry.row))
-            .filter(|entry| {
-                self.items
-                    .get(entry.item)
-                    .is_some_and(|items| items.iter().any(|item| item.kind == Kind::Type))
-            })
-            .map(|entry| entry.item)
-            .collect();
         let mut found = Vec::new();
         for (path, _) in self.policy.check_entries {
             for value in self.index.values.iter().filter(|v| v.item.path == *path) {
@@ -640,7 +618,6 @@ impl Check<'_> {
                     continue;
                 };
                 let mut walk = Taken {
-                    barred: &barred,
                     generics: generics_of(value.impl_generics.as_ref(), &signature.generics),
                     self_type: value.self_type,
                     seen: BTreeSet::new(),
@@ -831,8 +808,7 @@ struct Sites {
 }
 
 /// The walk of one check entry's parameter types.
-struct Taken<'a> {
-    barred: &'a BTreeSet<&'a str>,
+struct Taken {
     generics: HashMap<String, Vec<syn::TypeParamBound>>,
     self_type: Option<usize>,
     seen: BTreeSet<usize>,
@@ -840,7 +816,7 @@ struct Taken<'a> {
     found: BTreeMap<String, BTreeSet<String>>,
 }
 
-impl Taken<'_> {
+impl Taken {
     fn hit(&mut self, taken: &str, at: &str) {
         self.found
             .entry(taken.to_owned())

@@ -184,6 +184,7 @@ const BASE: &[BaseRow] = &[
             "application",
             "model_check::identity",
             "model_check::limits",
+            "spine_eval_api",
         ],
         prefix: "fsl_replay::",
         extent: Extent::TypeItems,
@@ -366,6 +367,14 @@ const EXCEPTIONS: &[ExceptionRow] = &[
         )],
     ),
     row(
+        "S-14",
+        Rule::SharedSemantics,
+        &[(
+            "model_check/identity.rs",
+            &["fsl-replay/src/model_check/identity.rs"],
+        )],
+    ),
+    row(
         "P-1",
         Rule::ProducerCall,
         &[(
@@ -509,12 +518,26 @@ const EXCEPTIONS: &[ExceptionRow] = &[
         )],
     ),
     row(
+        "P-14",
+        Rule::ProducerCall,
+        &[(
+            "certificate/zone_certificate/task_check.rs",
+            &["fsl-replay/src/certificate/zone_certificate/task_check.rs"],
+        )],
+    ),
+    row(
         "O-1",
         Rule::ProducerObject,
-        &[(
-            "probability_certificate/**",
-            &["fsl-replay/src/probability_certificate/**"],
-        )],
+        &[
+            (
+                "probability_certificate.rs",
+                &["fsl-replay/src/probability_certificate.rs"],
+            ),
+            (
+                "probability_certificate/**",
+                &["fsl-replay/src/probability_certificate/**"],
+            ),
+        ],
     ),
     row(
         "O-2",
@@ -569,6 +592,36 @@ const EXCEPTIONS: &[ExceptionRow] = &[
         Rule::ProducerObject,
         &[("contract_check.rs", &["fsl-replay/src/contract_check.rs"])],
     ),
+    row(
+        "O-7",
+        Rule::ProducerObject,
+        &[
+            (
+                "probability_certificate/document.rs",
+                &["fsl-replay/src/probability_certificate/document.rs"],
+            ),
+            (
+                "probability_certificate/document/mdp.rs",
+                &["fsl-replay/src/probability_certificate/document/mdp.rs"],
+            ),
+            (
+                "probability_certificate/document/long_run.rs",
+                &["fsl-replay/src/probability_certificate/document/long_run.rs"],
+            ),
+            (
+                "probability_certificate/witness.rs",
+                &["fsl-replay/src/probability_certificate/witness.rs"],
+            ),
+        ],
+    ),
+    row(
+        "O-8",
+        Rule::ProducerObject,
+        &[(
+            "certificate/zone_certificate.rs",
+            &["fsl-replay/src/certificate/zone_certificate.rs"],
+        )],
+    ),
 ];
 
 const ROUTES: &[&str] = &[
@@ -600,9 +653,16 @@ pub(crate) const FSL: Policy = Policy {
         "TupleLetters",
         "StepMatch",
         "ModelEvaluator",
-    ],
-    object_type_rows: &[
-        "S-1", "S-2", "S-3", "S-4", "S-5", "S-6", "S-7", "S-8", "S-9",
+        "BoundedTranslation",
+        "SafetyTranslation",
+        "PropertyAutomaton",
+        "Monitor",
+        "QualifiedBoundedMonitor",
+        "MeasurePlan",
+        "HyperProduct",
+        "ProjectedProduct",
+        "WitnessProduct",
+        "FiniteQuantifier",
     ],
     check_entries: lists::CHECK_ENTRIES,
     codec: lists::CODEC,

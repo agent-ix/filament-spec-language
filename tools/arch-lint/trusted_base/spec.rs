@@ -247,16 +247,17 @@ pub(super) fn differences(text: &str, policy: &Policy) -> Vec<String> {
     differences
 }
 
-/// AC-15: with no S-1 entry, ADR-028 CE-7 may no longer say the product
-/// construction is shared with EN-1.
-pub(super) fn product_sharing_difference(adr: &str, policy: &Policy) -> Option<String> {
-    let recorded = policy.entries.iter().any(|entry| entry.row == "S-1");
-    let shared = adr.lines().any(|line| {
-        line.starts_with("| CE-7 |") && line.contains("product construction is shared with EN-1")
-    });
-    (!recorded && shared).then(|| {
-        "ADR-028 CE-7 still says the product construction is shared with EN-1, \
-         and the data holds no S-1 entry"
-            .to_owned()
+/// AC-15: ADR-028 CE-7 says the checker shares the concrete run alone, and
+/// does not say that the product construction is shared with EN-1.
+pub(super) fn ce_7_difference(adr: &str) -> Option<String> {
+    let narrowed = adr
+        .lines()
+        .find(|line| line.starts_with("| CE-7 |"))
+        .is_some_and(|line| {
+            line.contains("checker shares is the concrete run alone")
+                && !line.contains("product construction is shared with EN-1")
+        });
+    (!narrowed).then(|| {
+        "ADR-028 CE-7 does not limit what the checker shares to the concrete run alone".to_owned()
     })
 }
