@@ -21,7 +21,7 @@ enum ItemExecution {
 }
 
 struct CallOutput {
-    item_limits: fsl_analyze::analyze::AnalyzeLimits,
+    item_limits: Box<fsl_analyze::analyze::AnalyzeLimits>,
     source: fsl_foundation::source::Source,
     function: String,
     requirements: Option<super::requirements::Requirements>,
@@ -431,7 +431,7 @@ pub(super) fn run_bytes(
                     let candidate = compilation_from_function(&input, overrides.spine_limits());
                     set_compilation(&mut compilation, candidate)?;
                     let call_output = Some(CallOutput {
-                        item_limits: super::overrides::item_limits(overrides),
+                        item_limits: Box::new(super::overrides::item_limits(overrides)),
                         source: input.source.clone(),
                         function: input.call.function.clone(),
                         requirements: requirements.clone(),
@@ -584,7 +584,7 @@ pub(super) fn run_bytes(
                                     &requirements,
                                     &selection,
                                     &call_output.packages,
-                                    call_output.item_limits,
+                                    *call_output.item_limits,
                                     settle,
                                 )?)
                             }

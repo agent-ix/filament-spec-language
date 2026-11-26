@@ -2262,6 +2262,7 @@ fn every_work_bound_settles_incomplete_or_reports_the_unbounded_result() {
                     .with_max_states(100)
                     .with_max_transitions(1_000),
             )
+            .map_err(|error| format!("{error:?}"))
         };
         let observed = |result: &fsl_eval::simulation::model::ModelBasedTestResult| {
             format!(
@@ -2311,7 +2312,7 @@ fn every_work_bound_settles_incomplete_or_reports_the_unbounded_result() {
                         result.evidence, result.cause, result.counts
                     ),
                 },
-                Err(error) => format!("{error:?}"),
+                Err(error) => error,
             };
             unchanged = 0;
             if !seen.contains(&found) {
