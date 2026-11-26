@@ -2684,3 +2684,72 @@ fn fixture_s_regions_and_rows_follow_the_owner_walk_numbering() {
         "fixture S has body-location rows of an effective precondition"
     );
 }
+
+/// FSpec FR-322-AC-291: the strict public reader admits rows for one shared
+/// application occurrence across two functions, and each public body cursor
+/// returns its own row with the package-wide ordinal.
+#[trace("FSpec-FR-322-AC-291")]
+#[test]
+fn shared_application_occurrence_reads_back_across_function_cursors() {
+    use filament_contract_model::{
+        CheckedBodyLocationOrigin, CheckedPackageReadLimits, CheckedPackageV2,
+        CheckedPackageV2ReadResult,
+    };
+
+    let emission = emit_checked(&fixture_s_package()).expect("S4 emits fixture S");
+    let admitted = match CheckedPackageV2::read(
+        emission.package().bytes(),
+        CheckedPackageReadLimits::bounded(),
+        emission.evidence(),
+    ) {
+        CheckedPackageV2ReadResult::Admitted(admitted) => admitted,
+        failure => panic!("the strict reader admits fixture S: {failure:?}"),
+    };
+    let rows = &admitted
+        .checked_term_data()
+        .expect("fixture S has body-location rows")
+        .body_locations;
+    let shared = rows.iter().find_map(|first| {
+        let CheckedBodyLocationOrigin::FunctionBody {
+            function: first_function,
+            ..
+        } = &first.location.origin;
+        rows.iter().find(|second| {
+            let CheckedBodyLocationOrigin::FunctionBody {
+                function: second_function,
+                ..
+            } = &second.location.origin;
+            first.application == second.application
+                && first.occurrence == second.occurrence
+                && first_function != second_function
+                && first.term_ordinal == 0
+                && second.term_ordinal == 1
+        })
+        .map(|second| (first, second, first_function.clone()))
+    });
+    let (first, second, first_function) = shared.expect(
+        "fixture S has one application occurrence visited by two functions at ordinals 0 and 1",
+    );
+    let CheckedBodyLocationOrigin::FunctionBody {
+        function: second_function,
+        ..
+    } = &second.location.origin;
+
+    for (function, expected) in [(first_function, first), (second_function.clone(), second)] {
+        let mut cursor = admitted
+            .body_locations(&function, u64::MAX)
+            .expect("the selected function has a body-location cursor");
+        let mut matches = Vec::new();
+        while let Some(view) = cursor
+            .next_location()
+            .expect("the body-location cursor reconstructs the shared visit")
+        {
+            if view.row.application == first.application && view.row.occurrence == first.occurrence
+            {
+                matches.push(view.row);
+            }
+        }
+        assert_eq!(matches, [expected], "cursor for {function:?}");
+        assert_eq!(matches[0].term_ordinal, expected.term_ordinal);
+    }
+}
