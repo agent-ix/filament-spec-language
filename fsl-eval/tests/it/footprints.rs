@@ -762,6 +762,15 @@ fn every_object_frame_includes_a_key_created_later_by_an_operation() {
     let system = subject.system(start, &COUNTER_KEYS);
     let receiver = subject.reference("Counter", "a");
     let created_later = subject.reference("Counter", "d");
+    let counter = system
+        .type_identity(&key("Counter"))
+        .expect("the counter type is admitted");
+    assert_eq!(
+        system
+            .excluded_keys(&ValueType::Reference(counter))
+            .expect("the counter universe is finite"),
+        ["d"]
+    );
 
     let footprint = footprint_of(&system, "bumpAll", &receiver, &[]);
 
