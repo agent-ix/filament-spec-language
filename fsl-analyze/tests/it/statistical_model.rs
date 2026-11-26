@@ -3124,3 +3124,261 @@ fn exact_outcome(world: &crate::timed_world::World, name: &str) -> String {
         .expect("a result word")
         .to_owned()
 }
+
+/// TC-709 step 5's fixtures: `send` moves `phase` 0 to 1 and, where `reply`
+/// is given, moves it 1 to 2; `rewards` states `reward cost` declarations.
+fn window_world(
+    send_ms: u32,
+    reply_ms: Option<u32>,
+    rewards: &str,
+    claim: &str,
+) -> crate::timed_world::World {
+    let mut operations: Vec<(&str, &[&str])> = vec![("send", &["phase"])];
+    let mut reply = String::new();
+    let mut reply_weight = "";
+    if let Some(delay) = reply_ms {
+        operations.push(("reply", &["phase"]));
+        reply = format!(
+            "pre Reply using v on M::Call::reply {{ self.phase = 1 }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::reply ~ discrete {{ {delay} ms: 1 }};\n"
+        );
+        reply_weight = "weight Call::reply = 1;";
+    }
+    timed_world_with(
+        &operations,
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             delay M::Call::send ~ discrete {{ {send_ms} ms: 1 }};\n\
+             {reply}{rewards}\
+             workload Even on M {{ weight Call::send = 1; {reply_weight} }}\n\
+             {}",
+            window_claim(claim)
+        ),
+    )
+}
+
+/// TC-709's `Tick` fixture: `time tick` with period 2 ms on `tick`, which is
+/// enabled at `phase = 2` only.
+fn tick_world(claim: &str) -> crate::timed_world::World {
+    let body = format!(
+        "dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         time M tick M::Call::tick period 2 ms unit ms;\n\
+         pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+         post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+         pre Tick using v on M::Call::tick {{ self.phase = 2 }}\n\
+         post Ticked using v on M::Call::tick {{ self.phase = 2 }}\n\
+         workload Even on M {{ weight Call::send = 1; weight Call::tick = 1; }}\n\
+         {}",
+        window_claim(claim)
+    );
+    crate::timed_world::world(
+        &crate::timed_world::document(&[], &[("send", &["phase"]), ("tick", &["phase"])]),
+        "profile ev = \"filament.temporal.timed/v1\";\n",
+        &body,
+    )
+}
+
+fn window_claim(claim: &str) -> String {
+    format!(
+        "probabilistic Probe using ev on M over (c: M::Call) under Even on origin\n\
+             with alpha 0.4, beta 0.4, indifference 0.05\n\
+             {{ {claim} }}\n"
+    )
+}
+
+fn probe(world: &crate::timed_world::World) -> StatisticalOutcome {
+    run_timed_method(
+        world,
+        "Probe",
+        StatisticalMethod::Okamoto,
+        7,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    )
+    .expect("the claim runs")
+}
+
+/// The estimate, as a fraction, and whether the claim is accepted.
+fn measured(world: &crate::timed_world::World) -> (Option<Rational>, Decision) {
+    let verdict = completed(Ok(probe(world)));
+    (verdict.estimate, verdict.decision)
+}
+
+const COSTS: &str = "reward cost on M::Call::send = 1;\nreward cost on M::Call::reply = 3;\n";
+const SEND_COST: &str = "reward cost on M::Call::send = 1;\n";
+
+/// FR-254-AC-5: positions stamped 0 and 2 ms lie in `[0, 5 ms]`; the `reply`
+/// step that leaves the second lands at 12 ms and weighs it.
+#[trace("TC-709", "FR-254-AC-5")]
+#[test]
+fn a_time_window_fraction_reads_every_position_and_the_leaving_rewards() {
+    let claim = "mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25";
+    assert_eq!(
+        measured(&window_world(2, Some(10), "", claim)),
+        (Some(ratio(1, 2)), Decision::Rejected)
+    );
+    let weighted = "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25";
+    assert_eq!(
+        measured(&window_world(2, Some(10), COSTS, weighted)),
+        (Some(ratio(3, 4)), Decision::Rejected)
+    );
+}
+
+/// Hand values over `Send` (stamps 0, 2, 12; `cost` 1 then 3): `accumulate`
+/// and `steps` read the positions of a time window.
+#[test]
+fn accumulate_and_steps_within_a_time_horizon_read_the_window_positions() {
+    for (claim, holds) in [
+        (
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 12 ms >= 2]",
+            true,
+        ),
+        (
+            "probability >= 0.5 [accumulate cost from holds(c.phase = 0) until holds(c.phase = 2) within 12 ms >= 4]",
+            true,
+        ),
+        (
+            "probability >= 0.5 [accumulate cost from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]",
+            false,
+        ),
+        (
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]",
+            false,
+        ),
+    ] {
+        let decision = if holds {
+            Decision::Accepted
+        } else {
+            Decision::Rejected
+        };
+        assert_eq!(
+            measured(&window_world(2, Some(10), COSTS, claim)),
+            (Some(ratio(i64::from(holds), 1)), decision),
+            "{claim}"
+        );
+    }
+}
+
+/// FR-254-AC-6: the positions are stamped 0, 0, 2 and 4 ms.
+#[trace("TC-709", "FR-254-AC-6")]
+#[test]
+fn a_tick_subject_is_sampled_without_a_race_and_reads_its_stutter_positions() {
+    for (claim, estimate, decision) in [
+        (
+            "mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25",
+            ratio(3, 4),
+            Decision::Rejected,
+        ),
+        (
+            "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]",
+            ratio(1, 1),
+            Decision::Accepted,
+        ),
+        (
+            "probability >= 0.5 [eventually[3 ms, 3 ms] holds(c.phase = 1)]",
+            ratio(0, 1),
+            Decision::Rejected,
+        ),
+    ] {
+        assert_eq!(
+            measured(&tick_world(claim)),
+            (Some(estimate), decision),
+            "{claim}"
+        );
+    }
+}
+
+/// FR-254-AC-7: on `Idle` every completion of the tail gives one reading.
+#[trace("TC-709", "FR-254-AC-7")]
+#[test]
+fn an_idle_tail_reading_every_completion_agrees_on_is_decided() {
+    for (rewards, claim, holds, decision) in [
+        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]", 1, Decision::Accepted),
+        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(2, 5)]", 0, Decision::Rejected),
+        ("", "mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25", 1, Decision::Rejected),
+        ("", "mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25", 0, Decision::Accepted),
+        (SEND_COST, "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25", 0, Decision::Accepted),
+        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]", 1, Decision::Accepted),
+    ] {
+        assert_eq!(
+            measured(&window_world(2, None, rewards, claim)),
+            (Some(ratio(holds, 1)), decision),
+            "{claim}"
+        );
+    }
+}
+
+/// The timed state just after `send` at 2 ms.
+fn state_after_send(world: &crate::timed_world::World) -> fsl_eval::simulation::StateKey {
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("the subject is timed");
+    let initial = timed.initial().remove(0);
+    let delayed = timed
+        .delay(&initial, &ratio(2, 1))
+        .expect("the delay reads")
+        .expect("the delay is admissible");
+    let (_, after) = timed.steps(&delayed).expect("the steps read").remove(0);
+    timed.state_key(&after).expect("the state encodes")
+}
+
+/// FR-254-AC-8: two completions of the tail give different readings.
+#[trace("TC-709", "FR-254-AC-8")]
+#[test]
+fn an_idle_tail_reading_that_depends_on_the_stutters_is_not_stochastic() {
+    for claim in [
+        "mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25",
+        "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(3, 5)]",
+        "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]",
+    ] {
+        let world = window_world(2, None, "", claim);
+        let expected = state_after_send(&world);
+        match probe(&world) {
+            StatisticalOutcome::Unsupported {
+                cause: StatisticalUnsupported::NotStochasticIdleTail { state },
+                ..
+            } => assert_eq!(state, expected, "{claim}"),
+            other => panic!("{claim}: {other:?}"),
+        }
+    }
+    assert_eq!(
+        measured(&window_world(
+            5,
+            None,
+            "",
+            "mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25"
+        )),
+        (Some(ratio(1, 2)), Decision::Rejected)
+    );
+}
+
+/// A nested timed formula on a dense idle tail is not decided yet: it stops
+/// typed incomplete and gives no reading (FR-254 "Undecided completions").
+#[test]
+fn a_nested_timed_formula_on_a_dense_idle_tail_stops_incomplete() {
+    let world = window_world(
+        2,
+        None,
+        "",
+        "probability >= 0.5 [eventually[0 ms, 5 ms] always[0 ms, 1 ms] holds(c.phase = 1)]",
+    );
+    let expected = state_after_send(&world);
+    match probe(&world) {
+        StatisticalOutcome::Stopped {
+            stop: StatisticalStop::IdleTailUndecided { state, reason },
+            ..
+        } => assert_eq!(
+            (state, reason),
+            (
+                expected,
+                fsl_replay::statistical::IdleTailReason::TimedFormula
+            )
+        ),
+        other => panic!("{other:?}"),
+    }
+}

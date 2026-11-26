@@ -41,8 +41,8 @@ use fsl_eval::simulation::model::{ClauseOutcome, NotMarkov};
 use fsl_eval::simulation::{ExpansionStop, SampledStep};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
-    ClaimForm, Decision, MeasureValue, SampledUndefined, SampledWitness, StatisticalBasis,
-    StatisticalLimit, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
+    ClaimForm, Decision, IdleTailReason, MeasureValue, SampledUndefined, SampledWitness,
+    StatisticalBasis, StatisticalLimit, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
     StatisticalProvenance, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
     StatisticalVerdict, TestProvenance, TestResult, TraceRange, UndecidedCause, WitnessValue,
 };
@@ -257,6 +257,18 @@ pub enum SampleHalt {
         state: fsl_eval::simulation::StateKey,
         /// The scheduled identity with no law.
         identity: filament_semantic_value::model_transition::ModelTransition,
+    },
+    /// FR-254: two completions of a dense idle tail read differently.
+    NotStochasticIdleTail {
+        /// The idle tail's first timed state.
+        state: fsl_eval::simulation::StateKey,
+    },
+    /// FR-254: the completions of a dense idle tail are not decided.
+    IdleTailUndecided {
+        /// The idle tail's first timed state.
+        state: fsl_eval::simulation::StateKey,
+        /// Which kind of reading is not decided.
+        reason: IdleTailReason,
     },
     /// FR-254: a local time-lock was reached before the horizon.
     TimeLockedSample {
@@ -628,6 +640,12 @@ fn halted(halt: SampleHalt) -> Result<TestEnd, StatisticalRefusal> {
         }
         SampleHalt::NotStochastic { state, identity } => {
             TestEnd::Unsupported(StatisticalUnsupported::NotStochastic { state, identity })
+        }
+        SampleHalt::NotStochasticIdleTail { state } => {
+            TestEnd::Unsupported(StatisticalUnsupported::NotStochasticIdleTail { state })
+        }
+        SampleHalt::IdleTailUndecided { state, reason } => {
+            TestEnd::Stopped(StatisticalStop::IdleTailUndecided { state, reason })
         }
         SampleHalt::TimeLockedSample { state } => {
             TestEnd::Unsupported(StatisticalUnsupported::TimeLockedSample { state })

@@ -541,6 +541,14 @@ pub enum IncompleteCause {
         /// The upper endpoint.
         upper: Box<ExactRational>,
     },
+    /// A statistical sample's reading over a dense idle tail is not decided
+    /// over every completion (FR-254; FSpec FR-420 "Undecided completions").
+    IdleTailUndecided {
+        /// The canonical timed-state key at the idle tail's first position.
+        state: fsl_eval::simulation::StateKey,
+        /// Which kind of reading is not decided.
+        reason: crate::statistical::IdleTailReason,
+    },
 }
 
 impl IncompleteCause {
@@ -551,6 +559,7 @@ impl IncompleteCause {
             Self::Cancelled { .. } => "cancelled",
             Self::ResourceExhausted | Self::LimitReached { .. } => "limit-reached",
             Self::PrecisionBudget { .. } => "precision-budget",
+            Self::IdleTailUndecided { .. } => "idle-tail-undecided",
             Self::UnresolvedDynamics | Self::CertificateUnchecked => "bounded-search-incomplete",
         }
     }
@@ -684,6 +693,12 @@ pub enum UnavailabilityCause {
         /// The typed transition identity whose delay is free.
         identity: filament_semantic_value::model_transition::ModelTransition,
     },
+    /// Two completions of a dense idle tail read differently (FR-254).
+    /// Wire cause `not-stochastic` with `idle_tail` and no `identity`.
+    NotStochasticIdleTail {
+        /// The canonical timed-state key at the idle tail's first position.
+        state: fsl_eval::simulation::StateKey,
+    },
     /// A timed statistical sample reached a local time-lock (FR-254).
     TimeLockedSample {
         /// The canonical timed-state key.
@@ -813,7 +828,7 @@ impl UnavailabilityCause {
                 .cause(),
             Self::NotMarkov(_) => "not-markov",
             Self::TotalAboveDrawRange { .. } => "total-above-draw-range",
-            Self::NotStochastic { .. } => "not-stochastic",
+            Self::NotStochastic { .. } | Self::NotStochasticIdleTail { .. } => "not-stochastic",
             Self::TimeLockedSample { .. } => "time-locked-sample",
             Self::ConfidenceBeyondPrecision => "confidence-beyond-precision",
             Self::WeakAccessShape { .. } => "weak-access-shape",
@@ -842,6 +857,7 @@ impl UnavailabilityCause {
             | Self::NotMarkov(_)
             | Self::TotalAboveDrawRange { .. }
             | Self::NotStochastic { .. }
+            | Self::NotStochasticIdleTail { .. }
             | Self::TimeLockedSample { .. }
             | Self::ConfidenceBeyondPrecision
             | Self::WeakAccessShape { .. }

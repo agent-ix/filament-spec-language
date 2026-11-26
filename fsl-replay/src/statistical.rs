@@ -588,6 +588,14 @@ impl StatisticalVerdict {
 /// A stopped run carries no decision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StatisticalStop {
+    /// A reading over a dense idle tail is not decided over every
+    /// completion (FR-254 "Undecided completions").
+    IdleTailUndecided {
+        /// The idle tail's first timed state.
+        state: fsl_eval::simulation::StateKey,
+        /// Which kind of reading is not decided.
+        reason: IdleTailReason,
+    },
     /// A test would exceed a budget: the budget and the value it was set
     /// to; [`StatisticalLimit::setting`] names the member that raises it.
     Limit {
@@ -623,6 +631,26 @@ pub enum StatisticalStop {
     },
 }
 
+/// Why a dense idle tail's completions are not decided (FSpec FR-420
+/// "Undecided completions").
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum IdleTailReason {
+    /// A predicate or `when` guard of the form reads a clock.
+    ClockPredicate,
+    /// A timed formula.
+    TimedFormula,
+}
+
+impl IdleTailReason {
+    /// The wire spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ClockPredicate => "clock-predicate",
+            Self::TimedFormula => "timed-formula",
+        }
+    }
+}
+
 /// Why a run is unsupported once sampling began (FR-189).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StatisticalUnsupported {
@@ -641,6 +669,12 @@ pub enum StatisticalUnsupported {
         state: fsl_eval::simulation::StateKey,
         /// Scheduled identity with no law.
         identity: filament_semantic_value::model_transition::ModelTransition,
+    },
+    /// Two completions of a dense idle tail give different readings
+    /// (FR-254; wire `not-stochastic` with `idle_tail`).
+    NotStochasticIdleTail {
+        /// The idle tail's first timed state.
+        state: fsl_eval::simulation::StateKey,
     },
     /// A local time-lock was reached before the timed sample horizon.
     TimeLockedSample {
