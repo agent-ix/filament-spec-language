@@ -25,6 +25,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-148
     type: references
+  - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
 ---
 # FR-145: Replay a refinement counterexample
 
