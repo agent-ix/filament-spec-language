@@ -26,3 +26,9 @@ All three criteria have tagged tests and implements markers (quire trace). Expec
 ## Coverage
 
 Plan completion: not assessed. Scope was the PR diff, not the whole repository; the matrix lookup used quire trace by criterion id (quoin matrix produced no output here). Semantic review was not run as a separate pass.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Fixed at 9d66ec6f29: both tests carry TC-471 and FR-120-AC-40; quire trace lists both as verifying AC-40, and both pass at this head. |

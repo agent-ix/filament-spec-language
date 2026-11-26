@@ -32,3 +32,9 @@ The 39 it_monitor_protocol failures: the same 39 names (all SourceMapInvariant i
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | FR-120-AC-40 names the temporal counterexample reader as one that reads each written identity back, and this PR changes that reader to call WrittenOperation::into_identity_text, but read_document's source_transition carries only #[implements("FR-120-AC-39")]. quire trace --id FR-120-AC-40 lists no implements entry for the temporal reader, so a later change to it is not linked to AC-40. | fsl-replay/src/outcome/counterexample.rs:438-442 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Fixed at 9d66ec6f29: source_transition now carries implements FR-120-AC-39 and AC-40; quire trace lists it under AC-40. |
