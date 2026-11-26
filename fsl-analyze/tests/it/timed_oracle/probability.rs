@@ -2,7 +2,9 @@
 //! The probabilistic rows of the corpus. Each ticket model has a `_hand`
 //! test, in which the falsifier's extrema over the dense grids equal the
 //! values derived by hand from the specification, and a `_routes` test, in
-//! which every route that answers gives those values.
+//! which every route gives exactly the outcome the row names for it: the hand
+//! verdict and value, or one named decline. A `_hand` test runs the falsifier
+//! and the readers only, so it carries no criterion tag.
 //!
 //! The positions a claim reads are FSpec FR-416's: the initial state, the
 //! post-state of each discrete step and the idle tail's stutter positions. A
@@ -98,12 +100,30 @@ fn pay(payoff: &Payoff, world: &World, system: &ModelSystem<'_>, b: &Behaviour) 
     }
 }
 
+/// The outcome one route must give for a claim.
+#[derive(Clone, Copy)]
+enum Expect {
+    /// The hand verdict, with the hand value where the route states one.
+    Hand,
+    /// Exactly this named decline.
+    Declines(&'static str),
+    /// The hand refutation, or `incomplete` (FSpec-FR-421-AC-8).
+    HandOrIncomplete,
+}
+
+/// EN-5's decline of a form it does not build.
+const NOT_BUILT: &str = "unsupported:not-yet-implemented";
+/// EN-5's decline of a nested or repeated timed window over drawn delays.
+const FORM_SHAPE: &str = "unsupported:TimedFormShape";
+
 /// One claim of a model with its hand extrema.
 struct Claim {
     /// The claim the exact route reads, if it has one.
     exact: Option<&'static str>,
     /// The claim the sampled route reads, if it has one.
     sampled: Option<&'static str>,
+    exact_expect: Expect,
+    sampled_expect: Expect,
     payoff: Payoff,
     bound: Bound,
     min: Rational,
@@ -114,6 +134,8 @@ fn claim(name: &'static str, payoff: Payoff, bound: Bound, min: Rational, max: R
     Claim {
         exact: Some(name),
         sampled: None,
+        exact_expect: Expect::Hand,
+        sampled_expect: Expect::Hand,
         payoff,
         bound,
         min,
@@ -125,6 +147,49 @@ impl Claim {
     fn also_sampled(mut self, name: &'static str) -> Self {
         self.sampled = Some(name);
         self
+    }
+
+    fn exact_expects(mut self, expect: Expect) -> Self {
+        self.exact_expect = expect;
+        self
+    }
+
+    fn sampled_expects(mut self, expect: Expect) -> Self {
+        self.sampled_expect = expect;
+        self
+    }
+
+    /// Whether `verdict` is the outcome `expect` names for `route`.
+    fn agrees(&self, route: &str, expect: Expect, verdict: &Verdict) -> bool {
+        // An exact proof states the compared extreme; a sampled test states
+        // its estimate, the value where every behaviour has one.
+        let proof_value = |value: &Option<Rational>| match (route, value) {
+            ("en-4", Some(value)) => self.min != self.max || value == &self.min,
+            (_, Some(value)) => value == self.extreme(),
+            (_, None) => false,
+        };
+        let refutation_value = |value: &Option<Rational>| match (route, value) {
+            ("en-4", Some(value)) => self.min != self.max || value == &self.min,
+            ("en-4", None) => false,
+            (_, value) => value.is_none(),
+        };
+        let hand = match verdict {
+            Verdict::Proved(value) => self.holds() && proof_value(value),
+            Verdict::Refuted(value) => !self.holds() && refutation_value(value),
+            Verdict::Declined(_) | Verdict::Vacuous(_) | Verdict::Broken(_) => false,
+        };
+        match expect {
+            Expect::Hand => hand,
+            Expect::Declines(named) => {
+                matches!(verdict, Verdict::Declined(found) if found == named)
+            }
+            Expect::HandOrIncomplete => {
+                hand || matches!(
+                    verdict,
+                    Verdict::Declined(found) if found.starts_with("incomplete:")
+                )
+            }
+        }
     }
 
     fn holds(&self) -> bool {
@@ -182,22 +247,22 @@ fn assert_hand(row: &Row) {
     }
 }
 
-/// Every route that answers a claim gives its hand verdict, an exact proof
-/// its hand value, and a sampled estimate of a claim with one behaviour value
-/// that value.
+/// Every route of every claim gives the outcome the claim names for it.
 fn assert_routes(row: &Row) {
     let mut wrong = Vec::new();
     for claim in &row.claims {
         let answers = claim
             .exact
-            .map(|name| (name, routes::exact(&row.world, name)))
+            .map(|name| (name, claim.exact_expect, routes::exact(&row.world, name)))
             .into_iter()
-            .chain(
-                claim
-                    .sampled
-                    .map(|name| (name, routes::sampled(&row.world, name))),
-            );
-        for (name, answer) in answers {
+            .chain(claim.sampled.map(|name| {
+                (
+                    name,
+                    claim.sampled_expect,
+                    routes::sampled(&row.world, name),
+                )
+            }));
+        for (name, expect, answer) in answers {
             let line = format!(
                 "{} {name} {} holds={} min={:?} max={:?}: {:?}",
                 row.name,
@@ -208,27 +273,7 @@ fn assert_routes(row: &Row) {
                 answer.verdict
             );
             eprintln!("OBSERVED {line}");
-            let agrees = match &answer.verdict {
-                Verdict::Proved(value) => {
-                    claim.holds()
-                        && value.as_ref().is_none_or(|value| {
-                            if answer.route == "en-4" {
-                                claim.min != claim.max || value == &claim.min
-                            } else {
-                                value == claim.extreme()
-                            }
-                        })
-                }
-                Verdict::Refuted(value) => {
-                    !claim.holds()
-                        && value
-                            .as_ref()
-                            .is_none_or(|value| claim.min != claim.max || value == &claim.min)
-                }
-                Verdict::Unsettled(_) => true,
-                Verdict::Vacuous(_) | Verdict::Broken(_) => false,
-            };
-            if !agrees {
+            if !claim.agrees(answer.route, expect, &answer.verdict) {
                 wrong.push(line);
             }
         }
@@ -332,33 +377,28 @@ fn empty_window(drawn: bool) -> Row {
     }
 }
 
-#[trace("FR-204-AC-26", "FSpec-FR-416-AC-4")]
 #[test]
 fn row_3324_empty_windows_hand() {
     assert_hand(&empty_window(false));
     assert_hand(&empty_window(true));
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3324_empty_windows_guard_routes() {
     assert_routes(&empty_window(false).only(&["E", "A", "L"]));
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 #[ignore = "QSL-3324: en-5 refutes a nested empty window whose probability is 0"]
 fn row_3324_nested_empty_window_guard_routes() {
     assert_routes(&empty_window(false).only(&["N"]));
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3324_empty_windows_drawn_routes() {
     assert_routes(&empty_window(true).only(&["E", "A"]));
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 #[ignore = "QSL-3324: en-5 fails on nested windows over a drawn delay"]
 fn row_3324_nested_empty_windows_drawn_routes() {
@@ -423,21 +463,18 @@ fn workload_windows(drawn: bool) -> Row {
     }
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3324_workload_windows_hand() {
     assert_hand(&workload_windows(false));
     assert_hand(&workload_windows(true));
 }
 
-#[trace("FR-204-AC-5", "FR-204-AC-26")]
 #[test]
 #[ignore = "QSL-3324: en-5 proves three false window claims under a workload"]
 fn row_3324_workload_windows_routes() {
     assert_routes(&workload_windows(false));
 }
 
-#[trace("FR-204-AC-5", "FR-204-AC-26")]
 #[test]
 #[ignore = "QSL-3324: en-5 proves three false window claims under a workload with a drawn delay"]
 fn row_3324_workload_windows_drawn_routes() {
@@ -457,19 +494,16 @@ fn gap() -> Row {
     }
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3324_gap_hand() {
     assert_hand(&gap());
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3324_gap_minimum_routes() {
     assert_routes(&gap().only(&["Min"]));
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 #[ignore = "QSL-3324: en-5 proves maximum 0 where it is 1"]
 fn row_3324_gap_maximum_routes() {
@@ -495,13 +529,11 @@ fn nested_inside_a_delay() -> Row {
     }
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3324_nested_inside_a_delay_hand() {
     assert_hand(&nested_inside_a_delay());
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 #[ignore = "QSL-3324: en-5 refutes a claim whose probability is 0 with bound <= 0.5"]
 fn row_3324_nested_inside_a_delay_routes() {
@@ -514,6 +546,10 @@ fn row_3324_nested_inside_a_delay_routes() {
 /// breaks it on every draw (minimum 0). Both extrema are the same on every
 /// draw, so the walk's equal weighting of the two outcomes does not change
 /// them.
+///
+/// EN-5 declines the form today, though FSL FR-204-AC-26 has the region route
+/// refute it; the routes row states that decline, so building the route fails
+/// it until the hand verdicts replace the decline.
 fn retx_offsets() -> Row {
     let form = "always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)";
     let mut space = Space::new(2, Lock::Frozen);
@@ -524,17 +560,18 @@ fn retx_offsets() -> Row {
         name: "3324-retx-offsets",
         world: models::retx(&(extrema_claims(form) + &formula("F", form))),
         space,
-        claims: extrema_rows(&Payoff::Holds("F")),
+        claims: extrema_rows(&Payoff::Holds("F"))
+            .into_iter()
+            .map(|claim| claim.exact_expects(Expect::Declines(FORM_SHAPE)))
+            .collect(),
     }
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3324_retx_offsets_hand() {
     assert_hand(&retx_offsets());
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3324_retx_offsets_routes() {
     assert_routes(&retx_offsets());
@@ -558,33 +595,28 @@ fn two_clocks(bounded: bool) -> Row {
     }
 }
 
-#[trace("FR-204-AC-21")]
 #[test]
 fn row_3444_two_clock_regions_hand() {
     assert_hand(&two_clocks(false));
     assert_hand(&two_clocks(true));
 }
 
-#[trace("FR-204-AC-21")]
 #[test]
 fn row_3444_two_clock_regions_minimum_routes() {
     assert_routes(&two_clocks(false).only(&["Min"]));
 }
 
-#[trace("FR-204-AC-21")]
 #[test]
-#[ignore = "QSL-3444: en-5 certificate is rejected where the maximum is 1"]
+#[ignore = "QSL-3443: en-5 certificate is rejected where the maximum is 1"]
 fn row_3444_two_clock_regions_maximum_routes() {
     assert_routes(&two_clocks(false).only(&["Max", "Half"]));
 }
 
-#[trace("FR-204-AC-21")]
 #[test]
 fn row_3444_two_clock_regions_bounded_minimum_routes() {
     assert_routes(&two_clocks(true).only(&["Min"]));
 }
 
-#[trace("FR-204-AC-21")]
 #[test]
 #[ignore = "QSL-3444: en-5 proves maximum 0 where it is 1"]
 fn row_3444_two_clock_regions_bounded_maximum_routes() {
@@ -618,7 +650,6 @@ fn skew_elapsed() -> Row {
     }
 }
 
-#[trace("FSpec-FR-407-AC-26")]
 #[test]
 fn row_3445_elapsed_quantile_hand() {
     assert_hand(&skew_elapsed());
@@ -636,7 +667,8 @@ fn row_3445_elapsed_quantile_routes() {
 /// That position is at `t` when lost, with `late` at 2 ms (holds only at
 /// `t = 1`), and at 1 ms when kept, with `late` at `t + 2` (holds only at
 /// `t = 0`). So the minimum is 0, at every `t` strictly inside (0, 1), and
-/// the maximum 1/2; integer `t` alone gives 1/2 for both.
+/// the maximum 1/2; integer `t` alone gives 1/2 for both. EN-5 declines the
+/// form today, and the routes row states that decline.
 fn skew_nested() -> Row {
     let form = "eventually[0 ms, 4 ms] \
          (holds(c.inflight and not c.late) and eventually[0 ms, 1 ms] holds(c.late))";
@@ -653,17 +685,16 @@ fn skew_nested() -> Row {
             AtLeast(ratio(2, 5)),
             zero(),
             half(),
-        )],
+        )
+        .exact_expects(Expect::Declines(FORM_SHAPE))],
     }
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_window_starting_after_position_zero_hand() {
     assert_hand(&skew_nested());
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_window_starting_after_position_zero_routes() {
     assert_routes(&skew_nested());
@@ -686,7 +717,7 @@ fn skew_each() -> Row {
         name: "3445-on-each-later-activation",
         world: models::skew(&format!("{claim}{}", formula("F", from_activation))),
         space,
-        claims: vec![claim_each()],
+        claims: vec![claim_each().exact_expects(Expect::Declines(NOT_BUILT))],
     }
 }
 
@@ -700,13 +731,11 @@ fn claim_each() -> Claim {
     )
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_activation_after_position_zero_hand() {
     assert_hand(&skew_each());
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_activation_after_position_zero_routes() {
     assert_routes(&skew_each());
@@ -756,11 +785,11 @@ fn mean_fraction() -> Row {
             half(),
             half(),
         )
-        .also_sampled("MeanS"),
+        .also_sampled("MeanS")
+        .exact_expects(Expect::Declines(NOT_BUILT)),
     )
 }
 
-#[trace("FR-254-AC-5", "FSpec-FR-407-AC-21")]
 #[test]
 fn row_3447_mean_fraction_hand() {
     assert_hand(&mean_fraction());
@@ -789,17 +818,16 @@ fn two_steps() -> Row {
             zero(),
             zero(),
         )
-        .also_sampled("StepsS"),
+        .also_sampled("StepsS")
+        .exact_expects(Expect::Declines(NOT_BUILT)),
     )
 }
 
-#[trace("FSpec-FR-407-AC-23")]
 #[test]
 fn row_3447_steps_hand() {
     assert_hand(&two_steps());
 }
 
-#[trace("FSpec-FR-407-AC-23")]
 #[test]
 fn row_3447_steps_routes() {
     assert_routes(&two_steps());
@@ -822,7 +850,9 @@ fn elapsed(
         send,
         Some(reply),
         &(pair("Q", form) + &phases()),
-        claim("Q", payoff, bound, value.clone(), value).also_sampled("QS"),
+        claim("Q", payoff, bound, value.clone(), value)
+            .also_sampled("QS")
+            .exact_expects(Expect::Declines(NOT_BUILT)),
     )
 }
 
@@ -876,7 +906,6 @@ fn elapsed_one() -> Row {
     )
 }
 
-#[trace("FR-254-AC-9", "FSpec-FR-407-AC-26")]
 #[test]
 fn row_254_elapsed_from_the_first_a_hand() {
     assert_hand(&elapsed_ten());
@@ -941,7 +970,6 @@ fn four_after_five() -> Row {
     at_least_four("3463-at-most-send-5", 5, "<= 0.5", AtMost(half()))
 }
 
-#[trace("FR-254-AC-3", "FSpec-FR-407-AC-26")]
 #[test]
 fn row_3463_elapsed_past_the_horizon_of_position_zero_hand() {
     assert_hand(&four_after_three());
@@ -995,13 +1023,11 @@ fn horizon_without_a_position() -> Row {
     }
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3448_empty_horizon_hand() {
     assert_hand(&horizon_without_a_position());
 }
 
-#[trace("FR-204-AC-26")]
 #[test]
 fn row_3448_empty_horizon_routes() {
     assert_routes(&horizon_without_a_position());
@@ -1019,7 +1045,8 @@ fn time_lock(invariant: &str) -> Row {
     let text = every("Early", &format!("probability >= 0.5 [ {early} ]"))
         + &every("Later", &format!("probability >= 0.5 [ {later} ]"))
         + &formula("FEarly", early)
-        + &formula("FLater", later);
+        + &formula("FLater", later)
+        + &formula("FPast", "eventually[2 ms, 3 ms] holds(true)");
     Row {
         name: if invariant.contains("<=") {
             "3468-lock-closed"
@@ -1047,21 +1074,35 @@ fn time_lock(invariant: &str) -> Row {
     }
 }
 
-#[trace("FR-204-AC-21")]
 #[test]
 fn row_3468_time_lock_hand() {
-    assert_hand(&time_lock("self.x <= 1 ms"));
-    assert_hand(&time_lock("self.x < 1 ms"));
+    for invariant in ["self.x <= 1 ms", "self.x < 1 ms"] {
+        let row = time_lock(invariant);
+        assert_hand(&row);
+        // A time-locked run adds no later position (FSpec FR-416), so no
+        // position is stamped in [2, 3] ms.
+        let system = row.world.system();
+        let past = falsifier::extrema(&system, &row.space, &|b| {
+            whole(i64::from(b.stamps.iter().any(|stamp| stamp > &whole(1))))
+                .add(&falsifier::holds(&row.world, &system, "FPast", b))
+        });
+        assert_eq!(
+            past,
+            Some(Extrema {
+                min: zero(),
+                max: zero()
+            }),
+            "{invariant}"
+        );
+    }
 }
 
-#[trace("FR-204-AC-21")]
 #[test]
 #[ignore = "QSL-3468: en-5 refutes always at a time lock, whose value is 1"]
 fn row_3468_time_lock_closed_routes() {
     assert_routes(&time_lock("self.x <= 1 ms"));
 }
 
-#[trace("FR-204-AC-21")]
 #[test]
 #[ignore = "QSL-3468: en-5 refutes always at a time lock, whose value is 1"]
 fn row_3468_time_lock_strict_routes() {
@@ -1092,11 +1133,11 @@ fn split() -> Row {
             AtLeast(ratio(1, 4)),
             zero(),
             half(),
-        )],
+        )
+        .exact_expects(Expect::HandOrIncomplete)],
     }
 }
 
-#[trace("FSpec-FR-421-AC-8")]
 #[test]
 fn row_split_reachable_lock_hand() {
     assert_hand(&split());
@@ -1132,11 +1173,12 @@ fn burst() -> Row {
             half(),
             ratio(101, 102),
         )
-        .also_sampled("BurstS")],
+        .also_sampled("BurstS")
+        .exact_expects(Expect::Declines(NOT_BUILT))
+        .sampled_expects(Expect::Declines("unsupported:NotStochasticIdleTail"))],
     }
 }
 
-#[trace("FSpec-FR-421-AC-9")]
 #[test]
 fn row_burst_stutter_fraction_hand() {
     assert_hand(&burst());
@@ -1165,6 +1207,8 @@ fn sampled_lock() -> Row {
         claims: vec![Claim {
             exact: None,
             sampled: Some("LockS"),
+            exact_expect: Expect::Hand,
+            sampled_expect: Expect::Hand,
             payoff: Payoff::Holds("F"),
             bound: AtMost(half()),
             min: one(),
@@ -1173,13 +1217,12 @@ fn sampled_lock() -> Row {
     }
 }
 
-#[trace("FR-254-AC-4")]
 #[test]
 fn row_sampled_time_lock_hand() {
     assert_hand(&sampled_lock());
 }
 
-/// An unsettled answer is not enough here: the sample is decided.
+/// The sample is decided: rejected with estimate 1.
 #[trace("FR-254-AC-4")]
 #[test]
 #[ignore = "QSL-3493: en-4 does not decide a sample that ends time-locked after its event (FR-254-AC-4)"]

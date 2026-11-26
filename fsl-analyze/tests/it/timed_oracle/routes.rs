@@ -27,13 +27,24 @@ pub(super) enum Verdict {
     Proved(Option<Rational>),
     /// Refuted; a sampled route's rejected test reads here.
     Refuted(Option<Rational>),
-    /// Unsupported, declined, incomplete or refused: no answer, honestly.
-    Unsettled(#[expect(dead_code, reason = "read through Debug in failures")] String),
+    /// A typed answer of no verdict, named: `unsupported:...`,
+    /// `incomplete:...`, `declined:...`, `undecided:...` or
+    /// `requires-bound`. It agrees with a claim only where a row names it.
+    Declined(String),
     /// Inconclusive with the named FSpec cause: no admitted behaviour or no
     /// instance.
     Vacuous(&'static str),
-    /// A rejected certificate, a replay disagreement or a failed run.
+    /// A rejected certificate, a replay disagreement, a failed or stopped
+    /// run, an invalid request or no record at all. No row accepts it.
     Broken(#[expect(dead_code, reason = "read through Debug in failures")] String),
+}
+
+/// The name of the variant a `Debug` rendering starts with.
+fn variant(value: &impl std::fmt::Debug) -> String {
+    format!("{value:?}")
+        .chars()
+        .take_while(char::is_ascii_alphanumeric)
+        .collect()
 }
 
 /// One route's verdict on one claim.
@@ -70,9 +81,12 @@ pub(super) fn exact(world: &World, claim: &str) -> Answer {
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
     let verdict = match &record.settlement {
         Settlement::Disposed(disposed) => match disposed.kind {
-            DispositionKind::RequiresBound
-            | DispositionKind::Unsupported
-            | DispositionKind::InvalidRequest => Verdict::Unsettled(format!("{disposed:?}")),
+            DispositionKind::RequiresBound => Verdict::Declined("requires-bound".to_owned()),
+            DispositionKind::Unsupported => disposed.diagnostic.as_ref().map_or_else(
+                || Verdict::Broken(format!("{disposed:?}")),
+                |diagnostic| Verdict::Declined(format!("unsupported:{}", diagnostic.code.cause())),
+            ),
+            DispositionKind::InvalidRequest => Verdict::Broken(format!("{disposed:?}")),
         },
         Settlement::Terminal(terminal) => match terminal.value() {
             TerminalValue::Proved {
@@ -81,9 +95,15 @@ pub(super) fn exact(world: &World, claim: &str) -> Answer {
             } => Verdict::Proved(Some(value.value().clone())),
             TerminalValue::Proved { .. } => Verdict::Proved(None),
             TerminalValue::Refuted => Verdict::Refuted(None),
-            value @ (TerminalValue::Unsupported(_)
-            | TerminalValue::Incomplete(_)
-            | TerminalValue::Declined { .. }) => Verdict::Unsettled(format!("{value:?}")),
+            TerminalValue::Unsupported(cause) => {
+                Verdict::Declined(format!("unsupported:{}", variant(cause)))
+            }
+            TerminalValue::Incomplete(cause) => {
+                Verdict::Declined(format!("incomplete:{}", variant(cause)))
+            }
+            value @ TerminalValue::Declined { .. } => {
+                Verdict::Declined(format!("declined:{}", variant(value)))
+            }
             TerminalValue::Inconclusive(InconclusiveCause::NoInstance) => {
                 Verdict::Vacuous("no-instance")
             }
@@ -129,9 +149,15 @@ pub(super) fn sampled(world: &World, claim: &str) -> Answer {
         Ok(StatisticalOutcome::Completed(verdict)) => match verdict.decision {
             Decision::Accepted => Verdict::Proved(verdict.estimate.clone()),
             Decision::Rejected => Verdict::Refuted(verdict.estimate.clone()),
-            Decision::Undecided(cause) => Verdict::Unsettled(format!("{cause:?}")),
+            Decision::Undecided(cause) => {
+                Verdict::Declined(format!("undecided:{}", variant(&cause)))
+            }
         },
-        other => Verdict::Unsettled(format!("{other:?}").chars().take(300).collect()),
+        Ok(StatisticalOutcome::Unsupported { cause, .. }) => {
+            Verdict::Declined(format!("unsupported:{}", variant(&cause)))
+        }
+        // No row expects a stopped run or a refused request.
+        other => Verdict::Broken(format!("{other:?}").chars().take(300).collect()),
     };
     Answer {
         route: "en-4",
@@ -141,18 +167,30 @@ pub(super) fn sampled(world: &World, claim: &str) -> Answer {
 
 fn item_verdict(item: &Value) -> Verdict {
     let record = &item["record"];
-    let cause = record["cause"]["kind"].as_str().unwrap_or_default();
+    let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
+    let broken = || Verdict::Broken(record.to_string().chars().take(300).collect());
     match record["result"].as_str() {
         Some("proved") => Verdict::Proved(None),
         Some("refuted") => Verdict::Refuted(None),
-        Some("unsupported" | "declined" | "incomplete") | None => {
-            Verdict::Unsettled(record.to_string().chars().take(300).collect())
+        Some(result @ ("unsupported" | "declined" | "incomplete")) => {
+            let diagnostic = &record["diagnostic"];
+            // FSpec FR-272's `not_digitisable` member of an EN-1 decline.
+            let rule = [
+                &diagnostic["not_digitisable"],
+                &diagnostic["detail"]["not_digitisable"],
+            ]
+            .into_iter()
+            .find_map(|member| member["rule"].as_str())
+            .unwrap_or("none");
+            Verdict::Declined(format!(
+                "{result}:{}/{}:{rule}",
+                text(&diagnostic["code"]),
+                text(&diagnostic["cause"]),
+            ))
         }
-        Some("inconclusive") => inconclusive(cause).map_or_else(
-            || Verdict::Broken(format!("inconclusive {}", record["cause"])),
-            Verdict::Vacuous,
-        ),
-        Some(other) => Verdict::Broken(format!("{other} {}", record["cause"])),
+        Some("inconclusive") => inconclusive(record["cause"]["kind"].as_str().unwrap_or_default())
+            .map_or_else(broken, Verdict::Vacuous),
+        _ => broken(),
     }
 }
 

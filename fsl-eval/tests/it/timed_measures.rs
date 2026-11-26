@@ -101,7 +101,6 @@ fn a_time_window_fraction_divides_by_the_positions_of_the_window() {
     assert_eq!(fraction(&trace, 0, &only(3, &[0]), 0), value(1, 2));
 }
 
-#[trace("FSpec-FR-407-AC-23")]
 #[test]
 fn steps_within_a_time_horizon_are_censored_or_not_activated() {
     let trace = complete(&[0, 2, 2, 7], 9);
