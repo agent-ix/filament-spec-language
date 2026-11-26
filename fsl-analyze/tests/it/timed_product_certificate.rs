@@ -680,6 +680,74 @@ fn a_workload_alone_makes_a_mean_time_infinite() {
     assert_eq!(disposed.kind, DispositionKind::Unsupported);
 }
 
+/// `send` and `toggle`, each disabling the other, with the guards and delay
+/// distributions given, under `One`: MeanTime until `late`, which `send`
+/// alone sets, so some scheduler reaches it and the workload may not.
+fn uncertified_race(send: &str, toggle: &str, delays: &str) -> World {
+    let declarations = format!(
+        "pre Send using v on M::Call::send {{ not self.late and not self.retried{send} }}\n\
+         post Sent using v on M::Call::send {{ self.late }}\n\
+         pre Give using v on M::Call::toggle {{ not self.late and not self.retried{toggle} }}\n\
+         post Gave using v on M::Call::toggle {{ self.retried }}\n\
+         {delays}\
+         workload One on M {{ weight Call::send = 1; weight Call::toggle = 1; }}\n\
+         time invariant Deadline when {{ not self.late and not self.retried }} {{ self.x <= 2 ms }}\n\
+         probabilistic MeanTime using inf on M over (c: M::Call) under One on origin \
+         {{ expected elapsed until holds(c.late) >= 3 ms }}\n"
+    );
+    timed_world::world(
+        &timed_world::document(&["x"], &[("send", &["late"]), ("toggle", &["retried"])]),
+        PROFILES,
+        &format!("{}{declarations}", timed_world::DENSE),
+    )
+}
+
+fn is_not_yet_certifiable(world: &World) {
+    let record = settle(world, "MeanTime");
+    assert_eq!(unsupported_cause(&record), "not-yet-implemented");
+    assert!(record.terminal().is_none());
+}
+
+const UNIT_DELAYS: &str = "delay M::Call::send ~ discrete { 1 ms: 1 };\n\
+                           delay M::Call::toggle ~ discrete { 1 ms: 1 };\n";
+
+/// FR-204-AC-24, not yet certifiable: strict guards put the workload infinity
+/// on the region route. `send` goes first only half the time, so the expected
+/// time is infinite, and no checker rederives it there.
+#[trace("TC-639", "FR-204-AC-24")]
+#[test]
+fn a_region_route_workload_infinity_is_not_yet_certified() {
+    is_not_yet_certifiable(&uncertified_race(
+        " and self.x < 3 ms",
+        " and self.x < 3 ms",
+        UNIT_DELAYS,
+    ));
+}
+
+/// FR-204-AC-24, not yet certifiable: `send` and `toggle` both choose their
+/// delay and are enabled together.
+#[trace("TC-639", "FR-204-AC-24")]
+#[test]
+fn a_workload_infinity_with_racing_free_delays_is_not_yet_certified() {
+    is_not_yet_certifiable(&uncertified_race(
+        " and self.x >= 1 ms",
+        " and self.x >= 1 ms",
+        "",
+    ));
+}
+
+/// FR-204-AC-24, not yet certifiable: `toggle` chooses its delay and a unit
+/// delay closes its window before it fires.
+#[trace("TC-639", "FR-204-AC-24")]
+#[test]
+fn a_workload_infinity_with_a_closing_free_window_is_not_yet_certified() {
+    is_not_yet_certifiable(&uncertified_race(
+        "",
+        " and self.x <= 0 ms",
+        "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
+    ));
+}
+
 const NEVER: &str = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
 
 /// FR-204-AC-25, FR-920-AC-5: every scheduler misses `false`, so the least

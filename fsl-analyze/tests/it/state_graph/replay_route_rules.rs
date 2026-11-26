@@ -89,7 +89,7 @@ fn request(
                 }),
                 WitnessSource::Explored,
             )],
-            over: None,
+            over: Vec::new(),
         },
         Evidence::NeverTrap => GraphEvidence::Trap {
             stem: ModelPath {
@@ -97,7 +97,7 @@ fn request(
                 steps: Vec::new(),
             },
             closure: TrapClosure::StateGraph,
-            over: None,
+            over: Vec::new(),
         },
     };
     let occurrence: OccurrenceKey = claim.occurrence().expect("an occurrence").clone();

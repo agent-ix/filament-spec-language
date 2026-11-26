@@ -1709,9 +1709,14 @@ fn from_two_initials(source: &str, second: (u64, bool), exact: ExactProbLimits) 
         },
     );
     let engines = fsl_analyze::analyze::Engines::fsl().unwrap();
-    fsl_analyze::analyze::analyze_items(&engines, vec![item], &filament_exact::Cancel::new())
-        .remove(0)
-        .settlement
+    fsl_analyze::analyze::analyze_items(
+        &engines,
+        vec![item],
+        &filament_exact::Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
+    .settlement
 }
 
 /// FR-1042 "Pairing": a bound checks its threshold at one initial key, so over
