@@ -807,3 +807,44 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
         run.item(0)
     );
 }
+
+/// `first` runs by 1 ms and resets `x`; `second` runs exactly 2 ms later.
+/// From the position `second` makes, at most 3 ms in, every later position
+/// has `phase` 2, so the claim is true on every behaviour.
+#[trace("TC-1592", "FR-632-AC-2")]
+#[test]
+fn digital_clocks_prove_a_true_always_inside_eventually() {
+    let body = format!(
+        "{}\
+         pre First using v on M::Call::first {{ self.phase = 0 }}\n\
+         post FirstDone using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Second using v on M::Call::second {{ self.phase = 1 and self.x >= 2 ms }}\n\
+         post SecondDone using v on M::Call::second {{ self.phase = 2 }}\n\
+         time invariant Early when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n\
+         time invariant Exact when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         temporal Settled using tt over (c: M::Call) clock \"model-time\" on origin \
+         {{ eventually[0 ms, 4 ms] always[0 ms, 1 ms] holds(c.phase = 2) }}\n",
+        crate::timed_world::DENSE,
+    );
+    let unit = crate::timed_world::unit_text(
+        crate::timed_world::PACKAGE,
+        crate::zone_search::TIMED,
+        &body,
+    );
+    let document = crate::timed_world::document(
+        &["x"],
+        &[("first", &["phase", "x"]), ("second", &["phase"])],
+    );
+    let ws = crate::analyze_cli_support::Workspace::new("timed-digital-replay-parity");
+    let run = crate::analyze_cli_support::analyze(&crate::analyze_cli_support::request_over(
+        &ws,
+        &unit,
+        &document,
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Settled"},
+            {"claim": "Settled", "options": {"method": "digital-clocks"}}]}),
+    ));
+    let items = run.document()["items"].clone();
+    assert_eq!(label(&items[0]), "proved", "{items}");
+    assert_eq!(label(&items[1]), "proved", "{items}");
+}
