@@ -595,6 +595,7 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
         fsl_analyze::analyze::document::SubjectSelection::default_over(&documents.snapshots);
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &package,
             binding: SubjectBinding {
                 packages: &documents.packages,

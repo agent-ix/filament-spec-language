@@ -1649,6 +1649,7 @@ fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_jso
     );
     settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &world.package,
             binding,
             provision: SourceProvision::single(

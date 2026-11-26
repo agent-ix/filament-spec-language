@@ -447,12 +447,27 @@ fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness(
 /// request reader names no population of a unit's own, so the binding is
 /// given directly. The selected domain package holds no object.
 fn settle_over_base(claim: &str, item: Value) -> Value {
+    let limits = fsl_analyze::analyze::AnalyzeLimits::published(
+        fsl_analyze::analyze::DeadlineSupply::Unbounded,
+    );
+    let (document, _) =
+        settle_over_base_with(claim, item, limits, false).expect("a settled run");
+    document["items"][0].clone()
+}
+
+/// [`settle_over_base`] under `limits`, the whole document or the refusal;
+/// `stated` hands the run the item as the caller stated it.
+fn settle_over_base_with(
+    claim: &str,
+    item: Value,
+    limits: fsl_analyze::analyze::AnalyzeLimits,
+    stated: bool,
+) -> Result<(Value, u8), fsl_analyze::analyze::document::AnalyzeDocumentError> {
     use crate::timed_world::{world_over, DENSE};
     use fsl_analyze::analyze::document::{
         analyze_document, resolve_items, AnalyzeRun, ItemSelection, SubjectSelection,
     };
-    use fsl_analyze::analyze::DeadlineSupply;
-    use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision, SubjectBinding};
+    use fsl_analyze::analyze::{Engines, SourceProvision, SubjectBinding};
     use fsl_eval::simulation::model::PopulationUniverse;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
     use fsl_semantics::model::observation::document_reference;
@@ -523,22 +538,21 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
         &registry,
         std::slice::from_ref(&source),
         &binding,
-        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
+        &limits,
     );
-    let (document, _) = analyze_document(
+    analyze_document(
         AnalyzeRun {
+            selections: if stated { &selections } else { &[] },
             package: &world.package,
             binding,
             provision: SourceProvision::single(&source, &world.unit),
             items,
             engines: &engines,
-            limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
+            limits,
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),
     )
-    .expect("a settled run");
-    document["items"][0].clone()
 }
 
 /// FR-125 "Instancing"'s written binding of the held `Derived` under `c` for
@@ -558,6 +572,38 @@ fn the_admitted_derived() -> Value {
             "path": ["model", "object_type", "ix://source/package/Base"]
         }
     })
+}
+
+/// QSL-3553 (FR-255-AC-25): the library path refuses a timed item that states
+/// `temporal.limits.max_states` when the caller also set
+/// `zone_check.max_symbolic_states`, as the command does, and with the same
+/// item position and setting.
+#[trace("FR-255-AC-25")]
+#[test]
+fn the_library_refuses_a_timed_item_limit_the_caller_also_set() {
+    use fsl_analyze::analyze::document::AnalyzeDocumentError;
+    use fsl_analyze::analyze::{AnalyzeLimits, AnalyzeRefusal, DeadlineSupply};
+    let item = json!({"claim": "AnyBase", "temporal": {"limits": {"max_states": 2}}});
+    let mut limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+    assert!(limits
+        .engines
+        .set(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5));
+    let refused = settle_over_base_with(BASE_POSSIBLE, item.clone(), limits, true)
+        .expect_err("the item and the caller state one bound twice");
+    let AnalyzeDocumentError::Refused(AnalyzeRefusal::EngineConflict { position, setting }) =
+        refused
+    else {
+        panic!("an engine conflict, not {refused:?}");
+    };
+    assert_eq!(position, 0);
+    assert_eq!(setting, fsl_foundation::Setting::ZoneCheckMaxSymbolicStates);
+    // The caller's bound alone, or the item's alone, settles.
+    let mut caller_only = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+    caller_only
+        .engines
+        .set(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5);
+    settle_over_base_with(BASE_POSSIBLE, json!({"claim": "AnyBase"}), caller_only, true)
+        .expect("a caller bound alone settles");
 }
 
 const BASE_POSSIBLE: &str = "possible AnyBase using v over (c: Base) { true }\n";

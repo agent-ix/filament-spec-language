@@ -1288,6 +1288,19 @@ pub enum AnalyzeRefusal {
     /// runs.
     #[error("the result's node ids cannot be held: {0:?}")]
     Emission(GraphUnavailable),
+    /// FR-255 "Caller limits and item limits": the item at `position` states
+    /// in its own members a limit the caller also set, so no run depends on
+    /// which of the two bounds wins; the run ends before any item runs.
+    #[error(
+        "items[{position}] states a limit the caller also set with `--limit {}`; give it once",
+        .setting.name()
+    )]
+    EngineConflict {
+        /// The request position of the item.
+        position: usize,
+        /// The setting both the item and the caller state.
+        setting: Setting,
+    },
 }
 
 /// The deadline stated by the frontend, which owns its timer.
@@ -1495,6 +1508,17 @@ impl AnalyzeRefusal {
                     )],
                 )
             }
+            Self::EngineConflict { .. } => OutcomeDocument::new(
+                Operation::Analyze,
+                None,
+                fsl_foundation::Code::InvalidRequest.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                None,
+                fsl_foundation::Code::InvalidRequest.as_str(),
+                None,
+                self.to_string(),
+            )]),
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
