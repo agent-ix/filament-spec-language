@@ -1153,8 +1153,7 @@ fn row_burst_stutter_fraction_routes() {
 
 /// `go` at 1/2 ms reaches phase 1, and the run is time-locked at 1 ms: the
 /// position stamped 1/2 ms is in phase 1 on every sample, so the event has
-/// probability 1 and `<= 0.5` is rejected with estimate 1 (FR-254-AC-4 as
-/// agent-ix/filament-spec-language#4042 amends it).
+/// probability 1 and `<= 0.5` is rejected with estimate 1 (FR-254-AC-4).
 fn sampled_lock() -> Row {
     let form = "eventually[0 ms, 2 ms] holds(c.phase = 1)";
     let text =
@@ -1186,7 +1185,7 @@ fn row_sampled_time_lock_hand() {
 /// An unsettled answer is not enough here: the sample is decided.
 #[trace("FR-254-AC-4")]
 #[test]
-#[ignore = "QSL-3493: en-4 does not decide a sample that ends time-locked after its event (FR-254-AC-4 as agent-ix/filament-spec-language#4042 amends it)"]
+#[ignore = "QSL-3493: en-4 does not decide a sample that ends time-locked after its event (FR-254-AC-4)"]
 fn row_sampled_time_lock_routes() {
     let row = sampled_lock();
     let answer = routes::sampled(&row.world, "LockS");
