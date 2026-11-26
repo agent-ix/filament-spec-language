@@ -2171,6 +2171,24 @@ impl Scope {
         }
     }
 
+    /// The declared spelling of an object type, using a package model name
+    /// rather than an import alias or the identity node's final segment.
+    #[implements("FR-363-AC-9")]
+    pub(crate) fn object_type_name(
+        &self,
+        source: Option<&RawSourceRef>,
+        object: &EffectiveId,
+    ) -> Option<String> {
+        self.model_spellings
+            .object_type_name(source, object)
+            .or_else(|| {
+                self.index
+                    .object_types
+                    .iter()
+                    .find_map(|(name, candidate)| (candidate == object).then(|| name.clone()))
+            })
+    }
+
     /// ADR-013 T-6 (last sentence): the checked `VariantId -> EnumValue`
     /// index `TypeEnvironment::check_equality_in`'s `Enum` schedule needs to
     /// evaluate a comparison later, and `value::expression::evaluate::Machine`
