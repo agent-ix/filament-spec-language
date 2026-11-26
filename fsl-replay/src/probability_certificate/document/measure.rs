@@ -2356,6 +2356,7 @@ fn tight_activation(
 /// shifted maximum is exactly 0 and whose tight actions reach an activated
 /// state, so some scheduler may meet the level while activating (FR-1042
 /// "Pairing"). Tight actions are those that attain the document's own values.
+#[implements("FR-1042-AC-28")]
 fn tight_zero_rejection(
     plan: &Plan<'_>,
     graph: &Graph,
@@ -2389,7 +2390,7 @@ fn acceptance(
     })
 }
 
-#[implements("FR-1042-AC-27")]
+#[implements("FR-1042-AC-27", "FR-1043-AC-10")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
