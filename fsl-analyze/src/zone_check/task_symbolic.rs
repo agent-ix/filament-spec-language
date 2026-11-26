@@ -600,6 +600,9 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
         Ok(())
     }
 
+    /// The data of the discrete location `location`, one automaton state of
+    /// the product, charged once before it is stored.
+    #[implements("FR-239-AC-8")]
     fn location(&mut self, location: &TaskLocation) -> Done<(StateKey, std::rc::Rc<LocationData>)> {
         let key = product_key(location).ok_or(Failure::Stop(SymbolicStop::Fault("key")))?;
         if let Some(found) = self.data.get(&key) {
@@ -613,6 +616,7 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
             (Some(successors.edges), successors.overflows)
         };
         let count = edges.as_ref().map_or(0, Vec::len);
+        self.charge(Setting::ZoneCheckMaxAutomatonStates, 1)?;
         let data = std::rc::Rc::new(LocationData {
             info,
             edges,

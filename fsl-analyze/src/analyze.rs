@@ -774,21 +774,46 @@ impl EngineBounds {
         })
     }
 
+    /// [`EngineBounds::conflict`] for the `temporal.limits` members, which
+    /// state `zone_check.*` settings only on an item that reads a timed model
+    /// (FR-239 "Budget sources"), so it is judged over the resolved items.
+    /// `selected` is the number of items the caller stated.
+    #[must_use]
+    #[implements("FR-255-AC-25")]
+    pub fn timed_conflict(
+        &self,
+        package: &CheckedPackage,
+        binding: &SubjectBinding<'_>,
+        selected: usize,
+        resolved: &[document::ResolvedItem],
+    ) -> Option<(usize, Setting)> {
+        resolved.iter().find_map(|item| {
+            let document::ResolvedItem::Claim(claim) = item else {
+                return None;
+            };
+            let item = &claim.item;
+            let position = item.request_index.get();
+            if position >= selected || !document::claim_timed(package, &item.claim, binding) {
+                return None;
+            }
+            [
+                (item.options.max_states, Setting::ZoneCheckMaxSymbolicStates),
+                (
+                    item.options.max_transitions,
+                    Setting::ZoneCheckMaxSymbolicTransitions,
+                ),
+                (item.options.max_check_work, Setting::ZoneCheckMaxCheckWork),
+            ]
+            .into_iter()
+            .find(|(member, setting)| member.is_some() && self.get(*setting).is_some())
+            .map(|(_, setting)| (position, setting))
+        })
+    }
+
     /// The settings `item` states in its own members.
     fn stated(&self, item: &document::ItemSelection) -> Vec<Setting> {
         use Setting as S;
         let mut stated = Vec::new();
-        if let Some(limits) = item.temporal.as_ref().and_then(|temporal| temporal.limits) {
-            for (member, setting) in [
-                (limits.max_states, S::ZoneCheckMaxSymbolicStates),
-                (limits.max_transitions, S::ZoneCheckMaxSymbolicTransitions),
-                (limits.max_check_work, S::ZoneCheckMaxCheckWork),
-            ] {
-                if member.is_some() {
-                    stated.push(setting);
-                }
-            }
-        }
         if item
             .simulation
             .as_ref()

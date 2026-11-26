@@ -342,6 +342,62 @@ fn simulation_enumerates_the_counter_subject() {
     assert!(item.get("record").is_none());
 }
 
+/// FR-634-AC-8, FR-634-AC-9: a candidate bound of 1 stops the initial
+/// state's expansion, so a sample and an enumeration each report the one
+/// state they hold, `incomplete` naming the setting, with the findings of
+/// that state kept.
+#[trace("FR-634-AC-8", "FR-634-AC-9")]
+#[test]
+fn a_simulation_stopped_by_the_candidate_bound_is_incomplete() {
+    const POSITIVE: &str =
+        "invariant Positive using v on M::Counter at current { self.value >= 1 }\n";
+    for mode in ["sample", "enumerate"] {
+        let ws = Workspace::new(&format!("cli-simulation-candidates-{mode}"));
+        let request = counter_request(
+            &ws,
+            POSITIVE,
+            json!([{"kind": "simulation", "simulation": {"mode": mode}}]),
+        );
+        let run = crate::analyze_cli_support::analyze_under(
+            &request,
+            &[(fsl_foundation::Setting::ExpansionMaxCandidates, 1)],
+        );
+        let item = run.item(0);
+        assert_eq!(run.exit, 22, "{item}");
+        assert_eq!(item["category"], "incomplete", "{item}");
+        assert_eq!(
+            item["cause"],
+            json!({"kind": "limit-reached", "limit": "max_candidates",
+                "setting": "expansion.max_candidates", "value": 1}),
+            "{item}"
+        );
+        assert_eq!(item["coverage"]["states"], "1", "{item}");
+        assert_eq!(item["coverage"]["transitions"], "0", "{item}");
+        assert_eq!(item["findings"].as_array().map(Vec::len), Some(1), "{item}");
+        let frontier = item["frontier"].as_array().map(Vec::len);
+        assert_eq!(frontier, Some(usize::from(mode == "enumerate")), "{item}");
+    }
+}
+
+/// FR-255-AC-25: `temporal.limits.max_states` on an item that reads no timed
+/// model bounds its own engine, so the caller's `zone_check.*` setting is not
+/// the same bound given twice.
+#[trace("FR-255-AC-25")]
+#[test]
+fn an_untimed_item_limit_does_not_state_a_zone_setting() {
+    let ws = Workspace::new("cli-untimed-zone-conflict");
+    let request = counter_request(
+        &ws,
+        &bounded(),
+        json!([{"claim": "Bounded", "temporal": {"limits": {"max_states": 100}}}]),
+    );
+    let run = crate::analyze_cli_support::analyze_under(
+        &request,
+        &[(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5)],
+    );
+    assert_eq!(run.exit, 0, "{}", run.document());
+}
+
 /// FR-634 "Inputs" and "Refusals": every simulation bound is a positive
 /// count, so `max_steps` 0 refuses the whole request `invalid-request`;
 /// `seed` on an `enumerate` item refuses it naming the member; and a

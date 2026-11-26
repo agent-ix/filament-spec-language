@@ -83,6 +83,39 @@ fn the_symbolic_pass_charges_each_state_before_storing_it() {
     assert_eq!(budget.consumed(Setting::ZoneCheckMaxSymbolicStates), 1);
 }
 
+/// FR-239 "Task-product symbolic pass": each distinct discrete task location
+/// is one automaton state, charged before it is stored.
+#[trace("FR-239-AC-8")]
+#[test]
+fn the_symbolic_pass_charges_each_automaton_state() {
+    let world = world_for(
+        "H",
+        &["a"],
+        "taskset H {\n\
+         task a periodic 2 ms deadline 2 ms bcet 1 ms wcet 1 ms priority 1 lo;\n\
+         }\n\
+         schedulable HFp on H under fixed_priority;\n",
+    );
+    let model = world.system();
+    let timed = TimedSystem::new(&model, "M").expect("dense timed model");
+    let product = TaskProductSystem::new(timed, "HFp").expect("checked task product");
+    let automaton = TaskAutomaton::new(&product);
+    let budget = budget(&[(Setting::ZoneCheckMaxAutomatonStates, 1)], &Cancel::new());
+
+    let stop = explore_task_symbolic(&automaton, &budget).err();
+
+    assert!(
+        matches!(
+            &stop,
+            Some(SymbolicStop::Budget(BudgetStop::Limit(limit)))
+                if limit.setting() == Setting::ZoneCheckMaxAutomatonStates
+                    && limit.configured_bound() == 1
+                    && limit.actual() == 2
+        ),
+        "{stop:?}"
+    );
+}
+
 fn no_release_emitted(
     world: &World,
     limits: ZoneCheckLimits,

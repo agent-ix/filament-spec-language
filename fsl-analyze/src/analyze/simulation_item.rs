@@ -14,7 +14,7 @@ use fsl_eval::simulation::model::{
     enumerate_model, sample_model_runs, ClauseOutcome, ModelFinding, ModelSystem, SampledRuns,
 };
 use fsl_eval::simulation::{
-    Coverage, EnumerationBounds, EnumerationEnd, NotSimulated, StateKey, BOUND_POSITIONS,
+    Coverage, EnumerationBounds, EnumerationEnd, NotSimulated, StateKey, StopReason, BOUND_POSITIONS,
 };
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::{RequestIndex, Setting};
@@ -189,7 +189,11 @@ pub(crate) enum SimulationFault {
 }
 
 /// The `{category, cause}` of a run that ended at `end`.
-fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Option<Value>) {
+fn ending(
+    end: &EnumerationEnd,
+    settings: &SimulationSelection,
+    limits: &AnalyzeLimits,
+) -> (Category, Option<Value>) {
     // FSpec FR-181 "Simulation bounds and their published defaults": each
     // bound is reported with its FR-461 setting name.
     let limit = |limit: &str, setting: &str, value: u64| {
@@ -229,11 +233,28 @@ fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Op
             Category::Incomplete,
             Some(json!({"kind": "cancelled", "code": "cancelled"})),
         ),
+        EnumerationEnd::Stopped(cause) if expansion_bound(cause) => (
+            Category::Incomplete,
+            Some(candidate_bound_cause(limits)),
+        ),
         EnumerationEnd::Stopped(cause) => (
             fsl_foundation::diagnostic::category_of(cause).unwrap_or(Category::InternalFailure),
             Some(json!({"code": cause.code(), "kind": cause.cause()})),
         ),
     }
+}
+
+/// Whether `cause` is the stop of an expansion that ran out of a bound
+/// (`resource_exhausted`/`insufficient-next-charge`).
+fn expansion_bound(cause: &filament_semantic_value::catalog::CatalogCode) -> bool {
+    cause.code() == "resource_exhausted" && cause.cause() == "insufficient-next-charge"
+}
+
+/// The FR-634 cause of an expansion stopped at the candidate bound: the
+/// `limit-reached` naming `expansion.max_candidates` and its value.
+fn candidate_bound_cause(limits: &AnalyzeLimits) -> Value {
+    json!({"kind": "limit-reached", "limit": "max_candidates",
+        "setting": "expansion.max_candidates", "value": limits.expansion.max_candidates})
 }
 
 /// A state's FSpec FR-181 typed canonical form, read back from its key.
@@ -437,7 +458,7 @@ fn enumerate(
         // A cut list of traces leaves the run incomplete whatever else
         // stopped it.
         Some(cause) => (Category::Incomplete, Some(cause)),
-        None => ending(&run.end, settings),
+        None => ending(&run.end, settings, limits),
     };
     if let Some(cause) = cause {
         document.insert("cause".to_owned(), cause);
@@ -602,7 +623,24 @@ fn sample(
         written.push(trace);
     }
     let drawn = u64::try_from(written.len()).unwrap_or(u64::MAX);
+    // FR-634 "Stopped expansion": a written trace that ended at a stopped
+    // expansion before it held `max_steps` steps is a prefix, so the item is
+    // incomplete; one that already holds `max_steps` steps is complete.
+    let max_steps = settings.max_steps();
+    let stopped_expansion = draw
+        .traces
+        .iter()
+        .take(written.len())
+        .find(|trace| {
+            trace.steps.len() < max_steps
+                && trace.provenance.as_ref().is_some_and(|provenance| {
+                    matches!(&provenance.stopped, StopReason::Stopped(cause) if expansion_bound(cause))
+                })
+        })
+        .map(|_| candidate_bound_cause(limits));
     let (category, cause) = if let Some(cause) = cut {
+        (Category::Incomplete, Some(cause))
+    } else if let Some(cause) = stopped_expansion {
         (Category::Incomplete, Some(cause))
     } else if oversized {
         (

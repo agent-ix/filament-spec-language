@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-752 model-based run results and native state-invariant execution.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Deref;
 
@@ -274,6 +275,12 @@ pub enum ModelBasedTestCause {
         /// Setting that raises the reached limit.
         setting: String,
     },
+    /// The step setting, below the requested trace length, cut a temporal
+    /// clause's trace, and no counterexample stands.
+    TraceStepLimit {
+        /// Configured `simulation.max_steps`.
+        value: u64,
+    },
     /// A generator or shrinker defect invalidated the run.
     ToolFailure {
         /// The failed native-oracle consistency check.
@@ -359,6 +366,8 @@ pub struct ModelBasedTestRequest<'a> {
     pub max_cases: u64,
     /// Maximum generated trace length; required for a state clause.
     pub max_trace_length: Option<u64>,
+    /// The `simulation.max_steps` in force, which cuts a longer trace length.
+    pub max_steps: u64,
     /// Bound for roots without a finite declared domain.
     pub max_value_bits: Option<u64>,
     /// FR-120 model subject inputs; absent for a value clause.
@@ -511,6 +520,15 @@ pub fn run_model_based_test(
         return Err(refuse("max_trace_length", "invalid-value"));
     }
 
+    let max_trace_length = request
+        .max_trace_length
+        .map(|length| length.min(request.max_steps));
+    let step_cut = request
+        .max_trace_length
+        .is_some_and(|length| length > request.max_steps)
+        .then_some(request.max_steps)
+        .filter(|_| false);
+
     if is_value {
         if cancel.cause().is_some() {
             return Err(cancelled());
@@ -521,7 +539,7 @@ pub fn run_model_based_test(
             &request.profile,
             request.seed,
             request.max_cases,
-            request.max_trace_length,
+            max_trace_length,
             request.max_value_bits,
             request.accounting,
             request.expansion,
@@ -558,12 +576,13 @@ pub fn run_model_based_test(
         &request.profile,
         request.seed,
         request.max_cases,
-        usize::try_from(request.max_trace_length.unwrap_or(1))
+        usize::try_from(max_trace_length.unwrap_or(1))
             .map_err(|_| refuse("max_trace_length", "invalid-value"))?,
         request.max_value_bits,
         request.position_limit,
         request.exploration,
         admission,
+        step_cut,
     )
     .map_err(refusal_of)?;
     Ok(result)
@@ -778,7 +797,8 @@ pub fn run_model_based_state_invariant_with_value_bits(
         None,
         None,
         None,
-        |trace| invariant_result(system, trace, clause),
+        &RunStops::default(),
+        |trace, _| invariant_result(system, trace, clause),
     )
 }
 
@@ -839,6 +859,7 @@ pub fn run_model_based_test_with_value_bits(
         position_limit,
         reachability_limits,
         &NativeAdmission,
+        None,
     )
 }
 
@@ -858,6 +879,7 @@ fn run_model_based_test_with_system_and_admission(
     position_limit: u64,
     reachability_limits: Limits,
     admission: &dyn RootAdmission,
+    step_cut: Option<u64>,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     let outcome = dispatch_model_based_test(
         system,
@@ -870,6 +892,7 @@ fn run_model_based_test_with_system_and_admission(
         position_limit,
         reachability_limits,
         admission,
+        step_cut,
     );
     let reached = match &outcome {
         Err(ModelBasedTestError::Expansion(ExpansionStop {
@@ -988,6 +1011,7 @@ fn dispatch_model_based_test(
     position_limit: u64,
     reachability_limits: Limits,
     admission: &dyn RootAdmission,
+    step_cut: Option<u64>,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     let package = system
         .source_package()
@@ -1048,6 +1072,7 @@ fn dispatch_model_based_test(
             max_value_bits,
             position_limit,
             reachability_limits,
+            step_cut,
         );
     }
     if let Some(function) = graph.callable_by_identity(identity.clone()) {
@@ -1993,6 +2018,7 @@ fn run_model_based_temporal_clause(
     max_value_bits: Option<u64>,
     position_limit: u64,
     reachability_limits: Limits,
+    step_cut: Option<u64>,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     system.reset_value_bound_cuts();
     run_model_based_with_oracle(
@@ -2007,8 +2033,9 @@ fn run_model_based_temporal_clause(
         reachability_limits,
         None,
         None,
-        None,
-        |trace| temporal_result(system, clause, trace),
+        step_cut,
+        &RunStops::default(),
+        |trace, truncated| temporal_result(system, clause, trace, truncated),
     )
 }
 
@@ -2047,7 +2074,7 @@ fn run_model_based_contract_clause(
             stop.limit,
         ));
     }
-    let mut candidate_stop = None;
+    let stops = RunStops::default();
     let partitions = match contract_partition_cases(
         system,
         clause,
@@ -2055,7 +2082,7 @@ fn run_model_based_contract_clause(
         max_trace_length,
         reachability_limits,
         admission,
-        &mut candidate_stop,
+        &stops,
     ) {
         Ok(partitions) => partitions,
         Err(ModelBasedTestError::OracleDisagreement { .. }) => {
@@ -2086,8 +2113,9 @@ fn run_model_based_contract_clause(
         reachability_limits,
         Some(identity.clone()),
         Some(partitions),
-        candidate_stop,
-        |trace| contract_result(system, clause, &identity, trace),
+        None,
+        &stops,
+        |trace, _| contract_result(system, clause, &identity, trace, &stops),
     )
 }
 
@@ -2095,7 +2123,13 @@ fn run_model_based_contract_clause(
     clippy::too_many_arguments,
     reason = "these are the model-based request inputs"
 )]
-#[implements("FR-752-AC-13", "FR-752-AC-17")]
+#[implements(
+    "FR-752-AC-13",
+    "FR-752-AC-17",
+    "FR-752-AC-18",
+    "FR-752-AC-19",
+    "FR-752-AC-20"
+)]
 fn run_model_based_with_oracle<F>(
     system: &ModelSystem<'_>,
     clause: &str,
@@ -2108,11 +2142,12 @@ fn run_model_based_with_oracle<F>(
     reachability_limits: Limits,
     omitted_clause: Option<NodeKey>,
     partition_cases: Option<Vec<PartitionRunCase>>,
-    mut candidate_stop: Option<ExpansionStop>,
+    step_cut: Option<u64>,
+    stops: &RunStops,
     mut oracle: F,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError>
 where
-    F: FnMut(&ModelTrace) -> Result<CaseResult, ModelBasedTestError>,
+    F: FnMut(&ModelTrace, bool) -> Result<CaseResult, ModelBasedTestError>,
 {
     if let Err(stop) = prepare_text_roots(
         system.rooted_domains().into_iter().map(|(_, _, ty)| ty),
@@ -2141,6 +2176,7 @@ where
     let mut checks = ModelBasedTestChecks::default();
     let mut discarded_by = discard_counts();
     let mut counterexample = None;
+    let mut cut_by_steps = None;
 
     let mut case_index = 0_u64;
     for mut partition_case in partition_cases.unwrap_or_default() {
@@ -2175,8 +2211,17 @@ where
             continue;
         }
         if let Some(trace) = partition_case.trace {
-            add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
-            let result = oracle(&trace)?;
+            add_trace_checks(
+                system,
+                clause,
+                &trace,
+                omitted_clause.as_ref(),
+                &mut checks,
+                stops,
+            )?;
+            // A partition trace belongs to a contract clause, whose checks
+            // each read one step, so it is never read as truncated.
+            let result = oracle(&trace, false)?;
             if matches!(result, CaseResult::Pass | CaseResult::Fail(_)) {
                 cover_trace_partitions(
                     system,
@@ -2220,7 +2265,7 @@ where
                         system,
                         &trace,
                         omitted_clause.clone(),
-                        |candidate| match oracle(candidate) {
+                        |candidate| match oracle(candidate, false) {
                             Ok(CaseResult::Fail(candidate_disposition)) => {
                                 candidate_disposition == disposition
                             }
@@ -2274,11 +2319,26 @@ where
                 partitions.push(partition.clone());
             }
         }
-        if candidate_stop.is_none() {
-            candidate_stop = sampled_candidate_stop(system, &trace, omitted_clause.as_ref())?;
+        let truncated = sampled_truncation(
+            system,
+            &trace,
+            omitted_clause.as_ref(),
+            max_trace_length,
+            step_cut.is_some(),
+            stops,
+        )?;
+        if truncated && trace.trace.steps.len() >= max_trace_length {
+            cut_by_steps = step_cut;
         }
-        add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
-        let outcome = oracle(&trace)?;
+        add_trace_checks(
+            system,
+            clause,
+            &trace,
+            omitted_clause.as_ref(),
+            &mut checks,
+            stops,
+        )?;
+        let outcome = oracle(&trace, truncated)?;
         if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
             cover_trace_partitions(
                 system,
@@ -2307,7 +2367,10 @@ where
                     system,
                     &trace,
                     omitted_clause.clone(),
-                    |candidate| match oracle(candidate) {
+                    |candidate| match oracle(
+                        candidate,
+                        truncated || stopped_short(candidate, max_trace_length),
+                    ) {
                         Ok(CaseResult::Fail(candidate_disposition)) => {
                             candidate_disposition == disposition
                         }
@@ -2338,23 +2401,29 @@ where
     let (reachability, coverage_stop) =
         operation_reachability(system, max_trace_length, reachability_limits)?;
     // A retained counterexample stands on its own replay; without one, a run
-    // that reached the candidate bound has not tested the clause.
+    // that reached a bound has not tested the clause.
     if counterexample.is_none() {
-        if let Some(stop) = candidate_stop.or(coverage_stop) {
+        if let Some(stop) = stops.reached.get().or(coverage_stop) {
             return Err(ModelBasedTestError::Expansion(stop));
         }
     }
     let operation_coverage = model_operation_coverage(&declared, &generated_cases, &reachability)
         .ok_or(ModelBasedTestError::Coverage)?;
-    let evidence = if counterexample.is_some() {
-        ModelBasedTestEvidence::Refuted
+    let (evidence, cause) = if counterexample.is_some() {
+        (ModelBasedTestEvidence::Refuted, None)
+    } else if let Some(value) = cut_by_steps {
+        (
+            ModelBasedTestEvidence::Incomplete,
+            Some(ModelBasedTestCause::TraceStepLimit { value }),
+        )
     } else if counts.passing == 0 {
-        ModelBasedTestEvidence::Inconclusive
+        (
+            ModelBasedTestEvidence::Inconclusive,
+            Some(ModelBasedTestCause::NoEvaluatedCase),
+        )
     } else {
-        ModelBasedTestEvidence::Tested
+        (ModelBasedTestEvidence::Tested, None)
     };
-    let cause = (evidence == ModelBasedTestEvidence::Inconclusive)
-        .then_some(ModelBasedTestCause::NoEvaluatedCase);
     let value_bound_cuts = system.value_bound_cuts();
 
     Ok(ModelBasedTestResult {
@@ -2525,6 +2594,7 @@ fn add_trace_checks(
     trace: &ModelTrace,
     identity: Option<&NodeKey>,
     checks: &mut ModelBasedTestChecks,
+    stops: &RunStops,
 ) -> Result<(), ModelBasedTestError> {
     let Some(identity) = identity else {
         let invariant = system
@@ -2571,10 +2641,9 @@ fn add_trace_checks(
         })?;
     for (index, state) in states.iter().enumerate() {
         let points = match contract.kind {
-            ContractClauseKind::Precondition => system
-                .precondition_cases(state, identity.clone())
-                .map_err(ModelBasedTestError::Expansion)?
-                .len(),
+            ContractClauseKind::Precondition => stops
+                .within(system.precondition_cases(state, identity.clone()))?
+                .map_or(0, |cases| cases.len()),
             ContractClauseKind::Postcondition => usize::from(
                 trace
                     .trace
@@ -2600,11 +2669,13 @@ fn add_trace_checks(
     Ok(())
 }
 
+#[implements("FR-752-AC-20")]
 fn contract_result(
     system: &ModelSystem<'_>,
     clause: &ContractClause,
     identity: &NodeKey,
     trace: &ModelTrace,
+    stops: &RunStops,
 ) -> Result<CaseResult, ModelBasedTestError> {
     let Some((_, states)) = super::rebuild_model_trace(
         system,
@@ -2635,9 +2706,10 @@ fn contract_result(
         let mut skipped = false;
         let mut undefined = false;
         for state in &states {
-            let cases = system
-                .precondition_cases(state, identity.clone())
-                .map_err(ModelBasedTestError::Expansion)?;
+            let Some(cases) = stops.within(system.precondition_cases(state, identity.clone()))?
+            else {
+                continue;
+            };
             if has_false_invariant(system, state)? {
                 skipped |= !cases.is_empty();
                 continue;
@@ -2665,7 +2737,7 @@ fn contract_result(
         if attempted.operation() != operation_text {
             return Ok(match clause.kind {
                 ContractClauseKind::Postcondition
-                    if attempted_precondition_satisfied(system, &states, attempted)?
+                    if attempted_precondition_satisfied(system, &states, attempted, stops)?
                         == Some(false) =>
                 {
                     CaseResult::Discard(ModelBasedTestDiscardReason::PreconditionFalse)
@@ -2680,9 +2752,9 @@ fn contract_result(
                         ModelBasedTestDiscardReason::NoCheckPoint,
                     ));
                 };
-                let cases = system
-                    .precondition_cases(state, identity.clone())
-                    .map_err(ModelBasedTestError::Expansion)?;
+                let cases = stops
+                    .within(system.precondition_cases(state, identity.clone()))?
+                    .unwrap_or_default();
                 let Some(case) = cases.iter().find(|case| case.transition == *attempted) else {
                     return Ok(CaseResult::Discard(
                         ModelBasedTestDiscardReason::NoCheckPoint,
@@ -2695,7 +2767,7 @@ fn contract_result(
                 })
             }
             ContractClauseKind::Postcondition => Ok(
-                match attempted_precondition_satisfied(system, &states, attempted)? {
+                match attempted_precondition_satisfied(system, &states, attempted, stops)? {
                     Some(false) => {
                         CaseResult::Discard(ModelBasedTestDiscardReason::PreconditionFalse)
                     }
@@ -2718,12 +2790,14 @@ fn contract_result(
             skipped = true;
             continue;
         }
-        checked = true;
         match clause.kind {
             ContractClauseKind::Precondition => {
-                let cases = system
-                    .precondition_cases(&states[index], identity.clone())
-                    .map_err(ModelBasedTestError::Expansion)?;
+                let Some(cases) =
+                    stops.within(system.precondition_cases(&states[index], identity.clone()))?
+                else {
+                    continue;
+                };
+                checked = true;
                 let Some(case) = cases.iter().find(|case| case.transition == step.transition)
                 else {
                     return Ok(CaseResult::Discard(
@@ -2744,15 +2818,17 @@ fn contract_result(
                     .filter(|candidate| candidate.operation.as_ref() == Some(&operation_identity))
                     .map(|candidate| candidate.identity)
                     .collect();
-                let cases = system
-                    .operation_cases(
-                        &states[index],
-                        declaring.clone(),
-                        operation,
-                        clause.context.clone(),
-                        &|candidate| selected.contains(&candidate),
-                    )
-                    .map_err(ModelBasedTestError::Expansion)?;
+                let Some(cases) = stops.within(system.operation_cases(
+                    &states[index],
+                    declaring.clone(),
+                    operation,
+                    clause.context.clone(),
+                    &|candidate| selected.contains(&candidate),
+                ))?
+                else {
+                    continue;
+                };
+                checked = true;
                 if cases.undecided.iter().any(|undecided| {
                     undecided.transition == step.transition && undecided.clause == clause.name
                 }) {
@@ -2801,6 +2877,7 @@ fn attempted_precondition_satisfied(
     system: &ModelSystem<'_>,
     states: &[ModelSimState],
     attempted: &filament_semantic_value::model_transition::ModelTransition,
+    stops: &RunStops,
 ) -> Result<Option<bool>, ModelBasedTestError> {
     let Some(state) = states.first() else {
         return Ok(None);
@@ -2817,9 +2894,9 @@ fn attempted_precondition_satisfied(
         clause.kind == ContractClauseKind::Precondition
             && clause.operation.as_ref() == Some(&operation)
     }) {
-        let cases = system
-            .precondition_cases(state, clause.identity)
-            .map_err(ModelBasedTestError::Expansion)?;
+        let Some(cases) = stops.within(system.precondition_cases(state, clause.identity))? else {
+            continue;
+        };
         if let Some(case) = cases.iter().find(|case| case.transition == *attempted) {
             return Ok(case.undecided.is_none().then_some(case.satisfied));
         }
@@ -2888,7 +2965,7 @@ fn contract_partition_cases(
     max_trace_length: usize,
     limits: Limits,
     admission: &dyn RootAdmission,
-    candidate_stop: &mut Option<ExpansionStop>,
+    stops: &RunStops,
 ) -> Result<Vec<PartitionRunCase>, ModelBasedTestError> {
     let mut cases = Vec::new();
     for mut partition in system.boundary_partitions() {
@@ -2938,7 +3015,7 @@ fn contract_partition_cases(
                     limits,
                     |state| state_has_field_value(system, state, &field, &partition),
                     None,
-                    candidate_stop,
+                    stops,
                 )? {
                     PathSearch::Found(trace) => cases.push(PartitionRunCase {
                         partition,
@@ -2988,10 +3065,12 @@ fn contract_partition_cases(
                     continue;
                 };
                 let attempt = |state: &ModelSimState| {
-                    partition_attempt(system, state, identity, &operation, parameter, &partition)
+                    partition_attempt(
+                        system, state, identity, &operation, parameter, &partition, stops,
+                    )
                 };
                 let result = if clause.kind == ContractClauseKind::Precondition {
-                    first_partition_attempt(system, identity, &partition, attempt, candidate_stop)?
+                    first_partition_attempt(system, identity, &partition, attempt, stops)?
                 } else {
                     shortest_partition_path(
                         system,
@@ -3001,7 +3080,7 @@ fn contract_partition_cases(
                         limits,
                         |_| false,
                         Some(&attempt),
-                        candidate_stop,
+                        stops,
                     )?
                 };
                 match result {
@@ -3204,7 +3283,7 @@ fn first_partition_attempt(
     attempt: impl Fn(
         &ModelSimState,
     ) -> Option<filament_semantic_value::model_transition::ModelTransition>,
-    candidate_stop: &mut Option<ExpansionStop>,
+    stops: &RunStops,
 ) -> Result<PathSearch, ModelBasedTestError> {
     for initial in ordered_initial_states(system)? {
         if let Some(attempted) = attempt(&initial.state) {
@@ -3220,7 +3299,7 @@ fn first_partition_attempt(
                 },
                 Some(attempted),
                 partition,
-                candidate_stop,
+                stops,
             )
             .map(PathSearch::Attempted);
         }
@@ -3235,7 +3314,7 @@ type PartitionAttempt<'a> =
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "these are the search inputs and the retained candidate stop"
+    reason = "these are the search inputs and the run stops"
 )]
 fn shortest_partition_path(
     system: &ModelSystem<'_>,
@@ -3245,7 +3324,7 @@ fn shortest_partition_path(
     limits: Limits,
     target: impl Fn(&ModelSimState) -> bool,
     attempt: Option<PartitionAttempt<'_>>,
-    candidate_stop: &mut Option<ExpansionStop>,
+    stops: &RunStops,
 ) -> Result<PathSearch, ModelBasedTestError> {
     let view = super::ModelRunView::new(system, Some(clause.clone()));
     let initial = ordered_initial_states(system)?;
@@ -3295,14 +3374,14 @@ fn shortest_partition_path(
                 Ok(Expanded::Stopped(stop)) => {
                     let limit = format!("{:?}", stop.limit);
                     if stop.limit == Some(ExpansionLimit::MaxCandidates) {
-                        candidate_stop.get_or_insert(stop);
+                        stops.note(stop);
                     }
                     return Ok(PathSearch::Undetermined { limit, value: 0 });
                 }
                 Err(error) => return Err(ModelBasedTestError::Key(error)),
             };
         if target(&current.state) {
-            return build_partition_trace(system, clause, current, None, partition, candidate_stop)
+            return build_partition_trace(system, clause, current, None, partition, stops)
                 .map(PathSearch::Found);
         }
         if let Some(attempt) = attempt {
@@ -3340,7 +3419,7 @@ fn shortest_partition_path(
                         },
                         None,
                         partition,
-                        candidate_stop,
+                        stops,
                     )
                     .map(PathSearch::Found);
                 }
@@ -3408,7 +3487,7 @@ fn shortest_partition_path(
             },
             Some(attempted),
             partition,
-            candidate_stop,
+            stops,
         )
         .map(PathSearch::Attempted);
     }
@@ -3426,7 +3505,7 @@ fn shortest_partition_path(
                 },
                 Some(attempted),
                 partition,
-                candidate_stop,
+                stops,
             )
             .map(PathSearch::Attempted);
         }
@@ -3451,7 +3530,7 @@ fn build_partition_trace(
     path: PartitionPath,
     attempted: Option<filament_semantic_value::model_transition::ModelTransition>,
     partition: &ModelBoundaryPartition,
-    candidate_stop: &mut Option<ExpansionStop>,
+    stops: &RunStops,
 ) -> Result<ModelTrace, ModelBasedTestError> {
     let PartitionPath {
         initial,
@@ -3469,7 +3548,7 @@ fn build_partition_trace(
             // The path to the final state is complete; only its findings are
             // unread.
             Expanded::Stopped(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
-                candidate_stop.get_or_insert(stop);
+                stops.note(stop);
                 Vec::new()
             }
             Expanded::Stopped(stop) if stop.limit.is_some() => {
@@ -3599,6 +3678,7 @@ fn partition_attempt(
     operation: &str,
     parameter: usize,
     partition: &ModelBoundaryPartition,
+    stops: &RunStops,
 ) -> Option<filament_semantic_value::model_transition::ModelTransition> {
     let expected = super::value_json(&partition_native_value(partition, system)?)?;
     let clauses = system.contract_clauses();
@@ -3620,11 +3700,10 @@ fn partition_attempt(
     let candidates = if selected.kind == ContractClauseKind::Precondition
         && selected.operation.as_ref() == Some(&operation_identity)
     {
-        system.precondition_cases(state, clause.clone()).ok()?
+        stops.noted(system.precondition_cases(state, clause.clone()))?
     } else if preconditions.is_empty() {
-        return system
-            .transition_identities(state)
-            .ok()?
+        return stops
+            .noted(system.transition_identities(state))?
             .into_iter()
             .find(|transition| {
                 transition.operation() == operation
@@ -3640,9 +3719,7 @@ fn partition_attempt(
         let mut candidates = Vec::new();
         for precondition in preconditions {
             candidates.extend(
-                system
-                    .precondition_cases(state, precondition.identity.clone())
-                    .ok()?,
+                stops.noted(system.precondition_cases(state, precondition.identity.clone()))?,
             );
         }
         candidates
@@ -3749,10 +3826,15 @@ fn invariant_result(
     })
 }
 
+/// What `node` says of `trace`: under closed finite-trace semantics, or,
+/// for a `truncated` trace, as a prefix of an unknown continuation, which
+/// fails only when every continuation violates the clause.
+#[implements("FR-752-AC-18", "FR-752-AC-19")]
 fn temporal_result(
     system: &ModelSystem<'_>,
     node: &TemporalClauseNode,
     trace: &ModelTrace,
+    truncated: bool,
 ) -> Result<CaseResult, ModelBasedTestError> {
     let Some((_, states)) = super::rebuild_model_trace(
         system,
@@ -3773,12 +3855,10 @@ fn temporal_result(
             outcome: "temporal clause has no model instances".to_owned(),
         });
     }
-    let trace_shape = crate::temporal::TemporalTrace::Finite {
-        len: u64::try_from(states.len()).map_err(|_| ModelBasedTestError::ClauseUndetermined {
-            clause: node.clause().name().to_owned(),
-            outcome: "trace length exceeds u64".to_owned(),
-        })?,
-    };
+    let len = u64::try_from(states.len()).map_err(|_| ModelBasedTestError::ClauseUndetermined {
+        clause: node.clause().name().to_owned(),
+        outcome: "trace length exceeds u64".to_owned(),
+    })?;
     let mut failing = None;
     let mut discarded = false;
     for instance in instances {
@@ -3790,12 +3870,22 @@ fn temporal_result(
             node,
             capture_values: BTreeMap::new(),
         };
-        let outcome = crate::temporal::evaluate(
-            node.clause(),
-            trace_shape,
-            &mut temporal_letters,
-            &mut Meter::new(system.meter_limits()),
-        )?;
+        let mut meter = Meter::new(system.meter_limits());
+        let outcome = if truncated {
+            crate::temporal::evaluate_open_prefix(
+                node.clause(),
+                len,
+                &mut temporal_letters,
+                &mut meter,
+            )?
+        } else {
+            crate::temporal::evaluate(
+                node.clause(),
+                crate::temporal::TemporalTrace::Finite { len },
+                &mut temporal_letters,
+                &mut meter,
+            )?
+        };
         if let crate::temporal::TemporalOutcome::Incomplete(incomplete) = &outcome {
             return Err(ModelBasedTestError::Exhausted(Box::new(incomplete.clone())));
         }
@@ -4018,22 +4108,83 @@ impl crate::temporal::TemporalLetters for ModelTemporalLetters<'_, '_, '_> {
     }
 }
 
-/// The candidate stop of a sampled trace whose last expansion reached the
-/// candidate bound: the sampler records only the stop's catalog code, so the
-/// trace's final state is expanded again to read the limit.
-#[implements("FR-752-AC-13")]
-fn sampled_candidate_stop(
+/// What a run's expansions did not cover.
+#[derive(Default)]
+struct RunStops {
+    /// The first reached bound, which a run with no counterexample reports.
+    reached: Cell<Option<ExpansionStop>>,
+}
+
+impl RunStops {
+    fn note(&self, stop: ExpansionStop) {
+        if self.reached.get().is_none() {
+            self.reached.set(Some(stop));
+        }
+    }
+
+    /// The value of `expansion`, or `None` when it reached the candidate
+    /// bound, which is noted so that the run goes on with its other states.
+    fn within<T>(
+        &self,
+        expansion: Result<T, ExpansionStop>,
+    ) -> Result<Option<T>, ModelBasedTestError> {
+        match expansion {
+            Ok(value) => Ok(Some(value)),
+            Err(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
+                self.note(stop);
+                Ok(None)
+            }
+            Err(stop) => Err(ModelBasedTestError::Expansion(stop)),
+        }
+    }
+
+    /// The value of `expansion`, noting the candidate bound when it stopped
+    /// there: partition search passes over every stopped state.
+    fn noted<T>(&self, expansion: Result<T, ExpansionStop>) -> Option<T> {
+        expansion
+            .map_err(|stop| {
+                if stop.limit == Some(ExpansionLimit::MaxCandidates) {
+                    self.note(stop);
+                }
+            })
+            .ok()
+    }
+}
+
+/// Whether the sampler ended `trace` at a stopped expansion before it held
+/// `max_trace_length` steps.
+fn stopped_short(trace: &ModelTrace, max_trace_length: usize) -> bool {
+    trace.trace.steps.len() < max_trace_length
+        && trace
+            .trace
+            .provenance
+            .as_ref()
+            .is_some_and(|provenance| matches!(provenance.stopped, StopReason::Stopped(_)))
+}
+
+/// Whether a sampled trace is truncated: stopped before `max_trace_length`,
+/// or, when the step setting cut that length (`step_cut`), left with a
+/// successor or a stopped expansion at its end. A reached bound at its final
+/// state is noted in `stops`. The sampler records only a stop's catalog
+/// code, so the trace's final state is expanded again to read the limit.
+#[implements("FR-752-AC-13", "FR-752-AC-18", "FR-752-AC-19")]
+fn sampled_truncation(
     system: &ModelSystem<'_>,
     trace: &ModelTrace,
     omitted_clause: Option<&NodeKey>,
-) -> Result<Option<ExpansionStop>, ModelBasedTestError> {
+    max_trace_length: usize,
+    step_cut: bool,
+    stops: &RunStops,
+) -> Result<bool, ModelBasedTestError> {
     let stopped = trace
         .trace
         .provenance
         .as_ref()
         .is_some_and(|provenance| matches!(provenance.stopped, StopReason::Stopped(_)));
-    if !stopped {
-        return Ok(None);
+    let short = trace.trace.steps.len() < max_trace_length;
+    let cut = step_cut && !short;
+    if !stopped && !cut {
+        return Ok(false);
     }
     let view = super::ModelRunView::new(system, omitted_clause.cloned());
     let Some(mut state) = ordered_initial_states(system)?
@@ -4048,7 +4199,7 @@ fn sampled_candidate_stop(
         match crate::simulation::order::expand(&view, &state, super::identity_limits())? {
             Expanded::Successors { successors, .. } => {
                 let Some(step) = steps.next() else {
-                    return Ok(None);
+                    return Ok(cut && !successors.is_empty());
                 };
                 state = successors
                     .into_iter()
@@ -4058,10 +4209,12 @@ fn sampled_candidate_stop(
                     .ok_or(ModelBasedTestError::Coverage)?
                     .state;
             }
-            Expanded::Stopped(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
-                return Ok(Some(stop));
+            Expanded::Stopped(stop) => {
+                if stop.limit.is_some() {
+                    stops.note(stop);
+                }
+                return Ok(short || cut);
             }
-            Expanded::Stopped(_) => return Ok(None),
         }
     }
 }

@@ -153,6 +153,32 @@ fn a_zone_state_budget_is_incomplete() {
     assert_eq!(run.exit, 22);
 }
 
+/// FR-255-AC-25: a timed item's `temporal.limits.max_states` and the
+/// caller's `zone_check.max_symbolic_states` are one bound given twice.
+#[trace("FR-255-AC-25")]
+#[test]
+fn a_timed_item_limit_and_the_zone_setting_are_refused() {
+    let ws = Workspace::new("timed-zone-conflict");
+    let request = request_over(
+        &ws,
+        &rpc_unit(4, &settles("[0 ms, 3 ms]")),
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Settles", "temporal": {"limits": {"max_states": 2}}}]}),
+    );
+    let run = crate::analyze_cli_support::analyze_under(
+        &request,
+        &[(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5)],
+    );
+    assert_eq!(run.exit, 20, "{}", run.document());
+    let document = run.document().to_string();
+    assert!(document.contains("items[0]"), "{document}");
+    assert!(
+        document.contains("zone_check.max_symbolic_states"),
+        "{document}"
+    );
+}
+
 /// QSL-2129: a clock bound of the wrong dimension (a bare number against a
 /// `Time` clock) is refused at check, before any item runs.
 #[trace("TC-1592", "FR-632-AC-1")]

@@ -279,6 +279,12 @@ pub(super) fn result_json(
             "value": value,
             "setting": setting,
         }),
+        ModelBasedTestCause::TraceStepLimit { value } => serde_json::json!({
+            "kind": "limit-reached",
+            "limit": "max_steps",
+            "value": value,
+            "setting": "simulation.max_steps",
+        }),
         ModelBasedTestCause::ToolFailure { defect } => serde_json::json!({
             "kind": "tool-failure",
             "defect": match defect {
@@ -604,6 +610,9 @@ pub(super) fn prepare(
         seed: selection.seed,
         max_cases: selection.max_cases,
         max_trace_length: selection.max_trace_length,
+        max_steps: super::overrides::analyze_limits(published, overrides)
+            .simulation
+            .max_steps,
         max_value_bits: selection.max_value_bits.map(u64::from),
         subject: subject.as_ref().map(|(snapshots, initial, universes)| {
             fsl_eval::simulation::model::ModelBasedTestSubject {

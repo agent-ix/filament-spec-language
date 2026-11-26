@@ -574,10 +574,8 @@ fn model_based_test(
         profile,
         seed: inputs.seed.unwrap_or(0),
         max_cases,
-        max_trace_length: state_subject
-            .then_some(inputs.max_trace_length)
-            .flatten()
-            .map(|length| length.min(limits.simulation.max_steps)),
+        max_trace_length: state_subject.then_some(inputs.max_trace_length).flatten(),
+        max_steps: limits.simulation.max_steps,
         max_value_bits: if consumes(&consumers.max_value_bits) {
             inputs.max_value_bits
         } else {

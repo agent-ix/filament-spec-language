@@ -1200,6 +1200,14 @@ pub(super) fn settle_items<'u>(
         &binding,
         &routed.limits,
     );
+    if let Some(conflict) = routed.limits.engines.timed_conflict(
+        package,
+        &binding,
+        routed.items.as_ref().map_or(0, Vec::len),
+        &resolved,
+    ) {
+        return Err(engine_conflict(conflict));
+    }
     let run = AnalyzeRun {
         package,
         binding,
@@ -1567,15 +1575,20 @@ pub(super) fn refuse_engine_conflict(
     limits: &AnalyzeLimits,
 ) -> Result<()> {
     match limits.engines.conflict(items.unwrap_or_default()) {
-        Some((position, setting)) => Err(invalid(
-            &format!("items[{position}]"),
-            format!(
-                "states a limit the caller also set with `--limit {}`; give it once",
-                setting.name()
-            ),
-        )),
+        Some(conflict) => Err(engine_conflict(conflict)),
         None => Ok(()),
     }
+}
+
+/// The refusal of the item at `position` stating a limit the caller set too.
+fn engine_conflict((position, setting): (usize, fsl_foundation::Setting)) -> RunCause {
+    invalid(
+        &format!("items[{position}]"),
+        format!(
+            "states a limit the caller also set with `--limit {}`; give it once",
+            setting.name()
+        ),
+    )
 }
 
 /// FR-620's item checks that need no compiled program: `recording` and
