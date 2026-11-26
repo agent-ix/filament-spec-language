@@ -73,8 +73,10 @@ clause's FSpec FR-352 `disposition.temporal`.
   `invalid_runtime_input`/`missing-member`, `unknown-member` or
   `wrong-value-kind`, with `details.position` the zero-based step index when
   the defect is inside a step and `details.path` the JSON pointer of the
-  defect inside the trace document (such as `/prefix/0/send_record`). The
-  first defect in document order is reported.
+  defect inside the trace document (such as `/prefix/0/send_record`). A
+  `post_state` is FSpec FR-331's `State`: a `key` that is not the canonical
+  unpadded base64url of any octets is `invalid-value` at its `post_state/key`.
+  The first defect in document order is reported.
 - **Replay.** A trace that reads SHALL then be replayed step by step as FR-217
   replays a counterexample. A step that is stale or not enabled at its
   pre-state, or whose recorded post-state or send record differs from the
