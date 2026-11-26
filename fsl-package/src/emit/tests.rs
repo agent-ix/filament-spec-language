@@ -43,10 +43,10 @@ mod admission_corpus;
 mod bare_world;
 mod bytes_operations;
 mod carried_quantity_paths;
-mod class_c;
 mod check_mode;
 mod checked_views;
 mod child_composite;
+mod class_c;
 mod clock_places;
 mod collection_if;
 mod composition;
@@ -459,6 +459,71 @@ fn operand_slot_numbering_visits_only_identity_paths_in_canonical_order() {
         .contains(&json!(99)));
     fsl_semantics::check::wire_id::resolve_operand_slots(&mut authored).unwrap();
     assert_eq!(authored, original);
+}
+
+#[test]
+fn typed_operand_rows_keep_canonical_order_without_recursive_encoding() {
+    use filament_contract_model::CheckedNodePathSegment as Segment;
+
+    let (_, emission) = emit_from_text("function f using v(): Integer pure { 1 }\n");
+    let mut node = typed_nodes(&emission).remove(0);
+    node.dependencies.clear();
+    node.semantic_type.path.clear();
+    node.owner_model = None;
+    node.node_id.path = vec![Segment::Index(2)];
+    let mut target = node.node_id.clone();
+    target.path = vec![Segment::Index(7)];
+    node.body = CheckedTerm::Reference { target };
+
+    let rows = write_operand_slots(&mut [node], ceiling()).unwrap();
+    assert_eq!(
+        rows,
+        [vec![
+            CheckedOperandEntry::Node(7),
+            CheckedOperandEntry::Node(2)
+        ]]
+    );
+}
+
+#[test]
+fn operand_slot_discovery_handles_fifty_thousand_nested_terms_on_a_bounded_stack() {
+    let (_, emission) = emit_from_text("function f using v(): Integer pure { 1 }\n");
+    let mut node = typed_nodes(&emission).remove(0);
+    let mut body = CheckedTerm::Aggregate {
+        members: Vec::new(),
+        temporal_profile: None,
+    };
+    for _ in 0..50_000 {
+        body = CheckedTerm::Aggregate {
+            members: vec![body],
+            temporal_profile: None,
+        };
+    }
+    node.body = body;
+
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(move || {
+            write_operand_slots(std::slice::from_mut(&mut node), ceiling()).unwrap();
+
+            // `CheckedTerm`'s derived drop is recursive; peel this fixture
+            // iteratively so the test measures operand discovery alone.
+            let mut pending = vec![std::mem::replace(
+                &mut node.body,
+                CheckedTerm::Aggregate {
+                    members: Vec::new(),
+                    temporal_profile: None,
+                },
+            )];
+            while let Some(term) = pending.pop() {
+                if let CheckedTerm::Aggregate { mut members, .. } = term {
+                    pending.extend(members.drain(..));
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[trace("TC-416", "FR-093-AC-3", "FR-093-AC-13")]

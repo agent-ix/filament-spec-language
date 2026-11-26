@@ -10747,7 +10747,10 @@ fn reachable_ids(node: &mut CheckedSemanticNodeV2) -> Vec<&mut CheckedNodeId> {
                 pending.extend(arguments.iter_mut());
             }
             CheckedTerm::Aggregate { members, .. } => pending.extend(members.iter_mut()),
-            CheckedTerm::Binding { value, .. } => pending.push(value),
+            CheckedTerm::Binding { binder, value, .. } => {
+                ids.extend(binder.iter_mut());
+                pending.push(value);
+            }
             CheckedTerm::Frame {
                 creates, deletes, ..
             } => ids.extend(creates.iter_mut().chain(deletes.iter_mut())),
@@ -10802,26 +10805,176 @@ fn environment_ids<'a>(
     );
 }
 
+/// Find typed node operands in the order they occur in the canonical node
+/// encoding, without asking `CheckedTerm::encode_into` to recurse through the
+/// term tree. The model encoder is recursive; package conversion also runs on
+/// bounded stacks (for example in qualification), so operand discovery must
+/// remain iterative for arbitrarily nested aggregates.
+fn ordered_operand_entries(node: &CheckedSemanticNodeV2) -> Vec<CheckedOperandEntry> {
+    use filament_contract_model::{CheckedNodePathSegment as Segment, CheckedTerm};
+
+    enum Pending<'a> {
+        Term(&'a CheckedTerm),
+        Id(&'a CheckedNodeId),
+        Environment(&'a [CheckedEnvironmentEntry]),
+    }
+
+    fn push_terms<'a>(pending: &mut Vec<Pending<'a>>, terms: &'a [CheckedTerm]) {
+        pending.extend(terms.iter().rev().map(Pending::Term));
+    }
+
+    fn push_ids<'a>(pending: &mut Vec<Pending<'a>>, ids: &'a [CheckedNodeId]) {
+        pending.extend(ids.iter().rev().map(Pending::Id));
+    }
+
+    let mut pending = Vec::new();
+    // Canonical object member order is body, dependencies, node_id,
+    // owner_model, semantic_type. Push in reverse so the stack visits it in
+    // that order.
+    pending.push(Pending::Id(&node.semantic_type));
+    if let Some(owner_model) = &node.owner_model {
+        pending.push(Pending::Id(owner_model));
+    }
+    pending.push(Pending::Id(&node.node_id));
+    push_ids(&mut pending, &node.dependencies);
+    pending.push(Pending::Term(&node.body));
+
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+    while let Some(task) = pending.pop() {
+        match task {
+            Pending::Id(id) => {
+                for segment in &id.path {
+                    let entry = match segment {
+                        Segment::Index(index) => Some(CheckedOperandEntry::Node(*index)),
+                        Segment::Dependency { package, node } => {
+                            Some(CheckedOperandEntry::Dependency(
+                                filament_contract_model::CheckedDependencyOperand {
+                                    package: package.clone(),
+                                    node: *node,
+                                },
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some(entry) = entry {
+                        if seen.insert(entry.clone()) {
+                            entries.push(entry);
+                        }
+                    }
+                }
+            }
+            Pending::Environment(environment) => {
+                for entry in environment.iter().rev() {
+                    match &entry.supplies {
+                        CheckedEnvironmentSupplies::Fairness(supply) => {
+                            pending.push(Pending::Id(&supply.context));
+                        }
+                        CheckedEnvironmentSupplies::Assumption(node) => {
+                            pending.push(Pending::Id(node));
+                        }
+                    }
+                }
+            }
+            Pending::Term(term) => match term {
+                CheckedTerm::Literal { type_id, .. } => pending.push(Pending::Id(type_id)),
+                CheckedTerm::Reference { target } => pending.push(Pending::Id(target)),
+                CheckedTerm::Application {
+                    result_type,
+                    arguments,
+                    ..
+                } => {
+                    pending.push(Pending::Id(result_type));
+                    push_terms(&mut pending, arguments);
+                }
+                CheckedTerm::Aggregate { members, .. } => push_terms(&mut pending, members),
+                CheckedTerm::Binding { value, binder, .. } => {
+                    pending.push(Pending::Term(value));
+                    if let Some(binder) = binder {
+                        pending.push(Pending::Id(binder));
+                    }
+                }
+                CheckedTerm::DependencyReference { .. }
+                | CheckedTerm::AbstractionRelation { .. }
+                | CheckedTerm::Refinement { .. }
+                | CheckedTerm::NominalBody(_) => {}
+                CheckedTerm::Frame {
+                    creates, deletes, ..
+                } => {
+                    push_ids(&mut pending, deletes);
+                    push_ids(&mut pending, creates);
+                }
+                CheckedTerm::ExtensionForm { clauses, .. } => push_terms(&mut pending, clauses),
+                CheckedTerm::OperationAnchorBody(body) => {
+                    push_terms(&mut pending, &body.members);
+                }
+                CheckedTerm::ImplementationGuarantee {
+                    clause,
+                    relation,
+                    progress,
+                    environment,
+                    ..
+                } => {
+                    pending.push(Pending::Id(relation));
+                    for entry in progress.iter().rev() {
+                        pending.push(Pending::Id(&entry.context));
+                    }
+                    pending.push(Pending::Environment(environment));
+                    pending.push(Pending::Id(clause));
+                }
+                CheckedTerm::ComponentComposition {
+                    components,
+                    guarantees,
+                    relies,
+                    liveness_dependencies,
+                    supplies,
+                    environment,
+                    ..
+                } => {
+                    for entry in supplies.iter().rev() {
+                        pending.push(Pending::Id(&entry.context));
+                    }
+                    for premise in relies
+                        .iter()
+                        .rev()
+                        .chain(liveness_dependencies.iter().rev())
+                    {
+                        pending.push(Pending::Id(&premise.on.clause));
+                        pending.push(Pending::Id(&premise.guarantee.clause));
+                    }
+                    for entry in guarantees.iter().rev() {
+                        pending.push(Pending::Id(&entry.clause));
+                    }
+                    pending.push(Pending::Environment(environment));
+                    for entry in components.iter().rev() {
+                        pending.push(Pending::Id(&entry.subject));
+                    }
+                }
+            },
+        }
+    }
+    entries
+}
+
 /// Write every node-held operand of `nodes` as an operand slot (FR-322): slot
-/// `k` of a node names the `k`th distinct graph index its canonical bytes
-/// hold, in byte order, and the returned row of that node lists those
+/// `k` of a node names the `k`th distinct graph index its typed fields hold,
+/// in canonical field and array order, and the returned row lists those
 /// indices. On entry, every node-held operand uses a document index.
 ///
 /// # Errors
 ///
-/// Returns the canonical output-limit failure or an identity invariant refusal.
+/// Returns an identity invariant refusal when a typed operand has no slot.
 /// Earlier nodes may already be rewritten on failure; discard that conversion.
 pub fn write_operand_slots(
     nodes: &mut [CheckedSemanticNodeV2],
-    limits: EmitLimits,
+    _limits: EmitLimits,
 ) -> Result<Vec<Vec<CheckedOperandEntry>>, EmitRefusal> {
     use filament_contract_model::CheckedNodePathSegment as Segment;
     let mut rows = Vec::with_capacity(nodes.len());
     for node in nodes.iter_mut() {
-        let bytes = quire_canonical::to_vec(&*node, limits.canonical())?;
         let mut row: Vec<CheckedOperandEntry> = Vec::new();
         let mut slots = HashMap::new();
-        for entry in operand_entries(&bytes, limits)? {
+        for entry in ordered_operand_entries(node) {
             if let std::collections::hash_map::Entry::Vacant(vacant) = slots.entry(entry.clone()) {
                 vacant
                     .insert(u64::try_from(row.len()).map_err(|_| EmitRefusal::SourceMapInvariant)?);
@@ -10849,14 +11002,14 @@ pub fn write_operand_slots(
                 changes.push((old, id.clone()));
             }
         }
-        for (old, new) in changes {
-            node.replace_node_id(&old, &new);
-        }
+        let remapped = changes.into_iter().collect::<BTreeMap<_, _>>();
+        node.map_node_ids(|id| remapped.get(id).cloned());
         rows.push(row);
     }
     Ok(rows)
 }
 
+#[cfg(test)]
 fn operand_entries(
     bytes: &[u8],
     limits: EmitLimits,

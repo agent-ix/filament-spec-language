@@ -131,7 +131,10 @@ fn collect<'a>(
     if let Some(current) = &observations.current {
         let own = observation_identity(&current.identity);
         for reference in current.environment.references() {
-            if contexts.contains(&reference) {
+            if contexts
+                .iter()
+                .any(|context| super::same_object_reference(context, reference))
+            {
                 continue;
             }
             let root = RuntimeValuePath {

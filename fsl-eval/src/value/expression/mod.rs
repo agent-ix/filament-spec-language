@@ -12,6 +12,8 @@
 //! through its public accessors, never through a private field (US-009).
 
 use filament_checked::node::{NodeKind, Visit};
+use filament_exact::{ObjectReference, PathSegmentView, UniverseId};
+use filament_semantic_value::object_closure::{ObjectAttributes, ObjectClosure};
 mod application_observation;
 pub use application_observation::{
     ApplicationObservation, ApplicationObservationOptions, OperationCharge, OperationLedger,
@@ -65,6 +67,59 @@ use filament_semantic_value::supplied_stop::{
 };
 use fsl_semantics::check::StepRead;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+
+/// Test object membership without the large inline comparison stack used by
+/// `NodeKey::cmp`. Qualification runs this evaluator on a deliberately small
+/// stack; walking borrowed node-key views keeps deeply nested identities on
+/// the heap-backed work list instead.
+pub(super) fn object_closure_contains(
+    objects: &ObjectClosure,
+    reference: &ObjectReference,
+) -> bool {
+    object_closure_attributes(objects, reference).is_some()
+}
+
+pub(super) fn object_closure_attributes<'a>(
+    objects: &'a ObjectClosure,
+    reference: &ObjectReference,
+) -> Option<ObjectAttributes<'a>> {
+    objects.iter().find_map(|(candidate, attributes)| {
+        same_object_reference(candidate, reference).then_some(attributes)
+    })
+}
+
+fn same_object_reference(left: &ObjectReference, right: &ObjectReference) -> bool {
+    left.object().as_str() == right.object().as_str()
+        && left.object_type().owner_chain() == right.object_type().owner_chain()
+        && same_universe(left.universe(), right.universe())
+}
+
+fn same_universe(left: &UniverseId, right: &UniverseId) -> bool {
+    same_node_key(left.root_type(), right.root_type())
+}
+
+fn same_node_key(left: &NodeKey, right: &NodeKey) -> bool {
+    let mut pending = vec![(left.view(), right.view())];
+    while let Some((left, right)) = pending.pop() {
+        if left.package() != right.package() || left.ordinal() != right.ordinal() {
+            return false;
+        }
+        let mut left_path = left.path();
+        let mut right_path = right.path();
+        loop {
+            match (left_path.next(), right_path.next()) {
+                (None, None) => break,
+                (Some(PathSegmentView::Text(left)), Some(PathSegmentView::Text(right)))
+                    if left == right => {}
+                (Some(PathSegmentView::Node(left)), Some(PathSegmentView::Node(right))) => {
+                    pending.push((left, right));
+                }
+                _ => return false,
+            }
+        }
+    }
+    true
+}
 use fsl_semantics::model::observation::SelfKind;
 use s6a::{ReferenceEvaluation, S6aFamilyKind};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1354,7 +1409,7 @@ fn admit_argument_values(
             match value {
                 Value::Reference(reference) => {
                     if !objects.references_are_unresolved()
-                        && !objects.objects().contains(reference)
+                        && !object_closure_contains(objects.objects(), reference)
                     {
                         return Err(InputRefusal::DanglingReference { parameter }.into());
                     }
@@ -3231,6 +3286,39 @@ mod tests {
     use fsl_forms::{Expression, FunctionDeclaration, TypeForm};
     use fsl_semantics::check::{PackageDeclarations, SCALAR_LIMITS_UNLIMITED};
     use ix_trace_rs::trace;
+
+    #[test]
+    fn structural_identity_comparison_handles_fifty_thousand_nested_node_keys() {
+        let mut key = NodeKey::new(
+            "nested",
+            vec![filament_exact::PathSegment::Text("leaf".into())],
+            0,
+        )
+        .unwrap();
+        for _ in 0..50_000 {
+            key = NodeKey::new("nested", vec![filament_exact::PathSegment::Node(key)], 0).unwrap();
+        }
+        let mut other = NodeKey::new(
+            "nested",
+            vec![filament_exact::PathSegment::Text("leaf".into())],
+            0,
+        )
+        .unwrap();
+        for _ in 0..50_000 {
+            other = NodeKey::new(
+                "nested",
+                vec![filament_exact::PathSegment::Node(other)],
+                0,
+            )
+            .unwrap();
+        }
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || assert!(same_node_key(&key, &other)))
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     /// FR-285-AC-3 (TC-769 step 3): `CallFailure::Input` exits 20 and
     /// `CallFailure::Fault` 30.

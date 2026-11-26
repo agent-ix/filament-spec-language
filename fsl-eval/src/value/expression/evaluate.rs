@@ -27,6 +27,9 @@ use super::s6a::separation::{
     Separation, SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
 };
 use super::slot_admission;
+use super::{
+    object_closure_attributes, object_closure_contains, same_object_reference, same_universe,
+};
 use crate::simulation::model::{ReferenceBinding, ReferenceBindings};
 use filament_checked::key::DeclarationKey;
 use filament_eval::modulo as integer_modulo;
@@ -1296,7 +1299,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .ok_or_else(unavailable)?;
         if !objects
             .population_members(&provenance.declaration().node)
-            .is_some_and(|members| members.contains(owner))
+            .is_some_and(|members| {
+                members
+                    .iter()
+                    .any(|member| same_object_reference(member, owner))
+            })
         {
             return Err(unavailable());
         }
@@ -2114,7 +2121,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         let absent = self
             .absent_parameters
             .iter()
-            .find(|absent| absent.key.as_ref() == Some(reference))
+            .find(|absent| {
+                absent
+                    .key
+                    .as_ref()
+                    .is_some_and(|key| same_object_reference(key, reference))
+            })
             .or_else(|| self.absent_parameters.first())
             .ok_or_else(|| invariant("guard-provenance-without-absent-parameter"))?;
         let key = render_identity(reference.object().as_str().as_bytes());
@@ -3827,9 +3839,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     self.trail
                         .as_ref()
                         .and_then(|trail| {
-                            (trail.receiver.as_ref() == Some(&reference))
-                                .then(|| trail.receiver_pre.clone())
-                                .flatten()
+                            trail
+                                .receiver
+                                .as_ref()
+                                .filter(|receiver| same_object_reference(receiver, &reference))
+                                .and_then(|_| trail.receiver_pre.clone())
                         })
                         .unwrap_or(reference)
                 } else {
@@ -3838,7 +3852,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let objects = self.objects_for(node)?;
                 // A replay's references are unresolved: there is no object to
                 // read, so the read completes no value.
-                if objects.references_are_unresolved() && !objects.objects().contains(&reference) {
+                if objects.references_are_unresolved()
+                    && !object_closure_contains(objects.objects(), &reference)
+                {
                     return Err(Halt::Family(FamilyResult::Refused(Box::new(
                         ReferenceUnresolved,
                     ))));
@@ -4835,7 +4851,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         }
         self.meter
             .charge(Charge::new(ChargePoint::LookupKey).size(LimitKind::ValueOccurrences, 1))?;
-        let present = self.named_members(node, population)?.contains(&reference);
+        let present = self
+            .named_members(node, population)?
+            .iter()
+            .any(|member| same_object_reference(member, &reference));
         self.log_membership_of(population, Some(reference.clone()));
         let retain = |meter: &mut Meter, occurrences: u64| -> Result<(), Halt> {
             Ok(meter.charge(
@@ -5174,7 +5193,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .ok_or_else(|| invariant("edge-attribute-unresolved"))?;
         let field = attribute.field();
         let objects = self.objects_for(node)?;
-        if !objects.objects().contains(current) {
+        if !object_closure_contains(objects.objects(), current) {
             return Err(invariant("edge-slot-unresolved"));
         }
         let (slot, _) = self.admitted_slot(objects, current, edge)?;
@@ -5240,7 +5259,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         };
         // An admitted reference whose object is absent has no value to read;
         // the population correspondence distinguishes absence from a bad layout.
-        if !objects.objects().contains(reference) {
+        let object_attributes = object_closure_attributes(objects.objects(), reference);
+        if object_attributes.is_none() {
             let binding = objects
                 .population_completeness()
                 .keys()
@@ -5251,12 +5271,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         .is_some_and(|population| {
                             population.member_types().iter().any(|(member, universe)| {
                                 member == reference.object_type()
-                                    && universe == reference.universe()
+                                    && same_universe(universe, reference.universe())
                             })
                         })
-                        || objects
-                            .population_binding(identity)
-                            .is_some_and(|binding| binding.universe() == reference.universe())
+                        || objects.population_binding(identity).is_some_and(|binding| {
+                            same_universe(binding.universe(), reference.universe())
+                        })
                 })
                 .ok_or_else(|| invariant("attribute-slot-unresolved"))?;
             return Err(Halt::Family(FamilyResult::Undefined(Box::new(
@@ -5273,9 +5293,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .iter()
             .find(|attribute| attribute.stands_for(field))
             .ok_or_else(|| invariant("attribute-slot-unresolved"))?;
-        let slot = objects
-            .objects()
-            .attribute(types, reference, field)
+        let slot = object_attributes
+            .and_then(|attributes| attributes.get(attribute.field().name()))
             .ok_or_else(refuse)?;
         let witnesses: Vec<&OutOfRange> = objects.witnesses(types, reference, field).collect();
         match slot_admission::admits_slot(
@@ -5710,7 +5729,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 } else {
                     let declared = at_root
                         && matches!(&path.subject, ValuePathSubject::Object(object)
-                            if Some(object) == reference);
+                            if reference
+                                .is_some_and(|reference| same_object_reference(object, reference)));
                     if !declared {
                         path.steps
                             .push(ValuePathStep::Reference(reference?.clone()));

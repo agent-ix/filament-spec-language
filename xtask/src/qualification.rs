@@ -442,17 +442,12 @@ fn prepare(fspec: &Path, operands: &[OsString]) -> Result<PreparedCorpus> {
     let value = DeepValue::new(parse_unique_json(&corpus_bytes).map_err(|reason| {
         Error::QualificationRefusal(format!("{}: {reason}", corpus_path.display()))
     })?);
-    let document = quire_canonical::read(
-        &corpus_bytes,
-        u64::try_from(corpus_bytes.len()).unwrap_or(u64::MAX),
-    )
-    .map_err(|error| {
+    // `quire_canonical::to_vec` recursively encodes its term tree. The corpus
+    // is untrusted input and may be deeply nested, so canonicalize the already
+    // uniquely parsed JSON value with the iterative encoder used by DeepValue.
+    let canonical = json_bytes(&value).map_err(|error| {
         Error::QualificationRefusal(format!("{}: canonicalize: {error}", corpus_path.display()))
     })?;
-    let canonical = quire_canonical::to_vec(&document, quire_canonical::Limits::new(u64::MAX))
-        .map_err(|error| {
-            Error::QualificationRefusal(format!("{}: canonicalize: {error}", corpus_path.display()))
-        })?;
     if canonical != corpus_bytes {
         return Err(Error::QualificationRefusal(format!(
             "{} is not canonical JSON",
