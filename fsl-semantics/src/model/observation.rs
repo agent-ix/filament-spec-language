@@ -3465,6 +3465,7 @@ fn admit_invocation_documents(
     preloaded: Option<InvocationDocuments>,
     limits: ObservationLimits,
     ancestor_steps: u64,
+#[implements("FR-106-AC-85", "FR-106-AC-86")]
 ) -> Result<InvocationAdmission, AdmissionFailure> {
     // Check 1: read every selected document -- the invocation, then its
     // pre and post snapshots, in that order -- before any of checks 2 to 5
@@ -3966,6 +3967,7 @@ fn admit_pre_call(
     if snapshot.observation != document::ObservationRole::Pre {
         return Err(refuse(admission_record(
             Code::WrongSnapshot,
+#[implements("FR-106-AC-85")]
             "wrong-observation",
         )));
     }
