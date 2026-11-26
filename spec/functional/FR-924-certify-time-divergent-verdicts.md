@@ -15,6 +15,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-753
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-416
+    type: depends_on
 ---
 # FR-924: Certify verdicts over time-divergent behaviours
 
@@ -79,9 +83,11 @@ value per pair equal to its best exit, and rejects the Zeno certificate.
   component above, whatever its delays, in place of the progress condition
   (FR-196 "Idle tail of a timed window monitor", item 7).
 - A component with no exit, and a state with no admissible delay and no
-  enabled discrete move, SHALL be a time-lock: a terminal state, value 0 for
-  an event not yet met and no further elapsed reward, a pending deadline
-  rejected.
+  enabled discrete move, SHALL be a time-lock: a terminal state, read for the
+  objective as FSpec FR-416 "How claims read a time-lock" states: value 0 for
+  an event not yet met, value 1 for an `always` that the positions read
+  satisfy, and an uncompleted measure censored, so that an expected
+  accumulation or elapsed time to a target not reached is infinite.
 
 ## Acceptance Criteria
 

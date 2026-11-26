@@ -13,6 +13,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-751
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-421
+    type: depends_on
 ---
 # FR-921: Check a timed-product certificate without the engine
 
@@ -50,13 +54,17 @@ certificate `InequalityFails` at the first such state; the item settles
 ### Re-derived by the checker
 
 The checker SHALL compute, with code in the qualified core that EN-5 does not
-share:
+share (the one concrete timed run excepted: exact clock values, delay
+admissibility, the discrete step, positions and outcome types, ADR-038 RL-1,
+RL-2):
 
-1. the route, digital exactly when every clock constraint of every guard and
-   time invariant, every timed interval of the claim and every elapsed
-   comparison is non-strict, the transform's `M < c` counting as strict, and
-   the claim's form is one FR-204 Admission "Route" gives the digital MDP;
-   region for every other bounded-window formula, closed or not;
+1. the route, by FSpec FR-421 "Closed and strict conditions" (ADR-038's route
+   admission table), the checker deciding for itself the subject's
+   closedness, its delay class, whether a time-lock is reachable where a
+   delay is not given, from the dense subject and never from the digital
+   product, the claim form and the position it is read from; the transform's
+   `M < c` counts as strict, and every claim that rule does not admit is
+   region;
 2. the unit, the scale (FR-196's least common denominator) and each clock's
    cap;
 3. the digital moves, or each region's time successor and each guard's
