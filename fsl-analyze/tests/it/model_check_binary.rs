@@ -17,6 +17,7 @@ mod dense_route;
 mod dense_route_support;
 mod derived_request;
 mod derived_request_support;
+mod digitisation;
 mod example_units;
 mod hyper_world;
 mod lasso_replay;

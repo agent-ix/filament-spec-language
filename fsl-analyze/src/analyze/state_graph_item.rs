@@ -41,6 +41,7 @@ use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
     SubjectBinding, TemporalItem,
 };
+use crate::model_check::digitisable::{DigitalItem, digitisation_decline};
 use crate::model_check::manifest as en1;
 use crate::model_check::{
     StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest, check_and_settle_state_graph,
@@ -281,6 +282,15 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     if let Some(refusal) = digital_closed_refusal(&timed) {
         return EngineReport::Refused(refusal);
+    }
+    // FR-243: `always possible` and `unique path` quantify over timed states
+    // the integer-clock reading does not visit.
+    match digitisation_decline(DigitalItem::StateGraph(read.claim)) {
+        Ok(None) => {}
+        Ok(Some(declined)) => {
+            return EngineReport::Refused(super::digital_item::not_digitisable(declined));
+        }
+        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     }
     let instances = match read.claim.over() {
         Some(parameter) => {

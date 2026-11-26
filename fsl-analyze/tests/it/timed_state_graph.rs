@@ -252,53 +252,102 @@ fn digital_clocks_decide_timed_state_graph_items_on_en_1() {
     assert_eq!(en1.state_graph_forms().len(), 3);
 }
 
-/// FR-852-AC-6: EN-1 decides the other two state-graph forms on the integer
-/// grid and replays their negative evidence.
-#[trace("TC-2412", "FR-852-AC-6")]
-#[trace("TC-2412", "FSpec-FR-712-AC-4")]
+/// `item` is EN-1's decline of the state-graph claim `declared` in `unit`,
+/// carrying `rule` and the declaration's span, with no search.
+fn assert_not_digitisable(item: &Value, unit: &str, declared: &str, rule: &str) {
+    let start = unit.find(declared).expect("the claim is declared");
+    assert_eq!(label(item), "declined", "{item}");
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(item["record"]["settled_by"], "result", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"],
+        json!({"code": "invalid_runtime_input", "cause": "invalid-value",
+            "detail": {"not_digitisable": {"rule": rule,
+                "span": {"start": start, "end": start + declared.len()}}}}),
+        "{item}"
+    );
+    assert!(item.get("exploration").is_none(), "no search runs: {item}");
+}
+
+const BACK_TO_IDLE: &str = "always possible BackToIdle using v over (c: M::Call) { c.phase = 0 }";
+const ONE_REPLY: &str =
+    "unique path OneReply using v over (c: M::Call) from (c.phase = 0) to (c.phase = 2);";
+
+/// FR-243-AC-6, TC-2412 step 7: with `options.method` `digital-clocks`,
+/// `always possible` and `unique path` are declined naming the form, whatever
+/// their verdict, and no search runs.
+#[trace("TC-2412", "FR-243-AC-6")]
 #[test]
-fn digital_clocks_decide_always_possible_and_unique_path() {
+fn digital_clocks_decline_always_possible_and_unique_path() {
     let method = json!({"method": "digital-clocks"});
-    let always = run(
-        "timed-sg-digital-always",
-        true,
-        json!([{"claim": "BackToIdle", "options": method.clone()}]),
-    );
-    let item = always.item(0);
-    assert_eq!(label(&item), "proved", "{item}");
-    assert_eq!(item["record"]["backend"], "en-1", "{item}");
-    assert_eq!(item["record"]["basis"]["type"], "exhaustive", "{item}");
+    for (name, reset) in [
+        ("timed-sg-digital-forms", true),
+        ("timed-sg-digital-forms-no-reset", false),
+    ] {
+        let run = run(
+            name,
+            reset,
+            json!([
+                {"claim": "BackToIdle", "options": method.clone()},
+                {"claim": "OneReply", "options": method.clone()}
+            ]),
+        );
+        let unit = unit(reset);
+        assert_not_digitisable(&run.item(0), &unit, BACK_TO_IDLE, "always-possible");
+        assert_not_digitisable(&run.item(1), &unit, ONE_REPLY, "unique-path");
+    }
+}
 
-    let always_refuted = run(
-        "timed-sg-digital-always-refuted",
-        false,
-        json!([{"claim": "BackToIdle", "options": method.clone()}]),
-    );
-    let item = always_refuted.item(0);
-    assert_eq!(label(&item), "refuted", "{item}");
-    assert_eq!(item["replay"]["reproduced"], true, "{item}");
-
-    let unique = run(
-        "timed-sg-digital-unique",
-        false,
-        json!([{"claim": "OneReply", "options": method.clone()}]),
-    );
-    let item = unique.item(0);
-    assert_eq!(label(&item), "proved", "{item}");
-    assert_eq!(item["record"]["backend"], "en-1", "{item}");
-
-    let cyclic_unit = unit(true).replace("self.x <= 3 ms", "self.x <= 4 ms");
-    let ws = Workspace::new("timed-sg-digital-unique-refuted");
-    let unique_refuted = analyze(&request_over(
-        &ws,
-        &cyclic_unit,
-        &crate::zone_search::rpc_document(),
-        &[rpc_snapshot()],
-        json!({"items": [{"claim": "OneReply", "options": method}]}),
-    ));
-    let item = unique_refuted.item(0);
-    assert_eq!(label(&item), "refuted", "{item}");
-    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+/// FR-243-AC-6, TC-2412 step 8: `first` runs at a time `t` in [0, 1] ms and
+/// resets `x`; `y` reads the time. From phase 1, `zero` needs `t = 0` and
+/// `one` needs `t = 1`, so only a fractional `t` is trapped, which no
+/// integer-clock reading visits. EN-1 declines both forms instead of proving
+/// them.
+#[trace("TC-2412", "FR-243-AC-6")]
+#[test]
+fn digital_clocks_decline_the_forms_over_a_fractional_trap() {
+    let always = "always possible Done using v over (c: M::Call) { c.phase >= 2 }";
+    let unique = "unique path Done using v over (c: M::Call) from (c.phase = 1) to (c.phase >= 2);";
+    for (name, declared, rule) in [
+        ("timed-sg-fraction-trap", always, "always-possible"),
+        ("timed-sg-fraction-unique", unique, "unique-path"),
+    ] {
+        let body = format!(
+            "{}\
+             pre First using v on M::Call::first {{ self.phase = 0 }}\n\
+             post FirstDone using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+             pre Zero using v on M::Call::zero {{ self.phase = 1 and self.y >= 2 ms and self.x >= 2 ms }}\n\
+             post ZeroDone using v on M::Call::zero {{ self.phase = 2 }}\n\
+             pre One using v on M::Call::one {{ self.phase = 1 and self.y >= 2 ms and self.x <= 1 ms }}\n\
+             post OneDone using v on M::Call::one {{ self.phase = 3 }}\n\
+             time invariant Early when {{ self.phase = 0 }} {{ self.y <= 1 ms }}\n\
+             time invariant Late when {{ self.phase = 1 }} {{ self.y <= 2 ms }}\n\
+             {declared}\n",
+            crate::timed_world::DENSE,
+        );
+        let unit = crate::timed_world::unit_text(
+            crate::timed_world::PACKAGE,
+            crate::zone_search::TIMED,
+            &body,
+        );
+        let document = crate::timed_world::document(
+            &["x", "y"],
+            &[
+                ("first", &["phase", "x"]),
+                ("zero", &["phase"]),
+                ("one", &["phase"]),
+            ],
+        );
+        let run = analyze(&request_over(
+            &Workspace::new(name),
+            &unit,
+            &document,
+            &[rpc_snapshot()],
+            json!({"items": [{"claim": "Done", "options": {"method": "digital-clocks"}}]}),
+        ));
+        assert_not_digitisable(&run.item(0), &unit, declared, rule);
+    }
 }
 
 /// FR-243: EN-1 refuses an open timed state-graph subject before search.
@@ -479,10 +528,9 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
             _ => None,
         })
         .expect("the unit declares one population");
-    let mut snapshot: Value = serde_json::from_slice(
-        world.snapshots.values().next().expect("one snapshot"),
-    )
-    .expect("snapshot JSON");
+    let mut snapshot: Value =
+        serde_json::from_slice(world.snapshots.values().next().expect("one snapshot"))
+            .expect("snapshot JSON");
     snapshot["populations"]
         .as_array_mut()
         .expect("snapshot populations")
