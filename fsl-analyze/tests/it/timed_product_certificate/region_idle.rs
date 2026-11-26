@@ -19,7 +19,7 @@ fn outcome(record: &AnalyzeRecord) -> String {
             value.value().numerator().as_big(),
             value.value().denominator().as_big()
         ),
-        Some(TerminalValue::Refuted { .. }) => "refuted".to_owned(),
+        Some(TerminalValue::Refuted) => "refuted".to_owned(),
         Some(value) => format!("{value:?}"),
         None => format!("{record:?}"),
     }
