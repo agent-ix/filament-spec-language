@@ -692,7 +692,7 @@ pub(crate) fn analyze_bound<'a>(
         .iter()
         .map(super::AnalyzeItem::requirement)
         .collect::<Vec<_>>();
-    let mut settled = super::analyze_items(engines, items, cancel, certification);
+    let settled = super::analyze_items(engines, items, cancel, certification);
     let aggregate = super::aggregate(&requirements, &settled);
     let details = settled.iter().map(super::ItemDetail::of).collect();
     let protocol_conformance = settled

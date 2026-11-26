@@ -4449,12 +4449,10 @@ mod tests {
                 "test-a",
                 |_| {
                     EngineReport::FiniteHyper(Box::new(FiniteHyperReport {
-                        terminal: TerminalRecord::from_value(
+                        terminal: TerminalRecord::proved_by_provider(
                             RequestIndex::new(0),
-                            TerminalValue::Proved {
-                                basis: fsl_replay::ProofBasis::Inductive { depth: 0 },
-                                certification: fsl_replay::Certification::Uncertified,
-                            },
+                            fsl_foundation::BackendId::new("test-a"),
+                            fsl_replay::Certification::Uncertified,
                         ),
                         counterexample: None,
                     }))

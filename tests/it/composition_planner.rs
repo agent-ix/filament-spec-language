@@ -501,8 +501,7 @@ fn require_certified_withholds_a_trusted_planner_result() {
     assert!(certified.conclusion.is_some());
 }
 
-// ---- FR-530-AC-6: trust, assumption
-, unsupported, failed, exhausted --------------
+// ---- FR-530-AC-6: trust, assumption, unsupported, failed, exhausted --------------
 
 #[trace("TC-1330", "FR-530-AC-6")]
 #[trace("FSpec-TC-983", "FSpec-FR-489-AC-5")]

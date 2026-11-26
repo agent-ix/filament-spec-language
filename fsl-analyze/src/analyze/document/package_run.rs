@@ -1033,7 +1033,7 @@ fn settle_package_run_inner(
             analyzed.push(work.item(route, item));
         }
     }
-    let mut records = super::super::analyze_items(engines, analyzed, cancel, certification);
+    let records = super::super::analyze_items(engines, analyzed, cancel, certification);
     let details = records.iter().map(super::super::ItemDetail::of).collect();
     let protocol_conformance = records
         .iter()

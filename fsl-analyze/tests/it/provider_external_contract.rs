@@ -10,9 +10,8 @@ use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Integer, Value};
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, CertificationPolicy, ClaimItem,
-    Counterexample, Engine, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
-    SubjectBinding,
+    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample, Engine,
+    Engines, ItemCounterexample, NegotiatedItem, SourceProvision, SubjectBinding,
 };
 use fsl_analyze::provider::{self, ProviderResults};
 use fsl_analyze::provider::{ExternalProvider, ProviderLimit, ProviderRequest, ProviderVerdict};
@@ -21,7 +20,8 @@ use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
 use fsl_replay::value_check::ValueTarget;
 use fsl_replay::{
-    Certification, IncompleteCause, InconclusiveCause, ProofBasis, TerminalValue, ToolFailure,
+    Certification, CertificationPolicy, IncompleteCause, InconclusiveCause, ProofBasis,
+    TerminalValue, ToolFailure,
 };
 use fsl_route::request::ExtentClassification;
 use fsl_route::routing::Disposition;

@@ -141,7 +141,13 @@ fn a_mean_ceiling_certified_by_bounds_takes_the_upper_document_as_the_claim() {
     let mut request = world.request("Up", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1;
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let TerminalValue::Proved {
         basis: ProofBasis::ValueBounds { lower, upper, .. },
         ..

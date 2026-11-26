@@ -5145,7 +5145,7 @@ fn prepare_complete_run(
             call: spine_call,
             integer_division,
             requirements,
-            certification: analyze::read_certification(request.require_certified)?,
+            certification: analyze::read_certification(request.require_certified.clone())?,
         }),
     }))
 }
