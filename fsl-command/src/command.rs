@@ -2712,6 +2712,7 @@ fn inspect_handoff_category(
     }
 }
 
+#[implements("FR-665-AC-5")]
 fn inspect_handoff_position(
     directory: &Path,
     error: &crate::checked_handoff::Error,
