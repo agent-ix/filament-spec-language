@@ -440,7 +440,7 @@ implementation qualification or new shared-wire contract follows.
 ### 13. Probabilistic timed automata through digital clocks
 
 ADR-026 RU-5 and SS-7 route `exact` evidence over a timed subject to EN-5.
-EN-5 reads it through digital clocks when its constraints are closed; the
+EN-5 reads it through digital clocks where ADR-038 admits the claim; the
 claim's scheduler resolves each delay (RU-6).
 
 | ID | Rule |
