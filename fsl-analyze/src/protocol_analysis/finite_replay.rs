@@ -7,7 +7,6 @@
 //! step records. It builds no transition system of its own; the one
 //! `fsl-eval` protocol system steps the trace.
 
-use base64::Engine as _;
 use filament_exact::{Identifier, ScalarLimits};
 use fsl_eval::model_subject::{
     ModelInstance, ModelLetters, ModelSubject, ProtocolSubject, RoleBinding,
@@ -22,6 +21,7 @@ use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_eval::temporal::{TemporalOutcome, TemporalRefusal};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
+use fsl_replay::shared_wire::{StateLocus, WireDefectKind};
 use fsl_replay::{
     evaluate_protocol_trace, settle_protocol_check, undefined_finding, CounterexampleKind,
     ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep,
@@ -60,14 +60,8 @@ pub(crate) struct SuppliedTrace {
 #[derive(Clone, Debug)]
 struct SuppliedStep {
     transition: Value,
-    post_state: PostState,
+    post_state: StateLocus,
     send_record: Option<Value>,
-}
-
-/// A state key as the counterexample wire spells it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PostState {
-    key: String,
 }
 
 /// The format word of a supplied protocol trace.
@@ -221,7 +215,7 @@ impl SuppliedTrace {
 impl SuppliedStep {
     /// The step at `position` that `step` spells.
     fn read(position: usize, step: &Value) -> Result<Self, TraceDefect> {
-        use DefectKind::{MissingMember, UnknownMember, WrongValueKind};
+        use DefectKind::{InvalidValue, MissingMember, UnknownMember, WrongValueKind};
         let defect = |kind, member| TraceDefect::in_step(kind, position, member);
         let Value::Object(step) = step else {
             return Err(TraceDefect {
@@ -237,18 +231,15 @@ impl SuppliedStep {
         };
         let post_state = match step.get("post_state") {
             None => return Err(defect(MissingMember, "post_state")),
-            Some(Value::Object(post_state)) => {
-                let key = match post_state.get("key") {
-                    None => return Err(defect(MissingMember, "post_state/key")),
-                    Some(Value::String(key)) => key.clone(),
-                    Some(_) => return Err(defect(WrongValueKind, "post_state/key")),
+            Some(post_state) => StateLocus::read(post_state).map_err(|found| {
+                let kind = match found.kind {
+                    WireDefectKind::Missing => MissingMember,
+                    WireDefectKind::UnknownMember => UnknownMember,
+                    WireDefectKind::WrongKind => WrongValueKind,
+                    WireDefectKind::Invalid | WireDefectKind::UnknownVariant => InvalidValue,
                 };
-                if let Some(member) = unknown(post_state, &["key"]) {
-                    return Err(defect(UnknownMember, &format!("post_state/{member}")));
-                }
-                PostState { key }
-            }
-            Some(_) => return Err(defect(WrongValueKind, "post_state")),
+                TraceDefect::in_step(kind, position, &format!("post_state{}", found.pointer))
+            })?,
         };
         let send = transition.get("step").and_then(Value::as_str) == Some("send");
         let send_record = match (send, step.get("send_record")) {
@@ -331,13 +322,6 @@ pub(crate) enum ReplayFault {
     /// The protocol has a symbolic capacity, and a supplied trace's subject
     /// binds no capacity: requires-bound (FSpec FR-785).
     UnboundCapacity,
-}
-
-/// The state-key spelling of the counterexample wire.
-fn state_wire(key: &StateKey) -> PostState {
-    PostState {
-        key: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes()),
-    }
 }
 
 /// What a claim's required clauses add to a replay (FR-941 "Formula claims").
@@ -598,7 +582,7 @@ fn replay_steps<M: MemoryModel>(
                 continue;
             }
             let key = key_of(&post)?;
-            if state_wire(&key) == step.post_state {
+            if StateLocus::from(&key) == step.post_state {
                 reached = Some((transition, post, key));
                 break;
             }
@@ -886,7 +870,7 @@ fn undefined_where(counterexample: &TemporalCounterexample<ProtocolTransition>) 
     };
     let mut at = serde_json::json!({
         "position": site.position,
-        "state_key": {"key": state_wire(&site.state_key).key},
+        "state_key": StateLocus::from(&site.state_key),
         "locus": locus,
     });
     if let (Some(node), Some(members)) = (node, at.as_object_mut()) {

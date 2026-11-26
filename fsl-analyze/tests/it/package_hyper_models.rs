@@ -152,17 +152,13 @@ fn check_two_model_atoms_and_certificate(ws: &Workspace, bytes: &[u8], holds: bo
         bare.node_key(&row.declaration).expect("claim key"),
         filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence.ordinal),
     );
-    let form = bare.hyper_clause_form(&occurrence).expect("two-model form");
-    let clause = fsl_semantics::check::CheckedHyperClause::of_package_form(
-        form,
-        bare.world().expect("package world").types(),
-        10_000,
-    )
-    .expect("checked package form");
     let selection = fsl_analyze::analyze::document::SubjectSelection::default_over(&snapshots);
     let binding = selection.binding(&packages, &snapshots);
     let input = PackageModelInput::of(&bare, &packages, ModelNormalizationLimits::default())
         .expect("package input");
+    let clause = input
+        .hyper_clause(&occurrence, 10_000)
+        .expect("checked package form");
     let simulation = ModelSimulationRequest {
         input: input.input(),
         packages: &packages,
@@ -213,7 +209,7 @@ fn check_two_model_atoms_and_certificate(ws: &Workspace, bytes: &[u8], holds: bo
             .position(|alias| alias == &parameter.alias)
             .expect("parameter alias");
         let binding = package_systems[slot]
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .instances(&ValueType::Reference(parameter.object.clone()))
             .expect("parameter universe")
             .into_iter()
             .next()
@@ -300,6 +296,12 @@ fn check_two_model_atoms_and_certificate(ws: &Workspace, bytes: &[u8], holds: bo
     let originals =
         PackageHyperClosureRequest::new(&bare, &occurrence, &subjects, UNLIMITED, 10_000)
             .expect("independently rebuilt model roots");
+    // The independent rebuild holds the same parameters, each with the one
+    // population of its own model that overlaps its type.
+    assert_eq!(originals.clause().parameters(), clause.parameters());
+    for parameter in originals.clause().parameters() {
+        assert_eq!(parameter.populations.len(), 1, "{}", parameter.name);
+    }
     let matcher = CheckedStepMatch::for_evaluator(&bare, &clause);
     let outcome = check_hyper(
         HyperCheckRequest {
@@ -356,7 +358,13 @@ fn check_two_model_atoms_and_certificate(ws: &Workspace, bytes: &[u8], holds: bo
     }
 }
 
-#[trace("FR-940-AC-17", "FR-940-AC-18", "FR-176-AC-1", "FR-163-AC-1")]
+#[trace(
+    "FR-940-AC-17",
+    "FR-940-AC-18",
+    "FR-176-AC-1",
+    "FR-163-AC-1",
+    "FR-172-AC-10"
+)]
 #[test]
 fn two_model_package_hyper_proof_matches_source_without_source() {
     two_model_parity(true);

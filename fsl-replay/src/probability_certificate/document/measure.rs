@@ -2321,6 +2321,9 @@ fn partial_lower_action_sum(
     }
     Ok(sum)
 }
+/// The first activated state the tight actions reach from the initial state,
+/// breadth-first with each layer in canonical order (FR-201's locus).
+#[implements("FR-201-AC-5")]
 fn tight_activation(
     graph: &Graph,
     values: &BTreeMap<ProbabilityProductKey, Rational>,
@@ -2328,29 +2331,50 @@ fn tight_activation(
     cancel: &Cancel,
 ) -> Result<Option<ProbabilityProductKey>, ProbabilityDocumentError> {
     let mut seen = BTreeSet::from([graph.initial.clone()]);
-    let mut queue = VecDeque::from([graph.initial.clone()]);
-    let mut activated = BTreeSet::new();
-    while let Some(key) = queue.pop_front() {
-        poll(cancel)?;
-        let state = graph
-            .states
-            .get(&key)
-            .ok_or(ProbabilityDocumentError::Malformed)?;
-        if state.activated {
-            activated.insert(key.clone());
-        }
-        for choice in &state.choices {
-            if values.get(&key) != Some(&action_sum(choice, values, meter, cancel)?) {
-                continue;
+    let mut layer = BTreeSet::from([graph.initial.clone()]);
+    while !layer.is_empty() {
+        let mut next = BTreeSet::new();
+        for key in &layer {
+            poll(cancel)?;
+            let state = graph
+                .states
+                .get(key)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            if state.activated {
+                return Ok(Some(key.clone()));
             }
-            for edge in choice {
-                if !edge.probability.is_zero() && seen.insert(edge.target.clone()) {
-                    queue.push_back(edge.target.clone());
+            for choice in &state.choices {
+                if values.get(key) != Some(&action_sum(choice, values, meter, cancel)?) {
+                    continue;
+                }
+                for edge in choice {
+                    if !edge.probability.is_zero() && seen.insert(edge.target.clone()) {
+                        next.insert(edge.target.clone());
+                    }
                 }
             }
         }
+        layer = next;
     }
-    Ok(activated.into_iter().next())
+    Ok(None)
+}
+/// For a `>= c` quantile whose initial shifted maximum is exactly 0, the first
+/// activated state its tight actions reach: some scheduler may then meet the
+/// level while activating (FR-1042 "Pairing"). Tight actions are those that
+/// attain the document's own values. Every route rejects `InequalityFails` there.
+#[implements("FR-1042-AC-28")]
+fn tight_zero_activation(
+    plan: &Plan<'_>,
+    graph: &Graph,
+    values: &BTreeMap<ProbabilityProductKey, Rational>,
+    initial: &Rational,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<Option<ProbabilityProductKey>, ProbabilityDocumentError> {
+    if !(plan.strict && initial.is_zero()) {
+        return Ok(None);
+    }
+    tight_activation(graph, values, meter, cancel)
 }
 fn acceptance(
     document: &MeasureProbabilityDocument,
@@ -2372,7 +2396,7 @@ fn acceptance(
 }
 
 #[implements("FR-1043-AC-1")]
-#[implements("FR-1042-AC-27")]
+#[implements("FR-1042-AC-27", "FR-1042-AC-29", "FR-1042-AC-30", "FR-1043-AC-10")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2662,11 +2686,9 @@ pub(super) fn check(
     )?;
     let partial_lower =
         partial_lower || (claim_lower && document.values.len() < graph.states.len());
-    if let Some(side) = bound_side.filter(|_| !partial_lower) {
-        return check_value_bounds(
-            &document, &graph, &plan, side, role, bytes, limits, cancel, &mut meter,
-        );
-    }
+    // These rules are the claim's, so they hold for an exact document and for
+    // either bound alike: a threshold is read at one initial key, and no
+    // numeric document stands where activation is unreachable.
     if graph.initials.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
     }
@@ -2677,6 +2699,11 @@ pub(super) fn check(
             ProbabilityCertificateRule::InequalityFails,
             graph.initial,
         ));
+    }
+    if let Some(side) = bound_side.filter(|_| !partial_lower) {
+        return check_value_bounds(
+            &document, &graph, &plan, side, role, bytes, limits, cancel, &mut meter,
+        );
     }
     let partial_floor = if partial_lower {
         if document.payoff == MeasurePayoffKind::Shifted {
@@ -2709,10 +2736,10 @@ pub(super) fn check(
         .ok_or(ProbabilityDocumentError::Malformed)?
         .clone();
     let (holds, side) = if document.payoff == MeasurePayoffKind::Shifted {
-        if plan.strict && value.is_zero() {
-            if let Some(key) = tight_activation(&graph, &values, &mut meter, cancel)? {
-                return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
-            }
+        if let Some(key) =
+            tight_zero_activation(&plan, &graph, &values, &value, &mut meter, cancel)?
+        {
+            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
         }
         (
             if plan.strict {
@@ -2758,6 +2785,7 @@ pub(super) fn check(
     }
     Ok(acceptance(&document, value, side, bytes))
 }
+#[implements("FR-1042-AC-28")]
 #[allow(clippy::too_many_arguments)]
 fn check_value_bounds(
     document: &MeasureProbabilityDocument,
@@ -2917,6 +2945,9 @@ fn check_value_bounds(
                     at: ProbabilityCertificateLocus::ProductState(graph.initial.clone()),
                 },
             ));
+        }
+        if let Some(key) = tight_zero_activation(plan, graph, &values, initial, meter, cancel)? {
+            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
         }
     }
     let accepted_side = match certified {
