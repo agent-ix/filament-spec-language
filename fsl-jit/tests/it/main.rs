@@ -8,3 +8,4 @@ mod coverage;
 mod differential;
 mod lifecycle;
 mod parity;
+mod wide_integer_argument;

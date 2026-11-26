@@ -336,6 +336,7 @@ fn dyadic(value: &Rational, precision: u32, upward: bool) -> Dyadic {
 mod tests {
     use super::*;
     use crate::exact_probabilistic::{ProbEdge, ProbKey, ProbStateId, ProductAction};
+    use ix_trace_rs::trace;
 
     fn rational(numerator: i64, denominator: i64) -> Rational {
         Rational::new(Integer::from(numerator), Integer::from(denominator)).unwrap()
@@ -400,5 +401,76 @@ mod tests {
         assert!(lower[0].rational() <= rational(2, 1));
         assert!(upper[0].rational() >= rational(2, 1));
         assert!(precision_bits <= limits.max_precision_bits);
+    }
+
+    /// FR-198-AC-10: threshold-directed reward bounds admit multiple scheduler
+    /// actions when their hand-computed minimum is above the threshold.
+    #[trace("TC-633", "FR-198-AC-10")]
+    #[test]
+    fn expected_reward_threshold_bounds_a_multi_action_mdp() {
+        use crate::exact_probabilistic::{ProbStateId, ProductKind};
+
+        let states: Vec<_> = (0..2)
+            .map(|state| ProbKey {
+                binding: None,
+                model: vec![state],
+                monitor: None,
+                accumulator: None,
+                pending: None,
+                certificate_state: None,
+            })
+            .collect();
+        let ids = [ProbStateId(0), ProbStateId(1)];
+        let reward = filament_exact::Identifier::new("cost").unwrap();
+        let edge = |choice: usize, probability: (i64, i64), amount: i64| ProbEdge {
+            from: ids[0],
+            choice: ProductAction::PostState(Box::new(states[choice].clone())),
+            action: None,
+            draw: None,
+            to: ids[1],
+            probability: rational(probability.0, probability.1),
+            elapsed: rational(0, 1),
+            rewards: vec![(reward.clone(), Value::Integer(Integer::from(amount)))],
+        };
+        let edges = vec![
+            edge(0, (1, 10), 2),
+            edge(0, (9, 10), 1),
+            edge(1, (1, 5), 2),
+            edge(1, (4, 5), 1),
+        ];
+        let product = ProbProduct {
+            states,
+            kind: ProductKind::Mdp,
+            edges,
+            initial: vec![(0, None, ids[0])],
+            decided: Vec::new(),
+            labels: Vec::new(),
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        };
+        let threshold = rational(1, 1);
+        let limits = ExactProbLimits {
+            max_rational_bits: 3,
+            max_iterations: 100,
+            precision_bits: 4,
+            max_precision_bits: 4,
+            ..ExactProbLimits::default()
+        };
+
+        let result = decide_expected_reward_threshold(
+            &product,
+            &[false, true],
+            "cost",
+            &threshold,
+            &limits,
+            &Cancel::new(),
+        );
+        let (lower, upper) = match result {
+            Ok(ExpectedRewardOutcome::Bounds { lower, upper, .. }) => (lower, upper),
+            other => panic!("interval iteration accepts multiple actions: {other:?}"),
+        };
+        assert!(threshold <= lower[0].rational());
+        assert!(lower[0].rational() <= rational(11, 10));
+        assert!(rational(11, 10) <= upper[0].rational());
     }
 }
