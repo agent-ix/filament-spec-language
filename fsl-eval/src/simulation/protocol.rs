@@ -1241,7 +1241,7 @@ pub fn classify_package_accesses(
 pub fn package_load_buffering_shapes(
     model: &ModelSystem<'_>,
     program: &PackageProtocolProgram<'_>,
-    over: &Value,
+    over: Option<&Value>,
     capacities: &Capacities,
 ) -> Result<Vec<LoadBufferingShape>, ProtocolRefusal> {
     let governing = program
@@ -1254,15 +1254,28 @@ pub fn package_load_buffering_shapes(
         return Ok(Vec::new());
     }
     let runtime = Program::new_package(model, program, capacities)?;
-    let accesses = access::classify_package(
-        model,
-        &runtime,
-        program,
-        &governing,
-        model.generated_initial().next().as_ref(),
-        over,
-        access::ClassificationMode::Potential,
-    )?;
+    // `over` is the subject's reference; `None` is a scalar `over`, which
+    // ranges over its bounded domain (FR-882-AC-3).
+    let overs: Vec<Value> = match over {
+        Some(over) => vec![over.clone()],
+        None => model
+            .bounded_domain(&program.over_type, &[])
+            .map_err(ProtocolRefusal::InitialStop)?
+            .iter()
+            .collect(),
+    };
+    let mut accesses = WeakAccesses::default();
+    for over in &overs {
+        accesses.extend(access::classify_package(
+            model,
+            &runtime,
+            program,
+            &governing,
+            model.generated_initial().next().as_ref(),
+            over,
+            access::ClassificationMode::Potential,
+        )?);
+    }
     Ok(
         access::load_buffering_shapes(&runtime, &governing, &accesses)?
             .into_iter()
@@ -3069,19 +3082,30 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let subject = self.package_subject.ok_or_else(broken)?;
         let request = &subject.model.simulation;
         let package = self.package_program.as_ref().ok_or_else(broken)?;
-        let ValueType::Reference(over) = &package.over_type else {
-            return Err(broken());
-        };
-        let declaring = self
-            .model
-            .declaring_package(over.clone())
-            .ok_or_else(broken)?;
-        let selection = request
-            .input
-            .model_selections
-            .iter()
-            .find(|selection| selection.identity == declaring)
-            .ok_or_else(broken)?;
+        // A reference `over` selects the model that declares its object type
+        // (FR-125); a scalar `over` has no declaring model, so the subject's
+        // single model selection supplies the observation (FR-882-AC-3).
+        let selection = match &package.over_type {
+            ValueType::Reference(over) => {
+                let declaring = self
+                    .model
+                    .declaring_package(over.clone())
+                    .ok_or_else(broken)?;
+                request
+                    .input
+                    .model_selections
+                    .iter()
+                    .find(|selection| selection.identity == declaring)
+            }
+            _ => {
+                let mut all = request.input.model_selections.iter();
+                match (all.next(), all.next()) {
+                    (Some(only), None) => Some(only),
+                    _ => None,
+                }
+            }
+        }
+        .ok_or_else(broken)?;
         self.evaluator
             .package_protocol_observation(
                 selection,
