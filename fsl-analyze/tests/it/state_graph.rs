@@ -2303,7 +2303,7 @@ const COUNTER_CLAIMS: &str = "possible AtThree using v over (c: C::Counter) { c.
 /// reproduce an undefined evaluation there. With the refused declaration
 /// false instead, the undefined one refutes. A declaration that intends the
 /// state decides it, whatever the others read.
-#[trace("TC-612", "FR-168-AC-16")]
+#[trace("TC-612", "FR-168-AC-16", "FSpec-FR-391-AC-13")]
 #[test]
 fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
     const UNDEFINED: &str = "terminal Stop using v on N when { remainder(3 - self.value) = 0 };\n";
@@ -2443,7 +2443,11 @@ fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
     }
 }
 
-fn terminal_alias_world(terminals: &str) -> World {
+fn terminal_alias_world(
+    terminals: &str,
+    possible_item: &str,
+    extra_functions: &str,
+) -> World {
     let model = Model {
         package: "test/terminal",
         alias: "M",
@@ -2462,12 +2466,13 @@ fn terminal_alias_world(terminals: &str) -> World {
     let body = format!(
         "model N = \"test/terminal\";\n\
          function q using v(x: Integer): Integer pure {{ 6 mod x }}\n\
+         {extra_functions}\
          pre Step using v on M::Vault::step {{ self.l < 1 }}\n\
          post Step using v on M::Vault::step {{ self.l = pre(self.l) + 1 }}\n\
          {terminals}\n\
-         possible AlwaysTrue using v over (x: M::Vault) {{ true }}\n"
+         {possible_item}\n"
     );
-    World::new(model, &body, &[&[("v", &[("l", 0)])]])
+    World::kernel(model, &body, &[&[("v", &[("l", 0)])]])
 }
 
 /// FR-391-AC-13: an unknown terminal keeps the completed node open; a witness
@@ -2522,6 +2527,52 @@ fn an_unknown_terminal_keeps_a_possible_witness_unchecked() {
     );
 }
 
+/// FR-391-AC-16: with no possible witness, a refused terminal declaration
+/// keeps the terminal node open and settles the item as undecided-successor.
+#[trace("FSpec-FR-391-AC-16")]
+#[test]
+fn an_unknown_terminal_refuses_a_no_witness_possible_item_as_undecided() {
+    let world = terminal_alias_world(
+        "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on N when { narrow(self.l) = 0 };",
+        "possible Never using v over (x: M::Vault) { false }",
+        "function narrow using v(x: Integer): Int[0, 0] pure { x }\n",
+    );
+    let claim = world.claim("Never");
+    let request = world.request(&["v"], vec![world.item("Never")], no_samples());
+    let settled = check_and_settle_state_graph(request, &Cancel::new(), |_| {
+        panic!("a no-witness item has no evidence to replay")
+    })
+    .expect("the completed state-graph run settles");
+
+    assert_eq!(
+        settled.run.items[0][0].outcome,
+        StateGraphOutcome::NoDecision {
+            end: RunEnd::Completed,
+            open: BTreeSet::from([OpenCause::UndecidedSuccessor]),
+        }
+    );
+    assert_eq!(
+        settled.records[0][0].value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::UndecidedSuccessor)
+    );
+
+    let terminal_path = ModelPath {
+        initial: 0,
+        steps: expected_steps(&world, &["v"], 0, &[("step", "v")]),
+    };
+    let terminal_state = positions(&world, &["v"], &terminal_path)
+        .pop()
+        .expect("the terminal state follows the one step");
+    let TerminalClass::Undecided { model } = system(&world, &["v"])
+        .terminal_class(&terminal_state, false)
+        .expect("terminal declarations are read")
+    else {
+        panic!("the refused second declaration makes the terminal unknown");
+    };
+    assert_eq!((model.label(), model.ordinal()), ("N", 1));
+}
+
 /// FR-391-AC-15: an intended terminal declaration wins over another alias's
 /// undefined predicate, so the possible-item witness settles without an
 /// Undefined evidence arm.
@@ -2531,6 +2582,8 @@ fn an_intended_terminal_alias_settles_a_possible_item_with_undefined_sibling() {
     let world = terminal_alias_world(
         "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
          terminal Stop using v on N when { true };",
+        "possible AlwaysTrue using v over (x: M::Vault) { true }",
+        "",
     );
     let claim = world.claim("AlwaysTrue");
     let request = world.request(&["v"], vec![world.item("AlwaysTrue")], no_samples());
@@ -2575,9 +2628,11 @@ fn undefined_terminal_aliases_refute_with_replayed_first_declaration() {
     let world = terminal_alias_world(
         "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
          terminal Stop using v on N when { q(1 - self.l) = 0 };",
+        "possible Never using v over (x: M::Vault) { false }",
+        "",
     );
     let over = bound_to(&world, &["v"], "v");
-    let settled = settle_undefined(&world, &["v"], "AlwaysTrue", &over);
+    let settled = settle_undefined(&world, &["v"], "Never", &over);
     let StateGraphOutcome::Undefined { stem, undefined } = &settled.run.items[0][0].outcome else {
         panic!(
             "both terminal predicates are undefined: {:?}",
