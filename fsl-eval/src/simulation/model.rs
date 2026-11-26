@@ -989,6 +989,56 @@ impl ModelSystem<'_> {
 /// holding it, the member, and the count's `min` and `max`.
 pub(crate) type ClockCount = (DeclarationKey, StateField, u64, Option<u64>);
 
+/// The type of the member record an initial state admits for each key of each
+/// bounded population's object universe. FR-125 gives a universe key one type
+/// across the subject's initial states and every bounded population. Equal
+/// keys in two object universes (unrelated type hierarchies) name two objects.
+///
+/// # Errors
+///
+/// `conflicting-identity` for two records of one universe key with different
+/// types; an admission failure for a record with no reference.
+#[implements("FR-125-AC-9")]
+fn admitted_types(
+    model: &StateModel,
+    universes: &BTreeMap<DeclarationKey, Vec<String>>,
+    initial: &[ModelSimState],
+) -> Result<BTreeMap<(UniverseId, String), DeclarationKey>, AdmissionFailure> {
+    let mut admitted = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
+    for state in initial {
+        for (population, objects) in &state.state().populations {
+            if !universes.contains_key(population) {
+                continue;
+            }
+            for (key, object) in objects {
+                let universe = model
+                    .object_reference(&object.type_identity, key)?
+                    .universe()
+                    .clone();
+                let identity = (universe, key.clone());
+                match admitted.get(&identity) {
+                    Some(first_type) if first_type != &object.type_identity => {
+                        return Err(refused(
+                            Code::InvalidRuntimeInput,
+                            "conflicting-identity",
+                            &[
+                                ("key", key.clone()),
+                                ("first_type", first_type.node.clone()),
+                                ("second_type", object.type_identity.node.clone()),
+                            ],
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        admitted.insert(identity, object.type_identity.clone());
+                    }
+                }
+            }
+        }
+    }
+    Ok(admitted)
+}
+
 fn refused(code: Code, cause: &'static str, fields: &[(&'static str, String)]) -> AdmissionFailure {
     AdmissionFailure::Refused(Box::new(record(code, cause, fields)))
 }
@@ -1505,44 +1555,10 @@ impl<'a> ModelSystem<'a> {
             initial.push(ModelSimState::anchored(state, anchor));
         }
 
-        // FR-125 gives an object universe's key one type across the subject's
-        // initial states and every bounded population. Do this before
-        // reference bindings or any instance is formed: otherwise one
+        // Before reference bindings or any instance is formed: otherwise one
         // reference could denote different objects depending on which
-        // population or initial snapshot supplied the row. Equal keys in two
-        // object universes (unrelated type hierarchies) name two objects.
-        let mut admitted_types = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
-        for state in &initial {
-            for (population, objects) in &state.state().populations {
-                if !universes.contains_key(population) {
-                    continue;
-                }
-                for (key, object) in objects {
-                    let universe = model
-                        .object_reference(&object.type_identity, key)?
-                        .universe()
-                        .clone();
-                    let identity = (universe, key.clone());
-                    match admitted_types.get(&identity) {
-                        Some(first_type) if first_type != &object.type_identity => {
-                            return Err(refused(
-                                Code::InvalidRuntimeInput,
-                                "conflicting-identity",
-                                &[
-                                    ("key", key.clone()),
-                                    ("first_type", first_type.node.clone()),
-                                    ("second_type", object.type_identity.node.clone()),
-                                ],
-                            ));
-                        }
-                        Some(_) => {}
-                        None => {
-                            admitted_types.insert(identity, object.type_identity.clone());
-                        }
-                    }
-                }
-            }
-        }
+        // population or initial snapshot supplied the row.
+        let admitted_types = admitted_types(&model, &universes, &initial)?;
 
         let reference_bindings = if let Some(package) = input.source_package() {
             ReferenceBindings::bind(

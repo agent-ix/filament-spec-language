@@ -2511,3 +2511,44 @@ fn a_refuted_over_binding_names_the_admitted_member_type() {
         run.document()
     );
 }
+
+/// FR-125 "Instancing": a system whose initial states are given to it, as a
+/// refinement's mapped abstract system is (FSL FR-630), writes the admitted
+/// member type of those states, not the declared `over` type.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn given_initial_states_write_the_admitted_member_type() {
+    let world = world(&[("P1", &["Dog", "Lamp"])], &[("P1", &[("l", "Lamp")])]);
+    let (package, clause) = world.clause("Thing");
+    let held = || universes(&[("P1", &["l"])]);
+    let read =
+        ModelSystem::new(world.subject(&package, held()).simulation).expect("the subject admits");
+    let states: Vec<_> = read
+        .initial_states()
+        .iter()
+        .map(|state| {
+            let anchor = state.required_anchor().expect("a snapshot state").clone();
+            (state.state().clone(), anchor)
+        })
+        .collect();
+    let mut request = world.subject(&package, held()).simulation;
+    request.initial = Vec::new();
+    let given = ModelSystem::new(request)
+        .expect("a subject with no initial snapshot admits")
+        .with_initial_states(states)
+        .expect("the given states admit");
+    let over = clause.over().1.clone();
+    let filament_exact::ValueType::Reference(thing) = &over else {
+        panic!("a reference `over` type");
+    };
+    let instances = given.instances(&over).expect("the instances");
+    let [instance] = instances.as_slice() else {
+        panic!("one admitted key: {instances:?}");
+    };
+    let written = given
+        .written_reference(thing.clone(), instance)
+        .expect("the binding is written");
+    assert_eq!(written.object().as_str(), "l");
+    let admitted_type = format!("{:?}", written.object_type());
+    assert!(admitted_type.contains("Lamp"), "{admitted_type}");
+}

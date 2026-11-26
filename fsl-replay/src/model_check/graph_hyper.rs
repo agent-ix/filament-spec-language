@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, LimitKind, Meter, ScalarLimits};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::fairness::FairnessGranularity;
+use filament_semantic_value::location::ExpressionLocation;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{analyze, Constraint, EdgeLabel, Graph, Identity, Strength, Vertex};
 use fsl_eval::hyper::{
@@ -20,7 +21,9 @@ use fsl_eval::temporal::{
     evaluate_tuple, AtomReading, ComponentPosition, ComponentTrace, LetterStop, TemporalOutcome,
     TemporalPosition, TupleLetters,
 };
-use fsl_semantics::check::{CheckedHyperClause, FormulaNode, HyperForm, PredicateRole};
+use fsl_semantics::check::{
+    CheckedHyperClause, FormulaNode, FormulaNodeId, HyperForm, PredicateRole,
+};
 
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::Lasso;
@@ -347,6 +350,17 @@ fn replay_positions_as_positions(positions: &[ReplayPosition]) -> Vec<Position> 
         .collect()
 }
 
+/// The `locus` of an undefined HP-5 evaluation: where the condition of the
+/// `holds` atom `atom` is. The settlement writes it and replay compares it.
+pub(super) fn atom_location(
+    clause: &CheckedHyperClause,
+    atom: FormulaNodeId,
+) -> Option<&ExpressionLocation> {
+    clause
+        .condition(atom)
+        .map(|(condition, _)| condition.location())
+}
+
 fn replay_undefined(
     clause: &CheckedHyperClause,
     letters: &CheckedHyperLetters<'_, '_>,
@@ -378,7 +392,7 @@ fn replay_undefined(
                 .body()
                 .node_id(index)
                 .ok_or_else(|| fault("a-formula-node-has-an-id"))?;
-            let Some((condition, _)) = clause.condition(atom) else {
+            let Some(location) = atom_location(clause, atom) else {
                 return Err(fault("an-HP-5-holds-node-has-a-condition"));
             };
             let reading = match letters.atom(atom, bindings, &[state], &mut meter) {
@@ -391,7 +405,7 @@ fn replay_undefined(
             if let AtomReading::Undefined(cause) = reading {
                 return Ok(position_index + 1 == positions.len()
                     && cause == undefined.cause
-                    && condition.location() == expected_locus);
+                    && location == expected_locus);
             }
         }
     }

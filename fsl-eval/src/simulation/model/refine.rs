@@ -13,6 +13,7 @@ use filament_exact::{Meter, ObjectReference, Outcome, Value};
 use fsl_semantics::check::CheckedRow;
 use fsl_semantics::model::observation::AdmissionFailure;
 use fsl_semantics::model::state::{ModelState, StateField};
+use ix_trace_rs::implements;
 
 use std::collections::BTreeMap;
 
@@ -21,8 +22,8 @@ use filament_exact::ValueType;
 use super::domain::Odometer;
 use super::walk::{exhausted, stop};
 use super::{
-    encode, identity_limits, state_document, BoundedDomain, ClauseOutcome, ModelSimState,
-    ModelSystem, BROKEN,
+    admitted_types, encode, identity_limits, state_document, BoundedDomain, ClauseOutcome,
+    ModelSimState, ModelSystem, BROKEN,
 };
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::key;
@@ -614,8 +615,13 @@ impl<'a> ModelSystem<'a> {
     /// each anchored as its paired anchor says. A refinement whose abstract
     /// subject names no initial snapshots builds its abstract system this
     /// way, from the states its mapping gives the concrete initial states
-    /// (FSL FR-630 "Request item"), not from snapshot documents.
-    #[must_use]
+    /// (FSL FR-630 "Request item"), not from snapshot documents. The admitted
+    /// member types are read from these states, as for snapshot documents.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`] for records of one universe key with different types.
+    #[implements("FR-125-AC-9")]
     pub fn with_initial_states(
         mut self,
         states: impl IntoIterator<
@@ -624,14 +630,15 @@ impl<'a> ModelSystem<'a> {
                 fsl_semantics::model::observation::SelectedAnchor,
             ),
         >,
-    ) -> Self {
+    ) -> Result<Self, AdmissionFailure> {
         self.initial_base = states
             .into_iter()
             .map(|(state, anchor)| ModelSimState::anchored(state, anchor))
             .collect();
+        self.admitted_types = admitted_types(&self.model, &self.universes, &self.initial_base)?;
         self.initial_stages.clear();
         self.initial_all = std::sync::OnceLock::new();
-        self
+        Ok(self)
     }
 }
 

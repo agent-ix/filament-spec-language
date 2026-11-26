@@ -53,6 +53,7 @@ use super::{AdmittedModel, Capability};
 use crate::family::requirements::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
+use crate::model::state::StateModel;
 
 pub(crate) mod emission;
 pub(crate) mod lowering;
@@ -469,9 +470,21 @@ pub struct PackageHyperParameter {
     /// The parameter's declared object type.
     pub object: EffectiveId,
     /// Every population of the alias's model that overlaps the type. A
-    /// package reader leaves it empty; its caller fills it from the admitted
-    /// model.
+    /// package reader leaves it empty; [`PackageHyperForm::bind_populations`]
+    /// fills it from the admitted model.
     pub populations: Vec<PopulationDomain>,
+}
+
+impl PackageHyperForm {
+    /// FR-172 "Object parameters": give each object parameter every
+    /// population of `model` that overlaps its type, as S3 does for a source
+    /// clause. Every rebuild from a package calls this.
+    #[implements("FR-172-AC-10")]
+    pub fn bind_populations(&mut self, model: &StateModel) {
+        for parameter in &mut self.parameters {
+            parameter.populations = model.overlapping_populations(parameter.object.clone());
+        }
+    }
 }
 
 /// A trace quantifier read from a package's ordered quantifier tuple.

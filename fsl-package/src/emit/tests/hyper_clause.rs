@@ -1052,9 +1052,7 @@ fn a_universal_package_hyper_form_rebuilds_equal_from_emitted_facts() {
             fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
         )
         .expect("the selected packages re-admit");
-        for parameter in &mut form.parameters {
-            parameter.populations = model.overlapping_populations(parameter.object.clone());
-        }
+        form.bind_populations(&model);
         assert_eq!(form.name, "Equal");
         assert_eq!(
             form.profile,

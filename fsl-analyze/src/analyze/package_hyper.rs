@@ -111,6 +111,9 @@ impl<'a> PackageHyperSubject<'a> {
             crate::plan::MODEL_BASED_POSITIONS,
         ) {
             Ok(request) => request,
+            Err(fsl_replay::ProductClosureRefusal::Admission(failure)) => {
+                return EngineReport::Refused(admission(&failure))
+            }
             Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
         };
         let clause = certificate.clause();

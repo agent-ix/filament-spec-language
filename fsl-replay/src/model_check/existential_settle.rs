@@ -6,6 +6,7 @@ use fsl_eval::simulation::model::ModelSystem;
 use ix_trace_rs::implements;
 
 use super::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
+use super::graph_hyper::atom_location;
 use super::graph_settle::{GraphReplaySettlement, StateGraphMethod, StateGraphRecord};
 use super::settle::Row;
 use super::state_graph::{
@@ -187,12 +188,8 @@ pub fn settle_existential(
                 predicate: Some(fsl_semantics::check::PredicateRole::Target),
                 transition: finding.site.transition.clone(),
                 state_key: finding.site.state_key.clone(),
-                // Replay compares the location of the atom the search
-                // found no value for.
                 locus: match &finding.site.locus {
-                    UndefinedLocus::Atom(atom) => clause
-                        .condition(*atom)
-                        .map(|(condition, _)| condition.location().clone()),
+                    UndefinedLocus::Atom(atom) => atom_location(clause, *atom).cloned(),
                     _ => None,
                 },
                 cause: finding.cause.clone(),

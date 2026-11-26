@@ -914,9 +914,7 @@ impl<'p> PackageModelInput<'p> {
             .package
             .hyper_clause_form(claim)
             .map_err(PendingClauseForm::Read)?;
-        for parameter in &mut form.parameters {
-            parameter.populations = self.model.overlapping_populations(parameter.object.clone());
-        }
+        form.bind_populations(&self.model);
         fsl_semantics::check::CheckedHyperClause::of_package_form(
             form,
             self.world.types(),
