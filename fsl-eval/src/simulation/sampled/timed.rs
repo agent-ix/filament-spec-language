@@ -37,6 +37,42 @@ impl From<InternalFault> for TimedDelayRefusal {
     }
 }
 
+/// One delay drawn from a law, and what drawing it used.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimedDelayDraw {
+    /// The drawn delay.
+    pub delay: Rational,
+    /// The probability of this draw: a discrete delay's weight over the
+    /// enabled weights, `1/n` over `n` points, `2^-q` on the grid, and 1
+    /// where the delay is determined.
+    pub probability: Rational,
+    /// Whether the draw used the sampler choice it was given, so the next
+    /// draw or tie-break takes the next choice index.
+    pub consumed_choice: bool,
+}
+
+impl TimedDelayDraw {
+    /// A delay the law and the windows determine, with no choice.
+    fn determined(delay: Rational) -> Self {
+        Self {
+            delay,
+            probability: Rational::from_integer(Integer::one()),
+            consumed_choice: false,
+        }
+    }
+
+    /// A delay taken from the grid value of one choice. At `q = 0` the grid
+    /// is the one value 0 and no choice is used.
+    fn on_grid(delay: Rational, q: u32) -> Self {
+        Self {
+            delay,
+            probability: Rational::from_integer(Integer::one())
+                .divided_by_power_of_two(u64::from(q)),
+            consumed_choice: q > 0,
+        }
+    }
+}
+
 /// Draw one exact delay from `distribution` conditioned on the union of
 /// `windows`, using `at` as its one sampler choice (FR-253/FR-254). The
 /// delay returned is always one the windows include.
@@ -46,23 +82,15 @@ pub fn draw_timed_delay(
     windows: &[DelayInterval],
     at: ChoicePoint,
     q: u32,
-) -> Result<Rational, TimedDelayRefusal> {
+) -> Result<TimedDelayDraw, TimedDelayRefusal> {
     match distribution {
         DelayDistribution::Discrete(support) => {
             let (delays, weights): (Vec<_>, Vec<_>) = support
                 .iter()
                 .filter(|(delay, _)| windows.iter().any(|window| window.contains(delay)))
-                .map(|(delay, weight)| (delay.clone(), weight.clone()))
+                .map(|(delay, weight)| (delay, weight.clone()))
                 .unzip();
-            if delays.is_empty() {
-                return Err(TimedDelayRefusal::NoMass);
-            }
-            if delays.len() == 1 {
-                return Ok(delays[0].clone());
-            }
-            let (selected, _) = weighted_choice_counted(at, &weights);
-            let index = selected.map_err(|_| TimedDelayRefusal::NoMass)?;
-            delays.get(index).cloned().ok_or(TimedDelayRefusal::NoMass)
+            draw_listed(&delays, &weights, at)
         }
         DelayDistribution::Uniform => draw_uniform(&ranges(windows, None)?, at, q),
         DelayDistribution::UniformRange { a, b } => {
@@ -75,9 +103,40 @@ pub fn draw_timed_delay(
         }
         DelayDistribution::Exponential { rate } => {
             let ranges = ranges(windows, None)?;
-            conditioned_exponential(rate, &ranges, &grid(at, q)?, q)
+            let delay = conditioned_exponential(rate, &ranges, &grid(at, q)?, q)?;
+            Ok(TimedDelayDraw::on_grid(delay, q))
         }
     }
+}
+
+/// Draw one of finitely many `delays` by exact `weights`; one delay uses no
+/// choice.
+fn draw_listed(
+    delays: &[&Rational],
+    weights: &[Rational],
+    at: ChoicePoint,
+) -> Result<TimedDelayDraw, TimedDelayRefusal> {
+    if let [delay] = delays {
+        return Ok(TimedDelayDraw::determined((*delay).clone()));
+    }
+    if delays.is_empty() {
+        return Err(TimedDelayRefusal::NoMass);
+    }
+    let (selected, _) = weighted_choice_counted(at, weights);
+    let index = selected.map_err(|_| TimedDelayRefusal::NoMass)?;
+    let (Some(delay), Some(weight)) = (delays.get(index), weights.get(index)) else {
+        return Err(TimedDelayRefusal::NoMass);
+    };
+    let total = weights
+        .iter()
+        .fold(Rational::from_integer(Integer::zero()), |sum, weight| {
+            sum.add(weight)
+        });
+    Ok(TimedDelayDraw {
+        delay: (*delay).clone(),
+        probability: weight.div(&total).ok_or(TimedDelayRefusal::NoMass)?,
+        consumed_choice: true,
+    })
 }
 
 /// The delays of `windows`, within `clip` where the law has a support, as
@@ -133,27 +192,18 @@ fn draw_uniform(
     ranges: &[DelayInterval],
     at: ChoicePoint,
     q: u32,
-) -> Result<Rational, TimedDelayRefusal> {
+) -> Result<TimedDelayDraw, TimedDelayRefusal> {
     if ranges.iter().any(|range| range.upper().is_none()) {
         return Err(TimedDelayRefusal::UnboundedUniform);
     }
     if ranges.iter().any(DelayInterval::has_length) {
-        return conditioned_uniform(ranges, &grid(at, q)?, q);
+        let delay = conditioned_uniform(ranges, &grid(at, q)?, q)?;
+        return Ok(TimedDelayDraw::on_grid(delay, q));
     }
     // A set of zero length is uniform over its points.
     let points: Vec<_> = ranges.iter().map(|range| range.lower().0).collect();
-    let index = if points.len() == 1 {
-        0
-    } else {
-        let weights = vec![Rational::from_integer(Integer::one()); points.len()];
-        weighted_choice_counted(at, &weights)
-            .0
-            .map_err(|_| TimedDelayRefusal::NoMass)?
-    };
-    points
-        .get(index)
-        .map(|point| (*point).clone())
-        .ok_or(TimedDelayRefusal::NoMass)
+    let weights = vec![Rational::from_integer(Integer::one()); points.len()];
+    draw_listed(&points, &weights, at)
 }
 
 /// The uniform law over the bounded `ranges` at the grid value `u` in
@@ -361,7 +411,7 @@ mod tests {
             step: 0,
             choice: 0,
         };
-        draw_timed_delay(distribution, &[window], at, 0)
+        draw_timed_delay(distribution, &[window], at, 0).map(|draw| draw.delay)
     }
 
     #[trace("FSpec-FR-420-AC-2")]
@@ -392,6 +442,49 @@ mod tests {
             draw_at_zero(&DelayDistribution::Uniform, closed(2, 2)),
             Ok(exact(2, 1))
         );
+    }
+
+    #[trace("FSpec-FR-420-AC-2")]
+    #[test]
+    fn a_draw_reports_its_probability_and_whether_it_used_its_choice() {
+        let at = ChoicePoint {
+            seed: 7,
+            trace: 0,
+            step: 0,
+            choice: 0,
+        };
+        let draw = |distribution: &DelayDistribution, windows: &[DelayInterval], q| {
+            let drawn = draw_timed_delay(distribution, windows, at, q).expect("a draw");
+            (drawn.probability, drawn.consumed_choice)
+        };
+        let two_points = [closed(1, 1), closed(3, 3)];
+        let three_points = [closed(1, 1), closed(3, 3), closed(5, 5)];
+        let at_two = DelayDistribution::UniformRange {
+            a: exact(2, 1),
+            b: exact(2, 1),
+        };
+        let rate = DelayDistribution::Exponential { rate: exact(1, 1) };
+        for q in [0, 8] {
+            // Uniform over finitely many points, at any grid.
+            assert_eq!(
+                draw(&DelayDistribution::Uniform, &two_points, q),
+                (exact(1, 2), true)
+            );
+            assert_eq!(
+                draw(&DelayDistribution::Uniform, &three_points, q),
+                (exact(1, 3), true)
+            );
+            // One delay is determined, however long the window.
+            assert_eq!(draw(&at_two, &[closed(0, 4)], q), (exact(1, 1), false));
+            assert_eq!(
+                draw(&DelayDistribution::Uniform, &[closed(2, 2)], q),
+                (exact(1, 1), false)
+            );
+        }
+        for law in [DelayDistribution::Uniform, rate] {
+            assert_eq!(draw(&law, &[closed(0, 4)], 0), (exact(1, 1), false));
+            assert_eq!(draw(&law, &[closed(0, 4)], 8), (exact(1, 256), true));
+        }
     }
 
     #[trace("FSpec-FR-420-AC-2")]

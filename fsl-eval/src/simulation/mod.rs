@@ -62,8 +62,8 @@ pub use sample::{
 };
 pub use sampled::{
     ProbabilisticSampler, SampleStop, SampledBehaviour, SampledDisagreement, SampledPosition,
-    SampledRecord, SampledReplay, SampledReplayRefusal, SampledStep, StepAt, TimedDelayRefusal,
-    draw_timed_delay, replay_sampled, sample_probabilistic,
+    SampledRecord, SampledReplay, SampledReplayRefusal, SampledStep, StepAt, TimedDelayDraw,
+    TimedDelayRefusal, draw_timed_delay, replay_sampled, sample_probabilistic,
 };
 pub use subject::{
     Bounded, ConstraintError, Cut, InitialStateRefusal, SubjectSystem, SubjectTransition,

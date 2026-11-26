@@ -3945,3 +3945,172 @@ fn a_law_with_no_mass_before_an_excluded_end_does_not_race() {
         );
     }
 }
+
+/// `send` and `reply` are each enabled at `x = 1 ms` and at `x = 3 ms` only,
+/// and the first to fire disables the other.
+fn two_point_world(law: &str, claim: &str, indifference: &str) -> crate::timed_world::World {
+    let claim =
+        window_claim(claim).replace("indifference 0.05", &format!("indifference {indifference}"));
+    let points = "(self.x = 1 ms or self.x = 3 ms)";
+    timed_world_with(
+        &[("send", &["phase"]), ("reply", &["phase"])],
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 and {points} }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             pre Reply using v on M::Call::reply {{ self.phase = 0 and {points} }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::send ~ {law};\n\
+             delay M::Call::reply ~ {law};\n\
+             workload Even on M {{ weight Call::send = 1; weight Call::reply = 1; }}\n\
+             {}",
+            claim
+        ),
+    )
+}
+
+/// The first race of trace `trace` from the initial state.
+fn first_race(
+    world: &crate::timed_world::World,
+    trace: u64,
+    q: u32,
+) -> fsl_eval::simulation::model::TimedRace {
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("a timed subject");
+    let workload = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .workload("Even")
+        .expect("the workload checks");
+    let at = fsl_eval::simulation::ChoicePoint {
+        seed: 7,
+        trace,
+        step: 0,
+        choice: 0,
+    };
+    let initial = timed.initial().remove(0);
+    fsl_eval::simulation::model::sample_timed_race(&timed, &initial, workload, at, q)
+        .expect("the race samples")
+}
+
+/// Each of two laws over the points `1 ms` and `3 ms` draws 1 ms with
+/// probability 1/2 at its own choice index, so the first delay is above 2 ms
+/// with probability `1/2 · 1/2` and the event has probability 3/4.
+#[trace("FSpec-FR-420-AC-2", "FSpec-FR-420-AC-4")]
+#[test]
+fn two_laws_over_points_draw_independently() {
+    for law in ["uniform", "discrete { 1 ms: 1, 3 ms: 1 }"] {
+        // Indifference 0.01 takes 4582 samples, so the band below is more than
+        // seven standard deviations either side of 3/4.
+        let world = two_point_world(
+            law,
+            "probability >= 0.65 [eventually[0 ms, 2 ms] not holds(c.phase = 0)]",
+            "0.01",
+        );
+        for q in [0, 64] {
+            let (estimate, decision) = measured_at_grid(&world, q);
+            let estimate = estimate.expect("an estimate");
+            assert!(
+                estimate > ratio(7, 10) && estimate < ratio(4, 5),
+                "{law} at q = {q}: {estimate:?}"
+            );
+            assert_eq!(decision, Decision::Accepted, "{law} at q = {q}");
+        }
+        // Two delay choices (0 and 1), then the tie-break (2) where they
+        // draw one delay: the step has probability 1/4, or 1/4 · 1/2.
+        let mut seen = [false; 2];
+        for q in [0, 64] {
+            for trace in 0..32 {
+                let race = first_race(&world, trace, q);
+                let step = &race.steps[0];
+                match step.choices.as_slice() {
+                    [0 | 1] => {
+                        assert_eq!(step.probability, ratio(1, 4), "{law} {trace}");
+                        assert_eq!(step.delay, ratio(1, 1), "{law} {trace}");
+                        seen[0] = true;
+                    }
+                    [0 | 1, 2] => {
+                        assert_eq!(step.probability, ratio(1, 8), "{law} {trace}");
+                        seen[1] = true;
+                    }
+                    other => panic!("{law} {trace}: choices {other:?}"),
+                }
+            }
+        }
+        assert_eq!(seen, [true, true], "{law}: both an untied and a tied race");
+    }
+}
+
+/// `uniform[2 ms, 2 ms]` draws 2 ms with no choice, so two of them tie at
+/// choice 0 and the step has the workload's probability 1/2.
+#[trace("FSpec-FR-420-AC-2")]
+#[test]
+fn a_law_over_one_delay_consumes_no_choice() {
+    let world = timed_world_with(
+        &[("send", &["phase"]), ("reply", &["phase"])],
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             pre Reply using v on M::Call::reply {{ self.phase = 0 }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::send ~ uniform[2 ms, 2 ms];\n\
+             delay M::Call::reply ~ uniform[2 ms, 2 ms];\n\
+             workload Even on M {{ weight Call::send = 1; weight Call::reply = 1; }}\n\
+             {}",
+            window_claim("probability >= 0.25 [eventually[0 ms, 4 ms] holds(c.phase = 1)]")
+        ),
+    );
+    for q in [0, 64] {
+        let race = first_race(&world, 0, q);
+        assert_eq!(race.steps[0].delay, ratio(2, 1), "q = {q}");
+        assert_eq!(race.steps[0].choices, [0], "q = {q}");
+        assert_eq!(race.steps[0].probability, ratio(1, 2), "q = {q}");
+    }
+}
+
+/// A kept witness of two point laws replays: the replay draws each delay at
+/// the choice index the sample did.
+#[trace("TC-709", "FR-254-AC-2")]
+#[test]
+fn a_witness_over_two_point_laws_replays() {
+    let world = two_point_world(
+        "uniform",
+        "probability >= 0.25 [eventually[0 ms, 4 ms] holds(c.phase = 1)]",
+        "0.05",
+    );
+    let verdict = completed(Ok(probe(&world)));
+    let witness = &verdict.witnesses[0];
+    assert!(
+        witness.path_probability == ratio(1, 4) || witness.path_probability == ratio(1, 8),
+        "{:?}",
+        witness.path_probability
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("a timed subject");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Probe")
+        .expect("the claim checks");
+    let workload = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .workload("Even")
+        .expect("the workload checks");
+    let cancel = Cancel::new();
+    let mut reader = witness_reader(&system, &world.package, claim, &sampler(), &cancel)
+        .expect("the timed claim is readable");
+    let replay = WitnessReplay {
+        system: &system,
+        timed: Some(&timed),
+        workload,
+        provenance: &verdict.provenance,
+        cancel: &cancel,
+    };
+    assert_eq!(
+        replay_sampled_witness(&replay, witness, &mut reader),
+        Ok(SampledWitnessReplay::Reproduced)
+    );
+}

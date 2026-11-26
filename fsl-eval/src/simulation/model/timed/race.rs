@@ -10,7 +10,9 @@ use ix_trace_rs::implements;
 use super::{GuardedStep, TimedState, TimedStop, TimedSystem};
 use crate::simulation::choice::{weighted_choice_counted, ChoicePoint};
 use crate::simulation::model::TransitionId;
-use crate::simulation::sampled::{draw_timed_delay, take_enabled_step, TimedDelayRefusal};
+use crate::simulation::sampled::{
+    draw_timed_delay, take_enabled_step, TimedDelayDraw, TimedDelayRefusal,
+};
 use crate::simulation::sampled::{SampleStop, SampledBehaviour, SampledStep, StepAt};
 use crate::simulation::StateKey;
 use crate::temporal::{TemporalRefusal, TimedTrace};
@@ -627,8 +629,8 @@ pub fn sample_timed_race(
             });
         }
         let point = ChoicePoint { choice, ..at };
-        let delay = match draw_timed_delay(distribution, &window.intervals, point, q) {
-            Ok(delay) => delay,
+        let drawn = match draw_timed_delay(distribution, &window.intervals, point, q) {
+            Ok(drawn) => drawn,
             Err(TimedDelayRefusal::NoMass) => continue,
             Err(TimedDelayRefusal::Internal(fault)) => return Err(TimedRaceStop::Internal(fault)),
             Err(TimedDelayRefusal::UnboundedUniform | TimedDelayRefusal::GridExponent { .. }) => {
@@ -638,15 +640,16 @@ pub fn sample_timed_race(
                 });
             }
         };
-        let probability = delay_probability(distribution, &window.intervals, &delay, q);
-        let consumes = delay_choice(distribution, &window.intervals, q);
-        let choices = if consumes {
+        let choices = if drawn.consumed_choice {
             let selected = choice;
             choice = choice.checked_add(1).ok_or(TimedRaceStop::DrawRange)?;
             vec![selected]
         } else {
             Vec::new()
         };
+        let TimedDelayDraw {
+            delay, probability, ..
+        } = drawn;
         let candidate = Candidate {
             step: window.transition,
             delay: delay.clone(),
@@ -843,54 +846,6 @@ fn workload_weight(
         })
         .map(|(_, weight)| weight.clone())
         .ok_or(TimedRaceStop::MissingWeight)
-}
-
-fn delay_choice(
-    distribution: &DelayDistribution,
-    intervals: &[super::DelayInterval],
-    q: u32,
-) -> bool {
-    match distribution {
-        DelayDistribution::Discrete(values) => {
-            values
-                .iter()
-                .filter(|(delay, _)| intervals.iter().any(|window| window.contains(delay)))
-                .count()
-                > 1
-        }
-        DelayDistribution::Uniform | DelayDistribution::UniformRange { .. } => {
-            q > 0
-                && intervals.iter().any(|window| {
-                    window
-                        .upper()
-                        .is_none_or(|(upper, _)| upper > window.lower().0)
-                })
-        }
-        DelayDistribution::Exponential { .. } => q > 0,
-    }
-}
-
-fn delay_probability(
-    distribution: &DelayDistribution,
-    intervals: &[super::DelayInterval],
-    delay: &Rational,
-    q: u32,
-) -> Rational {
-    match distribution {
-        DelayDistribution::Discrete(values) => {
-            let selected = values
-                .iter()
-                .find(|(value, _)| value == delay)
-                .map(|(_, weight)| weight);
-            let total = values
-                .iter()
-                .filter(|(value, _)| intervals.iter().any(|window| window.contains(value)))
-                .fold(zero(), |sum, (_, weight)| sum.add(weight));
-            selected.map_or_else(zero, |weight| quotient(weight, &total))
-        }
-        _ if !delay_choice(distribution, intervals, q) => one(),
-        _ => Rational::from_integer(Integer::one()).divided_by_power_of_two(u64::from(q)),
-    }
 }
 
 fn candidates_probability(candidates: &[Candidate]) -> Rational {
