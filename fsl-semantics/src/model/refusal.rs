@@ -1535,7 +1535,9 @@ pub mod fixtures {
     //! module's tests and the layer-5 evaluator's catalog tests
     //! (`value::expression::causes`), which reach it across the
     //! `fsl-semantics` crate boundary through `test-support`.
-    use super::{MemberPath, MemberRoot, ModelRefusalCause, OfferedSelection};
+    use super::{
+        EffectiveParameterType, MemberPath, MemberRoot, ModelRefusalCause, OfferedSelection,
+    };
     use crate::model::domain_package::{Multiplicity, ValueTypeRef};
     use filament_checked::key::DeclarationKey;
     use filament_exact::UniverseId;
