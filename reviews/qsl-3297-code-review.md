@@ -67,3 +67,43 @@ Merge-check reds: the 13 named test failures fail with the same panic
 lines and values with the test diff removed (only thread ids differ); the
 rover test is the 60 s wall-clock assertion and passed alone. No new failure.
 Lint reds map to QSL-3363, QSL-3309, QSL-3385, QSL-3465.
+
+## New findings (disposition pass 1)
+
+Head checked: 970559b18c42df77f3103ffab1cd5845bcf4aacf. Production change
+reviewed: `fair_components_within` (fair.rs) and
+`decide_fair_reachability_threshold` (fair_interval.rs).
+
+Hand values, derived here. Unit-test product (0 to 1 or 2, half each; 1 to
+target 3; 3 to 1; 2 loops): the only end component on `{0,1,2}` is `{2}`, so
+`U={2}` and the fair minimum is `[1/2, 1, 0, 1]`; components over the whole
+product add `{1,3}`, giving `[0,0,0,1]` once 3 is dropped. Returning-target
+model: no action of `s` stays off the target, so `U` is empty and both values
+are 1. Refinement model: `U={u}`, `v=(s 0, u 0, g 1)` with `drift`; without it
+`s` keeps `1/2`. The extraction leaves the exact route's computation
+unchanged; both routes now read FR-200's `U` from one function. No caller of
+the interval function exists in the repository outside its unit tests.
+
+Exact route against interval route on `FreeDelays` rows, probed on hand-built
+products (temporary lib tests, removed): one row with a cycle through the
+target, both give `[1/2, 1, 0]`; two rows, exact gives `[1/4, 1, 0]` and the
+interval route `Err(InvalidProbability)`; one row with `fair weak go`, the
+interval route gives 1 (correct) and the exact route 0 (wrong); with
+`fair strong go` both give 1. Both findings below predate this PR. FR-204
+admits no fairness set to the digital MDP, and the digital builder writes an
+empty set, so a checked source reaches neither.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | Public `decide_fair_reachability` returns a wrong minimum on a `FreeDelays` product with a weak constraint: the row expansion adds a dispatch state with no action, so the constraint is not enabled at every state of the component and the component is kept. One row, `stay` loops, `go` reaches the target, `fair weak go`: exact 0, hand value 1 (interval route 1) | fsl-analyze/src/exact_probabilistic/fair.rs:195-218 |
+| FND-007 | low | Public `decide_fair_reachability_threshold` builds its graph on the unexpanded product, so a `FreeDelays` state with two or more rows is `Err(InvalidProbability)` where the exact route gives `[1/4, 1, 0]`; its doc says components are derived as the exact route derives them | fsl-analyze/src/exact_probabilistic/fair_interval.rs:34-37 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Drift-less variant accepts `(1/2, 0, 1)` on both routes; with the checker's strong arm made to ignore the constraint (temporary, reverted) the test fails there |
+| FND-002 | deferred | QSL-3488, by decision of the limits lane owner |
+| FND-003 | fixed | The test doc says no stop is pinned to a refinement round and names QSL-3488 |
+| FND-004 | fixed | Interval route takes components on non-target states through `fair_components_within`; with the old derivation restored (temporary, reverted) the new unit test fails |
+| FND-005 | fixed | PR body names QSL-3380 as Done and the merge check ran on main 44c333a924; main has since moved to 0f6c371f7e with no file shared with this PR |
