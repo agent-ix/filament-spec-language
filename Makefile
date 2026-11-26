@@ -369,7 +369,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-base build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # runs the focused conformance lanes.
@@ -483,12 +483,12 @@ string-edge-install:
 # FSL-tree rules gate `ci:` without CG_CLONE.
 #
 # `arch-lint` runs the checks that need only this repository:
-# api-surface-fsl and qualified-core.
+# api-surface-fsl, qualified-core and trusted-base.
 IR_CLONE ?=
 RT_CLONE ?=
 CG_CLONE ?=
 
-.PHONY: arch-lint-direction arch-lint-api-surface arch-lint-api-surface-fsl arch-lint arch-lint-qualified-core
+.PHONY: arch-lint-direction arch-lint-api-surface arch-lint-api-surface-fsl arch-lint arch-lint-qualified-core arch-lint-trusted-base
 
 arch-lint-direction:
 	cargo run --locked -p arch-lint -- direction \
@@ -510,10 +510,17 @@ arch-lint-api-surface-fsl:
 arch-lint-qualified-core:
 	cargo run --locked -p arch-lint -- qualified-core --fsl .
 
-# Runs the two checks that need only this repository.
+# FR-1051: each certificate checker names only its trusted base, shares no
+# other function with the producer and takes no producer-built value; every
+# sharing that stands is an entry of the check's data under an FR-1051 row.
+# Needs only this repository, so it is part of `ci:`.
+arch-lint-trusted-base:
+	cargo run --locked -p arch-lint -- trusted-base --fsl .
+
+# Runs the three checks that need only this repository.
 # `arch-lint-direction` needs IR_CLONE/RT_CLONE/CG_CLONE, and
 # `arch-lint-api-surface` needs CG_CLONE (see above); each runs separately.
-arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
+arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-base
 
 
 # The committed performance benchmarks (`fsl-bench/`), one
