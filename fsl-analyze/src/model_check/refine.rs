@@ -70,6 +70,8 @@ use ix_trace_rs::implements;
 #[cfg(test)]
 use fsl_replay::{check_protocol_initial, check_protocol_step};
 
+use crate::analyze::EngineBounds;
+use fsl_foundation::budget::Budget;
 use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
 use super::fair_summary::{
     CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
@@ -101,6 +103,9 @@ pub struct RefinementCheckRequest<'a> {
     pub max_depth: Option<usize>,
     /// The run's caller-raisable budgets.
     pub limits: ModelCheckLimits,
+    /// The item's `analysis.retained_bytes` allowance (FR-255 "Retained
+    /// bytes"); `None` runs on the published default.
+    pub retained: Option<&'a Budget>,
 }
 
 /// Request-owned binding for the selected abstract protocol subject.
@@ -358,6 +363,9 @@ fn check_with(
         meter: simulation.meter,
         max_candidates: simulation.expansion.max_candidates,
         cancel,
+        retained: request.retained.cloned().unwrap_or_else(|| {
+            EngineBounds::default().item_budget(simulation.meter, cancel)
+        }),
         nodes: Vec::new(),
         known: BTreeMap::new(),
         queue: VecDeque::new(),
@@ -535,6 +543,8 @@ struct Run<'r, 'a> {
     meter: filament_exact::ScalarLimits,
     max_candidates: u64,
     cancel: &'r Cancel,
+    /// The item's `analysis.retained_bytes` allowance.
+    retained: Budget,
     nodes: Vec<Node>,
     /// Each product state's index by its key: the concrete state's key
     /// bytes, its history values' key and its candidates' sorted state
@@ -2000,6 +2010,7 @@ impl Run<'_, '_> {
                         state.state(),
                         widen(self.limits.limits.max_transitions),
                         widen(self.transitions),
+                        Some(&self.retained),
                     )
                     .map_err(ModelCheckRefusal::Protocol)?;
                     self.transitions = self.transitions.saturating_add(
@@ -2239,6 +2250,7 @@ impl Run<'_, '_> {
                     },
                     widen(self.limits.limits.max_transitions),
                     widen(self.transitions),
+                    Some(&self.retained),
                 ),
                 None => check_step_for_model(
                     self.refinement,
@@ -3568,6 +3580,7 @@ mod tests {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         }
     }
 
@@ -3712,6 +3725,7 @@ mod tests {
             meter: UNLIMITED,
             max_candidates: systems.abstract_system.max_candidates(),
             cancel: &cancel,
+            retained: EngineBounds::default().item_budget(UNLIMITED, &cancel),
             nodes: Vec::new(),
             known: BTreeMap::new(),
             queue: VecDeque::new(),

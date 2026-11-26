@@ -146,6 +146,7 @@ impl<'a> PackageHyperSubject<'a> {
                 Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
             };
         let matcher = CheckedStepMatch::for_evaluator(self.input.evaluator, clause);
+        let retained = limits.engines.item_budget(limits.accounting, cancel);
         let outcome = match check_hyper(
             HyperCheckRequest {
                 clause,
@@ -162,6 +163,7 @@ impl<'a> PackageHyperSubject<'a> {
                 max_depth: form.max_depth,
                 meter: limits.accounting,
                 reductions: form.reductions.clone(),
+                retained: Some(&retained),
             },
             cancel,
         ) {

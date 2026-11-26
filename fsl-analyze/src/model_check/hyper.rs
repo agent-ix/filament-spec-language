@@ -131,7 +131,8 @@ use fsl_eval::temporal::{
     evaluate_tuple, AtomReading, ComponentPosition, ComponentTrace, LetterStop, TemporalOutcome,
     TemporalPosition, TupleLetters,
 };
-use fsl_foundation::IdentityLimits;
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::{IdentityLimits, Setting};
 use fsl_replay::{
     AppliedReduction, BoundCovers, HyperCounterexample, HyperCounterexampleKind, HyperLocus,
     HyperOutcome, HyperReductionCause, HyperStep, HyperTrace, HyperUndefined, IncompleteCause,
@@ -141,10 +142,16 @@ use fsl_replay::{
 use fsl_semantics::check::{CheckedHyperClause, CopyGroup, FormulaNodeId, HyperForm};
 use ix_trace_rs::implements;
 
-use super::check::{atom_refusal, fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
+use super::check::{
+    atom_refusal, fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS,
+    EN1_STATE_OVERHEAD_BYTES,
+};
+use crate::analyze::EngineBounds;
+use filament_semantic_value::catalog::CatalogCode;
 use super::fair_walk::{tree_path, FairModel};
 use super::graph::{
-    retain, retain_reduced, GraphExploration, ProductStateId, RetainedEdge, RetainedGraph,
+    retain, retain_reduced_admitting, GraphExploration, ProductStateId,
+    RetainConfig, RetainedEdge, RetainedGraph,
 };
 use super::reduce;
 use fsl_route::reductions::Reductions;
@@ -164,6 +171,10 @@ pub use single::{check_single_existential, SingleExistentialRequest, SingleExist
 pub(super) fn atom_halt(stop: fsl_eval::model_subject::AtomStop) -> ModelCheckRefusal {
     atom_refusal(stop).unwrap_or_else(|_| fault("an-exhausted-atom-meter-is-a-meter-halt"))
 }
+
+/// The cause a refused `analysis.retained_bytes` charge gives the exploration
+/// engine; the run's [`Ending`] names the limit.
+const RETAINED_STOP: CatalogCode = CatalogCode::new("resource_exhausted", "limit-reached");
 
 type HyperGraph = RetainedGraph<HyperState, HyperTransition, HyperFinding>;
 
@@ -194,6 +205,9 @@ pub struct HyperCheckRequest<'a> {
     /// The reductions the request selects. Copy-swap is not among them: the
     /// compiler applies it when the clause has the symmetry (FR-174).
     pub reductions: Reductions,
+    /// The item's `analysis.retained_bytes` allowance (FR-255 "Retained
+    /// bytes"); `None` runs on the published default.
+    pub retained: Option<&'a Budget>,
 }
 
 /// Why [`check_hyper`] explored nothing, or built no counterexample
@@ -352,6 +366,10 @@ pub fn check_hyper(
         witness: matches!(clause.form(), Some(HyperForm::ForallExistsSafety)),
         projected,
         cancel,
+        retained: request.retained.cloned().unwrap_or_else(|| {
+            EngineBounds::default().item_budget(request.meter, cancel)
+        }),
+        retain_stop: std::cell::RefCell::new(None),
     };
     run.decide(&instances)
 }
@@ -858,6 +876,10 @@ struct Run<'r, 'a> {
     /// Whether the clause is HP-6.
     projected: bool,
     cancel: &'r Cancel,
+    /// The item's `analysis.retained_bytes` allowance, one for every instance.
+    retained: Budget,
+    /// Why a charge to `retained` stopped the run, for [`Self::explore`].
+    retain_stop: std::cell::RefCell<Option<Ending>>,
 }
 
 impl<'a> Run<'_, 'a> {
@@ -1645,14 +1667,18 @@ impl<'a> Run<'_, 'a> {
             Finding = HyperFinding,
         >,
     {
-        let retained = retain_reduced(
+        let identity = IdentityLimits::default();
+        let retained = retain_reduced_admitting(
             product,
             group,
             None,
-            totals.remaining(self.request.limits.limits),
-            IdentityLimits::default(),
-            cap,
+            RetainConfig {
+                limits: totals.remaining(self.request.limits.limits),
+                identity,
+                max_depth: cap,
+            },
             || self.cancel.poll() && self.cancel.cause().is_some(),
+            |_: &HyperState, key_len: usize| self.admit(key_len),
         );
         match retained {
             Ok(graph) => Ok(graph),
@@ -1661,6 +1687,38 @@ impl<'a> Run<'_, 'a> {
                 _ => Err(error.model_refusal(IdentityLimits::default())),
             },
         }
+    }
+
+    /// Charge a product state to the item's `analysis.retained_bytes` before
+    /// the graph stores it: the fixed entry overhead and its key, as the graph
+    /// and the index each hold it (FR-255 "Retained bytes").
+    #[implements("FR-255-AC-43")]
+    fn admit(&self, key_len: usize) -> Result<(), CatalogCode> {
+        let bytes = widen(key_len)
+            .saturating_mul(2)
+            .saturating_add(EN1_STATE_OVERHEAD_BYTES);
+        let ending = match self.retained.charge(Setting::AnalysisRetainedBytes, bytes) {
+            Ok(()) => return Ok(()),
+            Err(BudgetStop::Limit(limit)) => Ending::Stopped(
+                IncompleteCause::ResourceExhausted,
+                Some(ReachedLimit {
+                    limit: ModelCheckLimit::AnalysisRetainedBytes,
+                    value: limit.configured_bound(),
+                }),
+                None,
+            ),
+            Err(BudgetStop::Cancelled(source)) => {
+                Ending::Stopped(IncompleteCause::Cancelled { source }, None, None)
+            }
+            Err(BudgetStop::Accounting(_)) => {
+                Ending::Stopped(IncompleteCause::ResourceExhausted, None, None)
+            }
+        };
+        let mut slot = self.retain_stop.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(ending);
+        }
+        Err(RETAINED_STOP)
     }
 
     /// The stabiliser of the keys `instance` binds in the selected key
@@ -1771,9 +1829,12 @@ impl<'a> Run<'_, 'a> {
                 Some(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None, None),
                 None => return Err(fault("a-cancelled-run-has-a-cause")),
             },
-            Outcome::Stopped { .. } => match product.take_halt() {
-                Some(halt) => self.halt_ending(halt)?,
-                None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
+            Outcome::Stopped { .. } => match self.retain_stop.borrow_mut().take() {
+                Some(ending) => ending,
+                None => match product.take_halt() {
+                    Some(halt) => self.halt_ending(halt)?,
+                    None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
+                },
             },
             // The horizon is the ranking cap's or the request's: the instance
             // is explored as far as it can still win or be asked for.

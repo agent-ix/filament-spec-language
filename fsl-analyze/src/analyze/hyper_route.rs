@@ -128,7 +128,8 @@ pub(super) fn hyper_item<'a>(
                         },
                     );
                 }
-                let outcome = match check_hyper(
+                let retained = limits.engines.item_budget(limits.accounting, cancel);
+        let outcome = match check_hyper(
                     HyperCheckRequest {
                         clause,
                         subjects: clause
@@ -145,6 +146,7 @@ pub(super) fn hyper_item<'a>(
                         max_depth: form.max_depth,
                         meter: limits.accounting,
                         reductions: form.reductions.clone(),
+                        retained: Some(&retained),
                     },
                     cancel,
                 ) {

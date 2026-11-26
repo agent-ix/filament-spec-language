@@ -97,6 +97,7 @@ fn a_twice_protocol_refinement_holds_uncertified() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -126,6 +127,69 @@ fn a_twice_protocol_refinement_holds_uncertified() {
         }
     );
     assert_eq!(settled.basis, SettlementBasis::ClosedScope);
+}
+
+/// FR-255-AC-29: a one-byte retention allowance stops a protocol refinement
+/// at its first closure path, before that path is stored.
+#[trace("FR-255-AC-29")]
+#[test]
+fn a_one_byte_retention_allowance_stops_a_protocol_refinement_at_its_first_closure_path() {
+    use fsl_foundation::{budget::Budget, Setting};
+    let source = cas_twice(false, false);
+    let world = World::with_internals(
+        Variant {
+            peek: false,
+            intended_terminal: true,
+            ..Variant::CAS
+        },
+        &source,
+        serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
+    );
+    let run = |bound: Option<u64>| -> (SafetyOutcome, Budget) {
+        let mut engines = fsl_analyze::analyze::EngineBounds::default();
+        if let Some(bound) = bound {
+            assert!(engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        let retained = engines.item_budget(UNLIMITED, &Cancel::new());
+        let outcome = check_refinement(
+            RefinementCheckRequest {
+                refinement: world.refinement(),
+                concrete: ModelSubject {
+                    simulation: world.concrete_request(UNLIMITED),
+                    proof_bounds: Vec::new(),
+                },
+                abstract_package: world.package(),
+                abstract_initial: vec![world.abstract_initial()].into(),
+                abstract_protocol_binding: Some(protocol_binding()),
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                retained: Some(&retained),
+            },
+            &Cancel::new(),
+        )
+        .expect("the abstract protocol subject is admitted")
+        .safety;
+        (outcome, retained)
+    };
+    let (stopped, retained) = run(Some(1));
+    assert_eq!(retained.consumed(Setting::AnalysisRetainedBytes), 0);
+    let SafetyOutcome::Stopped { cause, limit, .. } = &stopped else {
+        panic!("expected a stop, got {stopped:?}");
+    };
+    assert_eq!(*cause, fsl_replay::IncompleteCause::ResourceExhausted);
+    assert_eq!(
+        *limit,
+        Some(fsl_replay::ReachedLimit {
+            limit: fsl_replay::ModelCheckLimit::AnalysisRetainedBytes,
+            value: 1,
+        })
+    );
+    assert_eq!(format!("{stopped:?}"), format!("{:?}", run(Some(1)).0));
+    let (published, _) = run(None);
+    assert!(
+        matches!(published, SafetyOutcome::HoldsUncertified { .. }),
+        "{published:?}"
+    );
 }
 
 /// FR-899-AC-10 (TC-552): the weak `inc` requirement settles over protocol
@@ -163,6 +227,7 @@ fn a_protocol_refinement_checks_hidden_fairness_state_liveness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -214,6 +279,7 @@ fn cas_twice_without_peek_holds_weak_abstract_inc_fairness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -310,6 +376,7 @@ fn a_stronger_concrete_assumption_never_settles_proved() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -389,6 +456,7 @@ fn protocol_scheduler_fairness_can_imply_a_concrete_assumption() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -486,6 +554,7 @@ fn one_protocol_class_does_not_imply_a_second_concrete_operation_assumption() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -618,6 +687,7 @@ fn a_protocol_product_limit_stops_assumption_decision_incomplete() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -694,6 +764,7 @@ fn required_strong_each_fairness_implies_concrete_weak_whole() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -733,6 +804,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -888,6 +960,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: limited,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -954,6 +1027,7 @@ fn a_satisfied_ensure_does_not_change_the_assumption_relation() {
                 abstract_protocol_binding: Some(protocol_binding()),
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                retained: None,
             },
             &Cancel::new(),
         )
@@ -1127,6 +1201,7 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
         }),
         max_depth: None,
         limits: ModelCheckLimits::default(),
+        retained: None,
     };
     let memory_fairness = preopened
         .abstract_protocol
@@ -1285,6 +1360,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1397,6 +1473,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: limited,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1469,6 +1546,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1539,6 +1617,7 @@ fn assert_refuted_and_replayed(
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1631,6 +1710,7 @@ fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1712,6 +1792,7 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1815,6 +1896,7 @@ fn a_refusal_is_permitted_when_one_stable_protocol_candidate_refuses() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1865,6 +1947,7 @@ fn an_incoming_step_rule_failure_precedes_refusal_at_the_same_state() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1927,6 +2010,7 @@ fn an_intended_protocol_terminal_mismatch_replays() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2037,6 +2121,7 @@ fn a_concrete_terminal_success_mismatch_replays() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2097,6 +2182,7 @@ fn model_abstract_refinements_exclude_protocol_refusal_and_terminal_failures() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2570,6 +2656,7 @@ fn the_engine_refuses_a_refinement_over_a_protocol() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     );
@@ -2597,6 +2684,7 @@ fn the_certificate_checker_refuses_a_refinement_over_a_protocol() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2710,6 +2798,7 @@ fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
                 abstract_protocol_binding: Some(abstract_binding),
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                retained: None,
             },
             &Cancel::new(),
         )
@@ -2769,6 +2858,7 @@ fn an_absent_abstract_subject_starts_a_protocol_abstract_side_at_the_mapped_stat
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2841,6 +2931,7 @@ fn check_forever(
             abstract_protocol_binding: Some(forever_binding(unit)),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -3283,6 +3374,7 @@ fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -3354,6 +3446,7 @@ fn protocol_initial_closures_share_the_product_transition_budget() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: Some(0),
             limits,
+            retained: None,
         },
         &Cancel::new(),
     )

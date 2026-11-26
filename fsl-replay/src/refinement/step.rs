@@ -19,6 +19,8 @@
 use super::read::{MappingExpression, MappingTarget as StepTarget, RefinementRead, StepMapping};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{ObjectReference, Value};
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::Setting;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -447,6 +449,7 @@ pub fn check_protocol_initial(
         concrete_initial,
         u64::MAX,
         0,
+        None,
     )
 }
 
@@ -466,6 +469,7 @@ pub fn check_protocol_initial_with_transition_limit(
     concrete_initial: &ModelState,
     max_transitions: u64,
     already_consumed: u64,
+    retained: Option<&Budget>,
 ) -> Result<StepResult, ProtocolRefusal> {
     let verdict = check_initial(
         refinement,
@@ -516,6 +520,7 @@ pub fn check_protocol_initial_with_transition_limit(
         roots,
         max_transitions.saturating_sub(already_consumed),
         max_transitions,
+        retained,
     ) {
         Ok(closure) => closure,
         Err(verdict) => {
@@ -570,6 +575,7 @@ pub fn check_protocol_step(
         step,
         u64::MAX,
         0,
+        None,
     )
 }
 
@@ -589,6 +595,7 @@ pub fn check_protocol_step_with_transition_limit(
     step: &ConcreteStep<'_>,
     max_transitions: u64,
     already_consumed: u64,
+    retained: Option<&Budget>,
 ) -> StepResult {
     let row = step
         .transition
@@ -635,6 +642,7 @@ pub fn check_protocol_step_with_transition_limit(
             model_result.abstract_successors,
             max_transitions,
             already_consumed,
+            retained,
         );
     }
     if protocol_node {
@@ -649,6 +657,7 @@ pub fn check_protocol_step_with_transition_limit(
             model_result.abstract_successors,
             max_transitions,
             already_consumed,
+            retained,
         );
     }
     // In a protocol refinement, each protocol candidate already identifies
@@ -752,6 +761,7 @@ pub fn check_protocol_step_with_transition_limit(
         matching,
         remaining_transitions,
         max_transitions,
+        retained,
     ) {
         Ok(closure) => closure,
         Err(verdict) => {
@@ -812,6 +822,7 @@ fn check_protocol_any_step(
     mut count: u64,
     max_transitions: u64,
     already_consumed: u64,
+    retained: Option<&Budget>,
 ) -> StepResult {
     let mapped = match post.abstract_states.first() {
         Some(state) => state,
@@ -926,6 +937,7 @@ fn check_protocol_any_step(
         seeds,
         remaining_transitions,
         max_transitions,
+        retained,
     ) {
         Ok(closure) => closure,
         Err(verdict) => {
@@ -996,6 +1008,7 @@ fn check_protocol_node_step(
     mut count: u64,
     max_transitions: u64,
     already_consumed: u64,
+    retained: Option<&Budget>,
 ) -> StepResult {
     let Some(transition) = step.transition else {
         return StepResult {
@@ -1142,6 +1155,7 @@ fn check_protocol_node_step(
         matching,
         remaining_transitions,
         max_transitions,
+        retained,
     ) {
         Ok(closure) => closure,
         Err(verdict) => {
@@ -1258,6 +1272,7 @@ fn protocol_closure(
     seeds: Vec<ProtocolCandidate>,
     remaining_transitions: u64,
     transition_limit: u64,
+    retained: Option<&Budget>,
 ) -> Result<(Vec<ProtocolCandidate>, u64), StepVerdict> {
     let traces = seeds
         .into_iter()
@@ -1270,6 +1285,7 @@ fn protocol_closure(
         traces,
         remaining_transitions,
         transition_limit,
+        retained,
     )
     .map_err(|verdict| *verdict)?;
     let mut keyed = Vec::new();
@@ -1352,6 +1368,47 @@ fn protocol_trace_from_predecessors(
     Ok(trace)
 }
 
+/// FR-255 "Retained bytes": the fixed overhead of one stored protocol
+/// closure path.
+pub const PROTOCOL_CLOSURE_PATH_OVERHEAD_BYTES: u64 = 256;
+
+/// Charge a closure path to the item's `analysis.retained_bytes` allowance
+/// before it is stored (FR-255 "Retained bytes"): the fixed overhead, the
+/// bytes of the keys it owns and the size of each step it holds. A caller
+/// with no allowance (`None`) charges nothing.
+#[implements("FR-255-AC-29")]
+fn charge_closure_path(
+    retained: Option<&Budget>,
+    path: &ProtocolTrace,
+) -> Result<(), Box<StepVerdict>> {
+    let Some(retained) = retained else {
+        return Ok(());
+    };
+    let widen = |length: usize| u64::try_from(length).unwrap_or(u64::MAX);
+    let step = widen(std::mem::size_of::<fsl_eval::simulation::protocol::ProtocolTransition>());
+    let bytes = path
+        .candidate_keys
+        .iter()
+        .fold(widen(path.start_key.len()), |total, key| {
+            total.saturating_add(widen(key.len()))
+        })
+        .saturating_add(widen(path.transitions.len()).saturating_mul(step))
+        .saturating_add(PROTOCOL_CLOSURE_PATH_OVERHEAD_BYTES);
+    match retained.charge(Setting::AnalysisRetainedBytes, bytes) {
+        Ok(()) => Ok(()),
+        Err(BudgetStop::Limit(limit)) => Err(Box::new(StepVerdict::Stopped(ReachedLimit {
+            limit: ModelCheckLimit::AnalysisRetainedBytes,
+            value: limit.configured_bound(),
+        }))),
+        // A cancelled run decides nothing; the product polls its handle
+        // before each edge and settles the cancellation itself.
+        Err(BudgetStop::Cancelled(_)) => Err(Box::new(StepVerdict::Undetermined(
+            Undetermined::UndecidedSuccessor,
+        ))),
+        Err(BudgetStop::Accounting(_)) => Err(Box::new(fault("a-byte-charge-is-no-kernel-charge"))),
+    }
+}
+
 #[implements("FR-148-AC-8")]
 fn protocol_closure_traces(
     refinement: &dyn RefinementRead,
@@ -1359,6 +1416,7 @@ fn protocol_closure_traces(
     seeds: Vec<ProtocolTrace>,
     remaining_transitions: u64,
     transition_limit: u64,
+    retained: Option<&Budget>,
 ) -> Result<(Vec<ProtocolTrace>, u64), Box<StepVerdict>> {
     let internal: std::collections::BTreeSet<&str> = refinement
         .abstract_internal()
@@ -1473,9 +1531,9 @@ fn protocol_closure_traces(
             }
         }
         for key in known.keys() {
-            paths.push(protocol_trace_from_predecessors(
-                &seed, &seed_key, key, &known,
-            )?);
+            let path = protocol_trace_from_predecessors(&seed, &seed_key, key, &known)?;
+            charge_closure_path(retained, &path)?;
+            paths.push(path);
         }
         for (key, transition, post_key) in closure_paths {
             let mut cycle = protocol_trace_from_predecessors(&seed, &seed_key, &key, &known)?;
@@ -1485,6 +1543,7 @@ fn protocol_closure_traces(
             cycle.transitions.push(transition);
             cycle.candidate_keys.push(post_key);
             cycle.candidates.push(candidate.clone());
+            charge_closure_path(retained, &cycle)?;
             paths.push(cycle);
         }
     }

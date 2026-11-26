@@ -94,6 +94,7 @@ fn outcome(subject: &Subject<'_>) -> RefinementOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

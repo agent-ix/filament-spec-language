@@ -178,6 +178,10 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if let Some(samples) = form.witness_samples {
         model_limits.witness_samples = samples;
     }
+    let retained = read
+        .limits
+        .engines
+        .item_budget(read.limits.accounting, cancel);
     let request = StateGraphRequest {
         subject: ModelSubject {
             simulation: read.simulation(),
@@ -190,6 +194,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         max_depth: form.max_depth,
         limits: model_limits,
         seed: form.seed,
+        retained: Some(&retained),
     };
     let replay = |instance: &StateGraphInstanceOutcome| {
         #[cfg_attr(not(feature = "test-support"), allow(unused_mut))]

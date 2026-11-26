@@ -288,6 +288,7 @@ fn settle(world: &World, initial: &DocumentRef) -> TerminalValue {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

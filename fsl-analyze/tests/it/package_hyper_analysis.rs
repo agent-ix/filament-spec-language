@@ -322,6 +322,7 @@ fn check_universal_atoms_and_certificate<'a>(
             max_depth: None,
             meter: UNLIMITED,
             reductions: fsl_route::reductions::Reductions::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

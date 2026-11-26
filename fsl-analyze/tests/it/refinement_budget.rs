@@ -43,6 +43,7 @@ fn run(world: &RingWorld, work: u64) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -419,6 +420,7 @@ fn refinement_refuses_at_max_states_before_keying_the_later_initial_states() {
                 abstract_protocol_binding: None,
                 max_depth: Some(0),
                 limits,
+                retained: None,
             },
             &Cancel::new(),
         )

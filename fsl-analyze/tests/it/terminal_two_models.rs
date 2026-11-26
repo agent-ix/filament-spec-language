@@ -390,6 +390,7 @@ fn package_state_graph_value(
                 ..ModelCheckLimits::default()
             },
             seed: None,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -473,6 +474,7 @@ fn source_state_graph_run(
             ..ModelCheckLimits::default()
         },
         seed: None,
+        retained: None,
     };
     check_state_graph(request, &Cancel::new()).expect("the source state graph runs")
 }

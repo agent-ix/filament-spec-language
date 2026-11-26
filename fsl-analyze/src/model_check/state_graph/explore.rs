@@ -47,7 +47,8 @@ use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
     ClosureCertificate, CounterexampleKind, GraphUndefined, ItemRefusal, ModelCheckLimit,
     ModelCheckLimits, ModelCheckOutcome, ModelStep, OpenCause, ProductStateRef, ReductionCause,
-    RunEnd, RunStats, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus,
+    IncompleteCause, RunEnd, RunStats, TemporalCounterexample, UndecidedCause,
+    UndefinedEvaluation, UndefinedLocus,
     UndefinedSite,
 };
 
@@ -57,7 +58,9 @@ use super::{
     PredicateLabel, cancelled, expansion_stop, stopped,
 };
 use crate::model_check::ModelCheckRefusal;
-use crate::model_check::check::{fault, widen};
+use crate::model_check::check::{fault, widen, EN1_STATE_OVERHEAD_BYTES};
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::Setting;
 use crate::model_check::initial::{Refused, admit_initial};
 
 /// Why keying one initial state failed.
@@ -175,6 +178,8 @@ pub(super) struct Exploration<'r, 'a, 'v> {
     pub(super) por: Option<&'r Por<'r, 'a>>,
     pub(super) declared_symmetry: &'r SymmetryGroup,
     pub(super) symmetry: &'r SymmetryGroup,
+    /// The run's `analysis.retained_bytes` allowance (FR-255).
+    pub(super) retained: &'r Budget,
 }
 
 /// The run's working state.
@@ -529,6 +534,9 @@ impl Exploration<'_, '_, '_> {
                             widen(self.limits.limits.max_states),
                         )));
                     }
+                    if let Some(halt) = self.retain_successor(key.len()) {
+                        return Ok(Err(halt));
+                    }
                     let node = walk.insert(
                         state,
                         fsl_eval::simulation::StateKey::from_canonical_bytes(key.clone()),
@@ -549,6 +557,32 @@ impl Exploration<'_, '_, '_> {
             walk.graph.outgoing[at].push(edge);
         }
         Ok(Ok(()))
+    }
+
+    /// Charge a successor the expansion returned to the run's
+    /// `analysis.retained_bytes` allowance before the graph stores it (FR-255
+    /// "Retained bytes"): the fixed entry overhead and its key, as the node
+    /// and the index each hold it.
+    #[implements("FR-255-AC-44")]
+    fn retain_successor(&self, key_len: usize) -> Option<Halt> {
+        let bytes = widen(key_len)
+            .saturating_mul(2)
+            .saturating_add(EN1_STATE_OVERHEAD_BYTES);
+        match self.retained.charge(Setting::AnalysisRetainedBytes, bytes) {
+            Ok(()) => None,
+            Err(BudgetStop::Limit(limit)) => Some(stopped(
+                ModelCheckLimit::AnalysisRetainedBytes,
+                limit.configured_bound(),
+            )),
+            Err(BudgetStop::Cancelled(source)) => Some(Halt {
+                cause: IncompleteCause::Cancelled { source },
+                limit: None,
+            }),
+            Err(BudgetStop::Accounting(_)) => Some(Halt {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: None,
+            }),
+        }
     }
 
     fn depth_of(&self, walk: &Walk, at: usize) -> Result<usize, ModelCheckRefusal> {

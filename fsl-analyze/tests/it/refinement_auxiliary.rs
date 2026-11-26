@@ -37,6 +37,7 @@ fn run(world: &World<'_>) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -371,6 +372,7 @@ fn the_product_key_holds_the_candidate_set() {
             abstract_protocol_binding: None,
             max_depth: Some(1),
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -471,6 +473,7 @@ fn a_hidden_side_ranges_over_the_abstract_initial_states_the_mapping_leaves_open
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -502,6 +505,7 @@ fn the_open_field_assignments_count_against_the_candidate_bound() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
