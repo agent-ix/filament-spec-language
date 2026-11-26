@@ -154,9 +154,46 @@ fn reference_refuses_unbounded_integer_fields() {
     )
     .expect("the front end admits an unbounded integer field");
 
-    let refusal = fsl_definitional_reference::validate_tiny_fragment(
-        world.package.graph(),
-    )
-    .expect_err("the reference does not enumerate an unbounded integer field");
+    let refusal = fsl_definitional_reference::validate_tiny_fragment(world.package.graph())
+        .expect_err("the reference does not enumerate an unbounded integer field");
     assert_eq!(refusal.construct, "unbounded integer field");
+}
+
+/// FR-1051-AC-19: hybrid dynamics in the reference fragment use literal
+/// rational rates rather than state-dependent flow expressions.
+#[trace("FR-1051-AC-19")]
+#[test]
+fn reference_refuses_state_dependent_hybrid_rates() {
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         hybrid H using p { mode A invariant { x >= 0 } flow { x' = x; } }\n";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("false-claim-corpus", "hybrid-rate"),
+        "unit.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the source is within parser limits");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("the source builds as a unit");
+    let package = fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "false-claim-corpus".to_owned(),
+        unit,
+        fsl_semantics::model::intake::SelectedModels::default(),
+        Vec::new(),
+    )
+    .expect("the hybrid unit assembles");
+    let graph = package
+        .check(
+            filament_semantic_value::checking::CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default(),
+            &fsl_definitional_reference::ReferenceRewardEvaluator,
+        )
+        .expect("the state-dependent rate passes package checking");
+
+    let refusal = fsl_definitional_reference::validate_tiny_fragment(&graph)
+        .expect_err("the reference refuses a state-dependent hybrid rate");
+    assert_eq!(refusal.construct, "hybrid mode with a non-constant rate");
 }

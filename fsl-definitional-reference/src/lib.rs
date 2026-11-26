@@ -13,11 +13,11 @@ use filament_checked::node::NodeKind;
 use filament_exact::{Meter, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::model::domain_package::{DomainPackageRecord, NativeValueType, ValueTypeRef};
 use fsl_semantics::check::{
     CheckedGraph, ProbForm, ProbScheduler, Reward, RewardEvaluationFailure, RewardEvaluator,
     StateClauseKind,
 };
+use fsl_semantics::model::domain_package::{DomainPackageRecord, NativeValueType, ValueTypeRef};
 use ix_trace_rs::implements;
 
 /// A state-indexed action relation for a finite, exact probabilistic model.
