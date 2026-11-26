@@ -247,6 +247,15 @@ reported instance the same on every run.
 The counterexample names the instance it refutes (FSpec FR-364
 `over_binding`; FSpec FR-393 `instance` for state-graph evidence).
 
+An instance is `refuted` for this rule only when replay confirms its
+refutation. A refutation whose replay disagrees leaves its instance
+`inconclusive`, `replay-parity` (FR-127), and SHALL NOT replace or hide a
+confirmed refutation of another instance, earlier or later in the order. The
+item's record SHALL NOT be `replay-parity` when any instance's refutation is
+confirmed. An engine that returns one outcome over all instances replays only
+the refutation it returns, so when that replay disagrees the item has no
+confirmed refutation and settles `replay-parity`.
+
 ### Temporal dispositions, values and engine roles
 
 - An item that reports a temporal disposition (a `monitor` item's
@@ -333,6 +342,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-21 | For the `command::analyze` request defined in AC-19, item 2 has `request_index` `2`, `claim_name` `ServedIfEachAcquireIsStronglyFair`, `record.result` `proved`, and `certificate.accepted` `true`. | Test (TC-1581) |
 | FR-621-AC-22 | For the `command::analyze` request defined in AC-19, the three outcome items have `request_index` `[0, 1, 2]` and `claim_name` `["ServedWithoutFairness", "ServedIfAcquireIsStronglyFair", "ServedIfEachAcquireIsStronglyFair"]` in request order, and the document exits 10. | Test (TC-1581) |
 | FR-621-AC-23 | Over the Counter subject with universe list `[b, a]` and both counters at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b`, the first in universe list order, not `a`, the first in key order. | Test (TC-3219) |
+| FR-621-AC-24 | A state-graph item has two instances with their own FR-169 records, and one instance's evidence is altered so that its replay disagrees, giving `inconclusive`, `replay-parity`. When the other instance's refutation replays, the item is `refuted` with that instance's counterexample and replay, whichever of the two is earlier in the instance order. When the other instance is `proved`, the item is `inconclusive`, `replay-parity`, in either order. | Test (TC-3219) |
 
 ## Dependencies
 
