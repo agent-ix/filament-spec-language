@@ -288,6 +288,7 @@ impl Product<'_, '_> {
                     Taken::Stutter
                     | Taken::Protocol(_)
                     | Taken::ProtocolTraces(_)
+                    | Taken::ProtocolPathRefs(_)
                     | Taken::Failing => Vec::new(),
                 })
             }))
@@ -1164,7 +1165,9 @@ impl Product<'_, '_> {
                     )
                     .into());
                 }
-                Some(Taken::Protocol(_) | Taken::ProtocolTraces(_)) => {
+                Some(
+                    Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::ProtocolPathRefs(_),
+                ) => {
                     return Err(ZoneCheckRefusal::Fault(
                         "hidden-model-edge-is-not-a-protocol-edge",
                     )

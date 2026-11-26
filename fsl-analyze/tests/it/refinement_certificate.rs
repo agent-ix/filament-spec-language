@@ -376,7 +376,9 @@ fn each_corrupted_field_is_rejected() {
                 Taken::Abstract(_) => Taken::Stutter,
                 Taken::CandidateSteps(_) => Taken::Stutter,
                 Taken::Protocol(_) => Taken::Stutter,
-                Taken::ProtocolTraces(_) | Taken::Failing => Taken::Stutter,
+                Taken::ProtocolTraces(_) | Taken::ProtocolPathRefs(_) | Taken::Failing => {
+                    Taken::Stutter
+                }
             };
             let (rule, _) = rejected(check(&world, &tampered));
             assert_eq!(rule, CertificateRule::PostDiffers);

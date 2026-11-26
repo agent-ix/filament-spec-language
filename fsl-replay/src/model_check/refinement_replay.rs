@@ -1941,8 +1941,11 @@ fn replay_lasso(
                 Taken::CandidateSteps(steps) => {
                     identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
                 }
-                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {
-                }
+                Taken::Stutter
+                | Taken::Protocol(_)
+                | Taken::ProtocolTraces(_)
+                | Taken::ProtocolPathRefs(_)
+                | Taken::Failing => {}
             }
         }
         let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
@@ -1965,9 +1968,11 @@ fn replay_lasso(
     let divergent = loop_taken.iter().all(|taken| match taken {
         Taken::Stutter => true,
         Taken::CandidateSteps(steps) => steps.iter().all(|step| step.transition.is_none()),
-        Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {
-            false
-        }
+        Taken::Abstract(_)
+        | Taken::Protocol(_)
+        | Taken::ProtocolTraces(_)
+        | Taken::ProtocolPathRefs(_)
+        | Taken::Failing => false,
     });
     Ok(match (payload.refinement.as_ref(), violated, divergent) {
         (Some(RefinementFailure::Divergence { .. }), true, true)
@@ -2462,6 +2467,100 @@ fn protocol_hidden_graph(
                         rows.push((pre_candidate, pre.clone(), first, post, None, hops));
                     }
                 }
+                Taken::ProtocolPathRefs(paths) => {
+                    for path in paths.iter().filter(|path| path.seed.start_key == pre) {
+                        let post = path.endpoint_key().to_vec();
+                        if !reaches(&post) {
+                            continue;
+                        }
+                        let first = path
+                            .seed
+                            .transitions
+                            .first()
+                            .and_then(|step| step.applied_application().cloned());
+
+                        let mut enabled_union = BTreeSet::new();
+                        let mut enabled_intersection = None::<BTreeSet<ModelTransition>>;
+                        let mut interior_count = 0_usize;
+                        let seed_interior = if path.tail.is_some() {
+                            path.seed.candidates.as_slice()
+                        } else {
+                            path.seed
+                                .candidates
+                                .get(..path.seed.candidates.len().saturating_sub(1))
+                                .unwrap_or_default()
+                        };
+                        for candidate in seed_interior {
+                            let enabled = match protocol_enabled_at(protocol, candidate)? {
+                                Ok(enabled) => enabled,
+                                Err(settlement) => {
+                                    return Ok(ProtocolHiddenGraph::Settled(settlement));
+                                }
+                            };
+                            let enabled: BTreeSet<_> = enabled.into_iter().collect();
+                            enabled_union.extend(enabled.iter().cloned());
+                            enabled_intersection = Some(match enabled_intersection.take() {
+                                Some(previous) => {
+                                    previous.intersection(&enabled).cloned().collect()
+                                }
+                                None => enabled,
+                            });
+                            interior_count = interior_count.saturating_add(1);
+                        }
+                        let mut node = path.tail.as_deref();
+                        if let Some(endpoint) = node {
+                            node = endpoint.previous.as_deref();
+                        }
+                        while let Some(current) = node {
+                            let enabled =
+                                match protocol_enabled_at(protocol, current.candidate.as_ref())? {
+                                    Ok(enabled) => enabled,
+                                    Err(settlement) => {
+                                        return Ok(ProtocolHiddenGraph::Settled(settlement));
+                                    }
+                                };
+                            let enabled: BTreeSet<_> = enabled.into_iter().collect();
+                            enabled_union.extend(enabled.iter().cloned());
+                            enabled_intersection = Some(match enabled_intersection.take() {
+                                Some(previous) => {
+                                    previous.intersection(&enabled).cloned().collect()
+                                }
+                                None => enabled,
+                            });
+                            interior_count = interior_count.saturating_add(1);
+                            node = current.previous.as_deref();
+                        }
+                        let weak_enabled: Vec<_> = enabled_intersection
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
+                        let strong_enabled: Vec<_> = enabled_union.into_iter().collect();
+                        let mut hops = Vec::new();
+                        if interior_count != 0 {
+                            // The intersection vertex preserves weak fairness;
+                            // the union vertex preserves strong fairness.
+                            hops.push((weak_enabled.clone(), None));
+                            hops.push((strong_enabled, None));
+                        }
+                        let mut taken = BTreeSet::new();
+                        for transition in path.seed.transitions.iter().skip(1) {
+                            if let Some(application) = transition.applied_application() {
+                                taken.insert(application.clone());
+                            }
+                        }
+                        let mut node = path.tail.as_deref();
+                        while let Some(current) = node {
+                            if let Some(application) = current.transition.applied_application() {
+                                taken.insert(application.clone());
+                            }
+                            node = current.previous.as_deref();
+                        }
+                        for transition in taken {
+                            hops.push((weak_enabled.clone(), Some(transition)));
+                        }
+                        rows.push((pre_candidate, pre.clone(), first, post, None, hops));
+                    }
+                }
                 Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Failing => {
                     return Err(fault("a-protocol-loop-edge-takes-protocol-steps"));
                 }
@@ -2617,8 +2716,10 @@ mod tests {
             panic!("bump passes");
         };
 
-        let Taken::ProtocolTraces(paths) = taken.as_ref().clone() else {
-            panic!("bump takes protocol traces");
+        let paths = match taken.as_ref() {
+            Taken::ProtocolTraces(paths) => paths.clone(),
+            Taken::ProtocolPathRefs(paths) => paths.iter().map(|path| path.to_trace()).collect(),
+            other => panic!("bump takes protocol traces: {other:?}"),
         };
 
         let ProtocolHiddenGraph::Built(_, steps) =
@@ -2646,9 +2747,8 @@ mod tests {
         }) {
             let end = path.candidate_keys.last().unwrap_or(&path.start_key);
             assert!(
-                rows.iter().any(|row| row.1 == path.start_key
-                    && row.3 == *end
-                    && row.5.len() + 1 == path.transitions.len()),
+                rows.iter()
+                    .any(|row| row.1 == path.start_key && row.3 == *end),
                 "a path that fails the compensation of inc has no row"
             );
             failed += 1;

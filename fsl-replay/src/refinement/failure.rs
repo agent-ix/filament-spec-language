@@ -194,6 +194,10 @@ pub enum Taken {
     /// Candidate-specific protocol paths, including internal closure steps.
     /// `candidates[n]` is the state reached by `transitions[n]`.
     ProtocolTraces(Vec<ProtocolTrace>),
+    /// Candidate-specific protocol paths stored as shared predecessor chains.
+    /// This keeps closure storage proportional to reached states and edges,
+    /// rather than the sum of all path lengths.
+    ProtocolPathRefs(Vec<ProtocolPathRef>),
     /// A zone certificate edge on which `check_step` fails at every point of
     /// the source zone and whose post-state is a time-locked entry node
     /// (FR-244-AC-8); `check_step` itself never returns it.
@@ -232,6 +236,76 @@ pub struct ProtocolTrace {
     /// Canonical identity of each reached candidate.
     pub candidate_keys: Vec<Vec<u8>>,
 }
+
+/// A protocol path represented by a shared predecessor chain.
+#[derive(Clone, Debug)]
+pub struct ProtocolPathRef {
+    /// The visible prefix before the internal closure begins.
+    pub seed: std::sync::Arc<ProtocolTrace>,
+    /// The final shared closure node, absent when the seed itself is the path.
+    pub tail: Option<std::sync::Arc<ProtocolPathNode>>,
+}
+
+/// One transition and destination in a shared protocol path chain.
+#[derive(Clone, Debug)]
+pub struct ProtocolPathNode {
+    /// The preceding path node.
+    pub previous: Option<std::sync::Arc<ProtocolPathNode>>,
+    /// The transition taken to reach `candidate`.
+    pub transition: std::sync::Arc<ProtocolTransition>,
+    /// The destination candidate.
+    pub candidate: std::sync::Arc<ProtocolCandidate>,
+    /// Canonical identity of the destination candidate.
+    pub candidate_key: Vec<u8>,
+}
+
+impl ProtocolPathRef {
+    /// Materialize this path for a consumer that needs a single full witness.
+    pub fn to_trace(&self) -> ProtocolTrace {
+        let mut chain = Vec::new();
+        let mut current = self.tail.as_deref();
+        while let Some(node) = current {
+            chain.push(node);
+            current = node.previous.as_deref();
+        }
+        let mut trace = self.seed.as_ref().clone();
+        for node in chain.into_iter().rev() {
+            trace.transitions.push(node.transition.as_ref().clone());
+            trace.candidates.push(node.candidate.as_ref().clone());
+            trace.candidate_keys.push(node.candidate_key.clone());
+        }
+        trace
+    }
+
+    /// The endpoint candidate for this path.
+    pub fn endpoint(&self) -> &ProtocolCandidate {
+        self.tail.as_deref().map_or_else(
+            || self.seed.candidates.last().unwrap_or(&self.seed.start),
+            |node| node.candidate.as_ref(),
+        )
+    }
+
+    /// The canonical identity of the endpoint candidate.
+    pub fn endpoint_key(&self) -> &[u8] {
+        self.tail.as_deref().map_or_else(
+            || {
+                self.seed
+                    .candidate_keys
+                    .last()
+                    .map_or(self.seed.start_key.as_slice(), Vec::as_slice)
+            },
+            |node| node.candidate_key.as_slice(),
+        )
+    }
+}
+
+impl PartialEq for ProtocolPathRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_trace() == other.to_trace()
+    }
+}
+
+impl Eq for ProtocolPathRef {}
 
 impl PartialEq for ProtocolTrace {
     fn eq(&self, other: &Self) -> bool {

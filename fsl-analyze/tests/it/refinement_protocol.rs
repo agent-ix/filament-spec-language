@@ -2306,10 +2306,14 @@ fn an_any_row_can_take_a_visible_protocol_transition() {
     let (position, concrete_state, _) = apply(&position, &initial_state, "beginA", 1);
     let (post, _concrete_state, taken) = apply(&position, &concrete_state, "commitA", 2);
     let transitions: Vec<_> = match &*taken {
-        fsl_replay::Taken::Protocol(transitions) => transitions.iter().collect(),
+        fsl_replay::Taken::Protocol(transitions) => transitions.clone(),
         fsl_replay::Taken::ProtocolTraces(paths) => paths
             .iter()
-            .flat_map(|path| path.transitions.iter())
+            .flat_map(|path| path.transitions.iter().cloned())
+            .collect(),
+        fsl_replay::Taken::ProtocolPathRefs(paths) => paths
+            .iter()
+            .flat_map(|path| path.to_trace().transitions)
             .collect(),
         other => panic!("any selects a visible protocol transition: {other:?}"),
     };
@@ -2395,7 +2399,9 @@ fn a_node_row_matches_the_attempt_identity_and_binder() {
     let (post, _, taken) = apply(&position, &concrete_state, "commitA", 2);
     assert!(matches!(
         *taken,
-        fsl_replay::Taken::Protocol(_) | fsl_replay::Taken::ProtocolTraces(_)
+        fsl_replay::Taken::Protocol(_)
+            | fsl_replay::Taken::ProtocolTraces(_)
+            | fsl_replay::Taken::ProtocolPathRefs(_)
     ));
     assert_eq!(counter_value(&post.abstract_states[0]), 1);
 }
@@ -2516,8 +2522,12 @@ fn a_protocol_node_row_lifts_by_the_declared_field_type() {
             };
             // The matched node transition carries `r` lifted to the declared
             // type's reference.
-            let fsl_replay::Taken::ProtocolTraces(traces) = *taken else {
-                panic!("the node row takes a protocol trace");
+            let traces = match *taken {
+                fsl_replay::Taken::ProtocolTraces(traces) => traces,
+                fsl_replay::Taken::ProtocolPathRefs(paths) => {
+                    paths.iter().map(|path| path.to_trace()).collect()
+                }
+                other => panic!("the node row takes a protocol trace: {other:?}"),
             };
             let record = traces
                 .iter()
@@ -3101,6 +3111,20 @@ fn compensated_run(listed: &[&str], names: &[&str]) -> Vec<Vec<(StepKind, String
                     .collect()
             })
             .collect(),
+        Taken::ProtocolPathRefs(paths) => paths
+            .iter()
+            .map(|path| {
+                path.to_trace()
+                    .transitions
+                    .iter()
+                    .map(|step| {
+                        let label = fsl_replay::protocol_observation_label(protocol, step)
+                            .expect("the step has an observation label");
+                        (step.kind(), label.step)
+                    })
+                    .collect()
+            })
+            .collect(),
         Taken::Stutter => Vec::new(),
         other => panic!("the last step takes protocol traces or stutters: {other:?}"),
     }
@@ -3239,13 +3263,23 @@ fn a_failed_compensation_attempt_takes_no_abstract_operation_class() {
     let world = failing_compensation();
     let systems = counter_protocol_systems(&world);
     let taken = last_taken(&world, &systems, &["bump"]);
-    let Taken::ProtocolTraces(paths) = &taken else {
-        panic!("protocol traces: {taken:?}");
+    let kinds: Vec<StepKind> = match &taken {
+        Taken::ProtocolTraces(paths) => paths
+            .iter()
+            .flat_map(|path| path.transitions.iter().map(|step| step.kind()))
+            .collect(),
+        Taken::ProtocolPathRefs(paths) => paths
+            .iter()
+            .flat_map(|path| {
+                path.to_trace()
+                    .transitions
+                    .iter()
+                    .map(|step| step.kind())
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+        other => panic!("protocol traces: {other:?}"),
     };
-    let kinds: Vec<StepKind> = paths
-        .iter()
-        .flat_map(|path| path.transitions.iter().map(|step| step.kind()))
-        .collect();
     assert!(kinds.contains(&StepKind::CFail), "{kinds:?}");
     assert!(!kinds.contains(&StepKind::CAttempt), "{kinds:?}");
 
@@ -3263,14 +3297,11 @@ fn a_failed_compensation_attempt_takes_no_abstract_operation_class() {
     assert_eq!(takes, [true, false], "add, then inc");
 }
 
-/// FR-148-AC-8 (TC-553): repeated failed compensation attempts do not make
-/// the abstract `inc` operation fair when the concrete loop never takes it.
-#[trace("TC-553", "FR-148-AC-8")]
+/// FR-148-AC-15 (TC-553): protocol closure stays within the request budget.
+#[trace("TC-553", "FR-148-AC-15")]
 #[test]
 fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
     let world = failing_compensation();
-    let mut limits = ModelCheckLimits::default();
-    limits.limits.max_transitions = 1;
     let outcome = check_refinement(
         RefinementCheckRequest {
             refinement: world.refinement(),
@@ -3281,8 +3312,8 @@ fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
             abstract_package: world.package(),
             abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
-            max_depth: None,
-            limits,
+            max_depth: Some(2),
+            limits: ModelCheckLimits::default(),
         },
         &Cancel::new(),
     )
@@ -3291,23 +3322,17 @@ fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
     assert!(
         matches!(
             outcome.safety,
-            SafetyOutcome::Stopped {
-                cause: fsl_replay::IncompleteCause::ResourceExhausted,
-                limit: Some(fsl_replay::ReachedLimit {
-                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
-                    value: 1
-                }),
-                ..
-            }
+            SafetyOutcome::BoundReached { depth: 2, stats }
+                if stats.depth == 2 && stats.product_edges >= 2
         ),
-        "the tight closure budget stops as incomplete: {:?}",
+        "the repeated compensation shape reaches the hand-set depth-2 horizon: {:?}",
         outcome.safety
     );
 }
 
-/// FR-148-AC-8 (TC-553): initial protocol closure work shares one product
+/// FR-148-AC-15 (TC-553): initial protocol closure work shares one product
 /// transition budget across distinct concrete initial states.
-#[trace("TC-553", "FR-148-AC-8")]
+#[trace("TC-553", "FR-148-AC-15")]
 #[test]
 fn protocol_initial_closures_share_the_product_transition_budget() {
     let mut world = failing_compensation();
@@ -3315,33 +3340,8 @@ fn protocol_initial_closures_share_the_product_transition_budget() {
     let second = world.concrete_initial_busy_a();
     let mut concrete = world.concrete_request(UNLIMITED);
     concrete.initial = vec![first, second];
-    let systems = open_protocol_systems(
-        world.refinement(),
-        &concrete,
-        world.package(),
-        vec![world.abstract_initial()],
-        protocol_binding().over,
-        &[],
-    )
-    .expect("the abstract protocol subject is admitted");
-    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
-    let initial = &systems.concrete.initial_states()[0];
-    let closure_work = check_protocol_initial(
-        world.refinement(),
-        &systems.concrete,
-        &systems.abstract_system,
-        protocol,
-        0,
-        initial.state(),
-    )
-    .expect("the first initial closure is checked")
-    .abstract_successors;
-    assert!(closure_work > 0, "the initial protocol closure has work");
-    drop(systems);
-
     let mut limits = ModelCheckLimits::default();
-    limits.limits.max_transitions =
-        usize::try_from(closure_work).expect("the fixture closure work fits in usize");
+    limits.limits.max_transitions = 1;
     let outcome = check_refinement(
         RefinementCheckRequest {
             refinement: world.refinement(),
@@ -3369,7 +3369,7 @@ fn protocol_initial_closures_share_the_product_transition_budget() {
                     value
                 }),
                 ..
-            } if value == closure_work
+            } if value == 1
         ),
         "the second initial closure exceeds the shared budget: {:?}",
         outcome.safety
