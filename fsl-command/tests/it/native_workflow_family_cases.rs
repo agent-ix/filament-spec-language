@@ -184,7 +184,14 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             let fsl_replay::spine::NativeRunResult::Clause(read) = read else {
                 panic!("a clause result");
             };
-            assert_eq!(read.extraction(), Some(extraction));
+            assert_eq!(
+                read.extraction()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .unwrap()
+                    .as_ref(),
+                Some(extraction)
+            );
             assert_eq!(read.stage(), document["disposition"]["stage"]);
             assert_eq!(read.category(), document["disposition"]["category"]);
             assert_eq!(read.truth(), document["disposition"]["truth"].as_bool());
@@ -398,7 +405,14 @@ fn an_extracted_body_with_a_syntax_error_refuses_at_the_source() {
     let fsl_replay::spine::NativeRunResult::Clause(read) = read else {
         panic!("a clause refusal record");
     };
-    assert_eq!(read.extraction(), Some(&document["extraction"]));
+    assert_eq!(
+        read.extraction()
+            .map(serde_json::to_value)
+            .transpose()
+            .unwrap()
+            .as_ref(),
+        Some(&document["extraction"])
+    );
 }
 
 #[test]

@@ -2984,10 +2984,14 @@ fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
 }
 
 #[cfg(feature = "quire-extraction")]
+#[implements("FR-267-AC-17")]
 fn extraction_record(
     request: &fsl_replay::spine::ClauseRunRequest,
     envelope: &serde_json::Value,
-) -> Result<(serde_json::Value, fsl_foundation::source_map::SourceMap)> {
+) -> Result<(
+    fsl_replay::spine::ExtractionRecord,
+    fsl_foundation::source_map::SourceMap,
+)> {
     let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = &request.source else {
         return Err(RunCause::ClauseRequest {
             member: "program.extraction".to_owned(),
@@ -3026,58 +3030,48 @@ fn extraction_record(
     let original = map.original();
     let body = map.body();
     let outcome = extracted.extraction();
-    let mut outcome_value = serde_json::Map::from_iter([
-        (
-            "availability".to_owned(),
-            serde_json::to_value(&outcome.availability).map_err(RunCause::Output)?,
-        ),
-        (
-            "clause_text".to_owned(),
-            serde_json::to_value(&outcome.clause_text).map_err(RunCause::Output)?,
-        ),
-        (
-            "diagnostics".to_owned(),
-            serde_json::to_value(&outcome.diagnostics).map_err(RunCause::Output)?,
-        ),
-    ]);
-    if let Some(clauses) = &outcome.clauses {
-        outcome_value.insert(
-            "clauses".to_owned(),
-            serde_json::to_value(clauses).map_err(RunCause::Output)?,
-        );
-    }
     let segments: Vec<_> = map
         .segments()
         .iter()
-        .map(|segment| {
-            serde_json::json!({
-                "body_start": segment.body.start,
-                "body_end": segment.body.end,
-                "original_start": segment.original.start,
-                "original_end": segment.original.end,
-            })
+        .map(|segment| fsl_replay::spine::ExtractionSegment {
+            body_start: segment.body.start as u64,
+            body_end: segment.body.end as u64,
+            original_start: segment.original.start as u64,
+            original_end: segment.original.end as u64,
         })
         .collect();
-    let record = serde_json::json!({
-        "original": {
-            "authority": original.identity().authority,
-            "identity": original.identity().identity,
-            "path": original.path(),
-            "bytes": original.text().as_bytes(),
+    let record = fsl_replay::spine::ExtractionRecord {
+        original: fsl_replay::spine::ExtractionOriginal {
+            authority: original.identity().authority.clone(),
+            identity: original.identity().identity.clone(),
+            path: original.path().to_owned(),
+            bytes: original.text().as_bytes().to_vec(),
         },
-        "body": {
-            "authority": body.identity().authority,
-            "identity": body.identity().identity,
-            "document": body_document,
-            "bytes": body.text().as_bytes(),
+        body: fsl_replay::spine::ExtractionBody {
+            authority: body.identity().authority.clone(),
+            identity: body.identity().identity.clone(),
+            document: body_document.to_owned(),
+            bytes: body.text().as_bytes().to_vec(),
         },
-        "binding": {"clause": clause, "package": package},
-        "outcome": outcome_value,
-        "map": {
-            "region": {"start": map.region().start, "end": map.region().end},
-            "segments": segments,
-        }
-    });
+        binding: fsl_replay::spine::ExtractionBinding {
+            clause: clause.to_owned(),
+            package: package.to_owned(),
+        },
+        outcome: fsl_replay::spine::ExtractionOutcome {
+            availability: outcome.availability.clone(),
+            clause_text: outcome.clause_text.clone(),
+            diagnostics: outcome.diagnostics.clone(),
+            clauses: outcome.clauses.clone(),
+        },
+        map: fsl_replay::spine::ExtractionMap {
+            region: fsl_replay::spine::ExtractionSpan {
+                start: map.region().start as u64,
+                end: map.region().end as u64,
+            },
+            segments,
+        },
+        original_regions: None,
+    };
     Ok((record, map.clone()))
 }
 
@@ -3560,9 +3554,7 @@ fn model_unit_outcome_diagnostic(
     diagnostic: &fsl_forms::cst::CompleteDiagnostic,
 ) -> fsl_replay::OutcomeDiagnostic {
     let locus = diagnostic.source_region().map(|region| {
-        fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(
-            region.clone(),
-        ))
+        fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(region.clone()))
     });
     fsl_replay::OutcomeDiagnostic::new(
         Some(diagnostic.cause().as_str()),

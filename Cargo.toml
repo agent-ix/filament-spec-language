@@ -26,6 +26,9 @@ filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "7
 # ADR-011 §6.1 layer E: the shared evaluation-core interface (FR-262, FR-401),
 # its own repository so RT and CG depend on it without the FSL repo.
 filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "7fc24dcbb3bf74f77a61dfde897fbdc9883918d3" }
+# Quire's extraction result types (`semantic`), which
+# `fsl-replay` reads and writes and `fsl-source` produces: one pin, one type.
+quire-rs = { git = "https://github.com/agent-ix/quire-rs", tag = "v0.62.3", default-features = false }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
 filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "dc7b2ae6b77937e7103a37fe14f765109b17bc07" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
