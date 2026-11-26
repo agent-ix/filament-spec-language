@@ -485,7 +485,9 @@ fn instances(
             .get(slot_of(parameter.alias.as_str())?)
             .ok_or_else(|| fault("a-parameter-names-an-alias-of-the-clause"))?;
         let keys = system
-            .hyper_instances(&parameter.object)
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
             .map_err(not_simulated)?;
         lists.push(
             keys.into_iter()

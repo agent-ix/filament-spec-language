@@ -2542,6 +2542,7 @@ impl<'a> ModelSystem<'a> {
     /// with no universe, before any instance is listed (FR-120 "Bounds");
     /// [`NotSimulated::Extent`] when that classification stops or a
     /// population's identity text does not encode.
+    #[implements("FR-125-AC-19", "FR-125-AC-20")]
     pub fn instances(&self, over: &ValueType) -> Result<Vec<ModelInstance>, NotSimulated> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
@@ -2575,11 +2576,10 @@ impl<'a> ModelSystem<'a> {
     /// Conflicting identities are rejected by [`Self::new`] before a system
     /// is available.
     #[implements("FR-125-AC-13", "FR-125-AC-21")]
-    pub fn claim_instances(
-        &self,
-        over: &ValueType,
-    ) -> Result<ClaimInstances, NoClaimInstances> {
-        let instances = self.instances(over).map_err(NoClaimInstances::NotSimulated)?;
+    pub fn claim_instances(&self, over: &ValueType) -> Result<ClaimInstances, NoClaimInstances> {
+        let instances = self
+            .instances(over)
+            .map_err(NoClaimInstances::NotSimulated)?;
         if self.initial_base.is_empty() {
             return Err(NoClaimInstances::NoInitialState);
         }
@@ -2588,25 +2588,9 @@ impl<'a> ModelSystem<'a> {
         }
         Ok(ClaimInstances(instances))
     }
-
-    /// FR-125 Instancing: the instances of a hyper clause parameter of object
-    /// type `object`, under the one rule of [`Self::instances`]. `self` is the
-    /// system of the parameter's alias.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::instances`].
-    #[implements("FR-125-AC-19", "FR-125-AC-20")]
-    pub fn hyper_instances(
-        &self,
-        object: &EffectiveId,
-    ) -> Result<Vec<ModelInstance>, NotSimulated> {
-        self.instances(&ValueType::Reference(object.clone()))
-    }
-
     /// Every key a hyper parameter of object type `object` may name in an
-    /// identity or an encoding (FR-315 `instance-binding`): each of
-    /// [`Self::hyper_instances`]; for a subject whose initial list is empty,
+    /// identity or an encoding (FR-315 `instance-binding`): each of its
+    /// [`Self::instances`]; for a subject whose initial list is empty,
     /// every key of the universes of the overlapping populations, since the
     /// item then settles `NoInitialState`.
     ///
@@ -2616,7 +2600,7 @@ impl<'a> ModelSystem<'a> {
     #[implements("FR-315-AC-59")]
     pub fn hyper_bindable(&self, object: &EffectiveId) -> Result<Vec<ModelInstance>, NotSimulated> {
         if !self.initial_base.is_empty() {
-            return self.hyper_instances(object);
+            return self.instances(&ValueType::Reference(object.clone()));
         }
         let mut seen = BTreeSet::new();
         Ok(self

@@ -1591,3 +1591,132 @@ fn an_undefined_hp5_finding_settles_refuted() {
         assert_eq!(record.value, TerminalValue::Refuted);
     }
 }
+
+/// FR-181-AC-12: a clause with two object parameters is checked once per
+/// instance pair, and settlement takes each pair, under both profiles. The
+/// first vault starts with `l = 0` and the second with `l = 1`, so the outputs
+/// agree only where a vault is paired with itself.
+#[trace("TC-3219", "FR-181-AC-12")]
+#[test]
+fn a_two_parameter_clause_settles_each_instance_pair() {
+    let objects = [("v", (0, 0)), ("w", (0, 1))];
+    for (profile, body) in [
+        ("inf", "always holds(x.l @ b = y.l @ b)"),
+        ("ep", "always [0, 0] holds(x.l @ b = y.l @ b)"),
+    ] {
+        let declaration = format!(
+            "hyper Possible using {profile} over behaviours (x: V::Vault, y: V::Vault) \
+             exists trace b of V {{ {body} }}"
+        );
+        let world = World::with_vaults(Vault::Secure, &objects, &declaration);
+        let run = world
+            .run_single(unsampled(), None, &Cancel::new())
+            .expect("not refused");
+        let settled: Vec<_> = run
+            .instances
+            .iter()
+            .map(|instance| {
+                let keys: Vec<_> = instance.instance.iter().map(|(_, k)| k.as_str()).collect();
+                let record = settle_instance(&world, instance, unsampled()).record;
+                (keys.join(","), record.label)
+            })
+            .collect();
+        assert_eq!(
+            settled,
+            [
+                ("v,v".to_owned(), ResultLabel::Proved),
+                ("v,w".to_owned(), ResultLabel::Refuted),
+                ("w,v".to_owned(), ResultLabel::Refuted),
+                ("w,w".to_owned(), ResultLabel::Proved),
+            ],
+            "{profile}"
+        );
+        // An outcome that binds one parameter, or both out of order, is not
+        // an instance of the clause.
+        let pair = run.instances[1].instance.clone();
+        for instance in [
+            vec![pair[0].clone()],
+            vec![pair[1].clone(), pair[0].clone()],
+        ] {
+            let mut outcome = run.instances[1].clone();
+            outcome.instance = instance;
+            let subjects = [world.subject()];
+            let request = ProductClosureRequest {
+                package: &world.package,
+                clause: ProductClosureClause::Hyper(&world.clause),
+                subjects: &subjects,
+                meter: UNLIMITED,
+            };
+            let method = StateGraphMethod {
+                limits: unsampled(),
+                max_depth: None,
+                seed: 0,
+            };
+            assert!(matches!(
+                fsl_replay::settle_existential(&request, &outcome, &method, &Cancel::new()),
+                Err(fsl_replay::ProductClosureRefusal::Input("HP-5-instance"))
+            ));
+        }
+    }
+}
+
+/// The record of the trapped instance of `world` under `limits`.
+fn settled_trap(world: &World, limits: ModelCheckLimits) -> (ResultLabel, SettlementBasis) {
+    let result = single(world, limits);
+    assert!(
+        matches!(result.outcome, ExistentialOutcome::Trapped { .. }),
+        "{:?}",
+        result.outcome
+    );
+    let record = settle_instance(world, &result, limits).record;
+    (record.label, record.basis)
+}
+
+/// FR-181-AC-13: a product state the body automaton has no run from leaves
+/// its part closed on both sides, whether a limit cut its expansion or its
+/// contract has no value.
+#[trace("TC-3219", "FR-181-AC-13")]
+#[test]
+fn a_trap_with_an_unexpanded_rejected_state_replays() {
+    let refuted = (ResultLabel::Refuted, SettlementBasis::ClosedScope);
+    // The body is false at the start `l = 0`, and `max_states` 1 cuts the
+    // start's expansion.
+    let world = World::new(
+        Vault::Secure,
+        false,
+        &[(0, 0)],
+        &clause("", "holds(v.l @ b = 1)"),
+    );
+    let mut limits = unsampled();
+    limits.limits.max_states = 1;
+    assert_eq!(settled_trap(&world, limits), refuted);
+    // The body is false at the start `(h, l) = (0, 1)`, where `step`'s
+    // precondition has no value.
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 1)],
+        &clause("", "holds(v.l @ b = 0)"),
+        KERNEL_QUOTIENT,
+    );
+    assert_eq!(settled_trap(&world, unsampled()), refuted);
+}
+
+/// FR-181-AC-13: a trap that ranks before an undefined letter of its part
+/// replays, from a start the body rejects and from one it does not.
+#[trace("TC-3219", "FR-181-AC-13")]
+#[test]
+fn a_trap_before_a_later_undefined_letter_replays() {
+    let body = "holds(v.l @ b = 1) and always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &[(0, 0)],
+        &clause("", body),
+        KERNEL_REMAINDER,
+    );
+    assert_eq!(
+        settled_trap(&world, unsampled()),
+        (ResultLabel::Refuted, SettlementBasis::ClosedScope)
+    );
+}

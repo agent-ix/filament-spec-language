@@ -111,6 +111,8 @@ pub use items::{
     hyper_form_item, model_item, protocol_item, statistical_item, timed_refinement_item, zone_item,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
+#[cfg(feature = "test-support")]
+pub use state_graph_item::AlterEvidence;
 pub use state_graph_item::PackageStateGraphSubject;
 
 use crate::provider::{
@@ -3459,7 +3461,7 @@ fn settle(
             settled
         }
         EngineReport::GlobalConformance(report) => AnalyzeRecord {
-            protocol_conformance: Some(report.output),
+            protocol_conformance: report.output,
             protocol_conformance_counterexample: report.counterexample,
             ..record(terminal(report.terminal), None)
         },
