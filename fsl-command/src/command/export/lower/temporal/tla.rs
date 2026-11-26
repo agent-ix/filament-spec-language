@@ -199,8 +199,8 @@ impl Extract<'_> {
     }
 
     fn history(&mut self, tf: &Tf, ord: u64) -> Lower<()> {
-        match tf {
-            &Tf::Once(iv, _) => {
+        match *tf {
+            Tf::Once(iv, _) => {
                 let operand = self.operand()?;
                 let p = self.past_state(operand)?;
                 let before_p = operand.before;
@@ -217,7 +217,7 @@ impl Extract<'_> {
                     before_q: false,
                 });
             }
-            &Tf::Historically(..) => {
+            Tf::Historically(..) => {
                 let operand = self.operand()?;
                 let p = self.past_state(operand)?;
                 self.histories.push(History {
@@ -228,7 +228,7 @@ impl Extract<'_> {
                     before_q: false,
                 });
             }
-            &Tf::Since(iv, ..) => {
+            Tf::Since(iv, ..) => {
                 let (left, right) = self.operands()?;
                 let (p, q) = (self.past_state(left)?, self.past_state(right)?);
                 let (before_p, before_q) = (left.before, right.before);
@@ -261,7 +261,7 @@ impl Extract<'_> {
                     }
                 }
             }
-            &Tf::Triggered(..) => {
+            Tf::Triggered(..) => {
                 let (left, right) = self.operands()?;
                 let (p, q) = (self.past_state(left)?, self.past_state(right)?);
                 self.histories.push(History {
@@ -463,11 +463,11 @@ fn conjuncts(formulas: &Formulas, root: TfId) -> Lower<Vec<TfId>> {
 
 /// The deterministic monitor of `tf`, when it has one.
 fn monitor_of(formulas: &Formulas, tf: TfId) -> Lower<Option<Monitor>> {
-    let (op, left, right, iv) = match formulas.get(tf)? {
-        &Tf::Until(iv, left, right) => (MonOp::Until, left, Some(right), iv),
-        &Tf::Release(iv, left, right) => (MonOp::Release, left, Some(right), iv),
-        &Tf::Always(iv, inner) if iv.is_some() => (MonOp::Always, inner, None, iv),
-        &Tf::Eventually(iv, inner) if iv.is_some() => (MonOp::Eventually, inner, None, iv),
+    let (op, left, right, iv) = match *formulas.get(tf)? {
+        Tf::Until(iv, left, right) => (MonOp::Until, left, Some(right), iv),
+        Tf::Release(iv, left, right) => (MonOp::Release, left, Some(right), iv),
+        Tf::Always(iv, inner) if iv.is_some() => (MonOp::Always, inner, None, iv),
+        Tf::Eventually(iv, inner) if iv.is_some() => (MonOp::Eventually, inner, None, iv),
         _ => return Ok(None),
     };
     let state = |id| formulas.facts(id).state;
@@ -855,13 +855,13 @@ impl Ctx<'_> {
         let unary = |out: &mut Vec<Piece<Say>>, open: &'static str, id| {
             out.extend([Piece::text(open), direct(id), Piece::text(")")]);
         };
-        match self.formulas.get(tf)? {
-            &Tf::Not(inner) => unary(out, "~(", inner),
-            &Tf::And(left, right) => binary(out, direct(left), " /\\ ", direct(right)),
-            &Tf::Or(left, right) => binary(out, direct(left), " \\/ ", direct(right)),
-            &Tf::Implies(left, right) => binary(out, direct(left), " => ", direct(right)),
-            &Tf::Always(_, inner) => unary(out, "[](", inner),
-            &Tf::Eventually(_, inner) => unary(out, "<>(", inner),
+        match *self.formulas.get(tf)? {
+            Tf::Not(inner) => unary(out, "~(", inner),
+            Tf::And(left, right) => binary(out, direct(left), " /\\ ", direct(right)),
+            Tf::Or(left, right) => binary(out, direct(left), " \\/ ", direct(right)),
+            Tf::Implies(left, right) => binary(out, direct(left), " => ", direct(right)),
+            Tf::Always(_, inner) => unary(out, "[](", inner),
+            Tf::Eventually(_, inner) => unary(out, "<>(", inner),
             _ => {
                 return Err(refusal(
                     CONSTRUCT,
