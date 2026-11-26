@@ -19,12 +19,17 @@ use ix_trace_rs::implements;
 
 mod fragment;
 mod interpreter;
+mod model;
 pub use fragment::validate_tiny_fragment;
 pub use interpreter::{
     checked_random_operation_mdp, checked_support_expected_reward, checked_support_probability,
     evaluate_boolean, evaluate_finite_value, measure_mass_at_most, ReferenceClockState,
     ReferenceFiniteState, ReferenceLasso, ReferenceMeasureOutcome, ReferenceTimedTrace,
     ReferenceTransitionGraph,
+};
+pub use model::{
+    can_reach_target, decide_bounded_probability_claim, has_exactly_one_path, ReferenceModel,
+    ReferenceObject, ReferenceOperation,
 };
 
 /// Maximum horizon enumerated by the reference's finite-horizon solver.

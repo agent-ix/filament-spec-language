@@ -33,6 +33,7 @@ mod false_claim_corpus;
 mod fill;
 mod fixture_ids;
 mod fr114_process_attempt;
+mod graph_world;
 mod hybrid_provider;
 mod hybrid_reference;
 mod hybrid_requests;
@@ -68,6 +69,7 @@ mod provision_contract;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
 mod reference_literal_binding;
+mod reference_model;
 mod related_by_support;
 mod relation_claims;
 mod relation_claims_support;

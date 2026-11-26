@@ -673,6 +673,17 @@ impl ReferenceFiniteState {
         Ok(state)
     }
 
+    /// Whether both states carry the same value for every field.
+    pub(crate) fn same_valuation(&self, other: &Self) -> bool {
+        self.fields.len() == other.fields.len()
+            && self.fields.iter().all(|(key, value)| {
+                other
+                    .fields
+                    .get(key)
+                    .is_some_and(|found| finite_scalar_equal(value, found))
+            })
+    }
+
     /// Reads a field value from this state.
     pub fn field(&self, object: &str, field: &str) -> Option<&Value> {
         self.fields.get(&(object.to_owned(), field.to_owned()))

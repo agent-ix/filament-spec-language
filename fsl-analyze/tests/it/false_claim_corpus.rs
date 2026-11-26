@@ -1093,3 +1093,74 @@ fn reference_accepts_a_conjunctive_integer_clock_subject() {
         Ok(())
     );
 }
+
+/// The reference decides QSL-3414's two bounded claims by running the checked
+/// model: the chain it reads from the checked operation and random support
+/// has mass 1/2 on the path `v: 0 -> 1`, so `>= 3/4` is false and `>= 1/2`
+/// is true.
+#[trace("FR-1051")]
+#[test]
+fn reference_runs_the_checked_model_to_decide_a_bounded_probability_claim() {
+    use filament_exact::{
+        Integer, NodeKey, ObjectId, ObjectReference, PathSegment, UniverseId, Value,
+    };
+
+    let mut model = crate::prob_world::tossed_coin("");
+    model.operations[0].deletes = false;
+    model.operations[0].modifies = vec!["v"];
+    model.body = "bound B on M::coins [1]\n\
+                  post Activate using ev on M::Coin::toss { self.v = b }\n\
+                  random Coin::toss(b) ~ { 0: 1, 1: 1 };\n\
+                  probabilistic FalseBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.75 [ eventually[0,1] holds(c.v = 1) ] }\n\
+                  probabilistic TrueBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.5 [ eventually[0,1] holds(c.v = 1) ] }\n"
+        .to_owned();
+    let world = crate::prob_world::World::try_new_with_evaluator(
+        &model,
+        &fsl_definitional_reference::ReferenceRewardEvaluator,
+    )
+    .expect("the finite model and both bounds are checked");
+    let graph = world.package.graph();
+    let clause = graph
+        .state_clause("Activate")
+        .expect("the activation clause is checked");
+    let receiver = Value::Reference(ObjectReference::new(
+        UniverseId::new(
+            NodeKey::new("test/tossed", vec![PathSegment::Text("Coin".to_owned())], 0)
+                .expect("the fixture identity is valid"),
+        ),
+        clause.context(),
+        ObjectId::new("c").expect("the fixture object id is valid"),
+    ));
+    let states = fsl_definitional_reference::ReferenceFiniteState::enumerate(vec![(
+        "c".to_owned(),
+        "v".to_owned(),
+        vec![
+            Value::Integer(Integer::zero()),
+            Value::Integer(Integer::one()),
+        ],
+    )])
+    .expect("the bounded field has two values");
+    let chain = fsl_definitional_reference::checked_random_operation_mdp(
+        graph,
+        "toss",
+        "b",
+        &[receiver.clone(), Value::Integer(Integer::zero())],
+        states.clone(),
+    )
+    .expect("the checked support fixes each post-state");
+    let decide = |name: &str| {
+        fsl_definitional_reference::decide_bounded_probability_claim(
+            graph,
+            world.claim(name),
+            &chain,
+            &states,
+            0,
+            &receiver,
+        )
+        .expect("the bounded claim is inside the reference fragment")
+    };
+    // Hand derivation: of the two equally weighted draws only b = 1 sets
+    // v = 1, so the mass of `eventually[0,1] v = 1` from v = 0 is 1/2.
+    assert!(!decide("FalseBound"));
+    assert!(decide("TrueBound"));
+}
