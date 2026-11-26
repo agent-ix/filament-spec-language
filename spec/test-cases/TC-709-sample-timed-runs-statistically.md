@@ -31,5 +31,5 @@ Tag the tests `#[trace("TC-709", "FR-254-AC-n")]`.
 - Step 1: `measured`, `Rejected`, `q` 64 in the basis; `measured`, `Accepted`; equal verdicts.
 - Step 2: exact rationals; replay and draw recomputation succeed; recomputation fails; basis records 8 and delays lie on the grid's rounded images.
 - Step 3: per-sample time-stamp differences; `incomplete`, `limit-reached` naming `statistical.max_cycle_steps`; `unsupported`; `unsupported`, `NotStochastic` naming the state after `send` and `timeout`; `Incomplete(LimitReached{limit, value, setting})` naming `max_sample_steps` and 1.
-- Step 4: `unsupported`, `TimeLockedSample` naming `(B, x = 1)`, no witness kept.
+- Step 4: the `eventually` claim has estimate 1 and settles `Rejected`; the mean of the fraction settles `unsupported`, `TimeLockedSample` naming `(B, x = 1)`, no witness kept.
 - Step 5: the estimates, decisions and `NotStochasticIdleTail` states FR-254-AC-5 to FR-254-AC-9 state.
