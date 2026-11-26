@@ -1304,6 +1304,27 @@ impl<'a> ModelSystem<'a> {
         &self.populations
     }
 
+    /// The first population overlapping `over` that the initial snapshot did
+    /// not list. This is a request refusal check, performed after policy
+    /// declaration resolution and before policy instancing.
+    #[implements("FR-391-AC-5")]
+    pub fn unlisted_population_overlapping(
+        &self,
+        over: &ValueType,
+    ) -> Option<&fsl_semantics::model::state::StatePopulation> {
+        let ValueType::Reference(parameter) = over else {
+            return None;
+        };
+        let initial = self.initial_base.first()?;
+        self.populations.iter().find(|population| {
+            self.overlaps(population, parameter.clone())
+                && !initial
+                    .state()
+                    .populations
+                    .contains_key(&population.key)
+        })
+    }
+
     /// The system of trace variable alias `alias` of a hyper clause (FR-173
     /// "Event-position form": each trace is read over its own model). A unit
     /// that selects several models gets [`Self::over_model`] the package the
@@ -2547,14 +2568,7 @@ impl<'a> ModelSystem<'a> {
         for (population, key) in self.universe_members(parameter)? {
             // Generated stages change field values only. The base states
             // supply every initial object's type identity and population.
-            let admitted = self.initial_base.iter().any(|state| {
-                state
-                    .state()
-                    .populations
-                    .get(population)
-                    .is_some_and(|objects| objects.contains_key(key))
-            });
-            if admitted && seen_instance_keys.insert(key) {
+            if self.initially_admitted(population, key) && seen_instance_keys.insert(key) {
                 instances.push(ModelInstance {
                     population: population.clone(),
                     key: key.to_owned(),
@@ -2562,6 +2576,25 @@ impl<'a> ModelSystem<'a> {
             }
         }
         Ok(instances)
+    }
+
+    /// Whether any initial base state holds `key` in `population`.
+    fn initially_admitted(&self, population: &DeclarationKey, key: &str) -> bool {
+        self.initial_base
+            .iter()
+            .any(|state| Self::state_admits_instance(state, population, key))
+    }
+
+    fn state_admits_instance(
+        state: &ModelSimState,
+        population: &DeclarationKey,
+        key: &str,
+    ) -> bool {
+        state
+            .state()
+            .populations
+            .get(population)
+            .is_some_and(|objects| objects.contains_key(key))
     }
 
     /// Return the non-empty admitted instances for a claim's `over` type.
@@ -2583,6 +2616,22 @@ impl<'a> ModelSystem<'a> {
         }
         Ok(ClaimInstances(instances))
     }
+
+    /// FR-125 Instancing: the instances of a hyper clause parameter of object
+    /// type `object`, under the one rule of [`Self::instances`]. `self` is the
+    /// system of the parameter's alias.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::instances`].
+    #[implements("FR-125-AC-19", "FR-125-AC-20")]
+    pub fn hyper_instances(
+        &self,
+        object: &EffectiveId,
+    ) -> Result<Vec<ModelInstance>, NotSimulated> {
+        self.instances(&ValueType::Reference(object.clone()))
+    }
+
     /// Every key a hyper parameter of object type `object` may name in an
     /// identity or an encoding (FR-315 `instance-binding`): each of its
     /// [`Self::instances`]; for a subject whose initial list is empty,
@@ -2716,6 +2765,7 @@ impl<'a> ModelSystem<'a> {
     /// # Errors
     /// The original instance admission, scalar accounting, cancellation or
     /// allocation/encoding refusal; no partial instance list is returned.
+    #[implements("FR-125-AC-8", "FR-125-AC-10")]
     pub fn instances_with_meter(
         &self,
         over: &ValueType,
@@ -2799,6 +2849,7 @@ impl<'a> ModelSystem<'a> {
             }
         }
         let mut instances = Vec::new();
+        let mut seen_instance_keys: Vec<&str> = Vec::new();
         for (_, population) in admitting {
             budget.work(1)?;
             for key in self
@@ -2807,6 +2858,31 @@ impl<'a> ModelSystem<'a> {
                 .flatten()
             {
                 budget.work(1)?;
+                let mut admitted = false;
+                for state in &self.initial_base {
+                    budget.work(1)?;
+                    if Self::state_admits_instance(state, population, key) {
+                        admitted = true;
+                        break;
+                    }
+                }
+                if !admitted {
+                    continue;
+                }
+                let mut duplicate = false;
+                for seen in &seen_instance_keys {
+                    if budget.compare_bytes(seen.as_bytes(), key.as_bytes())?
+                        == std::cmp::Ordering::Equal
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if duplicate {
+                    continue;
+                }
+                budget.growth(&mut seen_instance_keys, 1)?;
+                seen_instance_keys.push(key.as_str());
                 let population = DeclarationKey {
                     package: budget.text(&population.package)?,
                     node: budget.text(&population.node)?,
@@ -2956,6 +3032,7 @@ impl<'a> ModelSystem<'a> {
             .clone()
     }
 
+    #[implements("FR-155-AC-2")]
     fn compute_universe_declaring(&self, field: &DeclarationKey) -> Option<Vec<ObjectReference>> {
         let mut objects = Vec::new();
         for (type_key, fields) in &self.fields {
@@ -2963,11 +3040,12 @@ impl<'a> ModelSystem<'a> {
                 continue;
             }
             let identity = self.model.type_identity(type_key)?;
-            for instance in self
-                .instances(&ValueType::Reference(identity.clone()))
-                .ok()?
-            {
+            let over = ValueType::Reference(identity.clone());
+            for instance in self.instances(&over).ok()? {
                 objects.push(self.bound_reference(identity.clone(), &instance).ok()?);
+            }
+            for key in self.excluded_keys(&over).ok()? {
+                objects.push(self.model.object_reference(type_key, &key).ok()?);
             }
         }
         objects.sort();

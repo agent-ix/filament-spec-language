@@ -27,6 +27,7 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::CheckedSynthesis;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{DocumentProvision, ObservationLimits};
+use ix_trace_rs::implements;
 use serde_json::{json, Map, Value as Json};
 
 use super::plan_request::{
@@ -127,6 +128,7 @@ fn objective(checked: &CheckedSynthesis) -> PlanObjective {
 }
 
 /// Run `plan` over the plan synthesis.
+#[implements("FR-1012-AC-10", "FR-1012-AC-11", "FR-1013-AC-3")]
 pub(super) fn run(
     plan: PlanRun<'_, '_>,
     accounting: filament_exact::ScalarLimits,
@@ -307,6 +309,32 @@ pub(super) fn run(
             });
         }
         policies.push(node);
+    }
+    for policy in &policies {
+        if let Some(population) = system.unlisted_population_overlapping(&policy.clause().over().1) {
+            let identity = if population.key.node.starts_with("ix://") {
+                population.key.node.clone()
+            } else {
+                let package = population
+                    .key
+                    .package
+                    .strip_prefix("ix://")
+                    .unwrap_or(&population.key.package);
+                format!("ix://{package}/{}", population.key.node)
+            };
+            return Err(RunCause::SynthesisSnapshot {
+                file: initial.to_owned(),
+                record: Box::new(fsl_semantics::model::observation::AdmissionRecord {
+                    catalog: filament_semantic_value::catalog::CatalogCode::new(
+                        "incomplete_population",
+                        "missing-required-artifact",
+                    ),
+                    fields: std::collections::BTreeMap::from([("population", identity)]),
+                    path: Vec::new(),
+                    kernel: None,
+                }),
+            });
+        }
     }
     let mut rules = SourcePlan::new(package, checked, &system, policies, limits)
         .map_err(|error| source_failure(error, package, intake))?;

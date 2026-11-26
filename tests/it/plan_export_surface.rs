@@ -3401,6 +3401,116 @@ fn a_plan_without_initial_refuses_its_missing_snapshot() {
     }
 }
 
+/// FR-1012 policy admission requires each overlapping population's initial
+/// evidence before plan search, preserving the snapshot refusal at `initial`.
+#[test]
+#[trace("TC-2860", "FR-1012-AC-10", "FR-1012-AC-11", "FR-1013-AC-3", "FSpec-FR-806-AC-7", "FSpec-FR-803-AC-11")]
+fn a_policy_over_an_omitted_or_incomplete_population_refuses_at_initial() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
+    let path = directory.path().join("spine-initial.json");
+    let bytes = std::fs::read(&path).unwrap();
+    let initial: Value = serde_json::from_slice(&bytes).unwrap();
+    let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
+
+    let mut omitted: Value = initial.clone();
+    omitted["populations"]
+        .as_array_mut()
+        .expect("population records")
+        .retain(|row| row["population"] != population);
+
+    let mut incomplete = initial;
+    let row = incomplete["populations"]
+        .as_array_mut()
+        .expect("population records")
+        .iter_mut()
+        .find(|row| row["population"] == population)
+        .expect("config_history row");
+    row["complete"] = json!(false);
+
+    let unit = plan_unit("Int[0,1]", "", "Reach.length >= 1").replace(
+        "synthesis Reach",
+        r#"temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber != 4) }
+synthesis Reach"#,
+    );
+    for (snapshot, cause) in [
+        (omitted.clone(), "missing-required-artifact"),
+        (incomplete.clone(), "incomplete-scope"),
+    ] {
+        std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let (exit, value) = plan_in(
+            directory.path(),
+            &unit,
+            "spine-model.semantic-ir.json",
+            "spine-initial.json",
+            json!({"policy":[if cause == "incomplete-scope" { "MissingPolicy" } else { "NeverFour" }], "limits":{"max_states":1}}),
+        );
+        assert_eq!(exit, 22, "{value}");
+        assert_eq!(value["code"], "incomplete_population", "{value}");
+        assert_eq!(value["cause"], cause, "{value}");
+        assert_eq!(value["details"]["fields"]["population"], population, "{value}");
+        names(&value, "/request/synthesis/initial");
+        assert!(value.get("synthesis").is_none(), "{value}");
+    }
+
+    std::fs::write(&path, serde_json::to_vec(&incomplete).unwrap()).unwrap();
+    let (exit, value) = plan_in(
+        directory.path(),
+        &unit,
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({"policy":["NeverFour"], "limits":{"max_states":1}}),
+    );
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(value["code"], "incomplete_population", "{value}");
+    assert_eq!(value["cause"], "incomplete-scope", "{value}");
+    assert_eq!(value["details"]["fields"]["population"], population, "{value}");
+    names(&value, "/request/synthesis/initial");
+    assert!(value.get("synthesis").is_none(), "{value}");
+
+    let braking = BRAKING
+        .split_once("hybrid Braking")
+        .expect("the hybrid declaration follows its profile")
+        .1;
+    let wrong_over_unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.temporal.infinite-trace/v1\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         model Config = \"example/config-version\";\n\
+         type Lengths = Int[0,1];\n\
+         hybrid Braking{braking}\n\
+         temporal NeverFour using v over (c: Config::ConfigVersion) clock \"model-steps\" on origin {{ always holds(c.versionNumber != 4) }}\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {{ true }};\n"
+    );
+    let (exit, value) = plan_in(
+        directory.path(),
+        &wrong_over_unit,
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({"policy":["SlowEnough"], "limits":{"max_states":1}}),
+    );
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(value["code"], "incomplete_population", "{value}");
+    assert_eq!(value["cause"], "incomplete-scope", "{value}");
+    names(&value, "/request/synthesis/initial");
+    assert!(value.get("synthesis").is_none(), "{value}");
+
+    std::fs::write(&path, serde_json::to_vec(&omitted).unwrap()).unwrap();
+    let (exit, value) = plan_in(
+        directory.path(),
+        &unit,
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({"policy":["NeverFour", "MissingPolicy"], "limits":{"max_states":1}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "missing_declaration", "{value}");
+    assert_eq!(value["cause"], "missing-name", "{value}");
+    names(&value, "/request/synthesis/policy/1");
+    assert!(value.get("synthesis").is_none(), "{value}");
+}
+
 /// The genuine spine type domain stays intact. A single admitted receiver
 /// and an authored unchanged postcondition make its one-step case finite
 /// without raising any request budget.
@@ -3481,6 +3591,171 @@ fn genuine_spine_outcomes_preserve_status_members_and_typed_objective() {
     names(&value, "/request/synthesis/engines");
 }
 
+/// FR-1010 writes the whole no-instance plan document with zero exploration.
+#[test]
+#[trace("TC-2860", "FR-1010-AC-4", "FR-1012-AC-9", "FSpec-FR-803-AC-6")]
+fn a_plan_policy_with_no_admitted_instance_is_inconclusive() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
+    let path = directory.path().join("spine-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    snapshot["populations"][0]["objects"] = json!([]);
+    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+
+    let (exit, value) = plan_in(
+        directory.path(),
+        &plan_unit("Int[0,0]", "", "true"),
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({"policy":["SomeTime"], "limits":{
+            "max_states":1, "max_work":1, "max_certificate_entries":1,
+            "max_check_work":1, "max_state_key_bytes":1
+        }}),
+    );
+
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(
+        value["synthesis"],
+        json!({
+            "format":"filament.plan-outcome/v1",
+            "package":"test:w21:unit.native",
+            "declaration":"Reach",
+            "status":"inconclusive",
+            "objective":{"direction":"minimize", "expression":"length", "value":null},
+            "plan":null,
+            "replay":null,
+            "certificate":null,
+            "certification":null,
+            "bound":null,
+            "explored":{"states":0, "work":0, "nan_objectives":0, "undefined_objectives":0},
+            "limits":{
+                "plan_search.max_states":1,
+                "plan_search.max_work":1,
+                "plan_search.max_certificate_entries":1,
+                "plan_search.max_check_work":1,
+                "plan_search.max_state_key_bytes":1
+            },
+            "cause":{"type":"no-instance"}
+        }),
+        "the plan document and exit are the hand-written FR-805 no-instance result"
+    );
+}
+
+/// Resolve every requested policy before deciding that an empty policy
+/// population has no instance.
+#[test]
+#[trace("TC-2860", "FR-1013-AC-2", "FSpec-FR-803-AC-10")]
+fn an_unknown_later_policy_refuses_before_no_instance() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
+    let path = directory.path().join("spine-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    snapshot["populations"][0]["objects"] = json!([]);
+    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+
+    let (exit, value) = plan_in(
+        directory.path(),
+        &plan_unit("Int[0,0]", "", "true"),
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({"policy":["SomeTime", "MissingPolicy"]}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "missing_declaration", "{value}");
+    assert_eq!(value["cause"], "missing-name", "{value}");
+    names(&value, "/request/synthesis/policy/1");
+    assert!(value.get("synthesis").is_none(), "{value}");
+}
+
+/// Policy instances follow the snapshot list order, and max_work is charged
+/// once for the clause even when its second instance decides the result.
+#[test]
+#[trace("TC-2862", "FR-1012-AC-8", "FSpec-FR-803-AC-8")]
+fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    const MODEL: &str = r#"language "ix:native" edition "1-draft";
+domain "example/config-version";
+type VersionNumber = Int[0,5];
+object ConfigVersion {
+  versionNumber: VersionNumber;
+  operation attemptUpdate(): Boolean modifies self.versionNumber;
+}
+population config_history: ConfigVersion;
+"#;
+    std::fs::write(
+        directory.path().join("spine-model.semantic-ir.json"),
+        crate::support::plan_model::compile(MODEL),
+    )
+    .unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
+    let path = directory.path().join("spine-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let (first, second) = {
+        let population = snapshot["populations"]
+            .as_array_mut()
+            .expect("population records")
+            .iter_mut()
+            .find(|row| {
+                row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)
+            })
+            .expect("config_history population");
+        let objects = population["objects"].as_array_mut().expect("objects");
+        assert!(objects.len() >= 2, "the fixture starts with two objects");
+        let mut first = objects[0].clone();
+        let mut second = objects[1].clone();
+        first["fields"].as_object_mut().unwrap().remove("parent");
+        second["fields"].as_object_mut().unwrap().remove("parent");
+        first["key"] = json!("b");
+        first["fields"]["versionNumber"] = json!({"integer":"0"});
+        second["key"] = json!("a");
+        second["fields"]["versionNumber"] = json!({"integer":"0"});
+        *objects = vec![first.clone(), second.clone()];
+        (first, second)
+    };
+
+    let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+profile g = "filament.model.complete/v1";
+model Config = "example/config-version";
+post VersionAdvances using g on Config::ConfigVersion::attemptUpdate { result implies self.versionNumber = pre(self.versionNumber) }
+type Lengths = Int[0,0];
+pre NeverUpdate using v on Config::ConfigVersion::attemptUpdate { false }
+temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber < 4) }
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
+"#;
+    for (second_value, settings, status, exit_expected, states, work) in [
+        (0, json!({"policy":["NeverFour"]}), "optimal", 0, 1, 3),
+        (4, json!({"policy":["NeverFour"]}), "infeasible", 10, 1, 1),
+        (0, json!({"policy":["NeverFour"], "limits":{"max_work":1}}), "incomplete", 22, 1, 1),
+    ] {
+        let mut current = snapshot.clone();
+        let population = current["populations"]
+            .as_array_mut()
+            .expect("population records")
+            .iter_mut()
+            .find(|row| row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY))
+            .expect("config_history population");
+        let mut current_second = second.clone();
+        current_second["fields"]["versionNumber"] = json!({"integer":second_value.to_string()});
+        population["objects"] = json!([first.clone(), current_second]);
+        std::fs::write(&path, serde_json::to_vec(&current).unwrap()).unwrap();
+        let (exit, value) = plan_in(
+            directory.path(),
+            &unit,
+            "spine-model.semantic-ir.json",
+            "spine-initial.json",
+            settings,
+        );
+        assert_eq!(exit, exit_expected, "{value}");
+        assert_eq!(value["synthesis"]["status"], status, "{value}");
+        assert_eq!(value["synthesis"]["explored"]["states"], states, "{value}");
+        assert_eq!(value["synthesis"]["explored"]["work"], work, "{value}");
+    }
+}
+
 /// Operation contracts and state invariants consume the same accounting
 /// session as goal evaluation, including before the first eligible goal.
 #[test]
@@ -3533,11 +3808,11 @@ fn ambiguous_multi_object_plan_projections_refuse_before_search() {
 /// Unbounded domains retain their projection refusal and authored domain
 /// locus; a negative finite domain remains a typing refusal.
 #[test]
-#[trace("FR-1013")]
+#[trace("FR-1013", "FSpec-FR-806-AC-1")]
 fn an_unbounded_plan_domain_names_its_unbounded_extent() {
     let unit = plan_unit("Integer", "", "true");
     let (exit, value) = plan(&unit, json!({}));
-    assert_ne!(exit, 0, "{value}");
+    assert_eq!(exit, 21, "{value}");
     assert_eq!(value["code"], "unsupported_projection", "{value}");
     assert_eq!(value["cause"], "unbounded-extent", "{value}");
     let at = unit.rfind("domain Lengths").expect("domain name") + "domain ".len();

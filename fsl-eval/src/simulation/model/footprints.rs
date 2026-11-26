@@ -27,6 +27,7 @@ use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::object_environment::{ObservedRead, ReadLog};
 use fsl_semantics::model::observation::AdmittedObservations;
 use fsl_semantics::model::state::StateModel;
+use ix_trace_rs::implements;
 
 use crate::model_subject::ModelInstance;
 
@@ -539,6 +540,7 @@ impl<'a> ModelSystem<'a> {
     /// [`Self::footprint`] over only the clauses `selected` names: a protocol
     /// attempt's application with the contracts its node selects (ADR-027
     /// FT-1).
+    #[implements("FR-155-AC-2")]
     pub(crate) fn footprint_selecting(
         &self,
         transition: &ModelTransition,
@@ -583,7 +585,34 @@ impl<'a> ModelSystem<'a> {
                 ));
             }
         }
-        Ok(self.footprint_for(application, &receiver, &arguments, selected)?)
+        let mut footprint = self.footprint_for(application, &receiver, &arguments, selected)?;
+        self.expand_universe_fields(&mut footprint.reads);
+        self.expand_universe_fields(&mut footprint.writes);
+        self.expand_universe_fields(&mut footprint.enabling);
+        Ok(footprint)
+    }
+
+    fn expand_universe_fields(&self, locations: &mut BTreeSet<Location>) {
+        let mut expanded = BTreeSet::new();
+        for location in std::mem::take(locations) {
+            match location {
+                Location::AnyField { field } => match self.universe_declaring(&field) {
+                    Some(objects) => expanded.extend(objects.into_iter().map(|object| {
+                        Location::Field {
+                            object,
+                            field: field.clone(),
+                        }
+                    })),
+                    None => {
+                        expanded.insert(Location::AnyField { field });
+                    }
+                },
+                other => {
+                    expanded.insert(other);
+                }
+            }
+        }
+        *locations = expanded;
     }
 
     /// Whether every operation of the subject has a derivable footprint, each

@@ -31,7 +31,8 @@ snapshot, the policy clause identities, and the run's limits.
 
 ## Outputs
 
-FSpec FR-650's `optimal`, `feasible`, `infeasible` or `incomplete` result
+FSpec FR-650's `optimal`, `feasible`, `infeasible`, `incomplete` or
+`inconclusive` result
 with its plan, certificate and provenance.
 
 ## Behavior

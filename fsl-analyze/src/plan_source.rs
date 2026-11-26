@@ -24,6 +24,7 @@ use filament_semantic_value::stop::Stop as ValueStop;
 use fsl_eval::automaton::{PolicyContext, PolicyState, PolicyStateError, StepPolicy};
 use fsl_eval::model_subject::{AtomStop, ModelLetters};
 use fsl_eval::simulation::model::{read_clause, ClauseReading};
+use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_package::CheckedPackage;
@@ -31,6 +32,7 @@ use fsl_semantics::check::{
     CheckedBody, CheckedNode, CheckedPlan, CheckedSynthesis, PlanOperation, TemporalClauseNode,
 };
 use fsl_semantics::model::state::StateObject;
+use ix_trace_rs::implements;
 
 use crate::plan_search::{
     Direction, MonitorStep, ObjectiveKind, PlanRules, PlanStep, PlanView, RuleStop, StepTotal,
@@ -140,6 +142,9 @@ pub struct SourcePlan<'a> {
     traces: Vec<Vec<ModelSimState>>,
     positive_policies: bool,
     policy_cache: Vec<StepPolicy>,
+    /// Policy instance lists prepared before search. An inner `None` marks a
+    /// non-reference `over` binding, not an empty object policy.
+    policy_instances: Option<Vec<Option<std::sync::Arc<[ModelInstance]>>>>,
     trace_ids: BTreeMap<(usize, Vec<Vec<u8>>), usize>,
     fault: Option<String>,
 }
@@ -181,13 +186,12 @@ impl<'a> SourcePlan<'a> {
                 });
             }
         }
-        let positive_policies =
+        let positive_length =
             !matches!(synthesis.domain(), ValueType::Int(domain) if domain.upper().is_zero());
-        if positive_policies
-            && policies
-                .iter()
-                .any(|node| !Self::supports_positive_policy(node))
-        {
+        let positive_policies = policies
+            .iter()
+            .all(|node| Self::supports_positive_policy(node));
+        if positive_length && !positive_policies {
             return Err(PlanSourceError::UnsupportedForm {
                 form: "positive-length source policy outside capture-free origin safety and bounded F/G[0,k]"
                     .to_owned(),
@@ -323,6 +327,7 @@ impl<'a> SourcePlan<'a> {
             traces: Vec::new(),
             positive_policies,
             policy_cache: Vec::new(),
+            policy_instances: None,
             trace_ids: BTreeMap::new(),
             fault: None,
         })
@@ -716,6 +721,7 @@ impl<'a> SourcePlan<'a> {
         Ok(self.policy_cache[index])
     }
 
+    #[implements("FR-1012-AC-8", "FR-1012-AC-9")]
     fn canonical_policy(
         &mut self,
         index: usize,
@@ -723,12 +729,18 @@ impl<'a> SourcePlan<'a> {
         state: &ModelSimState,
         close: bool,
     ) -> Result<MonitorStep, RuleStop> {
+        if self.policy_instances.is_none() {
+            let _ = self.has_empty_policy_instance()?;
+        }
         let policy = self.compiled_policy(index)?;
         let node = self.policies[index];
-        let instances = self
-            .system
-            .instances_with_meter(&node.clause().over().1, &mut self.system.evaluation_meter())
-            .map_err(|error| self.policy_stop(error))?;
+        let policy_instances = self
+            .policy_instances
+            .as_ref()
+            .and_then(|instances| instances.get(index))
+            .cloned()
+            .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
+        let instances = policy_instances.as_deref().unwrap_or(&[]);
         let identity = node.identity();
         let parameter = node.over();
         let mut contexts = Vec::new();
@@ -1193,6 +1205,35 @@ impl PlanRules for SourcePlan<'_> {
 
     fn policy_count(&self) -> usize {
         self.policies.len()
+    }
+
+    #[implements("FR-1012-AC-9")]
+    fn has_empty_policy_instance(&mut self) -> Result<bool, RuleStop> {
+        if let Some(instances) = &self.policy_instances {
+            return Ok(instances
+                .iter()
+                .any(|instances| instances.as_ref().is_some_and(|items| items.is_empty())));
+        }
+
+        let mut policy_instances = Vec::new();
+        let mut has_empty = false;
+        for index in 0..self.policies.len() {
+            let over = self.policies[index].clause().over().1.clone();
+            let instances = if matches!(over, ValueType::Reference(_)) {
+                let instances = self
+                    .system
+                    .instances_with_meter(&over, &mut self.system.evaluation_meter())
+                    .map_err(|error| self.policy_stop(error))?;
+                has_empty |= instances.is_empty();
+                Some(instances.into())
+            } else {
+                None
+            };
+            self.policy_capacity(&mut policy_instances, 1)?;
+            policy_instances.push(instances);
+        }
+        self.policy_instances = Some(policy_instances);
+        Ok(has_empty)
     }
 
     fn policy_start(
