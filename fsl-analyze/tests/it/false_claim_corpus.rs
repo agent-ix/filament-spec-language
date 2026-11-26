@@ -482,8 +482,10 @@ fn qsl_3414_reference_builds_the_one_step_mdp_from_checked_support() {
     // weight 2; b=0 keeps the initial value 0.
 }
 
-/// The same hand-valued activation is sent through the analyzer route: a
+/// QSL-3414: the reference runs the checked model to a value for the claim,
+/// and the same value is then sent through the analyzer route: a
 /// one-step success mass of 1/2 cannot prove a lower bound of 3/4.
+#[trace("FR-1051")]
 #[test]
 fn qsl_3414_analysis_does_not_prove_a_bound_above_the_reference_value() {
     use filament_exact::{
@@ -519,32 +521,39 @@ fn qsl_3414_analysis_does_not_prove_a_bound_above_the_reference_value() {
         clause.context(),
         ObjectId::new("c").expect("the fixture object id is valid"),
     ));
-    let state = fsl_definitional_reference::ReferenceFiniteState::new([(
+    let states = fsl_definitional_reference::ReferenceFiniteState::enumerate(vec![(
         "c".to_owned(),
         "v".to_owned(),
-        Value::Integer(Integer::zero()),
+        vec![
+            Value::Integer(Integer::zero()),
+            Value::Integer(Integer::one()),
+        ],
     )])
-    .expect("the initial value is zero");
-    let random = graph
-        .probabilistic_model()
-        .random_parameters()
-        .iter()
-        .find(|random| random.operation().name() == "toss" && random.parameter() == "b")
-        .expect("the checked operation has its finite support");
-    let hand_value = fsl_definitional_reference::checked_support_probability(
+    .expect("the bounded field has two values");
+    let chain = fsl_definitional_reference::checked_random_operation_mdp(
         graph,
-        random,
-        1,
-        &[receiver, Value::Integer(Integer::zero())],
-        &state,
-        &state,
-        clause.body(),
+        "toss",
+        "b",
+        &[receiver.clone(), Value::Integer(Integer::zero())],
+        states.clone(),
     )
-    .expect("the reference evaluates both support outcomes");
-    assert_eq!(
-        hand_value,
-        filament_exact::Rational::new(Integer::one(), Integer::from(2_i64)).unwrap()
-    );
+    .expect("the checked support fixes each post-state");
+    let reference_verdict = |name: &str| {
+        fsl_definitional_reference::decide_bounded_probability_claim(
+            graph,
+            world.claim(name),
+            &chain,
+            &states,
+            0,
+            &receiver,
+        )
+        .expect("the bounded claim is inside the reference fragment")
+    };
+    // The reference runs the checked model: of the two equally weighted
+    // draws only b = 1 sets v = 1, so the mass of `eventually[0,1] v = 1`
+    // from v = 0 is 1/2, below 3/4 and not below 1/2.
+    assert!(!reference_verdict("FalseBound"));
+    assert!(reference_verdict("TrueBound"));
 
     let engines = Engines::fsl().expect("the analyzer engines are available");
     let item = exact_probabilistic_item(
@@ -1092,75 +1101,4 @@ fn reference_accepts_a_conjunctive_integer_clock_subject() {
         fsl_definitional_reference::validate_tiny_fragment(world.package.graph()),
         Ok(())
     );
-}
-
-/// The reference decides QSL-3414's two bounded claims by running the checked
-/// model: the chain it reads from the checked operation and random support
-/// has mass 1/2 on the path `v: 0 -> 1`, so `>= 3/4` is false and `>= 1/2`
-/// is true.
-#[trace("FR-1051")]
-#[test]
-fn reference_runs_the_checked_model_to_decide_a_bounded_probability_claim() {
-    use filament_exact::{
-        Integer, NodeKey, ObjectId, ObjectReference, PathSegment, UniverseId, Value,
-    };
-
-    let mut model = crate::prob_world::tossed_coin("");
-    model.operations[0].deletes = false;
-    model.operations[0].modifies = vec!["v"];
-    model.body = "bound B on M::coins [1]\n\
-                  post Activate using ev on M::Coin::toss { self.v = b }\n\
-                  random Coin::toss(b) ~ { 0: 1, 1: 1 };\n\
-                  probabilistic FalseBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.75 [ eventually[0,1] holds(c.v = 1) ] }\n\
-                  probabilistic TrueBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.5 [ eventually[0,1] holds(c.v = 1) ] }\n"
-        .to_owned();
-    let world = crate::prob_world::World::try_new_with_evaluator(
-        &model,
-        &fsl_definitional_reference::ReferenceRewardEvaluator,
-    )
-    .expect("the finite model and both bounds are checked");
-    let graph = world.package.graph();
-    let clause = graph
-        .state_clause("Activate")
-        .expect("the activation clause is checked");
-    let receiver = Value::Reference(ObjectReference::new(
-        UniverseId::new(
-            NodeKey::new("test/tossed", vec![PathSegment::Text("Coin".to_owned())], 0)
-                .expect("the fixture identity is valid"),
-        ),
-        clause.context(),
-        ObjectId::new("c").expect("the fixture object id is valid"),
-    ));
-    let states = fsl_definitional_reference::ReferenceFiniteState::enumerate(vec![(
-        "c".to_owned(),
-        "v".to_owned(),
-        vec![
-            Value::Integer(Integer::zero()),
-            Value::Integer(Integer::one()),
-        ],
-    )])
-    .expect("the bounded field has two values");
-    let chain = fsl_definitional_reference::checked_random_operation_mdp(
-        graph,
-        "toss",
-        "b",
-        &[receiver.clone(), Value::Integer(Integer::zero())],
-        states.clone(),
-    )
-    .expect("the checked support fixes each post-state");
-    let decide = |name: &str| {
-        fsl_definitional_reference::decide_bounded_probability_claim(
-            graph,
-            world.claim(name),
-            &chain,
-            &states,
-            0,
-            &receiver,
-        )
-        .expect("the bounded claim is inside the reference fragment")
-    };
-    // Hand derivation: of the two equally weighted draws only b = 1 sets
-    // v = 1, so the mass of `eventually[0,1] v = 1` from v = 0 is 1/2.
-    assert!(!decide("FalseBound"));
-    assert!(decide("TrueBound"));
 }
