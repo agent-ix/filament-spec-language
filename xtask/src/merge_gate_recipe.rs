@@ -1557,6 +1557,7 @@ fn run_with_runner(
     run_with_verified_main(workspace_root, operands, runner, recipe, verification)
 }
 
+#[implements("NFR-142-AC-6")]
 fn run_with_verified_main(
     workspace_root: &Path,
     operands: &[OsString],
@@ -2689,7 +2690,14 @@ fn require_no_overlap(
         .run(
             workspace_root,
             OsStr::new("git"),
-            &os_args(&["diff", "--name-only", "-z", &merge_base, "HEAD"]),
+            &os_args(&[
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                &merge_base,
+                "HEAD",
+            ]),
         )
         .map_err(|error| Error::MergeGateRecipe(format!("cannot inspect PR changes: {error}")))?;
     if !pr_changes.success {
@@ -2732,7 +2740,14 @@ fn require_no_overlap(
         .run(
             workspace_root,
             OsStr::new("git"),
-            &os_args(&["diff", "--name-only", "-z", &merge_base, "origin/main"]),
+            &os_args(&[
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                &merge_base,
+                "origin/main",
+            ]),
         )
         .map_err(|error| {
             Error::MergeGateRecipe(format!("cannot inspect origin/main changes: {error}"))
@@ -2833,6 +2848,7 @@ fn package_footprint(package: &str) -> BTreeSet<String> {
                 "src".to_owned(),
                 "tests".to_owned(),
                 "benches".to_owned(),
+                "examples".to_owned(),
                 "build.rs".to_owned(),
             ]);
         }
@@ -4676,6 +4692,42 @@ mod tests {
     }
 
     #[test]
+    #[trace("NFR-142-AC-3", "NFR-142-AC-5")]
+    fn rename_insensitive_diffs_overlap_on_the_pr_rename_old_path() {
+        let runner = FakeRunner {
+            pr_changes: "docs/old-guide.md\0docs/new-guide.md\0".to_owned(),
+            main_changes: "docs/old-guide.md\0".to_owned(),
+            ..FakeRunner::new()
+        };
+        let paths = vec![
+            "docs/old-guide.md".to_owned(),
+            "docs/new-guide.md".to_owned(),
+        ];
+        let mut recipe = plan(
+            workspace_root(),
+            &["docs/old-guide.md", "docs/new-guide.md"],
+        );
+        let error = ensure_compatible(
+            tool_workspace(),
+            workspace_root(),
+            &paths,
+            &mut recipe,
+            &runner,
+        )
+        .expect_err("the deleted PR-side rename path overlaps the main edit");
+        assert!(error.to_string().contains("OVERLAP: docs/old-guide.md"));
+        let calls = runner.calls.borrow();
+        for endpoint in ["HEAD", "origin/main"] {
+            assert!(calls.iter().any(|(_, args)| {
+                args.first().is_some_and(|arg| arg == "diff")
+                    && args.contains(&"--no-renames".to_owned())
+                    && args.contains(&"-z".to_owned())
+                    && args.last().is_some_and(|arg| arg == endpoint)
+            }));
+        }
+    }
+
+    #[test]
     #[trace("NFR-142-AC-5")]
     fn lockfile_manifest_and_xtask_changes_are_unconditional_overlaps() {
         for main_change in ["Cargo.lock", "fsl-analyze/Cargo.toml", "xtask/src/main.rs"] {
@@ -4742,6 +4794,23 @@ mod tests {
             find_path_overlaps(&relevant, &main_changes),
             main_changes,
             "a sibling source file in the selected package footprint overlaps"
+        );
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-5")]
+    fn root_package_all_target_check_includes_examples_in_overlap_footprint() {
+        let changed = vec!["src/lib.rs".to_owned()];
+        let recipe = plan(workspace_root(), &["src/lib.rs"]);
+        let relevant = recipe_relevant_paths(workspace_root(), &changed, &recipe)
+            .expect("expand root package path set");
+        assert!(relevant.contains("examples"));
+
+        let main_changes = BTreeSet::from(["examples/check_gate.rs".to_owned()]);
+        assert_eq!(
+            find_path_overlaps(&relevant, &main_changes),
+            main_changes,
+            "the workspace all-target check builds root-package examples"
         );
     }
 
