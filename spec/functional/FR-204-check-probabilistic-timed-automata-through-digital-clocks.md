@@ -294,96 +294,140 @@ unsupported cause `DelayDistribution{operation}`.
 
 ### Temporary fallback (QSL-3324, owner decision pending)
 
-This section is temporary. It names QSL-3324 and holds only while the region
-route of Admission "Route" cannot yet decide the forms below. It withholds
-verdicts the digital MDP cannot back; it changes no exact value a criterion
-states, which stays the target. Each rule ends for a form when that form is
-decided by a route that is sound for it, and the section is removed when
-every rule has ended.
+This section is temporary. It names QSL-3324 and holds only while no sound
+route decides the forms below. It withholds verdicts the routes built today
+cannot back; it changes no exact value a criterion states, which stays the
+target. Each rule ends for a form when a route that is sound for it decides
+it, and the section is removed when every rule has ended. EN-4's
+statistical wrong verdicts (a sampled horizon position read inside a delay,
+an unweighted position fraction over a time window) are outside this
+fallback: they are alpha must-fix defects, fixed under QSL-3447 and
+QSL-3448.
 
 - **F-1 Forms covered.** An exact timed item SHALL fall under this fallback
   when every clock constraint is closed and its form is one Admission
-  "Route" does not give the digital MDP but the region route does not yet
-  decide: under every scheduler, a bounded-window formula with an interval
-  operator nested under another; under a workload, every bounded-window
-  formula outside the digital list; and an `elapsed` comparison or quantile
-  `<=` whose race includes a free delay (FR-877). A single interval operator
-  under every scheduler is not covered, except under F-7: it is decided over
-  the region MDP.
-- **F-2 No proof.** A covered item SHALL NOT settle `proved`. Where the
-  digital MDP would prove it, the item SHALL settle
+  "Route" does not give the digital MDP: under every scheduler, a
+  bounded-window formula with an interval operator nested under another;
+  under every scheduler, a single interval operator, until both the region
+  route decides it and the single-operator position fix of QSL-3324 (reads
+  at positions only, Admission "Positions") has landed on main; and an
+  `elapsed` comparison or quantile `<=` whose race includes a free delay
+  (FR-877). Workload items are covered by F-4, strict subjects by F-7.
+- **F-2 No digital proof.** A covered item SHALL NOT settle `proved`. Where
+  the digital MDP would prove it, it SHALL settle
   `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})`. ADR-028
   TA-3 does not cover these forms, and AC-26 shows a closed subject whose
   digital maximum is below the dense one.
-- **F-3 Refutations kept where positions are read right.** A digital
+- **F-3 Digital refutations kept where positions are read right.** A digital
   refutation of a covered item SHALL be kept: a scheduler that takes integer
   delays is a dense scheduler, so a digital maximum above a `<=` bound, or a
   digital minimum below a `>=` bound, is attained on dense time, provided the
   product reads exactly that behaviour's positions (Admission "Positions").
-  For a formula with an interval operator nested under another, the
-  refutation SHALL be kept only once both the producer's and the checker's
-  nested reading give, on the digital route, the minimum and maximum of
-  AC-21's nested forms (worked example items 4 and 5) and of `Step`'s nested
-  claims. Until then such an item SHALL settle
-  `Incomplete(TimedRouteWithheld{reason: NestedReadUnchecked})` instead of
+  A single interval operator meets that proviso once the single-operator
+  position fix has landed. A formula with an interval operator nested under
+  another meets it only once both the producer's and the checker's nested
+  reading give, on the digital route, the minimum and maximum of AC-21's
+  nested forms (worked example items 4 and 5) and of `Step`'s nested
+  claims. Until its proviso is met, such an item SHALL settle
+  `Incomplete(TimedRouteWithheld{reason: PositionReadUnchecked})` instead of
   `refuted`.
 - **F-4 Workload races with a real free choice.** Under a workload, an item
-  whose claim is a bounded-window formula, deadline events included, or an
-  elapsed measure within a horizon, and whose race includes a free delay with
-  a window wider than a single point, SHALL settle neither `proved` nor
-  `refuted`: it settles
-  `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})`. A free delay
-  whose window is a single point is no choice and does not trigger the rule
-  (FR-923-AC-3's `tick`). The rule holds until the workload rule is settled:
-  ADR-026 SD-3 lets the scheduler choose each free identity's delay with the
-  smallest winning, while the all-free state of "The digital MDP" splits by
-  weight, and the two readings are not yet reconciled.
+  of any objective (a bounded-window formula, deadline events included, a
+  reachability or until, an expected reward or elapsed time, or a measure)
+  whose race includes a free delay with a window wider than a single point
+  SHALL settle neither `proved` nor `refuted`: it settles
+  `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})`, and a replay
+  of a witness for it (FR-202) settles the same instead of `refuted`. A free
+  delay whose window is a single point is no choice and does not trigger the
+  rule (FR-923-AC-3's `tick`). The rule holds until the workload rule is
+  settled: ADR-026 SD-3 lets the scheduler choose each free identity's delay
+  with the smallest winning, while the all-free state of "The digital MDP"
+  splits by weight. The two readings give different race probabilities, so
+  the doubt reaches every objective over such a race, not only bounded
+  windows.
 - **F-5 EN-1 digital clocks.** On EN-1's digital-clock route (FR-243), a
   claim other than a TT-1 timed invariant over the discrete state, deadlock
-  freedom or location reachability, which are the forms FSpec FR-416
-  "Verdicts" says digitization decides, SHALL NOT settle `proved`; it SHALL
-  settle `incomplete` with `TimedRouteWithheld{reason:
-  DigitalProofUnsound}`. Its refutations are kept, because each one replays
-  by FR-181 timed replay with rational delays.
+  freedom or location reachability, the forms FSpec FR-416 "Verdicts" says
+  digitization decides, SHALL NOT settle `proved`; it SHALL settle
+  `incomplete` with `TimedRouteWithheld{reason: DigitalProofUnsound}`. Its
+  refutations are kept, because each one replays by FR-181 timed replay with
+  rational delays.
 - **F-6 Cause.** `TimedRouteWithheld{reason}` is FR-203's temporary
   `IncompleteCause` arm, the FSpec FR-331 wire cause
-  `timed-route-withheld{reason}` with `reason` `digital-proof-unsound`,
-  `nested-read-unchecked` or `workload-free-delay`. It names no limit,
-  because nothing was exhausted, and it is never `unsupported`.
+  `timed-route-withheld{reason}`, with `reason` `digital-proof-unsound`
+  (F-2, F-5), `position-read-unchecked` (F-3), `workload-free-delay` (F-4)
+  or `region-walk-unchecked` (F-7). It names no limit, because nothing was
+  exhausted, and it is never `unsupported`.
+- **F-7 Region route while QSL-3444 is open.** QSL-3444's region time
+  successor can skip a region between two clocks' integer crossings. Until
+  it is fixed, an item decided over the region MDP (a strict constraint, an
+  elapsed `>=` quantile, or a bounded-window form Admission "Route" sends to
+  regions) SHALL NOT settle `proved`; it SHALL settle
+  `Incomplete(TimedRouteWithheld{reason: RegionWalkUnchecked})`. This covers
+  deadline events, reachability and expected time over strict subjects
+  (FR-922), as well as QSL-3444's own strict `eventually[0 ms, 4 ms]` claim.
+  A region refutation SHALL be kept only when every time invariant that
+  applies on the subject is a conjunction of atomic clock bounds and no race
+  draws a given (`discrete`) delay. Otherwise it settles the same cause
+  instead of `refuted`. The argument for keeping it:
+  - **A skipped region is passed, not invented.** Every point of a region has
+    the same sequence of time-successor regions, so a walk from `R` that
+    lands in `R''` and skips `R'` stands for real delays from every point of
+    `R` that pass through `R'`. Every modelled delay edge is therefore a real
+    delay.
+  - **Invariants still hold along it.** A conjunction of atomic clock bounds
+    is convex, so when it holds at both ends of the delay it holds at every
+    instant between them, including in `R'`. Urgency and the invariants'
+    `when` conditions are discrete and do not change during a delay.
+  - **Deadlines and windows are read as on the real path.** The deadline,
+    elapsed and obligation clocks are clocks of the same region. A delay
+    from `R` to `R''` that passes a deadline closes it as the real delay
+    does, and no predicate is read inside a delay (Admission "Positions"),
+    so the skipped region carries no position whose reading is lost.
+  - **Enabledness only shrinks.** A discrete move enabled only in `R'` is
+    missing from the model. The skip therefore removes scheduler choices;
+    it adds none.
+  - **So a modelled witness is a real scheduler.** It makes the same choice
+    at each point of a region, because guards and successors are uniform on
+    regions. The modelled maximum is at most the real one and the modelled
+    minimum at least the real one. A modelled value above a `<=` bound, or
+    below a `>=` bound, is therefore attained by a real scheduler, which is
+    sound for a refutation and unsound for a proof.
+  - **Where the argument fails.** It does not cover a race that draws a fixed
+    delay: points of one region can land in different regions after the same
+    delay. It also does not cover a non-convex time invariant, which can fail
+    inside a skipped region.
 
-- **F-7 Variant if QSL-3444 is not fixed.** If QSL-3444 (a false proof on
-  the region route) is not fixed by 2026-11-27 12:00 PST, single interval
-  operators under every scheduler are covered too, closed or not, on
-  whichever route decides them. Such an item SHALL NOT settle `proved`. It
-  SHALL settle `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})`,
-  the same cause, because no route is yet sound for its proof. Its digital
-  refutations are kept under F-3: a single operator at the origin holds one
-  obligation, and its position reading is the single-operator fix of
-  QSL-3324. The variant ends when QSL-3444 is fixed. The criteria it adds:
-  - AC-21's `eventually[1 ms, 4 ms]` and `until[1 ms, 4 ms]` proofs at
-    `0.99`, and `Step`'s `eventually[1 ms, 2 ms]` and `always[1 ms, 2 ms]`
-    proofs, with their checker-acceptance clauses;
-  - AC-26's `Gap` `probability <= 0.5`, which no digital refutation backs
-    (the digital maximum is `0`), and its `route: "region"` clause. `Gap`'s
-    `probability >= 0.5` refutation on the minimum `0` is kept, because
-    `s = 0` is an integer schedule;
-  - FR-498-AC-3's punctual-interval claim, where its verdict is `proved`;
-  - FSpec FR-421-AC-7 and TC-374 DG-07 on the same condition.
-  AC-21's `always[0 ms, 4 ms]` item is a TA-4 complement on the digital list
-  and is not affected.
+  F-7 ends when QSL-3444 is fixed.
 
-The criteria it changes while it holds: AC-5 to AC-11, AC-21, AC-26,
-FR-498-AC-8, FR-877-AC-1, FR-877-AC-2 (its tampered-document clause) and
-FR-877-AC-5. Each one names its temporary outcome. FR-243-AC-4 is not
-changed: `NoLateReply` reads `always holds(not k.late)` under `clock
-"model-steps"`, a timed invariant over the discrete state, which F-5 keeps.
+The criteria it changes while it holds, each with its temporary outcome:
+
+- **F-1 to F-3:** AC-21, AC-26, FR-498-AC-3 (its punctual claim is pinned to
+  FSpec FR-421-AC-7's single `eventually[2 ms, 2 ms] holds(m.delivered)` at
+  the origin), FR-498-AC-8, FR-877-AC-1 and FR-877-AC-2 (its
+  tampered-document clause).
+- **F-4:** AC-5 to AC-12, AC-24, FR-877-AC-5, FR-920-AC-4 and FR-202-AC-8.
+- **F-7:** AC-2 (its strict-guard clause), AC-13, FR-877-AC-3, FR-920-AC-2,
+  FR-922-AC-1 to FR-922-AC-3, and the region-route proofs of AC-21, AC-26
+  and FR-498-AC-3.
+
+Checked and not changed:
+
+- FR-243-AC-4: `NoLateReply` reads `always holds(not k.late)` under `clock
+  "model-steps"`, a timed invariant over the discrete state, which F-5
+  keeps.
+- FR-196-AC-14: product structure, with no verdict.
+- FR-877-AC-4: a region refutation over a convex invariant with no drawn
+  delay, which F-7 keeps.
+- FR-940-AC-39: program and package parity, which still holds for a
+  withheld item.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-204-AC-1 | §15.5 `Deadline` over every scheduler: `x` takes the values 0 to 2 and the deadline clock 0 to 5; the minimum is `99/100` (send at `x = 2`) and the maximum `9999/10000` (send at `x = 1`); the item settles `proved`, `ExactValue{99/100}`. At threshold 0.995 it settles `refuted` with a path of two losses at 2 ms and 4 ms of probability `1/100`, whose replay checks that the next `send` needs `x >= 1`, after 4 ms. | Test (TC-639) |
-| FR-204-AC-2 | §15.5 `MeanTime` settles `proved`, `ExactValue{20/9 ms}` (maximum; the minimum is `10/9 ms`). The no-operation x>=1/cap2 oracle of FR-196 has elapsed infimum1 and supremum+infinity despite eventual observation almost surely; at threshold3 its geometric IdleDelay3/4/IdleObserve1/4 policy has exact value5 and a checked infinite observation continuation. A finite maximum3 or delay-only witness fails. With the guard `self.x > 1 ms` the items are decided over the region MDP, never `unsupported`: the maximum is `20/9 ms`, attained by taking every delay at 2 ms, and the minimum is the infimum `10/9 ms`, approached by delays just above 1 ms and not attained (FR-204-AC-13). | Test (TC-639) |
+| FR-204-AC-2 | §15.5 `MeanTime` settles `proved`, `ExactValue{20/9 ms}` (maximum; the minimum is `10/9 ms`). The no-operation x>=1/cap2 oracle of FR-196 has elapsed infimum1 and supremum+infinity despite eventual observation almost surely; at threshold3 its geometric IdleDelay3/4/IdleObserve1/4 policy has exact value5 and a checked infinite observation continuation. A finite maximum3 or delay-only witness fails. With the guard `self.x > 1 ms` the items are decided over the region MDP, never `unsupported`: the maximum is `20/9 ms`, attained by taking every delay at 2 ms, and the minimum is the infimum `10/9 ms`, approached by delays just above 1 ms and not attained (FR-204-AC-13). Temporary (QSL-3324 fallback F-7, while QSL-3444 is open): the strict-guard items, decided over the region MDP, settle `Incomplete(TimedRouteWithheld{reason: RegionWalkUnchecked})` instead of `proved`; the digital items are unchanged. | Test (TC-639) |
 | FR-204-AC-3 | `Retx` with `delay Msg::send ~ discrete { 1 ms: 1, 2 ms: 1 };`, under a workload `One` with weight 1 on `send`, is a DTMC over digital timed states; `probability >= 0.99 [eventually[0 ms, 4 ms] holds(m.delivered)]` settles `proved`, `ExactValue{159129/160000}`: after every reset `send` waits 1 or 2 ms with probability 1/2 each, both inside its window `[1, 2]`, loses with `1/10`, and attempts at time stamps up to 4 ms inclusive count. The same claim `under every scheduler` is decided with the distribution applied (FR-204-AC-15); with `delay Msg::send ~ exponential(1 per ms);` under `One` and exact evidence requested it settles `unsupported`, `DelayDistribution`, naming `send`. | Test (TC-639) |
 | FR-204-AC-4 | A variant of `Retx` whose `send` has no `x >= 1 ms` guard and no reset has a zero-delay cycle at its initial state; it is decided with that cycle's end component made transient: once `x` reaches 2 ms time cannot pass before delivery, every time-divergent scheduler delivers with probability 1, so `Deadline`'s minimum and maximum are both `1` and it settles `proved`, never `unsupported` (FR-204-AC-16). `probability >= 0.99 [always[0 ms, 4 ms] holds(not m.delivered)]` over `Retx` is decided as the complement of `eventually[0 ms, 4 ms] holds(m.delivered)`: its minimum is `1 - 9999/10000 = 1/10000` and its maximum `1 - 99/100 = 1/100`, so it settles `refuted`, its minimum being below 0.99 (FR-204-AC-14). | Test (TC-639) |
 | FR-204-AC-5 | §15.5 `Retx`, whose `send` has no `delay` declaration, under the workload `One` (weight 1 on `send`): the workload resolves the scheduled identity and `send`'s delay stays the scheduler's choice in `[1, 2]` ms after each reset, with no distribution assumed for it. `probability >= 0.99 [eventually[0 ms, 4 ms] holds(m.delivered)]` under `One` settles `proved`, `ExactValue{99/100}`, its entry marked a minimum. `probability <= 0.999` over the same event under `One` settles `refuted` on the maximum `9999/10000`, its entry marked a maximum and its witness scheduler choosing `UnitDelay` at `x = 0` and `WorkloadResolve{send, 0}` at `x = 1`. At the same quiescent D=1 idle-delayed key, IdleObserve reads success at D with elapsed0 while IdleDelay crosses D with elapsed1; replay/certificates preserve the distinct actions, post-keys and predicate positions. Temporary (QSL-3324 fallback F-4, while it holds): `send`'s free delay has the window `[1, 2]`, so each item here settles `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})` instead of `proved` or `refuted`; the values above stay the target. | Test (TC-642) |
@@ -393,8 +437,8 @@ changed: `NoLateReply` reads `always holds(not k.late)` under `clock
 | FR-204-AC-9 | Over AC-8's `Race` the initial state offers nine `FreeDelays` actions (two rows, given `[1]` and `[3]`, each assigning `B` one of 1, 2, 3) and no `WorkloadResolve`. The witness scheduler for the maximum `3/4` holds the `FreeDelays` entry with the rows given `[1]` to `B` delay 1 and given `[3]` to `B` delay 1, and for the minimum `1/4` the rows given `[1]` to `B` delay 2 and given `[3]` to `B` delay 3 (least attaining delay per row). A single race whose payoff falls as `B`'s delay rises gives equal optima before and after the draw, so AC-8 cannot separate them; AC-10 does. Temporary (QSL-3324 fallback F-4, while it holds): `B`'s free delay has a window wider than a single point, so each `proved` or `refuted` item here settles `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})` and carries no witness entry; the stated actions, values and witness rows stay the target. | Test (TC-642) |
 | FR-204-AC-10 | Separating vector. The model `Detour` (`time dense unit ms`) has `phase` (`Idle`, `Half` or `Done`) and `b`. `A`, guarded by `phase = Idle`, sets `Done` and `b` and declares `delay Detour::A ~ discrete { 1 ms: 1, 3 ms: 1 }`; `B` has no `delay` declaration, is guarded by `phase = Idle and x >= 1 ms` under the time invariant `x <= 3 ms` while `Idle`, and sets `Half`; `G` and `L` are guarded by `phase = Half` and declare `delay Detour::G ~ discrete { 1 ms: 1 }` and `delay Detour::L ~ discrete { 1 ms: 1 }`; `G` sets `Done` and `b`, `L` sets `Done`. The workload `All` weights `A`, `B`, `G` and `L` 1. For `eventually[0 ms, 2 ms] holds(d.b)`, write `Q(g, d)` for the probability after the draw `g` with `B` at delay `d`: `Q(1, 1) = 3/4` (tie: `A` wins `1/2`; `B` wins `1/2`, then `G` wins the tie at 2 ms with `1/2`), `Q(1, 2) = Q(1, 3) = 1` (`A` wins at 1 ms); `Q(3, 1) = 1/2` (`B` at 1 ms, then `G` at 2 ms), `Q(3, 2) = Q(3, 3) = 0` (nothing sets `b` by 2 ms). After the draw the maximum is `(1 + 1/2)/2 = 3/4` and the minimum `(3/4 + 0)/2 = 3/8`; a choice before the draw gives `5/8`, `1/2` and `1/2` for `B` at 1, 2 and 3, so maximum `5/8` and minimum `1/2`. Under `All`, `probability <= 0.7` settles `refuted` on the maximum `ExactValue{3/4}`, its witness entry the `FreeDelays` rows given `[1]` to `B` delay 2 and given `[3]` to `B` delay 1, and with `max_witness_paths` at least 2 its path set (`A` at 1 ms, `1/2`; `B` at 1 ms then `G` at 2 ms, `1/4`) replays `refuted`; `probability >= 0.45` settles `refuted` on the minimum `ExactValue{3/8}`, its witness entry the rows given `[1]` to `B` delay 1 and given `[3]` to `B` delay 2. A product that chose before the draw would prove both claims. Temporary (QSL-3324 fallback F-4, while it holds): `B`'s free delay has a window wider than a single point, so each `proved` or `refuted` item here settles `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})` and carries no witness entry; the stated actions, values and witness rows stay the target. | Test (TC-642) |
 | FR-204-AC-11 | Every free identity in each row. AC-6's `Race` with a second free operation `C`, guarded by `phase = Idle and x >= 1 ms` under the same invariant, setting `Done` and not `b`, and `Both` weighting `A`, `B` and `C` 1: the initial state offers nine `FreeDelays` actions, each one row given `[2]` assigning both `B` and `C` a delay in `[1, 3]`. The maximum is `ExactValue{1}` with the row `B` delay 1, `C` delay 2; the minimum is `ExactValue{0}` with the row `B` delay 2, `C` delay 1 (`C` wins at 1 ms). A witness row naming `B` alone refuses `invalid_runtime_input`/`invalid-value` at replay. Temporary (QSL-3324 fallback F-4, while it holds): `B`'s free delay has a window wider than a single point, so each `proved` or `refuted` item here settles `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})` and carries no witness entry; the stated actions, values and witness rows stay the target. | Test (TC-642) |
-| FR-204-AC-12 | Witness at an end component. The model `Loop` (`time dense unit ms`) has `phase` (`Idle` or `Done`) and `b`; `A`, guarded by `phase = Idle`, sets `Done` and `b` and declares `delay Loop::A ~ discrete { 2 ms: 1 }`; `B` has no `delay` declaration, is guarded by `phase = Idle and x >= 1 ms` under the time invariant `x <= 2 ms` while `Idle`, resets `x` and keeps `Idle`; the workload `Both` weights `A` and `B` 1. The initial state offers two `FreeDelays` actions, one row given `[2]` each: `B` delay 1 (`B` wins and returns to the initial state) and `B` delay 2 (tie: either order reaches `b`: `A` first sets `b`; `B` first resets `x` and `A`, still enabled, sets `b`). Both attain the maximum's upper iterate 1. The `Reach` claim `probability <= 0.9 [eventually holds(r.b)]` under `Both` settles `refuted` on the maximum `ExactValue{1}`, its witness entry the row given `[2]` to `B` delay 2 (the MEC exit, not the least delay 1), and the refutation replays `refuted`; the chain the entry `B` delay 1 would induce never reaches `b` (value `0`), which is why the least attaining delay is not the witness. | Test (TC-642) |
-| FR-204-AC-13 | Over `Retx` with the guard `self.x > 1 ms`, over every scheduler, `Deadline` builds an MDP product over region states, with no refusal; its exact minimum is `99/100` (attempts at 2 ms and 4 ms) and its exact maximum `999/1000` (three attempts, each just after 1 ms past the last, fit in 4 ms, a fourth does not), so `Deadline` at 0.99 settles `proved` at equality. | Test (TC-2172) |
+| FR-204-AC-12 | Witness at an end component. The model `Loop` (`time dense unit ms`) has `phase` (`Idle` or `Done`) and `b`; `A`, guarded by `phase = Idle`, sets `Done` and `b` and declares `delay Loop::A ~ discrete { 2 ms: 1 }`; `B` has no `delay` declaration, is guarded by `phase = Idle and x >= 1 ms` under the time invariant `x <= 2 ms` while `Idle`, resets `x` and keeps `Idle`; the workload `Both` weights `A` and `B` 1. The initial state offers two `FreeDelays` actions, one row given `[2]` each: `B` delay 1 (`B` wins and returns to the initial state) and `B` delay 2 (tie: either order reaches `b`: `A` first sets `b`; `B` first resets `x` and `A`, still enabled, sets `b`). Both attain the maximum's upper iterate 1. The `Reach` claim `probability <= 0.9 [eventually holds(r.b)]` under `Both` settles `refuted` on the maximum `ExactValue{1}`, its witness entry the row given `[2]` to `B` delay 2 (the MEC exit, not the least delay 1), and the refutation replays `refuted`; the chain the entry `B` delay 1 would induce never reaches `b` (value `0`), which is why the least attaining delay is not the witness. Temporary (QSL-3324 fallback F-4, while it holds): `B`'s free delay has the window `[1 ms, 2 ms]`, so the `Reach` item settles `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})` instead of `refuted`, and its replay is not run; the offered actions and the witness rule stay the target. | Test (TC-642) |
+| FR-204-AC-13 | Over `Retx` with the guard `self.x > 1 ms`, over every scheduler, `Deadline` builds an MDP product over region states, with no refusal; its exact minimum is `99/100` (attempts at 2 ms and 4 ms) and its exact maximum `999/1000` (three attempts, each just after 1 ms past the last, fit in 4 ms, a fourth does not), so `Deadline` at 0.99 settles `proved` at equality. Temporary (QSL-3324 fallback F-7, while QSL-3444 is open): `Deadline` settles `Incomplete(TimedRouteWithheld{reason: RegionWalkUnchecked})` instead of `proved`; the product is still built with no refusal, and the stated extrema stay the target. | Test (TC-2172) |
 | FR-204-AC-14 | Over `Retx` over every scheduler, `probability >= 0.99 [always[0 ms, 4 ms] holds(c.late)]` builds a product, with no `TimedFormShape` refusal, and its exact minimum is `0`, because `c.late` is false at the initial state. | Test (TC-2173) |
 | FR-204-AC-15 | Over `Retx` with `delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };`, `Deadline` over every scheduler builds an MDP product with no `DelayDistribution` refusal. | Test (TC-2174) |
 | FR-204-AC-16 | Over the `Retx` variant whose `send` has no guard and no reset, `Deadline` over every scheduler builds a product with no `ZeroDelayCycle` refusal, and its exact minimum and maximum are both `1`. | Test (TC-2175) |
@@ -402,12 +446,12 @@ changed: `NoLateReply` reads `always holds(not k.late)` under `clock
 | FR-204-AC-18 | Under the workload `Skew` (weights `A` 1, `B` 2, `C` 3), the model `Trio` of the worked example below, whose `A`, `B` and `C` race with the given delays `discrete { 1 ms: 1, 2 ms: 1 }`, `discrete { 2 ms: 1, 3 ms: 1 }` and `discrete { 2 ms: 1, 3 ms: 3 }`, has at its initial state exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`), each edge `Identity(A)`, with `A` at 1 ms `1/2`, `A` at 2 ms `53/192`, `B` at 2 ms `7/48` and `C` at 2 ms `5/64`; `probability >= 0.13 [eventually[0 ms, 3 ms] holds(t.b)]` settles `proved`, `ExactValue{7/48}`, `probability >= 0.07 [eventually[0 ms, 3 ms] holds(t.c)]` settles `proved`, `ExactValue{5/64}`, `probability <= 0.8 [eventually[0 ms, 3 ms] holds(t.a)]` settles `proved`, `ExactValue{149/192}`, and `probability >= 0.5 [eventually[0 ms, 1 ms] holds(t.a)]` settles `proved`, `ExactValue{1/2}`; the `t.b` item's `Exact` certificate with values computed with even ties (initial value `11/96`) and the one computed with ties taken in canonical order (initial value `0`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3204) |
 | FR-204-AC-19 | Under the workload `Share` (weights `fire` 4, `G` 1), the model `Pair` of the worked example below, whose operation `fire` has the two tied identities `F1` and `F2` with `discrete { 2 ms: 1 }` and whose `G` has `discrete { 2 ms: 1, 3 ms: 1 }`, divides `fire`'s weight between `F1` and `F2` (2 each against `G` 1): its initial state has exactly three race edges and no other action, `F1` at 2 ms `9/20`, `F2` at 2 ms `9/20` and `G` at 2 ms `1/10`; `probability >= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` and `probability <= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` each settle `proved`, `ExactValue{9/20}`; the `n1.hit` item's `Exact` certificates with the weight not divided (initial value `17/36`) and with even ties (initial value `5/12`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3205) |
 | FR-204-AC-20 | Under the workload `Order` (weights `X` 1, `Y` 2, `Z` 3), the model `Chain` of the worked example below, whose `X`, `Y` and `Z` tie at 2 ms and each fire when still enabled at its turn, orders the tie without replacement by the weights, so `probability >= 0.58 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = X)]` settles `proved`, `ExactValue{7/12}`, `probability <= 0.2 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Z)]` settles `proved`, `ExactValue{3/20}`, and `probability <= 0.3 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Y)]` settles `proved`, `ExactValue{4/15}`; the `c.last = Z` item's `Exact` certificates with the first pick weighted and the rest in canonical order (initial value `1/2`), with even orders (initial value `1/3`) and with canonical order (initial value `1`) are each rejected `InequalityFails`, and the test submits all three. | Test (TC-3206) |
-| FR-204-AC-21 | Over the timed `Retx` subject of AC-1, under the timed profile EN-5 runs every bounded-window formula that FR-186 admits and retains a monitor for every bounded operator occurrence, including nested occurrences and their nonzero lower bounds. Representative admitted formulas are `eventually[1 ms, 4 ms] holds(m.delivered)`, `always[0 ms, 4 ms] holds(m.delivered)`, `holds(not m.delivered) until[1 ms, 4 ms] holds(m.delivered)`, nested `eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(m.delivered)`, and nested `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)`. Every value is the FSpec FR-416 pointwise value over every scheduler, derived in "Worked example: pointwise values" below. The first and third forms each have minimum `99/100` and maximum `9999/10000` and settle `proved` at threshold `0.99`; the `always` form has value `0` and settles `proved` for `probability <= 0.01`; the nested `eventually`-then-`always` form has minimum `99999/100000` and maximum `1` and settles `proved` at threshold `0.99`; the nested `always`-then-`eventually` form has minimum `0` and maximum `99/100`, settles `refuted` at `probability >= 0.99` on the minimum and `proved` at `probability <= 0.99` on the maximum, and does not settle `unsupported` or `not-yet-implemented`. Over the model `Step` of that example, where a delay without a step is not a position, `probability <= 0.01 [eventually[1 ms, 2 ms] holds(not c.late)]`, `probability >= 0.99 [always[1 ms, 2 ms] holds(c.late)]` (vacuous) and `probability <= 0.01 [always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(not c.late)]` settle `proved` with values `0`, `1` and `0`, and with `step`'s delay drawn by `delay M::Call::step ~ discrete { 3 ms: 1 };` `probability <= 0.01 [always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(c.late)]` settles `proved` with value `0`; on each of these items the certificate checker of FR-921 accepts the producer's certificate. Each of these forms is decided over the region MDP (Admission "Route"). Rejection: for the `Step` claim `always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(not c.late)`, the producer's accepted `exact` `timed-product/v1` document with only the initial product key's value changed to `1` (the value a reading of the state at the 2 ms instant gives: `late` is false then), is rejected `InequalityFails` at the initial product key, and the tampered item settles `inconclusive`, `CertificateRejected`. Every bounded-window formula admitted for the timed profile is decided by EN-5 and does not settle `unsupported` or `not-yet-implemented` (FR-186, FR-204). The timed profile refuses `probability >= 0.99 [eventually holds(m.delivered)]` as `unsupported_construct`/`expression-form` at `eventually`, and refuses both `probability >= 0.99 [eventually[1 ms, *] holds(m.delivered)]` and `probability >= 0.99 [always[0 ms, 4 ms] eventually[2 ms, *] holds(m.delivered)]` as `unsupported_construct`/`expression-form` at the unbounded interval, before EN-5 is called (FR-186). Temporary (QSL-3324 fallback F-2 and F-3, while they hold): the nested `eventually`-then-`always` item and the nested `always`-then-`eventually` item at `probability <= 0.99`, and `Step`'s two nested `always[0 ms, 0 ms] eventually[2 ms, 2 ms]` items, settle `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})` instead of `proved`, and the rejection vector, which needs their document, is not run; the nested `always`-then-`eventually` item at `probability >= 0.99` settles `Incomplete(TimedRouteWithheld{reason: NestedReadUnchecked})`, and `refuted` only once F-3's nested reading is shown right; the single-operator items are decided over the region MDP and are not covered. Temporary variant (QSL-3324, F-7, only if QSL-3444 is not fixed by 2026-11-27 12:00 PST): the `eventually[1 ms, 4 ms]` and `until[1 ms, 4 ms]` proofs and `Step`'s `eventually[1 ms, 2 ms]` and `always[1 ms, 2 ms]` proofs settle `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})` too. | Test |
+| FR-204-AC-21 | Over the timed `Retx` subject of AC-1, under the timed profile EN-5 runs every bounded-window formula that FR-186 admits and retains a monitor for every bounded operator occurrence, including nested occurrences and their nonzero lower bounds. Representative admitted formulas are `eventually[1 ms, 4 ms] holds(m.delivered)`, `always[0 ms, 4 ms] holds(m.delivered)`, `holds(not m.delivered) until[1 ms, 4 ms] holds(m.delivered)`, nested `eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(m.delivered)`, and nested `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)`. Every value is the FSpec FR-416 pointwise value over every scheduler, derived in "Worked example: pointwise values" below. The first and third forms each have minimum `99/100` and maximum `9999/10000` and settle `proved` at threshold `0.99`; the `always` form has value `0` and settles `proved` for `probability <= 0.01`; the nested `eventually`-then-`always` form has minimum `99999/100000` and maximum `1` and settles `proved` at threshold `0.99`; the nested `always`-then-`eventually` form has minimum `0` and maximum `99/100`, settles `refuted` at `probability >= 0.99` on the minimum and `proved` at `probability <= 0.99` on the maximum, and does not settle `unsupported` or `not-yet-implemented`. Over the model `Step` of that example, where a delay without a step is not a position, `probability <= 0.01 [eventually[1 ms, 2 ms] holds(not c.late)]`, `probability >= 0.99 [always[1 ms, 2 ms] holds(c.late)]` (vacuous) and `probability <= 0.01 [always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(not c.late)]` settle `proved` with values `0`, `1` and `0`, and with `step`'s delay drawn by `delay M::Call::step ~ discrete { 3 ms: 1 };` `probability <= 0.01 [always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(c.late)]` settles `proved` with value `0`; on each of these items the certificate checker of FR-921 accepts the producer's certificate. Each of these forms is decided over the region MDP (Admission "Route"). Rejection: for the `Step` claim `always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(not c.late)`, the producer's accepted `exact` `timed-product/v1` document with only the initial product key's value changed to `1` (the value a reading of the state at the 2 ms instant gives: `late` is false then), is rejected `InequalityFails` at the initial product key, and the tampered item settles `inconclusive`, `CertificateRejected`. Every bounded-window formula admitted for the timed profile is decided by EN-5 and does not settle `unsupported` or `not-yet-implemented` (FR-186, FR-204). The timed profile refuses `probability >= 0.99 [eventually holds(m.delivered)]` as `unsupported_construct`/`expression-form` at `eventually`, and refuses both `probability >= 0.99 [eventually[1 ms, *] holds(m.delivered)]` and `probability >= 0.99 [always[0 ms, 4 ms] eventually[2 ms, *] holds(m.delivered)]` as `unsupported_construct`/`expression-form` at the unbounded interval, before EN-5 is called (FR-186). Temporary (QSL-3324 fallback F-2 and F-3, while they hold): the nested `eventually`-then-`always` item and the nested `always`-then-`eventually` item at `probability <= 0.99`, and `Step`'s two nested `always[0 ms, 0 ms] eventually[2 ms, 2 ms]` items, settle `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})` instead of `proved`, and the rejection vector, which needs their document, is not run; the nested `always`-then-`eventually` item at `probability >= 0.99` settles `Incomplete(TimedRouteWithheld{reason: PositionReadUnchecked})`, and `refuted` only once F-3's proviso is met; the single-operator items are treated in the next sentence. Temporary (QSL-3324 fallback F-1 to F-3 and F-7, while they hold): the `eventually[1 ms, 4 ms]` and `until[1 ms, 4 ms]` proofs and `Step`'s `eventually[1 ms, 2 ms]` and `always[1 ms, 2 ms]` proofs, with their checker-acceptance clauses, settle `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})` on the digital route or `RegionWalkUnchecked` on the region route, until the region route decides them, the single-operator position fix has landed and QSL-3444 is fixed. | Test |
 | FR-204-AC-22 | For FR-196's cap-2 no-operation oracle from AC-2, the every-scheduler claim `expected elapsed until holds(B) <= 3 ms` is `refuted` only after FR-202 replays FR-201-AC-81's finite Lower document (initial bound 5 ms, the same exact initial value as AC-2); the result carries the replayed witness and no infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
 | FR-204-AC-23 | For AC-22's claim, a supplied finite Lower document with `ranking` omitted settles `inconclusive` with cause `CertificateRejected{Malformed, CertificateMember("ranking")}`; the infinite engine start value alone does not settle `refuted` and emits no `ExactValue`. | Test (TC-639) |
-| FR-204-AC-24 | On a timed `Retx` subject with an admitted workload `One` and claim `expected elapsed until holds(false) >= 3 ms`, the exact engine's `+infinity` minimum is accepted as a proof of the lower bound; the result settles `proved` and carries no infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
+| FR-204-AC-24 | On a timed `Retx` subject with an admitted workload `One` and claim `expected elapsed until holds(false) >= 3 ms`, the exact engine's `+infinity` minimum is accepted as a proof of the lower bound; the result settles `proved` and carries no infinite `ExactValue` or fabricated finite exact value. Temporary (QSL-3324 fallback F-4, while it holds): `send`'s free delay has the window `[1 ms, 2 ms]`, so the item settles `Incomplete(TimedRouteWithheld{reason: WorkloadFreeDelay})` instead of `proved`; the stated result stays the target. | Test (TC-639) |
 | FR-204-AC-25 | On timed `Retx` with claim `expected elapsed until holds(false) >= 3 ms` under every scheduler, because every admitted scheduler has nonreachability value `+infinity`, the result settles `proved` without an infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
-| FR-204-AC-26 | A bounded-window form other than a deadline event is decided over the region MDP even when every constraint is closed, with dense values derived in "Worked example: pointwise values" (items 6 and 7). Over the closed model `Gap` of that example, over every scheduler, `always[1 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`: `probability <= 0.5` settles `refuted` on the maximum `ExactValue{1}` and `probability >= 0.5` settles `refuted` on the minimum `ExactValue{0}`, never `proved` on the digital MDP's maximum `0`, and the item's certificate document has `route: "region"`. Over `Retx` of AC-1, `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`, so `probability <= 0.95` does not settle `proved`, which the digital MDP's maximum `9/10` would give: it settles `refuted` on the maximum `ExactValue{1}`. Temporary (QSL-3324 fallback F-2, while it holds): the `Retx` item settles `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})`, because the digital maximum `9/10` would prove it and no digital refutation exists; the `Gap` items, a single operator, are decided over the region MDP and are not covered. Temporary variant (QSL-3324, F-7, only if QSL-3444 is not fixed by 2026-11-27 12:00 PST): `Gap`'s `probability <= 0.5` item settles `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})` with no `route: "region"` document; its `probability >= 0.5` refutation is kept. | Test (TC-639) |
+| FR-204-AC-26 | A bounded-window form other than a deadline event is decided over the region MDP even when every constraint is closed, with dense values derived in "Worked example: pointwise values" (items 6 and 7). Over the closed model `Gap` of that example, over every scheduler, `always[1 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`: `probability <= 0.5` settles `refuted` on the maximum `ExactValue{1}` and `probability >= 0.5` settles `refuted` on the minimum `ExactValue{0}`, never `proved` on the digital MDP's maximum `0`, and the item's certificate document has `route: "region"`. Over `Retx` of AC-1, `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`, so `probability <= 0.95` does not settle `proved`, which the digital MDP's maximum `9/10` would give: it settles `refuted` on the maximum `ExactValue{1}`. Temporary (QSL-3324 fallback F-2, while it holds): the `Retx` item settles `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})`, because the digital maximum `9/10` would prove it and no digital refutation exists; the `Gap` items are treated in the next sentence. Temporary (QSL-3324 fallback F-1 and F-7, while they hold): `Gap`'s `probability <= 0.5` item settles `Incomplete(TimedRouteWithheld{reason: DigitalProofUnsound})` on the digital route (whose maximum `0` would prove it) or `RegionWalkUnchecked` on the region route, with no `route: "region"` document; its `probability >= 0.5` refutation on the minimum `0` is kept (`s = 0` is an integer schedule, read at positions once the position fix has landed). | Test (TC-639) |
 
 The Chain check also asserts that the six firing orders listed in the worked
 example are represented as six outcome edges from the initial product key,
