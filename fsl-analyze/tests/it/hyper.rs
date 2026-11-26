@@ -903,63 +903,53 @@ const PAIR: &str = "hyper H using inf over behaviours (v: V::Vault) \
      match { a.step.op = b.step.op and a.step.Vault::step.i = b.step.Vault::step.i } \
      { always holds(v.l @ a = v.l @ b) }";
 
-/// The same ranking at depth 1. The first instance finds an undefined letter
-/// at depth 1 (after `step(1)` on `v0`). A later instance is explored only
-/// through depth 1, expanding its initial states and no deeper: the counts of
-/// the whole run, set as the limits, still let it finish, and an uncapped
-/// second instance, a product of dozens of states, would exceed them and stop
-/// the run.
-#[trace("TC-601")]
-#[test]
-fn a_finding_at_depth_one_caps_the_later_instances() {
-    let world = World::with_vaults(Vault::Secure, &[("v0", (0, 0)), ("v1", (0, 0))], PAIR);
-    let letters = UndefinedFor {
-        seams: world.seams(),
-        key: "v0",
-    };
-    let HyperOutcome::Violated {
-        counterexample,
-        stats,
-    } = world
-        .run_through(
-            &letters,
-            &world.seams(),
-            ModelCheckLimits::default(),
-            &Cancel::new(),
-        )
-        .expect("not refused")
-    else {
-        panic!("expected a violation");
-    };
-    assert_eq!(counterexample.instance, [("v".to_owned(), "v0".to_owned())]);
-    assert_eq!(counterexample.trace_position, 1);
-    // The counts measured from the capped run: `v0` explored in full, `v1` only
-    // through the expansion of its initial states. They are the budget the
-    // run is held to; any state the capped `v1` explored past its initial states would exceed the 18.
-    assert_eq!((stats.product_states, stats.product_edges), (18, 80));
-    let mut exact = ModelCheckLimits::default();
-    exact.limits.max_states = 18;
-    exact.limits.max_transitions = 80;
-    let outcome = world
-        .run_through(&letters, &world.seams(), exact, &Cancel::new())
-        .expect("not refused");
-    let HyperOutcome::Violated {
-        counterexample: again,
-        ..
-    } = outcome
-    else {
-        panic!("the capped second instance fits the budget: {outcome:?}");
-    };
-    assert_eq!(*again, *counterexample);
+/// [`UndefinedFor`] that must be asked about its own instance alone.
+struct NoLaterInstance<'w>(UndefinedFor<'w>);
+
+impl HyperLetters for NoLaterInstance<'_> {
+    fn atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: &[ParameterBinding],
+        states: &[&ModelSimState],
+        meter: &mut Meter,
+    ) -> Result<AtomReading, fsl_eval::model_subject::AtomStop> {
+        assert_eq!(instance[0].instance.key, self.0.key, "a later instance");
+        self.0.atom(atom, instance, states, meter)
+    }
 }
 
-/// A search horizon deeper than the finding that caps a later instance does
-/// not widen it: the instance is explored through the finding's depth, so the
-/// run of the test above, with a horizon of 5, has the same counts and the
-/// same counterexample.
+/// FR-177 "Instances": the first refuted instance in order ends the item at
+/// any depth. The first instance finds an undefined letter at depth 1 (after
+/// `step(1)` on `v0`), and no letter of the later instance is read.
+#[trace("TC-601", "FR-176-AC-8")]
+#[test]
+fn a_finding_at_depth_one_ends_the_search() {
+    let world = World::with_vaults(Vault::Secure, &[("v0", (0, 0)), ("v1", (0, 0))], PAIR);
+    let letters = NoLaterInstance(UndefinedFor {
+        seams: world.seams(),
+        key: "v0",
+    });
+    let counterexample = refuted(
+        world
+            .run_through(
+                &letters,
+                &world.seams(),
+                ModelCheckLimits::default(),
+                &Cancel::new(),
+            )
+            .expect("not refused"),
+    );
+    assert_eq!(counterexample.instance, [("v".to_owned(), "v0".to_owned())]);
+    assert_eq!(counterexample.trace_position, 1);
+}
+
+/// A search horizon deeper than the deciding finding does not change the run:
+/// with a horizon of 5 it has the counts and the counterexample of the run
+/// with none.
 #[trace("TC-601")]
 #[test]
-fn a_horizon_deeper_than_a_finding_does_not_widen_the_later_instances() {
+fn a_horizon_deeper_than_a_finding_does_not_change_the_run() {
     let run_with = |max_depth: Option<usize>| {
         let mut world = World::with_vaults(Vault::Secure, &[("v0", (0, 0)), ("v1", (0, 0))], PAIR);
         world.max_depth = max_depth;
@@ -986,15 +976,11 @@ fn a_horizon_deeper_than_a_finding_does_not_widen_the_later_instances() {
     assert_eq!(run_with(Some(5)), run_with(None));
 }
 
-/// A `match` finding is at the depth of the joint position it ends at, one
-/// deeper than the state it is found at. The first instance has an undefined
-/// letter at depth 1; the second has an undefined `match` on its first joint
-/// step out of a depth-0 state, depth 1 too. A tie goes to the earlier
-/// instance; ranking the `match` at the state's depth (0) would let the
-/// second win.
+/// The earlier instance's finding stands whether it is an undefined letter or
+/// an undefined `match`, over a later instance's finding of the other kind.
 #[trace("TC-601")]
 #[test]
-fn a_match_finding_ranks_at_the_joint_position_it_ends_at() {
+fn the_earlier_instance_finding_stands_whatever_its_kind() {
     let world = World::with_vaults(Vault::Secure, &[("v0", (0, 0)), ("v1", (0, 0))], PAIR);
     let letters = UndefinedFor {
         seams: world.seams(),
