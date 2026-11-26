@@ -1361,6 +1361,7 @@ pub(super) fn check_with_value_bound_control<'a, 'control>(
 }
 
 #[implements("FR-1042-AC-19")]
+#[implements("FR-201-AC-3")]
 fn check_with_context(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
