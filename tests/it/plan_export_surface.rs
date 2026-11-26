@@ -3700,14 +3700,10 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
             .expect("population records")
             .iter_mut()
             .find(|row| row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY))
-            .expect("config_history population")["objects"] = json!([
-                first.clone(),
-                {
-                    let mut second = second.clone();
-                    second["fields"]["versionNumber"] = json!({"integer":second_value.to_string()});
-                    second
-                }
-            ]);
+            .expect("config_history population");
+        let mut current_second = second.clone();
+        current_second["fields"]["versionNumber"] = json!({"integer":second_value.to_string()});
+        population["objects"] = json!([first.clone(), current_second]);
         std::fs::write(&path, serde_json::to_vec(&current).unwrap()).unwrap();
         let (exit, value) = plan_in(
             directory.path(),
