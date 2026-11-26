@@ -618,6 +618,7 @@ struct Hit {
 /// omitted edge keeps its original probability and action, so rows are never
 /// renormalized and each omitted successor contributes exactly its original
 /// mass at the least continuation value.
+#[implements("FR-1042-AC-25")]
 fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, OmittedEdge)>) -> ProbProduct {
     let mut completed = product.clone();
     if omitted.is_empty() {
@@ -908,6 +909,7 @@ impl Builder<'_, '_, '_, '_> {
         Ok(Ok(truths))
     }
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn key_of(
         &self,
         state: &ModelSimState,
