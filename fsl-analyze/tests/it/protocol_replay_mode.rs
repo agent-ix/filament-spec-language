@@ -2800,7 +2800,15 @@ fn an_unobserved_choice_predecessor_stays_undecided_open_and_closed() {
         recording["closure"] = if closure == "open" {
             json!({"state": "open", "premises": []})
         } else {
-            recording["closure"].clone()
+            let mut premises = recording["closure"]["premises"]
+                .as_array()
+                .expect("closed recording premises")
+                .clone();
+            premises.extend([
+                json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Pick::a"}),
+                json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Pick::b"}),
+            ]);
+            json!({"state": "closed", "premises": premises})
         };
         let item = replay_with(
             &format!("unobserved-choice-predecessor-{name}"),
