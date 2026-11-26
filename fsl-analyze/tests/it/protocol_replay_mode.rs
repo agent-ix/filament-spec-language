@@ -2761,8 +2761,14 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
                 );
             }
         }
-        let order: Vec<usize> = (0..14).collect();
-        assert_every_verdict_only_advances(prefixes, &order);
+        for node in [NESTED_LEFT, NESTED_RIGHT] {
+            assert!(
+                node_verdicts_in(&item, node)
+                    .iter()
+                    .all(|verdict| verdict == "satisfied"),
+                "{outstanding} {node}: {item}"
+            );
+        }
         assert_eq!(prefixes[13]["obligations"], item["obligations"], "{item}");
     }
 }
