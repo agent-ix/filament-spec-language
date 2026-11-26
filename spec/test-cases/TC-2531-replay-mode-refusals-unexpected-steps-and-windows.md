@@ -20,8 +20,10 @@ Catches a recording defect reported as behaviour, or behaviour refused as a defe
 
 1. Assess a recording naming `Courier`; one with a send on `Tell` where none is enabled; one whose attempt reads 130 on clock `c` under `within [0, 120]`, then with the reading absent; assess each in batch and incrementally.
 2. Assess the nested-repeat recordings `P`, `L`, `P`, `L`; `L`, `L` with no observed `P`; and `P`, `L`, `L` in one enclosing iteration. Compare each batch result with every incremental prefix and inspect the outer and inner repeat-control obligations. Assess a recording against a package whose selected protocol contains a `repeat`.
+3. Over the FR-895-AC-42 protocol, assess a recording containing only `L` and no observed case under both `open` and `closed` closure; compare each final prefix with batch.
 
 ## Expected Results
 
 - Step 1: `Courier` is refused `missing-name` with its index; the send is `unexpected` and `refuted`; the window is `violated`, then `pending`; batch and incremental verdicts are equal.
 - Step 2: the first recording has every repeat-control obligation `satisfied` in batch; in every prefix none is `violated`, and a prefix before descendant evidence may leave one `pending`. The second has no inner repeat-control obligation `violated` in batch or any prefix. The third has the inner repeat-control obligation `violated`, cause `duplicated`, from the second `L`; earlier prefixes may leave it `pending`. Each final prefix equals batch, and no verdict advances from `satisfied` to `violated`. The package route returns `unsupported_construct`/`not-yet-implemented` and provides no per-obligation verdicts.
+- Step 3: with open closure, `L`'s enabledness is `pending`; with closed closure, it is `violated`, cause `unexpected`. Each final prefix equals its batch assessment.

@@ -3808,12 +3808,13 @@ fn earlier_steps_precede(
                 .iter()
                 .take_while(|sibling| **sibling != child.node)
             {
-                if choice_iteration_unknown
-                    && protocol
-                        .controls
-                        .control(*sibling)
-                        .is_some_and(|control| control.kind.label() == "choice")
-                {
+                let skip_ambiguous_choice = choice_iteration_unknown
+                    && protocol.controls.control(*sibling).is_some_and(|control| {
+                        control.kind.label() == "choice"
+                            && !choice_observations(protocol, document, position, control)
+                                .is_empty()
+                    });
+                if skip_ambiguous_choice {
                     continue;
                 }
                 collect_predecessors(

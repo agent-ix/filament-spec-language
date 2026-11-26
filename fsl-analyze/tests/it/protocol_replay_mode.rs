@@ -2775,6 +2775,58 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
     }
 }
 
+/// FR-895-AC-42 (TC-2531): an unobserved choice before a nested repeat remains
+/// an undecided predecessor when no main-sequence step identifies the outer
+/// iteration. Open history leaves the step pending; closed history violates
+/// its enabledness.
+#[trace("TC-2531", "FR-895-AC-42", "FSpec-FR-059-AC-4")]
+#[test]
+fn an_unobserved_choice_predecessor_stays_undecided_open_and_closed() {
+    let source = nested_repeat_cancel_protocol(
+        "choice Pick by Buyer visible () { case a when { true } sequence CA { event A by Buyer as (a: Ack) { true }; } case b when { false } sequence CB { event B by Buyer as (b: Ack) { true }; } } ",
+    );
+    let observation = loop_event("Inner::IBody::Both::left::Left::L");
+
+    for (name, closure, expected_verdict, expected_cause) in [
+        ("open", "open", "pending", None),
+        ("closed", "closed", "violated", Some("unexpected")),
+    ] {
+        let mut recording = repeat_recording(
+            json!([observation.clone()]),
+            json!([]),
+            json!([0]),
+            json!([]),
+        );
+        recording["closure"] = if closure == "open" {
+            json!({"state": "open", "premises": []})
+        } else {
+            recording["closure"].clone()
+        };
+        let item = replay_with(
+            &format!("unobserved-choice-predecessor-{name}"),
+            &source,
+            &recording,
+            json!({"file": "recording.json", "identity": recording_identity()}),
+            assessed_item("incremental"),
+        )
+        .item(0);
+        let prefixes = item["prefixes"].as_array().expect("prefixes");
+        assert_eq!(prefixes.len(), 1, "{item}");
+        assert_eq!(prefixes[0]["obligations"], item["obligations"], "{item}");
+        let obligation = prefixes[0]["obligations"]
+            .as_array()
+            .expect("obligations")
+            .iter()
+            .find(|entry| {
+                entry["obligation"]["kind"] == "enabledness"
+                    && entry["obligation"]["node"] == NESTED_LEFT
+            })
+            .unwrap_or_else(|| panic!("enabledness for {NESTED_LEFT}: {item}"));
+        assert_eq!(obligation["verdict"], expected_verdict, "{item}");
+        assert_eq!(obligation["cause"].as_str(), expected_cause, "{item}");
+    }
+}
+
 /// FR-895-AC-45 (TC-2531): repeat control counts belong to each repeat
 /// invocation. An outer repeat may execute twice while its inner repeat runs
 /// once per outer iteration. Without a counter fixing the outer iteration,
