@@ -616,40 +616,41 @@ pub(super) fn monitor_outcome<'a>(
 
 /// FR-267: expose the library's canonical clause report to the CLI adapter.
 pub(super) fn clause_report(
-    mut report: fsl_replay::spine::ClauseRunReport,
+    report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, None)
+    clause_report_with_record(report, selection, |_| Ok(None))
 }
 
 #[cfg(feature = "quire-extraction")]
+#[implements("FR-267-AC-17")]
 pub(super) fn clause_report_with_extraction(
-    mut report: fsl_replay::spine::ClauseRunReport,
+    report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: serde_json::Value,
+    mut record: serde_json::Value,
     map: &fsl_foundation::source_map::SourceMap,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, Some((extraction, map)))
+    clause_report_with_record(report, selection, |report| {
+        if let Some(regions) = extraction_original_regions(report, selection, &record, map)? {
+            record["original_regions"] = Value::Array(regions);
+        }
+        Ok(Some(record))
+    })
 }
 
+/// Write one clause report. `extraction` builds the document's `extraction`
+/// member from the settled report, or returns `None` for a unit given as bytes.
 fn clause_report_with_record(
-    report: &mut fsl_replay::spine::ClauseRunReport,
+    mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: Option<(serde_json::Value, &fsl_foundation::source_map::SourceMap)>,
+    extraction: impl FnOnce(&fsl_replay::spine::ClauseRunReport) -> super::Result<Option<Value>>,
 ) -> super::Result<RunResult> {
     // FR-526: a timestamped run settles its correction relation before any
     // result document is written; a refused relation writes none.
-    fsl_replay::spine::settle_run_correction(report, selection)
+    fsl_replay::spine::settle_run_correction(&mut report, selection)
         .map_err(RunCause::TemporalCorrection)?;
-    let report = &*report;
-    let extraction = extraction
-        .map(|(mut record, map)| {
-            if let Some(regions) = extraction_original_regions(report, selection, &record, map)? {
-                record["original_regions"] = Value::Array(regions);
-            }
-            Ok::<_, RunCause>(record)
-        })
-        .transpose()?;
+    let report = &report;
+    let extraction = extraction(report)?;
     let bytes = fsl_replay::spine::write_clause_run_result_for_with_extraction(
         report,
         Some(selection),
