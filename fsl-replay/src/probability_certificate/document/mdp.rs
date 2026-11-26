@@ -367,6 +367,36 @@ pub(super) struct ValueBoundControl<'a, 'control> {
     pub(super) reward: &'a super::super::reward::RewardControl<'control>,
 }
 
+/// The states a fair *minimum* values at zero: `U`, the non-target states in a
+/// maximal fair end component. A fair maximum takes FR-201's cyclic maximum
+/// conditions unchanged (FR-1041 "Check"), where a state of `U` may reach the
+/// target, so it has no such set.
+#[implements("FR-1041-AC-3", "FR-1041-AC-4")]
+fn fair_minimum_zero_states(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    graph: &CheckerGraph,
+    objective: ProbabilityObjective,
+    cx: &mut Context<'_, '_>,
+) -> Result<Option<BTreeSet<ProbabilityProductKey>>, ProbabilityDocumentError> {
+    if !cx.fair_mdp || objective != ProbabilityObjective::Minimum {
+        return Ok(None);
+    }
+    let claim = bind_claim(claims, item, cx.cancel)?;
+    super::fairness::non_target_fair_end_component_states(
+        system,
+        claim,
+        graph,
+        cx.limits,
+        cx.cancel,
+        cx.identity,
+        &mut cx.meter,
+        &mut cx.storage,
+    )
+    .map(Some)
+}
+
 /// Independently reconstruct the unbounded fair eventual MDP and verify that
 /// the offered deterministic scheduler has no unfair bottom component.
 pub(super) fn fair_scheduler_is_fair(
@@ -961,7 +991,9 @@ fn progress_failure_with_fair_zero(
         cx.tick(CyclicMdpProbabilityPhase::Progress)?;
         let certified_zero = !cx.reward
             && *value == rational(0)
-            && (!cx.fair_mdp || fair.zero.is_some_and(|states| states.contains(key)));
+            && (!cx.fair_mdp
+                || objective == ProbabilityObjective::Maximum
+                || fair.zero.is_some_and(|states| states.contains(key)));
         if state.terminal == Some(true) || certified_zero {
             if *rank != 0 {
                 return Ok(Some((ProbabilityCertificateRule::RankBroken, key.clone())));
@@ -1094,7 +1126,9 @@ fn derive_ranks_with_fair_zero(
         if state.terminal == Some(true)
             || !cx.reward
                 && values.get(key) == Some(&rational(0))
-                && (!cx.fair_mdp || fair_zero.is_some_and(|states| states.contains(key)))
+                && (!cx.fair_mdp
+                    || objective == ProbabilityObjective::Maximum
+                    || fair_zero.is_some_and(|states| states.contains(key)))
         {
             cx.reserve(std::mem::size_of::<(ProbabilityProductKey, u64)>() + key.as_bytes().len())?;
             ranks.insert(key.clone(), 0);
@@ -1237,21 +1271,7 @@ fn construct(
     if equality_failure(&graph, &values, &action_sums, objective, cx)?.is_some() {
         return Err(ProbabilityDocumentError::MalformedMember("values"));
     }
-    let fair_zero = if cx.fair_mdp {
-        let claim = bind_claim(claims, item, cx.cancel)?;
-        Some(super::fairness::non_target_fair_end_component_states(
-            system,
-            claim,
-            &graph,
-            cx.limits,
-            cx.cancel,
-            cx.identity,
-            &mut cx.meter,
-            &mut cx.storage,
-        )?)
-    } else {
-        None
-    };
+    let fair_zero = fair_minimum_zero_states(system, claims, item, &graph, objective, cx)?;
     let ranks = derive_ranks_with_fair_zero(
         &graph,
         &values,
@@ -1519,30 +1539,15 @@ fn check_with_context(
                 Err(error) => return document_admission_error(error),
             },
         };
-        let fair_zero = if fair_mdp {
-            let claim = bind_claim(claims, item, cancel)?;
-            let states = super::fairness::non_target_fair_end_component_states(
-                system,
-                claim,
-                &graph,
-                limits,
-                cancel,
-                cx.identity,
-                &mut cx.meter,
-                &mut cx.storage,
-            )?;
-            for key in &states {
-                if values.get(key) != Some(&rational(0)) {
-                    return Ok(rejected(
-                        ProbabilityCertificateRule::InequalityFails,
-                        key.clone(),
-                    ));
-                }
+        let fair_zero = fair_minimum_zero_states(system, claims, item, &graph, objective, &mut cx)?;
+        for key in fair_zero.iter().flatten() {
+            if values.get(key) != Some(&rational(0)) {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
             }
-            Some(states)
-        } else {
-            None
-        };
+        }
         let action_sums = sums(&graph, &values, reward.as_ref(), &mut cx)?;
         let selected = match bound_failure(
             system,
@@ -1606,31 +1611,16 @@ fn check_with_context(
     } else if ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
-    let fair_zero = if fair_mdp {
-        let claim = bind_claim(claims, item, cancel)?;
-        let states = super::fairness::non_target_fair_end_component_states(
-            system,
-            claim,
-            &graph,
-            limits,
-            cancel,
-            cx.identity,
-            &mut cx.meter,
-            &mut cx.storage,
-        )?;
-        for key in &states {
-            cx.tick(CyclicMdpProbabilityPhase::Rows)?;
-            if values.get(key) != Some(&rational(0)) {
-                return Ok(rejected(
-                    ProbabilityCertificateRule::InequalityFails,
-                    key.clone(),
-                ));
-            }
+    let fair_zero = fair_minimum_zero_states(system, claims, item, &graph, objective, &mut cx)?;
+    for key in fair_zero.iter().flatten() {
+        cx.tick(CyclicMdpProbabilityPhase::Rows)?;
+        if values.get(key) != Some(&rational(0)) {
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                key.clone(),
+            ));
         }
-        Some(states)
-    } else {
-        None
-    };
+    }
     let action_sums = sums(&graph, &values, reward.as_ref(), &mut cx)?;
     let fair_upper_bound = fair_mdp && cx.bound_side == Some(SubsystemBoundKind::Upper);
     if fair_mdp && cx.bound_side.is_none() {

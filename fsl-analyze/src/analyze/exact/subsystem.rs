@@ -146,7 +146,9 @@ pub(super) fn refute(
     let every = matches!(claim.scheduler, ProbScheduler::Every);
     // Where the optimum is already extreme the solver's choice may be any
     // value-preserving action; keep the witness inside that region so the
-    // undecided bottom component it reaches realizes the extreme.
+    // undecided bottom component it reaches realizes the extreme. Under a
+    // fairness set the caller's policy is already the checked fair one
+    // (FR-200), and another value-preserving action may be unfair.
     let region = |extreme: i64| {
         let extreme = Rational::from_integer(filament_exact::Integer::from(extreme));
         values
@@ -159,7 +161,11 @@ pub(super) fn refute(
         Stop::Document(error) => document_failure(error, subject),
     };
     let selected = match &role {
-        Role::Avoidance(boundary) if every && boundary.accepting == boundary.undecided_accepts => {
+        Role::Avoidance(boundary)
+            if every
+                && claim.fairness.is_empty()
+                && boundary.accepting == boundary.undecided_accepts =>
+        {
             avoiding_policy(
                 product,
                 &region(i64::from(boundary.accepting)),
