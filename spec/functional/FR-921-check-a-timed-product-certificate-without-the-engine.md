@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-421
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
 ---
 # FR-921: Check a timed-product certificate without the engine
 
@@ -46,8 +48,8 @@ certificate `InequalityFails` at the first such state; the item settles
 
 ## Outputs
 
-- `ExactProbabilityCertificateCheck` (`Accepted` or `Rejected`) or a
-  `ProbabilityDocumentError` refusal.
+- `ExactProbabilityCertificateCheck` (`Accepted`, `Rejected`,
+  `NoInitialState` or `NoInstance`) or a `ProbabilityDocumentError` refusal.
 
 ## Behavior
 
@@ -117,9 +119,9 @@ component, time-lock or phase is read from the document, because it has none
 
 ### Order
 
-Identity, then member set, then objective comparison, then rebuild, then the
-conditions in canonical key order, then the threshold; the first failure is
-the result.
+Identity, then member set, then FR-201's instancing outcomes, then objective
+comparison, then rebuild, then the conditions in canonical key order, then the
+threshold; the first failure or instancing outcome is the result.
 
 ## Acceptance Criteria
 
