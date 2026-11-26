@@ -422,13 +422,11 @@ pub(crate) fn package_global_behavior_item<'a>(
             let Some(form) = input.evaluator.package_protocol(&protocol) else {
                 return internal_fault();
             };
-            let memory = match fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(
-                &form,
-                &[],
-            ) {
-                Ok(memory) => memory,
-                Err(_) => return internal_fault(),
-            };
+            let memory =
+                match fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(&form, &[]) {
+                    Ok(memory) => memory,
+                    Err(_) => return internal_fault(),
+                };
             let program = match fsl_eval::simulation::protocol::PackageProtocolProgram::with_memory(
                 &input,
                 form,
@@ -463,20 +461,20 @@ pub(crate) fn package_global_behavior_item<'a>(
             let model = match fsl_eval::simulation::model::ModelSystem::new(simulation) {
                 Ok(model) => model,
                 Err(failure) => {
-                    return crate::analyze::EngineReport::Refused(
-                        crate::analyze::admission(&failure),
-                    );
+                    return crate::analyze::EngineReport::Refused(crate::analyze::admission(
+                        &failure,
+                    ));
                 }
             };
             match model.claim_instances(&program.over_type) {
-                Ok(_) => crate::analyze::EngineReport::Refused(
-                    crate::analyze::Refusal::Unsupported(
+                Ok(_) => {
+                    crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Unsupported(
                         filament_semantic_value::catalog::CatalogCode::new(
                             "unsupported_construct",
                             "not-yet-implemented",
                         ),
-                    ),
-                ),
+                    ))
+                }
                 Err(fsl_eval::simulation::model::NoClaimInstances::NoInstance) => {
                     empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance)
                 }
@@ -485,9 +483,7 @@ pub(crate) fn package_global_behavior_item<'a>(
                 }
                 Err(fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
                     fsl_eval::simulation::NotSimulated::RequiresBound(_),
-                )) => crate::analyze::EngineReport::Refused(
-                    crate::analyze::Refusal::RequiresBound,
-                ),
+                )) => crate::analyze::EngineReport::Refused(crate::analyze::Refusal::RequiresBound),
                 Err(_) => internal_fault(),
             }
         },

@@ -291,7 +291,13 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
             run.document()
         );
         assert_eq!(item["record"]["cause"]["kind"], "no-instance", "{item}");
-        for member in ["obligations", "closure", "global", "projections", "counterexample"] {
+        for member in [
+            "obligations",
+            "closure",
+            "global",
+            "projections",
+            "counterexample",
+        ] {
             assert!(item[member].is_null(), "NoInstance omits {member}: {item}");
         }
     }
@@ -304,7 +310,12 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
         json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
     );
     let admitted = analyze(&request);
-    assert_eq!(label(&admitted.item(0)), "proved", "{}", admitted.document());
+    assert_eq!(
+        label(&admitted.item(0)),
+        "proved",
+        "{}",
+        admitted.document()
+    );
 }
 
 fn recording_document(protocol: &str) -> Value {

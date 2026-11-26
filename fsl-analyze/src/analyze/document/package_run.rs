@@ -3716,15 +3716,13 @@ impl<'a> WorkInputs<'_, 'a> {
                             },
                         )
                     }
-                    None => {
-                        crate::protocol_analysis::conformance::package_global_behavior_item(
-                            item.request_index,
-                            self.input.input().clone(),
-                            self.binding.clone(),
-                            self.limits,
-                            protocol,
-                        )
-                    }
+                    None => crate::protocol_analysis::conformance::package_global_behavior_item(
+                        item.request_index,
+                        self.input.input().clone(),
+                        self.binding.clone(),
+                        self.limits,
+                        protocol,
+                    ),
                 }
             }
             (
