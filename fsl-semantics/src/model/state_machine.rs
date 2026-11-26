@@ -11,6 +11,7 @@ use crate::model::domain_package::{
 use crate::model::intake::{member_identity_name, read_record_value_type, NodeCtx, OperationNames};
 use crate::model::normalize::ModelRefusal;
 use filament_checked::key::DeclarationKey;
+use ix_trace_rs::implements;
 use serde_json::Value;
 
 use super::meaning_dispatch::MeaningBindingContext;
@@ -152,6 +153,7 @@ fn key_for(package: &str, node: &str) -> DeclarationKey {
     key(package, node)
 }
 
+#[implements("FR-230-AC-26")]
 pub(super) fn bind(context: &mut MeaningBindingContext<'_, '_>) -> Result<(), ModelRefusal> {
     let ctx = NodeCtx::new(context.type_value, context.at);
     let supertypes = ctx.identity_keys(context.package, "supertypes")?;
@@ -184,6 +186,13 @@ pub(super) fn bind(context: &mut MeaningBindingContext<'_, '_>) -> Result<(), Mo
         OperationNames::Validated,
         context.pending,
     )?;
+    context.records.extend(super::intake::read_value_bounds(
+        context.package,
+        &ctx,
+        context.at,
+        context.node,
+        None,
+    )?);
     let type_key = key(context.package, context.node);
     let Some(record) = context.records.iter_mut().find(
         |record| matches!(record, DomainPackageRecord::RecordValueType(value) if value.key == type_key),

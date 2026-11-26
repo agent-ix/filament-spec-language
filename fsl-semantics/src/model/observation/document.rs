@@ -4172,6 +4172,7 @@ fn is_state_machine(view: &ModelView, key: &DeclarationKey) -> bool {
 /// contexts the clause evaluates over, and are returned.
 #[implements("FR-106-AC-44")]
 #[implements("FR-663-AC-6")]
+#[implements("FR-106-AC-45", "FR-230-AC-26")]
 fn admit_contexts<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
@@ -4188,6 +4189,10 @@ fn admit_contexts<'t>(
                 .with("document", document.identity.clone())
                 .with("entry", entry.to_string()),
         )
+    };
+    let bounds = match range {
+        PostStateRange::Refuse => crate::model::state::member_bounds(views),
+        PostStateRange::Witness => Vec::new(),
     };
     let entries = match &snapshot.contexts {
         RawContexts::Absent => return Ok(Vec::new()),
@@ -4320,6 +4325,23 @@ fn admit_contexts<'t>(
                         entry,
                     )
                 })?;
+            if let FieldValue::Present(value) = &value {
+                let key = super::initial::field_key(views, attribute)?;
+                if let Some(record) = unit_bound_refusal(&bounds, &key, value, types) {
+                    let path = format!(
+                        "{}{}",
+                        context_field_path(entry, name),
+                        pointer_of(&record.path),
+                    );
+                    return Err(named(
+                        record
+                            .with("machine", machine.to_owned())
+                            .with("field", name.to_owned())
+                            .with("path", path),
+                        entry,
+                    ));
+                }
+            }
             let origins = references.take_origins();
             if !origins.is_empty() {
                 field_origins.push((attribute.identity(), origins));

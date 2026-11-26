@@ -21,6 +21,7 @@ use filament_contract_model::{
 use filament_exact::{EffectiveId, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::relationship_extent::RelationshipExtent;
+use ix_trace_rs::implements;
 
 use crate::model::accounting::ModelNormalizationLimits;
 use crate::model::domain_package::DomainPackageRecord;
@@ -76,9 +77,8 @@ pub struct StateField {
 /// by, or on an alias on the way to it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemberBound {
-    /// The member whose value holds the quantities: an object type's field
-    /// (the key a [`StateObject`] holds its value under), an operation
-    /// parameter, or an operation for its result.
+    /// The member whose value holds the quantities: an object or state
+    /// machine field, an operation parameter, or an operation result.
     pub member: DeclarationKey,
     /// The record fields from the member's value down to the quantity,
     /// outermost first: empty when the member is typed by the unit itself.
@@ -189,6 +189,7 @@ fn violation_at(
 /// items or as a field of a record it holds, every bound on `u` itself and
 /// every bound on an alias the quantity's type passes. A bound on an alias
 /// bounds no other member of `u`.
+#[implements("FR-230-AC-26")]
 pub(crate) fn member_bounds(views: &[ModelView]) -> Vec<MemberBound> {
     let mut bounds = Vec::new();
     for view in views {
@@ -199,7 +200,10 @@ pub(crate) fn member_bounds(views: &[ModelView]) -> Vec<MemberBound> {
                 DomainPackageRecord::FieldMember(field)
                     if matches!(
                         walk.record(&field.owner),
-                        Some(DomainPackageRecord::ObjectType(_))
+                        Some(
+                            DomainPackageRecord::ObjectType(_)
+                                | DomainPackageRecord::StateMachine(_)
+                        )
                     ) =>
                 {
                     walk.member(&field.key, &field.value_type, &mut Vec::new(), &mut bounds);

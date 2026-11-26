@@ -1792,10 +1792,10 @@ fn a_parameter_refusal_carries_a_pointer_that_resolves_in_the_invocation() {
 /// TC-1045 step 8, FSpec FR-154 "Unit bounds": the invariant `Consistent` of
 /// `OrderLifecycle` over an invocation of `expedite`, which only
 /// `ExpressLifecycle` declares, refuses on side `post` an argument or a result
-/// beyond the `max` `3` on `ms`, which the object type `Pump` carries.
-#[trace("TC-1045", "FR-106-AC-86")]
+/// beyond the `max` `3` on `ms`, which `ExpressLifecycle` carries.
+#[trace("TC-685", "TC-1045", "FR-230-AC-26", "FR-106-AC-86")]
 #[test]
-fn a_specialized_machine_operation_refuses_beyond_its_unit_bound() {
+fn a_state_machine_declared_unit_bound_refuses_operation_arguments_and_results() {
     let ms_type = "ix://filament/unit/ms";
     let multiplicity = || json!({"lower": 1, "upper": 1, "ordered": false, "unique": true});
     let orders = Orders::build(
@@ -1803,10 +1803,10 @@ fn a_specialized_machine_operation_refuses_beyond_its_unit_bound() {
         "dimension Time;\nunit s : Time = rational(1, 1);\n\
          unit ms : Time = rational(1, 1000) * s;\n",
         |document| {
-            type_named_mut(document, "Pump")["constraints"] = json!([{
-                "identity": id("Pump/max"), "keyword": "max",
+            type_named_mut(document, "ExpressLifecycle")["constraints"] = json!([{
+                "identity": id("ExpressLifecycle/max"), "keyword": "max",
                 "operands": {"value": "3"}, "appliesTo": ms_type,
-                "diagnosticCode": "bound.max", "origin": origin("Pump/max"),
+                "diagnosticCode": "bound.max", "origin": origin("ExpressLifecycle/max"),
             }]);
             let express = type_named_mut(document, "ExpressLifecycle");
             let expedite = &mut express["operations"][0];
@@ -1855,7 +1855,119 @@ fn a_specialized_machine_operation_refuses_beyond_its_unit_bound() {
             &record,
             Code::InvalidRuntimeInput,
             "invalid-value",
-            &[named, ("keyword", "max"), ("bound", "3"), ("path", path)],
+            &[
+                ("constraint", "ix://test/orders/ExpressLifecycle/max"),
+                named,
+                ("keyword", "max"),
+                ("bound", "3"),
+                ("path", path),
+            ],
+        );
+    }
+}
+
+/// FSpec FR-154 "Unit bounds": a unit bound on an object type constrains
+/// context fields of state machines too. Both pre and post contexts admit
+/// 3 ms and refuse 4 ms at the context field's wire path.
+#[trace(
+    "TC-685",
+    "TC-1045",
+    "FR-230-AC-26",
+    "FR-106-AC-45",
+    "FR-106-AC-86"
+)]
+#[test]
+fn a_context_field_of_a_state_machine_obeys_the_selected_unit_bound() {
+    let ms_type = "ix://filament/unit/ms";
+    let multiplicity = || json!({"lower": 1, "upper": 1, "ordered": false, "unique": true});
+    let orders = Orders::build(
+        false,
+        "dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n",
+        |document| {
+            type_named_mut(document, "Pump")["constraints"] = json!([{
+                "identity": id("Pump/max"), "keyword": "max",
+                "operands": {"value": "3"}, "appliesTo": ms_type,
+                "diagnosticCode": "bound.max", "origin": origin("Pump/max"),
+            }]);
+            let express = type_named_mut(document, "ExpressLifecycle");
+            express["fields"].as_array_mut().unwrap().push(field(
+                "ExpressLifecycle",
+                "elapsed",
+                ms_type,
+            ));
+            let expedite = &mut express["operations"][0];
+            expedite["params"] = json!([{
+                "identity": id("ExpressLifecycle/expedite/q"),
+                "origin": origin("ExpressLifecycle/expedite/q"),
+                "name": "q", "typeRef": ms_type, "presence": "required",
+                "nullable": false, "defaultKind": "none", "multiplicity": multiplicity(),
+            }]);
+            expedite["returns"] = json!({
+                "typeRef": ms_type, "nullable": false, "multiplicity": multiplicity(),
+            });
+        },
+    );
+    let ms = |magnitude: &str| {
+        json!({"kind": "quantity", "unit": "ms",
+            "magnitude": {"kind": "rational", "numerator": magnitude, "denominator": "1"}})
+    };
+    let context = |elapsed: &str, placed: bool| json!({
+        "machine": id("ExpressLifecycle"),
+        "fields": {
+            "placed": boolean(placed), "cancelled": boolean(false),
+            "retries": {"integer": "0"}, "elapsed": ms(elapsed),
+        },
+    });
+    let admit = |argument: &str, result: &str, pre_elapsed: &str, post_elapsed: &str, side| {
+        let mut docs = Docs::default();
+        let pre = docs.snapshot(&orders.snapshot_of(
+            "i3",
+            "e3-pre",
+            "pre",
+            vec![context(pre_elapsed, false)],
+        ));
+        let post = docs.snapshot(&orders.snapshot_of(
+            "i3",
+            "e3-post",
+            "post",
+            vec![context(post_elapsed, true)],
+        ));
+        let mut invocation = orders.invocation(
+            "i3",
+            "ExpressLifecycle",
+            "expedite",
+            Json::Null,
+            &pre,
+            &post,
+            json!({"q": ms(argument)}),
+        );
+        invocation["result"] = ms(result);
+        let invocation = docs.invocation(&invocation);
+        orders.context(&docs, "Consistent", &invocation, side)
+    };
+
+    for side in [ContextSide::Pre, ContextSide::Post] {
+        admit("3", "3", "3", "3", side)
+            .unwrap_or_else(|failure| panic!("3 ms admits on {side:?}: {failure:?}"));
+    }
+    for side in [ContextSide::Pre, ContextSide::Post] {
+        let (pre_elapsed, post_elapsed) = match side {
+            ContextSide::Pre => ("4", "3"),
+            ContextSide::Post => ("3", "4"),
+        };
+        let record = refused(admit("3", "3", pre_elapsed, post_elapsed, side));
+        assert_refusal(
+            &record,
+            Code::InvalidRuntimeInput,
+            "invalid-value",
+            &[
+                ("constraint", "ix://test/orders/Pump/max"),
+                ("field", "elapsed"),
+                ("keyword", "max"),
+                ("bound", "3"),
+                ("path", "/contexts/0/fields/elapsed"),
+            ],
         );
     }
 }

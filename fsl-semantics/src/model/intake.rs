@@ -3794,7 +3794,7 @@ fn read_map_bound(
 /// number (or a negative one on clocks), and at the later of a `min` above
 /// a `max` on the same type.
 #[ix_trace_rs::string_edge]
-fn read_value_bounds(
+pub(super) fn read_value_bounds(
     package: &str,
     ctx: &NodeCtx<'_>,
     at: &str,
