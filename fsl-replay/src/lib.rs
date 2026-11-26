@@ -129,6 +129,7 @@ mod timed;
 pub mod value_check;
 mod witness;
 mod witness_entry_name;
+mod written_operation;
 
 use fsl_package::{ModelIdentity, ObligationIdentity};
 

@@ -619,45 +619,52 @@ pub(super) fn clause_report(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, None)
+    settle_correction(&mut report, selection)?;
+    let bytes = fsl_replay::spine::write_clause_run_result_for(&report, Some(selection))
+        .map_err(RunCause::ClauseOutput)?;
+    clause_result(&report, selection, &bytes)
 }
 
 #[cfg(feature = "quire-extraction")]
+#[implements("FR-267-AC-17")]
 pub(super) fn clause_report_with_extraction(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: serde_json::Value,
+    mut extraction: fsl_replay::spine::ExtractionRecord,
     map: &fsl_foundation::source_map::SourceMap,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, Some((extraction, map)))
-}
-
-fn clause_report_with_record(
-    report: &mut fsl_replay::spine::ClauseRunReport,
-    selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: Option<(serde_json::Value, &fsl_foundation::source_map::SourceMap)>,
-) -> super::Result<RunResult> {
-    // FR-526: a timestamped run settles its correction relation before any
-    // result document is written; a refused relation writes none.
-    fsl_replay::spine::settle_run_correction(report, selection)
-        .map_err(RunCause::TemporalCorrection)?;
-    let report = &*report;
-    let extraction = extraction
-        .map(|(mut record, map)| {
-            if let Some(regions) = extraction_original_regions(report, selection, &record, map)? {
-                record["original_regions"] = Value::Array(regions);
-            }
-            Ok::<_, RunCause>(record)
-        })
-        .transpose()?;
+    settle_correction(&mut report, selection)?;
+    if let Some(regions) = extraction_original_regions(&report, selection, &extraction, map)? {
+        extraction.original_regions = Some(regions);
+    }
     let bytes = fsl_replay::spine::write_clause_run_result_for_with_extraction(
-        report,
+        &report,
         Some(selection),
-        extraction,
+        Some(extraction),
     )
     .map_err(RunCause::ClauseOutput)?;
+    clause_result(&report, selection, &bytes)
+}
+
+/// FR-526: a timestamped run settles its correction relation before any
+/// result document is written; a refused relation writes none.
+fn settle_correction(
+    report: &mut fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+) -> super::Result<()> {
+    fsl_replay::spine::settle_run_correction(report, selection)
+        .map_err(RunCause::TemporalCorrection)?;
+    Ok(())
+}
+
+/// The command result of a written clause-run document.
+fn clause_result(
+    report: &fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    bytes: &[u8],
+) -> super::Result<RunResult> {
     let outcome = monitor_outcome(std::iter::once((&selection.clause_name()[..], report)));
-    let value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
+    let value = serde_json::from_slice(bytes).map_err(RunCause::Output)?;
     Ok(RunResult {
         // FR-285: a finite-window `pending` exits 0 and `indeterminate` 11.
         exit_code: report.disposition.exit_code(),
@@ -672,9 +679,9 @@ fn clause_report_with_record(
 fn extraction_original_regions(
     report: &fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
-    record: &Value,
+    record: &fsl_replay::spine::ExtractionRecord,
     map: &fsl_foundation::source_map::SourceMap,
-) -> super::Result<Option<Vec<Value>>> {
+) -> super::Result<Option<Vec<fsl_replay::spine::ExtractionRegion>>> {
     let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
         .map_err(RunCause::ClauseOutput)?;
     let document: Value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
@@ -685,11 +692,12 @@ fn extraction_original_regions(
 }
 
 #[cfg(feature = "quire-extraction")]
+#[implements("FR-267-AC-17")]
 fn extraction_regions_for_locus(
     locus: Value,
-    record: &Value,
+    record: &fsl_replay::spine::ExtractionRecord,
     map: &fsl_foundation::source_map::SourceMap,
-) -> super::Result<Option<Vec<Value>>> {
+) -> super::Result<Option<Vec<fsl_replay::spine::ExtractionRegion>>> {
     use fsl_replay::spine::RefusalLocusRead;
 
     let decoded: RefusalLocusRead =
@@ -701,7 +709,7 @@ fn extraction_regions_for_locus(
                 && source.identity == body.identity().identity =>
         {
             let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
-                return Err(invalid_extraction_source_map(record, locus));
+                return Err(invalid_extraction_source_map(record, locus)?);
             };
             fsl_foundation::Span { start, end }
         }
@@ -716,7 +724,7 @@ fn extraction_regions_for_locus(
         _ => return Ok(None),
     };
     let Some(regions) = map.map_regions(body, span) else {
-        return Err(invalid_extraction_source_map(record, locus));
+        return Err(invalid_extraction_source_map(record, locus)?);
     };
     let original = map.original();
     let mapped = regions
@@ -725,45 +733,75 @@ fn extraction_regions_for_locus(
             let start = usize::try_from(region.start()).ok()?;
             let end = usize::try_from(region.end()).ok()?;
             let span = original.locate(fsl_foundation::Span { start, end })?;
-            Some(serde_json::json!({"start": span.start, "end": span.end}))
+            Some(fsl_replay::spine::ExtractionRegion {
+                start: fsl_replay::spine::ExtractionPosition {
+                    byte: span.start.byte as u64,
+                    line: span.start.line as u64,
+                    column: span.start.column as u64,
+                },
+                end: fsl_replay::spine::ExtractionPosition {
+                    byte: span.end.byte as u64,
+                    line: span.end.line as u64,
+                    column: span.end.column as u64,
+                },
+            })
         })
         .collect::<Option<Vec<_>>>();
     match mapped.filter(|regions| !regions.is_empty()) {
         Some(regions) => Ok(Some(regions)),
-        None => Err(invalid_extraction_source_map(record, locus)),
+        None => Err(invalid_extraction_source_map(record, locus)?),
     }
 }
 
 #[cfg(feature = "quire-extraction")]
-fn invalid_extraction_source_map(record: &Value, locus: Value) -> RunCause {
+#[implements("FR-267-AC-17")]
+fn invalid_extraction_source_map(
+    record: &fsl_replay::spine::ExtractionRecord,
+    locus: Value,
+) -> super::Result<RunCause> {
+    let original = serde_json::Map::from_iter([
+        (
+            "authority".to_owned(),
+            Value::String(record.original.authority.clone()),
+        ),
+        (
+            "identity".to_owned(),
+            Value::String(record.original.identity.clone()),
+        ),
+    ]);
+    let body = serde_json::Map::from_iter([
+        (
+            "authority".to_owned(),
+            Value::String(record.body.authority.clone()),
+        ),
+        (
+            "identity".to_owned(),
+            Value::String(record.body.identity.clone()),
+        ),
+    ]);
     let mut details = serde_json::Map::from_iter([
+        ("original".to_owned(), Value::Object(original)),
         (
-            "original".to_owned(),
-            serde_json::json!({
-                "authority": record["original"]["authority"],
-                "identity": record["original"]["identity"],
-            }),
+            "path".to_owned(),
+            Value::String(record.original.path.clone()),
         ),
-        ("path".to_owned(), record["original"]["path"].clone()),
+        ("body".to_owned(), Value::Object(body)),
         (
-            "body".to_owned(),
-            serde_json::json!({
-                "authority": record["body"]["authority"],
-                "identity": record["body"]["identity"],
-            }),
+            "binding".to_owned(),
+            serde_json::to_value(&record.binding).map_err(RunCause::Output)?,
         ),
-        ("binding".to_owned(), record["binding"].clone()),
         ("locus".to_owned(), locus),
     ]);
-    if let Some(outcome) = record.get("outcome") {
-        details.insert("outcome".to_owned(), outcome.clone());
-    }
-    RunCause::ExtractionFailure {
+    details.insert(
+        "outcome".to_owned(),
+        serde_json::to_value(&record.outcome).map_err(RunCause::Output)?,
+    );
+    Ok(RunCause::ExtractionFailure {
         code: fsl_foundation::Code::InvalidSourceMap,
         stage: super::ExtractionFailureStage::Selection,
         details,
         message: "a body refusal span is outside the verified source map".to_owned(),
-    }
+    })
 }
 
 /// FR-096/FR-100: `Evaluation.location`'s `origin`, rendered by kind.
@@ -820,7 +858,8 @@ mod extraction_tests {
     use super::{extraction_regions_for_locus, RunCause};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
-    use serde_json::{json, Value};
+    use ix_trace_rs::trace;
+    use serde_json::json;
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";
@@ -847,16 +886,19 @@ mod extraction_tests {
         .clone()
     }
 
-    fn record() -> Value {
-        json!({
-            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md"},
-            "body": {"authority": "agent-ix", "identity": "body"},
+    fn record() -> fsl_replay::spine::ExtractionRecord {
+        serde_json::from_value(json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
             "binding": {"clause": "valid_clause", "package": "agent-ix/spec"},
-            "outcome": {"availability": {"state": "available"}}
-        })
+            "outcome": {"availability": {"state": "available", "lossy": false}, "clause_text": {}, "diagnostics": []},
+            "map": {"region": {"start": 0, "end": 1}, "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+        }))
+        .unwrap()
     }
 
     #[test]
+    #[trace("FR-267-AC-17")]
     fn unmappable_body_locus_fails_closed_and_foreign_loci_remain_unmapped() {
         let map = verified_map();
         let record = record();
@@ -888,9 +930,10 @@ mod extraction_tests {
             "start": start,
             "end": start + 1
         });
-        assert_eq!(
-            extraction_regions_for_locus(dependency_locus, &record, &map).unwrap(),
-            None
+        assert!(
+            extraction_regions_for_locus(dependency_locus, &record, &map)
+                .unwrap()
+                .is_none()
         );
         let dependency_path_locus = json!({
             "kind": "located",
@@ -900,9 +943,10 @@ mod extraction_tests {
                 "end": {"byte": 1, "line": 1, "column": 2}
             }
         });
-        assert_eq!(
-            extraction_regions_for_locus(dependency_path_locus, &record, &map).unwrap(),
-            None
+        assert!(
+            extraction_regions_for_locus(dependency_path_locus, &record, &map)
+                .unwrap()
+                .is_none()
         );
     }
 }

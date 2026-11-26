@@ -449,9 +449,13 @@ fn source_model_terminal_witness_uses_the_reconstructed_state_key() {
     read_native_run_result(&serde_json::to_vec(document).unwrap()).unwrap();
 }
 
+/// FR-120's declaration identity text of the fixture's operation.
+const ATTEMPT_UPDATE: &str = r#"{"node":"ix://example/config-version/ConfigVersion/attemptUpdate","package":"example/config-version"}"#;
+
 /// A failing later activation keeps its real position and each taken model successor.
 #[test]
 #[trace("TC-1160", "FR-267-AC-30", "TC-840", "FR-330-AC-19")]
+#[trace("TC-471", "FR-120-AC-40")]
 fn source_model_later_violation_keeps_taken_transitions_and_state_keys() {
     let fixture = Fixture::new(
         "holds(c.versionNumber <= 1)",
@@ -472,10 +476,7 @@ fn source_model_later_violation_keeps_taken_transitions_and_state_keys() {
             step["post_state"]["key"],
             URL_SAFE_NO_PAD.encode(fixture.state_keys[index + 1].as_bytes())
         );
-        assert_eq!(
-            step["transition"]["operation"],
-            json!("ix://example/config-version/ConfigVersion/attemptUpdate")
-        );
+        assert_eq!(step["transition"]["operation"], json!(ATTEMPT_UPDATE));
         assert_native_binding(&step["transition"]["receiver"]);
         assert_eq!(step["transition"]["arguments"], json!([]));
     }
@@ -498,6 +499,13 @@ fn source_model_later_violation_keeps_taken_transitions_and_state_keys() {
     assert!(counterexample.is_model());
     assert_eq!(counterexample.trace_position(), 2);
     assert_eq!(counterexample.model_prefix().count(), 3);
+    for step in counterexample.model_prefix() {
+        let fsl_replay::spine::ModelTransitionRead::Transition(transition) = &step.transition
+        else {
+            panic!("a transition step")
+        };
+        assert_eq!(transition.operation(), ATTEMPT_UPDATE);
+    }
     let replay = replay_read_witness(&fixture, &document)
         .expect("decoded native steps replay over the authenticated source model");
     let fsl_replay::ModelTraceEnd::Evaluated(replay) = replay else {
@@ -513,8 +521,9 @@ fn source_model_later_violation_keeps_taken_transitions_and_state_keys() {
         matches!(replay_read_witness(&fixture, &stale), Err(fsl_replay::ReplayRefusal::ModelTrace(ref error)) if matches!(**error, fsl_replay::ModelTraceRefusal::PostState { step: 0, .. }))
     );
     stale = document.clone();
-    stale["disposition"]["temporal"]["counterexample"]["prefix"][0]["transition"]["operation"] =
-        json!("ix://example/config-version/ConfigVersion/missing");
+    stale["disposition"]["temporal"]["counterexample"]["prefix"][0]["transition"]["operation"] = json!(
+        r#"{"node":"ix://example/config-version/ConfigVersion/missing","package":"example/config-version"}"#
+    );
     assert!(
         matches!(replay_read_witness(&fixture, &stale), Err(fsl_replay::ReplayRefusal::ModelTrace(ref error)) if matches!(**error, fsl_replay::ModelTraceRefusal::NotEnabled { step: 0, .. }))
     );
