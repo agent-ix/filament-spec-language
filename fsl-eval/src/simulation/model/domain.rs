@@ -11,6 +11,7 @@ use filament_exact::{
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
 };
+use ix_trace_rs::implements;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -169,6 +170,7 @@ pub(super) enum Space {
 impl Space {
     /// The space of `value_type`; `None` for a type with no finite space
     /// here (a recursive record, or a field FR-120 does not enumerate).
+    #[implements("FR-120-AC-2")]
     fn of(
         value_type: &ValueType,
         objects: &[ObjectReference],
