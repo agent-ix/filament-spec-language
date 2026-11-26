@@ -133,7 +133,9 @@ that no trace exists.
   in FR-125's canonical instance order, the instances sharing the run's
   `max_states` and `max_transitions` as FR-126 shares them across bindings, and
   the result SHALL be one outcome per instance; a clause with no instance has
-  no outcome.
+  no outcome of this check, and its item settles `NoInstance`, or
+  `NoInitialState` for a subject with no initial state, as FR-125 Instancing
+  states: `inconclusive`, never a fault.
 - Every other case SHALL return `NoDecision` with the run's end and open
   causes.
 
@@ -167,6 +169,9 @@ that no trace exists.
 | FR-181-AC-5 | Over the secure vault, with `function remainder using v(x: Integer): Integer pure { 1 mod x }`, its body checked under `CheckMode::Kernel` and called by the Linked claim (FR-495-AC-3, FR-952), `exists trace b of V { eventually always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0) }`, whose division is evaluated first and has no value at `l = 1`, returns `Undefined` at the first product state with `l = 1`, with the default `witness_samples` as with `witness_samples` 0, while phase 0 finds a sampled witness lasso looping `step(0)` at `(h, 0)` for each initial state; cause `division-by-zero`. It settles `refuted`, `decisive-counterexample`, cause `UndefinedEvaluation`. AC-1's claim with the default `witness_samples` settles `proved` only from a product exploration that completed with no open node. | Test (TC-615) |
 | FR-181-AC-6 | AC-1's claim with the default `witness_samples` and `max_states` 2 gets a sampled witness lasso per initial state, the exploration stops at `max_states`, and the item returns `WitnessedUnchecked` and settles `inconclusive`, `WellDefinednessUnchecked`, never `proved`; with `witness_samples` 0 the same run settles `incomplete`, `LimitReached`, naming `max_states`. | Test (TC-616) |
 | FR-181-AC-7 | Two vaults in one start, so two instances of `over (v: V::Vault)`, give one outcome per instance in canonical order, and the second instance's product is explored with the `max_states` the first left; a clause with no instance has no outcome. | Test (TC-606) |
+| FR-181-AC-8 | `pets` declares `Thing`, which has the subtype `Lamp`; its universe is `[l, m]`; the model has no operation; the one initial state holds a `Lamp` under `l`, and none admits `m`. With `v: M::Thing`, `exists trace a of M { always holds(BODY @ a) }` under the infinite-trace profile, default limits, for `BODY` `present(lookup<M::Thing>(M::pets, v) absent empty)` and for `BODY` `(v = v)`: `check_single_existential` returns exactly one instance, `l`, `Witnessed`; `settle_existential` settles it `proved` and refuses the instance `m` as no instance of the clause; `excluded_keys` is `[m]`; and the source `native-analyze/1` item is `proved`, exit 0, its evidence binding `v` to the reference with identity `l` and object type `Lamp` and naming `m` nowhere. With universe `[k, l]`, the initial state holding only `l`, and `BODY` `(v != v)`, the item is `refuted`, exit 10, at the instance `l`, never `k`. | Test (TC-3219) |
+| FR-181-AC-9 | AC-8's two bodies over AC-8's first fixture, under `filament.temporal.event-position.false-extension/v1` with `always [0, 0] holds(BODY @ a)`, give the one instance `l` and settle `proved`, naming `m` nowhere. | Test (TC-3219) |
+| FR-181-AC-10 | AC-8's request selected by package settles as the package route settles it today, `unsupported_construct`/`not-yet-implemented`, exit 21, with no record verdict and no instance. | Test (TC-3219) |
 
 ## Dependencies
 
