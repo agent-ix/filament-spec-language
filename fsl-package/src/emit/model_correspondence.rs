@@ -11,6 +11,7 @@ use fsl_foundation::source::provenance::SourceRegion;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::model::key::EffectiveDeclarationPreimage;
+use ix_trace_rs::implements;
 
 use super::{
     claim_literal, node_id, push_scalar_type, source_artifact, EmitRefusal, OutputMeter, GRAPH_V2,
@@ -29,6 +30,7 @@ use super::{
 /// than the model it comes from: each preimage's terms are charged to `meter` as
 /// they are built (FR-264 Behavior 5), and an over-limit body is refused before
 /// the rest of it exists.
+#[implements("FR-264-AC-9", "FR-400-AC-14")]
 pub(super) fn append(
     ids: &StructuralIds,
     graph: &CheckedGraph,
