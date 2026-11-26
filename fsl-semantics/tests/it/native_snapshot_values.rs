@@ -20,11 +20,11 @@ use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
-    AdmissionFailure, AdmittedObservations, ClauseFacts, ClauseSelection, ClauseSelectionInput,
-    DocumentRef, FrameChange, FrameFacts, FrameVerdict, NativeKind, ObservationLimits,
-    OperationFacts, PathStep, PostStateRange, Provisions, RawNativeKind, SelectedObject,
-    SnapshotValue,
+    admit_current_snapshot, admit_frame_invocation, admit_observations,
+    admit_value_invariant_selection, population_universe_for, AdmissionFailure,
+    AdmittedObservations, ClauseFacts, ClauseSelection, ClauseSelectionInput, DocumentRef,
+    FrameChange, FrameFacts, FrameVerdict, NativeKind, ObservationLimits, OperationFacts, PathStep,
+    PostStateRange, Provisions, RawNativeKind, SelectedObject, SnapshotValue,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -3551,6 +3551,59 @@ fn a_frame_run_argument_beyond_its_unit_bound_refuses() {
     assert_argument_beyond_bound(&record_of(admit("4")));
 }
 
+/// FSpec FR-154 "Unit bounds": the no-clause value-invariant selection uses
+/// the same invocation argument admission as a Frame and refuses 4 ms under
+/// `max 3`, while admitting the boundary value 3 ms.
+#[trace("TC-465", "FR-106-AC-85")]
+#[test]
+fn a_value_invariant_selection_refuses_an_argument_beyond_its_unit_bound() {
+    let replay = bounded_quantity_replay();
+    let current_bytes = snapshot_text(&replay, "current", "current", &replay.base).into_bytes();
+    let current = document_ref("current");
+    let select = |argument: &str| {
+        let invoked = replay.invocation(
+            "meter",
+            &replay.base,
+            &replay.base,
+            json!({"q": ms(ratio(argument, "1"))}),
+            ms(ratio("3", "1")),
+        );
+        let mut snapshots = invoked.snapshots.clone();
+        snapshots.insert(current.clone(), current_bytes.clone());
+        admit_value_invariant_selection(
+            replay.graph.model_selections(),
+            replay.graph.scope().types(),
+            replay.graph.scope().operations(),
+            &replay.packages,
+            ModelNormalizationLimits::default(),
+            &Provisions {
+                snapshots: &snapshots,
+                invocations: &invoked.invocations,
+            },
+            &current,
+            Some(&invoked.call),
+            ObservationLimits::default(),
+        )
+    };
+
+    select("3").unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
+    let refusal = record_of(select("4"));
+    assert_eq!(refusal.catalog.code(), "invalid_runtime_input");
+    assert_eq!(refusal.catalog.cause(), "invalid-value");
+    assert_eq!(
+        refusal.fields,
+        BTreeMap::from([
+            ("bound", "3".to_owned()),
+            ("constraint", "ix://test/orders/Item/max".to_owned()),
+            ("field", "q".to_owned()),
+            ("keyword", "max".to_owned()),
+            ("parameter", "q".to_owned()),
+            ("path", "/parameters/q".to_owned()),
+        ])
+    );
+    assert!(refusal.path.is_empty());
+}
+
 /// FR-505-AC-5 (TC-1300 row 23), the unit sentence: over a bounded Rational
 /// value type that carries the unit `ms`, a snapshot Quantity of `ms` whose
 /// magnitude is `2/4` admits as `1/2 ms` (FR-106-AC-55), and `1/13` refuses
@@ -3742,41 +3795,4 @@ fn typed_nested_steps_are_identical_under_a_field_and_a_parameter() {
             "{name}: the steps are typed, not document-spelled"
         );
     }
-}
-
-/// FSpec FR-154 "Unit bounds" (TC-465): a value-invariant selection, which
-/// admits its invocation without naming a clause, refuses an argument that
-/// violates the bound; the bound itself admits.
-#[trace("TC-465", "FR-106-AC-85")]
-#[test]
-fn a_value_invariant_selection_argument_beyond_its_unit_bound_refuses() {
-    let replay = bounded_quantity_replay();
-    let admit = |argument: &str| {
-        let (current, current_bytes) = snapshot(&replay, "current", "current", &replay.base);
-        let mut invoked = replay.invocation_over(
-            "meter",
-            &snapshot_text(&replay, "pre", "pre", &replay.base),
-            &snapshot_text(&replay, "post", "post", &replay.base),
-            json!({"q": ms(ratio(argument, "1"))}),
-            ms(ratio("3", "1")),
-        );
-        invoked.snapshots.insert(current.clone(), current_bytes);
-        fsl_semantics::model::observation::admit_value_invariant_selection(
-            replay.graph.model_selections(),
-            replay.graph.scope().types(),
-            replay.graph.scope().operations(),
-            &replay.packages,
-            ModelNormalizationLimits::default(),
-            &Provisions {
-                snapshots: &invoked.snapshots,
-                invocations: &invoked.invocations,
-            },
-            &current,
-            Some(&invoked.call),
-            ObservationLimits::default(),
-        )
-        .map(|_admitted| ())
-    };
-    admit("3").unwrap_or_else(|failure| panic!("3 ms admits: {failure:?}"));
-    assert_argument_beyond_bound(&record_of(admit("4")));
 }
