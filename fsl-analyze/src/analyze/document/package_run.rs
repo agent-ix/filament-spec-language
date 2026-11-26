@@ -2351,7 +2351,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     }
 
     /// Resolve conformance or supplied replay/recording over a package protocol.
-    #[implements("FR-896-AC-7", "FR-990-AC-11")]
+    #[implements("FR-896-AC-8", "FR-896-AC-9", "FR-990-AC-11")]
     fn supplied_protocol(
         &self,
         index: RequestIndex,

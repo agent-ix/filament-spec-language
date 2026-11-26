@@ -185,40 +185,6 @@ impl<'k> SelectedKeys<'k> for MeteredKeys<'k, '_, '_> {
     }
 }
 
-/// A non-empty, canonically ordered set of admitted claim instances.
-///
-/// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
-/// an empty instance list to an exploration engine.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClaimInstances(Vec<ModelInstance>);
-
-impl ClaimInstances {
-    /// The first instance in canonical order.
-    pub fn first(&self) -> &ModelInstance {
-        // The private field is only constructed after checking non-emptiness.
-        &self.0[0]
-    }
-
-    /// All instances in canonical order.
-    pub fn as_slice(&self) -> &[ModelInstance] {
-        &self.0
-    }
-}
-
-/// Why a claim has no non-empty admitted instance set.
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum NoClaimInstances {
-    /// The model could not be simulated or its extent could not be classified.
-    #[error("the model cannot be simulated: {0}")]
-    NotSimulated(#[from] NotSimulated),
-    /// The subject has no initial state.
-    #[error("the subject has no initial state")]
-    NoInitialState,
-    /// No initial record admits a key in the overlapping populations.
-    #[error("the claim has no admitted instance")]
-    NoInstance,
-}
-
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
 pub use cells::Cell;
 pub use contract::{
@@ -277,6 +243,34 @@ pub use timed::{
     sample_timed, sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
+
+/// A non-empty, canonically ordered set of admitted claim instances.
+///
+/// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
+/// an empty instance list to an exploration engine.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimInstances(Vec<ModelInstance>);
+
+impl ClaimInstances {
+    /// All instances in canonical order.
+    pub fn as_slice(&self) -> &[ModelInstance] {
+        &self.0
+    }
+}
+
+/// Why a claim has no non-empty admitted instance set.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum NoClaimInstances {
+    /// The model could not be simulated or its extent could not be classified.
+    #[error("the model cannot be simulated: {0}")]
+    NotSimulated(#[from] NotSimulated),
+    /// The subject has no initial state.
+    #[error("the subject has no initial state")]
+    NoInitialState,
+    /// No initial record admits a key in the overlapping populations.
+    #[error("the claim has no admitted instance")]
+    NoInstance,
+}
 
 /// `resource_exhausted`/`insufficient-next-charge`: a candidate count, or an
 /// evaluation meter, ran out (FR-120 "Post-states", "Contract clauses").

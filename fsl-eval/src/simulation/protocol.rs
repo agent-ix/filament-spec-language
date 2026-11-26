@@ -1238,6 +1238,7 @@ pub fn classify_package_accesses(
 
 /// FR-226, FR-940: load-buffering shapes of an admitted package protocol
 /// under `ra`, preserving the same access and program-order rules as source.
+#[implements("FR-882-AC-3")]
 pub fn package_load_buffering_shapes(
     model: &ModelSystem<'_>,
     program: &PackageProtocolProgram<'_>,
@@ -3070,6 +3071,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             .transpose()
     }
 
+    #[implements("FR-882-AC-3")]
     fn package_observation(
         &self,
         state: &ModelSimState,

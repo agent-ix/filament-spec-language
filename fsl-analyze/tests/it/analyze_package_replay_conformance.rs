@@ -427,7 +427,7 @@ fn source_and_package_global_conformance_check_the_expected_instances() {
 }
 
 /// FR-125-AC-13: an empty initial list settles NoInitialState on both routes.
-#[trace("TC-2410", "FR-125-AC-13", "FR-990-AC-11", "FR-850-AC-2")]
+#[trace("TC-2410", "FR-125-AC-13", "FR-850-AC-2")]
 #[test]
 fn no_initial_protocol_over_settles_on_source_and_package_routes() {
     // FR-125-AC-13: "A subject in which an overlapping population has no
@@ -453,7 +453,7 @@ fn no_initial_protocol_over_settles_on_source_and_package_routes() {
         &snapshots,
         json!({"initial_states": [], "universes": [{"authority": "test", "identity": "u0"}]}),
     );
-    // FR-990-AC-11 / FR-125-AC-13: `inconclusive` is exit 22.
+    // FR-125-AC-13: `inconclusive` is exit 22.
     assert_eq!(source.exit, 22, "{}", source.document());
     for run in [&source, &package] {
         let item = run.item(0);
@@ -472,7 +472,7 @@ fn no_initial_protocol_over_settles_on_source_and_package_routes() {
 }
 
 /// FR-896 scalar `over` ranges over Boolean values, including on the package route.
-#[trace("TC-2410", "FR-896-AC-7", "FR-850-AC-2")]
+#[trace("TC-2410", "FR-882-AC-3", "FR-850-AC-2")]
 #[test]
 fn scalar_protocol_over_is_checked_on_source_and_package_routes() {
     let protocol = order_protocol(true).replace("over (k: M::Core)", "over (n: Boolean)");
@@ -492,6 +492,38 @@ fn scalar_protocol_over_is_checked_on_source_and_package_routes() {
     assert_eq!(source.exit, 0, "{}", source.document());
     assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
     assert_eq!(label(&package.item(0)), "proved", "{}", package.document());
+    assert_equal(&source, &package);
+}
+
+/// FR-896-AC-9 on both routes: the first item inherits a `subject.protocol`
+/// that binds `Other` and is declined, the second binds `Flow` to `p` and
+/// settles proved.
+#[trace("TC-2410", "FR-896-AC-9", "FR-850-AC-2")]
+#[test]
+fn a_binding_to_another_protocol_is_declined_on_source_and_package_routes() {
+    let flow = order_protocol(true).replace(
+        "send Placed via Order as (placed: Ack) { true }",
+        "send Placed via Order as (placed: Ack) { k.r1 = 0 }",
+    );
+    let (_, other) = flow.split_once("protocol Flow").expect("Flow declaration");
+    let unit = format!("{flow}\nprotocol Other{other}");
+    let mut subject = bound_protocol_subject("p");
+    subject["protocol"]["protocol"] = json!("Other");
+    let (source, package) = both_routes_for_unit_with_snapshots(
+        "package-other-protocol",
+        &unit,
+        json!([
+            {"claim": "Flow", "kind": "global-conformance"},
+            {"claim": "Flow", "kind": "global-conformance",
+                "temporal": {"subject": bound_protocol_subject("p")}}
+        ]),
+        &keyed_core_snapshots("1"),
+        Some(subject),
+    );
+    for run in [&source, &package] {
+        crate::protocol_conformance::assert_other_protocol_declined(&run.item(0));
+        assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
+    }
     assert_equal(&source, &package);
 }
 

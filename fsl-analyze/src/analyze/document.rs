@@ -1828,12 +1828,7 @@ fn requirement_items(
     fsl_route::request::items_from_requirements(package.graph().requirements(), registry, named)
 }
 
-#[implements(
-    "FR-940-AC-10",
-    "FR-896-AC-8",
-    "FR-896-AC-9",
-    "FR-896-AC-10"
-)]
+#[implements("FR-940-AC-10", "FR-896-AC-8", "FR-896-AC-9", "FR-896-AC-10")]
 fn resolve_one(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -2181,15 +2176,14 @@ fn resolve_one(
                 == Some(claim.node())
         });
         match (owner, own_subject.protocol.as_ref()) {
-            (Some(owner), Some(selected))
-                if selected.protocol == owner.name =>
-            {
+            (Some(owner), Some(selected)) if selected.protocol == owner.name => {
                 match selected.binding(package, &own_subject.memory) {
                     Some(binding) => Some(binding),
                     None => return invalid_value(index, name, "capacities"),
                 }
             }
-            (Some(_), None) if protocol_global_kind => None,
+            // FR-896-AC-10: the deadlock-freedom item declines without a subject.protocol.
+            (Some(_), None) if protocol_global_kind && !protocol_deadlock => None,
             (Some(_), _) if protocol_analysis_kind => {
                 return invalid_member(index, name, "temporal.subject.protocol");
             }

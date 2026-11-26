@@ -538,6 +538,17 @@ impl Input<'_> {
 /// source route's compiled relation lists them (FSpec FR-464 "Derived causal
 /// relation"): a sequence enters its first child, steps child to child and
 /// exits with its last; a choice enters and exits through each case's body.
+///
+/// This is the third derivation of the FR-464 table, kept on purpose and not
+/// shared: `fsl-package` `protocol_view::relation_over` derives it over
+/// `CheckedNodeId`s of a checked package graph, and `fsl-semantics`
+/// `protocol_clause/graph.rs` over the source clause graph. Both need the
+/// checked graph this builder does not have (it holds only the local
+/// `CheckedControl` slice with `ProtocolNodeId`s), so reusing one would mean
+/// building that graph and mapping every id back. `Protocol::package` returns
+/// `None` for any other control operation, so Sequence and Choice are all that
+/// can occur; a grown slice must extend this function or switch to
+/// `relation_over`.
 fn structural_edges(controls: &[CheckedControl]) -> Vec<check::CausalEdge> {
     let port = |node: ProtocolNodeId, port| check::PortRef { node, port };
     let edge = |kind, from, to| check::CausalEdge { kind, from, to };
