@@ -730,10 +730,6 @@ impl<'a> SourcePlan<'a> {
         state: &ModelSimState,
         close: bool,
     ) -> Result<MonitorStep, RuleStop> {
-        self.policy_charge(
-            filament_exact::Charge::new(filament_exact::ChargePoint::ModelCandidate)
-                .work(Integer::from(1_i64)),
-        )?;
         if self.policy_instances.is_none() {
             let _ = self.has_empty_policy_instance()?;
         }

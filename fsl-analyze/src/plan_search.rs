@@ -1116,6 +1116,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
         Ok(key)
     }
 
+    #[implements("FR-1012-AC-8")]
     fn explore(&mut self) -> Result<(), Stop> {
         let Some(start) = self.system.initial().into_iter().next() else {
             return Err(Stop::Error(PlanSearchError::InitialStates(0)));
@@ -1145,6 +1146,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
             accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum).then(zero),
             prefix: (!self.rules.merges_prefixes()).then_some(0),
         };
+        self.charge(PlanLimit::MaxWork)?;
         self.rules
             .push_policy_index(self.index.entry(key.model_key()).or_default(), 0)?;
         self.nodes.push(Node {
