@@ -762,6 +762,19 @@ impl Library {
     fn subject(&self) -> ModelSubject<'_> {
         self.world.subject(&self.package, self.universes())
     }
+
+    fn state_graph<'a>(&'a self, claim: &'a CheckedStateGraphClaim) -> StateGraphRequest<'a> {
+        StateGraphRequest {
+            subject: self.subject(),
+            temporal_clock_selections: Vec::new(),
+            items: vec![StateGraphItem::new(claim)],
+            reductions: Default::default(),
+            deadlock_freedom: false,
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            seed: None,
+        }
+    }
 }
 
 /// Whether a library refusal, or an outcome, spells the case's cause.
