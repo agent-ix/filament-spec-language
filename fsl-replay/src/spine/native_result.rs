@@ -4392,9 +4392,9 @@ fn run_limits(
 
 #[cfg(test)]
 mod qsl_3117_deciding_run {
-    use super::{read_native_run_result, NativeRunReadError};
+    use super::{NativeRunReadError, read_native_run_result};
     use ix_trace_rs::trace;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     /// The strict-reader decision case from QSL-3117: an empty map must be
     /// refused with its member path, rather than admitted as a valid extraction.
