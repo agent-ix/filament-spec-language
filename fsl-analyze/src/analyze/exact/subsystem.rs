@@ -47,6 +47,8 @@ pub(super) fn refute(
     budget: &mut CandidateBudget<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    let work = budget.work_scope().clone();
+    record_work_checkpoint(ExactWorkPhase::WitnessProduction, &work, false);
     let label = |state: usize, at: usize| {
         product
             .labels
@@ -351,22 +353,23 @@ pub(super) fn refute(
     if let Some(tamper) = tamper {
         tamper(&mut witness);
     }
-    finish_replay(
-        replay_witness_with_work_scope(
-            system,
-            &item,
-            &witness,
-            limits,
-            cancel,
-            budget.work_scope(),
-        ),
+    record_work_checkpoint(ExactWorkPhase::WitnessProduction, &work, true);
+    record_work_checkpoint(ExactWorkPhase::WitnessReplay, &work, false);
+    let report = finish_replay(
+        replay_witness_with_work_scope(system, &item, &witness, limits, cancel, &work),
         claim,
         system,
         &witness,
         &spelled,
         limits,
         subject,
-    )
+    );
+    record_work_checkpoint(
+        ExactWorkPhase::WitnessReplay,
+        &work,
+        matches!(&report, EngineReport::Exact(report) if matches!(report.as_ref(), ExactReport::Refuted(..))),
+    );
+    report
 }
 
 /// Why producing a subsystem counterexample stopped.

@@ -17,6 +17,38 @@ const TRAFFIC: &str = "random Service::call(ok) ~ { true: 99, false: 1 };\n\
                        workload Traffic on M { weight Service::call = 1; }\n";
 const CALLS: &str = "reward calls on Service::call = 1;\n";
 
+// Hand-counted from the deterministic expected-reward subsystem charge path.
+// The first witness-production charge follows the 70,989-unit product prefix;
+// production admits 169,184 units and independent replay admits 165,143.
+#[cfg(feature = "test-support")]
+const SUBSYSTEM_PREFIX_WORK: u64 = 70_989;
+#[cfg(feature = "test-support")]
+const SUBSYSTEM_PRODUCTION_WORK: u64 = 169_184;
+#[cfg(feature = "test-support")]
+const SUBSYSTEM_REPLAY_WORK: u64 = 165_143;
+#[cfg(feature = "test-support")]
+const SUBSYSTEM_CERTIFICATE_WRITER_WORK: u64 = 165_103;
+#[cfg(feature = "test-support")]
+const SUBSYSTEM_PRODUCTION_END: u64 = SUBSYSTEM_PREFIX_WORK + SUBSYSTEM_PRODUCTION_WORK;
+#[cfg(feature = "test-support")]
+const SUBSYSTEM_TOTAL_WORK: u64 = SUBSYSTEM_PRODUCTION_END + SUBSYSTEM_REPLAY_WORK;
+
+// Fixed charge totals for the package-supported event-avoidance fixture.
+// These are counted from its product, witness-production, and replay charge
+// paths; checkpoints below verify the independently counted phase boundaries.
+#[cfg(feature = "test-support")]
+const EVENT_SUBSYSTEM_PREFIX_WORK: u64 = 134_113;
+#[cfg(feature = "test-support")]
+const EVENT_SUBSYSTEM_PRODUCTION_WORK: u64 = 45_897;
+#[cfg(feature = "test-support")]
+const EVENT_SUBSYSTEM_REPLAY_WORK: u64 = 75_603;
+#[cfg(feature = "test-support")]
+const EVENT_SUBSYSTEM_PRODUCTION_END: u64 =
+    EVENT_SUBSYSTEM_PREFIX_WORK + EVENT_SUBSYSTEM_PRODUCTION_WORK;
+#[cfg(feature = "test-support")]
+const EVENT_SUBSYSTEM_TOTAL_WORK: u64 =
+    EVENT_SUBSYSTEM_PRODUCTION_END + EVENT_SUBSYSTEM_REPLAY_WORK;
+
 fn architecture(up: bool, declarations: &str) -> prob_world::Model {
     prob_world::Model {
         package: "test/architecture",
@@ -407,9 +439,10 @@ fn subsystem_certificate_production_uses_the_shared_work_scope() {
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let item = fsl_replay::probabilistic_claim_identity(world.claim("Fails")).unwrap();
     let cancel = Cancel::new();
-    let mut accounting = system.meter_limits();
-    accounting.work_units = 0;
-    let work = filament_exact::WorkScope::new(accounting);
+    let local_accounting = system.meter_limits();
+    let mut shared_accounting = local_accounting;
+    shared_accounting.work_units = 0;
+    let work = filament_exact::WorkScope::new(shared_accounting);
     let exact = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
     let result = fsl_replay::ProbabilitySubsystemCertificate::value_bound_with_work_scope(
         &system,
@@ -418,7 +451,7 @@ fn subsystem_certificate_production_uses_the_shared_work_scope() {
         fsl_replay::SubsystemBoundKind::Lower,
         &[],
         None,
-        fsl_replay::ProbabilityDocumentLimits::for_exact(&exact, accounting),
+        fsl_replay::ProbabilityDocumentLimits::for_exact(&exact, local_accounting),
         &cancel,
         &work,
     );
@@ -428,6 +461,304 @@ fn subsystem_certificate_production_uses_the_shared_work_scope() {
             if incomplete.limit_kind == filament_exact::LimitKind::WorkUnits
     ));
     assert_eq!(work.consumed_work(), 0);
+}
+
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-31", "FR-203-AC-32")]
+#[test]
+fn subsystem_refutation_checkpoints_share_work_on_source_and_owner_routes() {
+    let world = World::new(&architecture(
+        false,
+        &format!(
+            "{TRAFFIC}{CALLS}{}",
+            claim(
+                "Fails",
+                "Traffic",
+                "expected accumulate calls until holds(s.up) <= 1"
+            ),
+        ),
+    ));
+    let (source_record, source_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Fails", SUBSYSTEM_TOTAL_WORK);
+    assert_eq!(
+        source_record.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    assert_phase_work(
+        &source_checkpoints,
+        ExactWorkPhase::WitnessProduction,
+        SUBSYSTEM_PREFIX_WORK,
+        SUBSYSTEM_PRODUCTION_END,
+    );
+    assert_phase_work(
+        &source_checkpoints,
+        ExactWorkPhase::WitnessReplay,
+        SUBSYSTEM_PRODUCTION_END,
+        SUBSYSTEM_TOTAL_WORK,
+    );
+    let source_witness = source_record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the sufficient cumulative allowance accepts the source witness");
+
+    let package_world = World::new(&architecture(
+        false,
+        &claim(
+            "ComesUp",
+            "every scheduler",
+            "probability >= 0.5 [ eventually holds(s.up) ]",
+        ),
+    ));
+    let (package_source_record, package_source_checkpoints) =
+        settle_with_work_and_checkpoints(&package_world, "ComesUp", EVENT_SUBSYSTEM_TOTAL_WORK);
+    assert_eq!(
+        package_source_record.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    let package_witness = package_source_record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the eventuality refutation carries source evidence");
+    assert!(package_witness.evidence().subsystem.is_some());
+    assert_phase_work(
+        &package_source_checkpoints,
+        ExactWorkPhase::WitnessProduction,
+        EVENT_SUBSYSTEM_PREFIX_WORK,
+        EVENT_SUBSYSTEM_PRODUCTION_END,
+    );
+    assert_phase_work(
+        &package_source_checkpoints,
+        ExactWorkPhase::WitnessReplay,
+        EVENT_SUBSYSTEM_PRODUCTION_END,
+        EVENT_SUBSYSTEM_TOTAL_WORK,
+    );
+
+    let (source_production_short, source_production_checkpoints) = settle_with_work_and_checkpoints(
+        &package_world,
+        "ComesUp",
+        EVENT_SUBSYSTEM_PRODUCTION_END - 1,
+    );
+    assert!(matches!(
+        source_production_short
+            .terminal()
+            .map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&source_production_short, EVENT_SUBSYSTEM_PRODUCTION_END - 1);
+    assert!(
+        source_production_short
+            .probabilistic_counterexample
+            .is_none()
+    );
+    assert_phase_starts_without_completing(
+        &source_production_checkpoints,
+        ExactWorkPhase::WitnessProduction,
+        EVENT_SUBSYSTEM_PREFIX_WORK,
+    );
+
+    let (source_replay_short, source_replay_checkpoints) =
+        settle_with_work_and_checkpoints(&package_world, "ComesUp", EVENT_SUBSYSTEM_TOTAL_WORK - 1);
+    assert!(matches!(
+        source_replay_short
+            .terminal()
+            .map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&source_replay_short, EVENT_SUBSYSTEM_TOTAL_WORK - 1);
+    assert!(source_replay_short.probabilistic_counterexample.is_none());
+    assert_phase_work(
+        &source_replay_checkpoints,
+        ExactWorkPhase::WitnessProduction,
+        EVENT_SUBSYSTEM_PREFIX_WORK,
+        EVENT_SUBSYSTEM_PRODUCTION_END,
+    );
+    assert_phase_starts_without_completing(
+        &source_replay_checkpoints,
+        ExactWorkPhase::WitnessReplay,
+        EVENT_SUBSYSTEM_PRODUCTION_END,
+    );
+
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("Fails")).unwrap();
+    let certificate: Value = serde_json::from_slice(
+        source_witness
+            .evidence()
+            .subsystem
+            .as_ref()
+            .expect("the subsystem witness carries its source certificate")
+            .as_bytes(),
+    )
+    .expect("the generated certificate is JSON");
+    let values = certificate["values"]
+        .as_array()
+        .expect("the source certificate has value rows")
+        .iter()
+        .map(|row| {
+            let state = URL_SAFE_NO_PAD
+                .decode(row["state"].as_str().expect("state is encoded text"))
+                .expect("state key encoding is valid");
+            let numerator = row["value"]["numerator"]
+                .as_str()
+                .expect("numerator is text")
+                .parse::<Integer>()
+                .expect("numerator is an integer");
+            let denominator = row["value"]["denominator"]
+                .as_str()
+                .expect("denominator is text")
+                .parse::<Integer>()
+                .expect("denominator is an integer");
+            fsl_replay::ExactProbabilityValue {
+                state: ProbabilityProductKey::from_canonical_bytes(state),
+                value: Rational::new(numerator, denominator).expect("rational is canonical"),
+            }
+        })
+        .collect::<Vec<_>>();
+    let exact = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    let mut local_accounting = system.meter_limits();
+    local_accounting.work_units = 1 << 30;
+    let document_limits =
+        fsl_replay::ProbabilityDocumentLimits::for_exact(&exact, local_accounting);
+    let producer_at = |bound| {
+        let mut accounting = prob_world::UNLIMITED;
+        accounting.work_units = bound;
+        let work = filament_exact::WorkScope::new(accounting);
+        let result = fsl_replay::ProbabilitySubsystemCertificate::value_bound_with_work_scope(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &item,
+            fsl_replay::SubsystemBoundKind::Lower,
+            &values,
+            None,
+            document_limits,
+            &Cancel::new(),
+            &work,
+        );
+        (result, work.consumed_work())
+    };
+    let (producer_short, producer_short_work) = producer_at(SUBSYSTEM_CERTIFICATE_WRITER_WORK - 1);
+    assert!(matches!(
+        producer_short,
+        Err(fsl_replay::ProbabilityDocumentError::Accounting(incomplete))
+            if incomplete.limit_kind == filament_exact::LimitKind::WorkUnits
+                && incomplete.limit == SUBSYSTEM_CERTIFICATE_WRITER_WORK - 1
+    ));
+    assert_eq!(producer_short_work, SUBSYSTEM_CERTIFICATE_WRITER_WORK - 1);
+    let (producer_complete, producer_work) = producer_at(SUBSYSTEM_CERTIFICATE_WRITER_WORK);
+    assert!(producer_complete.is_ok());
+    assert_eq!(producer_work, SUBSYSTEM_CERTIFICATE_WRITER_WORK);
+
+    use fsl_eval::simulation::model::{ModelSimulationRequest, PackageModelInput};
+    use fsl_package::{BarePackage, BareSupply};
+
+    let simulation = package_world.subject().simulation;
+    let emission =
+        fsl_package::emit_checked(&package_world.package, fsl_package::EmitLimits::fixture())
+            .expect("the checked package emits");
+    let package_limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        simulation.packages,
+        package_limits,
+    )
+    .expect("the emitted package admits");
+    let mut join_budget = package_limits.native_join_limits().budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut join_budget)
+        .expect("identity rows join");
+    let equality = emission
+        .equality_witness(&admitted, &mut join_budget)
+        .expect("the equality witness joins");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut join_budget,
+        )
+        .expect("the package owner supply joins");
+    let owner = PackageModelInput::of(&bare, simulation.packages, simulation.normalization)
+        .expect("the owner input admits");
+    let package_system = ModelSystem::new(ModelSimulationRequest {
+        input: owner.input(),
+        ..simulation
+    })
+    .expect("the owner-backed system admits");
+    let exact = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    let owner_claim = package_system
+        .input()
+        .probabilistic
+        .claims()
+        .iter()
+        .find(|claim| {
+            matches!(
+                fsl_replay::probabilistic_claim_identity(claim),
+                Ok(item) if item == package_witness.evidence().item
+            )
+        })
+        .expect("the package owner retains the source witness's claim identity");
+    let owner_item = fsl_replay::probabilistic_claim_identity(owner_claim).unwrap();
+    let owner_binding = claim_binding(&package_system, owner_claim)
+        .unwrap()
+        .unwrap();
+    let owner_initial = package_system.initial()[0].clone();
+    let owner_raw = package_system
+        .state_key(&owner_initial, fsl_foundation::IdentityLimits::default())
+        .unwrap()
+        .0;
+    let owner_initial_key =
+        ProbabilityProductKey::for_model_state(Some(&owner_binding.reference), &owner_raw).unwrap();
+    assert_eq!(package_witness.evidence().item, owner_item);
+    assert_eq!(
+        package_witness.evidence().binding.as_ref(),
+        Some(&owner_binding.reference)
+    );
+    assert_eq!(package_witness.evidence().initial_key, owner_initial_key);
+    let replay_at = |work_units| {
+        let mut accounting = prob_world::UNLIMITED;
+        accounting.work_units = work_units;
+        let work = filament_exact::WorkScope::new(accounting);
+        for _ in 0..EVENT_SUBSYSTEM_PRODUCTION_END {
+            work.meter()
+                .charge(filament_exact::Charge::new(
+                    filament_exact::ChargePoint::CollectionMemberTest,
+                ))
+                .expect("the fixed source product and production prefix is admitted");
+        }
+        let result = fsl_replay::replay_probabilistic_witness_from_package_with_work_scope(
+            &owner,
+            &package_system,
+            &package_witness.evidence().item,
+            package_witness.evidence(),
+            &exact,
+            &Cancel::new(),
+            Some(&work),
+        );
+        (result, work.consumed_work())
+    };
+    let owner_bound = EVENT_SUBSYSTEM_TOTAL_WORK - 1;
+    let (owner_short, owner_short_work) = replay_at(owner_bound);
+    assert!(matches!(
+        owner_short,
+        Err(fsl_replay::ProbabilityWitnessError::Limit {
+            limit: fsl_replay::ModelCheckLimit::EvaluationMeter {
+                counter: filament_exact::LimitKind::WorkUnits,
+            },
+            value,
+        }) if value == owner_bound
+    ));
+    assert_eq!(owner_short_work, owner_bound);
+
+    let (owner_complete, owner_complete_work) = replay_at(EVENT_SUBSYSTEM_TOTAL_WORK);
+    assert!(matches!(
+        owner_complete,
+        Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    assert_eq!(owner_complete_work, EVENT_SUBSYSTEM_TOTAL_WORK);
 }
 
 #[trace("TC-3156", "FR-202-AC-31")]
