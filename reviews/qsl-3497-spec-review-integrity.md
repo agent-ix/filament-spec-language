@@ -143,3 +143,4 @@ pub enum CertificateCheck { Accepted { bound_side: Bound }, Rejected(Certificate
 | FND-002 | fixed | - |
 | FND-003 | fixed | - |
 | FND-004 | fixed | - |
+| FND-005 | fixed | - |
