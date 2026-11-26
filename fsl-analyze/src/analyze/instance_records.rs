@@ -233,7 +233,7 @@ mod tests {
 
     /// FR-621: the first refuted instance decides, whatever came before it;
     /// else the first instance that is not proved.
-    #[trace("TC-3219", "FR-621-AC-24")]
+    #[trace("TC-3219", "FR-621-AC-9")]
     #[test]
     fn a_refuted_instance_decides_before_an_earlier_unproved_one() {
         let method = StateGraphMethod {

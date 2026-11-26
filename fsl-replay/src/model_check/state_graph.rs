@@ -171,8 +171,8 @@ pub enum GraphEvidence {
     Witness {
         /// The paths in initial-state order and how each was found.
         paths: Vec<(WitnessPath, WitnessSource)>,
-        /// The claim's `over` binding, when it has one.
-        over: Option<fsl_eval::model_subject::ModelInstance>,
+        /// The instance: see [`GraphEvidence::over`].
+        over: Vec<fsl_eval::model_subject::ModelInstance>,
     },
     /// A stem to a state whose forward closure is claimed to have no target.
     Trap {
@@ -180,8 +180,8 @@ pub enum GraphEvidence {
         stem: ModelPath,
         /// The closure system used by the claim that produced it.
         closure: TrapClosure,
-        /// The claim's `over` binding, when it has one.
-        over: Option<fsl_eval::model_subject::ModelInstance>,
+        /// The instance: see [`GraphEvidence::over`].
+        over: Vec<fsl_eval::model_subject::ModelInstance>,
     },
     /// Two distinct paths from one `from` state to their first `to` state.
     PathPair {
@@ -191,8 +191,8 @@ pub enum GraphEvidence {
         first: Vec<ModelStep>,
         /// The second path from the stem's final state.
         second: Vec<ModelStep>,
-        /// The claim's `over` binding, when it has one.
-        over: Option<fsl_eval::model_subject::ModelInstance>,
+        /// The instance: see [`GraphEvidence::over`].
+        over: Vec<fsl_eval::model_subject::ModelInstance>,
     },
     /// A path to the first state where a claim predicate has no value.
     Undefined {
@@ -200,9 +200,25 @@ pub enum GraphEvidence {
         stem: ModelPath,
         /// The undefined predicate and its location.
         undefined: GraphUndefined,
-        /// The claim's `over` binding, when it has one.
-        over: Option<fsl_eval::model_subject::ModelInstance>,
+        /// The instance: see [`GraphEvidence::over`].
+        over: Vec<fsl_eval::model_subject::ModelInstance>,
     },
+}
+
+impl GraphEvidence {
+    /// The instance the evidence is for: one bound object per object
+    /// parameter, in parameter order, and none for a claim without one. A
+    /// state-graph claim has at most one `over` parameter; an HP-5 clause may
+    /// have several.
+    #[must_use]
+    pub fn over(&self) -> &[fsl_eval::model_subject::ModelInstance] {
+        match self {
+            Self::Witness { over, .. }
+            | Self::Trap { over, .. }
+            | Self::PathPair { over, .. }
+            | Self::Undefined { over, .. } => over,
+        }
+    }
 }
 
 impl crate::witness::FamilyPayload for GraphEvidence {

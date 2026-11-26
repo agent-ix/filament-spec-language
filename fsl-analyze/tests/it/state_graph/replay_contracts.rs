@@ -48,7 +48,7 @@ fn evidence(paths: &[GraphWitness], over: &ModelInstance) -> GraphEvidence {
                 )
             })
             .collect(),
-        over: Some(over.clone()),
+        over: vec![over.clone()],
     }
 }
 
@@ -221,7 +221,7 @@ fn a_returned_trap_settles_from_its_real_closure_and_a_shortened_stem_names_the_
                 GraphEvidence::Trap {
                     stem: stem.clone(),
                     closure: fsl_replay::TrapClosure::StateGraph,
-                    over: Some(over.clone()),
+                    over: vec![over.clone()],
                 },
                 &["g"],
                 ReplayLimits::default(),
@@ -245,7 +245,7 @@ fn a_returned_trap_settles_from_its_real_closure_and_a_shortened_stem_names_the_
             GraphEvidence::Trap {
                 stem: shortened,
                 closure: fsl_replay::TrapClosure::StateGraph,
-                over: Some(over),
+                over: vec![over],
             },
             &["g"],
             ReplayLimits::default(),
@@ -300,7 +300,7 @@ fn undefined_subject_evidence_replays_from_its_expression_locus() {
                 GraphEvidence::Undefined {
                     stem: stem.clone(),
                     undefined: undefined.clone(),
-                    over: Some(over.clone()),
+                    over: vec![over.clone()],
                 },
                 keys,
                 ReplayLimits::default(),

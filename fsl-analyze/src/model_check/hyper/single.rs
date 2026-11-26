@@ -64,6 +64,7 @@ use fsl_replay::{
     UndefinedEvaluation, UndefinedLocus, UndefinedSite, WitnessSource, DEFAULT_WITNESS_SEED,
 };
 use fsl_semantics::check::{CheckedHyperClause, HyperForm, TemporalProfile};
+use ix_trace_rs::implements;
 
 use super::{
     fault, instances, retain, tree_path, widen, FairModel, HyperGraph, HyperRefusal, Positions,
@@ -851,6 +852,7 @@ impl<'a> Run<'_, 'a> {
 
 impl<'a> Decision<'_, '_, 'a> {
     /// Decide the instance (FR-181 Outcomes).
+    #[implements("FR-181-AC-13")]
     fn decide(
         &self,
         sampled: &[Option<LassoWitness>],

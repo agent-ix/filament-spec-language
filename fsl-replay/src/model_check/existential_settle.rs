@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! HP-5 settlement with independently checked closure and replayed lassos.
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, ValueType};
 use fsl_eval::simulation::model::ModelSystem;
 use ix_trace_rs::implements;
 
@@ -30,7 +30,7 @@ pub struct ExistentialRecord {
 /// # Errors
 ///
 /// Refuses an inconsistent subject, binding or missing proof certificate.
-#[implements("FR-181-AC-5")]
+#[implements("FR-181-AC-5", "FR-181-AC-12")]
 pub fn settle_existential(
     request: &ProductClosureRequest<'_>,
     instance: &ExistentialInstanceOutcome,
@@ -47,18 +47,25 @@ pub fn settle_existential(
         .ok_or(ProductClosureRefusal::Input("HP-5-subject"))?;
     let system = ModelSystem::for_alias(subject.simulation.clone(), alias.as_str())
         .map_err(|_| ProductClosureRefusal::Input("HP-5-subject"))?;
-    let over = match (clause.parameters(), instance.instance.as_slice()) {
-        ([], []) => None,
-        ([parameter], [(name, key)]) if name == &parameter.name => Some(
+    if clause.parameters().len() != instance.instance.len() {
+        return Err(ProductClosureRefusal::Input("HP-5-instance"));
+    }
+    let over = clause
+        .parameters()
+        .iter()
+        .zip(&instance.instance)
+        .map(|(parameter, (name, key))| {
+            if name != &parameter.name {
+                return Err(ProductClosureRefusal::Input("HP-5-instance"));
+            }
             system
-                .hyper_instances(&parameter.object)
+                .instances(&ValueType::Reference(parameter.object.clone()))
                 .map_err(|_| ProductClosureRefusal::Input("HP-5-universe"))?
                 .into_iter()
                 .find(|instance| &instance.key == key)
-                .ok_or(ProductClosureRefusal::Input("HP-5-instance"))?,
-        ),
-        _ => return Err(ProductClosureRefusal::Input("HP-5-instance")),
-    };
+                .ok_or(ProductClosureRefusal::Input("HP-5-instance"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     if clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
         && matches!(
             instance.outcome,
@@ -254,7 +261,7 @@ pub fn settle_existential(
 fn settle_closed(
     request: &ProductClosureRequest<'_>,
     system: &ModelSystem<'_>,
-    over: Option<fsl_eval::model_subject::ModelInstance>,
+    over: Vec<fsl_eval::model_subject::ModelInstance>,
     instance: &ExistentialInstanceOutcome,
     method: &StateGraphMethod,
     cancel: &Cancel,
@@ -264,13 +271,15 @@ fn settle_closed(
         ClosedInputs, ClosedStop, ClosedVerdict, ParameterBinding,
     };
     let clause = request.hyper_clause()?;
-    let binding: Vec<ParameterBinding> = match (clause.parameters(), &over) {
-        ([parameter], Some(found)) => vec![ParameterBinding {
+    let binding: Vec<ParameterBinding> = clause
+        .parameters()
+        .iter()
+        .zip(&over)
+        .map(|(parameter, found)| ParameterBinding {
             parameter: parameter.name.clone(),
             instance: found.clone(),
-        }],
-        _ => Vec::new(),
-    };
+        })
+        .collect();
     let letters = CheckedHyperLetters::new(request.package, clause, vec![system])
         .map_err(|_| ProductClosureRefusal::Input("HP-5-letters"))?;
     let matcher = CheckedStepMatch::new(request.package, clause);
