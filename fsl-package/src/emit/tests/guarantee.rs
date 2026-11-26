@@ -5,6 +5,8 @@
 //! read, its node is written and read back, and every refusal carries
 //! FSpec FR-490's code and cause.
 
+use filament_checked::key::DeclarationKey;
+use filament_exact::Identifier;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind, PropertyForm};
 use fsl_semantics::check::{
@@ -12,7 +14,12 @@ use fsl_semantics::check::{
     CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot, ModelFamily,
     SlotBacking, SlotRole,
 };
+use fsl_semantics::check::{
+    AuthoredBinding, FrameBinding, ObjectBinding, OperationKey, PopulationBinding, RustField,
+    RustPath, RustReceiver,
+};
 use ix_trace_rs::trace;
+use std::collections::BTreeMap;
 
 use super::*;
 
@@ -630,4 +637,114 @@ fn the_fragment_operator_names_a_nested_interval_operator() {
     );
     let plain = checked(&unit(LIVENESS, RELATION, CASE_ONE));
     assert_eq!(sole(&plain).fragment_operator(), None);
+}
+
+/// The relation of a unit declaring [`RELATION`] without its population.
+const RELATION_WITHOUT_POPULATION: &str = "abstraction A using v {\n\
+     type Spec::Counter to \"counter::Counter\" { value to \"value\"; };\n\
+     operation Spec::Counter::inc to \"counter::Counter::inc_cas\" receiver \"self\" ();\n\
+     }\n";
+
+/// The bindings of the relation `declared` writes, as a checked unit holds
+/// them.
+fn bindings_of(declared: &str) -> Vec<AuthoredBinding> {
+    let key = |node: &str| DeclarationKey {
+        package: "test/orders".to_owned(),
+        node: format!("ix://test/orders/{node}"),
+    };
+    let mut bindings = vec![AuthoredBinding::Object {
+        key: key("Counter"),
+        value: ObjectBinding {
+            rust_type: RustPath::new("counter::Counter"),
+            fields: BTreeMap::from([(
+                Identifier::new("value").expect("an identifier"),
+                RustField::new("value"),
+            )]),
+        },
+    }];
+    if declared.contains("population") {
+        bindings.push(AuthoredBinding::Population {
+            key: key("counters"),
+            value: PopulationBinding {
+                collection: RustPath::new("state::counters"),
+            },
+        });
+    }
+    if declared.contains("operation") {
+        bindings.push(AuthoredBinding::Frame {
+            key: OperationKey {
+                declaring: key("Counter"),
+                operation: Identifier::new("inc").expect("an identifier"),
+            },
+            value: FrameBinding {
+                function: RustPath::new("counter::Counter::inc_cas"),
+                receiver: RustReceiver::SelfValue,
+                parameters: BTreeMap::new(),
+            },
+        });
+    }
+    bindings
+}
+
+/// A unit declaring `from`, rebound to the relation `to` writes.
+fn rebound(from: &str, to: &str) -> CheckedPackage {
+    let mut package = checked(&unit(LIVENESS, from, CASE_ONE));
+    let sites = package.abstraction().expect("a relation").sites().to_vec();
+    package
+        .bind_abstraction_at(&bindings_of(to), sites)
+        .expect("the relation binds");
+    package
+}
+
+/// FR-306-AC-5, FSpec FR-490-AC-6: a rebind that drops the frame of `inc`
+/// refuses the guarantee item, as checking a unit declaring that relation
+/// does, and does not change a graph already shared.
+#[trace("TC-804", "FR-306-AC-5", "FSpec-FR-490-AC-6")]
+#[test]
+fn a_rebind_that_drops_a_frame_refuses_the_guarantee_item() {
+    let mut package = checked(&unit(LIVENESS, RELATION, CASE_ONE));
+    let shared = package.shared_graph();
+    let sites = package.abstraction().expect("a relation").sites().to_vec();
+    package
+        .bind_abstraction_at(&bindings_of(RELATION_WITHOUT_INC), sites)
+        .expect("the relation binds");
+
+    let refusal = sole(&package).item_refusal().expect("the item refuses");
+    assert_eq!(refusal.code(), fsl_foundation::Code::MissingDeclaration);
+    assert_eq!(refusal.cause(), "missing-name");
+    assert!(
+        matches!(&refusal.element, AbstractionKey::Frame(key) if key.operation.as_str() == "inc")
+    );
+    let fresh = checked(&unit(LIVENESS, RELATION_WITHOUT_INC, CASE_ONE));
+    assert_eq!(sole(&package).item_refusal(), sole(&fresh).item_refusal());
+    assert_eq!(sole(&package).relation(), sole(&fresh).relation());
+    assert_eq!(shared.implementation_guarantees()[0].item_refusal(), None);
+}
+
+/// FR-306-AC-5: a rebind that adds the missing frame lifts the item refusal.
+#[trace("TC-804", "FR-306-AC-5")]
+#[test]
+fn a_rebind_that_adds_the_frame_lifts_the_item_refusal() {
+    let package = rebound(RELATION_WITHOUT_INC, RELATION);
+    assert_eq!(sole(&package).item_refusal(), None);
+}
+
+/// FR-306-AC-5: a rebind that changes the target set rekeys the relation the
+/// guarantee names, to the key the package emits for it.
+#[trace("TC-804", "FR-306-AC-5")]
+#[test]
+fn a_rebind_that_changes_the_targets_rekeys_the_guarantees_relation() {
+    let original = checked(&unit(LIVENESS, RELATION, CASE_ONE));
+    let package = rebound(RELATION, RELATION_WITHOUT_POPULATION);
+    assert_ne!(sole(&package).relation(), sole(&original).relation());
+    let fresh = checked(&unit(LIVENESS, RELATION_WITHOUT_POPULATION, CASE_ONE));
+    assert_eq!(sole(&package).relation(), sole(&fresh).relation());
+    assert_eq!(sole(&package).item_refusal(), sole(&fresh).item_refusal());
+    let relation = package
+        .graph()
+        .abstraction_nodes(package.abstraction().expect("a relation"))
+        .expect("the relation keys")
+        .relation()
+        .key();
+    assert_eq!(sole(&package).relation(), &relation);
 }

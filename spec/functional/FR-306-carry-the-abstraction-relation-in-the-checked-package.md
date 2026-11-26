@@ -59,9 +59,16 @@ package's value (FSpec FR-451). The package identity (identity and version,
 ADR-013 O-02) does not depend on a binding. A rebinding is a new relation
 revision and SHALL NOT reinterpret a contract generated from the earlier
 package (FSpec FR-353-AC-5). The two revisions are told apart by comparing
-checked-package values: their relation nodes have an equal `node_id` (FSpec
-FR-451 `node_id`), and the two packages are unequal values, so they are not
-the same package (FSpec FR-322).
+checked-package values: while the bindings target the same nodes, their
+relation nodes have an equal `node_id` (FSpec FR-451 `node_id`), and the two
+packages are unequal values, so they are not the same package (FSpec FR-322).
+
+A binding made on a linked package (`CheckedPackage::bind_abstraction` or
+`bind_abstraction_at`) derives again everything checking derives from the
+relation: each guarantee's item refusal (FSpec FR-490-AC-6) and relation
+node, and each step relation's claim node, implementation references,
+occurrences and requirement records. A graph shared before the binding is
+unchanged.
 
 ### The relation is a premise, not a claim
 
@@ -81,6 +88,7 @@ through S6a (ADR-012 §8; ADR-017 AR-5).
 | FR-306-AC-2 | Recompiling the unit unchanged gives an equal relation node id and body. Changing one `ObjectBinding` field's `RustField` gives a relation node with an equal node id and an unequal body, whose `objects` entry for that type holds the new `RustField` in `fields` where the first holds the old one, and the changed package reads back. | Test (TC-804) |
 | FR-306-AC-3 | The unit's requirement records and their `route` results are equal with and without its relation declaration. | Test (TC-805) |
 | FR-306-AC-4 | A clause run of the unit's ConfigVersion clauses through the spine run entry gives the same disposition with and without its relation declaration. | Test (TC-805) |
+| FR-306-AC-5 | After a successful binding on a linked package, including one that drops a frame or changes the nodes the bindings target, each guarantee's item refusal and relation node, and each step relation's claim node, implementation references and requirement records, equal those of checking a unit that declares the bound relation, and a graph obtained from `shared_graph` before the binding is unchanged. | Test (TC-804) |
 
 ## Dependencies
 

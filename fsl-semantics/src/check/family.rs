@@ -1862,6 +1862,11 @@ impl<S> Default for OccurrenceMap<S> {
 }
 
 impl<S> OccurrenceMap<S> {
+    /// Take out every occurrence of `identity`.
+    pub(crate) fn remove(&mut self, identity: &NodeKey) {
+        self.spans.remove(identity);
+    }
+
     /// Record one occurrence of `identity` under `role`, at `span`. Ordinals
     /// are assigned by (identity, role) insertion order (ADR-013 O-07: "an
     /// ordinal disambiguating repeated occurrences of that role on the same

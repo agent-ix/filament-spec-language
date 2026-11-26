@@ -778,13 +778,13 @@ fn acquire_evidence(
     }
     let mut artifacts: BTreeMap<String, DependencyArtifact> = BTreeMap::new();
     for (identity, dependency) in held {
-        let emission = dependency
+        let remembered = dependency
             .remembered_emission()
             .ok_or_else(|| Error::Dependency {
                 identity: identity.clone(),
                 detail: "the checked acquisition retained no library emission".to_owned(),
-            })?
-            .clone();
+            })?;
+        let emission = fsl_package::Emission::clone(&remembered);
         let selected = fsl_semantics::library::LibraryName::new(&identity).map_err(|error| {
             Error::Dependency {
                 identity: identity.clone(),

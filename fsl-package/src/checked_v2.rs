@@ -1442,7 +1442,7 @@ impl AdmittedPackageRead<'_> {
             })?;
         let mut held = BTreeMap::new();
         hold_closure(self.source, &mut held);
-        let dependencies = held
+        let remembered = held
             .iter()
             .map(|(identity, source)| {
                 let admitted = self.dependencies.package(identity).ok_or_else(fault)?;
@@ -1450,6 +1450,10 @@ impl AdmittedPackageRead<'_> {
                 Ok((admitted, emission))
             })
             .collect::<Result<Vec<_>, ViewFailure>>()?;
+        let dependencies: Vec<_> = remembered
+            .iter()
+            .map(|(admitted, emission)| (*admitted, &**emission))
+            .collect();
         let slots = project_package(
             &self.read.admitted,
             &self.emission,
@@ -1617,7 +1621,8 @@ impl ClosureReader<'_> {
         identity: LibraryName,
     ) -> Result<V2Read, ImportViewRefusal> {
         let fresh;
-        let emission = match package.remembered_emission() {
+        let remembered = package.remembered_emission();
+        let emission = match remembered.as_deref() {
             Some(emission) => emission,
             None => {
                 fresh = emit_checked(package, self.emit).map_err(|refusal| {

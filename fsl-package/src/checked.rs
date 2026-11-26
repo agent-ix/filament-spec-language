@@ -43,9 +43,9 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
-use std::sync::OnceLock;
+use std::sync::{PoisonError, RwLock};
 
-use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, Maybe, With};
+use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, With};
 #[cfg(feature = "std")]
 use fsl_foundation::Code;
 use fsl_semantics::check::{
@@ -192,16 +192,13 @@ pub struct CheckedPackage {
     /// Only `link_with` and the emitter read it, so it exists with `std`.
     #[cfg(feature = "std")]
     direct_imports: BTreeSet<LibraryName>,
-    /// FR-304, FR-306: this package's checked abstraction relation, when it
-    /// declares one. The checked package is its only authority.
-    abstraction: Option<CheckedAbstractionRelation>,
-    /// This package's checked emission, set only by the emitter
+    /// This package's latest checked emission, set only by the emitter
     /// ([`Self::remember_emission`]; the bytes stay the emitter's own
     /// output, ADR-013 O-02) so a package reached again, as a dependency or
     /// by another emit, is not emitted again. A successful binding, the one
-    /// change a linked package takes, resets it.
+    /// change a linked package takes, drops it.
     #[cfg(feature = "std")]
-    emission: OnceLock<Emission>,
+    emission: RwLock<Option<Arc<Emission>>>,
 }
 
 /// One library identity's selection in a package's resolved closure, and the
@@ -372,7 +369,6 @@ impl DebugWith for CheckedPackage {
             selections,
             #[cfg(feature = "std")]
             direct_imports,
-            abstraction,
             #[cfg(feature = "std")]
             emission,
         } = self;
@@ -386,24 +382,32 @@ impl DebugWith for CheckedPackage {
             .field("selections", selections);
         #[cfg(feature = "std")]
         out.field("direct_imports", direct_imports);
-        out.field("abstraction", &Maybe(abstraction, table));
         #[cfg(feature = "std")]
-        out.field("emission", &RetainedEmission(emission, table));
+        out.field(
+            "emission",
+            &RetainedEmission(
+                emission
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_deref(),
+                table,
+            ),
+        );
         out.finish()
     }
 }
 
-/// The retained emission, written as `OnceLock` writes it, into `table`.
+/// The retained emission, written into `table`.
 #[cfg(feature = "std")]
-struct RetainedEmission<'a>(&'a OnceLock<Emission>, &'a DebugTable);
+struct RetainedEmission<'a>(Option<&'a Emission>, &'a DebugTable);
 
 #[cfg(feature = "std")]
 impl core::fmt::Debug for RetainedEmission<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut out = f.debug_tuple("OnceLock");
-        match self.0.get() {
+        let mut out = f.debug_tuple("Remembered");
+        match self.0 {
             Some(emission) => out.field(&With(emission, self.1)),
-            None => out.field(&format_args!("<uninit>")),
+            None => out.field(&format_args!("<none>")),
         };
         out.finish()
     }
@@ -525,14 +529,13 @@ impl CheckedPackage {
     /// ```
     pub fn link(graph: CheckedGraph) -> Self {
         Self {
-            abstraction: graph.abstraction().cloned(),
             graph: Arc::new(graph),
             dependencies: BTreeMap::new(),
             selections: BTreeMap::new(),
             #[cfg(feature = "std")]
             direct_imports: BTreeSet::new(),
             #[cfg(feature = "std")]
-            emission: OnceLock::new(),
+            emission: RwLock::new(None),
         }
     }
 
@@ -608,12 +611,11 @@ impl CheckedPackage {
             dependencies.insert(import.identity, import.package);
         }
         Ok(Self {
-            abstraction: graph.abstraction().cloned(),
             graph: Arc::new(graph),
             dependencies,
             selections,
             direct_imports,
-            emission: OnceLock::new(),
+            emission: RwLock::new(None),
         })
     }
 
@@ -637,8 +639,10 @@ impl CheckedPackage {
     /// the emitter writes one `declaration` occurrence of the relation node at
     /// each (FSpec FR-451).
     ///
-    /// A successful binding changes what the emitter writes, so it drops the
-    /// remembered emission.
+    /// A successful binding derives again everything checking derives from
+    /// the relation ([`CheckedGraph::with_abstraction`]) and drops the
+    /// remembered emission. A graph shared before the binding
+    /// ([`Self::shared_graph`]) is unchanged.
     ///
     /// # Errors
     ///
@@ -649,11 +653,12 @@ impl CheckedPackage {
         bindings: &[AuthoredBinding],
         sites: Vec<filament_semantic_value::location::ExpressionLocation>,
     ) -> Result<(), Vec<AbstractionRefusal>> {
-        let relation = self.graph.check_abstraction(bindings)?;
-        self.abstraction = Some(relation.with_sites(sites));
+        let relation = self.graph.check_abstraction(bindings)?.with_sites(sites);
+        // A new graph, so a graph another package already shares is unchanged.
+        self.graph = Arc::new(self.graph.with_abstraction(relation)?);
         #[cfg(feature = "std")]
         {
-            self.emission = OnceLock::new();
+            self.emission = RwLock::new(None);
         }
         Ok(())
     }
@@ -661,20 +666,26 @@ impl CheckedPackage {
     /// FR-304: this package's checked abstraction relation, when it declares
     /// one.
     pub fn abstraction(&self) -> Option<&CheckedAbstractionRelation> {
-        self.abstraction.as_ref()
+        self.graph.abstraction()
     }
 
     /// Records `emission`, the emitter's output for this package. Only the
     /// emitter calls this (ADR-013 O-02).
     #[cfg(feature = "std")]
     pub(crate) fn remember_emission(&self, emission: &Emission) {
-        let _ = self.emission.set(emission.clone());
+        *self
+            .emission
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(emission.clone()));
     }
 
     /// This package's emission, if it has been emitted.
     #[cfg(feature = "std")]
-    pub fn remembered_emission(&self) -> Option<&Emission> {
-        self.emission.get()
+    pub fn remembered_emission(&self) -> Option<Arc<Emission>> {
+        self.emission
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The name the emitter used for this package, if it was
@@ -684,7 +695,9 @@ impl CheckedPackage {
     /// none.
     #[cfg(feature = "std")]
     pub fn emitted_package_name(&self) -> Option<&str> {
-        self.emission.get().map(|emission| emission.package.name())
+        // Every emission of a package declares its graph's package name.
+        self.remembered_emission()
+            .map(|_| self.graph.package_name())
     }
 
     /// This package's own checked declarations (S3's stage output) -- the
@@ -737,7 +750,8 @@ impl CheckedPackage {
 #[cfg(feature = "std")]
 fn check_dependency_emission(import: &Import, emit: EmitLimits) -> Result<(), LinkRefusal> {
     let fresh;
-    let emission = match import.package.remembered_emission() {
+    let remembered = import.package.remembered_emission();
+    let emission = match remembered.as_deref() {
         Some(emission) => emission,
         None => {
             fresh = emit_checked(&import.package, emit).map_err(|refusal| {
@@ -879,7 +893,7 @@ pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
         CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
     };
     use fsl_semantics::check::PackageDeclarations;
-    static GRAPH: OnceLock<Arc<CheckedGraph>> = OnceLock::new();
+    static GRAPH: std::sync::OnceLock<Arc<CheckedGraph>> = std::sync::OnceLock::new();
     let graph = Arc::clone(GRAPH.get_or_init(|| {
         let source = fsl_foundation::Source::read(
             fsl_foundation::SourceIdentity::new("a", "u"),
@@ -930,8 +944,7 @@ pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
             dependencies: BTreeMap::new(),
             selections: BTreeMap::new(),
             direct_imports: BTreeSet::new(),
-            abstraction: None,
-            emission: OnceLock::new(),
+            emission: RwLock::new(None),
         },
         |dependency, link| CheckedPackage {
             graph: Arc::clone(&graph),
@@ -941,8 +954,7 @@ pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
             )]),
             selections: BTreeMap::new(),
             direct_imports: BTreeSet::new(),
-            abstraction: None,
-            emission: OnceLock::new(),
+            emission: RwLock::new(None),
         },
     )
 }

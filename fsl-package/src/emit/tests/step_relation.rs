@@ -4,7 +4,13 @@
 
 use super::admission_corpus::config_version_unit;
 use super::*;
+use filament_checked::key::DeclarationKey;
+use filament_exact::Identifier;
 use filament_semantic_value::checking::CheckMode;
+use fsl_semantics::check::{
+    AuthoredBinding, FrameBinding, OperationKey, PopulationBinding, RustPath, RustReceiver,
+};
+use std::collections::BTreeMap;
 
 pub(super) fn document() -> &'static [u8] {
     config_version_unit::DOMAIN_PACKAGE.as_bytes()
@@ -842,4 +848,216 @@ fn a_step_relation_satisfies_fr180_ac1() {
     a_step_relation_emits_and_reads_back_its_execution_body();
     one_step_relation_claim_occurrence_is_admitted_by_ir();
     a_bound_step_relation_emits_its_execution_clause_and_abstraction_joins();
+}
+
+/// The relation unit with `bindings` declared as its abstraction relation.
+fn checked_graph_declaring(bindings: &str) -> fsl_semantics::check::CheckedGraph {
+    let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
+    let unit = format!(
+        "{}abstraction A using v {{\n{bindings}}}\n",
+        relation_unit()
+    );
+    assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
+}
+
+const HISTORY: &str = "population Config::config_history to \"store::history\";\n";
+const UPDATE: &str =
+    "operation Config::ConfigVersion::attemptUpdate to \"store::update\" receiver \"self\" ();\n";
+
+/// The binding of [`HISTORY`].
+fn history_binding() -> AuthoredBinding {
+    AuthoredBinding::Population {
+        key: DeclarationKey {
+            package: "example/config-version".to_owned(),
+            node: "ix://example/config-version/config_history".to_owned(),
+        },
+        value: PopulationBinding {
+            collection: RustPath::new("store::history"),
+        },
+    }
+}
+
+/// The binding of [`UPDATE`].
+fn update_binding() -> AuthoredBinding {
+    AuthoredBinding::Frame {
+        key: OperationKey {
+            declaring: DeclarationKey {
+                package: "example/config-version".to_owned(),
+                node: "ix://example/config-version/ConfigVersion".to_owned(),
+            },
+            operation: Identifier::new("attemptUpdate").expect("an identifier"),
+        },
+        value: FrameBinding {
+            function: RustPath::new("store::update"),
+            receiver: RustReceiver::SelfValue,
+            parameters: BTreeMap::new(),
+        },
+    }
+}
+
+/// The step relation's claim key and whether it has the code claim's record.
+fn step_claim(graph: &fsl_semantics::check::CheckedGraph) -> (filament_exact::NodeKey, bool) {
+    use fsl_semantics::check::Capability;
+
+    let [relation] = graph.step_relations() else {
+        panic!("one step relation");
+    };
+    let claim = relation.occurrence().expect("the claim occurrence");
+    assert!(graph
+        .requirements()
+        .get_kind(claim, Capability::TemporalSatisfaction)
+        .is_some());
+    (
+        relation.identity().expect("the claim node"),
+        graph
+            .requirements()
+            .get_kind(claim, Capability::OperationContract)
+            .is_some(),
+    )
+}
+
+/// The emitted step-relation node, and the `implementation` member's value of
+/// each of its two executions.
+fn emitted_step_relation(package: &CheckedPackage) -> (Value, [Value; 2]) {
+    let emission = emit_checked(package).expect("the package emits");
+    let wire = wire(&emission);
+    let node = nodes(&wire)
+        .iter()
+        .find(|node| node["semantic_form"] == "step_relation")
+        .expect("the step-relation node")
+        .clone();
+    let member = |members: &Value, name: &str| {
+        members
+            .as_array()
+            .expect("members")
+            .iter()
+            .find(|member| member["name"] == name)
+            .unwrap_or_else(|| panic!("the member {name}"))["value"]
+            .clone()
+    };
+    let executions = member(&node["body"]["members"], "executions");
+    let [x, y] = executions["members"]
+        .as_array()
+        .expect("executions")
+        .as_slice()
+    else {
+        panic!("two executions: {executions}");
+    };
+    let implementations =
+        [x, y].map(|execution| member(&execution["value"]["members"], "implementation"));
+    (
+        json!({"node_id": node["node_id"], "body": node["body"]}),
+        implementations,
+    )
+}
+
+/// The emitted `abstraction_relation` node.
+fn emitted_abstraction(package: &CheckedPackage) -> Value {
+    let emission = emit_checked(package).expect("the package emits");
+    let wire = wire(&emission);
+    nodes(&wire)
+        .iter()
+        .find(|node| node["semantic_form"] == "abstraction_relation")
+        .expect("the abstraction node")
+        .clone()
+}
+
+/// Rebinds a package declaring `HISTORY` and `UPDATE`, at the sites it
+/// already has, so it still emits.
+fn rebound(binding: AuthoredBinding) -> (CheckedPackage, CheckedPackage) {
+    let declared = format!("{HISTORY}{UPDATE}");
+    let original = CheckedPackage::link(checked_graph_declaring(&declared));
+    let mut package = CheckedPackage::link(checked_graph_declaring(&declared));
+    let sites = package.abstraction().expect("a relation").sites().to_vec();
+    package
+        .bind_abstraction_at(&[binding], sites)
+        .expect("the relation binds");
+    (original, package)
+}
+
+/// FR-306-AC-5: a rebind that drops the frame leaves the step relation with no
+/// implementation and no code claim, as a unit declaring that relation does,
+/// and does not change a graph already shared.
+#[trace("TC-804", "FR-306-AC-5")]
+#[test]
+fn a_rebind_that_drops_a_frame_derives_the_step_relation_again() {
+    let mut package = CheckedPackage::link(checked_graph_declaring(&format!("{HISTORY}{UPDATE}")));
+    let shared = package.shared_graph();
+    assert!(step_claim(&shared).1);
+    let sites = package.abstraction().expect("a relation").sites().to_vec();
+    package
+        .bind_abstraction_at(&[history_binding()], sites)
+        .expect("the relation binds");
+
+    let (key, code) = step_claim(package.graph());
+    assert!(!code);
+    assert_eq!(package.graph().requirements().len(), 1);
+    let fresh = CheckedPackage::link(checked_graph_declaring(HISTORY));
+    assert_eq!(key, step_claim(fresh.graph()).0);
+    assert_eq!(package.graph().requirements(), fresh.graph().requirements());
+    let (node, implementations) = emitted_step_relation(&package);
+    for implementation in implementations {
+        assert_eq!(implementation["members"], json!([]));
+    }
+    assert_eq!(node, emitted_step_relation(&fresh).0);
+    // The graph shared before the rebind keeps its code claim.
+    assert!(step_claim(&shared).1);
+    assert_eq!(shared.requirements().len(), 2);
+}
+
+/// FR-306-AC-5: a rebind that changes the target set gives the abstraction
+/// relation a new node key, and each execution's implementation references it.
+/// The claim's own key is its declared name's, so it does not change.
+#[trace("TC-804", "FR-306-AC-5")]
+#[test]
+fn a_rebind_that_changes_the_targets_rekeys_the_implementation() {
+    let (original, package) = rebound(update_binding());
+    let abstraction = emitted_abstraction(&package);
+    assert_ne!(
+        abstraction["node_id"],
+        emitted_abstraction(&original)["node_id"]
+    );
+    let (node, implementations) = emitted_step_relation(&package);
+    for implementation in implementations {
+        assert_eq!(implementation["target"], abstraction["node_id"]);
+    }
+    let fresh = CheckedPackage::link(checked_graph_declaring(UPDATE));
+    assert_eq!(node, emitted_step_relation(&fresh).0);
+    let (key, code) = step_claim(package.graph());
+    assert!(code);
+    assert_eq!(key, step_claim(fresh.graph()).0);
+    assert_eq!(key, step_claim(original.graph()).0);
+    assert_ne!(node, emitted_step_relation(&original).0);
+    assert_eq!(package.graph().requirements(), fresh.graph().requirements());
+}
+
+/// FR-306-AC-5: binding a frame to a package whose unit declares no relation
+/// adds the code claim a unit declaring the frame has.
+#[trace("TC-804", "FR-306-AC-5")]
+#[test]
+fn a_first_binding_derives_the_step_relations_code_claim() {
+    let mut package = CheckedPackage::link(checked_graph());
+    let (unbound, code) = step_claim(package.graph());
+    assert!(!code);
+    package
+        .bind_abstraction(&[update_binding()])
+        .expect("the relation binds");
+    let (key, code) = step_claim(package.graph());
+    assert!(code);
+    assert_eq!(key, unbound);
+    assert_eq!(package.graph().requirements().len(), 2);
+    let fresh = CheckedPackage::link(checked_graph_declaring(UPDATE));
+    assert_eq!(key, step_claim(fresh.graph()).0);
+    assert_eq!(package.graph().requirements(), fresh.graph().requirements());
+    assert_eq!(
+        package.graph().semantic_graph().node(key.clone()),
+        fresh.graph().semantic_graph().node(key)
+    );
 }

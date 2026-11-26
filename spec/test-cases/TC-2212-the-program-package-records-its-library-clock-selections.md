@@ -16,7 +16,7 @@ Verify that a compile writes the configuration it served to a library
 unit's own clock into the program package's lock
 `dependency_clock_selections`, that the configuration enters the package
 bytes, and that the member is absent when no library takes a request clock.
-Scope: FR-640-AC-10.
+Scope: FR-640-AC-10, FR-640-AC-16.
 
 ## Test Procedure
 
@@ -25,13 +25,21 @@ Scope: FR-640-AC-10.
    `timestamped_event` in `ms`; read the package lock. Compile again with
    `timestamp_unit` `s`.
 2. Compile the program against a `test/plant` with no clause and no `clocks`.
+3. Emit one package with a bounded event-position clause through
+   `emit_dependency_with_temporal_selections_and_cancel` twice, under two
+   sequence authorities, then call `emit_checked` on it.
 
 Test: `tests/it/clock_derivation.rs`
 `the_program_package_records_its_library_clock_selections`, tagged
 `#[trace("TC-2212", "FR-640-AC-10", "FSpec-TC-1661", "FSpec-FR-322-AC-452")]`.
+Step 3: `fsl-package/tests/temporal_occurrences.rs`
+`a_later_dependency_emission_replaces_the_remembered_one`, tagged
+`#[trace("TC-2212", "FR-640-AC-16")]`.
 
 ## Expected Results
 
 - Step 1: exit 0; the lock holds the one `lib-ms` entry with the `ms`
   configuration; the `s` compile gives different package bytes.
 - Step 2: exit 0 and no `dependency_clock_selections` member.
+- Step 3: the two emissions differ, and `emit_checked` returns the second,
+  whose `temporal_bindings` clock holds the second authority.

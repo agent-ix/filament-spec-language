@@ -88,6 +88,18 @@ impl RequirementMap {
         Ok(Self::ranked(all))
     }
 
+    /// The map without the records of `occurrences`.
+    pub(crate) fn without(self, occurrences: &std::collections::HashSet<OccurrenceKey>) -> Self {
+        if occurrences.is_empty() {
+            return self;
+        }
+        Self::ranked(
+            self.entries
+                .into_iter()
+                .filter(|(occurrence, _)| !occurrences.contains(occurrence)),
+        )
+    }
+
     /// The sole record at `key`, or `None` when absent or ambiguous by kind.
     pub fn get(&self, key: &OccurrenceKey) -> Option<&RequirementRecord> {
         let [at] = self.index.get(key)?.as_slice() else {

@@ -388,7 +388,8 @@ fn clause_site() -> filament_semantic_value::location::ExpressionLocation {
 }
 
 /// NFR-015-AC-9 (TC-1111 step 7): `bind_abstraction` after an emission clears
-/// the remembered emission, and emitting again includes the bound relation.
+/// the remembered emission, and `emit_package`, with the caller placing the
+/// unsited relation, includes the bound relation.
 #[trace("TC-1111", "NFR-015-AC-9")]
 #[test]
 fn a_binding_after_an_emission_emits_the_relation() {
@@ -401,7 +402,27 @@ fn a_binding_after_an_emission_emits_the_relation() {
         .bind_abstraction(&three_bindings("version"))
         .expect("the relation checks");
     assert_eq!(package.emitted_package_name(), None);
-    // An unsited relation has no region of its own, so the caller places it.
+    // An unsited relation names no region of the unit, so `emit_checked`,
+    // which places each occurrence from its own location, refuses the
+    // generated occurrence of the population node the relation targets.
+    let refusal = emit_checked(&package).expect_err("no region to place");
+    let EmitRefusal::UnlocatedOccurrence {
+        node,
+        role: CheckedOccurrenceRole::Generated,
+        ordinal: 0,
+    } = &refusal
+    else {
+        panic!("an unlocated generated occurrence: {refusal:?}");
+    };
+    assert_eq!(
+        format!("{node:?}"),
+        format!(
+            "NodeKey({}:[\"relation\",\"population\",\"{}\",]:0)",
+            fixture::PACKAGE,
+            fixture::id("configs")
+        )
+    );
+    // `emit_package` takes the caller's region for it.
     let graph = package.graph();
     let source = graph.source().clone();
     let second = emit_package(&package, |location| {
@@ -459,5 +480,5 @@ fn a_binding_at_a_site_after_an_emission_emits_the_relation() {
     assert!(refused.abstraction().is_none());
     assert_eq!(refused.emitted_package_name(), Some("pkg"));
     let kept = refused.remembered_emission().expect("the emission is kept");
-    assert_eq!(relation_occurrences(kept), Vec::<Value>::new());
+    assert_eq!(relation_occurrences(&kept), Vec::<Value>::new());
 }

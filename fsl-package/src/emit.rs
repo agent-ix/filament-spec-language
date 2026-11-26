@@ -5564,7 +5564,7 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
     if let Some(emission) = package.remembered_emission() {
-        return remembered_within(emission, limits, package.graph());
+        return remembered_within(&emission, limits, package.graph());
     }
     emit_checked_with_cancel(package, &Cancel::new(), limits)
 }

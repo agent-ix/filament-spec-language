@@ -2,9 +2,11 @@
 //! Temporal occurrence emission, row identity and clock-selection refusals.
 
 use filament_contract_model::ClockConfiguration;
+use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{
-    emit_checked_with_temporal_selections, CheckedPackage, EmitLimits, EmitRefusal,
+    emit_checked, emit_checked_with_temporal_selections,
+    emit_dependency_with_temporal_selections_and_cancel, CheckedPackage, EmitLimits, EmitRefusal,
     TemporalClockSelection,
 };
 use fsl_semantics::check::PackageDeclarations;
@@ -567,4 +569,43 @@ fn changing_a_clause_name_changes_only_its_name_row() {
         |_| None,
     );
     assert!(document(&none).get("temporal_clause_names").is_none());
+}
+
+/// FR-640-AC-16: a package emitted again as a dependency under other clock
+/// selections keeps the later emission, which a following `emit_checked`
+/// returns.
+#[trace("TC-2212", "FR-640-AC-16")]
+#[test]
+fn a_later_dependency_emission_replaces_the_remembered_one() {
+    let source = unit(
+        EVENT,
+        &declared("Bound", "eventually[0,1] holds(c.code = 2)"),
+    );
+    let graph = graph(&source);
+    let span = graph.temporal_clauses()[0].clause().span();
+    let source_ref = graph.source().clone();
+    let package = CheckedPackage::link(graph);
+    let limits = EmitLimits::new(1 << 32);
+    let emit_under = |authority: &str| {
+        let selection =
+            TemporalClockSelection::new(source_ref.clone(), span, event_clock(authority));
+        emit_dependency_with_temporal_selections_and_cancel(
+            &package,
+            &[selection],
+            &Cancel::new(),
+            limits,
+        )
+        .expect("the selection emits")
+    };
+
+    let first = emit_under("first");
+    let second = emit_under("second");
+    assert_ne!(first.package().bytes(), second.package().bytes());
+    let held = emit_checked(&package, limits).expect("the remembered emission");
+    assert_eq!(held.package().bytes(), second.package().bytes());
+    let wire: Value = serde_json::from_slice(held.package().bytes()).expect("the wire is JSON");
+    assert_eq!(
+        wire["temporal_bindings"][0]["clock"]["sequence_authority"],
+        "authority-second"
+    );
 }

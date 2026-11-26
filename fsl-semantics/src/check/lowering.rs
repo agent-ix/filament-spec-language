@@ -808,6 +808,13 @@ impl SemanticGraph {
         }
     }
 
+    /// Take out a node [`Self::insert_finalized`] added.
+    pub(crate) fn remove_finalized(&mut self, key: &NodeKey) {
+        if self.nodes.remove(key).is_some() {
+            self.order.retain(|ranked| ranked != key);
+        }
+    }
+
     /// Take out the node keyed `key`, as a re-key leaves the key it had.
     #[cfg(any(test, feature = "test-support"))]
     pub fn remove(&mut self, key: NodeKey) -> Option<SemanticNode> {

@@ -45,6 +45,8 @@ NFR-015-AC-4 to NFR-015-AC-7, NFR-015-AC-9 and NFR-015-AC-10.
    `HashSet`.
 7. With default features, emit a package with `emit_checked`, call
    `bind_abstraction` with valid bindings and read `emitted_package_name`.
+   Call `emit_checked` again, then `emit_package` with a region conversion
+   that places the occurrences the unit does not locate.
 8. With default features, emit a package with no abstraction relation with `emit_checked`, call
    `bind_abstraction_at` with valid bindings and one site, read
    `emitted_package_name`, then emit it again and read it. Emit a second
@@ -64,7 +66,10 @@ NFR-015-AC-4 to NFR-015-AC-7, NFR-015-AC-9 and NFR-015-AC-10.
    `dependency_selections`.
 5. Both pass: the emitted bytes and `package_id` match the FR-322 vectors.
 6. No match.
-7. It is `None`.
+7. It is `None`. `emit_checked` refuses `UnlocatedOccurrence` for the
+   generated occurrence, ordinal 0, of the population node the unsited
+   relation targets. The `emit_package` emission holds one relation node with
+   one `declaration` occurrence.
 8. It is `None` after the binding; the second emission holds the relation
    node and its `declaration` occurrence, which the first lacks. The second
    package's binding is refused with
