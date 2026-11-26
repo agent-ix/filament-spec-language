@@ -2799,13 +2799,17 @@ fn an_unobserved_choice_predecessor_stays_undecided_open_and_closed() {
             json!([0]),
             json!([]),
         );
+        let mut premises = recording["closure"]["premises"]
+            .as_array()
+            .expect("recording premises")
+            .clone();
+        premises.extend([
+            json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Inner::IBody::Both::left"}),
+            json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Inner::IBody::Both::right"}),
+        ]);
         recording["closure"] = if closure == "open" {
-            json!({"state": "open", "premises": []})
+            json!({"state": "open", "premises": premises})
         } else {
-            let mut premises = recording["closure"]["premises"]
-                .as_array()
-                .expect("closed recording premises")
-                .clone();
             premises.extend([
                 json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Pick::a"}),
                 json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Pick::b"}),
