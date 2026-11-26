@@ -7,11 +7,13 @@ use fsl_package::CheckedNodeId;
 use fsl_route::request::ExtentClassification;
 use fsl_route::{EvidenceKind, ItemEvidence};
 use fsl_semantics::check::Capability;
+use ix_trace_rs::implements;
 
 use super::super::{candidate_list, invalid_kind, unknown_option, ItemSelection, ResolvedClaim};
 use super::{ClaimReads, PackageRunError, Resolution};
 
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
+    #[implements("FR-940-AC-39")]
     pub(super) fn probability(
         &self,
         index: RequestIndex,

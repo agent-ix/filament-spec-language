@@ -9,6 +9,7 @@ use fsl_replay::{OutcomeDiagnostic, TerminalRecord};
 use fsl_semantics::model::observation::{AdmissionFailure, AdmissionRecord, DocumentProvision};
 use quire_canonical::{Encode, Node, NodeRef};
 use serde_json::{Map, Value};
+use ix_trace_rs::implements;
 
 use super::{DocumentSelection, ItemSelection, SettledRun};
 
@@ -319,6 +320,7 @@ pub struct SelectorRefusal {
 ///
 /// # Errors
 /// Refuses non-arrays and malformed closed document references at their pointer.
+#[implements("FR-1046-AC-8")]
 pub fn selections(items: &[ItemSelection]) -> Result<Vec<Vec<DocumentSelection>>, SelectorRefusal> {
     items
         .iter()
@@ -568,6 +570,7 @@ fn invalid_integer(root: NodeRef<'_>) -> Option<String> {
 ///
 /// # Errors
 /// Returns a typed FR-272 refusal for non-canonical or malformed receipts.
+#[implements("FR-1046-AC-2", "FR-1046-AC-7")]
 pub fn validate(
     bytes: &[u8],
     item: usize,
@@ -584,6 +587,7 @@ impl SettledRun {
     /// # Errors
     /// Malformed selectors or canonical documents refuse the request; an internal
     /// projection fault is reported separately from a binding refusal.
+    #[implements("FR-1046-AC-4", "FR-1046-AC-5")]
     pub fn bind_effect_decisions(
         &mut self,
         items: &[ItemSelection],

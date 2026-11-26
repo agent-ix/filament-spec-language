@@ -2371,6 +2371,7 @@ fn acceptance(
     })
 }
 
+#[implements("FR-1043-AC-1")]
 #[implements("FR-1042-AC-27")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
