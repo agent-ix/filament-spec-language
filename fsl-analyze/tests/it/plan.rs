@@ -304,7 +304,7 @@ fn a_plan_that_requires_certified_proofs_withholds_a_provider_step() {
             &inputs,
             &engines,
             &Recording::default(),
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &Cancel::new(),
         )
         .expect("a provider route")
