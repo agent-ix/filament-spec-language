@@ -3723,7 +3723,7 @@ model Config = "example/config-version";
 post VersionAdvances using g on Config::ConfigVersion::attemptUpdate { result implies self.versionNumber = pre(self.versionNumber) }
 type Lengths = Int[0,0];
 pre NeverUpdate using v on Config::ConfigVersion::attemptUpdate { false }
-temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber != 4) }
+temporal NeverFour using v over (c: Config::ConfigVersion) clock "model-steps" on origin { always holds(c.versionNumber < 4) }
 synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
 "#;
     for (second_value, settings, status, exit_expected, states, work) in [
