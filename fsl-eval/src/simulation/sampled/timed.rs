@@ -487,8 +487,8 @@ mod tests {
         }
     }
 
-    #[trace("FSpec-FR-420-AC-2")]
-    #[trace("FSpec-FR-420-AC-2", "FSpec-FR-420-AC-9")]
+    #[trace("FSpec-FR-420-AC-2", "FSpec-FR-420-AC-16")]
+    #[test]
     fn an_excluded_end_is_never_drawn() {
         // (2, 4] at u = 0, q = 0: half the length inside the open end.
         let open = range((2, false), (4, true));
@@ -527,8 +527,7 @@ mod tests {
         );
     }
 
-    #[trace("FSpec-FR-420-AC-2")]
-    #[trace("FSpec-FR-420-AC-9")]
+    #[trace("FSpec-FR-420-AC-16")]
     #[test]
     fn a_quantile_on_an_excluded_end_moves_in_by_two_to_the_minus_q_plus_one() {
         let at = ChoicePoint {
@@ -550,6 +549,7 @@ mod tests {
         assert_eq!(drawn, exact(9, 4));
     }
 
+    #[trace("FSpec-FR-420-AC-2")]
     #[test]
     fn an_exponential_law_has_no_mass_on_points() {
         assert_eq!(

@@ -3996,7 +3996,7 @@ fn first_race(
 /// Each of two laws over the points `1 ms` and `3 ms` draws 1 ms with
 /// probability 1/2 at its own choice index, so the first delay is above 2 ms
 /// with probability `1/2 · 1/2` and the event has probability 3/4.
-#[trace("FSpec-FR-420-AC-2", "FSpec-FR-420-AC-4")]
+#[trace("FSpec-FR-420-AC-2")]
 #[test]
 fn two_laws_over_points_draw_independently() {
     for law in ["uniform", "discrete { 1 ms: 1, 3 ms: 1 }"] {

@@ -122,6 +122,26 @@ server is available. Each estimate comes with its confidence and the grid
   distribution function at `u`, computed by the statistical design's
   rational method and rounded up, an exact rational. Each delay draw and
   each tie-break SHALL be one more choice with its own choice index.
+- **Draw derivation.** A draw SHALL be a function of its choice point alone:
+  the seed `s`, the trace index `t`, the step `n` and the choice index `c`.
+  Draw `d` of that choice has the preimage that is the RFC 8785 (JCS)
+  encoding of `{"choice":"c","draw":"d","seed":"s","step":"n","trace":"t"}`,
+  each value a decimal string, and its digest is the SHA-256 of that encoding
+  read as a 256-bit big-endian integer. A grid value `u` at exponent `q` uses
+  draw 0 alone: `u = (digest mod 2^q) / 2^q` for `1 <= q <= 256`, `u = 0` at
+  `q = 0`, and `q > 256` is refused. A weighted choice of two or more
+  items, whose positive weights are scaled to integers of total `N`, takes
+  draws 0, 1, … in turn until a digest `v` is below `N · ⌊2^256 / N⌋` and
+  selects the item whose cumulative scaled weight interval holds `v mod N`; a
+  one-item choice selects item 0 and computes no digest. The conditioned
+  inverse distribution function at `u` is then rounded up as above.
+- **Replay of draws.** A sampled witness SHALL record each step's draws (the
+  delay of each racing identity and each choice's selected index), and its
+  replay SHALL use the recorded draws and run no sampler. Replay SHALL still
+  re-derive each draw from the recorded seed, trace index, step, choice index
+  and `q` by the derivation above and compare it with the recorded draw; a
+  difference settles `Inconclusive(ReplayParity)`. A recorded value is never
+  trusted, so one changed delay fails the recomputation.
 - A sample SHALL end when its next position's time stamp passes the end of
   its window, or at an idle tail. The window ends its time horizon after the
   activating position's stamp, and for `elapsed` after the stamp of the first
@@ -172,6 +192,7 @@ server is available. Each estimate comes with its confidence and the grid
 | FR-254-AC-7 | On TC-709's `Idle` fixture (`send` at 2 ms, then an idle tail), each is decided, as every completion gives one reading: `probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]` estimate 1, `Accepted`; the same with `<= rational(2, 5)` estimate 0, `Rejected`; `mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25` estimate 1, `Rejected`; `mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25` estimate 0, `Accepted`; with `reward cost` 1 on `send`, `mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25` estimate 0, `Accepted`; `probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]` estimate 0, `Rejected`; `probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]` censored, estimate 0, `Rejected`; `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]` estimate 0, `Rejected`; `probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]` estimate 1, `Accepted`. | Test (TC-709) |
 | FR-254-AC-8 | On the `Idle` fixture, each of these settles `Unsupported(NotStochasticIdleTail{state})`, `state` the timed state just after `send` (wire `not-stochastic` with `idle_tail` true and no `identity`): `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` (values `(1 + m)/(2 + m)`); `probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(3, 5)]` (true at `m = 0`, false for large `m`); `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]` (false with no stutter position, true with one at 4 ms). With `send` at 5 ms the first claim settles `Rejected` with estimate `1/2`. | Test (TC-709) |
 | FR-254-AC-9 | `elapsed` starts at the first `A`. On TC-709's `Send` fixture (`phase` 1 first at 2 ms, 2 first at 12 ms), `probability >= 0.5 [elapsed from holds(c.phase = 1) until holds(c.phase = 2) within 10 ms <= 10 ms]` settles `Accepted` with estimate 1 (elapsed `12 - 2 = 10`), and with `within 9 ms <= 9 ms` it is censored, estimate 0, `Rejected`. On the `Send` variant whose `reply` is `discrete { 1 ms: 1 }`, `probability >= 0.5 [elapsed from holds(c.phase = 1) until holds(c.phase = 2) within 1 ms <= 1 ms]` settles `Accepted` with estimate 1 (elapsed `3 - 2 = 1`), though `A` first holds later than `h`. | Test (TC-709) |
+| FR-254-AC-10 | A witness over `uniform[0 ms, 4 ms]` records each step's delay, and replay with those recorded draws runs no sampler. At `q` 2 the seed, trace, step and choice give a digest whose value mod `2^2` is `k`, so `u = k/4` and the delay is `4 ms · k/4`; the same witness with one delay changed to another value fails recomputation `Inconclusive(ReplayParity)`, and so does one with the seed changed. At `q` 0 the recomputed `u` is 0 and the delay is `0 ms`. | Test (TC-709) |
 
 ## Dependencies
 
