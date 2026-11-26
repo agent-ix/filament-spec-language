@@ -880,8 +880,8 @@ fn zones_refute_where_a_covering_edge_leads_further_than_any_run() {
 fn escape_run(name: &str, extra: Option<&str>, claim: &str) -> Value {
     let extra_step = match extra {
         Some("late") => {
-            "pre Late using v on M::Call::late { self.phase = 1 and self.x > 1 ms }\n\
-             post LateDone using v on M::Call::late { self.phase = 3 }\n"
+            "pre Late using v on M::Call::slide { self.phase = 1 and self.x > 1 ms }\n\
+             post LateDone using v on M::Call::slide { self.phase = 3 }\n"
         }
         Some("direct") => {
             "pre Direct using v on M::Call::direct { self.phase = 0 }\n\
@@ -902,11 +902,13 @@ fn escape_run(name: &str, extra: Option<&str>, claim: &str) -> Value {
     );
     let mut ops: Vec<(&str, &[&str])> = vec![("first", &["phase", "x"]), ("escape", &["phase"])];
     if let Some(extra) = extra {
-        ops.push((extra, &["phase"]));
+        // `late` is a field of the subject, so its step is named `slide`.
+        let op = if extra == "late" { "slide" } else { extra };
+        ops.push((op, &["phase"]));
     }
     let run = timed_run(name, &body, &["x"], &ops, json!([{"claim": "Done"}]));
     let item = run.item(0);
-    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    assert_eq!(item["record"]["backend"], "en-6", "{item} in {}", run.document());
     item
 }
 
