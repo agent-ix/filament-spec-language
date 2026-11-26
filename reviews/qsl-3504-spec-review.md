@@ -104,3 +104,16 @@ The blocking problem is completeness. FND-001 to FND-004 are sharing routes that
 - FR-282, FR-921, ADR-026 CF-6, ADR-028 CE-7: context only.
 - Method: the `use` trees of all 82 non-test files in the declared checker paths were expanded, and every `fsl_replay` item imported by fsl-analyze and fsl-hybrid-reference was mapped to its defining file. Spot reads confirmed each cited line.
 - Not checked (review stopped by the dispatcher): imports of `tools/fsl-probability-check`; checker calls into non-checker `crate::` modules (the Services row); full classification of producer-imported types as document data types versus semantic types; the existence of relationship targets; and a separate EARS or code-review pass. The diff is spec-only, and no cargo was run.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Named builders are rows or assemble-only codec; the further unrecorded calls are SR-96741 |
+| FND-002 | fixed | Checked against code at 47b83d02c1 |
+| FND-003 | fixed | Checked against code at 47b83d02c1 |
+| FND-004 | fixed | Extents stated and named items placed; further unlisted items are SR-96741 FND-005 |
+| FND-005 | fixed | Paths and explicit entry list added; Routes still uses wildcards |
+| FND-006 | fixed | Checked against code at 47b83d02c1 |
+| FND-007 | fixed | Checked against code at 47b83d02c1 |
+| FND-008 | fixed | Narrowing and amendment stated; the specifies edges are SR-96743 FND-001 |
