@@ -1470,7 +1470,10 @@ fn a_timed_claim_with_no_fair_behaviour_is_never_proved() {
         &crate::timed_world::document(&["x"], &[("idle", &["x"]), ("go", &["phase", "x"])]),
         model,
         &[
-            ("Invariant", "fair weak M::Call::go; always holds(c.phase != 1)"),
+            (
+                "Invariant",
+                "fair weak M::Call::go; always holds(c.phase != 1)",
+            ),
             (
                 "Window",
                 "fair weak M::Call::go; always[0 ms, 1 ms] holds(c.phase != 1)",
@@ -1502,10 +1505,17 @@ fn a_violation_only_on_unfair_behaviours_refutes_nothing() {
         "timed-unfair-violation",
         &crate::timed_world::document(
             &["x"],
-            &[("block", &["phase"]), ("idle", &["x"]), ("go", &["phase", "x"])],
+            &[
+                ("block", &["phase"]),
+                ("idle", &["x"]),
+                ("go", &["phase", "x"]),
+            ],
         ),
         model,
-        &[("Invariant", "fair weak M::Call::go; always holds(c.phase != 3)")],
+        &[(
+            "Invariant",
+            "fair weak M::Call::go; always holds(c.phase != 3)",
+        )],
         &[rpc_snapshot()],
         None,
     );
