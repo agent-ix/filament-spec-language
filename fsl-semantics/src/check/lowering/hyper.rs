@@ -488,8 +488,7 @@ impl Lowering<'_> {
         let mut scope: Vec<Binder> = Vec::with_capacity(named.len());
         for (level, (name, slot_index, parameter_index, site)) in named.into_iter().enumerate() {
             let object = clause
-                .parameter_objects()
-                .get(parameter_index)
+                .parameter_object_type(parameter_index)
                 .ok_or_else(|| stage_fault(&site, "slot-parameter-has-an-object"))?;
             let semantic_type =
                 self.binder_type(&ValueType::Reference(object.clone()), None, &site)?;
@@ -571,8 +570,8 @@ impl Lowering<'_> {
         let domain = self.text_literal("behaviours", &claim)?;
         let subjects = self.subjects(clause, input.subject_roots, &claim)?;
         let mut parameters = Vec::with_capacity(clause.parameters().len());
-        for (parameter, object) in clause.parameters().iter().zip(clause.parameter_objects()) {
-            let node = self.object_node(object.clone(), &claim)?;
+        for parameter in clause.parameters() {
+            let node = self.object_node(parameter.object.clone(), &claim)?;
             parameters.push(GroupMember::Binding(Binding::new(
                 parameter.name.clone(),
                 LeafTerm::reference(node),

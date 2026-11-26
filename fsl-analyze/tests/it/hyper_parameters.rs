@@ -62,7 +62,7 @@ fn the_adr_clauses_check_with_their_aliases_instances_and_match_conjuncts() {
     let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
     assert_eq!(
         system
-            .hyper_instances(&parameter.population)
+            .hyper_instances(&parameter.object)
             .expect("the vaults have a universe"),
         [ModelInstance {
             population: key("vaults"),

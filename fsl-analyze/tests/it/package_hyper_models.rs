@@ -213,7 +213,7 @@ fn check_two_model_atoms_and_certificate(ws: &Workspace, bytes: &[u8], holds: bo
             .position(|alias| alias == &parameter.alias)
             .expect("parameter alias");
         let binding = package_systems[slot]
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .instances(&ValueType::Reference(parameter.object.clone()))
             .expect("parameter universe")
             .into_iter()
             .next()

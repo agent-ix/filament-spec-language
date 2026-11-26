@@ -16,7 +16,7 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    check_match_witness, settle_hyper_check, DisagreementCause, HyperCounterexample,
+    check_match_witness, replay_hyper_trace_tuple, settle_hyper_check, DisagreementCause, HyperCounterexample,
     HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperReplay, HyperStep, HyperTrace,
     InconclusiveCause, MatchWitness, MatchWitnessCheck, ModelCheckLimit, ModelCheckLimits,
     ModelStep, ModelTraceRefusal, ModelTraceSettlement, ModelTraceValue, ReachedLimit,
@@ -1514,7 +1514,7 @@ fn a_match_witness_is_checked_without_the_body_against_its_instance_and_match() 
     for (bound, reason) in [
         (
             "w",
-            "binds a parameter to a key outside its population's universe",
+            "binds a parameter to a key that is not one of its instances",
         ),
         ("v", "names an instance other than the request's"),
     ] {
@@ -1524,4 +1524,90 @@ fn a_match_witness_is_checked_without_the_body_against_its_instance_and_match() 
             "{bound}: {refused:?}"
         );
     }
+}
+
+/// The vault over a universe of `v` and `w` whose initial states hold a vault
+/// under `v` alone.
+fn unadmitted_w(vault: Vault) -> World {
+    World::with_snapshots(
+        vault,
+        STARTS.iter().map(|start| vec![("v", *start)]).collect(),
+        &["v", "w"],
+        &non_interference(EQUAL_INPUTS),
+    )
+}
+
+/// FR-183-AC-13: a match witness or a counterexample at `w`, a universe key no
+/// initial state admits, is refused before any trace is re-executed; the same
+/// traces at `v` are not refused for the instance.
+#[trace("TC-3219", "FR-183-AC-13")]
+#[test]
+fn an_instance_no_initial_state_admits_is_refused_before_replay() {
+    const NOT_AN_INSTANCE: &str = "binds a parameter to a key that is not one of its instances";
+    let not_an_instance = |refused: &ModelTraceRefusal| {
+        matches!(refused, ModelTraceRefusal::HyperShape { reason } if *reason == NOT_AN_INSTANCE)
+    };
+
+    let world = unadmitted_w(Vault::Secure);
+    let witness = |key: &str, initial: u32| {
+        let mut traces = vec![
+            witness_trace(&world, "a", [0, 0]),
+            witness_trace(&world, "b", [0, 0]),
+        ];
+        for trace in &mut traces {
+            trace.initial = initial;
+        }
+        MatchWitness {
+            instance: vec![("v".to_owned(), key.to_owned())],
+            traces,
+            loop_entry: 0,
+        }
+    };
+    assert!(matches!(
+        checked_witness(&world, "v", &witness("v", 0)),
+        MatchWitnessCheck::Accepted
+    ));
+    // No subject has initial state 7, so a re-executed trace would refuse that.
+    let refused = witness_refusal(checked_witness(&world, "w", &witness("w", 7)));
+    assert!(not_an_instance(&refused), "{refused:?}");
+
+    let world = unadmitted_w(Vault::Leaky);
+    let counterexample = refuted(&world);
+    assert_eq!(
+        world.replay(&counterexample).expect("`v` replays"),
+        ModelTraceSettlement::Reproduced {
+            value: ModelTraceValue::Truth(false),
+            trace_position: Some(1),
+        }
+    );
+    let mut at_w = counterexample;
+    at_w.instance = vec![("v".to_owned(), "w".to_owned())];
+    for trace in &mut at_w.traces {
+        trace.initial = 7;
+    }
+    let seams = world.seams();
+    let instance = [ParameterBinding {
+        parameter: "v".to_owned(),
+        instance: ModelInstance {
+            population: key("vaults"),
+            key: "w".to_owned(),
+        },
+    }];
+    let result = replay_hyper_trace_tuple(
+        &HyperReplay {
+            clause: &world.clause,
+            systems: seams.per_trace(),
+            instance: &instance,
+            letters: &seams,
+            matcher: &seams,
+            meter: UNLIMITED,
+            max_witness_set: DEFAULT_MAX_WITNESS_SET,
+            max_states: u64::try_from(ModelCheckLimits::default().limits.max_states)
+                .unwrap_or(u64::MAX),
+            cancel: &Cancel::new(),
+        },
+        &at_w,
+    );
+    let refused = refusal(result);
+    assert!(not_an_instance(&refused), "{refused:?}");
 }

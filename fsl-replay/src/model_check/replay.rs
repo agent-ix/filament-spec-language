@@ -34,7 +34,7 @@
 use filament_exact::NodeKey;
 use std::collections::BTreeMap;
 
-use filament_exact::{Meter, Rational, ScalarLimits};
+use filament_exact::{Meter, Rational, ScalarLimits, ValueType};
 use filament_semantic_value::catalog::{Category, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
@@ -423,7 +423,7 @@ pub enum ModelTraceRefusal {
     /// A formula counterexample names no instance of the clause's `over`
     /// parameter.
     #[error(
-        "invalid_runtime_input/invalid-value: a formula counterexample names no `over` binding"
+        "invalid_runtime_input/invalid-value: a formula counterexample names no instance of the clause's `over` parameter"
     )]
     OverBinding,
     /// The loop does not end at its entry state, is empty, or re-enters
@@ -1892,6 +1892,9 @@ impl ProtocolReplay<'_> {
     ) -> Result<ModelTraceSettlement, ReplayRefusal> {
         let payload = self.payload;
         refuse_closure_alphabet(payload)?;
+        if let Some(clause) = self.clause {
+            admitted_over(system.model(), clause, payload.over_binding.as_ref())?;
+        }
         let fairness = match self.clause {
             Some(clause) => {
                 let protocol_fairness: Vec<_> = clause
@@ -2530,6 +2533,9 @@ fn settle(
     stutter_closure: bool,
 ) -> Result<(ModelTraceSettlement, Vec<StrongFairnessHint>), ReplayRefusal> {
     check_closure_stutters(payload, stutter_closure)?;
+    if let Some(formula) = &formula {
+        admitted_over(system, formula.clause, payload.over_binding.as_ref())?;
+    }
     let Some((positions, steps)) = replay_prefix(system, payload, &MODEL_STEPS)? else {
         return Ok((no_value(), Vec::new()));
     };
@@ -3092,6 +3098,7 @@ pub fn evaluate_model_trace(
     // `stutter_closure` here, so a listed closure step is refused at its
     // `/transition/type` before any step runs (FSpec FR-364).
     refuse_closure_alphabet(payload)?;
+    admitted_over(system, clause, payload.over_binding.as_ref())?;
     let positions = match replay_prefix_stopped(system, payload, &MODEL_STEPS)? {
         Ok((positions, _)) => positions,
         Err(stop) => return Ok(ModelTraceEnd::Stopped(stop)),
@@ -3351,6 +3358,7 @@ pub fn evaluate_protocol_trace<M: MemoryModel>(
     if payload.lasso.is_some() {
         return Err(fault("a-finite-behaviour-has-no-loop"));
     }
+    admitted_over(system.model(), clause, payload.over_binding.as_ref())?;
     let positions = match replay_prefix_stopped(system, payload, &PROTOCOL_STEPS)? {
         Ok((positions, _)) => positions,
         Err(stop) => return Ok(ProtocolTraceEnd::Stopped(stop)),
@@ -3366,6 +3374,29 @@ pub fn evaluate_protocol_trace<M: MemoryModel>(
         undefined: replayed.undefined.take(),
         positions: positions.len(),
     })))
+}
+
+/// FR-128: refuse, before any step is re-executed, an `over_binding` that is
+/// not an instance of the clause's `over` parameter, such as a universe key
+/// no initial state admits. A payload with no binding is left to the reading
+/// that needs one.
+#[implements("FR-128-AC-17")]
+pub(super) fn admitted_over(
+    system: &ModelSystem<'_>,
+    clause: &CheckedTemporalClause,
+    binding: Option<&ModelInstance>,
+) -> Result<(), ReplayRefusal> {
+    let over = &clause.over().1;
+    let (Some(binding), ValueType::Reference(_)) = (binding, over) else {
+        return Ok(());
+    };
+    let instances = system
+        .instances(over)
+        .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
+    if instances.contains(binding) {
+        return Ok(());
+    }
+    Err(refused(ModelTraceRefusal::OverBinding))
 }
 
 /// The letters of a counterexample's replayed positions, for the instance

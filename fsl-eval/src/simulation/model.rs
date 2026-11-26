@@ -89,7 +89,7 @@ use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{OperationKey, PopulationDomain};
+use fsl_semantics::check::OperationKey;
 use fsl_semantics::family::ClassifyFailure;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::clause_observation::Observation;
@@ -2516,37 +2516,44 @@ impl<'a> ModelSystem<'a> {
         Ok(instances)
     }
 
-    /// FR-172 Object parameters: the instances of a hyper clause parameter,
-    /// one per key of the universe of the one population `domain` it resolves
-    /// to, in universe order, whether or not an initial state holds the key.
-    /// `self` is the system of the parameter's alias. No other population
-    /// contributes a key, whatever its member types.
+    /// FR-125 Instancing: the instances of a hyper clause parameter of object
+    /// type `object`, under the one rule of [`Self::instances`]. `self` is the
+    /// system of the parameter's alias.
     ///
     /// # Errors
     ///
-    /// [`NotSimulated::RequiresBound`] when that population has no universe;
-    /// [`NotSimulated::Extent`] when this system's model has no one population
-    /// that is `domain`, and as [`Self::instances`].
+    /// As [`Self::instances`].
+    #[implements("FR-125-AC-19", "FR-125-AC-20")]
     pub fn hyper_instances(
         &self,
-        domain: &PopulationDomain,
+        object: &EffectiveId,
     ) -> Result<Vec<ModelInstance>, NotSimulated> {
-        let resolved = self.model.resolved_population(domain).ok_or_else(|| {
-            NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
-                "model-simulation",
-                "parameter-population",
-            )))
-        })?;
+        self.instances(&ValueType::Reference(object.clone()))
+    }
+
+    /// Every key a hyper parameter of object type `object` may name in an
+    /// identity or an encoding (FR-315 `instance-binding`): each of
+    /// [`Self::hyper_instances`]; for a subject whose initial list is empty,
+    /// every key of the universes of the overlapping populations, since the
+    /// item then settles `NoInitialState`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::instances`].
+    #[implements("FR-315-AC-59")]
+    pub fn hyper_bindable(&self, object: &EffectiveId) -> Result<Vec<ModelInstance>, NotSimulated> {
+        if !self.initial_base.is_empty() {
+            return self.hyper_instances(object);
+        }
         let mut seen = BTreeSet::new();
-        let instances = self
-            .universe_members_where(&|population| population.key == resolved)?
+        Ok(self
+            .universe_members(object)?
             .filter(|(_, key)| seen.insert(*key))
             .map(|(population, key)| ModelInstance {
                 population: population.clone(),
                 key: key.to_owned(),
             })
-            .collect();
-        Ok(instances)
+            .collect())
     }
 
     /// [`Self::universe_members_where`] the populations that overlap the
@@ -2849,13 +2856,14 @@ impl<'a> ModelSystem<'a> {
     /// The reference a binding of `instance`, for a parameter of object type
     /// `declared`, is written as (FR-125 "Instancing"): the universe of
     /// `declared`, the type of the member record an initial state admits for
-    /// the key in that universe, and the key. A key with no such record,
-    /// which a hyper parameter's instance may have, is written with `declared`.
+    /// the key in that universe, and the key. Only a subject whose initial
+    /// list is empty, which admits no key, writes `declared`.
     ///
     /// # Errors
     ///
-    /// As [`Self::bound_reference`].
-    #[implements("FR-125-AC-9")]
+    /// As [`Self::bound_reference`]; a fault for a key no initial state of a
+    /// non-empty initial list admits.
+    #[implements("FR-125-AC-9", "FR-125-AC-19")]
     pub fn written_reference(
         &self,
         declared: EffectiveId,
@@ -2864,7 +2872,10 @@ impl<'a> ModelSystem<'a> {
         let declared = self.bound_reference(declared, instance)?;
         let identity = (declared.universe().clone(), instance.key.clone());
         let Some(admitted) = self.admitted_types.get(&identity) else {
-            return Ok(declared);
+            if self.initial_base.is_empty() {
+                return Ok(declared);
+            }
+            return Err(InternalFault::new("model-simulation", "bound-key-admitted"));
         };
         self.model
             .object_reference(admitted, &instance.key)

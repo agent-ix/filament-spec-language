@@ -100,6 +100,7 @@ mod model_check_captures;
 mod model_check_input;
 mod model_check_oracle;
 mod model_check_safety;
+mod hyper_instances;
 mod model_instances;
 mod model_trace_run;
 mod model_world;

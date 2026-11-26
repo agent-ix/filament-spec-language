@@ -43,7 +43,9 @@ use fsl_replay::{
     UndecidedCause,
 };
 
-use super::{exhausted, fault, stopped, widen, Ending, HyperRefusal, Run, Totals};
+use super::{
+    ends_search, exhausted, fault, restated, stopped, widen, Ending, HyperRefusal, Run, Totals,
+};
 use crate::model_check::ModelCheckRefusal;
 
 /// What reading one tuple or searching one universal tuple ended with.
@@ -65,7 +67,8 @@ enum ConstraintReading {
 }
 
 impl Run<'_, '_> {
-    /// Decide the event-position HP-2 or HP-3 clause over `instances`.
+    /// Decide the event-position HP-2 or HP-3 clause over `instances`, one
+    /// instance at a time in order.
     pub(super) fn decide_closed(
         &self,
         instances: &[Vec<ParameterBinding>],
@@ -96,7 +99,10 @@ impl Run<'_, '_> {
         totals.depth = depth;
         let universals = clause.universals();
         let mut matched = false;
-        for instance in instances {
+        // The outcome of the first instance that neither held nor was
+        // refuted (FR-177 "Instances").
+        let mut first_open = None;
+        'instances: for instance in instances {
             let inputs = ClosedInputs {
                 clause,
                 instance,
@@ -115,11 +121,13 @@ impl Run<'_, '_> {
                 }
                 totals.edges = totals.edges.saturating_add(1);
                 if totals.edges > widen(limits.limits.max_transitions) {
-                    return Ok(exhausted(
+                    // Every later instance would stop at the same limit.
+                    first_open.get_or_insert(exhausted(
                         ModelCheckLimit::MaxTransitions,
                         widen(limits.limits.max_transitions),
                         &totals,
                     ));
+                    break 'instances;
                 }
                 let mut universal: Vec<&ClosedExecution> = Vec::with_capacity(universals);
                 for (variable, index) in picked.iter().enumerate() {
@@ -146,7 +154,11 @@ impl Run<'_, '_> {
                 };
                 match reading {
                     Reading::Continue => {}
-                    Reading::Ended(outcome) => return Ok(outcome),
+                    Reading::Ended(outcome) if ends_search(&outcome) => return Ok(outcome),
+                    Reading::Ended(outcome) => {
+                        first_open.get_or_insert(outcome);
+                        continue 'instances;
+                    }
                     Reading::Refuted(position) => {
                         let counterexample = HyperCounterexample {
                             kind: HyperCounterexampleKind::Closed,
@@ -161,6 +173,9 @@ impl Run<'_, '_> {
                     }
                 }
             }
+        }
+        if let Some(outcome) = first_open {
+            return Ok(restated(outcome, &totals));
         }
         if !clause.mu_universal().is_empty() && !matched {
             return Ok(HyperOutcome::Undecided {
@@ -187,7 +202,9 @@ impl Run<'_, '_> {
         let mut meter = Meter::new(self.request.meter).with_cancel(self.cancel.clone());
         let mut matched = false;
         let mut reductions = Vec::new();
+        let mut first_open = None;
         for instance in instances {
+            let cut = totals.boundary;
             let inputs = ClosedInputs {
                 clause,
                 instance,
@@ -204,7 +221,14 @@ impl Run<'_, '_> {
                 &mut matched,
             ) {
                 Ok(scope) => scope,
-                Err(stop) => return self.closed_graph_stop(stop, &totals),
+                Err(stop) => {
+                    let outcome = self.closed_graph_stop(stop, &totals)?;
+                    if ends_search(&outcome) {
+                        return Ok(outcome);
+                    }
+                    first_open.get_or_insert(outcome);
+                    continue;
+                }
             };
             for (canonical, representative) in &scope.boundaries {
                 if representative.actual != *canonical {
@@ -228,9 +252,12 @@ impl Run<'_, '_> {
                     stabiliser: self.stabiliser_of(instance).classes,
                 });
             }
+            if totals.boundary > cut {
+                first_open.get_or_insert_with(|| Self::constraint_reached(&totals));
+            }
         }
-        if totals.boundary > 0 {
-            return Ok(Self::constraint_reached(&totals));
+        if let Some(outcome) = first_open {
+            return Ok(restated(outcome, &totals));
         }
         if !clause.mu_universal().is_empty() && !matched {
             return Ok(HyperOutcome::Undecided {

@@ -887,8 +887,18 @@ impl<'a> Decision<'_, '_, 'a> {
             match self.lasso(&fair, &analyses, &part, initial)? {
                 Ok(Some(witness)) => *slot = Some(witness),
                 Ok(None) => {
+                    // A state the body automaton has no run from accepts
+                    // nothing, and neither does any state after it, so one
+                    // the run did not expand hides no witness. It stays
+                    // open for `Witnessed`, which also needs every letter
+                    // beyond it to have a value.
                     let closed = !part.roots.is_empty()
-                        && part.members.iter().all(|id| !self.open.contains_key(id));
+                        && part.members.iter().all(|id| {
+                            !self.open.contains_key(id)
+                                || graph
+                                    .state(*id)
+                                    .is_some_and(|member| member.state.property == Property::Dead)
+                        });
                     if closed && trap.is_none() {
                         let rank = part.roots.first().map_or(0, |root| root.index());
                         trap = Some((initial, rank));

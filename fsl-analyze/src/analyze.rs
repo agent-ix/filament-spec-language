@@ -41,6 +41,7 @@ mod finite_hyper_item;
 mod hybrid_item;
 mod hybrid_process;
 mod hyper_route;
+mod instance_records;
 mod invariant_item;
 mod items;
 mod package_hyper;

@@ -176,7 +176,7 @@ fn hyper_bindings(
         ([], None) => Ok(Vec::new()),
         ([parameter], Some(instance)) => {
             let admitted = system
-                .hyper_instances(&parameter.population)
+                .hyper_instances(&parameter.object)
                 .map_err(|_| refused(ModelTraceRefusal::OverBinding))?;
             if !admitted.iter().any(|candidate| {
                 candidate.population == instance.population && candidate.key == instance.key

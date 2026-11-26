@@ -14,6 +14,7 @@ use fsl_eval::smt::{
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{CheckedHyperClause, HyperForm};
+use ix_trace_rs::implements;
 
 use crate::model_check::subject_identity::SubjectIdentity;
 
@@ -197,18 +198,20 @@ fn check_subjects(
     Ok(())
 }
 
-/// `instance-binding`: one pair per parameter, in parameter order, each key
-/// in that parameter's universe: the keys of the populations of its alias's
-/// subject that admit the parameter's object type. A subject that FR-120 does
-/// not admit lists no populations, so its key is read against the keys of all
-/// of the subject's universes, and its admission is refused by
+/// `instance-binding`: one pair per parameter, in parameter order, each key an
+/// instance of that parameter (FR-125 "Instancing"). A subject whose initial
+/// list is empty accepts every key of the overlapping populations' universes,
+/// since the item settles `NoInitialState`. A subject that FR-120 does not
+/// admit lists no populations, so its key is read against the keys of all of
+/// the subject's universes, and its admission is refused by
 /// `encode_hyper_query` after the identity checks. A subject that admits and
-/// has no listable universe for the parameter refuses `instance-binding`.
+/// whose instances cannot be listed refuses `instance-binding`.
 ///
 /// # Errors
 ///
 /// A refusal as above; a fault when a parameter names an alias that is not
 /// an alias of the clause.
+#[implements("FR-315-AC-59")]
 fn check_instance(
     clause: &CheckedHyperClause,
     subjects: &[ModelSubject<'_>],
@@ -234,7 +237,7 @@ fn check_instance(
         }
         let listed = match ModelSystem::new(subject.simulation.clone()) {
             Ok(system) => system
-                .hyper_instances(&parameter.population)
+                .hyper_bindable(&parameter.object)
                 .map_err(|_| binding(&parameter.name))?
                 .into_iter()
                 .map(|instance| instance.key)

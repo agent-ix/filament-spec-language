@@ -191,7 +191,7 @@ impl<'a> PackageHyperSubject<'a> {
                         .and_then(|slot| owned.get(slot))
                         .ok_or_else(|| fault("parameter-alias"))?;
                     let admitted = system
-                        .hyper_instances(&parameter.population)
+                        .hyper_instances(&parameter.object)
                         .map_err(|_| fault("parameter-universe"))?;
                     let bound = admitted
                         .into_iter()

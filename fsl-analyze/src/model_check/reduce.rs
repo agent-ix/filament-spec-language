@@ -15,6 +15,7 @@ use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
+use ix_trace_rs::implements;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
@@ -368,6 +369,7 @@ pub struct InstanceGroup {
 /// class is one orbit; each other key its own), one instance per orbit,
 /// bound to the orbit's least key and run under its stabiliser. With no
 /// binding (the deadlock-freedom item) the one instance runs under `group`.
+#[implements("FR-151-AC-5")]
 pub fn instance_groups(
     bindings: Option<&[ModelInstance]>,
     group: &SymmetryGroup,
@@ -385,9 +387,16 @@ pub fn instance_groups(
         if covered.contains(&(&binding.population, binding.key.as_str())) {
             continue;
         }
-        let orbit = group
+        let mut orbit = group
             .class_of(&binding.population, &binding.key)
             .map_or_else(|| vec![binding.key.clone()], |class| class.keys.clone());
+        // A key that is no instance here is in no orbit (FR-151
+        // "Instances").
+        orbit.retain(|key| {
+            bindings
+                .iter()
+                .any(|other| other.population == binding.population && other.key == *key)
+        });
         let Some(least) = orbit.first().cloned() else {
             continue;
         };

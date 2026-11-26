@@ -40,6 +40,7 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{AdmittedObservations, ModelSelections};
 use fsl_semantics::model::operation::{OperationDeclaration, OperationTable};
 use fsl_semantics::model::state::StateModel;
+use ix_trace_rs::implements;
 
 use crate::value::{
     CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, ProtocolSlot,
@@ -889,6 +890,40 @@ impl<'p> PackageModelInput<'p> {
         }
         CheckedTemporalClause::of_package_run_form(form, self.world.types(), position_limit)
             .map_err(PendingClauseForm::Build)
+    }
+
+    /// FR-940: the hyper clause declared at the `claim` occurrence `claim`,
+    /// read from the package's nodes ([`BarePackage::hyper_clause_form`]) with
+    /// the populations of the supplied domain packages that overlap each
+    /// object parameter's type, and rebuilt as S3 builds it
+    /// ([`CheckedHyperClause::of_package_form`]) within S3's domain
+    /// `position_limit`.
+    ///
+    /// # Errors
+    ///
+    /// [`PendingClauseForm`] for a clause the package does not select or
+    /// whose facts do not rebuild it.
+    #[implements("FR-172-AC-10")]
+    pub fn hyper_clause(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        position_limit: u64,
+    ) -> Result<fsl_semantics::check::CheckedHyperClause, PendingClauseForm> {
+        let mut form = self
+            .package
+            .hyper_clause_form(claim)
+            .map_err(PendingClauseForm::Read)?;
+        for parameter in &mut form.parameters {
+            parameter.populations = self
+                .model
+                .overlapping_populations(parameter.object.clone());
+        }
+        fsl_semantics::check::CheckedHyperClause::of_package_form(
+            form,
+            self.world.types(),
+            position_limit,
+        )
+        .map_err(PendingClauseForm::Build)
     }
 
     /// FR-940 "Package form of a state-graph claim": the state-graph claim

@@ -35,6 +35,7 @@ use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
 
+use super::instance_records::{decisive, undecided};
 use super::items::{INVALID_VALUE, model_refusal};
 use super::timed_item::subject_refusal;
 use super::{
@@ -994,33 +995,15 @@ fn no_timed_graph_decision(
     read: &Run<'_, '_>,
     cause: fsl_replay::InconclusiveCause,
 ) -> EngineReport {
-    let record = StateGraphRecord {
-        value: TerminalValue::Inconclusive(cause),
-        label: fsl_replay::ResultLabel::Inconclusive,
-        basis: fsl_replay::SettlementBasis::Unsettled,
-        execution: fsl_replay::Execution::Completed,
-        truth: fsl_replay::Truth::Pending,
-        method: fsl_replay::EXPLICIT_STATE,
+    let method = fsl_replay::StateGraphMethod {
+        limits: read.form.limits,
         max_depth: read
             .form
             .max_depth
             .and_then(|depth| u64::try_from(depth).ok()),
-        limits: read.form.limits.used(),
-        limit_reached: None,
         seed: read.form.seed.unwrap_or_default(),
-        witness_samples: read.form.witness_samples.unwrap_or(1),
-        walks_stopped: 0,
-        end: None,
-        undefined: None,
     };
-    EngineReport::StateGraph(Box::new(GraphReport {
-        record,
-        exploration: fsl_replay::RunStats::default(),
-        counterexample: None,
-        evidence: None,
-        certificate_document: None,
-        checker: None,
-    }))
+    undecided(cause, &method, read.form.witness_samples.unwrap_or(1))
 }
 
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
@@ -1368,19 +1351,6 @@ fn model_path(
             .map_err(|_| crate::zone_check::ZoneCheckRefusal::Fault("state-graph-initial"))?,
         steps: crate::zone_check::concretise_timed_state_graph_path(timed, graph, edges)?,
     })
-}
-
-/// The index of the instance that decides the item.
-fn decisive(records: &[StateGraphRecord]) -> usize {
-    records
-        .iter()
-        .position(|record| matches!(record.value, TerminalValue::Refuted))
-        .or_else(|| {
-            records
-                .iter()
-                .position(|record| !matches!(record.value, TerminalValue::Proved { .. }))
-        })
-        .unwrap_or(0)
 }
 
 /// The FR-393 evidence an instance's outcome settles from, bound to the

@@ -1114,8 +1114,9 @@ fn instances_share_the_runs_limits() {
     );
 }
 
-/// A start with no vault gives the clause no instance, and a subject with no
-/// initial state gives each instance `NoInitialState`.
+/// A start with no vault gives the clause no instance. A subject with no
+/// initial state admits no key either, so it has no instance to decide, and its
+/// item settles `NoInitialState` (FR-181, FR-125 "Instancing").
 #[trace("TC-606", "FR-181-AC-7")]
 #[test]
 fn no_instance_and_no_initial_state_decide_nothing() {
@@ -1125,8 +1126,10 @@ fn no_instance_and_no_initial_state_decide_nothing() {
         .expect("not refused");
     assert!(run.instances.is_empty());
     let empty = World::new(Vault::Secure, false, &[], &clause("", SETTLES));
-    let result = single(&empty, ModelCheckLimits::default());
-    assert_eq!(result.outcome, ExistentialOutcome::NoInitialState);
+    let run = empty
+        .run_single(ModelCheckLimits::default(), None, &Cancel::new())
+        .expect("not refused");
+    assert!(run.instances.is_empty());
 }
 
 /// The clause must be HP-5: a universal clause is refused, naming its form.
@@ -1555,5 +1558,32 @@ fn sampling_gives_each_instance_its_own_first_witness() {
     );
     for instance in &run.instances {
         assert_eq!(instance.walks_stopped, 0);
+    }
+}
+
+/// FR-181-AC-5's `Undefined` outcome settles `refuted`,
+/// `decisive-counterexample`, for the cause the division found.
+#[trace("TC-615", "FR-181-AC-5")]
+#[trace("TC-3219", "FR-181-AC-5")]
+#[test]
+fn an_undefined_hp5_finding_settles_refuted() {
+    let body = "eventually always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &clause("", body),
+        KERNEL_REMAINDER,
+    );
+    for limits in [unsampled(), ModelCheckLimits::default()] {
+        let result = single(&world, limits);
+        assert!(matches!(
+            result.outcome,
+            ExistentialOutcome::Undefined { .. }
+        ));
+        let record = settle_instance(&world, &result, limits).record;
+        assert_eq!(record.label, ResultLabel::Refuted);
+        assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
+        assert_eq!(record.value, TerminalValue::Refuted);
     }
 }
