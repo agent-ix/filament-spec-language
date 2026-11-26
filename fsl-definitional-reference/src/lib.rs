@@ -32,9 +32,15 @@ impl TinyMdp {
     /// Builds a model from state, action and transition rows. Every state must
     /// have at least one action; distributions must be nonempty, in range,
     /// nonnegative and sum exactly to one.
+    #[implements("FR-1051-AC-19")]
     pub fn new(
         actions: Vec<Vec<Vec<(usize, filament_exact::Rational)>>>,
     ) -> Result<Self, ReferenceRefusal> {
+        if actions.len() > (1 << 16) {
+            return Err(ReferenceRefusal {
+                construct: "finite state space exceeds 2^16 valuations",
+            });
+        }
         for state in &actions {
             if state.is_empty() {
                 return Err(ReferenceRefusal {
@@ -299,6 +305,17 @@ mod tests {
                 .some_scheduler_reachability_within(0, &targets, 2)
                 .expect("valid initial state and target set"),
             ratio(9, 10)
+        );
+    }
+
+    #[trace("FR-1051-AC-19")]
+    #[test]
+    fn model_construction_refuses_more_than_two_to_the_sixteenth_states() {
+        let refusal = TinyMdp::new(vec![Vec::new(); (1 << 16) + 1])
+            .expect_err("the reference is bounded to 2^16 valuations");
+        assert_eq!(
+            refusal.construct,
+            "finite state space exceeds 2^16 valuations"
         );
     }
 }
