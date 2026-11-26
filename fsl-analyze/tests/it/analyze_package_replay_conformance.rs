@@ -286,7 +286,7 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
     for run in [&source, &package] {
         let item = run.item(0);
         assert_eq!(label(&item), "inconclusive", "{}", run.document());
-        assert_eq!(item["record"]["cause"], "no-instance", "{item}");
+        assert_eq!(item["record"]["cause"]["kind"], "no-instance", "{item}");
         for member in ["obligations", "closure", "global", "projections", "counterexample"] {
             assert!(item[member].is_null(), "NoInstance omits {member}: {item}");
         }
