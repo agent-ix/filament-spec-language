@@ -132,26 +132,28 @@ limits is rebuilt as the solver received it.
   when the item or the subject uses a construct the encoding has no form
   for. Each refusal of `encode_smt_query` has one code. The encoding SHALL
   apply the checks in the order of this table, one row at a time, and SHALL
-  refuse on the first row that applies:
+  refuse on the first row that applies. Rows 5 to 8 are FR-125's instancing
+  outcomes in FR-125's order:
 
 | Order | Code | When | Locus |
 | --- | --- | --- | --- |
 | 1 | `item-form` | The item is a TP-4 liveness clause, guarded or not, whose refutations are EN-2's lassos (Monitors); a clause with no recorded property form; or a clause whose property-automaton translation refuses, carrying that refusal | the clause |
 | 2 | `profile` | The clause binds a profile other than infinite-trace and event-position false-extension, such as ADR-026's `model-time` | the clause |
 | 3 | `query-kind` | `InductionBase` or `InductionStep` for a TP-2 `on origin` item, whose V-2 verdict needs no induction; `Unrolling{depth}` with `depth < u` for `eventually[0,u] holds(I)` (Finite behaviours); `Unrolling{depth}` with `depth < h` for an `on origin` monitor item, `h` its ADR-014 TR-4 horizon (Monitors); `InductionStep` with `SmtInstances::First` | the clause |
-| 4 | `subject-admission` | FR-120's admission of the subject refuses, carrying that refusal | the subject |
-| 5 | `no-initial-state` | The subject's `initial` list is empty (FR-125), so every query would be unsatisfiable | the subject |
-| 6 | `object-lifecycle` | An operation's frame creates or deletes objects, or a universe object is not held by every initial state at one type, so the objects of a state copy are not fixed | the operation, or the object |
-| 7 | `constant-name` | A name cannot be printed as an SMT-LIB symbol, or two constants would print the same name (two objects under one key, or a dotted key that prints as another object's field) | the name |
-| 8 | `field-sort` | A field of a universe object has a sort with no SMT form (FR-315-AC-3) | the object and field |
-| 9 | `parameter-domain` | An operation parameter, or an operation's declared result, has no finite domain under FR-120 or a type with no SMT form | the operation, and the parameter or `result` |
-| 10 | `field-domain` | The query expands the candidates of an application (Finite behaviours, Deadlock-freedom, Undefined evaluation) and a field the application may write has no finite domain under FR-120, such as an `Integer` field | the object and field |
-| 11 | `requires-bound` | A population that admits the clause's `over` type has no universe (FR-125 `RequiresBound`) | the population |
-| 12 | `no-instance` | The clause has zero instances (FR-125 `NoInstance`), so every query would be unsatisfiable | the clause |
-| 13 | `instance-type` | An instance's object does not conform to the `over` type in an initial state | the instance |
-| 14 | `too-large` | The `constants`, then `applications`, then `monitor-atoms`, then `monitor-states`, then `candidates` measure passes its limit (Size limits) | the measure, its value and its limit |
-| 15 | `out-of-fragment` | An expression is outside the `QF_LIA` fragment the encoding prints, such as a product of two non-literal terms or a non-literal divisor | the expression's clause and node |
-| 16 | `too-large` | The `script-bytes` measure passes its limit | the measure, its value and its limit |
+| 4 | `subject-admission` | FR-120's admission of the subject refuses, carrying that refusal, other than for a key with two types (row 7) | the subject |
+| 5 | `requires-bound` | A population that admits the clause's `over` type has no universe (FR-125 `RequiresBound`) | the population |
+| 6 | `no-initial-state` | The subject's `initial` list is empty (FR-125), so every query would be unsatisfiable | the subject |
+| 7 | `subject-admission` | Two member records of the subject give one key two types (FR-125), carrying `invalid_runtime_input`/`conflicting-identity` | the subject |
+| 8 | `no-instance` | The clause has zero instances (FR-125 `NoInstance`), so every query would be unsatisfiable | the clause |
+| 9 | `object-lifecycle` | An operation's frame creates or deletes objects, or a universe object is not held by every initial state at one type, so the objects of a state copy are not fixed | the operation, or the object |
+| 10 | `constant-name` | A name cannot be printed as an SMT-LIB symbol, or two constants would print the same name (two objects under one key, or a dotted key that prints as another object's field) | the name |
+| 11 | `field-sort` | A field of a universe object has a sort with no SMT form (FR-315-AC-3) | the object and field |
+| 12 | `parameter-domain` | An operation parameter, or an operation's declared result, has no finite domain under FR-120 or a type with no SMT form | the operation, and the parameter or `result` |
+| 13 | `field-domain` | The query expands the candidates of an application (Finite behaviours, Deadlock-freedom, Undefined evaluation) and a field the application may write has no finite domain under FR-120, such as an `Integer` field | the object and field |
+| 14 | `instance-type` | An instance's object does not conform to the `over` type in an initial state | the instance |
+| 15 | `too-large` | The `constants`, then `applications`, then `monitor-atoms`, then `monitor-states`, then `candidates` measure passes its limit (Size limits) | the measure, its value and its limit |
+| 16 | `out-of-fragment` | An expression is outside the `QF_LIA` fragment the encoding prints, such as a product of two non-literal terms or a non-literal divisor | the expression's clause and node |
+| 17 | `too-large` | The `script-bytes` measure passes its limit | the measure, its value and its limit |
 
 Of several constructs that one row refuses, the encoding names the first in
 the canonical order of the script: object, field and operation order for
@@ -1045,8 +1047,8 @@ to an earlier one is printed once, at its first place, by rule 3. FR-314's
 byte comparison is over the normalised script.
 
 **Refusals.** `encode_refinement_query` SHALL check the refusals 1 to 5 below
-first, in this order, then the table's rows 4 to 14 and 16 as they apply to the
-concrete subject, with row 15's `out-of-fragment` check (refusal 6) read over the
+first, in this order, then the table's rows 4 to 15 and 17 as they apply to the
+concrete subject, with row 16's `out-of-fragment` check (refusal 6) read over the
 terms of the query; it refuses on the first that applies, with the code and
 locus named. This precedence is chosen here, because STD-556 asks for a
 normative statement and no earlier text orders these refusals; a request with a
@@ -1497,6 +1499,7 @@ impl HyperProductIdentity {
 | FR-315-AC-59 | Over an HP-2 clause with one object parameter whose universe is `{v, w}` and whose initial states hold an object under `v` only, `HyperProductIdentity::of` at the instance `w` refuses `instance-binding` at the parameter, and at `v` returns an identity. With an empty `initial` list it returns an identity at `v`, and the item settles `NoInitialState`. | Test (TC-3219) |
 | FR-315-AC-60 | Over FR-315-AC-1's `Counter` under infinite-trace with the universe `[c, d]`, `c` initially 0 and `d` initially 1, and `inc`'s frame `modifies self.value` (FR-154's receiver scope), the TP-1 claim `always holds(x.value <= 1)` with `over (x: Counter)` is violated for `d` by one `inc` and for `c` by two. At `Unrolling{depth: 2}` the item reports `over_binding` `c` with the prefix of two `inc` steps on `c`, whichever model the solver gives first: a first model naming `d` is followed by the query with `First(1)`, whose negated property holds `c`'s disjuncts only and whose other assertions are byte-equal to those of `All`. At `Unrolling{depth: 1}` the `First(1)` query is unsatisfiable and the item reports `d` with the prefix of one `inc` on `d`. | Test (TC-1201) |
 | FR-315-AC-61 | `encode_smt_query` for AC-60's item with `InductionStep{depth: 1}` and `SmtInstances::First(1)` refuses `query-kind` and returns no script; the same call with `SmtInstances::All` returns one. | Test (TC-1201) |
+| FR-315-AC-62 | Instancing outcomes are refused in FR-125's order. Over FR-315-AC-1's `Counter` with no universe for the population of `c` and an empty `initial` list, `encode_smt_query` refuses `requires-bound` naming the population, not `no-initial-state`. Over FR-125-AC-13's records, an `Animal` under `c` in `animals` and a `Dog` under `c` in `dogs`, a claim over `Animal` refuses `subject-admission` carrying `invalid_runtime_input`/`conflicting-identity`. Over `Counter` with the universe `[c]`, one initial state that holds no object and an operation `setTo(n: Integer)`, it refuses `no-instance`, not `object-lifecycle` or `parameter-domain`. Each call writes no script. | Test (TC-900) |
 
 ## Dependencies
 

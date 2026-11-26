@@ -21,6 +21,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-188
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-280
@@ -101,7 +103,8 @@ pub enum UndecidedCause { IndifferenceRegion, UndecidedSuccessor }
 `StatisticalRefusal` holds FR-120's `AdmissionFailure`, FR-151's `SymmetryRefusal` for a malformed symmetry declaration, FR-101's
 `RequiresBound` and `GeneratorMismatch`, `EveryScheduler` for a claim `under every scheduler` and
 `MissingConfidence` for a claim without confidence parameters,
-`NoTest` for a subject with no (initial state, binding) pair, `TooManyTests`
+`NoInitialState` for a subject whose `initial` list is empty, `NoInstance` for
+a claim whose `over` type has no admitted instance (FR-125), `TooManyTests`
 for more tests than a test index counts, `TraceIndexRange` when `max_draws · m`
 overflows the trace index of Okamoto, SPRT or Clopper–Pearson (the regenerative test `j` uses
 trace index `j` alone, so the method never raises it), `ConfidenceBeyondPrecision` when `min(α', β')` has
@@ -256,9 +259,15 @@ unsupported condition.
   decision (Rejected, then Undecided, then Accepted), the smallest margin
   among tests of that decision, and the lowest index among equal margins.
   FR-192 reports its `estimate`, `interval` and `quantile`.
-- If the subject has no (initial state, binding) pair, then EN-4 SHALL refuse
-  with `StatisticalRefusal::NoTest`, and FR-192 settles it `inconclusive` with
-  the cause `no-initial-state`, so an empty product is never Accepted.
+- EN-4 SHALL take a claim's instances, and its instancing outcomes in their
+  order, from `ModelSystem::claim_instances` (FR-125 "Instancing"):
+  `RequiresBound`, then `NoInitialState`, then a conflicting identity, then
+  `NoInstance`. A claim with no `over` has one instance, with no bound object.
+- If the subject's `initial` list is empty, then EN-4 SHALL refuse with
+  `StatisticalRefusal::NoInitialState`; if the subject has an initial state
+  and the claim's `over` type has no admitted instance, then EN-4 SHALL refuse
+  with `StatisticalRefusal::NoInstance`. FR-192 settles each `inconclusive`
+  with its own cause, so an empty product is never Accepted.
 - If a test rejects on an undefined sample and stops the run, then the
   verdict SHALL keep the results of the tests that finished before it and the
   rejecting test's own result, and no result for a test that did not start.
@@ -298,12 +307,13 @@ unsupported condition.
 | FR-189-AC-8 | Through the `ClaimSampler` seam, with a stub whose undefined sample is `Undefined` at position 0 with cause `division-by-zero`, over the claim `probability >= 1/2` with `indifference 0.1` and Okamoto: when the first sample is undefined, the one test is Rejected with `estimate` `None`, `samples` 0 and `undefined` naming test 0, trace index 0, position 0; the verdict is Rejected and its `estimate` is `None`. With two tests, one per initial state, where test 0 samples a true event and test 1 is undefined, test 0's Accepted result is kept beside test 1's Rejected one and the verdict is Rejected. | Test (TC-624) |
 | FR-189-AC-9 | Over `Service` with the claim `P95` and Okamoto, a test ended by an undefined second sample (the second sample's event evaluated undefined) has `estimate` the first sample's value (`0` or `1`) and no `interval`; a decided Okamoto test has an `interval` and an SPRT test has none; a mean-of-fraction test ended the same way has the first sample as its estimate; and a regenerative `LongRun` test that ends before its first positive-weight cycle has `estimate` `None`. | Test (TC-624) |
 | FR-189-AC-10 | Through the `BehaviourSampler` seam, with the SPRT method over a claim `>= 19/20` (so no Okamoto sample count applies), tests with these (decision, estimate) pairs give the verdict's `estimate` of: Rejected `9/10` and Rejected `4/5` the test at `4/5`; Rejected `9/10` and Rejected `9/10` the test at index 0; Accepted `97/100` and Rejected with no estimate (test 1, since an undefined test stops the run) the test with no estimate; Undecided `19/20` and Accepted `99/100` the Undecided test; Accepted `97/100` and Accepted `99/100` the test at `97/100`; for a claim `<= 1/20` Accepted `1/100` and Accepted `3/100` the test at `3/100`; for a quantile `>= 3` claim reduced to `< 1/2` with estimates `2/5` and `9/20` the test at `9/20`. | Test (TC-624) |
-| FR-189-AC-11 | A request whose subject has no (initial state, binding) pair is refused `NoTest`, and FR-192 settles it `inconclusive` with the cause `no-initial-state`; it is never Accepted. | Test (TC-624) |
+| FR-189-AC-11 | A request whose subject has an empty `initial` list is refused `NoInitialState`, and FR-192 settles it `inconclusive` with the cause `no-initial-state`; it is never Accepted. | Test (TC-624) |
 | FR-189-AC-12 | The activation variant of FR-189-AC-4 with the activation probability 0 and `max_draws` 1,000 stops `MaxDraws` with 0 samples counted and no decision. | Test (TC-624) |
 | FR-189-AC-13 | A sampler stub that returns event samples for a mean-of-fraction claim with Okamoto, `θ = 1/2`, `α = β = 1/3` and `ι = 2/5` and a non-strict bound (a strict `Below` bound on a mean of a fraction is refused `StrictBound`) (so `N = ⌈ln 3 / (2ι²)⌉ = ⌈3.43⌉ = 4`), 3 holding of the 4 counted, gives the estimate `3/4` and no refusal. | Test (TC-624) |
 | FR-189-AC-14 | A regenerative request over two tests with `max_draws` `u64::MAX` is not refused `TraceIndexRange`, and the same `max_draws` under Okamoto with two tests is. | Test (TC-624) |
 | FR-189-AC-15 | Through the `BehaviourSampler` seam, a quantile `<= 3` claim at `q = 1/2` over 4 counted samples (the stub ends the test after exactly 4 counted samples) with `M` values 1, 3, 2, 5 gives the test `quantile` `Value(2)`; at `q = 9/10` with the samples 1, 3, 2 and one censored sample, the rank `⌈36/10⌉ = 4` lies among the censored samples and `quantile` is `Censored`; at `q = 1/2` the same samples give `Value(2)`. With `M` of type `Quantity<ms>`, threshold `3 ms` and samples `1 ms`, `3 ms`, `2 ms`, `5 ms` at `q = 1/2`, the test quantile is `Value(2)` interpreted in `ms` by the checked reward type and canonically stored as `2/1`; it is not `1/500 s`. In another run with `q = 1/2` and samples `1 ms`, `1.50 ms`, `2 ms`, `5 ms`, the quantile is `Value(3/2)`; replacing `1.50 ms` with the equivalent `rational(3, 2) ms` gives the same exact rational value. With a quantity reward whose unit is `ms`, a threshold of `0.005 s` reaches EN-4 as `5 ms` under FR-186's exact conversion rule. A `1 s` support value for a `Quantity<ms>` parameter is refused `value-outside-type` as FR-185-AC-8 requires, and a threshold `5 m` for the time reward is refused `ill_typed`/`unit-mismatch` as FR-186-AC-2 requires, each before EN-4 draws a sample. A `P95` probability-bound test and a quantile test that has no estimate, because it counted no sample, have `quantile` absent. | Test (TC-624) |
 | FR-189-AC-16 | A sampler stub that returns `k` holding samples of `N = 231` for a claim `probability >= 9/10` with `α = β = 1/100`, `ι = 1/10` and `m = 1`, under `StatisticalMethod::ClopperPearson`, settles the test Accepted at `k` = 231 and 219, Undecided (`IndifferenceRegion`) at 218 and 197, and Rejected at 196 and 184, while `Okamoto` on the same stub accepts only at 231 and rejects only at 184; at `k = 219` the exact Clopper–Pearson ends, each truncated after 20 digits, are `0.90351472792271070929…` (lower) and `0.97621175445884490995…` (upper), and the reported lower end is at most the exact lower end and within `2^-64` of it, and the reported upper end at least the exact upper end and within `2^-64` of it, and the basis records `ClopperPearson` with coverage `FiniteSample`. A mean-of-fraction claim and a long-run fraction claim with `ClopperPearson` refuse `NotStatistical` before any sample is drawn. | Test (TC-624) |
+| FR-189-AC-17 | Over AC-6's `Coin` model and claim `over (c: M::Coin)`, with the universe of `coins` `[k]` and one initial state that holds no object, the request is refused `NoInstance` before any sample is drawn, and FR-192 settles it `inconclusive` with the cause `no-instance`, never Accepted. With the same universe and an empty `initial` list it is refused `NoInitialState`, not `NoInstance`. | Test (TC-624) |
 
 ## Dependencies
 
