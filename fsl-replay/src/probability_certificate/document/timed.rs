@@ -12,7 +12,6 @@ use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, Tim
 use ix_trace_rs::implements;
 use num_traits::Zero;
 use serde_json::{json, Value as JsonValue};
-use ix_trace_rs::implements;
 
 mod elapsed;
 
