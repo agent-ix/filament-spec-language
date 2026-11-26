@@ -468,6 +468,9 @@ fn the_not_digitisable_member_round_trips_through_the_strict_reader() {
     extra_in_span["detail"]["not_digitisable"]["span"]["unit"] = json!("program");
     let mut no_span = diagnostic.clone();
     no_span["detail"]["not_digitisable"] = json!({"rule": "two-sided-interval"});
+    let mut backwards = diagnostic.clone();
+    backwards["detail"]["not_digitisable"]["span"] =
+        json!({"start": expected.span.end, "end": expected.span.start});
     let mut other_cause = diagnostic.clone();
     other_cause["cause"] = json!("strict-clock-constraint");
     for (written, cause) in [
@@ -475,6 +478,7 @@ fn the_not_digitisable_member_round_trips_through_the_strict_reader() {
         (extra, EntryCause::InvalidValue),
         (extra_in_span, EntryCause::InvalidValue),
         (no_span, EntryCause::InvalidValue),
+        (backwards, EntryCause::InvalidValue),
         (other_cause, EntryCause::UnknownMember),
     ] {
         let refusal = read_result_entry(&entry(&written), 0, EntryOrigin::FirstParty)
@@ -522,4 +526,144 @@ fn the_not_digitisable_member_round_trips_through_the_strict_reader() {
         ),
         "{refusal:?}"
     );
+}
+
+/// FR-243-AC-5, rules (c) to (e) for the past operators and for the left
+/// operand of `implies`, whose polarity is flipped. Every claim is read at
+/// position 0 of the two-step subject, whose past is that one position.
+#[trace("TC-2290", "FR-243-AC-5")]
+#[test]
+fn digital_clocks_read_past_operators_and_implies_in_normal_form() {
+    // (claim, hand value, rule, the named part)
+    let declined: [(&str, &str, &str, &str); 13] = [
+        (
+            "once[0 ms, 1 ms] holds(c.phase = 0) or once[0 ms, 2 ms] holds(c.phase = 0)",
+            "proved",
+            "second-bounded-operator",
+            "once[0 ms, 2 ms] holds(c.phase = 0)",
+        ),
+        (
+            "(holds(c.phase >= 0) since[0 ms, 2 ms] holds(c.phase = 0)) \
+             and once[0 ms, 1 ms] holds(c.phase = 0)",
+            "proved",
+            "second-bounded-operator",
+            "once[0 ms, 1 ms] holds(c.phase = 0)",
+        ),
+        (
+            "once[1 ms, 2 ms] holds(c.phase >= 0)",
+            "refuted",
+            "two-sided-interval",
+            "once[1 ms, 2 ms] holds(c.phase >= 0)",
+        ),
+        (
+            "holds(c.phase >= 0) since[1 ms, 2 ms] holds(c.phase >= 0)",
+            "refuted",
+            "two-sided-interval",
+            "holds(c.phase >= 0) since[1 ms, 2 ms] holds(c.phase >= 0)",
+        ),
+        // A negated `historically` is a `once`, and a negated `triggered` a
+        // `since`.
+        (
+            "not historically[1 ms, 2 ms] holds(c.phase < 0)",
+            "refuted",
+            "two-sided-interval",
+            "historically[1 ms, 2 ms] holds(c.phase < 0)",
+        ),
+        (
+            "not (holds(c.phase < 0) triggered[1 ms, 2 ms] holds(c.phase < 0))",
+            "refuted",
+            "two-sided-interval",
+            "holds(c.phase < 0) triggered[1 ms, 2 ms] holds(c.phase < 0)",
+        ),
+        (
+            "eventually once[0 ms, 2 ms] holds(c.phase = 0)",
+            "proved",
+            "nested-bounded-operator",
+            "once[0 ms, 2 ms] holds(c.phase = 0)",
+        ),
+        (
+            "once once[0 ms, 1 ms] holds(c.phase = 0)",
+            "proved",
+            "nested-bounded-operator",
+            "once[0 ms, 1 ms] holds(c.phase = 0)",
+        ),
+        (
+            "holds(c.phase >= 0) since once[0 ms, 1 ms] holds(c.phase = 0)",
+            "proved",
+            "nested-bounded-operator",
+            "once[0 ms, 1 ms] holds(c.phase = 0)",
+        ),
+        (
+            "(once[0 ms, 1 ms] holds(c.phase = 0)) since holds(c.phase >= 0)",
+            "proved",
+            "nested-bounded-operator",
+            "once[0 ms, 1 ms] holds(c.phase = 0)",
+        ),
+        // The left operand of `triggered` is nested.
+        (
+            "(once[0 ms, 1 ms] holds(c.phase = 0)) triggered holds(c.phase >= 0)",
+            "proved",
+            "nested-bounded-operator",
+            "once[0 ms, 1 ms] holds(c.phase = 0)",
+        ),
+        // The left `always` of an `implies` is negated, so it is a two-sided
+        // eventually.
+        (
+            "(always[1 ms, 2 ms] holds(c.phase = 0)) implies holds(c.phase = 0)",
+            "proved",
+            "two-sided-interval",
+            "always[1 ms, 2 ms] holds(c.phase = 0)",
+        ),
+        (
+            "(historically[1 ms, 2 ms] holds(c.phase < 0)) implies holds(c.phase = 0)",
+            "proved",
+            "two-sided-interval",
+            "historically[1 ms, 2 ms] holds(c.phase < 0)",
+        ),
+    ];
+    let bodies: Vec<&str> = declined.iter().map(|row| row.0).collect();
+    let (unit, run) = both_routes("digitisation-past", TWO_STEP, &["first", "second"], &bodies);
+    for (at, (body, value, rule, part)) in declined.iter().enumerate() {
+        assert_settled(&run.item(2 * at), "en-6", value);
+        assert_declined(&run.item(2 * at + 1), rule, span_of(&unit, at, body, part));
+    }
+
+    // (claim, the value both routes give)
+    let admitted: [(&str, &str); 8] = [
+        // `historically` and `triggered` are not counted by (c).
+        ("historically[1 ms, 2 ms] holds(c.phase < 0)", "proved"),
+        (
+            "holds(c.phase < 0) triggered[1 ms, 2 ms] holds(c.phase < 0)",
+            "proved",
+        ),
+        ("once[0 ms, 2 ms] holds(c.phase = 0)", "proved"),
+        (
+            "holds(c.phase >= 0) since[0 ms, 2 ms] holds(c.phase = 0)",
+            "proved",
+        ),
+        ("not once[0 ms, 2 ms] holds(c.phase = 0)", "refuted"),
+        // `historically` does not nest its operand.
+        ("historically once[0 ms, 2 ms] holds(c.phase = 0)", "proved"),
+        // The left `eventually` of an `implies` is negated, so it is an
+        // `always`, which is not counted.
+        (
+            "(eventually[1 ms, 2 ms] holds(c.phase >= 0)) implies holds(c.phase = 0)",
+            "proved",
+        ),
+        (
+            "(once[1 ms, 2 ms] holds(c.phase >= 0)) implies holds(c.phase = 0)",
+            "proved",
+        ),
+    ];
+    let bodies: Vec<&str> = admitted.iter().map(|row| row.0).collect();
+    let (_, run) = both_routes(
+        "digitisation-past-admitted",
+        TWO_STEP,
+        &["first", "second"],
+        &bodies,
+    );
+    for (at, (_, value)) in admitted.iter().enumerate() {
+        assert_settled(&run.item(2 * at), "en-6", value);
+        assert_settled(&run.item(2 * at + 1), "en-1", value);
+    }
 }

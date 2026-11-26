@@ -13,7 +13,7 @@ use fsl_foundation::bound::TemporalUpper;
 use fsl_replay::{NotDigitisable, NotDigitisableRule};
 use fsl_semantics::check::{
     BinaryTemporal, CheckedInterval, CheckedStateGraphClaim, CheckedTemporalClause, FormulaNode,
-    StateGraphForm, UnaryTemporal,
+    UnaryTemporal,
 };
 use ix_trace_rs::implements;
 
@@ -54,19 +54,7 @@ pub(crate) fn digitisation_decline(
     const NO_SPAN: &str = "digital-source-span";
     let (subject, clause) = match item {
         DigitalItem::Temporal { subject, clause } => (subject, clause),
-        DigitalItem::StateGraph(claim) => {
-            // Each of these two forms quantifies over every reachable timed
-            // state, which an integer-clock reading does not visit.
-            let rule = match claim.form() {
-                StateGraphForm::Possible { .. } => return Ok(None),
-                StateGraphForm::AlwaysPossible { .. } => NotDigitisableRule::AlwaysPossible,
-                StateGraphForm::UniquePath { .. } => NotDigitisableRule::UniquePath,
-            };
-            return Ok(Some(NotDigitisable {
-                rule,
-                span: claim.span(),
-            }));
-        }
+        DigitalItem::StateGraph(claim) => return Ok(NotDigitisable::of_state_graph(claim)),
     };
     let formula = clause.formula();
     let nodes = formula.nodes();

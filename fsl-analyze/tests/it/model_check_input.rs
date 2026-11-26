@@ -1375,3 +1375,113 @@ fn a_package_route_terminal_self_is_the_populations_canonical_member() {
     assert_eq!(classes(&over_bytes), classes(&over_source));
     assert!(classes(&over_source).contains(&TerminalClass::Intended));
 }
+
+/// Digital-clock replay refuses the two state-graph forms its integer-clock
+/// graph does not preserve (FSL FR-243), whatever evidence it is given, and
+/// still reads `possible`.
+#[trace("TC-2412")]
+#[test]
+fn digital_replay_refuses_always_possible_and_unique_path() {
+    use fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS;
+    use fsl_replay::ModelTraceRefusal;
+    use fsl_replay::{
+        GraphEvidence, ModelPath, NotDigitisable, NotDigitisableRule, ReplayRefusal, TrapClosure,
+    };
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x"], &[("send", &["phase"])]),
+        "",
+        &format!(
+            "{DIRECT_DENSE}\
+            pre Enabled using v on M::Call::send {{ self.phase = 0 }}\n\
+            post SetPhase using v on M::Call::send {{ self.phase = 1 }}\n\
+            possible Reach using v over (c: M::Call) {{ c.phase = 1 }}\n\
+            always possible Back using v over (c: M::Call) {{ c.phase = 0 }}\n\
+            unique path Only using v over (c: M::Call) from (c.phase = 0) to (c.phase = 1);\n"
+        ),
+    );
+    let request = world.request();
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: request.universes[0].population.clone(),
+        key: "c".to_owned(),
+    };
+    let replay = |name: &str| {
+        let claim = world
+            .package
+            .graph()
+            .state_graph_claim(name)
+            .expect("claim");
+        let occurrence = claim.occurrence().expect("occurrence").clone();
+        let obligation = fsl_package::ObligationIdentity::new(occurrence.node().clone(), None, 0);
+        let envelope = fsl_replay::GraphEvidenceEnvelope::new(
+            obligation.clone(),
+            occurrence.clone(),
+            occurrence.node().clone(),
+            Vec::new(),
+            request.meter,
+            Vec::new(),
+            fsl_foundation::BackendId::new("en-1"),
+            GraphEvidence::Trap {
+                stem: ModelPath {
+                    initial: 0,
+                    steps: Vec::new(),
+                },
+                closure: TrapClosure::StateGraph,
+                over: Some(instance.clone()),
+            },
+        );
+        let mut wire = crate::model_settle_support::request(
+            &world.package,
+            &[],
+            &world.document,
+            world.snapshots.iter(),
+            &world.unit,
+        );
+        wire.replay_target = fsl_replay::RequestTargetWire::default();
+        wire.obligation_identity = obligation;
+        wire.backend = "en-1".to_owned();
+        wire.accounting_limits = request.meter;
+        wire.source = fsl_replay::ReplaySource::ModelGraph(Box::new(envelope));
+        let replayed = fsl_replay::replay_model_graph(
+            wire,
+            &fsl_replay::ModelTraceSubject {
+                timed: Some(fsl_replay::TimedReplay {
+                    model: "M".to_owned(),
+                    exploration: Default::default(),
+                    max_clocks: DEFAULT_MAX_CLOCKS,
+                    digital: true,
+                }),
+                initial: request.initial.clone(),
+                universes: request.universes.clone(),
+                expansion: request.expansion,
+                stutter_closure: false,
+            },
+            fsl_replay::ReplayLimits::default(),
+        );
+        (claim.span(), replayed)
+    };
+    for (name, rule) in [
+        ("Back", NotDigitisableRule::AlwaysPossible),
+        ("Only", NotDigitisableRule::UniquePath),
+    ] {
+        let (span, replayed) = replay(name);
+        let expected = NotDigitisable { rule, span };
+        assert!(
+            matches!(
+                &replayed,
+                Err(ReplayRefusal::ModelTrace(refusal))
+                    if matches!(**refusal, ModelTraceRefusal::NotDigitisable(declined)
+                        if declined == expected)
+            ),
+            "{name}: {replayed:?}"
+        );
+    }
+    let (_, replayed) = replay("Reach");
+    assert!(
+        !matches!(
+            &replayed,
+            Err(ReplayRefusal::ModelTrace(refusal))
+                if matches!(**refusal, ModelTraceRefusal::NotDigitisable(_))
+        ),
+        "`possible` is read under digital timing: {replayed:?}"
+    );
+}

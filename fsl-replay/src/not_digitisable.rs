@@ -7,6 +7,8 @@
 
 use fsl_foundation::diagnostic::CatalogCode;
 use fsl_foundation::Span;
+use fsl_semantics::check::{CheckedStateGraphClaim, StateGraphForm};
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 /// Why digitisation does not preserve an item's verdict: FSL FR-243's closed
@@ -46,4 +48,22 @@ impl NotDigitisable {
     pub const MEMBER: &'static str = "not_digitisable";
     /// The one code and cause whose detail carries the member.
     pub const CATALOG: CatalogCode = CatalogCode::new("invalid_runtime_input", "invalid-value");
+
+    /// The state-graph half of FSL FR-243's rule, read by the digital-clock
+    /// route and by its replay: `always possible` and `unique path` quantify
+    /// over every reachable timed state, which an integer-clock reading does
+    /// not visit. `possible` is preserved.
+    #[must_use]
+    #[implements("FR-243-AC-6")]
+    pub fn of_state_graph(claim: &CheckedStateGraphClaim) -> Option<Self> {
+        let rule = match claim.form() {
+            StateGraphForm::Possible { .. } => return None,
+            StateGraphForm::AlwaysPossible { .. } => NotDigitisableRule::AlwaysPossible,
+            StateGraphForm::UniquePath { .. } => NotDigitisableRule::UniquePath,
+        };
+        Some(Self {
+            rule,
+            span: claim.span(),
+        })
+    }
 }
