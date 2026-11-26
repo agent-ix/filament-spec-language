@@ -3305,60 +3305,15 @@ fn a_tick_subject_is_sampled_without_a_race_and_reads_its_stutter_positions() {
 #[test]
 fn an_idle_tail_reading_every_completion_agrees_on_is_decided() {
     for (rewards, claim, holds, decision) in [
-        (
-            "",
-            "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]",
-            1,
-            Decision::Accepted,
-        ),
-        (
-            "",
-            "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(2, 5)]",
-            0,
-            Decision::Rejected,
-        ),
-        (
-            "",
-            "mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25",
-            1,
-            Decision::Rejected,
-        ),
-        (
-            "",
-            "mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25",
-            0,
-            Decision::Accepted,
-        ),
-        (
-            SEND_COST,
-            "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25",
-            0,
-            Decision::Accepted,
-        ),
-        (
-            "",
-            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]",
-            0,
-            Decision::Rejected,
-        ),
-        (
-            "",
-            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]",
-            0,
-            Decision::Rejected,
-        ),
-        (
-            "",
-            "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]",
-            0,
-            Decision::Rejected,
-        ),
-        (
-            "",
-            "probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]",
-            1,
-            Decision::Accepted,
-        ),
+        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]", 1, Decision::Accepted),
+        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(2, 5)]", 0, Decision::Rejected),
+        ("", "mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25", 1, Decision::Rejected),
+        ("", "mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25", 0, Decision::Accepted),
+        (SEND_COST, "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25", 0, Decision::Accepted),
+        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]", 0, Decision::Rejected),
+        ("", "probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]", 1, Decision::Accepted),
     ] {
         assert_eq!(
             measured(&window_world(2, None, rewards, claim)),
