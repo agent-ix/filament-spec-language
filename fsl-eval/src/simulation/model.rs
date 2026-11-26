@@ -2561,6 +2561,7 @@ impl<'a> ModelSystem<'a> {
     /// with no universe, before any instance is listed (FR-120 "Bounds");
     /// [`NotSimulated::Extent`] when that classification stops or a
     /// population's identity text does not encode.
+    #[implements("FR-125-AC-19", "FR-125-AC-20")]
     pub fn instances(&self, over: &ValueType) -> Result<Vec<ModelInstance>, NotSimulated> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
@@ -2636,8 +2637,8 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// Every key a hyper parameter of object type `object` may name in an
-    /// identity or an encoding (FR-315 `instance-binding`): each of
-    /// [`Self::hyper_instances`]; for a subject whose initial list is empty,
+    /// identity or an encoding (FR-315 `instance-binding`): each of its
+    /// [`Self::instances`]; for a subject whose initial list is empty,
     /// every key of the universes of the overlapping populations, since the
     /// item then settles `NoInitialState`.
     ///
@@ -2647,7 +2648,7 @@ impl<'a> ModelSystem<'a> {
     #[implements("FR-315-AC-59")]
     pub fn hyper_bindable(&self, object: &EffectiveId) -> Result<Vec<ModelInstance>, NotSimulated> {
         if !self.initial_base.is_empty() {
-            return self.hyper_instances(object);
+            return self.instances(&ValueType::Reference(object.clone()));
         }
         let mut seen = BTreeSet::new();
         Ok(self

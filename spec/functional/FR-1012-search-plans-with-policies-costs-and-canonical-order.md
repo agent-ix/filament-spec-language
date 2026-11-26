@@ -5,7 +5,21 @@ type: FR
 relationships:
   - target: ix://agent-ix/filament-spec-language/US-029
     type: implements
-  - target: ix://agent-ix/filament-specification/FR-800 filament-specification/FR-802 filament-specification/FR-803 filament-specification/FR-804 filament-specification/FR-808 filament-specification/FR-809 filament-spec-language/FR-755
+  - target: ix://agent-ix/filament-specification/FR-800
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-802
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-803
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-804
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-808
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-809
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-755
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
 ---
 # FR-1012: Search plans with exact costs, policy monitors and the canonical plan order
@@ -20,6 +34,8 @@ FSL's plan search in `fsl-analyze` SHALL implement FSpec FR-800 to FR-804, FR-80
 - The reported plan and every count SHALL be those of FSpec FR-801's canonical sequential exploration ("Exploration order": layers by step count, nodes within a layer by accumulated per-step sum then representative prefix in FSpec FR-804's step order, successors in step order, and its fixed charge order), whatever the worker count.
 - Over a timed grammar the search SHALL implement FSpec FR-808: tick steps of delay 0, dense-time steps of an exact delay then an invocation over FSpec FR-418's region abstraction, concrete delays at the least point or the open-bound midpoint, and an unattained infimum reported `feasible` with its exact `bound`; every `delay` and `elapsed` is written as FSpec FR-181's unit-bearing quantity in the model's time unit.
 - Over a probabilistic grammar the search SHALL implement FSpec FR-809: open-loop actions with drawn arguments, adversarial choice, nodes holding the exact state distribution, and `probability` and the expected objective computed as exact rationals.
+- The plan search SHALL keep, for each policy clause, one monitor for each admitted key of the clause's `over` type (FR-125 "Instancing").
+- A plan keeps a policy only when every one of that policy's monitors accepts it (FSpec FR-803).
 - Every reported plan SHALL replay natively before it is written (FR-755).
 - A requested policy over a type SHALL monitor the distinct object keys that the initial snapshot lists for that type, in snapshot list order. A policy with no such admitted instance SHALL settle `inconclusive` with cause `no-instance` before exploration; it SHALL NOT be treated as vacuously satisfied or produce `optimal`, `feasible` or `infeasible`. A non-reference `over` binding that has no instances is not this condition.
 - For each policy clause the search SHALL charge `max_work` once per clause, preserving the clause's snapshot instance order and stopping at the first decisive instance.
@@ -52,4 +68,5 @@ does not change their acceptance obligations.
 
 ## Dependencies
 
-- FR-800 filament-specification/FR-802 filament-specification/FR-803 filament-specification/FR-804 filament-specification/FR-808 filament-specification/FR-809 filament-spec-language/FR-755 (filament-specification).
+- FSpec FR-800, FR-802, FR-803, FR-804, FR-808 and FR-809 (plan search).
+- FR-755 (native plan replay) and FR-125 "Instancing" (admitted keys).

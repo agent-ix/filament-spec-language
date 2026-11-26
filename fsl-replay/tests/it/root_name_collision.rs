@@ -224,7 +224,7 @@ fn replay(root: &DependencyArtifact, dependencies: &[DependencyArtifact]) -> Rep
         BackendId::new("test-backend".to_owned()),
         GraphEvidence::Witness {
             paths: Vec::new(),
-            over: None,
+            over: Vec::new(),
         },
     );
     let wire = ReplayRequestWire {

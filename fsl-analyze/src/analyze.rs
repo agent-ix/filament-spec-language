@@ -111,6 +111,8 @@ pub use items::{
     hyper_form_item, model_item, protocol_item, statistical_item, timed_refinement_item, zone_item,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
+#[cfg(feature = "test-support")]
+pub use state_graph_item::AlterEvidence;
 pub use state_graph_item::PackageStateGraphSubject;
 
 use crate::provider::{

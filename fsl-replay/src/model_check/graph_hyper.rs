@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use filament_exact::{Cancel, LimitKind, Meter, ScalarLimits};
+use filament_exact::{Cancel, LimitKind, Meter, ScalarLimits, ValueType};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::fairness::FairnessGranularity;
 use filament_semantic_value::location::ExpressionLocation;
@@ -24,6 +24,7 @@ use fsl_eval::temporal::{
 use fsl_semantics::check::{
     CheckedHyperClause, FormulaNode, FormulaNodeId, HyperForm, PredicateRole,
 };
+use ix_trace_rs::implements;
 
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::Lasso;
@@ -61,13 +62,7 @@ pub(super) fn replay_evidence(
     let Some(quantifier) = clause.quantifiers().first() else {
         return Err(fault("an-HP-5-clause-has-one-quantifier"));
     };
-    let over = match evidence {
-        GraphEvidence::Witness { over, .. }
-        | GraphEvidence::Trap { over, .. }
-        | GraphEvidence::PathPair { over, .. }
-        | GraphEvidence::Undefined { over, .. } => over.as_ref(),
-    };
-    let bindings = hyper_bindings(system, clause, over)?;
+    let bindings = hyper_bindings(system, clause, evidence.over())?;
     let letters = CheckedHyperLetters::new(package, clause, vec![system])
         .map_err(|_| fault("the-HP-5-letters-match-the-subject"))?;
     match evidence {
@@ -173,26 +168,30 @@ pub(super) fn replay_evidence(
 fn hyper_bindings(
     system: &ModelSystem<'_>,
     clause: &CheckedHyperClause,
-    over: Option<&fsl_eval::model_subject::ModelInstance>,
+    over: &[fsl_eval::model_subject::ModelInstance],
 ) -> Result<Vec<ParameterBinding>, ReplayRefusal> {
-    match (clause.parameters(), over) {
-        ([], None) => Ok(Vec::new()),
-        ([parameter], Some(instance)) => {
+    let parameters = clause.parameters();
+    if parameters.len() != over.len() {
+        return Err(refused(ModelTraceRefusal::OverBinding));
+    }
+    parameters
+        .iter()
+        .zip(over)
+        .map(|(parameter, instance)| {
             let admitted = system
-                .hyper_instances(&parameter.object)
+                .instances(&ValueType::Reference(parameter.object.clone()))
                 .map_err(|_| refused(ModelTraceRefusal::OverBinding))?;
             if !admitted.iter().any(|candidate| {
                 candidate.population == instance.population && candidate.key == instance.key
             }) {
                 return Err(refused(ModelTraceRefusal::OverBinding));
             }
-            Ok(vec![ParameterBinding {
+            Ok(ParameterBinding {
                 parameter: parameter.name.clone(),
                 instance: instance.clone(),
-            }])
-        }
-        _ => Err(refused(ModelTraceRefusal::OverBinding)),
-    }
+            })
+        })
+        .collect()
 }
 
 fn path_initial(path: &WitnessPath) -> usize {
@@ -419,6 +418,7 @@ struct ProductNode {
     edges: Vec<(HyperTransition, usize)>,
 }
 
+#[implements("FR-181-AC-13")]
 #[allow(clippy::too_many_arguments)]
 fn replay_product_trap(
     system: &ModelSystem<'_>,
@@ -491,6 +491,19 @@ fn replay_product_trap(
     if roots.is_empty() {
         return Err(fault("the-HP-5-product-has-an-initial-root"));
     }
+    // A root whose letter has no value is undefined-evaluation evidence, not
+    // a trap.
+    if roots
+        .iter()
+        .any(|root| matches!(root.property, Property::Undefined { .. }))
+    {
+        return Ok(result(
+            inconclusive(Category::Violation, Category::Success),
+            Vec::new(),
+            None,
+            None,
+        ));
+    }
 
     let mut nodes = Vec::<ProductNode>::new();
     let mut by_key = BTreeMap::<(StateKey, Option<usize>), usize>::new();
@@ -524,19 +537,36 @@ fn replay_product_trap(
             .get(id)
             .map(|node| node.state.clone())
             .ok_or_else(|| fault("a-product-queue-entry-is-a-node"))?;
+        // A state whose letter has no value has no step after it.
+        if matches!(state.property, Property::Undefined { .. }) {
+            continue;
+        }
         let expansion = match product.successors(&state) {
             Ok(expansion) => expansion,
             Err(_) => return product_halt_result(&product, max_candidates, accounting),
         };
-        if state_has_open_finding(&expansion.findings)
-            || matches!(state.property, Property::Undefined { .. })
-        {
+        // A state the body automaton has no run from lies on no accepting
+        // cycle, and nor does any state after it, so its successors are not
+        // followed. Its contract conjunctions still need a value, as the
+        // engine requires.
+        let open = if state.property == Property::Dead {
+            expansion
+                .findings
+                .iter()
+                .any(HyperFinding::leaves_successors_unknown)
+        } else {
+            state_has_open_finding(&expansion.findings)
+        };
+        if open {
             return Ok(result(
                 inconclusive(Category::Violation, Category::Success),
                 Vec::new(),
                 Some(nodes.len() as u64),
                 None,
             ));
+        }
+        if state.property == Property::Dead {
+            continue;
         }
         let enabled = expansion
             .findings
@@ -558,14 +588,6 @@ fn replay_product_trap(
                 return Ok(stopped_result(
                     ModelCheckLimit::MaxTransitions,
                     max_transitions as u64,
-                ));
-            }
-            if matches!(next.property, Property::Undefined { .. }) {
-                return Ok(result(
-                    inconclusive(Category::Violation, Category::Success),
-                    Vec::new(),
-                    Some(nodes.len() as u64),
-                    None,
                 ));
             }
             let key = product_key(system, &next)?;

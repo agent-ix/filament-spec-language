@@ -197,7 +197,9 @@ pub(super) fn hyper_item<'a>(
                                 .and_then(|slot| owned.get(slot))
                                 .ok_or_else(|| fault("parameter-alias"))?;
                             let admitted = system
-                                .hyper_instances(&parameter.object)
+                                .instances(&filament_exact::ValueType::Reference(
+                                    parameter.object.clone(),
+                                ))
                                 .map_err(|_| fault("parameter-universe"))?;
                             let bound = admitted
                                 .into_iter()
@@ -243,7 +245,7 @@ struct SingleControl<'a> {
 
 /// Decide and settle an HP-5 item, instance by instance, and report the record
 /// of the instance that decides it.
-#[implements("FR-181-AC-8", "FR-181-AC-11")]
+#[implements("FR-181-AC-8", "FR-181-AC-11", "FR-181-AC-12")]
 fn single(
     package: &fsl_package::CheckedPackage,
     clause: &fsl_semantics::check::CheckedHyperClause,
@@ -252,12 +254,17 @@ fn single(
     letters: &CheckedHyperLetters<'_, '_>,
     control: SingleControl<'_>,
 ) -> EngineReport {
-    use fsl_replay::{GraphEvidence, StateGraphMethod, StateGraphPropertyForm, TerminalValue};
+    use fsl_replay::{StateGraphMethod, StateGraphPropertyForm, TerminalValue};
     let SingleControl {
         form,
         limits,
         cancel,
     } = control;
+    // FSpec FR-393's evidence instance names one parameter, so a clause with
+    // more has no way to write what its instances settle from.
+    if clause.parameters().len() > 1 {
+        return EngineReport::Refused(Refusal::Unsupported(super::items::NOT_YET));
+    }
     let mut budgets = form.limits;
     if let Some(samples) = form.witness_samples {
         budgets.witness_samples = samples;
@@ -308,13 +315,7 @@ fn single(
         };
         let mut wire = None;
         if let Some(evidence) = settled.evidence.as_ref() {
-            let over = match evidence {
-                GraphEvidence::Witness { over, .. }
-                | GraphEvidence::Trap { over, .. }
-                | GraphEvidence::PathPair { over, .. }
-                | GraphEvidence::Undefined { over, .. } => over.as_ref(),
-            };
-            let reference = match (clause.parameter_object_type(0), over) {
+            let reference = match (clause.parameter_object_type(0), evidence.over().first()) {
                 (Some(declared), Some(instance)) => {
                     match system.written_reference(declared.clone(), instance) {
                         Ok(reference) => Some(reference),

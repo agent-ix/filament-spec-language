@@ -32,7 +32,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-182
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-331
-    type: references
+    type: depends_on
 ---
 # FR-163: Check a hyper item's product-closure certificate in the qualified core
 

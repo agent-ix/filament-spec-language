@@ -64,6 +64,7 @@ use fsl_replay::{
     UndefinedEvaluation, UndefinedLocus, UndefinedSite, WitnessSource, DEFAULT_WITNESS_SEED,
 };
 use fsl_semantics::check::{CheckedHyperClause, HyperForm, TemporalProfile};
+use ix_trace_rs::implements;
 
 use super::{
     fault, instances, retain, tree_path, widen, FairModel, HyperGraph, HyperRefusal, Positions,
@@ -825,10 +826,11 @@ impl<'a> Run<'_, 'a> {
                     OpenCause::NotExpanded
                 };
                 open.insert(id, cause);
-            } else if state.findings.iter().any(|finding| {
-                matches!(finding, HyperFinding::Contract { finding, .. }
-                    if finding.undefined_contract().is_some() || finding.is_refused_contract())
-            }) {
+            } else if state
+                .findings
+                .iter()
+                .any(HyperFinding::leaves_successors_unknown)
+            {
                 open.insert(id, OpenCause::UndecidedSuccessor);
             }
         }
@@ -851,6 +853,7 @@ impl<'a> Run<'_, 'a> {
 
 impl<'a> Decision<'_, '_, 'a> {
     /// Decide the instance (FR-181 Outcomes).
+    #[implements("FR-181-AC-13")]
     fn decide(
         &self,
         sampled: &[Option<LassoWitness>],
@@ -887,18 +890,8 @@ impl<'a> Decision<'_, '_, 'a> {
             match self.lasso(&fair, &analyses, &part, initial)? {
                 Ok(Some(witness)) => *slot = Some(witness),
                 Ok(None) => {
-                    // A state the body automaton has no run from accepts
-                    // nothing, and neither does any state after it, so one
-                    // the run did not expand hides no witness. It stays
-                    // open for `Witnessed`, which also needs every letter
-                    // beyond it to have a value.
                     let closed = !part.roots.is_empty()
-                        && part.members.iter().all(|id| {
-                            !self.open.contains_key(id)
-                                || graph
-                                    .state(*id)
-                                    .is_some_and(|member| member.state.property == Property::Dead)
-                        });
+                        && part.members.iter().all(|id| self.closed_for_trap(*id));
                     if closed && trap.is_none() {
                         let rank = part.roots.first().map_or(0, |root| root.index());
                         trap = Some((initial, rank));
@@ -1257,6 +1250,33 @@ impl<'a> Decision<'_, '_, 'a> {
             }
         }
         Ok(steps)
+    }
+
+    /// Whether the state at `id` leaves its part closed for `Trapped`. A
+    /// state the body automaton has no run from accepts nothing, and neither
+    /// does any state after it, so one the run did not expand hides no
+    /// witness, provided its contract conjunctions all have a value: one
+    /// without is never read as a disabled step (ADR-018 UE-6). It stays
+    /// open for `Witnessed`, which also needs every letter beyond it.
+    #[implements("FR-181-AC-13")]
+    fn closed_for_trap(&self, id: ProductStateId) -> bool {
+        match self.open.get(&id) {
+            None => true,
+            Some(OpenCause::UndecidedSuccessor) => false,
+            Some(_) => self.product.graph.state(id).is_some_and(|member| {
+                member.state.property == Property::Dead
+                    && self
+                        .product
+                        .product
+                        .successors(&member.state)
+                        .is_ok_and(|expansion| {
+                            !expansion
+                                .findings
+                                .iter()
+                                .any(HyperFinding::leaves_successors_unknown)
+                        })
+            }),
+        }
     }
 
     /// The `Undefined` outcome for the product state `at`, whose letter has no

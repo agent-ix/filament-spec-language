@@ -475,7 +475,9 @@ fn instance_of_clause(
             })
             .ok_or_else(|| fault("a-parameter-alias-has-a-trace"))?;
         let listed = system
-            .hyper_instances(&parameter.object)
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
             .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
         if !listed.iter().any(|instance| instance.key == *key) {
             return Err(shape_error(
