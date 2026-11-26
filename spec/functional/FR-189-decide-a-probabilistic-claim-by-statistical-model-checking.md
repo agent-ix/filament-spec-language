@@ -134,7 +134,8 @@ the claim's form does not admit (FR-190, SPRT and Clopper–Pearson below).
 ### Per sample
 
 - EN-4 SHALL sample at most `h + 1` positions for an event or bounded measure
-  of horizon or window `h` (FR-188), and evaluate the event, or the measure and
+  of step horizon or window `h` (FR-188; a time horizon is read as FR-254
+  states, which bounds no position count by `h`), and evaluate the event, or the measure and
   its comparison, with the layer-5 evaluator over those positions. A bounded
   event stops when its monitor decides, and closes at a terminal model state
   with the profile's false extension (ADR-018 SM-4, FR-126). A measure stops
