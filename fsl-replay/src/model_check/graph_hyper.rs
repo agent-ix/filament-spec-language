@@ -381,18 +381,17 @@ fn replay_undefined(
     if *state_key != undefined.state_key {
         return Ok(false);
     }
-    // A contract conjunction with no value: no claim predicate, and the
-    // transition whose guard has none (ADR-018 UE-6).
+    // A contract conjunction with no value: no claim predicate. A
+    // precondition names the transition it guards; a postcondition names
+    // none (ADR-018 UE-6).
     if undefined.predicate.is_none() {
-        let (Some(transition), Some(clause_name)) = (
-            undefined.transition.as_ref(),
-            package
-                .graph()
-                .state_clauses()
-                .iter()
-                .find(|candidate| candidate.body().location() == expected_locus)
-                .map(|candidate| candidate.name().to_owned()),
-        ) else {
+        let Some(clause_name) = package
+            .graph()
+            .state_clauses()
+            .iter()
+            .find(|candidate| candidate.body().location() == expected_locus)
+            .map(|candidate| candidate.name().to_owned())
+        else {
             return Ok(false);
         };
         for (index, (state, _)) in positions.iter().enumerate() {
@@ -405,7 +404,7 @@ fn replay_undefined(
                 .filter_map(|finding| finding.undefined_contract())
                 .any(|contract| {
                     contract.clause == clause_name
-                        && contract.guard_of.as_ref() == Some(transition)
+                        && contract.guard_of.as_ref() == undefined.transition.as_ref()
                         && contract.cause == undefined.cause
                 });
             if matched {

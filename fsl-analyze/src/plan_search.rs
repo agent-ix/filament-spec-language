@@ -1190,7 +1190,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
     /// Keep the first contract conjunction with no value among `findings`, at
     /// `state` (ADR-018 UE-6): the search is then not complete, whatever it
     /// finds elsewhere.
-    #[implements("FR-1012-AC-5")]
+    #[implements("FR-1012-AC-9")]
     fn note_undefined_contract(
         &mut self,
         state: &ModelSimState,
@@ -1294,8 +1294,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
                     }),
                     Event::Disabled(_) => Ok(()),
                     Event::Undetermined {
-                        outcome,
-                        transition,
+                        outcome, clause, ..
                     } => match outcome {
                         fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(_)
                         | fsl_eval::simulation::model::ClauseOutcome::FamilyUndefined(_) => {
@@ -1303,7 +1302,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
                             // invocation (ADR-018 UE-6).
                             if self.undefined.is_none() {
                                 self.state_key(&state).map(|key| {
-                                    self.undefined = Some((key, transition.operation().to_owned()));
+                                    self.undefined = Some((key, clause.to_owned()));
                                 })
                             } else {
                                 Ok(())

@@ -3710,17 +3710,12 @@ fn positive_source_policy_stage_boundary_keeps_required_future_forms_explicit() 
     }
 }
 
-/// A contract conjunction with no value at a reachable state is no disabled
-/// step (ADR-018 UE-6). `inc`'s guard `6 mod (2 - value) >= 0` has no value
-/// at the reachable value 2, so a goal at 8 and a goal at 21 are each
-/// `incomplete` with the `ContractUndefined` cause naming `Gap`, never
-/// `optimal`, `infeasible` or certified.
-fn undefined_guard(goal: i64) {
+fn undefined_guard_world() -> World {
     let document =
         filament_specification::published_file(&format!("{FIXTURE}model.semantic-ir.json"))
             .expect("FSpec publishes the counter model")
             .to_vec();
-    let world = World::with_kernel_functions(
+    World::with_kernel_functions(
         Domain {
             package: "example/plan-counter",
             object: "Counter",
@@ -3732,7 +3727,16 @@ fn undefined_guard(goal: i64) {
         model_world::INFINITE,
         &[],
         &[("c", json!({"value": {"integer": "1"}}))],
-    );
+    )
+}
+
+/// A contract conjunction with no value at a reachable state is no disabled
+/// step (ADR-018 UE-6). `inc`'s guard `6 mod (2 - value) >= 0` has no value
+/// at the reachable value 2, so a goal at 8 and a goal at 21 are each
+/// `incomplete` with the `ContractUndefined` cause naming `Gap`, never
+/// `optimal`, `infeasible` or certified.
+fn undefined_guard(goal: i64) {
+    let world = undefined_guard_world();
     let system = ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation).expect("admits");
     let mut rules = Counter::new(&world, &system, goal);
     let result = run(
@@ -3762,4 +3766,51 @@ fn a_goal_reached_through_an_undefined_guard_is_incomplete() {
 #[trace("FR-1012-AC-9")]
 fn a_goal_past_an_undefined_guard_is_not_infeasible() {
     undefined_guard(21);
+}
+
+/// The native candidate walk, which source plan requests use, names the
+/// undecided clause, not the operation: from the value 1 `inc` completes at
+/// 2, and from 2 its `Gap` guard has no value.
+#[test]
+#[trace("FR-1012-AC-9")]
+fn a_native_candidate_event_names_the_clause_with_no_value() {
+    use fsl_eval::simulation::model::{
+        ClauseOutcome, NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let world = undefined_guard_world();
+    let system = ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation).expect("admits");
+    let order = native_order(&system, &["inc"]);
+    let mut next = None;
+    system
+        .visit_plan_candidates(&system.initial()[0], &order, None, &mut |event| {
+            if let Event::Completed { state, .. } = event {
+                next = Some(state.clone());
+            }
+            Control::Continue
+        })
+        .unwrap();
+    let mut undefined = Vec::new();
+    system
+        .visit_plan_candidates(
+            &next.expect("inc completes at 1"),
+            &order,
+            None,
+            &mut |event| {
+                if let Event::Undetermined {
+                    clause, outcome, ..
+                } = event
+                {
+                    undefined.push((
+                        clause.to_owned(),
+                        matches!(
+                            outcome,
+                            ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_)
+                        ),
+                    ));
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    assert_eq!(undefined, [("Gap".to_owned(), true)]);
 }

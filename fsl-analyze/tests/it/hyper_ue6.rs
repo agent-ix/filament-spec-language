@@ -44,8 +44,18 @@ fn single(
     starts: &[(i64, i64)],
     samples: bool,
 ) -> (ExistentialOutcome, String) {
+    single_in(GUARDED, profile, body, starts, samples)
+}
+
+fn single_in(
+    vault: Vault,
+    profile: &str,
+    body: &str,
+    starts: &[(i64, i64)],
+    samples: bool,
+) -> (ExistentialOutcome, String) {
     let world = World::new_with_kernel_function(
-        GUARDED,
+        vault,
         false,
         starts,
         &single_clause(profile, body),
@@ -90,6 +100,10 @@ fn single(
 /// The outcome is `Undefined` at `position` along `steps` steps, naming the
 /// `Guard` conjunction, and the settled record is `Refuted`.
 fn assert_undefined(run: (ExistentialOutcome, String), position: u64) {
+    assert_undefined_in(run, position, "Guard");
+}
+
+fn assert_undefined_in(run: (ExistentialOutcome, String), position: u64, clause: &str) {
     let (outcome, label) = run;
     let ExistentialOutcome::Undefined { stem, undefined } = outcome else {
         panic!("expected Undefined, got {outcome:?}");
@@ -98,7 +112,7 @@ fn assert_undefined(run: (ExistentialOutcome, String), position: u64) {
     assert_eq!(u64::try_from(stem.steps.len()).unwrap(), position);
     assert_eq!(
         undefined.site.locus,
-        UndefinedLocus::Contract("Guard".to_owned())
+        UndefinedLocus::Contract(clause.to_owned())
     );
     assert_eq!(undefined.cause, DIVISION);
     assert_eq!(label, "Refuted");
@@ -145,11 +159,35 @@ fn a_single_closed_undefined_initial_state_is_position_zero() {
     assert_undefined(
         single(
             "ep",
-            "eventually [0, 2] holds(v.h @ b = 0)",
+            "eventually [0, 2] holds(v.l @ b = 1)",
             &[(0, 1)],
             false,
         ),
         0,
+    );
+}
+
+/// An undefined postcondition names no transition, and it replays too: the
+/// vault's `Div` conjunction divides by the post-state's `l`, which is 0 after
+/// `step(0)` from `(0, 0)`, so the initial state's expansion already has no
+/// value (ADR-018 UE-6).
+#[trace("TC-616", "FR-181-AC-15")]
+#[test]
+fn an_undefined_postcondition_refutes_and_replays() {
+    const POSTCONDITION: Vault = Vault::Custom(
+        "post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n\
+         post Div using v on V::Vault::step { quotient(self.l) >= 0 }\n",
+    );
+    assert_undefined_in(
+        single_in(
+            POSTCONDITION,
+            "inf",
+            "always holds(v.l @ b = 0)",
+            &[(0, 0)],
+            false,
+        ),
+        0,
+        "Div",
     );
 }
 
@@ -194,14 +232,20 @@ fn forall_exists(profile: &str, matched: &str, body: &str) -> String {
     )
 }
 
-const BOTH_ZERO: &str = "match { (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 \
+const BOTH_ZERO: &str =
+    "match { (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 \
      and (if present(b.step.Vault::step.i) then value(b.step.Vault::step.i) else 0) = 0 }";
-const A_ZERO: &str = "match { (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 \
+const A_ZERO: &str =
+    "match { (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 \
      and b.step.op != stutter }";
 
 /// The outcome is an `undefined` counterexample at `position` naming the
 /// `Guard` conjunction of exactly `named`, and its record is `Refuted`.
-fn assert_refuted(run: Result<(HyperOutcome, String), ModelCheckRefusal>, position: u64, named: &[&str]) {
+fn assert_refuted(
+    run: Result<(HyperOutcome, String), ModelCheckRefusal>,
+    position: u64,
+    named: &[&str],
+) {
     let (outcome, label) = run.expect("not refused");
     let HyperOutcome::Violated { counterexample, .. } = outcome else {
         panic!("expected a counterexample, got {outcome:?}");
@@ -235,7 +279,7 @@ fn assert_closed_undefined_refused(run: Result<(HyperOutcome, String), ModelChec
 /// Universal, infinite: the body is decided true at position 0 on every
 /// start, yet `(0, 1)` is a component state at position 1. Canonical order
 /// tries `a` on `step(0)` first, so the first tuple to reach it has `b` on `step(1)`.
-#[trace("TC-602", "FR-176-AC-4")]
+#[trace("TC-602", "FR-176-AC-5")]
 #[test]
 fn a_universal_infinite_body_decided_at_position_zero_is_refuted_at_the_guard() {
     assert_refuted(
@@ -255,7 +299,7 @@ fn a_universal_infinite_body_decided_at_position_zero_is_refuted_at_the_guard() 
 /// `match` keeps only the joint steps whose both components take `step(0)`,
 /// so no admitted tuple reaches `(0, 1)`: the state is outside the clause's
 /// scope (ADR-023 HM-3, HV-8), and the clause holds.
-#[trace("TC-602", "FR-176-AC-4")]
+#[trace("TC-602", "FR-176-AC-5")]
 #[test]
 fn a_state_no_matched_universal_tuple_reaches_is_outside_the_clause() {
     let (outcome, label) = hyper(
@@ -297,7 +341,8 @@ fn an_existential_member_at_the_guard_refutes_the_universal_side() {
     );
 }
 
-/// Closed finite executions of length 4 reach `(0, 1)` by `step(1)` from `(0, 0)`
+/// Item level: `HyperRefusal::ClosedUndefined` settles `unsupported`, the
+/// `NOT_YET` cause, by the pinned mapping in `analyze/items.rs`. Closed finite executions of length 4 reach `(0, 1)` by `step(1)` from `(0, 0)`
 /// and start there from `(0, 1)`: no execution ends at a state whose guard has no
 /// value, so the clause is not proved.
 #[trace("TC-2243", "FR-173-AC-7")]
@@ -305,19 +350,11 @@ fn an_existential_member_at_the_guard_refutes_the_universal_side() {
 fn closed_universal_and_forall_exists_do_not_prove_past_the_guard() {
     for start in [(0, 0), (0, 1)] {
         assert_closed_undefined_refused(hyper(
-            &universal(
-                "ep",
-                "",
-                "eventually [0, 3] holds(v.h @ a = v.h @ a)",
-            ),
+            &universal("ep", "", "eventually [0, 3] holds(v.h @ a = v.h @ a)"),
             &[start],
         ));
         assert_closed_undefined_refused(hyper(
-            &forall_exists(
-                "ep",
-                "",
-                "eventually [0, 3] holds(v.h @ a = v.h @ b)",
-            ),
+            &forall_exists("ep", "", "eventually [0, 3] holds(v.h @ a = v.h @ b)"),
             &[start],
         ));
     }
@@ -336,11 +373,12 @@ fn match_undefined(profile: &str, quantifier: &str, body: &str) -> String {
 }
 
 fn match_run(declaration: &str) -> Result<HyperOutcome, ModelCheckRefusal> {
-    let world = World::new_with_kernel_function(Vault::Secure, false, &[(0, 0)], declaration, QUOTIENT);
+    let world =
+        World::new_with_kernel_function(Vault::Secure, false, &[(0, 0)], declaration, QUOTIENT);
     world.run(ModelCheckLimits::default(), &Cancel::new())
 }
 
-#[trace("TC-602", "FR-176-AC-4")]
+#[trace("TC-602")]
 #[test]
 fn an_undefined_match_refutes_the_infinite_universal_and_forall_exists() {
     for quantifier in ["forall", "exists"] {
@@ -354,7 +392,10 @@ fn an_undefined_match_refutes_the_infinite_universal_and_forall_exists() {
             panic!("{quantifier}: expected a counterexample, got {outcome:?}");
         };
         let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-            panic!("{quantifier}: expected undefined, got {:?}", counterexample.kind);
+            panic!(
+                "{quantifier}: expected undefined, got {:?}",
+                counterexample.kind
+            );
         };
         assert!(
             matches!(undefined.locus, HyperLocus::Match { .. }),
@@ -364,10 +405,12 @@ fn an_undefined_match_refutes_the_infinite_universal_and_forall_exists() {
     }
 }
 
-/// The closed forms stop at `Undecided(MatchUndetermined)`: never `Holds`. A
+/// No criterion owns an undefined `match` (ADR-023 HV-8 is the only rule), so the
+/// tests of it carry the test-case tag alone. The closed forms stop at
+/// `Undecided(MatchUndetermined)`: never `Holds`. A
 /// refuting counterexample (HV-8) needs the tuple search that the closed
 /// forms lack.
-#[trace("TC-2243", "FR-173-AC-7")]
+#[trace("TC-2243")]
 #[test]
 fn an_undefined_match_never_proves_the_closed_forms() {
     for quantifier in ["forall", "exists"] {

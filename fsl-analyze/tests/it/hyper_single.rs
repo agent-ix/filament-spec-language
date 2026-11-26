@@ -1168,7 +1168,7 @@ const GUARDED: Vault = Vault::Custom(
 /// item is `Undefined` there although the stutter loop at `(0, 1)` would
 /// satisfy the claim. The stem is the one step, `where` names position 1,
 /// the guard's clause and the transition it guards.
-#[trace("TC-616", "FR-181-AC-5")]
+#[trace("TC-616", "FR-181-AC-15")]
 #[test]
 fn a_contract_with_no_value_refutes_its_state() {
     let world = World::new_with_kernel_function(
@@ -1207,7 +1207,7 @@ fn a_contract_with_no_value_refutes_its_state() {
 
 /// ADR-018 UE-6: an initial state whose guard has no value ends the instance
 /// at path length 0 with `where` at position 0.
-#[trace("TC-616", "FR-181-AC-5")]
+#[trace("TC-616", "FR-181-AC-15")]
 #[test]
 fn ue6_an_undefined_guard_refutes_the_hyper_instance_as_undefined() {
     let world = World::new_with_kernel_function(
@@ -1460,7 +1460,7 @@ const GUARDED_RESET: Vault = Vault::Custom(
 /// `(0, 1)` is undefined, so the `reset` loop there under `fair weak step`
 /// settles `Undefined` at position 0 in the explored product and in the
 /// sampled run alike, and phase 0 keeps no candidate through the state.
-#[trace("TC-606", "FR-181-AC-5")]
+#[trace("TC-606", "FR-181-AC-15")]
 #[test]
 fn a_loop_through_an_undefined_state_is_refuted_not_witnessed() {
     let world = World::new_with_kernel_function(

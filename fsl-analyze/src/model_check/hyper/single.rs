@@ -1322,7 +1322,7 @@ impl<'a> Decision<'_, '_, 'a> {
 
     /// The first contract conjunction with no value among a state's findings,
     /// in the order its expansion recorded them (ADR-018 UE-6).
-    #[implements("FR-181-AC-13")]
+    #[implements("FR-181-AC-15")]
     fn undefined_contract_of(
         findings: &[HyperFinding],
     ) -> Option<fsl_eval::simulation::model::UndefinedContract> {

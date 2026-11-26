@@ -179,7 +179,7 @@ variable, so its form is decided over tuples of closed finite traces.
   a disabled step (ADR-018 UE-6), so no execution ends there: every form
   except HP-5 returns the refusal `ClosedUndefined`, which settles
   `unsupported`, never `proved`, and a refused conjunction returns
-  `Undecided(UndecidedSuccessor)`. HP-5 returns `Undefined` (FR-181-AC-15).
+  `Undecided(UndecidedSuccessor)`. HP-5 returns `Undefined` (FR-181-AC-15). This deviates from ADR-018 UE-6, ADR-022 RU-5 and RU-7, which settle `refuted` in every engine: closed HP-2, HP-3 and HP-6 settle `unsupported` until the closed forms carry a tuple search that yields a replayable `undefined` counterexample (QSL-3557). It is sound, since nothing is proved, and the verdict is a refusal, never a wrong answer.
 
 ## Acceptance Criteria
 

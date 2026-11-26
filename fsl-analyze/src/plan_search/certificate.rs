@@ -444,13 +444,12 @@ pub(crate) fn check<R: PlanRules>(
                         }
                     },
                     Event::Undetermined {
-                        outcome,
-                        transition,
+                        outcome, clause, ..
                     } => match outcome {
                         ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_) => {
                             // No disabled invocation (ADR-018 UE-6).
                             denied = Some(PlanStopCause::ContractUndefined {
-                                clause: transition.operation().to_owned(),
+                                clause: clause.to_owned(),
                                 state: entry.key.state.clone(),
                             });
                             Control::Stop
