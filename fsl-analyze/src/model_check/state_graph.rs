@@ -327,6 +327,7 @@ fn instances<'a>(
 }
 
 /// Collapse symmetry-equivalent claim instances to their least binding.
+#[implements("FR-151-AC-5")]
 fn symmetry_instances<'a>(
     views: Vec<Vec<InstanceView<'a>>>,
     declared: &SymmetryGroup,
@@ -334,6 +335,11 @@ fn symmetry_instances<'a>(
     views
         .into_iter()
         .map(|instances| {
+            let bound: BTreeSet<_> = instances
+                .iter()
+                .filter_map(|view| view.model_instance.as_ref())
+                .map(|binding| (binding.population.clone(), binding.key.clone()))
+                .collect();
             let mut result = Vec::new();
             for view in instances {
                 let Some(binding) = view.model_instance.clone() else {
@@ -345,6 +351,9 @@ fn symmetry_instances<'a>(
                 let mut orbit = declared
                     .class_of(&binding.population, &binding.key)
                     .map_or_else(|| vec![binding.key.clone()], |class| class.keys.clone());
+                // A key that is no instance here is in no orbit (FR-151
+                // "Instances").
+                orbit.retain(|key| bound.contains(&(binding.population.clone(), key.clone())));
                 orbit.sort();
                 let representative = orbit
                     .first()
