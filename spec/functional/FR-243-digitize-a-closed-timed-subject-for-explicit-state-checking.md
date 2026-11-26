@@ -67,6 +67,16 @@ decided on the digital-clock route with an exact value.
   strict, the route SHALL decline: the item settles `declined`
   `invalid-input` naming the strict constraint or interval, with
   `settled_by` `result` and `backend` `en-1`, and no search runs.
+- Temporarily (QSL-3324, FR-204 "Temporary fallback" F-5, owner decision
+  pending): on EN-1's digital-clock route, a claim other than a TT-1 timed
+  invariant over the discrete state, deadlock freedom or location
+  reachability SHALL NOT settle `proved`; it SHALL settle `incomplete` with
+  FSpec FR-331's `timed-route-withheld{reason: digital-proof-unsound}`. Its
+  refutations, which replay by FR-181 timed replay, are kept. A temporal
+  clause `eventually[1 ms, 2 ms] holds(P)` is such a claim, which
+  digitization can prove where the zone route refutes it. FR-243-AC-4's
+  `NoLateReply` is a timed invariant over the discrete state and is
+  unchanged.
 - When a `probabilistic-satisfaction` item over a timed subject names
   `exact` evidence, the request writer SHALL route it to EN-5's
   digital-clock route (FR-204); when it names `statistical` evidence, to

@@ -84,7 +84,9 @@ pub enum ExactProbLimit { MaxStates, MaxTransitions, MaxAutomatonStates, MaxIter
 // Exploration: Complete, or Partial for a lower proof found on a partial product (FR-1042), whose
 //   upper is the objective's least upper bound (+∞ for an expected reward) and which has no counterpart
 pub enum BoundsMethod { BackwardInduction { precision_bits: u32 }, IntervalIteration { precision_bits: u32, sweeps: u64 } }
-// IncompleteCause gains: PrecisionBudget { lower: Rational, upper: Rational }
+// IncompleteCause gains: PrecisionBudget { lower: Rational, upper: Rational },
+//   and, temporarily (QSL-3324, FR-204 "Temporary fallback"), TimedRouteWithheld { reason: TimedRouteWithheldReason }
+//   with TimedRouteWithheldReason one of DigitalProofUnsound, NestedReadUnchecked, WorkloadFreeDelay
 
 // UnsupportedCause gains: DelayDistribution (exact evidence over a continuous
 //   delay distribution only; FR-204). Zero-weight components (FR-199), strict
