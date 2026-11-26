@@ -502,11 +502,12 @@ fn assert_terminal_node_is_the_only_open_successor(
         unknown_terminal[0].0.as_slice(),
         "the open node is the terminal state whose predicate refuses"
     );
-    assert!(run
-        .graph
-        .edges
-        .iter()
-        .any(|edge| { edge.source.index() == 0 && edge.target == *open_node }));
+    assert!(
+        run.graph
+            .edges
+            .iter()
+            .any(|edge| { edge.source.index() == 0 && edge.target == *open_node })
+    );
 }
 
 /// FSpec FR-391-AC-13/15/16/17: source hand outcomes and strict package-read
