@@ -1475,6 +1475,7 @@ fn evidence_of(
 
 /// The instance `reference` is the binding of: `Some(None)` for a claim with
 /// no `over` parameter, `None` when the reference names no instance.
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
 fn bound_instance(
     system: &ModelSystem<'_>,
     claim: &CheckedStateGraphClaim,
@@ -1484,14 +1485,16 @@ fn bound_instance(
         return Some(None);
     };
     system
-        .instances(&ValueType::Reference(over.object.clone()))
+        .claim_instances(&ValueType::Reference(over.object.clone()))
         .ok()?
-        .into_iter()
+        .as_slice()
+        .iter()
         .find(|instance| {
             system
                 .written_reference(over.object.clone(), instance)
                 .is_ok_and(|bound| &bound == reference)
         })
+        .cloned()
         .map(Some)
 }
 
