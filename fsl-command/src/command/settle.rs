@@ -142,7 +142,7 @@ fn resolve_held_claims<'a>(
         return Ok(std::borrow::Cow::Borrowed(selection));
     }
     let graph = fsl_analyze::analyze::DocumentGraphs::of_package(checked.package(), packages, emit)
-    .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
+        .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
     resolve_held_claims_in(&graph, selection)
 }
 
