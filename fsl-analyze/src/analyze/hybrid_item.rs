@@ -9,13 +9,13 @@
 
 use filament_exact::LimitKind;
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    hybrid_locus_wire, Certification, ExactGap, HybridCounterexample, HybridCounterexampleKind,
-    HybridReplayMeter, HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict,
-    IncompleteCause, ModelCheckLimit, TerminalValue, UnsupportedConstruct,
+    Certification, ExactGap, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
+    HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, IncompleteCause,
+    ModelCheckLimit, TerminalValue, UnsupportedConstruct, hybrid_locus_wire,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::wire_id::WireGraph;

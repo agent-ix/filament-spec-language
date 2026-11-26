@@ -479,9 +479,10 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
             _ => None,
         })
         .expect("the unit declares one population");
-    let mut snapshot: Value =
-        serde_json::from_slice(world.snapshots.values().next().expect("one snapshot"))
-            .expect("snapshot JSON");
+    let mut snapshot: Value = serde_json::from_slice(
+        world.snapshots.values().next().expect("one snapshot"),
+    )
+    .expect("snapshot JSON");
     snapshot["populations"]
         .as_array_mut()
         .expect("snapshot populations")

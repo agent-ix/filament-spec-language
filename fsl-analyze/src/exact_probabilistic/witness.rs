@@ -35,7 +35,7 @@ use fsl_eval::simulation::model::same_rewards;
 
 use super::finite_horizon::rational_fits;
 use super::rows::{
-    free_delays_choice, free_delays_distribution, scheduler_distribution, DistributionFault,
+    DistributionFault, free_delays_choice, free_delays_distribution, scheduler_distribution,
 };
 use super::unbounded::same_action;
 use super::{
@@ -1326,27 +1326,31 @@ mod tests {
     #[test]
     fn mathematical_insufficiency_is_distinct_from_a_producer_stop() {
         let product = terminal_product();
-        assert!(produce_witness(
-            &product,
-            &[Some(0)],
-            WitnessScope::EveryScheduler,
-            ProbStateId(0),
-            &[false],
-            &rational(0),
-            &ExactProbLimits::default()
-        )
-        .expect("the chain is well formed and no budget is exhausted")
-        .is_none());
-        assert!(produce_witness(
-            &product,
-            &[Some(0)],
-            WitnessScope::EveryScheduler,
-            ProbStateId(0),
-            &[true],
-            &rational(0),
-            &ExactProbLimits::default()
-        )
-        .expect("the initial target has unit mass")
-        .is_some());
+        assert!(
+            produce_witness(
+                &product,
+                &[Some(0)],
+                WitnessScope::EveryScheduler,
+                ProbStateId(0),
+                &[false],
+                &rational(0),
+                &ExactProbLimits::default()
+            )
+            .expect("the chain is well formed and no budget is exhausted")
+            .is_none()
+        );
+        assert!(
+            produce_witness(
+                &product,
+                &[Some(0)],
+                WitnessScope::EveryScheduler,
+                ProbStateId(0),
+                &[true],
+                &rational(0),
+                &ExactProbLimits::default()
+            )
+            .expect("the initial target has unit mass")
+            .is_some()
+        );
     }
 }

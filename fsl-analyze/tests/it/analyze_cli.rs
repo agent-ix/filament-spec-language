@@ -1093,8 +1093,7 @@ fn caller_s1_diagnostics_moves_the_syntax_error_cut() {
     let broken: String = (0..150)
         .map(|n| format!("record R{n} {{ z: ; }}\n"))
         .collect();
-    let path =
-        crate::analyze_cli_support::counter_request(&ws, &broken, json!([{"claim": "Bounded"}]));
+    let path = crate::analyze_cli_support::counter_request(&ws, &broken, json!([{"claim": "Bounded"}]));
     let default = crate::analyze_cli_support::analyze(&path);
     let text = String::from_utf8_lossy(&default.stdout).into_owned();
     assert!(text.contains("cut after 100 syntax errors"), "{text}");
@@ -1109,16 +1108,8 @@ fn caller_s1_diagnostics_moves_the_syntax_error_cut() {
     let text = String::from_utf8_lossy(&widened.stdout).into_owned();
     assert!(!text.contains("diagnostic list was cut"), "{text}");
     assert_eq!(widened.exit, default.exit);
-    for operand in [
-        "s1.diagnostics=-1",
-        "s1.diagnostics=many",
-        "s1.diagnostics=",
-    ] {
+    for operand in ["s1.diagnostics=-1", "s1.diagnostics=many", "s1.diagnostics="] {
         let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
-        assert_eq!(
-            refusal.cause,
-            fsl_foundation::UsageCause::NotAnInteger,
-            "{operand}"
-        );
+        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
     }
 }

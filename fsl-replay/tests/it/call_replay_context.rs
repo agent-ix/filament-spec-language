@@ -23,14 +23,14 @@ fn fixture_node(fill: u8) -> NodeKey {
 
 use filament_exact::Cancel;
 use filament_semantic_value::supplied_stop::SuppliedLimits;
-use fsl_replay::spine::{self, default_accounting, ParseRequest};
+use fsl_replay::spine::{self, ParseRequest, default_accounting};
 use fsl_replay::{
-    call_site, compile_package, replay, run_with_replay_context, run_with_requirements, BackendId,
-    Call, CallArgument, CallOutcome, CallSiteUnit, CallerLimits, CanonicalAssignment,
+    BackendId, Call, CallArgument, CallOutcome, CallSiteUnit, CallerLimits, CanonicalAssignment,
     DependencyInput, DomainKey, DomainKind, FiniteBound, Identifier, InconclusiveCause, Integer,
     NodeKey, ObjectEnvironment, PluginReplayContext, PluginReplayRefusal, ProofBound,
     QualifiedName, ReplayLimits, ReplayRequestWire, RequestIndex, RunRefusal, RunWithReplayContext,
-    SourceIdentity, SpineLimits, TerminalRecord, TerminalValue, Value, WitnessValue,
+    SourceIdentity, SpineLimits, TerminalRecord, TerminalValue, Value, WitnessValue, call_site,
+    compile_package, replay, run_with_replay_context, run_with_requirements,
 };
 use ix_trace_rs::trace;
 

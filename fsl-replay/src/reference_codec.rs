@@ -2006,13 +2006,13 @@ mod tests {
     #[trace("TC-471", "FR-120-AC-40")]
     #[test]
     fn call_reference_adapter_uses_checked_admission_and_environment() {
-        use super::{reference_fixture, ReferenceCodec};
+        use super::{ReferenceCodec, reference_fixture};
         use filament_semantic_value::model_transition::ModelTransition;
         use fsl_eval::execution::{PrepareLimits, SuppliedBackends};
         use fsl_package::ReferenceCatalog;
-        use fsl_semantics::model::intake::{package_input, SelectedModels};
+        use fsl_semantics::model::intake::{SelectedModels, package_input};
         use fsl_semantics::model::observation::{
-            admit_current_snapshot, DocumentRef, ObservationLimits,
+            DocumentRef, ObservationLimits, admit_current_snapshot,
         };
         use serde_json::json;
         use std::collections::BTreeMap;
@@ -2161,8 +2161,10 @@ mod tests {
         let original_wire = template
             .to_wire()
             .expect("unchanged unscoped source spelling");
-        assert!(template
-            .same_identity(&crate::TaskTransitionTemplate::from_wire(&original_wire).unwrap()));
+        assert!(
+            template
+                .same_identity(&crate::TaskTransitionTemplate::from_wire(&original_wire).unwrap())
+        );
         task_wire["source_transition"]["arguments"][0]["identity"] = json!("FF");
         assert!(
             matches!(carrier.restore_task_template(&task_wire), Err(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer }) if pointer == "/source_transition/arguments/0/identity")
@@ -2267,7 +2269,7 @@ mod tests {
     #[trace("TC-471", "FR-120-AC-39")]
     #[test]
     fn reference_catalog_genuine_config_version_source_and_admitted_roundtrip() {
-        use super::{reference_fixture, ReferenceCodec};
+        use super::{ReferenceCodec, reference_fixture};
         use filament_checked::key::DeclarationKey;
         use filament_contract_model::NativeJoinBudget;
         use fsl_eval::model_subject::ModelInstance;
@@ -2286,13 +2288,13 @@ mod tests {
         use fsl_semantics::model::normalize::EffectiveView;
         use fsl_semantics::model::object_environment::ObjectEnvironment;
         use fsl_semantics::model::observation::{
-            admit_current_snapshot_with_views, admitted_population_document,
-            declared_type_universe_for, DocumentRef, ObservationLimits,
+            DocumentRef, ObservationLimits, admit_current_snapshot_with_views,
+            admitted_population_document, declared_type_universe_for,
         };
         use fsl_semantics::model::population::{
-            admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+            AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, admit_binding,
         };
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
         use std::collections::BTreeMap;
 
         let mut document: Value = serde_json::from_str(reference_fixture::DOMAIN_PACKAGE).unwrap();

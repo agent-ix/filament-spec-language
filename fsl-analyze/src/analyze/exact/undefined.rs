@@ -5,7 +5,7 @@ use super::*;
 use crate::exact_probabilistic::{PredicateRole, UndefinedPath, UndefinedRead};
 use fsl_eval::automaton::{Monitor, PropertyAutomaton, QualifiedBoundedMonitor};
 use fsl_eval::simulation::model::{ModelSimulationRequest, PredicateReading};
-use fsl_replay::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
+use fsl_replay::{ProbabilityUndefinedWitness, replay_probabilistic_undefined};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(

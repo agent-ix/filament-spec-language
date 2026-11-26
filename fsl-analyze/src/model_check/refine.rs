@@ -43,10 +43,10 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex, analyze,
 };
 use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{
     ExpansionLimit, ExpansionStop, InitialStateRefusal, SubjectSystem, TransitionSystem,
@@ -56,10 +56,11 @@ use fsl_replay::{
     check_protocol_initial_with_transition_limit, check_protocol_state_relations,
     check_protocol_step_with_transition_limit, check_step_for_model,
     open_protocol_systems_with_initial_limit, open_systems_with_initial_limit, AbstractClass,
-    AbstractProtocolSystem, CandidateFairState, CandidateFairStep, CandidateLivenessError,
-    CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind, IncompleteCause, Lasso,
-    LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelStep,
-    ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
+    AbstractProtocolSystem, CandidateFairState,
+    CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
+    CounterexampleKind, IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelStep, ProtocolRelationError, ProtocolStateRelation,
+    ProtocolSystemsRefusal, ReachedLimit,
     RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
     Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
@@ -69,15 +70,15 @@ use ix_trace_rs::implements;
 #[cfg(test)]
 use fsl_replay::{check_protocol_initial, check_protocol_step};
 
-use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
+use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
 use super::fair_summary::{
+    CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
     candidate_steps_relation, candidate_stutter_relation, compose_candidate_relations,
     compose_fair_labels, concrete_label_is_fair, idempotent_has_fair_candidate,
     idempotent_has_fair_candidate_in, insert_relation_label, insert_walk_summary, neutral_label,
-    CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
 };
-use super::fair_walk::{fairness_constraints, FairModel};
-use super::initial::{admit_initial, Refused};
+use super::fair_walk::{FairModel, fairness_constraints};
+use super::initial::{Refused, admit_initial};
 
 /// One refinement safety run (FR-142 Inputs).
 pub struct RefinementCheckRequest<'a> {
@@ -3551,7 +3552,7 @@ mod tests {
 
     use super::super::fair_summary::at_least_as_fair;
     use super::cas_fixture::{
-        cas_refines_counter, failing_compensation, key, World, SPEC, UNLIMITED,
+        SPEC, UNLIMITED, World, cas_refines_counter, failing_compensation, key,
     };
     use super::*;
 

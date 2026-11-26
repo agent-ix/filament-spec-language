@@ -10,7 +10,7 @@
 //! two spellings, and the base's checker compares every member with its own
 //! derivation.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 

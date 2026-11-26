@@ -92,8 +92,11 @@ pub(super) fn subject_item<'a>(
     max_demand_points: u64,
 ) -> AnalyzeItem<'a> {
     item(request_index, move |cancel| {
-        let outcome =
-            schedulability::analyze(&subject, &ScheduleLimits { max_demand_points }, cancel);
+        let outcome = schedulability::analyze(
+            &subject,
+            &ScheduleLimits { max_demand_points },
+            cancel,
+        );
         let value = fsl_replay::settle(&subject, &outcome, cancel);
         let miss = miss_wire(&name, &unit, &subject, &outcome);
         EngineReport::ClosedForm(Box::new(ClosedFormReport {

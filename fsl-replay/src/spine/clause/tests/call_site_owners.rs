@@ -12,8 +12,8 @@ use super::frame::identifier;
 use super::*;
 use crate::spine::OperationName;
 use crate::{
-    call_site, CallSite, CallSiteRefusal, DeclineCode, FrameOperation, OperationSite,
-    ProofRefusalCause, QualifiedName, TerminalValue,
+    CallSite, CallSiteRefusal, DeclineCode, FrameOperation, OperationSite, ProofRefusalCause,
+    QualifiedName, TerminalValue, call_site,
 };
 
 const PACKAGE: &str = CONFIG_VERSION_PACKAGE_IDENTITY;

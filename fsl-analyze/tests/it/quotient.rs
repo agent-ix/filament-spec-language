@@ -789,35 +789,33 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
     ) -> u64 {
         (0..=4096)
             .find(|work| {
-                with_budgets(world, max_transitions, *work).is_ok_and(|outcome| accepts(&outcome))
+                with_budgets(world, max_transitions, *work)
+                    .is_ok_and(|outcome| accepts(&outcome))
             })
             .expect("the bounded run reaches the requested terminal")
     }
 
     // FR-161-AC-1: the concrete walk for the symmetric Counter loop is
     // three transitions and six work units, independent of quotient work.
-    let counter_world =
-        configs("fair weak whole M::Counter::bump; always eventually holds(x.v = 2)");
-    let counter_outcome = counter_world
-        .run_with_meter(
-            Some(0),
-            vec![atom(|v| Some(v == 2))],
-            symmetric(),
-            None,
-            ModelCheckLimits::default(),
-            meter(u64::MAX),
-        )
-        .expect("the reduced each loop concretises");
+    let counter_world = configs(
+        "fair weak whole M::Counter::bump; always eventually holds(x.v = 2)",
+    );
+    let counter_outcome = counter_world.run_with_meter(
+        Some(0),
+        vec![atom(|v| Some(v == 2))],
+        symmetric(),
+        None,
+        ModelCheckLimits::default(),
+        meter(u64::MAX),
+    )
+    .expect("the reduced each loop concretises");
     let ModelCheckOutcome::Violated { stats, .. } = &counter_outcome else {
         panic!("the reduced each loop refutes: {counter_outcome:?}");
     };
     let counter_result = Ok(counter_outcome.clone());
     let counterexample = violation(&counter_result);
     assert_eq!(counterexample.len(), 3);
-    assert_eq!(
-        moved(&counter_world.positions(counterexample)),
-        ["b", "b", "b"]
-    );
+    assert_eq!(moved(&counter_world.positions(counterexample)), ["b", "b", "b"]);
     let counter_edges = usize::try_from(stats.product_edges).expect("small");
     let counter_with_budgets = |max_transitions: usize, work_units: u64| {
         let mut limits = ModelCheckLimits::default();
@@ -874,8 +872,12 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
     });
     assert_eq!(completion_work - exploration_work, 4);
 
-    let one_work_short = with_budgets(&world, full_transition_budget, completion_work - 1)
-        .expect("meter exhaustion is a typed outcome");
+    let one_work_short = with_budgets(
+        &world,
+        full_transition_budget,
+        completion_work - 1,
+    )
+    .expect("meter exhaustion is a typed outcome");
     assert!(matches!(
         one_work_short,
         ModelCheckOutcome::Stopped {
@@ -903,17 +905,11 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
         ..
     } if value == u64::try_from(m - 1).expect("small")));
     let two_short = with_budgets(&world, m - 2, u64::MAX).expect("typed stop");
-    assert!(matches!(
-        two_short,
-        ModelCheckOutcome::Stopped {
-            cause: IncompleteCause::ResourceExhausted,
-            limit: Some(ReachedLimit {
-                limit: ModelCheckLimit::MaxTransitions,
-                ..
-            }),
-            ..
-        }
-    ));
+    assert!(matches!(two_short, ModelCheckOutcome::Stopped {
+        cause: IncompleteCause::ResourceExhausted,
+        limit: Some(ReachedLimit { limit: ModelCheckLimit::MaxTransitions, .. }),
+        ..
+    }));
 }
 
 /// The reduced-refutation settlement clause (QSL-1045 tracks its wording): it

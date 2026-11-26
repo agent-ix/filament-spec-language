@@ -30,8 +30,8 @@ use filament_semantic_value::checking::CheckMode;
 #[trace("TC-2958", "FR-940-AC-32")]
 #[test]
 fn package_union_function_call_has_source_charge_logs() {
-    use filament_eval::FamilyOutcome;
     use filament_exact::{Meter, Outcome, Value};
+    use filament_eval::FamilyOutcome;
     use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
     use fsl_package::{
         admit_checked_package, BarePackage, BareSupply, ReadIdentityRows, V2ReadLimits,
@@ -76,8 +76,9 @@ fn package_union_function_call_has_source_charge_logs() {
         )
         .expect("the package identity supply joins");
     let source = compiled.checked();
-    let name =
-        |function: &str| QualifiedName::new(vec![function.to_owned()]).expect("function name");
+    let name = |function: &str| {
+        QualifiedName::new(vec![function.to_owned()]).expect("function name")
+    };
     let objects = ObjectEnvironment::default();
 
     for (constructor, expected) in [("shape", true), ("emptyShape", false)] {

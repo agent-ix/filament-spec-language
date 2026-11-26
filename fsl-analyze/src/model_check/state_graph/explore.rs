@@ -53,12 +53,12 @@ use fsl_replay::{
 
 use super::super::ample::Por;
 use super::{
-    cancelled, expansion_stop, stopped, Budgets, ExploredStateGraph, GraphEdge, GraphNode,
-    GraphStats, Halt, InstanceView, NodeIndex, PredicateLabel,
+    Budgets, ExploredStateGraph, GraphEdge, GraphNode, GraphStats, Halt, InstanceView, NodeIndex,
+    PredicateLabel, cancelled, expansion_stop, stopped,
 };
-use crate::model_check::check::{fault, widen};
-use crate::model_check::initial::{admit_initial, Refused};
 use crate::model_check::ModelCheckRefusal;
+use crate::model_check::check::{fault, widen};
+use crate::model_check::initial::{Refused, admit_initial};
 
 /// Why keying one initial state failed.
 enum Keying {

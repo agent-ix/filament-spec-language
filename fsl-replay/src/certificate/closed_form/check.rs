@@ -3,9 +3,9 @@
 //! package evidence, then independently recompute the reported outcome.
 
 use filament_exact::{Cancel, Identifier};
+use ix_trace_rs::implements;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{self as checked, ScheduleClaim as CheckedScheduleClaim};
-use ix_trace_rs::implements;
 
 use crate::execute::{self, ReplayRefusal};
 use crate::{

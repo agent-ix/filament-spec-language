@@ -5,9 +5,9 @@
 //! re-export that is not `pub` fails to compile here.
 
 use fsl_replay::{
-    call_site, DeclaredDomain, DependencyInput, DomainKey, DomainKind, EmptyFiniteBound,
-    EmptyInterval, FiniteBound, FiniteBoundKind, Identifier, Integer, IntegerInterval, ProofBound,
-    QualifiedName, SourceIdentity,
+    DeclaredDomain, DependencyInput, DomainKey, DomainKind, EmptyFiniteBound, EmptyInterval,
+    FiniteBound, FiniteBoundKind, Identifier, Integer, IntegerInterval, ProofBound, QualifiedName,
+    SourceIdentity, call_site,
 };
 use ix_trace_rs::trace;
 

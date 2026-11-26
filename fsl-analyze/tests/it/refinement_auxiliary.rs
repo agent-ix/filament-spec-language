@@ -433,10 +433,7 @@ fn a_certificate_position_carries_its_history() {
         verdict: None,
     } = &rejection.at
     else {
-        panic!(
-            "history omission is located at a simulation edge: {:?}",
-            rejection.at
-        );
+        panic!("history omission is located at a simulation edge: {:?}", rejection.at);
     };
     let position = usize::try_from(*position).expect("a position index fits usize");
     let edge = usize::try_from(*edge).expect("an edge index fits usize");

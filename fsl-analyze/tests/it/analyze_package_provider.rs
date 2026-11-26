@@ -541,10 +541,7 @@ fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_i
             Reason::AssignmentNotClaimParameter,
             "assignment-not-claim-parameter",
         ),
-        (
-            Reason::ClaimParameterUnassigned,
-            "claim-parameter-unassigned",
-        ),
+        (Reason::ClaimParameterUnassigned, "claim-parameter-unassigned"),
         (
             Reason::ParameterValueKindMismatch,
             "parameter-value-kind-mismatch",
@@ -593,10 +590,7 @@ fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_i
                 ("wrong cause", mutate(&|d| d[0]["cause"] = json!("other"))),
                 ("empty array", mutate(&|d| *d = json!([]))),
             ] {
-                assert!(
-                    !compiled.is_valid(&mutated),
-                    "{spelling}: {what}: {mutated}"
-                );
+                assert!(!compiled.is_valid(&mutated), "{spelling}: {what}: {mutated}");
             }
         }
         assert_eq!(reason.as_str(), spelling);
@@ -658,13 +652,7 @@ fn coexisting_defects_select_the_declared_priority_and_unknown_spellings_name_no
         assert_eq!(Reason::select([low, high]), Some(expected));
     }
     assert_eq!(Reason::select([]), None);
-    for text in [
-        "",
-        "node-id-unresolved ",
-        "Node-Id-Unresolved",
-        "boom",
-        "other",
-    ] {
+    for text in ["", "node-id-unresolved ", "Node-Id-Unresolved", "boom", "other"] {
         assert_eq!(Reason::from_spelling(text), None, "{text:?}");
     }
 }

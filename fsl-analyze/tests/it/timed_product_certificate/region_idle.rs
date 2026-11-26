@@ -9,9 +9,8 @@
 
 use fsl_analyze::analyze::AnalyzeRecord;
 use fsl_replay::{ProofBasis, TerminalValue};
-use ix_trace_rs::trace;
 
-use super::{settle, PROFILES};
+use super::{PROFILES, settle};
 use crate::timed_world::{self, World};
 
 fn outcome(record: &AnalyzeRecord) -> String {
@@ -127,7 +126,6 @@ fn assert_extrema(subject: (&str, &str), rows: &[Dense]) {
 /// Nothing sets `retried`, so every behaviour, before and after `step`, leaves
 /// the claim that waits to see it in [1, 2] ms at 0.
 #[test]
-#[trace("TC-3443", "FR-922-AC-4")]
 fn a_quiescent_undecided_region_state_is_certified() {
     assert_extrema(
         ("self.x > 1 ms", ""),
@@ -139,7 +137,6 @@ fn a_quiescent_undecided_region_state_is_certified() {
 /// idle position in [2, 3] ms then reads it: the minimum is 0. Never taking
 /// `step`, or observing nothing, gives the maximum 1.
 #[test]
-#[trace("TC-3443", "FR-922-AC-4")]
 fn an_idle_position_in_a_later_region_decides_the_window() {
     assert_extrema(
         ("self.x < 1 ms", ""),
@@ -151,7 +148,6 @@ fn an_idle_position_in_a_later_region_decides_the_window() {
 /// 2 ms reads it true. A scheduler chooses whether there is such a position:
 /// `eventually` and `until` need one, and `always` holds without one.
 #[test]
-#[trace("TC-3443", "FR-922-AC-4")]
 fn the_forced_subject_reads_idle_positions_in_its_window() {
     assert_extrema(
         FORCED,
@@ -170,7 +166,6 @@ fn the_forced_subject_reads_idle_positions_in_its_window() {
 /// With `step` optional, `late` at a position from 2 ms is the scheduler's
 /// choice, and so is having a position there.
 #[test]
-#[trace("TC-3443", "FR-922-AC-4")]
 fn the_unforced_subject_reads_idle_positions_in_its_window() {
     assert_extrema(
         UNFORCED,
@@ -192,7 +187,6 @@ fn the_unforced_subject_reads_idle_positions_in_its_window() {
 /// and a scheduler may put none there: `eventually` needs one and `always`
 /// holds without one.
 #[test]
-#[trace("TC-3443", "FR-922-AC-4")]
 fn a_window_ending_at_a_region_point_is_decided() {
     assert_extrema(
         FORCED,
@@ -209,7 +203,6 @@ fn a_window_ending_at_a_region_point_is_decided() {
 /// The verdicts of the ticket's own claims, as it states them: with a minimum
 /// of 0 and a maximum of 1, each threshold of one half is refuted.
 #[test]
-#[trace("TC-3443", "FR-922-AC-4")]
 fn the_tickets_claims_are_refuted() {
     let claim = |name: &str, bound: &str, formula: &'static str| {
         (name.to_owned(), bound.to_owned(), formula)

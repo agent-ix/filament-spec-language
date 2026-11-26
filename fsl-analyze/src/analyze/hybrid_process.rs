@@ -13,16 +13,16 @@ use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::fairness::FairnessKind;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
-use fsl_replay::planner::{read_result_entry, EntryOrigin};
+use fsl_replay::planner::{EntryOrigin, read_result_entry};
 use fsl_replay::{
-    read_plugin_certification, HybridAnswer, HybridEntryRefusal, HybridProcessDependency,
-    HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest, HybridProcessStage,
-    SolverBudget, TerminalValue, ToolFailure,
+    HybridAnswer, HybridEntryRefusal, HybridProcessDependency, HybridProcessItem,
+    HybridProcessPackageContext, HybridProcessRequest, HybridProcessStage, SolverBudget,
+    TerminalValue, ToolFailure, read_plugin_certification,
 };
 use fsl_route::BackendDescriptor;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{Capability, CheckedGraph, CheckedHybridClaim};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::hybrid_item::HybridReport;
 use super::{BackendTool, EngineReport, HybridExchangeError, Refusal};

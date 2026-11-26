@@ -25,15 +25,15 @@ use filament_exact::{
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::probabilistic::TimedOperatorState;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
-    PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
-};
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{
+    Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
+    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
+};
 use fsl_replay::{
-    digital_probability_product_key, region_probability_product_key, DigitalClockKey,
-    DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
+    DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
     ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
+    digital_probability_product_key, region_probability_product_key,
 };
 use fsl_semantics::check::{
     BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim,
@@ -44,9 +44,9 @@ use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
-use super::unbounded::{maximal_end_components_from, same_action, Choice, Graph};
+use super::unbounded::{Choice, Graph, maximal_end_components_from, same_action};
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MeasurePhase, MonitorState,
     MonitorVerdict, PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId,
@@ -270,8 +270,10 @@ impl<'c> Form<'c> {
                             Some(FormulaNode::Holds { .. }) => (
                                 kind,
                                 interval,
-                                vec![holds(*operand)
-                                    .ok_or_else(|| shape_at(&[root_at, operand.index()]))?],
+                                vec![
+                                    holds(*operand)
+                                        .ok_or_else(|| shape_at(&[root_at, operand.index()]))?,
+                                ],
                             ),
                             Some(FormulaNode::Unary {
                                 operator: inner_operator,

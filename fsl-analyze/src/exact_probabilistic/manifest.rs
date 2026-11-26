@@ -12,8 +12,8 @@
 
 use fsl_foundation::bound::DomainKind;
 use fsl_route::{
-    descriptor_from_manifest, BackendDescriptor, Candidate, EvidenceKind, ManifestMembers, Mode,
-    ProviderOrigin, RegistrationRefusal,
+    BackendDescriptor, Candidate, EvidenceKind, ManifestMembers, Mode, ProviderOrigin,
+    RegistrationRefusal, descriptor_from_manifest,
 };
 use fsl_semantics::check::Capability;
 

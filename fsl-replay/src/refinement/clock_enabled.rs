@@ -19,7 +19,7 @@ use fsl_eval::simulation::model::{GuardedStep, ModelSystem, PlaceConstraint, Tim
 use fsl_semantics::check::ClockOp;
 use fsl_semantics::model::state::ModelState;
 
-use crate::refinement::clock_rows::{row_clock_step, RowClockStep};
+use crate::refinement::clock_rows::{RowClockStep, row_clock_step};
 use crate::refinement::failure::Taken;
 
 /// The transitions enabled at one segment of a delay: each with the key of

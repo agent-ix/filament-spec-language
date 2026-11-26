@@ -20,7 +20,7 @@ use filament_semantic_value::supplied_stop::{
 };
 
 use super::*;
-use crate::supplied_limits::{read_supplied_limits, SuppliedLimitsRefusal};
+use crate::supplied_limits::{SuppliedLimitsRefusal, read_supplied_limits};
 
 const SOURCE: &str = "function seq using v(xs: Sequence<Boolean>[0, 64]): Boolean pure { false }\n\
      function pair using v(a: Sequence<Boolean>[0, 64], b: Sequence<Boolean>[0, 64]): Boolean pure { false }\n\

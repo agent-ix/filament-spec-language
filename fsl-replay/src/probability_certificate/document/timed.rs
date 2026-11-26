@@ -11,7 +11,7 @@ use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use ix_trace_rs::implements;
 use num_traits::Zero;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
 mod elapsed;
 
@@ -1082,10 +1082,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
-            Err(ProbabilityDocumentError::Unsupported)
-        }
+        [
+            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+            | fsl_eval::simulation::model::PredicateReading::Refused(_),
+        ] => Err(ProbabilityDocumentError::Unsupported),
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -5259,11 +5259,7 @@ impl Payoff<'_> {
             Self::Deadline { failing, .. } => verdict == !*failing,
             Self::Elapsed { violating, .. } => violating.contains(key),
         };
-        if counted {
-            one()
-        } else {
-            zero()
-        }
+        if counted { one() } else { zero() }
     }
 
     fn activation(&self, key: &ProbabilityProductKey) -> Rational {

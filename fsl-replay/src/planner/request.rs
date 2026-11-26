@@ -23,14 +23,14 @@ use super::declaration::{
     DerivedSlot, EnvSupplies, EnvironmentMember, ItemRole, PlannerDeclaration, SlotBacking,
     SlotRole,
 };
-use super::entry::{read_result_entry, EntryOrigin, LimitFacts, ResultEntry, ResultEntryRefusal};
-use super::item::{read_premise_item, PremiseItem};
+use super::entry::{EntryOrigin, LimitFacts, ResultEntry, ResultEntryRefusal, read_result_entry};
+use super::item::{PremiseItem, read_premise_item};
 use super::json::{
-    array, check_members, count, object, parse_strict, require, string, Cause, Fault, Parsed,
+    Cause, Fault, Parsed, array, check_members, count, object, parse_strict, require, string,
 };
-use super::key::{read_node, ItemKey, SlotKey};
+use super::key::{ItemKey, SlotKey, read_node};
 use crate::bounds::DEFAULT_REPLAY_INPUT_BYTES;
-use crate::proof_result::{child, Certification, TerminalRecord, TerminalValue};
+use crate::proof_result::{Certification, TerminalRecord, TerminalValue, child};
 
 /// The request format.
 pub const FORMAT: &str = "filament.planner-settlement/v1";
@@ -1061,10 +1061,10 @@ mod held_slot_tests {
         ClauseRef, CompositionSlot, SlotBacking as SemBacking, SlotRole as SemRole,
     };
     use ix_trace_rs::trace;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::super::key::{ClaimKind, ExtentClass, TemporalItemKind, TemporalKey};
-    use super::super::tests::{item_json, proved_entry, slot as derived_slot, PACKAGE};
+    use super::super::tests::{PACKAGE, item_json, proved_entry, slot as derived_slot};
     use super::*;
 
     const PRODUCER: &str = "producer@1";

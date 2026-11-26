@@ -905,7 +905,8 @@ fn subject(
     ) || !matches!(
         TimedSystem::new(system, &claim.subject.alias),
         Err(TimedSubjectRefusal::NoTimedModel { .. })
-    ) {
+    )
+    {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let binding = claim_binding(system, claim)?;

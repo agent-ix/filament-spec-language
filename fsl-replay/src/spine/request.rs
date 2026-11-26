@@ -11,20 +11,20 @@ use filament_exact::{CollectionKind, Identifier, Integer, Rational, ScalarLimits
 use fsl_eval::temporal::{LateCutoff, StampInterval};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_semantics::model::observation::{
-    collection_kind_of_tag, AnchorKind, ClauseSelection, ClauseSelectionInput, ContextSide,
-    DocumentRef, NativeKind, ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor,
-    SelectedObject, SnapshotValue,
+    AnchorKind, ClauseSelection, ClauseSelectionInput, ContextSide, DocumentRef, NativeKind,
+    ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor, SelectedObject,
+    SnapshotValue, collection_kind_of_tag,
 };
 use ix_trace_rs::implements;
 use quire_canonical::{Node, NodeRef};
 use serde_json::value::RawValue;
 
 use super::{
-    sample_position, ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection,
-    ClauseRunSource, DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion,
-    ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation,
-    SpineLimits, TimedObservation, TimestampedCover, TimestampedMissingValuation,
-    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
+    DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion, ProgressClosure,
+    ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation, SpineLimits,
+    TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, sample_position,
 };
 
 /// A selected observation whose bytes and document identity were admitted by
@@ -2066,8 +2066,8 @@ pub fn read_sample_text(raw: &RawValue, member: &str) -> Result<String, ClauseRe
 mod tests {
     use super::snapshot_value;
     use super::{
-        selection, ClauseRunSelection, ClauseRunSelectionWire, ClauseSelectionParts,
-        ClauseSelectionPartsKind, SuppliedObservation, TemporalTraceParts,
+        ClauseRunSelection, ClauseRunSelectionWire, ClauseSelectionParts, ClauseSelectionPartsKind,
+        SuppliedObservation, TemporalTraceParts, selection,
     };
     use filament_exact::CollectionKind;
     use fsl_semantics::model::observation::{ClauseSelectionInput, DocumentRef, SelectedObject};

@@ -73,37 +73,37 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{
-    translate, translate_counted, Atom, AutomatonStateKey, BoundedKind, BoundedState,
-    BoundedTranslation, Letter, Monitor, PropertyAutomaton, SafetyItem, SafetyState, SafetyStates,
-    SafetyTranslation, StateId, SubjectKind,
+    Atom, AutomatonStateKey, BoundedKind, BoundedState, BoundedTranslation, Letter, Monitor,
+    PropertyAutomaton, SafetyItem, SafetyState, SafetyStates, SafetyTranslation, StateId,
+    SubjectKind, translate, translate_counted,
 };
 use fsl_eval::model_subject::{
-    refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
+    AtomStop, ModelLetters, ModelSubject, ProtocolSubject, refused_invariant,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
     ModelFinding, ModelSimState, ModelSystem, ProtocolDefinition, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, MemoryModel,
-    ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
-    ProtocolSystem, Sc, SubjectMemory,
+    Capacities, MemoryModel, ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget,
+    ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory, activates_on_each, check_protocol_bounds,
+    live_instance_bound,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated,
-    SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError,
-    BOUND_POSITIONS,
+    BOUND_POSITIONS, ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion,
+    ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress,
+    ZeroProgressError,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::model::observation::AdmissionFailure;
-use serde::{ser::SerializeStruct, Serialize, Serializer};
+use serde::{Serialize, Serializer, ser::SerializeStruct};
 
 use crate::certificate::check::{
-    admit, admit_read_identities, expansion_halt, finish, poll, stopped, widen, Budgets, Checker,
-    Halt, Step,
+    Budgets, Checker, Halt, Step, admit, admit_read_identities, expansion_halt, finish, poll,
+    stopped, widen,
 };
 use crate::certificate::recording::Recording;
-use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
+use crate::certificate::scc::{Component, ComponentCertificate, check_partition};
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::identity::ClauseRootRefusal;
 use crate::model_check::item::{
@@ -2307,7 +2307,7 @@ fn fault(invariant: &'static str) -> ClosureRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{loop_proof_target, ProtocolLoopProofKind, ProtocolLoopProofTarget};
+    use super::{ProtocolLoopProofKind, ProtocolLoopProofTarget, loop_proof_target};
     use crate::ModelCheckItem;
     use fsl_semantics::check::ProtocolNodeId;
 

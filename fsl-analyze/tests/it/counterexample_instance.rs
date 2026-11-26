@@ -5,12 +5,12 @@
 //! (ADR-018 §6 states the same rule).
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{check_model, ModelCheckRequest};
+use fsl_analyze::model_check::{ModelCheckRequest, check_model};
 use fsl_replay::{ModelCheckItem, ModelCheckLimits, ModelCheckOutcome};
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, instance, package_with_clauses, subject, Documents, Letters, CONTRACT, UNLIMITED,
+    CONTRACT, Documents, Letters, UNLIMITED, document, instance, package_with_clauses, subject,
 };
 
 /// Over the Counter subject with `a` at 0 and `b` at 3 and the universe

@@ -21,7 +21,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_package::{EnumScope, SourceEnumCatalog, SourceEnumCatalogError};
 use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use serde_json::{json, Map, Value as Json};
+use serde_json::{Map, Value as Json, json};
 
 #[cfg(test)]
 mod accounting_tests;
@@ -31,9 +31,9 @@ mod canonical;
 mod references;
 pub(crate) use crate::NormalizationReferenceBudget;
 pub(crate) use references::{
-    catalog_error_cause, catalog_error_code, catalog_refusal, reference_cancel_cause,
-    reference_error_cause, reference_error_code, reference_error_pointer, reference_refusal,
-    take_normalization_refusal, write_run_value, SuppliedReferenceAdmission,
+    SuppliedReferenceAdmission, catalog_error_cause, catalog_error_code, catalog_refusal,
+    reference_cancel_cause, reference_error_cause, reference_error_code, reference_error_pointer,
+    reference_refusal, take_normalization_refusal, write_run_value,
 };
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
