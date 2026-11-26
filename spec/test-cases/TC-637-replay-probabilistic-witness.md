@@ -12,7 +12,8 @@ relationships:
 
 Verify path-set replay, scheduler, support, post-state and prefix checks, subsystem evidence through the checker, the fairness check, and the path-count setting.
 
-Scope: FR-202-AC-1 to FR-202-AC-4, FR-202-AC-6 to FR-202-AC-8 and FR-202-AC-11.
+Scope: FR-202-AC-1 to FR-202-AC-4, FR-202-AC-6 to FR-202-AC-8, FR-202-AC-11 and
+FR-202-AC-47.
 
 ## Test Procedure
 
@@ -34,6 +35,10 @@ Fixtures: §15.4's and §15.2's one-path refutations; §15.3's per-window subsys
    randomized-policy evidence, and multiple-initial/instance inputs. Exercise
    pre-cancellation, cancellation at final acceptance and one-short
    expansion/work/storage limits.
+9. By the source replay and the package replay, replay a timed deadline
+   witness with its binding removed and with another instance's binding;
+   replay a path-set witness with an `instance` added to a claim with no
+   `on each`.
 
 Tag the tests `#[trace("TC-637", "FR-202-AC-n")]`.
 Tag the caller-configured input-limit assertion `#[trace("TC-637", "FR-202-AC-7")]`.
@@ -51,3 +56,4 @@ Tag the caller-configured input-limit assertion `#[trace("TC-637", "FR-202-AC-7"
   the AC-8 timed witness and AC-3 §15.3 subsystem and fair `Coin2` witnesses
   remain admissible and replay `refuted`. Cancellation and resource-limit
   cases return incomplete without a token or refuted record.
+- Step 9: every altered witness is refused with no token.

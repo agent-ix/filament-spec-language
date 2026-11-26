@@ -13,7 +13,7 @@ relationships:
 Verify `replay_model_graph` on each `GraphEvidence` arm: reproduction,
 disagreement, refusal, a stopped trap replay, and determinism.
 
-Scope: FR-170-AC-1 to FR-170-AC-4, FR-170-AC-6 and FR-170-AC-8.
+Scope: FR-170-AC-1 to FR-170-AC-4, FR-170-AC-6 and FR-170-AC-8 to FR-170-AC-10.
 
 ## Test Procedure
 
@@ -35,6 +35,11 @@ units, and the edited envelopes FR-170-AC-3 and AC-4 name.
    trap.
 6. Replay `CanStillWin`'s trap at `Lost` and settle it; replay the same
    trap with its stem ending at `Mid`.
+7. Over a timed subject, from source and from package bytes, replay an
+   envelope with no timed reading, and one with a zone reading and no zone
+   certificate.
+8. Replay with a `digital-clocks` reading of a timed subject with a strict
+   guard.
 
 Tag the tests `#[trace("TC-595", "FR-170-AC-n")]`.
 
@@ -52,3 +57,4 @@ Tag the tests `#[trace("TC-595", "FR-170-AC-n")]`.
   settles `refuted`, `closed-scope` with no certificate checked; the second
   settles `inconclusive`, `Verdicts` naming `Won`'s state key as the
   first target node.
+- Steps 7 and 8: each refuses `stale_dependency`/`content-mismatch`.
