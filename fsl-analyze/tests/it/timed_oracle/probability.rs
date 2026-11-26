@@ -768,7 +768,6 @@ fn row_3447_mean_fraction_hand() {
 
 #[trace("FR-254-AC-5")]
 #[test]
-#[ignore = "QSL-3447: en-4 accepts with estimate 0 where the fraction is 1/2"]
 fn row_3447_mean_fraction_routes() {
     assert_routes(&mean_fraction());
 }
@@ -802,7 +801,6 @@ fn row_3447_steps_hand() {
 
 #[trace("FSpec-FR-407-AC-23")]
 #[test]
-#[ignore = "QSL-3447: en-4 accepts with estimate 1 where the probability is 0"]
 fn row_3447_steps_routes() {
     assert_routes(&two_steps());
 }
@@ -1146,7 +1144,6 @@ fn row_burst_stutter_fraction_hand() {
 
 #[trace("FSpec-FR-421-AC-9", "FR-254-AC-8")]
 #[test]
-#[ignore = "QSL-3447: en-4 accepts with estimate 0 a fraction that is at least 1/2"]
 fn row_burst_stutter_fraction_routes() {
     assert_routes(&burst());
 }
