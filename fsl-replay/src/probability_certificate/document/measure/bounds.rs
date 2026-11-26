@@ -244,7 +244,11 @@ pub(super) fn check(
         cancel,
         &mut meter,
         &mut storage,
-        lower.then_some(&named),
+        if lower {
+            Scope::Restored(&named)
+        } else {
+            Scope::Whole
+        },
     )?;
     if graph.initials.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);

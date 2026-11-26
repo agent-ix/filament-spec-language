@@ -6,8 +6,9 @@ use crate::exact_probabilistic::{
 };
 use fsl_replay::{
     MeasurePayoffKind, conditional_measure_probability_certificate,
-    measure_probability_objective,
-    measure_probability_product_key, write_measure_probability_certificate,
+    measure_probability_objective, measure_probability_product_key,
+    partial_lower_measure_probability_certificate_document_with_work_scope,
+    write_measure_probability_certificate,
 };
 use ix_trace_rs::implements;
 
@@ -383,14 +384,20 @@ pub(super) fn run(
         );
     }
     if lower_product.is_some() {
-        if !matches!(
-            claim.form,
-            ProbForm::Quantile { .. } | ProbForm::MeanOfFraction { .. }
-        ) {
+        // A partial product shows only a `lower`: the claim side of `>= θ`
+        // and of a `<= c` quantile.
+        let lower_side = match &claim.form {
+            ProbForm::Probability { bound, .. } | ProbForm::MeanOfFraction { bound, .. } => {
+                matches!(bound, Bound::AtLeast(_))
+            }
+            ProbForm::Quantile { threshold, .. } => matches!(threshold, Bound::AtMost(_)),
+            _ => false,
+        };
+        if !lower_side {
             return max_states_limit(&limits, subject);
         }
         let checked = (|| {
-            let document = fsl_replay::measure_probability_certificate_document_with_work_scope(
+            let document = partial_lower_measure_probability_certificate_document_with_work_scope(
                 &system,
                 claims,
                 &item,
@@ -421,6 +428,12 @@ pub(super) fn run(
             Ok(check) => check,
             Err(error) => return document_failure(error, subject),
         };
+        // A prefix whose bound misses the threshold settles nothing (FR-196).
+        if matches!(&check, ExactProbabilityCertificateCheck::Rejected(rejection)
+            if rejection.rule == ProbabilityCertificateRule::ThresholdMissed)
+        {
+            return max_states_limit(&limits, subject);
+        }
         let ExactProbabilityCertificateCheck::Accepted(accepted) = &check else {
             return checked_report(Ok(check), certificate, binding, None, subject);
         };
@@ -453,7 +466,11 @@ pub(super) fn run(
         return EngineReport::Exact(Box::new(ExactReport::ProvedPartialBounds {
             claim: check,
             upper,
-            method: fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 0 },
+            // The values are exact; FSpec's method still states the
+            // run's positive starting precision.
+            method: fsl_replay::BoundsMethod::BackwardInduction {
+                precision_bits: limits.precision_bits,
+            },
             extremum,
             binding,
             evidence,

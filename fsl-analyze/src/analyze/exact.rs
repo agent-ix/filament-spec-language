@@ -110,6 +110,7 @@ pub enum ExactWorkPhase {
 }
 
 /// A cumulative item-work boundary around one exact phase.
+#[cfg(feature = "test-support")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExactWorkCheckpoint {
     /// The phase at this boundary.

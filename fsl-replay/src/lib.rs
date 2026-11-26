@@ -506,6 +506,8 @@ pub use probability_certificate::{
     on_each_outcome_with_work_scope,
     partial_lower_probability_proof_document, partial_lower_probability_proof_document_with_work_scope,
     probabilistic_claim_identity,
+    partial_lower_measure_probability_certificate_document,
+    partial_lower_measure_probability_certificate_document_with_work_scope,
     probabilistic_formula_monitor_context, probability_certificate_document,
     probability_proof_document, probability_proof_document_with_work_scope,
     read_long_run_probability_certificate,

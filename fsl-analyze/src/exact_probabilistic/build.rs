@@ -110,19 +110,7 @@ struct KeyPolicy<'a> {
     budget: RefCell<&'a mut dyn ModelKeyBudget>,
 }
 
-/// Retain the semantic monitor while every key uses the same caller admission.
-pub(crate) fn build_retaining_monitor_with_budget(
-    request: ProductRequest<'_>,
-    identity: IdentityLimits,
-    budget: &mut dyn ModelKeyBudget,
-    cancel: &Cancel,
-) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
-    let work = WorkScope::new(request.subject.simulation.meter);
-    build_retaining_monitor_with_budget_in_scope(request, identity, budget, work, cancel)
-}
-
-/// [`build_retaining_monitor_with_budget`] under the item's `work` allowance,
-/// as [`build_retaining_monitor_in_scope`] is for an unbudgeted build.
+/// Retain the semantic monitor while every key uses the item's work allowance.
 #[implements("FR-203-AC-29")]
 pub(crate) fn build_retaining_monitor_with_budget_in_scope(
     request: ProductRequest<'_>,
@@ -146,7 +134,9 @@ pub fn build_product_with_key_budget(
     budget: &mut dyn ModelKeyBudget,
     cancel: &Cancel,
 ) -> Result<ProbBuild, BudgetedProductError> {
-    build_retaining_monitor_with_budget(request, identity, budget, cancel).map(|(build, _)| build)
+    let work = WorkScope::new(request.subject.simulation.meter);
+    build_retaining_monitor_with_budget_in_scope(request, identity, budget, work, cancel)
+        .map(|(build, _)| build)
 }
 
 /// Admit `simulation` under the item's `work` allowance.
