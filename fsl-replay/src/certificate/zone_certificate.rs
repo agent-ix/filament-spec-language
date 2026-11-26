@@ -1808,6 +1808,14 @@ impl<O> Checker<'_, '_, O> {
     }
 
     /// The `Malformed` members, in member order.
+    #[implements(
+        "FR-245-AC-2",
+        "FR-245-AC-7",
+        "FR-245-AC-8",
+        "FR-245-AC-9",
+        "FR-245-AC-12",
+        "FSpec-FR-418-AC-10"
+    )]
     fn members(&self) -> Step<(), O> {
         let certificate = self.certificate;
         if certificate.scale <= Integer::zero() {

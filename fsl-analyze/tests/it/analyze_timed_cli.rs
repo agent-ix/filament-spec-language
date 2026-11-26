@@ -911,8 +911,8 @@ fn digital_clocks_prove_nothing_over_a_stalled_subject() {
 /// The same model with `ping` resetting `x`: time diverges, so the true claims
 /// are proved and the false one refuted on both routes. The first result,
 /// EN-6 on `always holds(true)`, is not asserted: EN-6 rejects its own
-/// certificate there (QSL-3486).
-#[trace("FR-632-AC-2")]
+/// certificate there (QSL-3486). A control for the stall test above; no
+/// criterion states these verdicts, so it carries no trace tag.
 #[test]
 fn digital_clocks_decide_claims_once_time_can_diverge() {
     assert_eq!(
