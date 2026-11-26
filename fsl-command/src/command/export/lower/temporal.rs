@@ -20,6 +20,7 @@ use fsl_package::checked_views::{
 };
 use fsl_package::{CheckedTimeSourceKind, CheckedTimedModel};
 use fsl_semantics::check::TemporalProfile;
+use ix_trace_rs::implements;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 
@@ -770,6 +771,7 @@ impl LeanClause<'_> {
     }
 
     /// `tf` at the position `position` of the behaviour `b`.
+    #[implements("FSpec-FR-813-AC-1")]
     fn at(&mut self, tf: TfId, position: &str) -> Lower<String> {
         render(
             At {

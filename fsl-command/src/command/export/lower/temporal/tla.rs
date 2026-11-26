@@ -22,6 +22,7 @@ use crate::command::export::lower::{
     Definition, Input, Lower, Object, Operation, Piece, Refusal, Target,
 };
 use filament_walk::{walk, Children, Walk};
+use ix_trace_rs::implements;
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 
@@ -628,6 +629,7 @@ impl Ctx<'_> {
         self.say(Say::State(tf, primed))
     }
 
+    #[implements("FSpec-FR-813-AC-1")]
     fn say(&self, root: Say) -> Lower<String> {
         render(root, |say, out| match say {
             Say::State(tf, primed) => self.state_pieces(tf, primed, out),
