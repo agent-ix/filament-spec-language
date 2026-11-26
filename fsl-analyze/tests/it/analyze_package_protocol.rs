@@ -4022,7 +4022,7 @@ fn a_protocol_over_subject_names_the_admitted_member_type_on_both_routes() {
 
 /// FR-125 "Instancing": on the source and the package constructor, a
 /// replicated role over `M::Base` spawns objects of the admitted type `Cell`.
-#[trace("TC-520", "FR-125-AC-9")]
+#[trace("TC-520")]
 #[test]
 fn a_replicated_role_object_names_the_admitted_member_type_on_both_routes() {
     use fsl_eval::simulation::protocol::{Sc, StepKind};

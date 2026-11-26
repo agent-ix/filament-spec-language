@@ -323,7 +323,7 @@ fn base_fixture(source: &str) -> Fixture {
 /// FR-125 "Instancing": a replicated role over `M::Base` holds the admitted
 /// `Node` reference, so `w = view` holds for the `over` object and the
 /// role's footprint covers a field read of that reference.
-#[trace("TC-520", "FR-125-AC-9")]
+#[trace("TC-520")]
 #[test]
 fn a_replicated_role_object_is_the_over_binding() {
     let source = SOURCE.replace(
