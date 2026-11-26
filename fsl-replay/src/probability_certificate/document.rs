@@ -1893,6 +1893,7 @@ pub fn probability_certificate_document(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-201-AC-11", "FR-1042-AC-25")]
 fn construct_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1950,7 +1951,13 @@ fn construct_document(
     } else {
         original?
     };
-    let stopped = event.is_some() || reward.is_some() || cyclic_dtmc;
+    // An `eventually`, until, always or reward graph stops at its decided
+    // states, so rows the solver holds only past them are dropped. A bounded
+    // formula's product already stops there.
+    let stopped = matches!(
+        bind_claim(claims, item, cancel)?.form,
+        ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. }
+    );
     let bounded = bounded_ranks.is_some();
     let mut ranks = bounded_ranks.unwrap_or_default();
     if bounded {
@@ -2039,6 +2046,7 @@ fn construct_document(
 /// The document is checked as the claim side
 /// ([`check_probability_certificate_document_as`] with
 /// [`CertificateRole::Claim`]).
+#[implements("FR-201-AC-1")]
 pub fn check_probability_certificate_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2063,6 +2071,7 @@ pub fn check_probability_certificate_document(
 /// claim's threshold, and one of the wrong kind is rejected `Malformed` at
 /// `kind`; a counterpart is a `lower` or `upper` document that meets its
 /// conditions and no threshold.
+#[implements("FR-1042-AC-1")]
 pub fn check_probability_certificate_document_as(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

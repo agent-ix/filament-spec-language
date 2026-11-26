@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, ScalarLimits};
+use ix_trace_rs::implements;
 use fsl_eval::automaton::PropertyAutomaton;
 use fsl_eval::fairness::{Analysis, Constraint, EdgeLabel, Graph, Identity, Outcome, Strength};
 use fsl_eval::hyper::{
@@ -219,6 +220,7 @@ pub struct ModelRelationClosureRequest<'a> {
 /// # Errors
 ///
 /// Refuses invalid original inputs or a reconstruction invariant failure.
+#[implements("FR-163-AC-6")]
 pub fn check_model_relation_closure(
     request: &ModelRelationClosureRequest<'_>,
     certificate: &ProductClosureCertificate,
@@ -317,6 +319,7 @@ impl HyperOriginals<'_, '_> {
 ///
 /// # Errors
 /// Preserves original-input and product reconstruction refusals.
+#[implements("FR-163-AC-1")]
 pub fn check_package_hyper_closure(
     request: &PackageHyperClosureRequest<'_>,
     certificate: &ProductClosureCertificate,
@@ -473,6 +476,7 @@ fn complete_hyper_scope(
 /// # Errors
 ///
 /// Returns a refusal when the original program or its model inputs do not admit.
+#[implements("FR-163-AC-1")]
 pub fn check_product_closure(
     request: &ProductClosureRequest<'_>,
     certificate: &ProductClosureCertificate,
