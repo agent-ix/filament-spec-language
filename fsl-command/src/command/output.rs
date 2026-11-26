@@ -883,13 +883,22 @@ mod extraction_tests {
         .clone()
     }
 
-    fn record() -> Value {
-        json!({
-            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md"},
-            "body": {"authority": "agent-ix", "identity": "body"},
+    fn record() -> fsl_replay::spine::ExtractionRecord {
+        serde_json::from_value(json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+            "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
             "binding": {"clause": "valid_clause", "package": "agent-ix/spec"},
-            "outcome": {"availability": {"state": "available"}}
-        })
+            "outcome": {
+                "availability": {"state": "available", "lossy": false},
+                "clause_text": {},
+                "diagnostics": []
+            },
+            "map": {
+                "region": {"start": 0, "end": 1},
+                "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
+            }
+        }))
+        .expect("the extraction fixture matches the shared record")
     }
 
     #[test]
@@ -924,9 +933,10 @@ mod extraction_tests {
             "start": start,
             "end": start + 1
         });
-        assert_eq!(
-            extraction_regions_for_locus(dependency_locus, &record, &map).unwrap(),
-            None
+        assert!(
+            extraction_regions_for_locus(dependency_locus, &record, &map)
+                .unwrap()
+                .is_none()
         );
         let dependency_path_locus = json!({
             "kind": "located",
@@ -936,9 +946,10 @@ mod extraction_tests {
                 "end": {"byte": 1, "line": 1, "column": 2}
             }
         });
-        assert_eq!(
-            extraction_regions_for_locus(dependency_path_locus, &record, &map).unwrap(),
-            None
+        assert!(
+            extraction_regions_for_locus(dependency_path_locus, &record, &map)
+                .unwrap()
+                .is_none()
         );
     }
 }
