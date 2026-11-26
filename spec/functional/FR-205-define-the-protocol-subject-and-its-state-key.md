@@ -92,11 +92,15 @@ has already seen instead of a new one.
   the role does not admit, or the request supplies a binding for a role on a
   whole model, the subject builder SHALL refuse
   `invalid_runtime_input`/`wrong-role-mapping`, naming the role.
-- When the `over` object is not an admitted key of its declared type
-  (FR-125 "Instancing"), the subject builder SHALL refuse
-  `invalid_runtime_input`/`invalid-value`, naming the parameter and the
-  object. A key of a population universe that no initial state holds is not
-  admitted, and is refused so.
+- When the `over` object is not a key of its declared type's population
+  universe, the subject builder SHALL refuse `invalid_runtime_input`/
+  `invalid-value`, naming the parameter and the object.
+- When the subject has a non-empty initial list and the `over` object is a
+  universe key that is not an admitted key of its declared type (FR-125
+  "Instancing"), the subject builder SHALL refuse it the same way.
+- With an empty initial list no key is admitted: the subject builder SHALL
+  NOT refuse a universe key for that reason, and the item settles
+  `NoInitialState`, in FR-125's order of causes.
 - The subject carries the capacity binding `capacities` of the clause's
   `symbolic(<name>)` queue capacities (FSpec FR-785). An entry naming no
   capacity of the clause refuses `invalid_runtime_input`/`unknown-member`
@@ -341,7 +345,7 @@ proof or lasso.
 | FR-205-AC-15 | Unread message ordinals close a loop. Protocol `Loop` over the `Fill` model of AC-1: channel `ch` `fifo`, capacity 1, `delivery exactly-once-premise`; `run repeat { send Snd via ch; receive Rcv via ch of Snd }`, a `repeat` with no maximum; the claim `always holds(c.v = 0)`, which reads no message identity. After `k` iterations the state with the root back at `Snd` has `message-ordinal` `k` and `next-delivery` entries for the `k` received messages, so the states for `k` = 0, 1 and 2 have three different `ProtocolKey`s; `canon` removes the `next-delivery` entries of the received messages and the `message-ordinal` bound, so the three have one cycle key, the initial state's. The post-`send` states of iterations 1 and 2 hold messages with ordinals 0 and 1 and have one cycle key, whose entry names ordinal 0. EN-1 explores finitely many product states and settles the claim `Holds` (`proved`), and the lasso with an empty prefix and loop `send(Snd)`, `receive(Rcv)` closes on cycle keys under FR-217. A cycle key that keeps the ordinal or a received message's `next-delivery` fails this criterion. | Test (TC-650) |
 | FR-205-AC-16 | Unread business-effect ordinals close a loop (FSpec FR-425-AC-16). Protocol `Charge` over the `Fill` model of AC-1: `run repeat { attempt Pay; effect Paid of Pay }`, a `repeat` with no maximum, `Pay` an operation that writes nothing and is always enabled; the claim `always holds(c.v = 0)`, which holds no step identity read. After `k` iterations the state with the root back at `Pay` has `business-effect-ordinal` `k` for `Paid` on `(0)` (none for `k` = 0), so the states for `k` = 0, 1 and 2 have three different `ProtocolKey`s; `canon` removes the entry, so the three have one cycle key, the initial state's. The `k`-th `event(Paid)` of a counterexample or replayed lasso carries the concrete effect occurrence key with ordinal `k - 1`, never relabelled. EN-1 explores finitely many product states and settles `Holds` (`proved`), and the lasso with an empty prefix and loop `attempt(Pay)`, `event(Paid)` closes on cycle keys under FR-217. A cycle key that keeps the ordinal never closes the loop and settles `BoundReached`, which this criterion rejects. | Test (TC-650) |
 | FR-205-AC-17 | Read business-effect ordinals stay apart. Over AC-16's `Charge`, the effect item: clause `on each` with `when (present(filament::protocol::effect(Charge::Paid)))`, capture `e` of that occurrence, formula `not eventually[1, *] holds(filament::protocol::effect(Charge::Paid) = some(e))` under `filament.temporal.infinite-trace/v1` ("no `Paid` occurrence is established twice", which has no counterexample). Its effect read set is `{Charge::Paid}` and its message and delivery read sets are empty, so the states for `k` = 0, 1 and 2 keep their `business-effect-ordinal` entries and have three different cycle keys; EN-1 with `max_depth` 8 settles `inconclusive` `BoundReached{depth: 8}` and no run settles `proved`; the loop `attempt(Pay)`, `event(Paid)` offered as a lasso refuses under FR-217 and FR-329 as a loop that does not close. A variant `Charge3`, `Charge` with a second effect node declared after the `repeat` (`run sequence { repeat { attempt Pay; effect Paid of Pay }; attempt Close; effect Other of Close }`, `Close` never enabled), whose clause reads `filament::protocol::effect(Charge3::Other)` instead, keeps `Paid` outside the effect read set, so the loop states keep one cycle key and the item settles `Holds` (`proved`). | Test (TC-650) |
-| FR-205-AC-18 | Over AC-1's `Fill` unit with the universe `[c, d]`, the one initial state holding an object under `c` only, binding `k` to `c` builds, and binding `k` to `d` refuses `invalid_runtime_input`/`invalid-value` naming `k` and `d`. | Test (TC-650) |
+| FR-205-AC-18 | Over AC-1's `Fill` unit with the universe `[c, d]`, the one initial state holding an object under `c` only, binding `k` to `c` builds, and binding `k` to `d` refuses `invalid_runtime_input`/`invalid-value` naming `k` and `d`; with an empty initial list, binding `k` to `d` is not refused, and the item over the subject settles `inconclusive`, `NoInitialState`. | Test (TC-650) |
 
 
 ## Dependencies

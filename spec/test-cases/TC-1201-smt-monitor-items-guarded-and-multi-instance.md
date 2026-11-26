@@ -21,7 +21,7 @@ instance, with one monitor per instance, the false-extension end letter,
 the past-the-end distinctness form and the reading of satisfiable models
 by rules 4, 4b and 4c.
 
-Scope: FR-315-AC-33 to FR-315-AC-39, FR-315-AC-58, FR-315-AC-60, FR-314-AC-8 and
+Scope: FR-315-AC-33 to FR-315-AC-39, FR-315-AC-58, FR-315-AC-60, FR-315-AC-61, FR-314-AC-8 and
 FR-127-AC-15.
 
 S4 emits an `on each` clause, guarded or not (FR-337-AC-6). The test
@@ -89,6 +89,8 @@ printed script.
 10. With a solver, check FR-315-AC-60's item at `Unrolling{depth: 2}` and
     `Unrolling{depth: 1}`, reading each model by rules 4 to 4d, and compare
     the `First(1)` script with the `All` script.
+11. Encode `InductionStep{depth: 1}` for step 10's item with `First(1)` and
+    with `All`.
 
 Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
 
@@ -130,7 +132,8 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
 - Step 7: the `c.inc`, `d.inc` model fails at position 2 with only
   instance 0 rejecting and is replayed to `refuted` with `over_binding`
   `c`; rule 4c reads the `d.inc`, `c.inc` model as `d`, and rule 4d's
-  `First(1)` search then reports `c`.
+  `First(1)` search then reports `c` with the prefix `c.inc`, `d.inc`,
+  excluding the `c.inc`, stutter model if the solver gives it.
 - Step 8: each basis below the horizon, and the TP-1 basis, rejected
   `ShapeMismatch` at `Query { part: Unrolling }` before any encoding and
   settled `inconclusive`, `CertificateRejected`, with or without a
@@ -146,3 +149,4 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
   the first instance in canonical order with a finding (FR-126-AC-11).
 - Step 10: `c` with two `inc` steps at depth 2; `d` with one at depth 1;
   the scripts differ in the negated property only.
+- Step 11: `First(1)` refuses `query-kind` with no script; `All` encodes.

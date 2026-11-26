@@ -102,7 +102,8 @@ item's FSpec FR-331 `memory`), so it can be re-requested exactly.
   and with no `protocol` FSL SHALL decide it over one protocol subject for
   each admitted key of the claim's `over` type, not over the model subject,
   each outermost `parallel` resolved from the request's `memory` member. The
-  protocol deadlock item takes the first of these rules only.
+  protocol deadlock item (FR-636) takes the first of these rules, and with
+  no `protocol` is declined the same way, as FR-896 states.
 - A race-freedom item whose `claim` is the scoped path of an outermost
   `parallel` SHALL be decided over the protocol its path names. When the
   item's subject carries no `protocol`, the item SHALL settle `declined`

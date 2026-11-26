@@ -32,3 +32,17 @@ One low finding. The new criteria are sound.
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | With `subject.protocol`, FR-896 decides the item over the given `over` object, and FR-205 accepts any object of the type's population universe. The subject builder in `fsl-eval/src/simulation/protocol.rs` (`over_value`) refuses any object that is not an admitted key (FR-125) with `invalid_value`. Failure: a request binds `over` to a universe object that no initial state holds; by the spec it is checked, by the code it is refused, and no criterion decides which. State the admitted-key requirement or the intended check. | spec/functional/FR-896-decide-a-global-conformance-claim-over-the-protocol-system-or-a-recording.md:92-94 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | AC-60 does not state `inc`'s frame. The `Counter` of FR-315-AC-1 is built with the type-wide frame `modifies [value]` (`fsl-eval/tests/it/smt_query.rs` `operation`; `fsl-analyze/tests/it/model_check.rs` says that frame lets an operation on one receiver change every other counter), which is why AC-38 and AC-58 state `modifies self.value`. Failure: with two objects, one `inc` on `d` may set `c` to 2 or 3, so `c` is violated in one step, the `First(1)` query at depth 1 is satisfiable, and the item reports `c`, not `d`. State `modifies self.value` (FR-154) in AC-60. | spec/functional/FR-315-encode-the-smt-lib-transition-relation.md:1492 |
+| FND-003 | low | With an empty `initial` list no key is admitted, so every binding is now refused `invalid-value`, while FR-125 orders `NoInitialState` first and FR-896 settles a subject with no instance that way. Failure: a `global-conformance` request with `subject.protocol.over` set over a subject with no initial state settles `declined invalid-value` by FR-205 and `inconclusive no-initial-state` by FR-896's last bullet. Say which, as FR-315-AC-59 does for hyper parameters. | spec/functional/FR-205-define-the-protocol-subject-and-its-state-key.md:95-99 |
+| FND-004 | low | Step 19 is placed after the `Tag the tests` line with no blank line, so it renders as part of that paragraph and not as a procedure step. Move it above the line, after step 18. | spec/test-cases/TC-650-protocol-subject-and-state-key.md:102-104 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Checked at head 8bc5cfda3663de78b37a32d5be17391ce9345c54. |

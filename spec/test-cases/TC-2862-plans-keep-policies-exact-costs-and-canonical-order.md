@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify non-safety policies, deterministic outcomes, exact decimal costs, timed and probabilistic plans and the pinned exploration counts. Scope: FR-1012-AC-1 to AC-9.
+Verify non-safety policies, deterministic outcomes, exact decimal costs, timed and probabilistic plans and the pinned exploration counts. Scope: FR-1012-AC-1 to AC-8.
 
 ## Test Procedure
 
@@ -22,7 +22,6 @@ Verify non-safety policies, deterministic outcomes, exact decimal costs, timed a
 6. Plan over `counter` with `max_states` 2 and with `max_work` 1, each twice.
 7. Plan over a counter whose invariant is undetermined from value 4 up, for goal 8 and for goal 2, and through a substituted plan crossing that state.
 8. Plan with domain `Int[0, 0]` and goal `true` under `always holds(c.value != 4)` over `a` 0 and `b` 0, over `a` 0 and `b` 4, and over `a` 0 with an unheld key `z`.
-9. Plan under `eventually holds(c.value = 3)` over an empty universe and over an unheld key `z` alone.
 
 ## Expected Results
 
@@ -34,4 +33,3 @@ Verify non-safety policies, deterministic outcomes, exact decimal costs, timed a
 - Step 6: `explored` 2 states, 6 work and 1 state, 1 work, plan `null`, byte-identical.
 - Step 7: `incomplete` naming the invariant with no plan and no certificate; `incomplete` carrying the plan found before the state; no plan through the state is reported.
 - Step 8: `optimal` empty plan; `infeasible`; `optimal` empty plan.
-- Step 9: `inconclusive` `no-instance`, no plan, no certificate.

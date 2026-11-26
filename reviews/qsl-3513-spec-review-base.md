@@ -31,3 +31,16 @@ One medium finding.
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | medium | The new obligation has no acceptance criterion and does not say how a policy over several admitted keys is kept (presumably every key) or what the search returns when the type has none. FR-125 "Instancing" gives `NoInstance` for a clause item, but a plan request is not one. Failure: for `policy` over an empty population one implementer prunes nothing and reports `optimal`, another reports `no-instance`; a monitor of the first key only also passes every FR-1012 criterion. | spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md:37 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | The new refusal of `InductionStep` with `SmtInstances::First` has no acceptance criterion. Failure: an encoder that prints a step query restricted to the first instances passes AC-60 and every other criterion. | spec/functional/FR-315-encode-the-smt-lib-transition-relation.md:141 |
+| FND-003 | low | The text says the protocol deadlock item gets no subject per object but not what it decides when it carries no `subject.protocol` and the claim's `over` is an object type. Failure: FR-1033 sends it to the model subject, which binds no `over` object; the ticket records, unrun, that the code returns `invalid-value`. State that outcome. | spec/functional/FR-896-decide-a-global-conformance-claim-over-the-protocol-system-or-a-recording.md:90-92 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Checked at head 8bc5cfda3663de78b37a32d5be17391ce9345c54. |

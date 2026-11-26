@@ -27,3 +27,9 @@ One low finding.
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | The subject of `SHALL monitor` is a clause's `over` parameter, which performs nothing. Failure: a reader cannot tell whether the obligation is on the plan search (one monitor per admitted key) or on how a request declares the clause. Name the plan search as the actor and say it keeps one monitor per admitted key. | spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md:37 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Checked at head 8bc5cfda3663de78b37a32d5be17391ce9345c54. |
