@@ -266,14 +266,14 @@ fn a_claim_over_a_timer_is_checked_once_per_orbit() {
     assert!(reproduced(&settlement), "{settlement:?}");
 }
 
-/// FR-430-AC-3 (TC-1170), FR-159's preservation row for symmetry under a
-/// fairness: under `fair weak M::Call::arm`, a claim over `t` read by an
-/// invariant or by a window is decided under `[[t1, t2]]` as with no
-/// reduction. `t1` is armed after 1 ms, so `always holds(not t.inflight)`
+/// FR-430-AC-3 (TC-1170)'s symmetric `Timer` under a fairness, which
+/// FR-159's preservation table keeps: under `fair weak M::Call::arm`, a
+/// claim over `t` read by an invariant or by a window is decided under
+/// `[[t1, t2]]` as with no reduction. `t1` is armed after 1 ms, so `always holds(not t.inflight)`
 /// is violated at `t1`; no timer need be armed within 2 ms, so the window
 /// `eventually` is violated; the two claims every state satisfies hold,
 /// settling `Proved{Reduced{symmetry}, Uncertified}`.
-#[trace("TC-1170", "FR-430-AC-3", "FR-159-AC-2")]
+#[trace("TC-1170", "FR-430-AC-3")]
 #[test]
 fn a_fair_claim_over_a_timer_is_decided_under_symmetry() {
     let limits = ZoneCheckLimits::default();
