@@ -43,6 +43,14 @@ impl WrittenOperation {
             && serde_json::from_str::<serde::de::IgnoredAny>(wire).is_ok()
     }
 
+    /// The identity text `text` where it names something: `None` for the
+    /// identity text of the empty name, which is no name (FR-120).
+    #[ix_trace_rs::string_edge]
+    #[implements("FR-120-AC-39")]
+    pub(crate) fn admit_identity_text(text: String) -> Option<String> {
+        (text != r#""""#).then_some(text)
+    }
+
     /// A string as read from a written transition.
     pub(crate) fn from_wire(wire: String) -> Self {
         Self(wire)
