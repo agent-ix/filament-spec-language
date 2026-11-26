@@ -8,7 +8,7 @@
 //! and its zone search are not read, and the document's route member is
 //! never authoritative.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 use fsl_eval::simulation::model::{
     en5_admission, Admission, ClaimForm, DelayClass, PredicateReading, ReadFrom, RegionCause,
@@ -280,7 +280,7 @@ fn steps_only(formula: &CheckedTemporalFormula) -> bool {
 
 /// A node of the region graph: the model state and one representative of the
 /// clock region, the last clock the one that measures divergence.
-type RegionNode = (Vec<u8>, Vec<Rational>);
+type RegionNode = (Vec<u8>, Vec<(BigInt, BigInt)>);
 
 /// The region partition of one model: constants are multiples of
 /// `1 / scale`, and no clock is compared above `largest` such units.
@@ -336,14 +336,16 @@ impl Regions {
             let units = value.numerator().as_big() * BigInt::from(self.scale);
             units.div_rem(value.denominator().as_big())
         };
-        let mut fractions = BTreeSet::new();
+        let mut fractions = Vec::new();
         for (index, value) in values.iter().enumerate() {
             let (whole, rest) = split(value);
             let cap = BigInt::from(self.cap(index, values.len()));
             if (whole < cap) && rest != BigInt::from(0) {
-                fractions.insert(rational(rest, value.denominator().as_big().clone())?);
+                fractions.push(rational(rest, value.denominator().as_big().clone())?);
             }
         }
+        fractions.sort();
+        fractions.dedup();
         let parts = BigInt::from(fractions.len() + 1);
         values
             .iter()
@@ -441,7 +443,13 @@ fn time_lock_reachable(
             .map_err(ProbabilityDocumentError::KeyEncoding)?
             .0;
         let values = regions.canonical(&values)?;
-        let node = (key.to_vec(), values.clone());
+        let exact = values.iter().map(|value| {
+            (
+                value.numerator().as_big().clone(),
+                value.denominator().as_big().clone(),
+            )
+        });
+        let node = (key.to_vec(), exact.collect());
         if let Some(found) = index.get(&node) {
             return Ok(*found);
         }
