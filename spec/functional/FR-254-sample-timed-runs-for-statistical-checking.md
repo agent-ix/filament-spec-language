@@ -49,7 +49,7 @@ server is available. Each estimate comes with its confidence and the grid
 ## Outputs
 
 - The statistical design's `measured` verdict, with `q` in its basis, or
-  its `undecided` and `unsupported` dispositions; sampled witnesses
+  its `undecided`, `incomplete` and `unsupported` dispositions; sampled witnesses
   carrying their delays.
 
 ## Behavior
@@ -67,9 +67,13 @@ server is available. Each estimate comes with its confidence and the grid
   position, several at one stamp included; a delay and the instant `h` add
   none. This holds for a formula and for every measure: an unweighted
   fraction is the positions where `P` holds over the positions in the window,
-  never over `h + 1`, and the positions of `accumulate`, `steps` and
-  `elapsed` are positions of the window. No form with a time horizon SHALL be
-  read with a step horizon.
+  never over `h + 1`, and the positions of `accumulate` and `steps` are
+  positions of the window. No form with a time horizon SHALL be read with a
+  step horizon.
+- **Elapsed clock.** For `elapsed from holds(A) until holds(B) within h`,
+  EN-4 SHALL start the elapsed time at the first position at or after the
+  activating one where `A` holds, with no limit on reaching it, and censor as
+  FSpec FR-407 "Elapsed" states (FSpec FR-753).
 - **Step rewards.** Each sampled timed step SHALL carry its rewards. Under
   `weighted by R`, EN-4 SHALL draw the step that leaves a window position even
   when it lands after the window's end, weigh the position by its reward and
@@ -89,8 +93,21 @@ server is available. Each estimate comes with its confidence and the grid
   that reading.
 - If two completions give different readings, then EN-4 SHALL stop the run at
   the first such sample in trace-index order and settle the item
-  `unsupported`, `not-stochastic` with `state`, the idle tail's first timed
-  state, and `idle_tail` true, with no `identity` (FSpec FR-331).
+  `Unsupported(NotStochasticIdleTail{state})`, `state` the idle tail's first
+  timed state (FR-253; wire `not-stochastic` with `state` and `idle_tail` true, no
+  `identity`, FSpec FR-331).
+- **Undecided completions.** Where EN-4 cannot yet decide a timed formula,
+  or a form whose predicate or `when` guard reads a clock, over every
+  completion of a dense idle tail, EN-4 MAY stop the run at that sample and
+  settle the item `Incomplete(IdleTailUndecided{state, reason})` (FR-253;
+  FSpec FR-420 "Undecided completions").
+- That stop SHALL give no reading, verdict or `unsupported`, and satisfies no
+  criterion that states one; the acceptance criteria below are unchanged by
+  it.
+- If deciding the completions reaches a request limit, then EN-4 SHALL settle
+  the item `Incomplete(LimitReached{limit, value, setting})` naming it.
+- A release whose EN-4 takes the `IdleTailUndecided` stop SHALL name it in its
+  release notes (QSL-3447).
 - **Given delays only.** Over a `time dense` subject, if an identity with a
   free delay (FR-253) races at a sampled timed state, then EN-4 SHALL settle
   the item `unsupported`, `NotStochastic{state, identity}`, at the first such
@@ -102,8 +119,9 @@ server is available. Each estimate comes with its confidence and the grid
   rational method and rounded up, an exact rational. Each delay draw and
   each tie-break SHALL be one more choice with its own choice index.
 - A sample SHALL end when its next position's time stamp passes the end of
-  its window, the horizon after the activating position's stamp, or at an idle
-  tail.
+  its window, or at an idle tail. The window ends its time horizon after the
+  activating position's stamp, and for `elapsed` after the stamp of the first
+  position where `A` holds.
 - If a sample reaches a local time-lock before its horizon, where no
   positive delay is admissible and no transition identity is enabled, then
   EN-4 SHALL settle the item `unsupported`, `TimeLockedSample{state}`,
@@ -143,7 +161,8 @@ server is available. Each estimate comes with its confidence and the grid
 | FR-254-AC-5 | On TC-709's `Send` fixture (`send` at 2 ms, `reply` 10 ms later), `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` reads the positions stamped 0 and 2 ms and settles `Rejected` with estimate `1/2`; with `reward cost` 1 on `send` and 3 on `reply`, the `weighted by cost` form settles `Rejected` with estimate `3/4`, reading the reward of the `reply` step that lands at 12 ms. | Test (TC-709) |
 | FR-254-AC-6 | On TC-709's `Tick` fixture (`time tick`, period 2 ms), `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` reads the positions stamped 0, 0, 2 and 4 ms and settles `Rejected` with estimate `3/4`; `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]` settles `Accepted` with estimate 1, and with `[3 ms, 3 ms]` `Rejected` with estimate 0. No item is `NotStochastic`. | Test (TC-709) |
 | FR-254-AC-7 | On TC-709's `Idle` fixture (`send` at 2 ms, then an idle tail), each is decided, as every completion gives one reading: `probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]` estimate 1, `Accepted`; the same with `<= rational(2, 5)` estimate 0, `Rejected`; `mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25` estimate 1, `Rejected`; `mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25` estimate 0, `Accepted`; with `reward cost` 1 on `send`, `mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25` estimate 0, `Accepted`; `probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]` estimate 0, `Rejected`; `probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]` censored, estimate 0, `Rejected`; `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]` estimate 0, `Rejected`; `probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]` estimate 1, `Accepted`. | Test (TC-709) |
-| FR-254-AC-8 | On the `Idle` fixture, each of these settles `unsupported`, `not-stochastic` with the timed state just after `send`, `idle_tail` true and no `identity`: `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` (values `(1 + m)/(2 + m)`); `probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(3, 5)]` (true at `m = 0`, false for large `m`); `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]` (false with no stutter position, true with one at 4 ms). With `send` at 5 ms the first claim settles `Rejected` with estimate `1/2`. | Test (TC-709) |
+| FR-254-AC-8 | On the `Idle` fixture, each of these settles `Unsupported(NotStochasticIdleTail{state})`, `state` the timed state just after `send` (wire `not-stochastic` with `idle_tail` true and no `identity`): `mean of (fraction holds(c.phase = 1) over [0, 5 ms]) <= 0.25` (values `(1 + m)/(2 + m)`); `probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(3, 5)]` (true at `m = 0`, false for large `m`); `probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 1)]` (false with no stutter position, true with one at 4 ms). With `send` at 5 ms the first claim settles `Rejected` with estimate `1/2`. | Test (TC-709) |
+| FR-254-AC-9 | `elapsed` starts at the first `A`. On TC-709's `Send` fixture (`phase` 1 first at 2 ms, 2 first at 12 ms), `probability >= 0.5 [elapsed from holds(c.phase = 1) until holds(c.phase = 2) within 10 ms <= 10 ms]` settles `Accepted` with estimate 1 (elapsed `12 - 2 = 10`), and with `within 9 ms <= 9 ms` it is censored, estimate 0, `Rejected`. On the `Send` variant whose `reply` is `discrete { 1 ms: 1 }`, `probability >= 0.5 [elapsed from holds(c.phase = 1) until holds(c.phase = 2) within 1 ms <= 1 ms]` settles `Accepted` with estimate 1 (elapsed `3 - 2 = 1`), though `A` first holds later than `h`. | Test (TC-709) |
 
 ## Dependencies
 
