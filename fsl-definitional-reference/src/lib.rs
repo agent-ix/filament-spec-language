@@ -3,9 +3,8 @@
 //!
 //! This crate is a test oracle, never a verdict route. Its dependency surface
 //! is restricted to checked packages and data crates so it cannot inherit a
-//! producer, analyzer, or checker decision. The interpreter admits only
-//! literal reward bodies today; unsupported expressions are refused rather
-//! than delegated to the production evaluator.
+//! producer, analyzer, or checker decision. Unsupported expressions are
+//! refused rather than delegated to production semantics.
 
 #![forbid(unsafe_code)]
 
@@ -19,6 +18,46 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::domain_package::{DomainPackageRecord, NativeValueType, ValueTypeRef};
 use ix_trace_rs::implements;
+
+/// Maximum horizon enumerated by the reference's finite-horizon solver.
+pub const MAX_HORIZON_STEPS: usize = 256;
+
+/// Scheduler quantifiers understood independently of the source claim syntax.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReferenceSchedulerQuantifier {
+    /// A claim required to hold under every enabled scheduler.
+    Every,
+    /// A claim whose truth asks whether some scheduler can achieve the bound.
+    Some,
+    /// A claim evaluated under this fixed, declared workload.
+    Workload(String),
+}
+
+/// The scheduler quantifier represented by a checked probabilistic claim.
+pub fn scheduler_quantifier(scheduler: &ProbScheduler) -> ReferenceSchedulerQuantifier {
+    match scheduler {
+        ProbScheduler::Every => ReferenceSchedulerQuantifier::Every,
+        ProbScheduler::Workload(name) => ReferenceSchedulerQuantifier::Workload(name.clone()),
+    }
+}
+
+/// Refuses a quantile when its scheduler semantics are outside the implemented
+/// quantile solver. `Some` is the AC-19 refusal; `Every` remains distinct from
+/// a fixed declared workload.
+#[implements("FR-1051-AC-19")]
+pub fn validate_quantile_scheduler(
+    scheduler: &ReferenceSchedulerQuantifier,
+) -> Result<(), ReferenceRefusal> {
+    match scheduler {
+        ReferenceSchedulerQuantifier::Some => Err(ReferenceRefusal {
+            construct: "quantile claim over some scheduler",
+        }),
+        ReferenceSchedulerQuantifier::Every => Ok(()),
+        ReferenceSchedulerQuantifier::Workload(_) => Err(ReferenceRefusal {
+            construct: "quantile over an unsupported declared workload",
+        }),
+    }
+}
 
 /// A state-indexed action relation for a finite, exact probabilistic model.
 /// Each action is a finite distribution over state indices. The target set is
@@ -36,11 +75,6 @@ impl TinyMdp {
     pub fn new(
         actions: Vec<Vec<Vec<(usize, filament_exact::Rational)>>>,
     ) -> Result<Self, ReferenceRefusal> {
-        if actions.len() > (1 << 16) {
-            return Err(ReferenceRefusal {
-                construct: "finite state space exceeds 2^16 valuations",
-            });
-        }
         for state in &actions {
             if state.is_empty() {
                 return Err(ReferenceRefusal {
@@ -87,8 +121,8 @@ impl TinyMdp {
 
     /// Maximum probability of reaching a target within `horizon` steps,
     /// allowing deterministic scheduler choices to depend on both state and
-    /// steps remaining. The recursion enumerates every available action at
-    /// each `(state, remaining)` pair and keeps the best exact expectation.
+    /// steps remaining. An iterative dynamic program keeps the best exact
+    /// expectation at each horizon.
     #[implements("FR-1051-AC-19")]
     pub fn some_scheduler_reachability_within(
         &self,
@@ -96,42 +130,43 @@ impl TinyMdp {
         targets: &[bool],
         horizon: usize,
     ) -> Result<filament_exact::Rational, ReferenceRefusal> {
+        if horizon > MAX_HORIZON_STEPS {
+            return Err(ReferenceRefusal {
+                construct: "horizon exceeds the reference step bound",
+            });
+        }
         if initial >= self.actions.len() || targets.len() != self.actions.len() {
             return Err(ReferenceRefusal {
                 construct: "initial state or target set outside finite state space",
             });
         }
-        fn value(
-            model: &TinyMdp,
-            state: usize,
-            targets: &[bool],
-            remaining: usize,
-        ) -> filament_exact::Rational {
-            if targets[state] {
-                return filament_exact::Rational::from_integer(filament_exact::Integer::one());
+        let zero = filament_exact::Rational::from_integer(filament_exact::Integer::zero());
+        let one = filament_exact::Rational::from_integer(filament_exact::Integer::one());
+        let mut values: Vec<_> = targets
+            .iter()
+            .map(|target| if *target { one.clone() } else { zero.clone() })
+            .collect();
+        for _ in 0..horizon {
+            let mut next = values.clone();
+            for (state, actions) in self.actions.iter().enumerate() {
+                if targets[state] {
+                    continue;
+                }
+                next[state] = actions
+                    .iter()
+                    .map(|action| {
+                        action
+                            .iter()
+                            .fold(zero.clone(), |sum, (destination, probability)| {
+                                sum.add(&probability.mul(&values[*destination]))
+                            })
+                    })
+                    .max()
+                    .expect("construction requires at least one action per state");
             }
-            if remaining == 0 {
-                return filament_exact::Rational::from_integer(filament_exact::Integer::zero());
-            }
-            model.actions[state]
-                .iter()
-                .map(|action| {
-                    action.iter().fold(
-                        filament_exact::Rational::from_integer(filament_exact::Integer::zero()),
-                        |sum, (destination, probability)| {
-                            sum.add(&probability.mul(&value(
-                                model,
-                                *destination,
-                                targets,
-                                remaining - 1,
-                            )))
-                        },
-                    )
-                })
-                .max()
-                .expect("construction requires at least one action per state")
+            values = next;
         }
-        Ok(value(self, initial, targets, horizon))
+        Ok(values[initial].clone())
     }
 }
 
@@ -251,12 +286,8 @@ pub fn validate_tiny_fragment(graph: &CheckedGraph) -> Result<(), ReferenceRefus
         }
     }
     for claim in graph.probabilistic_model().claims() {
-        if matches!(&claim.form, ProbForm::Quantile { .. })
-            && matches!(&claim.scheduler, ProbScheduler::Workload(_))
-        {
-            return Err(ReferenceRefusal {
-                construct: "quantile claim over some scheduler",
-            });
+        if matches!(&claim.form, ProbForm::Quantile { .. }) {
+            validate_quantile_scheduler(&scheduler_quantifier(&claim.scheduler))?;
         }
     }
     Ok(())
@@ -310,12 +341,33 @@ mod tests {
 
     #[trace("FR-1051-AC-19")]
     #[test]
-    fn model_construction_refuses_more_than_two_to_the_sixteenth_states() {
-        let refusal = TinyMdp::new(vec![Vec::new(); (1 << 16) + 1])
-            .expect_err("the reference is bounded to 2^16 valuations");
+    fn horizon_solver_refuses_steps_past_its_declared_bound() {
+        let model = TinyMdp::new(vec![vec![vec![(0, ratio(1, 1))]]])
+            .expect("the self-loop distribution is exact");
+        let refusal = model
+            .some_scheduler_reachability_within(0, &[false], super::MAX_HORIZON_STEPS + 1)
+            .expect_err("the reference refuses horizons beyond its bound");
         assert_eq!(
             refusal.construct,
-            "finite state space exceeds 2^16 valuations"
+            "horizon exceeds the reference step bound"
+        );
+    }
+
+    #[trace("FR-1051-AC-19")]
+    #[test]
+    fn quantile_refuses_some_but_preserves_every_scheduler_quantifiers() {
+        use super::{validate_quantile_scheduler, ReferenceSchedulerQuantifier};
+
+        assert_eq!(
+            validate_quantile_scheduler(&ReferenceSchedulerQuantifier::Some)
+                .expect_err("AC-19's some-scheduler quantile is refused")
+                .construct,
+            "quantile claim over some scheduler"
+        );
+        assert!(validate_quantile_scheduler(&ReferenceSchedulerQuantifier::Every).is_ok());
+        assert!(
+            validate_quantile_scheduler(&ReferenceSchedulerQuantifier::Workload("Even".into()))
+                .is_err()
         );
     }
 }

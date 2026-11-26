@@ -29,9 +29,9 @@ thiserror = "2.0.20"
 syn = { version = "2.0.119", features = ["full", "visit"] }
 # `span-locations` gives each token its real source line.
 proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 
 [dev-dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 tempfile = "3.27.0"
 
 [lints.rust]

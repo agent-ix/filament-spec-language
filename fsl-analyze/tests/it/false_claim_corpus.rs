@@ -3,16 +3,62 @@
 
 use ix_trace_rs::trace;
 
+fn direct_manifest_dependencies(manifest: &str) -> Vec<(String, String)> {
+    let mut dependencies = Vec::new();
+    let mut dependency_table: Option<String> = None;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            dependency_table = match line {
+                "[dependencies]" | "[build-dependencies]" | "[dev-dependencies]" => {
+                    Some(line.trim_matches(['[', ']']).to_owned())
+                }
+                _ if line.starts_with("[dependencies.") => {
+                    let name = line
+                        .strip_prefix("[dependencies.")
+                        .and_then(|tail| tail.strip_suffix(']'))
+                        .unwrap_or_default();
+                    dependencies.push((
+                        name.trim_matches(['"', '\'']).to_owned(),
+                        "dependencies".to_owned(),
+                    ));
+                    None
+                }
+                _ if line.starts_with("[target.") => [
+                    ".dependencies]",
+                    ".build-dependencies]",
+                    ".dev-dependencies]",
+                ]
+                .iter()
+                .find(|suffix| line.ends_with(**suffix))
+                .map(|suffix| suffix.trim_matches(['.', ']']).to_owned()),
+                _ => None,
+            };
+            continue;
+        }
+        let Some(table) = &dependency_table else {
+            continue;
+        };
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some((name, _)) = line.split_once('=') {
+            dependencies.push((
+                name.trim().trim_matches(['"', '\'']).to_owned(),
+                table.clone(),
+            ));
+        }
+    }
+    dependencies
+}
+
 /// The oracle stays isolated from producer and checker crates and is linked
 /// only into tests. Runtime checks are added alongside each route's seed.
 #[trace("FR-1051-AC-18")]
 #[test]
 fn reference_crate_has_only_the_declared_semantic_dependencies() {
     let manifest = include_str!("../../../fsl-definitional-reference/Cargo.toml");
-    let dependencies = manifest
-        .split_once("[dependencies]")
-        .and_then(|(_, section)| section.split_once("[lints.rust]").map(|(deps, _)| deps))
-        .expect("reference manifest has a dependency section");
+    let dependencies = direct_manifest_dependencies(manifest);
     let allowed = [
         "fsl-foundation",
         "fsl-semantics",
@@ -23,13 +69,9 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
         "filament-semantic-value",
         "ix-trace-rs",
     ];
-    for line in dependencies.lines().filter(|line| line.contains('=')) {
-        let name = line
-            .split_once('=')
-            .map(|(name, _)| name.trim())
-            .expect("dependency rows have a name");
+    for (name, _) in &dependencies {
         assert!(
-            allowed.contains(&name),
+            allowed.contains(&name.as_str()),
             "unexpected direct dependency {name}"
         );
     }
@@ -43,7 +85,9 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
         "filament-semantic-value =",
     ] {
         assert!(
-            dependencies.contains(required),
+            dependencies
+                .iter()
+                .any(|(name, _)| name == required.trim_end_matches(" =")),
             "reference dependency section omits required crate {required}"
         );
     }
@@ -54,7 +98,7 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
         "fsl-hybrid-reference",
     ] {
         assert!(
-            !dependencies.contains(forbidden),
+            !dependencies.iter().any(|(name, _)| name == forbidden),
             "reference dependency section names forbidden crate {forbidden}"
         );
     }
@@ -63,21 +107,38 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
     assert!(!reference_source.contains("S6aRewardEvaluator"));
 
     let analyze_manifest = include_str!("../../../fsl-analyze/Cargo.toml");
-    let reference_entry = analyze_manifest
-        .lines()
-        .find(|line| {
-            line.trim_start()
-                .starts_with("fsl-definitional-reference =")
-        })
-        .expect("analyze manifest registers the oracle");
-    let dev_dependencies = analyze_manifest
-        .split_once("[dev-dependencies]")
-        .map(|(_, section)| section)
-        .expect("analyze manifest has dev dependencies");
-    assert!(
-        dev_dependencies.contains(reference_entry),
-        "reference is a dev dependency only"
+    let analyze_dependencies = direct_manifest_dependencies(analyze_manifest);
+    assert_eq!(
+        analyze_dependencies
+            .iter()
+            .filter(|(name, _)| name == "fsl-definitional-reference")
+            .count(),
+        1,
+        "the reference is linked only once"
     );
+    assert_eq!(
+        analyze_dependencies
+            .iter()
+            .find(|(name, _)| name == "fsl-definitional-reference")
+            .map(|(_, table)| table.as_str()),
+        Some("dev-dependencies"),
+        "the reference is linked from analyzer test dependencies only"
+    );
+}
+
+/// The manifest reader includes dependency tables after lints and target
+/// dependency tables, so later sections cannot hide a forbidden edge.
+#[trace("FR-1051-AC-18")]
+#[test]
+fn manifest_dependency_reader_covers_later_and_target_tables() {
+    let manifest = "[dependencies]\nfsl-semantics = \"0.1\"\n\
+         [lints.rust]\nunsafe_code = \"forbid\"\n\
+         [dependencies.fsl-eval]\npath = \"../fsl-eval\"\n\
+         [target.'cfg(unix)'.build-dependencies]\nfsl-replay = \"0.1\"\n";
+    let dependencies = direct_manifest_dependencies(manifest);
+    assert!(dependencies.iter().any(|(name, _)| name == "fsl-eval"));
+    assert!(dependencies.iter().any(|(name, _)| name == "fsl-replay"));
+    assert!(dependencies.iter().any(|(name, _)| name == "fsl-semantics"));
 }
 
 /// FR-1051-AC-19: a disjunctive guard is refused before the reference can
@@ -100,11 +161,29 @@ fn reference_refuses_disjunctive_operation_guards() {
     assert_eq!(refusal.construct, "disjunctive operation guard");
 }
 
-/// FR-1051-AC-19: some-scheduler quantiles are refused without producing a
-/// truth value; the reference does not yet enumerate quantile distributions.
+/// A multi-part timed guard carries disjunction outside ordinary preconditions.
 #[trace("FR-1051-AC-19")]
 #[test]
-fn reference_refuses_some_scheduler_quantiles() {
+fn reference_refuses_disjunctive_timed_guards() {
+    const PROFILES: &str = "profile ev = \"filament.temporal.timed/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n";
+    let document = crate::timed_world::document(&["x"], &[("send", &["phase"])]);
+    let body = format!(
+        "{}pre Disjunctive using v on M::Call::send {{ self.x > 0 ms or self.x < 2 ms }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world(&document, PROFILES, &body);
+
+    let refusal = fsl_definitional_reference::validate_conjunctive_guards(world.package.graph())
+        .expect_err("the reference refuses a timed disjunction");
+    assert_eq!(refusal.construct, "disjunctive timed guard");
+}
+
+/// A checked workload names one fixed scheduler, not existential scheduling.
+/// The reference refuses this unsupported quantile route by its actual kind.
+#[trace("FR-1051-AC-19")]
+#[test]
+fn reference_refuses_quantiles_under_unsupported_declared_workload() {
     let model = crate::prob_world::tossed_coin(
         "probabilistic Q using ev on M over (c: M::Coin) under Even on origin \
          { quantile 0.5 of (steps from holds(c.v = 0) until holds(c.v = 1) within 2) <= 1 }",
@@ -116,8 +195,11 @@ fn reference_refuses_some_scheduler_quantiles() {
     .expect("the checked package admits the quantile claim");
 
     let refusal = fsl_definitional_reference::validate_tiny_fragment(world.package.graph())
-        .expect_err("some-scheduler quantile is outside the reference fragment");
-    assert_eq!(refusal.construct, "quantile claim over some scheduler");
+        .expect_err("the named workload quantile solver is unsupported");
+    assert_eq!(
+        refusal.construct,
+        "quantile over an unsupported declared workload"
+    );
 }
 
 /// FR-1051-AC-19: region constraints in the admitted reference fragment use
