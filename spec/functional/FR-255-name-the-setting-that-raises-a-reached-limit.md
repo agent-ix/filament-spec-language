@@ -743,7 +743,7 @@ these names through the same operand grammar as the stage settings
     per entry kind plus the lengths of the buffers the entry owns (the bytes
     of its keys, 8 bytes for each limb of a big integer, and length times
     element size for a sequence), never an allocator capacity or a resident
-    set size. The retained entries are an EN-6 symbolic vertex, a protocol
+    set size. An EN-1 stored state's fixed overhead is 256 bytes. The retained entries are an EN-6 symbolic vertex, a protocol
     closure path, an EN-1 stored state and a model-expansion successor. Each
     entry SHALL be charged before it is stored, the charges of one item SHALL
     accumulate and SHALL NOT be refunded, and the item's producer, certificate
@@ -799,6 +799,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-31 | A replay of a clause over a model with caller setting `emit.output_bytes` 1 returns `stage_limit_exceeded` with bound 1 and setting `emit.output_bytes`. A hyper clause whose body has five expression nodes (`1 + 1 + 1`), checked with `s3.nodes` 4, returns `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. An 11-byte snapshot read with `observation.input_bytes` 10 refuses with bound 10, count 11 and that setting. | Test |
 | FR-255-AC-32 | A synthesis request whose own accounting gives `work_units` 1000000, run with the caller override `accounting.work_units=0`, settles `incomplete` naming `work_units`, bound 0, count 1 and setting `accounting.work_units`. A `refinement_transfer` request and a monitor request whose checked source holds `1 + 1 + 1`, each run with `s3.nodes` 4, return `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. | Test |
 | FR-255-AC-33 | A synthesis run given a clocks override both by its request and by its caller, and any run given one `--limit` setting twice, are refused before work starts. A `native-replay/1` run given a clocks override or an output override is refused `invalid-request` naming it. | Test |
+| FR-255-AC-34 | A deadlock-freedom analyze item over a model subject, decided by EN-1, run with `analysis.retained_bytes=1`, stops before it stores its first state, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. The same item with no setting settles as it does at the published default. | Test |
 
 ## Status
 
@@ -806,6 +807,11 @@ The existing setting table, the one-mapping-per-limits-type rule, the
 builders, the settings operation, a request's `stage_limits` and their
 defaults are implemented (TC-720, TC-721). FR-255-AC-15 to FR-255-AC-19 specify native-join
 setting bindings, defaults and refusals; their implementation is not yet complete.
+`analysis.retained_bytes` is charged for the states of EN-1's safety and
+reduced searches (FR-255-AC-34). EN-1's liveness and hyper searches, EN-6
+vertices, protocol closure paths, model-expansion successors, and the
+certificate checker and witness replay do not yet charge it.
+
 Backing of the criteria:
 
 The `inspect.max_view_entries` row and its typed-view behavior are specified

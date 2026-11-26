@@ -22,6 +22,7 @@ use fsl_analyze::model_check::{check_model, ModelCheckRequest};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::Setting;
 use fsl_replay::{
     replay_model_trace, settle_model_check, CounterexampleKind, DisagreementCause, Execution,
     IncompleteCause, InconclusiveCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
@@ -899,4 +900,41 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
             other => panic!("expected an invalid-value refusal, got {other:?}"),
         }
     }
+}
+
+#[test]
+#[trace("FR-255-AC-34")]
+fn a_one_byte_retention_allowance_stops_before_the_first_stored_state() {
+    use fsl_analyze::analyze::{analyze_items, split_records, Engines};
+    let case = case(&crate::derived_request_support::counter_body(""), &[0]);
+    let run = |bound: Option<u64>| {
+        let mut item = case.model_item();
+        if let Some(bound) = bound {
+            assert!(item.engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        let records = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![crate::derived_request_support::derived_deadlock(item)],
+            &Cancel::new(),
+        );
+        let (mut records, found) = split_records(records, case.checked());
+        assert!(found.is_empty());
+        assert_eq!(records.len(), 1);
+        records.remove(0)
+    };
+    let stopped = run(Some(1));
+    let printed = format!("{stopped:?}");
+    assert!(
+        printed.contains("AnalysisRetainedBytes") && printed.contains("value: 1"),
+        "{printed}"
+    );
+    assert_eq!(printed, format!("{:?}", run(Some(1))));
+    assert_eq!(
+        ModelCheckLimit::AnalysisRetainedBytes.setting(),
+        "analysis.retained_bytes"
+    );
+    assert_eq!(
+        format!("{:?}", run(None)),
+        format!("{:?}", run(Setting::AnalysisRetainedBytes.default_bound()))
+    );
 }

@@ -67,9 +67,10 @@ use filament_exact::{Cancel, ObjectReference, ScalarLimits};
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_eval::simulation::protocol::ProtocolTransition;
+use fsl_foundation::budget::Budget;
 use fsl_foundation::diagnostic::category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::{BackendId, RequestIndex, Setting};
+use fsl_foundation::{BackendId, RequestIndex, Setting, SettingLimits};
 use fsl_package::CheckedPackage;
 use fsl_replay::statistical::StatisticalRecord;
 use fsl_replay::{
@@ -688,8 +689,9 @@ impl SubjectBinding<'_> {
 /// engine reads the caller's bound. `certificate_check.max_rank` is the one
 /// exception: it is accepted and carried in [`EngineBounds`], but no engine
 /// in this repository reads it yet (FR-255 states only that it is carried).
+/// `analysis.retained_bytes` bounds the states an EN-1 run stores.
 /// `plan_search.*` is never listed: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 17] = [
+pub const ENGINE_SETTINGS: [Setting; 18] = [
     Setting::ExpansionMaxCandidates,
     Setting::SimulationMaxSteps,
     Setting::ScheduleMaxDemandPoints,
@@ -707,6 +709,7 @@ pub const ENGINE_SETTINGS: [Setting; 17] = [
     Setting::StatisticalMaxCycleSteps,
     Setting::StatisticalMaxSampleSteps,
     Setting::CertificateCheckMaxRank,
+    Setting::AnalysisRetainedBytes,
 ];
 
 /// The engine settings the caller set for one run: a bound is present only
@@ -811,6 +814,29 @@ impl EngineBounds {
             }
         }
         stated
+    }
+}
+
+impl SettingLimits for EngineBounds {
+    fn bounds(&self) -> Vec<(Setting, u64)> {
+        ENGINE_SETTINGS
+            .iter()
+            .filter_map(|setting| Some((*setting, self.get(*setting)?)))
+            .collect()
+    }
+
+    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
+        self.set(setting, bound)
+    }
+}
+
+impl EngineBounds {
+    /// One analysis item's allowance: every setting at the caller's bound,
+    /// else its published default, polling `cancel`. The retained exploration
+    /// state of the item draws on it (`analysis.retained_bytes`).
+    #[must_use]
+    pub fn item_budget(&self, accounting: ScalarLimits, cancel: &Cancel) -> Budget {
+        Budget::from_settings(self, accounting, cancel)
     }
 }
 

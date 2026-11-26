@@ -278,6 +278,7 @@ impl<'a> ClauseSubject<'a> {
                                 .and_then(|temporal| temporal.smt_encoding)
                                 .unwrap_or_default(),
                         },
+                        engines: subject.limits.engines,
                         replay: Box::new(|payload| subject.replay(payload, &letters)),
                     },
                     cancel,
@@ -960,6 +961,7 @@ impl<'a> PackageClauseSubject<'a> {
                                 .and_then(|temporal| temporal.smt_encoding)
                                 .unwrap_or_default(),
                         },
+                        engines: subject.limits.engines,
                         replay: Box::new(|payload| subject.replay(payload, &letters)),
                     },
                     cancel,
@@ -1391,6 +1393,7 @@ impl<'a> PackageProtocolWork<'a> {
                     ProtocolItem {
                         request,
                         certificate,
+                        engines: self.limits.engines,
                         replay,
                     },
                     constraint.as_deref(),

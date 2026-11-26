@@ -298,6 +298,9 @@ pub enum ModelCheckLimit {
     /// FR-247: EN-7's EDF demand-point budget; setting
     /// `schedule.max_demand_points`.
     ScheduleMaxDemandPoints,
+    /// FR-255: the item's retained exploration bytes; setting
+    /// `analysis.retained_bytes`.
+    AnalysisRetainedBytes,
 }
 
 impl ModelCheckLimit {
@@ -361,6 +364,7 @@ impl ModelCheckLimit {
             Self::CertificateMaxRank => "max_rank",
             Self::ValueCheckMaxCases | Self::ContractCheckMaxCases => "max_cases",
             Self::ScheduleMaxDemandPoints => "max_demand_points",
+            Self::AnalysisRetainedBytes => "retained_bytes",
         }
     }
 
@@ -415,6 +419,7 @@ impl ModelCheckLimit {
             Self::ValueCheckMaxCases => "value_check.max_cases",
             Self::ContractCheckMaxCases => "contract_check.max_cases",
             Self::ScheduleMaxDemandPoints => "schedule.max_demand_points",
+            Self::AnalysisRetainedBytes => "analysis.retained_bytes",
         }
     }
 }
@@ -679,6 +684,7 @@ mod tests {
                 ("max_working_bytes", "certificate_check.max_working_bytes")
             }
             ModelCheckLimit::CertificateMaxRank => ("max_rank", "certificate_check.max_rank"),
+            ModelCheckLimit::AnalysisRetainedBytes => ("retained_bytes", "analysis.retained_bytes"),
         }
     }
 
@@ -728,6 +734,7 @@ mod tests {
             ModelCheckLimit::CertificateMaxBytes,
             ModelCheckLimit::CertificateMaxWorkingBytes,
             ModelCheckLimit::CertificateMaxRank,
+            ModelCheckLimit::AnalysisRetainedBytes,
         ];
         all.extend(
             [
