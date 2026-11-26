@@ -41,6 +41,7 @@ use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{Capability, CheckedComposition, ComponentPackages, DeclarationFamily};
 use fsl_semantics::library::LibraryName;
 use serde_json::{Map, Value, json};
+use ix_trace_rs::implements;
 
 use super::{
     ItemSelection, ResolvedClaim, ResolvedItem, SubjectSelection, candidate_list, invalid_kind,
@@ -479,6 +480,7 @@ pub(super) fn guarantee_selection(clause: &GuaranteeClause) -> ItemSelection {
     }
 }
 
+#[implements("FR-1044-AC-1")]
 fn composition_named<'p>(
     package: &'p CheckedPackage,
     name: &str,
@@ -658,6 +660,7 @@ fn list(slots: &[SlotFacts]) -> Result<Vec<Value>, fsl_replay::planner::KeyWireE
 }
 
 /// The routed composition item (FSpec FR-331 `composition`).
+#[implements("FR-1044-AC-10", "FR-1044-AC-11")]
 fn routed<F: CompositionFront>(
     front: &F,
     index: RequestIndex,
@@ -701,6 +704,7 @@ fn routed<F: CompositionFront>(
 }
 
 /// A composition item anchored at `node`.
+#[implements("FR-1044-AC-1")]
 fn claim_item<F: CompositionFront>(
     front: &F,
     index: RequestIndex,
@@ -848,6 +852,7 @@ pub(super) fn premise_items<F: CompositionFront>(
     Ok(items)
 }
 
+#[implements("FR-1044-AC-4")]
 fn premise_item<F: CompositionFront>(
     front: &mut F,
     index: RequestIndex,
@@ -1012,6 +1017,7 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
 /// index segment), `malformed_wire`, with no cause, at the `node` member of an
 /// index segment the component graph does not hold; or the typed cause of a
 /// component package that has no graph.
+#[implements("FR-1044-AC-15")]
 fn restate<F: CompositionFront>(
     front: &F,
     facts: &CompositionFacts,

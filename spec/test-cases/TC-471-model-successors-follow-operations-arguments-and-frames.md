@@ -14,7 +14,8 @@ Verify the model-level successor relation: enabled applications, receiver
 and argument identities, frame post-states with creations and deletions,
 closure, postcondition filtering and the state key's `semantic` form.
 
-Scope: FR-120-AC-1, FR-120-AC-2, FR-120-AC-3, FR-120-AC-4, FR-120-AC-27.
+Scope: FR-120-AC-1, FR-120-AC-2, FR-120-AC-3, FR-120-AC-4, FR-120-AC-27,
+FR-120-AC-39. The readers of FR-120-AC-39 are unit tests in `fsl-replay`.
 
 ## Test Procedure
 
