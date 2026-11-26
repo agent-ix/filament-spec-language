@@ -529,6 +529,26 @@ pub(crate) fn sample_request_using<
     end: impl FnMut(&S::State, &StateKey) -> bool,
     expansion: impl FnMut(&S::State, &StateKey) -> Result<E, EncodingRefusal>,
 ) -> Result<Trace<S::TransitionId, S::Finding>, NotSimulated> {
+    sample_request_using_observed(system, request, end, expansion, |_| {
+        ObserverDecision::Continue
+    })
+}
+
+/// [`sample_request_using`] with an `observer` that only watches: it is
+/// called at every state, a stopped expansion included, and must continue.
+pub(crate) fn sample_request_using_observed<
+    S: TransitionSystem<InitialError = std::convert::Infallible>,
+    R: Root,
+    E: SampleExpansionSource<S::TransitionId, S::State, S::Finding>,
+>(
+    system: &S,
+    request: SampleRequest<'_, R>,
+    end: impl FnMut(&S::State, &StateKey) -> bool,
+    expansion: impl FnMut(&S::State, &StateKey) -> Result<E, EncodingRefusal>,
+    observer: impl FnMut(
+        &SampleObservation<'_, S::State, S::TransitionId, S::Finding>,
+    ) -> ObserverDecision,
+) -> Result<Trace<S::TransitionId, S::Finding>, NotSimulated> {
     if !is_pinned_sampler(request.sampler) {
         return Err(NotSimulated::GeneratorMismatch {
             supplied: request.sampler.clone(),
@@ -546,13 +566,13 @@ pub(crate) fn sample_request_using<
         },
         end,
         expansion,
-        |_| ObserverDecision::Continue,
+        observer,
     )?
     .ok_or(NotSimulated::EmptyInitial)?;
     match sampled {
         ObservedSample::Completed(trace) => Ok(trace),
         ObservedSample::ObserverStopped(_) => {
-            unreachable!("sample_request_using always continues its observer")
+            unreachable!("the observer of sample_request_using_observed must continue")
         }
     }
 }

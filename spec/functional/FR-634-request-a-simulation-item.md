@@ -154,6 +154,7 @@ reader; refusing to report it would hide a real violating run.
 | FR-634-AC-7 | Over the Counter subject with `invariant AtMostThree using v on M::Counter at current { self.value <= 3 }`, enumeration and a `sample` run with seed 5 each give `findings` `[]` and the same `category`, `traces` and `coverage` as the subject with no invariant; under `max_states` 2 over `AtMostTwo` the item is `incomplete` `LimitReached{max_states}` and `findings` holds no entry, since no reported trace reaches `value = 3`. | Test (TC-2976) |
 | FR-634-AC-8 | A `sample` run over the Counter subject with `expansion.max_candidates` 1 is `incomplete` (exit 22) with cause `{"kind": "limit-reached", "limit": "max_candidates", "setting": "expansion.max_candidates", "value": 1}`, `coverage.states` 1 and `coverage.transitions` 0. | Test |
 | FR-634-AC-9 | An `enumerate` run of the same request settles the same category, exit, cause and coverage, with the initial state in `frontier`. | Test |
+| FR-634-AC-10 | A `sample` run and an `enumerate` run of the same request with the request's `accounting.integer_bits` 1, where an expansion's evaluation exhausts that counter, are `incomplete` with cause `{"kind": "limit-reached", "limit": "integer_bits", "setting": "accounting.integer_bits", "value": 1}`, naming the counter and not `max_candidates`. | Test |
 
 ## Dependencies
 

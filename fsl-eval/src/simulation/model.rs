@@ -123,7 +123,7 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
-use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
+use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
 use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
@@ -3711,6 +3711,9 @@ pub struct SampledDraw {
     pub coverage: crate::simulation::Coverage,
     /// The meter's refusal, when it stopped the run.
     pub stopped: Option<filament_exact::Incomplete>,
+    /// For each trace, the budget its final stopped expansion ran out of;
+    /// `None` for a trace that no expansion stopped or whose stop names none.
+    pub stop_limits: Vec<Option<ExpansionLimit>>,
 }
 
 /// FSL FR-634's sampled runs over `system`: `runs.samples` traces drawn by
@@ -3743,12 +3746,14 @@ pub fn sample_model_runs(
         .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
         .collect();
     let mut traces = Vec::new();
+    let mut stop_limits = Vec::new();
     let mut stopped = None;
     for trace in 0..runs.samples {
         if poll() {
             break;
         }
-        let drawn = sample_request_until(
+        let mut stop_limit = None;
+        let drawn = crate::simulation::sample::sample_request_using_observed(
             system,
             SampleRequest {
                 domains: &roots,
@@ -3760,14 +3765,24 @@ pub fn sample_model_runs(
                 max_steps: runs.max_steps,
                 identity: identity_limits(),
             },
-            |_| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
+            |_, _| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
                 Ok(()) => false,
                 Err(incomplete) => {
                     stopped = Some(incomplete);
                     true
                 }
             },
+            |state, _| expand(system, state, identity_limits()),
+            |observation| {
+                if let crate::simulation::sample::SampleExpansion::Stopped(stop) =
+                    &observation.expansion
+                {
+                    stop_limit = stop.limit;
+                }
+                crate::simulation::sample::ObserverDecision::Continue
+            },
         )?;
+        stop_limits.push(stop_limit);
         let retained = std::iter::once(&drawn.initial)
             .chain(drawn.steps.iter().map(|step| &step.key))
             .map(|key| length_amount(key.as_bytes().len()))
@@ -3790,6 +3805,7 @@ pub fn sample_model_runs(
         traces,
         coverage,
         stopped,
+        stop_limits,
     })
 }
 
