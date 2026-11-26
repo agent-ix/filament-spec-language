@@ -178,7 +178,12 @@ fn member_names(source: &str) -> Vec<Vec<String>> {
     emission
         .source_object_member_facts()
         .iter()
-        .map(|facts| facts.iter().map(|fact| fact.admitted_name.to_string()).collect())
+        .map(|facts| {
+            facts
+                .iter()
+                .map(|fact| fact.admitted_name.to_string())
+                .collect()
+        })
         .collect()
 }
 
@@ -239,10 +244,10 @@ fn subtype_adding_a_field_and_an_operation_emits() {
         .as_bytes(),
     );
     let emission = emit_checked(&package, EmitLimits::new(10_000_000)).expect("the package emits");
-    let operations: Vec<Vec<String>> = emission
+    let operations: Vec<Vec<&str>> = emission
         .source_object_operations()
         .iter()
-        .map(|entries| entries.iter().map(|entry| format!("{entry:?}")).collect())
+        .map(|entries| entries.iter().map(|entry| &*entry.identity).collect())
         .collect();
-    assert_eq!(operations.iter().map(Vec::len).collect::<Vec<_>>(), vec![1, 1]);
+    assert_eq!(operations, vec![vec!["Order::size"], vec!["Rush::weight"]]);
 }

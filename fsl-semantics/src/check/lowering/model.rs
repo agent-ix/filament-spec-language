@@ -3244,23 +3244,28 @@ impl<'a> Lowering<'a> {
             _ => None,
         };
         let owner_chain = source_object_owner_chain(object_records, declaration);
+        // Each owner's declared positions, indexed once for this object.
+        let mut positions: BTreeMap<(&DeclarationKey, &str), usize> = BTreeMap::new();
+        for record in model.records.values() {
+            if let DomainPackageRecord::FieldMember(field) = record {
+                if let Some(name) = field.key.node.rsplit('/').next() {
+                    positions.insert((&field.owner, name), field.position);
+                }
+            }
+        }
         let place = |attribute: &filament_semantic_value::declaration::EffectiveAttribute<'_>| {
             let owner = model.type_key(attribute.owner())?;
-            let name = attribute.field().name();
-            let record = model.records.values().find_map(|record| match record {
-                DomainPackageRecord::FieldMember(field)
-                    if &field.owner == owner && field.key.node.rsplit('/').next() == Some(name) =>
-                {
-                    Some(field.position)
-                }
-                _ => None,
-            })?;
-            Some((owner_chain.iter().position(|held| *held == owner)?, record))
+            let position = *positions.get(&(owner, attribute.field().name()))?;
+            Some((
+                owner_chain.iter().position(|held| *held == owner)?,
+                position,
+            ))
         };
         let mut ordered = Vec::with_capacity(fields.len());
         for attribute in fields.iter() {
-            let at = place(&attribute)
-                .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
+            let at = place(&attribute).ok_or_else(|| {
+                fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
+            })?;
             ordered.push((at, attribute));
         }
         ordered.sort_by_key(|(at, _)| *at);
@@ -4200,4 +4205,3 @@ pub fn source_object_owner_chain<'a>(
     }
     chain
 }
-

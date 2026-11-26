@@ -8972,7 +8972,14 @@ fn source_object_rows(
             SelectedSourceObjectMember,
             SourceObjectMemberFacts,
         )> = Vec::with_capacity(source_members.len());
+        let mut bound: Vec<&str> = Vec::with_capacity(source_members.len());
         for (name, target, optional) in source_members {
+            // The body's binding names are exactly the view's field names,
+            // each once.
+            if bound.contains(&name) {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            bound.push(name);
             // The body binds the view order; the scope lists an object's own
             // fields before its supertypes', so each binding finds its
             // attribute by name.
@@ -8981,8 +8988,7 @@ fn source_object_rows(
                 .find(|attribute| attribute.field().name() == name)
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
             let field = attribute.field();
-            if optional != (field.presence() == filament_exact::Presence::Optional)
-            {
+            if optional != (field.presence() == filament_exact::Presence::Optional) {
                 return Err(EmitRefusal::SourceMapInvariant);
             }
             let field_owner = graph
