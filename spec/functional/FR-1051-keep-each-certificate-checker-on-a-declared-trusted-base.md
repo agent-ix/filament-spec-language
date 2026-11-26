@@ -415,7 +415,7 @@ part of the fragment:
 
 PLANNED. No criterion is met on main. The exception rows record the sharing
 on origin/main as of this requirement. The arch-lint check and its data, the
-restructuring that removes S-1 and S-3 to S-13, P-1 to P-12 and O-1 to O-6
+restructuring that removes S-1 and S-3 to S-13, P-1 to P-13 and O-1 to O-6
 (QSL-3501), the separate timed monitor that removes S-2 (QSL-3324), the
 shared admission data of B-10 (QSL-3494, after FSL PR #4042), the mutation
 harness (QSL-3505) and the definitional reference with its corpus (QSL-3500)
