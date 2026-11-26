@@ -82,6 +82,9 @@ pub struct PackageSnapshotRequest<'a, 'p> {
     /// The progress ledger the request carries, which only a trace that
     /// asserts progress accepts.
     pub ledger: Option<&'a super::ProgressLedger>,
+    /// The ceiling on the bytes of each package emission the run makes
+    /// (`emit.output_bytes`).
+    pub emit: fsl_package::EmitLimits,
 }
 
 fn report(disposition: ClauseDisposition, usage: ClauseRunUsage) -> ClauseRunReport {
@@ -145,6 +148,7 @@ pub fn run_package_snapshots(
         ledger,
         sources,
         progress_capacity,
+        emit: _,
     } = *request;
     let input = input.as_inner();
     let early = |disposition| Ok(report(disposition, ClauseRunUsage::default()));
@@ -398,6 +402,7 @@ fn run_model(
         accounting,
         trace,
         over,
+        emit,
         ..
     } = *request;
     let input = input.as_inner();
@@ -478,7 +483,7 @@ fn run_model(
             max_candidates: *max_candidates,
         },
         meter: accounting,
-        emit: fsl_package::EmitLimits::new(u64::MAX),
+        emit,
     }) {
         Ok(system) => system,
         Err(failure) => return stopped(ClauseDisposition::Admit(failure), admitted),

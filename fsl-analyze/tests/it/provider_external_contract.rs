@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Integer, Value};
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample, Engine,
-    Engines, ItemCounterexample, NegotiatedItem, SourceProvision, SubjectBinding,
+    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample,
+    DeadlineSupply, Engine, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
+    SubjectBinding,
 };
 use fsl_analyze::provider::{self, ProviderResults};
 use fsl_analyze::provider::{ExternalProvider, ProviderLimit, ProviderRequest, ProviderVerdict};
@@ -208,7 +209,7 @@ fn both_entries_under(
         items: vec![fixture.item(engines, extent)],
         certification,
     };
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let analyze_cancel = Cancel::new();
     let provider_cancel = Cancel::new();
     if pre_cancelled {

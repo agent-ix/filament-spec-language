@@ -9,8 +9,8 @@
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{
     analyze, AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, ClaimItem, ClaimRefusal, ClauseLimits,
-    Counterexample, Engines, ItemForm, ItemOptions, NegotiatedItem, ProbabilisticItem,
-    ProbabilisticLimits, SourceProvision, TemporalItem,
+    Counterexample, DeadlineSupply, Engines, ItemForm, ItemOptions, NegotiatedItem,
+    ProbabilisticItem, ProbabilisticLimits, SourceProvision, TemporalItem,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use fsl_analyze::provider;
@@ -121,7 +121,7 @@ fn missing_source_refuses_analyze_and_declines_provider_items_before_any_engine(
         certification: Default::default(),
     };
     let engines = Engines::fsl().expect("the manifests register");
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let failure = analyze(&world.package, &request, &engines, &limits, &Cancel::new())
         .expect_err("the source is absent");
     let StageFailure::Refused(AnalyzeRefusal::Provision(refusal)) = failure else {
@@ -184,7 +184,7 @@ fn a_refuted_clause_returns_the_reproduced_counterexample_through_both_entries()
         items: vec![temporal(&world)],
         certification: Default::default(),
     };
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let engines = Engines::fsl().expect("the manifests register");
     let outcome = analyze(&world.package, &request, &engines, &limits, &Cancel::new())
         .expect("the request admits")
@@ -255,7 +255,7 @@ fn the_unbounded_exact_member_retains_the_checker_owned_certificate() {
         certification: Default::default(),
     };
     let engines = Engines::fsl().expect("the manifests register");
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let outcome = analyze(&world.package, &request, &engines, &limits, &Cancel::new())
         .expect("the request admits")
         .into_value();
@@ -320,7 +320,7 @@ fn the_one_state_exact_budget_returns_no_counterexample_or_certificate() {
         &world.package,
         &request,
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the request admits")
@@ -361,7 +361,7 @@ fn changed_source_bytes_never_promote_an_unreproduced_candidate_to_refuted() {
         &world.package,
         &request,
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the labels, binding and source provision admit")
@@ -391,7 +391,7 @@ fn source_completeness_is_checked_even_when_the_package_cannot_emit() {
         &world.package,
         &request,
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("missing source refuses even this package");
@@ -512,7 +512,7 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
         certification: Default::default(),
     };
     let engines = Engines::fsl().expect("the manifests register");
-    let mut limited = AnalyzeLimits::unbounded();
+    let mut limited = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     limited.accounting.work_units = 0;
     let stopped = analyze(&package, &request, &engines, &limited, &Cancel::new())
         .expect("the bounded value request admits")
@@ -544,7 +544,7 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
         &package,
         &request,
         &engines,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the adequately funded request admits")
@@ -560,7 +560,7 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
             fsl_analyze::value_check::manifest::BACKEND_ID,
         )],
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
         Default::default(),
     );
@@ -605,7 +605,7 @@ fn a_contract_claim_reaches_the_existing_contract_arm() {
             fsl_analyze::contract_check::manifest::BACKEND_ID,
         )],
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
         Default::default(),
     );
@@ -642,7 +642,7 @@ fn omitted_optional_statistical_settings_equal_the_explicit_defaults() {
     form.timed_sampling = None;
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let engines = Engines::fsl().expect("the manifests register");
     let serve = |item| {
@@ -704,7 +704,7 @@ fn exact_refutation_retains_the_reproduced_path_set_through_both_entries() {
         certification: Default::default(),
     };
     let engines = Engines::fsl().expect("the manifests register");
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let outcome = analyze(&world.package, &request, &engines, &limits, &Cancel::new())
         .expect("the request admits")
         .into_value();
@@ -818,7 +818,7 @@ fn a_provider_admission_failure_is_settled_by_disposition() {
         &SourceProvision::default(),
         &items,
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
         Default::default(),
     );
@@ -868,7 +868,7 @@ fn a_call_item_fault_is_settled_by_disposition() {
             provision: SourceProvision::single(world.package.graph().source(), &world.unit),
             items: resolved,
             engines: &engines,
-            limits: AnalyzeLimits::unbounded(),
+            limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
             certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,

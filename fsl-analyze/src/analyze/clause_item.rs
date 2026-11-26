@@ -278,6 +278,7 @@ impl<'a> ClauseSubject<'a> {
                                 .and_then(|temporal| temporal.smt_encoding)
                                 .unwrap_or_default(),
                         },
+                        engines: subject.limits.engines,
                         replay: Box::new(|payload| subject.replay(payload, &letters)),
                     },
                     cancel,
@@ -960,6 +961,7 @@ impl<'a> PackageClauseSubject<'a> {
                                 .and_then(|temporal| temporal.smt_encoding)
                                 .unwrap_or_default(),
                         },
+                        engines: subject.limits.engines,
                         replay: Box::new(|payload| subject.replay(payload, &letters)),
                     },
                     cancel,
@@ -1391,6 +1393,7 @@ impl<'a> PackageProtocolWork<'a> {
                     ProtocolItem {
                         request,
                         certificate,
+                        engines: self.limits.engines,
                         replay,
                     },
                     constraint.as_deref(),
@@ -1492,6 +1495,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::*;
+    use crate::analyze::DeadlineSupply;
 
     /// Read the actual package produced at Source replay's emission seam. An
     /// untimed replay outcome alone cannot detect a substituted clock authority.
@@ -1572,7 +1576,7 @@ protocol Flow using p over (input: M::Widget) on origin {
             initial: vec![],
             universes: vec![],
         };
-        let limits = AnalyzeLimits::unbounded();
+        let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
         let inputs = ReplayInputs {
             package,
             binding: &binding,
@@ -1663,7 +1667,7 @@ protocol Flow using p over (input: M::Widget) on origin {
     #[trace("TC-2958", "FR-940-AC-22")]
     #[test]
     fn an_unreadable_replay_package_is_that_items_replay_refusal() {
-        let limits = AnalyzeLimits::unbounded();
+        let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
         let refusal = read_package(b"{not a package", &limits).expect_err("malformed bytes");
         assert!(matches!(
             refusal,

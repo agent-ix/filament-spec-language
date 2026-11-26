@@ -50,6 +50,17 @@ pub enum ExpansionLimit {
     MaxCandidates,
 }
 
+impl ExpansionLimit {
+    /// The limit's name in a `limit-reached` cause.
+    #[must_use]
+    pub fn limit_name(self) -> &'static str {
+        match self {
+            Self::EvaluationMeter(kind) => kind.as_str(),
+            Self::MaxCandidates => "max_candidates",
+        }
+    }
+}
+
 /// The findings of one expanded state (FR-101-AC-13).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StateFindings<F> {

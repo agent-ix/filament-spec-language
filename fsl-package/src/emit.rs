@@ -6895,6 +6895,48 @@ fn append_model_roots<'a>(
     Ok(())
 }
 
+#[implements("FSpec-FR-322-AC-137")]
+fn move_model_roots_to_end(
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+) {
+    let root_ids: BTreeSet<_> = nodes
+        .iter()
+        .filter(|node| {
+            node.node_tag.as_ref() == CheckedNodeTag::Model.as_wire()
+                && node.semantic_form.as_ref() == "model_root"
+        })
+        .map(|node| node.node_id.clone())
+        .collect();
+    if root_ids.is_empty() {
+        return;
+    }
+
+    let mut other_nodes = Vec::with_capacity(nodes.len());
+    let mut roots = Vec::with_capacity(root_ids.len());
+    for node in nodes.drain(..) {
+        if root_ids.contains(&node.node_id) {
+            roots.push(node);
+        } else {
+            other_nodes.push(node);
+        }
+    }
+    other_nodes.extend(roots);
+    *nodes = other_nodes;
+
+    let mut other_entries = Vec::with_capacity(source_map.len());
+    let mut root_entries = Vec::with_capacity(root_ids.len());
+    for entry in source_map.drain(..) {
+        if root_ids.contains(&entry.node_id) {
+            root_entries.push(entry);
+        } else {
+            other_entries.push(entry);
+        }
+    }
+    other_entries.extend(root_entries);
+    *source_map = other_entries;
+}
+
 /// FR-322 / contract-ir model occurrence rule: each model-owned declaration
 /// node carries one generated occurrence at its selected model root region.
 /// Type references discovered while emitting a declaration do not create
@@ -7658,6 +7700,7 @@ pub(crate) fn emitted_document_nodes(
 /// `#[string_edge]`: the admitted timed nominal form selects the unit-node
 /// emission branch.
 #[string_edge]
+#[implements("FSpec-FR-322-AC-137")]
 #[allow(clippy::too_many_arguments)]
 fn emit_package_nodes(
     package: &CheckedPackage,
@@ -8188,7 +8231,16 @@ fn emit_package_nodes(
         &mut nodes,
         &mut source_map,
     )?;
-    model_correspondence::append(ids, graph, &regions, &mut nodes, &mut source_map)?;
+    // The meter charges the canonical rows that are written below.
+    let mut meter = OutputMeter::new(limits);
+    model_correspondence::append(
+        ids,
+        graph,
+        &regions,
+        &mut nodes,
+        &mut source_map,
+        &mut meter,
+    )?;
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
@@ -8209,8 +8261,6 @@ fn emit_package_nodes(
             .and_then(|candidate| candidate.expression_region(claim.origin().ordinal(), &regions))
             .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
-    // The meter charges the canonical rows that are written below.
-    let mut meter = OutputMeter::new(limits);
     let value_validity = value_validity_requirements::append(
         ids,
         graph,
@@ -8221,6 +8271,9 @@ fn emit_package_nodes(
     )?;
     omitted.extend(value_validity.omitted.iter().cloned());
     omitted.sort_by(|left, right| left.node.cmp(&right.node));
+    // FSpec FR-322-AC-137: selected-model roots and their source-map entries
+    // follow every other emitted node and source-map entry.
+    move_model_roots_to_end(&mut nodes, &mut source_map);
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
@@ -8349,7 +8402,9 @@ fn emit_package_nodes(
                     .iter()
                     .map(|(key, id)| (key.clone(), id.clone())),
             );
-            value_validity.renumbering.relabel_term_data(&row_ids, data);
+            value_validity
+                .renumbering
+                .relabel_term_data(&row_ids, data);
         }
     }
     let selected_operation_member_rows = selected_operation_member_rows
@@ -8433,6 +8488,11 @@ fn emit_package_nodes(
         &value_validity,
         &relation_rows,
         &omitted_causes,
+    )?;
+    value_validity_requirements::renumber_records(
+        &requirement_rows,
+        &mut nodes,
+        &mut source_map,
     )?;
     meter.charge(&requirement_rows)?;
     let path_condition_frames =

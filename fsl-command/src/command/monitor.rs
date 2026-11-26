@@ -30,8 +30,9 @@ use serde_json::{json, Value};
 use super::limits::{CommandLimits, MonitorPreparationLimits};
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire, FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    check_sources, intake_with_bytes, request_integer_division, request_with_overrides,
+    require_native_header, wire, FileCounts, NativeResult, RequestOverrides, Result, RunCause,
+    RunError, RunLimits, RunResult,
 };
 
 /// The format of one event.
@@ -735,6 +736,8 @@ struct DriveRequest<'a> {
     bytes: &'a [u8],
     dependent_bytes: usize,
     caller: &'a CommandLimits,
+    /// FR-640: the batch run's caller overrides, for the clock selections.
+    overrides: &'a RequestOverrides<'a>,
 }
 
 /// Drive one stream. `lines` yields the records; `sink` gets each event.
@@ -751,8 +754,9 @@ fn drive(
         bytes,
         dependent_bytes,
         caller,
+        overrides,
     } = request_input;
-    let mut request: wire::MonitorRequest = request(bytes)?;
+    let mut request: wire::MonitorRequest = request_with_overrides(bytes, overrides)?;
     let integer_division = request_integer_division(request.integer_division.take())?;
     let records_file = request.records.clone();
     match (matches!(source, Records::Batch), &records_file) {
@@ -1275,6 +1279,7 @@ where
                 bytes,
                 dependent_bytes: limits.dependent_bytes,
                 caller,
+                overrides: &RequestOverrides::default(),
             },
             Records::Stream(Box::new(records.map(|line| {
                 line.map_err(|error| RunCause::Io {
@@ -1297,12 +1302,17 @@ pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
+    overrides: &RequestOverrides<'_>,
     settle: &Settle<'_>,
 ) -> Result<RunResult> {
-    let caller = CommandLimits::monitor(MonitorPreparationLimits {
-        work: u64::MAX,
-        storage: u64::MAX,
-    });
+    let caller = super::overrides::command_limits(
+        super::overrides::RunRoute::Monitor,
+        CommandLimits::monitor(MonitorPreparationLimits {
+            work: u64::MAX,
+            storage: u64::MAX,
+        }),
+        overrides,
+    )?;
     let mut events = Vec::new();
     let summary = drive(
         DriveRequest {
@@ -1310,6 +1320,7 @@ pub(super) fn run_bytes(
             bytes,
             dependent_bytes,
             caller: &caller,
+            overrides,
         },
         Records::Batch,
         &mut |event| events.push(event.as_value().clone()),

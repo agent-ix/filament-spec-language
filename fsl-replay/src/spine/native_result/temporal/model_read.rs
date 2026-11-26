@@ -1,36 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Structural model-arm members of FR-267's temporal result reader.
 
-use base64::Engine;
 use filament_exact::{ObjectId, ObjectReference, UniverseId};
 use filament_semantic_value::model_transition::ModelTransition;
 use serde::{Deserialize, Deserializer};
 
 use super::EffectiveIdRead;
-
-/// A model state key's canonical unpadded base64url spelling.
-/// Reading it checks the encoding, not membership in the supplied model.
-#[derive(Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct StateRead {
-    #[serde(deserialize_with = "state_key")]
-    key: String,
-}
-
-impl StateRead {
-    /// The exact canonical base64url spelling in the result.
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-}
-
-fn state_key<'de, D: Deserializer<'de>>(decoder: D) -> Result<String, D::Error> {
-    let key = String::deserialize(decoder)?;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(&key)
-        .map_err(serde::de::Error::custom)?;
-    Ok(key)
-}
+use crate::shared_wire::StateLocus;
 
 /// The existing canonical typed reference bound to a model clause's `over`.
 #[derive(Debug, Deserialize)]
@@ -80,7 +56,7 @@ pub struct ModelStepRead {
     /// The source operation or terminal stutter identity.
     pub transition: ModelTransitionRead,
     /// The recorded post-state key, without successor authentication.
-    pub post_state: StateRead,
+    pub post_state: StateLocus,
 }
 
 /// The two transition identities admitted by an authored model clause run.
@@ -125,6 +101,7 @@ mod tests {
 
     use super::super::{decode, validate_counterexample, CounterexampleRead, TemporalRecord};
     use super::*;
+    use base64::Engine as _;
 
     // These fixtures establish structural read behavior only. A valid key or
     // reference can still fail the model's separate semantic replay checks.
@@ -226,7 +203,7 @@ mod tests {
             .next()
             .expect("the recorded prefix step");
         assert_eq!(
-            step.post_state.key(),
+            step.post_state.key_text(),
             value["prefix"][0]["post_state"]["key"].as_str().unwrap()
         );
         assert!(matches!(
@@ -258,7 +235,7 @@ mod tests {
             ModelTransitionRead::TerminalStutter
         ));
         assert_eq!(
-            terminal.post_state.key(),
+            terminal.post_state.key_text(),
             state(b"[0,[]]")["key"].as_str().unwrap()
         );
     }
@@ -414,7 +391,10 @@ mod tests {
         let parsed =
             read(&value, 1, Some("division-by-zero")).expect("a finite model undefined prefix");
         assert_eq!(
-            parsed.undefined_state().expect("the model locus").key(),
+            parsed
+                .undefined_state()
+                .expect("the model locus")
+                .key_text(),
             state(b"[1,[]]")["key"].as_str().unwrap()
         );
         for identity in [

@@ -9,8 +9,9 @@
 use filament_exact::{Cancel, Origin, Role};
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeRequest, ClaimItem, ClauseLimits, Counterexample, Engines,
-    ItemCounterexample, ItemForm, ItemOptions, NegotiatedItem, SubjectBinding, TemporalItem,
+    analyze, AnalyzeLimits, AnalyzeRequest, ClaimItem, ClauseLimits, Counterexample,
+    DeadlineSupply, Engines, ItemCounterexample, ItemForm, ItemOptions, NegotiatedItem,
+    SubjectBinding, TemporalItem,
 };
 use fsl_analyze::provider;
 use fsl_eval::simulation::Limits;
@@ -90,7 +91,7 @@ fn through_analyze_with_counterexamples(
             certification: Default::default(),
         },
         &Engines::fsl().expect("the layer-A manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the binding is admitted")
@@ -114,7 +115,7 @@ fn through_run_with_counterexamples(
         &world.provision,
         &[item],
         &Engines::fsl().expect("the layer-A manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
         Default::default(),
     );

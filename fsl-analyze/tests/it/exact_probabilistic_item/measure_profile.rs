@@ -187,6 +187,14 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
         .expect("the quantile refutation carries replayed path evidence");
     assert_eq!(counterexample.mass(), &ratio(1, 4));
     assert!(!counterexample.evidence().paths.is_empty());
+    // FSpec FR-413 "Claim bound": a quantile keeps the claim's comparison,
+    // its measure bound as `threshold` and its level apart.
+    assert_eq!(
+        counterexample.wire.as_ref().expect("a wire")["bound"],
+        json!({"type": "quantile", "comparison": "less-or-equal",
+            "threshold": {"numerator": "2", "denominator": "1"},
+            "level": {"numerator": "4", "denominator": "5"}})
+    );
 }
 
 #[trace("TC-3152", "FR-1043-AC-2", "FR-1043-AC-3")]
@@ -795,6 +803,7 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
         resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
     };
     use fsl_analyze::analyze::AnalyzeLimits;
+    use fsl_analyze::analyze::DeadlineSupply;
     let engines = Engines::fsl().unwrap();
     let mut registry = fsl_route::Registry::new();
     for descriptor in engines.registrations() {
@@ -804,7 +813,7 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
         serde_json::from_value(json!([{"claim": name, "probabilistic": {"evidence": "exact"}}]))
             .unwrap();
     let binding = world.binding();
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let units = [world.package.graph().source().clone()];
     let items = resolve_items(
         &world.package,

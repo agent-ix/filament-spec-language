@@ -5,9 +5,13 @@
 //! selects a declaration by its declared name and runs a value synthesis,
 //! writing the `filament.synthesis-outcome/v1` document (FSpec FR-823).
 
-use fsl_foundation::SourceIdentity;
+use std::collections::BTreeMap;
+
+use fsl_command::command::RequestOverrides;
+use fsl_foundation::{AccountingSetting, Setting, SourceIdentity};
 use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 
 use crate::support::config_version_spine::{spine, Case};
@@ -782,4 +786,235 @@ fn a_grammar_retyped_plan_candidate_refuses_at_its_binding() {
             .unwrap()["name"],
         "candidate"
     );
+}
+
+// ---- FR-255 Behavior 15: caller overrides on a synthesis run -----------
+
+/// Runs `request`'s members over `unit.native` (and `package.json` when
+/// `package` is given) with the caller's `overrides`.
+fn run_overridden(
+    unit: &str,
+    package: bool,
+    members: Value,
+    overrides: &RequestOverrides<'_>,
+) -> (u8, Value) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = json!({"format": "native-run/1", "request": {"models": []}});
+    if package {
+        std::fs::write(
+            directory.path().join("package.json"),
+            package_bytes(unit, &Default::default()),
+        )
+        .unwrap();
+        request["request"]["package"] = json!({"file": "package.json"});
+    } else {
+        std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+        request["request"]["program"] = json!({"source": source("unit.native")});
+    }
+    for (name, member) in members.as_object().unwrap() {
+        request["request"][name] = member.clone();
+    }
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    match fsl_command::command::run_with_overrides(&path, overrides, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).expect("a JSON document"),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
+}
+
+fn work_stop() -> Value {
+    json!({"kind": "limit-reached", "limit": "work_units", "value": 0,
+        "setting": "accounting.work_units"})
+}
+
+/// FR-255-AC-32: the caller's `accounting.work_units` at 0 replaces the
+/// request's 1000000 on the source and the package route. A counter the
+/// caller does not name keeps the request's value.
+#[test]
+#[trace("FR-255-AC-32")]
+fn a_synthesis_run_applies_the_callers_accounting_counters() {
+    // No equality application, so the package needs no equality file.
+    let unit = pick("Pick * Pick > 48", "");
+    let no_work = BTreeMap::from([(AccountingSetting::WorkUnits, 0)]);
+    let other = BTreeMap::from([(AccountingSetting::ResultUnits, 1_000_000)]);
+    for package in [false, true] {
+        let (exit, found) = run_overridden(
+            &unit,
+            package,
+            json!({"synthesis": {"declaration": "Pick", "accounting": {"work_units": 1_000_000}}}),
+            &RequestOverrides {
+                accounting: Some(&no_work),
+                ..Default::default()
+            },
+        );
+        assert_eq!(exit, 22, "{package}: {found}");
+        assert_eq!(found["synthesis"]["status"], "incomplete", "{found}");
+        assert_eq!(found["synthesis"]["cause"], work_stop(), "{found}");
+
+        let (exit, kept) = run_overridden(
+            &unit,
+            package,
+            json!({"synthesis": {"declaration": "Pick", "accounting": {"work_units": 1}}}),
+            &RequestOverrides {
+                accounting: Some(&other),
+                ..Default::default()
+            },
+        );
+        assert_eq!(exit, 22, "{package}: {kept}");
+        assert_eq!(
+            kept["synthesis"]["cause"],
+            json!({"kind": "limit-reached", "limit": "work_units", "value": 1,
+                "setting": "accounting.work_units"}),
+            "{kept}"
+        );
+    }
+}
+
+/// FR-255-AC-34: a request whose accounting gives `work_units` 0 runs under
+/// the caller's 1000000; a caller naming only another counter keeps the 0.
+#[test]
+#[trace("FR-255-AC-34")]
+fn a_callers_counter_replaces_the_requests_only_when_named() {
+    let unit = pick("Pick * Pick > 48", "");
+    let member = json!({"synthesis": {"declaration": "Pick", "accounting": {"work_units": 1}}});
+    let more = BTreeMap::from([(AccountingSetting::WorkUnits, 1_000_000)]);
+    let other = BTreeMap::from([(AccountingSetting::ValueOccurrences, 1_000_000)]);
+    // The request reader takes no zero bound, so the request states 1.
+    let kept_stop = json!({"kind": "limit-reached", "limit": "work_units", "value": 1,
+        "setting": "accounting.work_units"});
+    for package in [false, true] {
+        let (_, replaced) = run_overridden(
+            &unit,
+            package,
+            member.clone(),
+            &RequestOverrides {
+                accounting: Some(&more),
+                ..Default::default()
+            },
+        );
+        assert_ne!(replaced["synthesis"]["cause"], kept_stop, "{replaced}");
+        assert_ne!(replaced["synthesis"]["status"], "incomplete", "{replaced}");
+
+        let (exit, kept) = run_overridden(
+            &unit,
+            package,
+            member.clone(),
+            &RequestOverrides {
+                accounting: Some(&other),
+                ..Default::default()
+            },
+        );
+        assert_eq!(exit, 22, "{package}: {kept}");
+        assert_eq!(kept["synthesis"]["cause"], kept_stop, "{kept}");
+    }
+}
+
+/// FR-255-AC-33: a clocks override beside the request's own `clocks` is
+/// refused on both routes.
+#[test]
+#[trace("FR-255-AC-33", "FR-640-AC-14")]
+fn a_synthesis_run_refuses_clocks_given_twice() {
+    let supplied = RawValue::from_string("{}".to_owned()).unwrap();
+    for package in [false, true] {
+        let (exit, found) = run_overridden(
+            &pick("Pick = 7", ""),
+            package,
+            json!({"synthesis": {"declaration": "Pick"}, "clocks": {}}),
+            &RequestOverrides {
+                clocks: Some(&supplied),
+                ..Default::default()
+            },
+        );
+        assert_eq!(exit, 20, "{package}: {found}");
+        assert_eq!(found["code"], "invalid-request", "{found}");
+        names(&found["message"], "--clocks");
+    }
+}
+
+/// FR-255 Behavior 15: the source synthesis run compiles under the caller's
+/// stage limits; `1 + 1 + 1` is five expression nodes.
+#[test]
+#[trace("FR-255-AC-32")]
+fn a_source_synthesis_run_applies_the_callers_stage_limit() {
+    let limits = std::collections::BTreeMap::from([(Setting::S3Nodes, 4)]);
+    let (exit, found) = run_overridden(
+        &format!(
+            "{}function f using v(): Integer pure {{ 1 + 1 + 1 }}\n",
+            pick("Pick = 7", "")
+        ),
+        false,
+        json!({"synthesis": {"declaration": "Pick"}}),
+        &RequestOverrides {
+            limits: Some(&limits),
+            ..Default::default()
+        },
+    );
+    assert_eq!(exit, 22, "{found}");
+    assert_eq!(found["code"], "stage_limit_exceeded", "{found}");
+    names(&found, "S3 node limit 4 reached (5)");
+}
+
+/// FR-255 Behavior 15: a synthesis run refuses, naming it, an override it
+/// cannot apply: clocks, an output file, observation limits on a value
+/// synthesis, and a stage setting on a package, which compiles nothing.
+#[test]
+fn a_synthesis_run_refuses_an_override_it_cannot_apply() {
+    let supplied = RawValue::from_string("{}".to_owned()).unwrap();
+    let output = std::path::PathBuf::from("synthesis-output.json");
+    let observation =
+        std::collections::BTreeMap::from([(Setting::ObservationInputBytes, 1_048_576)]);
+    let limits = std::collections::BTreeMap::from([(Setting::S3Nodes, 4)]);
+    let clocks = RequestOverrides {
+        clocks: Some(&supplied),
+        ..Default::default()
+    };
+    let written = RequestOverrides {
+        output: Some(&output),
+        ..Default::default()
+    };
+    let observed = RequestOverrides {
+        limits: Some(&observation),
+        ..Default::default()
+    };
+    let staged = RequestOverrides {
+        limits: Some(&limits),
+        ..Default::default()
+    };
+    for (package, overrides, member) in [
+        (false, clocks, "clocks"),
+        (true, clocks, "clocks"),
+        (false, written, "output"),
+        (true, written, "output"),
+        (false, observed, "observation.input_bytes"),
+        (true, observed, "observation.input_bytes"),
+        (true, staged, "s3.nodes"),
+    ] {
+        let (exit, found) = run_overridden(
+            &pick("Pick = 7", ""),
+            package,
+            json!({"synthesis": {"declaration": "Pick"}}),
+            &overrides,
+        );
+        assert_eq!(exit, 20, "{package} {member}: {found}");
+        assert_eq!(found["code"], "invalid-request", "{found}");
+        names(&found["message"], &format!("{member} override"));
+    }
+}
+
+/// FR-255 Behavior 15: a synthesis compile reads no clocks selection, so one
+/// the request states is refused rather than ignored, for a source and for a
+/// package synthesis.
+#[test]
+fn a_synthesis_run_refuses_the_requests_clocks() {
+    let clocks = json!({"spare": {"kind": "event_position", "sequence_authority": "spare"}});
+    let (exit, found) = run_with(
+        &pick("Pick = 7", ""),
+        json!({"synthesis": {"declaration": "Pick"}, "clocks": clocks}),
+    );
+    assert_eq!(exit, 20, "{found}");
+    assert_eq!(found["code"], "invalid-request", "{found}");
+    names(&found["message"], "reads no clocks selection");
 }

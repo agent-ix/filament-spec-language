@@ -229,6 +229,7 @@ impl Case {
                 max_messages: None,
                 max_live_instances: None,
             },
+            engines: Default::default(),
             replay: Box::new(|_| panic!("a claim that holds has no counterexample")),
         }
     }

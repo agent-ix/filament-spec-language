@@ -40,6 +40,7 @@ pub(super) fn settle_call(
     members: &fsl_replay::CallRequirements,
     selection: &Requirements,
     packages: &fsl_semantics::model::intake::PackageInput,
+    limits: AnalyzeLimits,
     settle: &Settle<'_>,
     certification: CertificationPolicy,
 ) -> Result<SettledRun> {
@@ -49,7 +50,7 @@ pub(super) fn settle_call(
         .map(|member| fsl_replay::claim_locus_wire(member.occurrence()))
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| RunCause::AnalyzeFault)?;
-    let resolved = resolve_held_claims(checked, packages, selection)?;
+    let resolved = resolve_held_claims(checked, packages, limits.emit, selection)?;
     // FR-960 "Unknown claim": a claim of no item of the call refuses the
     // request before any item is negotiated, naming the claim as supplied.
     if let Some(position) = resolved
@@ -96,7 +97,7 @@ pub(super) fn settle_call(
         provision,
         items: resolved,
         engines: settle.engines,
-        limits: AnalyzeLimits::unbounded(),
+        limits,
         certification,
     };
     settle_run(run, settle.negotiate, settle.cancel).map_err(|error| match error {
@@ -135,6 +136,7 @@ fn index_segments(claim: &serde_json::Value) -> Vec<(usize, &serde_json::Value)>
 fn resolve_held_claims<'a>(
     checked: &fsl_replay::spine::CheckedUnit,
     packages: &fsl_semantics::model::intake::PackageInput,
+    emit: fsl_package::EmitLimits,
     selection: &'a Requirements,
 ) -> Result<std::borrow::Cow<'a, Requirements>> {
     if selection
@@ -144,12 +146,8 @@ fn resolve_held_claims<'a>(
     {
         return Ok(std::borrow::Cow::Borrowed(selection));
     }
-    let graph = fsl_analyze::analyze::DocumentGraphs::of_package(
-        checked.package(),
-        packages,
-        AnalyzeLimits::unbounded().emit,
-    )
-    .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
+    let graph = fsl_analyze::analyze::DocumentGraphs::of_package(checked.package(), packages, emit)
+        .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
     resolve_held_claims_in(&graph, selection)
 }
 

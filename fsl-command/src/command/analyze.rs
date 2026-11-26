@@ -350,9 +350,7 @@ pub fn prepare_analyze(
 
 fn prepare_bytes(directory: &Path, bytes: &[u8], limits: RunLimits) -> Result<PreparedAnalyze> {
     match read(directory, bytes, limits, &CommandLimits::analyze())? {
-        Readout::Source(input, _) => Ok(PreparedAnalyze {
-            input: Box::new(input),
-        }),
+        Readout::Source(input, _) => Ok(PreparedAnalyze { input }),
         // A prepared run holds the source it compiles; a package request
         // has none to prepare (FR-850).
         Readout::Package(_) => Err(RunCause::AnalyzeNotYetImplemented {
@@ -366,8 +364,8 @@ fn prepare_bytes(directory: &Path, bytes: &[u8], limits: RunLimits) -> Result<Pr
 /// What [`read`] read: a `program` request's inputs with the intake that
 /// still charges compilation, or a `package` request's admitted package.
 enum Readout<'d> {
-    Source(AnalyzeInput, super::Intake<'d>),
-    Package(PackageSelection),
+    Source(Box<AnalyzeInput>, super::Intake<'d>),
+    Package(Box<PackageSelection>),
 }
 
 /// A `package` request (FR-850): the package the strict reader admitted
@@ -879,14 +877,14 @@ fn read<'d>(
             admit_package(directory, dependent_bytes, &request, package, caller)?;
         let memory = read_memory(&request.memory)?;
         let members = Box::new(read_run_members(&request, &mut intake, caller)?);
-        return Ok(Readout::Package(PackageSelection {
+        return Ok(Readout::Package(Box::new(PackageSelection {
             admitted,
             members,
             memory,
             items: request.items,
             deadline_ms: request.deadline_ms,
             certification,
-        }));
+        })));
     }
     let integer_division = request_integer_division(request.integer_division.take())?;
     let Some(program) = &request.program else {
@@ -928,7 +926,7 @@ fn read<'d>(
         check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     Ok(Readout::Source(
-        AnalyzeInput {
+        Box::new(AnalyzeInput {
             source,
             compile,
             documents,
@@ -939,7 +937,7 @@ fn read<'d>(
             deadline_ms: request.deadline_ms,
             certification,
             integer_division,
-        },
+        }),
         intake,
     ))
 }
@@ -1059,9 +1057,9 @@ pub fn analyze_with_providers_and_limits(
         })?;
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         let (input, mut intake) = match read(directory, bytes, limits, caller)? {
-            Readout::Source(input, intake) => (input, intake),
+            Readout::Source(input, intake) => (*input, intake),
             Readout::Package(selection) => {
-                return run_package(selection, negotiate, providers, options, cancel);
+                return run_package(*selection, negotiate, providers, options, cancel);
             }
         };
         let mut result = run_input(
@@ -1230,6 +1228,14 @@ pub(super) fn settle_items<'u>(
         &binding,
         &routed.limits,
     );
+    if let Some(conflict) = routed.limits.engines.timed_conflict(
+        package,
+        &binding,
+        routed.items.as_ref().map_or(0, Vec::len),
+        &resolved,
+    ) {
+        return Err(engine_conflict(conflict));
+    }
     let run = AnalyzeRun {
         package,
         binding,
@@ -1598,15 +1604,20 @@ pub(super) fn refuse_engine_conflict(
     limits: &AnalyzeLimits,
 ) -> Result<()> {
     match limits.engines.conflict(items.unwrap_or_default()) {
-        Some((position, setting)) => Err(invalid(
-            &format!("items[{position}]"),
-            format!(
-                "states a limit the caller also set with `--limit {}`; give it once",
-                setting.name()
-            ),
-        )),
+        Some(conflict) => Err(engine_conflict(conflict)),
         None => Ok(()),
     }
+}
+
+/// The refusal of the item at `position` stating a limit the caller set too.
+fn engine_conflict((position, setting): (usize, fsl_foundation::Setting)) -> RunCause {
+    invalid(
+        &format!("items[{position}]"),
+        format!(
+            "states a limit the caller also set with `--limit {}`; give it once",
+            setting.name()
+        ),
+    )
 }
 
 /// FR-620's item checks that need no compiled program: `recording` and
@@ -1891,7 +1902,7 @@ pub(super) fn analyze_limits(
     request: &wire::AnalyzeLimits,
     deadline_ms: Option<u64>,
 ) -> AnalyzeLimits {
-    let mut limits = AnalyzeLimits::unbounded();
+    let mut limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let mut accounting = fsl_replay::AccountingLimits(limits.accounting);
     for (setting, bound) in request.accounting.entries() {
         accounting.set_bound(setting, bound);

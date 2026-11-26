@@ -542,6 +542,7 @@ impl World {
             request,
             stutter_closure: false,
             certificate,
+            engines: Default::default(),
             replay: Box::new(|counterexample| {
                 replay_unit_result(
                     &unit,

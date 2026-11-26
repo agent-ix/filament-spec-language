@@ -324,6 +324,7 @@ fn analyze_case_items(
                 max_messages: None,
                 max_live_instances: None,
             },
+            engines: Default::default(),
             replay: Box::new(move |payload| {
                 let CounterexampleKind::LoopProof(proof) = &payload.kind else {
                     panic!(

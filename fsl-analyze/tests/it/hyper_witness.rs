@@ -1005,12 +1005,28 @@ pub(crate) const GUARDED_CLAUSE: &str = "hyper Opaque using inf over behaviours 
      and b.step.op != stutter } \
      { holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b) }";
 
-/// FR-177 states no verdict for an existential member whose contract has no
-/// value (the spec follow-up), so the engine does not claim one: the
-/// successor relation of the witness set is not exactly known and the item is
-/// `Undecided(UndecidedSuccessor)`, never `Holds`. `a` takes only `step(0)`, so
-/// it never reaches `(0, 1)`; its partner from `(0, 0)` takes `step(1)` there.
-fn assert_an_existential_member_with_an_undefined_contract_leaves_the_item_undecided() {
+/// The outcome is the undefined counterexample at joint position 1 whose
+/// locus is the existential member's `Guard` conjunction, naming `b` alone,
+/// with the division by zero as cause (ADR-018 UE-6).
+fn assert_the_member_guard_refutes(outcome: HyperOutcome) {
+    let counterexample = refuted(outcome);
+    assert_eq!(counterexample.trace_position, 1);
+    let HyperCounterexampleKind::Undefined(undefined) = counterexample.kind else {
+        panic!("expected the undefined kind");
+    };
+    assert_eq!(undefined.position, 1);
+    assert_eq!(undefined.locus, HyperLocus::Contract("Guard".to_owned()));
+    assert_eq!(undefined.variables, [("b".to_owned(), "V".to_owned())]);
+    assert_eq!(
+        undefined.cause,
+        UndefinedCause::Kernel(Undefined::DivisionByZero)
+    );
+}
+
+/// An existential member whose guard has no value refutes the item at the
+/// member's tuple (ADR-018 UE-6). `a` takes only `step(0)`, so it never
+/// reaches `(0, 1)`; its partner from `(0, 0)` takes `step(1)` there.
+fn assert_an_existential_member_with_an_undefined_contract_refutes_the_item() {
     let world = World::new_with_kernel_function(
         KERNEL_GUARDED,
         false,
@@ -1018,11 +1034,7 @@ fn assert_an_existential_member_with_an_undefined_contract_leaves_the_item_undec
         GUARDED_CLAUSE,
         KERNEL_DIV_FUNCTION,
     );
-    let outcome = run(&world, ModelCheckLimits::default());
-    let HyperOutcome::Undecided { cause, .. } = outcome else {
-        panic!("expected no decision, got {outcome:?}");
-    };
-    assert_eq!(cause, UndecidedCause::UndecidedSuccessor);
+    assert_the_member_guard_refutes(run(&world, ModelCheckLimits::default()));
 }
 
 /// μ_U refused on the fifth evaluation, the first step of the state `a = (1, 1)`
@@ -1063,21 +1075,15 @@ impl StepMatch for RefuseThenHold<'_> {
     }
 }
 
-/// A state's refused findings rank by the joint position they are at, not by
-/// their order in its list: the member's contract at joint position 1 comes
-/// before a refused `μ_U` at position 2 that was found first, so the cause is
-/// `UndecidedSuccessor`, not `MatchUndetermined`.
-fn assert_a_state_keeps_its_earliest_refused_finding() {
-    let clause = "hyper Opaque using inf over behaviours (v: V::Vault) \
-         forall trace a of V exists trace b of V \
-         match { (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 \
-         and b.step.op != stutter } \
-         { holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b) }";
+/// A refused `μ_U` at joint position 2 does not hide the member's undefined
+/// contract at position 1: the undefined counterexample is returned
+/// (ADR-018 UE-6).
+fn assert_a_refused_match_does_not_hide_the_undefined_contract() {
     let world = World::new_with_kernel_function(
         KERNEL_GUARDED,
         false,
         &STARTS,
-        clause,
+        GUARDED_CLAUSE,
         KERNEL_DIV_FUNCTION,
     );
     let matcher = RefuseThenHold {
@@ -1092,21 +1098,18 @@ fn assert_a_state_keeps_its_earliest_refused_finding() {
             &Cancel::new(),
         )
         .expect("the run is not refused");
-    let HyperOutcome::Undecided { cause, .. } = outcome else {
-        panic!("expected no decision, got {outcome:?}");
-    };
-    assert_eq!(cause, UndecidedCause::UndecidedSuccessor);
+    assert_the_member_guard_refutes(outcome);
 }
 
 /// FR-177-AC-7: the Linked precondition calls Kernel-checked `q`; its
-/// division is undefined in the state `(0, 1)`. The item remains
-/// `Undecided(UndecidedSuccessor)`, and the contract finding at position 1
-/// comes before a refused `μ_U` evaluation at position 2.
+/// division is undefined in the state `(0, 1)`. The item is refuted at
+/// position 1, and a refused `μ_U` evaluation at position 2 gives the same
+/// counterexample.
 #[trace("TC-602", "FR-177-AC-7", "FR-495-AC-3", "FR-952-AC-1")]
 #[test]
 fn an_undefined_contract_at_position_one_comes_before_a_refused_match_at_position_two() {
-    assert_an_existential_member_with_an_undefined_contract_leaves_the_item_undecided();
-    assert_a_state_keeps_its_earliest_refused_finding();
+    assert_an_existential_member_with_an_undefined_contract_refutes_the_item();
+    assert_a_refused_match_does_not_hide_the_undefined_contract();
 }
 
 /// FR-495: the same divisor refusal is reported for a clause with two

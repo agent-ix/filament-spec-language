@@ -3304,6 +3304,7 @@ impl PackageDeclarations {
                 models: &self.models,
                 dispatch_tables: &dispatch_tables,
                 sealing_meter: &mut contract_meter,
+                limits,
             },
         )?;
         let mut seen_operations = std::collections::BTreeSet::new();

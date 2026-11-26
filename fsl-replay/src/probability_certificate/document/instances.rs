@@ -25,6 +25,7 @@ use super::*;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{ScheduledIdentity, TransitionId, WeightedStep};
 use fsl_semantics::check::{ActivationGuard, ClaimActivation, StatePredicate};
+use ix_trace_rs::implements;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -750,6 +751,20 @@ pub fn on_each_outcome(
     max_paths: u64,
     cancel: &Cancel,
 ) -> Result<OnEachOutcome, ProbabilityDocumentError> {
+    on_each_outcome_with_work_scope(system, claims, item, limits, max_paths, cancel, None)
+}
+
+/// [`on_each_outcome`] using the item's shared work allowance.
+#[implements("FR-203-AC-29")]
+pub fn on_each_outcome_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    limits: ProbabilityDocumentLimits,
+    max_paths: u64,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<OnEachOutcome, ProbabilityDocumentError> {
     let claim = each_claim(system, claims, item, cancel)?;
     let instances = Instances::of(system, claim)?;
     // An empty instance set is `no-instance` before the profile is admitted.
@@ -758,7 +773,7 @@ pub fn on_each_outcome(
     }
     let subject = admit(system, claim)?;
     let found = roots_over(system, &subject, &instances, limits, cancel)?;
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut arith = Arith {
         meter: &mut meter,
         cancel,
@@ -1035,6 +1050,24 @@ pub fn replay_on_each_witness(
     max_paths: u64,
     cancel: &Cancel,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityDocumentError> {
+    replay_on_each_witness_with_work_scope(
+        system, claims, item, evidence, limits, max_paths, cancel, None,
+    )
+}
+
+/// [`replay_on_each_witness`] using the item's shared work allowance.
+#[implements("FR-203-AC-32")]
+#[allow(clippy::too_many_arguments)]
+pub fn replay_on_each_witness_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    evidence: &ProbabilisticCounterexample,
+    limits: ProbabilityDocumentLimits,
+    max_paths: u64,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityWitnessReplay, ProbabilityDocumentError> {
     let subject = subject(system, claims, item, cancel)?;
     if &evidence.item != item || evidence.subsystem.is_some() {
         return Ok(ProbabilityWitnessReplay::Parity);
@@ -1061,7 +1094,7 @@ pub fn replay_on_each_witness(
     }) else {
         return Ok(ProbabilityWitnessReplay::Parity);
     };
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut arith = Arith {
         meter: &mut meter,
         cancel,
@@ -1436,7 +1469,7 @@ pub(super) fn identity(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ObligationIdentity, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     Ok(decode(bytes, limits, cancel, &mut meter)?.identity)
 }
 
@@ -1682,6 +1715,7 @@ fn part_locus(key: &Key, part: Part) -> ProbabilityCertificateLocus {
     }
 }
 
+#[implements("FR-203-AC-30")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1689,8 +1723,9 @@ pub(super) fn check(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let document = decode(bytes, limits, cancel, &mut meter)?;
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);
