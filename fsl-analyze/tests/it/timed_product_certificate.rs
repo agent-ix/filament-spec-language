@@ -659,9 +659,9 @@ fn every_scheduler_infinite_mean_time_is_certified() {
     assert_eq!(rejected_item_rule(&tampered), CertificateRule::Malformed);
 }
 
-/// FR-921-AC-5: a row in an infinite document is rejected, and a document with
+/// FR-921-AC-6: a row in an infinite document is rejected, and a document with
 /// no row does not make a finite expected time infinite.
-#[trace("TC-2490", "FR-921-AC-5")]
+#[trace("TC-2490", "FR-921-AC-6")]
 #[test]
 fn an_infinite_expected_time_is_rederived_not_claimed() {
     let world = retx(GUARD, true, "", NEVER);

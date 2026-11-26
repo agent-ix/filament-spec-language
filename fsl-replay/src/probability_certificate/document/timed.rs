@@ -360,7 +360,7 @@ fn some_policy_reaches_almost_surely<'g>(
 
 /// Admit the certificate of an infinite least expected time: it holds an `>=`
 /// bound and carries no value or rank, there being no finite one.
-#[implements("FR-204-AC-25", "FR-921-AC-5")]
+#[implements("FR-204-AC-25", "FR-921-AC-6")]
 fn check_infinite_mean_time(
     initial: ProbabilityProductKey,
     bytes: &[u8],
@@ -1464,6 +1464,7 @@ fn deadline_event(
 
 /// The independently checked FR-204 bounded monitor shape. Operator node
 /// positions are retained so nested occurrences remain distinct in the key.
+#[implements("FR-204-AC-21")]
 fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound, Watch<'_>)> {
     use fsl_semantics::check::ProbForm;
     let ProbForm::Probability {
@@ -1619,6 +1620,7 @@ enum Phase {
 }
 
 impl Phase {
+    #[implements("FR-204-AC-21")]
     fn decided(&self) -> bool {
         match self {
             Self::Pending | Self::Inactive | Self::Active => false,
@@ -1630,6 +1632,7 @@ impl Phase {
     }
 }
 
+#[implements("FR-204-AC-21")]
 fn phase_value(phase: &Phase) -> Option<bool> {
     use fsl_eval::probabilistic::DeadlinePhase as MonitorPhase;
     match phase {
@@ -1722,6 +1725,7 @@ enum Watch<'a> {
 }
 
 impl Watch<'_> {
+    #[implements("FR-204-AC-21")]
     fn start(&self) -> Phase {
         match self {
             Self::Deadline(_) => Phase::Pending,
@@ -1737,6 +1741,7 @@ impl Watch<'_> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn horizon(&self) -> u64 {
         match self {
             Self::Bounded { horizon, .. } | Self::Nested { horizon, .. } => *horizon,
@@ -2484,6 +2489,7 @@ fn enumerate_digital_deadline(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
+#[implements("FR-204-AC-21")]
 fn enumerate_region_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -5424,6 +5430,7 @@ fn price_paths(
 
 /// Whether `claim` is a timed form this module replays a witness of: an
 /// independently recognized FR-204 bounded monitor or FR-877 elapsed quantile.
+#[implements("FR-204-AC-21")]
 pub(in crate::probability_certificate) fn is_timed_witness_claim(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,

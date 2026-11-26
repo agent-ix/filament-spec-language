@@ -19,24 +19,31 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-195
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-416
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-421
+    type: depends_on
 ---
 # FR-204: Check probabilistic timed automata through digital clocks
 
 ## Description
 
 EN-5 SHALL decide a probabilistic claim with exact evidence over a timed
-subject whose clock constraints are all closed by exploring its digital
-MDP (ADR-028 TA-1 to TA-7): integer clocks after scaling every constant,
+subject, by exploring its digital MDP (ADR-028 TA-1 to TA-7) where Admission
+admits the claim on digital clocks and its region MDP otherwise. The digital
+MDP has integer clocks after scaling every constant,
 unit delay moves, and discrete moves as the timed step with integer clocks.
 The claim's scheduler SHALL resolve each delay (RU-6): over every scheduler
 the scheduler chooses delays and identities; under a workload, the workload
 resolves the identity and every delay a `discrete` delay distribution
 gives, so the subject is a DTMC over digital timed states; a delay no
 distribution gives stays the scheduler's choice and is decided by its
-minimum and maximum. Strict constraints, bounded-window forms other than a
-deadline event or its `always[0, D]` complement (decided over the region MDP), delay distributions over every
-scheduler, zero-delay cycles and time-locks are decided by the rules under
-Admission; only continuous delay
+minimum and maximum. Which claims the digital MDP decides, and the strict
+constraints, other bounded-window forms, delay distributions over every
+scheduler, zero-delay cycles and time-locks, are stated under Admission; only
+continuous delay
 distributions, whose probabilities exact evidence cannot state, go to the
 statistical engine.
 
@@ -74,30 +81,26 @@ unsupported cause `DelayDistribution{operation}`.
 - Every claim over a timed subject whose delays are deterministic or given by
   `discrete` distributions SHALL be decided with exact evidence; no form,
   constraint or scheduler of that class settles `unsupported`. The digital MDP
-  below decides it when every clock constraint is closed and its form is one
-  the digital route decides (the next rule); the following rules decide the
-  rest.
-- **Route.** The digital MDP SHALL decide only reachability and until over
-  state predicates, a TA-4 deadline event `eventually[0, D] holds(P)` or
-  `holds(A) until[0, D] holds(B)` and its complement `always[0, D] holds(P)`,
-  each over state predicates (predicates over the discrete state, with no
-  clock atom), `expected elapsed until holds(B)`, the elapsed measures and
-  quantiles of FR-877, and a `steps` measure or an `accumulate` of per-step
-  rewards within a time horizon, when every clock constraint is closed. Every
-  other bounded-window formula SHALL be decided over the region MDP
-  (FR-922), closed or not. A `steps` or per-step `accumulate` measure within
-  a horizon is a reachability over the closed automaton: its count or sum is
-  discrete state, its activation resets a closed horizon clock, and its
-  event is reaching a completing position before that clock passes the
-  horizon, which TA-3 covers. This rule does not settle the route of a
-  `weighted by delay` fraction over a window, a `weighted by delay`
-  long-run fraction, or an unweighted fraction over a time window: they keep
-  the rule they had before it (digital when every constraint is closed,
-  region otherwise), pending an arch ruling (QSL-3324). ADR-028 TA-3's equality of digital and
-  dense extrema covers reachability and expected time only; a bounded-window
-  value can turn on a position being absent from a window, which integer
-  time stamps cannot always arrange, so the digital MDP can give a wrong
-  extremum (AC-26).
+  below decides it when FSpec FR-421 "Closed and strict conditions" admits it
+  on digital clocks, and the region MDP otherwise.
+- **Route.** The route of an exact probabilistic timed claim SHALL be the one
+  FSpec FR-421 "Closed and strict conditions" gives, recorded with its
+  justification in ADR-038's route admission table. It depends on the
+  subject's closedness and delay class (every delay given, or none given), on
+  whether a time-lock is reachable where no delay is given, on whether the claim
+  states a fairness set (none is admitted to the digital MDP), on the claim form,
+  and on the position the claim is read from. The digital MDP SHALL decide no
+  claim that rule does not admit; every other claim SHALL be decided over the
+  region MDP (FR-922), closed or not. The region MDP is symbolic, advancing by
+  region time successor (ADR-038 RL-3); while EN-5 cannot build the one a claim
+  needs, the item settles a typed `Incomplete`, never a digital value and never
+  `unsupported`. A subject with some delays given and others not is not
+  admitted to the digital MDP: its post-draw race is the one stated below, the
+  integer-unit rows below are no basis for a verdict, and the item is decided
+  over the region MDP; AC-6 to AC-12 are pending that route (ADR-038). A
+  workload race among two or more identities with free
+  delays only keeps the route this requirement states below, pending the ruling
+  on that rule (ADR-038).
 - **Pending target times.** For some admitted forms the number of pending
   target times the claim's monitor keeps can grow without bound on the region
   MDP (an interval operator nested under another, read at arbitrarily many
@@ -133,7 +136,7 @@ unsupported cause `DelayDistribution{operation}`.
   position (ADR-026 TS-3): it advances time, so a window it passes closes,
   but it reads no predicate, and a drawn race delay of several units reads
   no instant inside it. The time stamps of idle observation stutters after a
-  quiescent state are the scheduler's choice (FSpec FR-416 "Time stamps"),
+  quiescent state are the scheduler's choice (FSpec FR-416 "Idle tail"),
   so a minimum or maximum ranges over them as over every other choice.
 - **Delay distributions over every scheduler.** Over every scheduler, a
   `discrete` delay distribution SHALL apply as it does under a workload: the
@@ -158,8 +161,10 @@ unsupported cause `DelayDistribution{operation}`.
 - **Time-locks.** A digital or region state from which time cannot advance
   and no discrete move is enabled (under a workload, a state where no
   identity races and delay is bounded) SHALL be terminal: its run ends there
-  with FR-196's terminal stutter, time frozen, so a deadline not yet met is
-  never met. The verdict is exact.
+  with FR-196's terminal stutter, time frozen, and the claim reads it as
+  FSpec FR-416 "How claims read a time-lock" states. The verdict is exact.
+  The digital MDP's own lack of a time-lock does not establish the dense
+  subject's (FSpec FR-421).
 
 ### The digital MDP
 
@@ -196,7 +201,7 @@ unsupported cause `DelayDistribution{operation}`.
   state). Replay expands the label to one trace position for each fired
   identity, all at the same elapsed time, with each position's actual
   intermediate model state. A delay no distribution gives SHALL be an action of
-  the scheduler. A state where no identity races and delay is bounded SHALL
+  the scheduler. A state where no identity races and delay is bounded
   is a time-lock, decided by Admission's time-lock rule.
 - Under a workload, a state whose racing identities all have given delays
   (`discrete` distributions) SHALL resolve as above, each race edge carrying
@@ -497,7 +502,7 @@ The values of AC-21 are derived by hand from the FSpec FR-416 text alone
 - R2. A behaviour may end its discrete steps only at a quiescent state, one
   where no time invariant applies and which is not urgent; it then continues
   with stutter positions, each after a positive delay of any length, every
-  such choice an admitted behaviour (FSpec FR-416 "Time stamps", ADR-026
+  such choice an admitted behaviour (FSpec FR-416 "Idle tail", ADR-026
   TS-5). Over every scheduler these choices are the scheduler's, so the
   minimum and maximum range over them.
 - R3. `eventually_I p` holds at position `i` when some position `j >= i` has
