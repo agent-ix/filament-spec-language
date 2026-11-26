@@ -2472,7 +2472,7 @@ fn terminal_alias_world(
          {terminals}\n\
          {possible_item}\n"
     );
-    World::kernel(model, &body, &[&[("v", &[("l", 0)])]])
+    World::kernel(model, &body, &[&[("v", &[("l", 1)])]])
 }
 
 /// FR-391-AC-13: an unknown terminal keeps the completed node open; a witness
@@ -2559,7 +2559,7 @@ fn an_unknown_terminal_refuses_a_no_witness_possible_item_as_undecided() {
 
     let terminal_path = ModelPath {
         initial: 0,
-        steps: expected_steps(&world, &["v"], 0, &[("step", "v")]),
+        steps: expected_steps(&world, &["v"], 0, &[]),
     };
     let terminal_state = positions(&world, &["v"], &terminal_path)
         .pop()
