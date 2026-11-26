@@ -204,7 +204,7 @@ entry defines no result type of its own.
 | HP-1 distinct subject aliases in source model declaration order | the admitted `step_relation` body's optional `subject_declaration_order` Group, joined exactly to `subjects` by alias and model-root identity (FR-940 "Declaration-order member contract"); absence refuses only selection of an HP-1 package form | the same witness of its own S4 emission, emitted from `CheckedModelRelation::aliases()` |
 | clause name, capture names and capture value types | the occurrence's `temporal_clause_names` row, the captures argument's binding names and the typed result types of the capture initializer terms | the source clause's `name()` and `captures()` |
 | arithmetic exactness and bounds | the lock and the nodes' types | the same, through the source |
-| the package's requirement records: each record's occurrence key, capability kind and extent, its request index (its position in package order) and, for a `value-validity` record, its owner function, application occurrence, result bound, direct conversion, path condition, extent roots and object types | the `requirement_items` rows and their `claim`/`value_validity` nodes (FSpec FR-825), through Contract IR's `requirement_items()` and `value_validity_records_of()` | the same rows of its own S4 emission, through `AdmittedPackageRead` |
+| the package's requirement records: each record's occurrence key, capability kind and extent, its request index (its position in package order), and for a `value-validity` record its owner function, application occurrence, result bound, direct conversion, path condition, extent roots and object types, or for an `operation-contract` record its result-bound type, invariant flag, optional operation anchor, model object types and ordered populations with their member types, ordinals and optional maxima | the `requirement_items` rows and their `claim`/`value_validity` or `claim`/`operation_contract` nodes (FSpec FR-825), through Contract IR's `requirement_items()` and record accessors | the same rows of its own S4 emission, through `AdmittedPackageRead` |
 
 **Requirement records in the bytes.** S4 SHALL write every record of
 `CheckedGraph::requirements()` (FR-062 "Records") as one FSpec FR-825
@@ -221,7 +221,15 @@ type node of its `ResultBound`, `conversion` its conversion context,
 `path_condition` its `PathGuard`s in order, `extent_roots` its
 `extent_roots()` and `objects` the declaration nodes of its references'
 object types; its `generated` ordinal is its position among its owner's
-records. S4 writes no record by any other route and omits none, because the
+records. Each `operation-contract` record SHALL also be written as a
+`claim`/`operation_contract` node whose `result_bound` is the record's
+Boolean bound type, `invariant` is its invariant-clause flag, `operation` is
+its optional operation anchor, `model_objects` are its referenced object
+types in structural order, and `populations` are its population member types,
+declaration ordinals and authored maxima in record order. The package reader's
+`requirement_items()` SHALL expose both record variants alongside the same
+claim, occurrence, capability and extent facts; a consumer SHALL preserve the
+row's position as its request index. S4 writes no record by any other route and omits none, because the
 package order counts every record of every kind. A record S4 cannot write
 (an owner with no function node, a key with no `source_map` occurrence, an
 object type with no declaration node) is `EmitRefusal::UnlocatedOccurrence`
