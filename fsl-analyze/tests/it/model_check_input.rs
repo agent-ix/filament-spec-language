@@ -1426,7 +1426,7 @@ fn digital_replay_refuses_always_possible_and_unique_path() {
                     steps: Vec::new(),
                 },
                 closure: TrapClosure::StateGraph,
-                over: Some(instance.clone()),
+                over: vec![instance.clone()],
             },
         );
         let mut wire = crate::model_settle_support::request(
