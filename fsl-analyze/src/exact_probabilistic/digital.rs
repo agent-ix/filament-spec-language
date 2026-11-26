@@ -1815,6 +1815,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The target reached from node `at` by `reached` after the letters of
     /// the discrete steps listed in `landed` (model states, in order).
+    #[implements("FR-204-AC-21")]
     fn arrive(
         &mut self,
         at: usize,
@@ -2132,6 +2133,7 @@ impl<'c> Builder<'_, '_, 'c> {
     /// scheduler chooses among identities tied at the least sampled delay.
     /// Free-delay identities remain ordinary scheduler choices and are
     /// handled by the running clock moves until a discrete race is admitted.
+    #[implements("FR-204-AC-21")]
     fn every_discrete_moves(
         &mut self,
         at: usize,

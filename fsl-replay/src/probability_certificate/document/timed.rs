@@ -1910,6 +1910,7 @@ struct RegionState {
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
+#[implements("FR-204-AC-21")]
 fn enumerate_digital_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -3073,6 +3074,7 @@ fn digital_key(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
+#[implements("FR-204-AC-21")]
 fn next_digital_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -3132,6 +3134,7 @@ fn next_digital_delay(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-21")]
 fn digital_idle_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4234,6 +4237,7 @@ fn digital_workload_choices(
 /// the next distinct unit delay and, where the state may idle, the idle
 /// delay, each with the action a witness names it by.
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-5")]
 fn digital_time_choices(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4368,6 +4372,7 @@ fn digital_enabled_actions(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-21")]
 fn digital_state_after_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4421,6 +4426,7 @@ fn digital_state_after_delay(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
+#[implements("FR-204-AC-21")]
 fn next_region_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
