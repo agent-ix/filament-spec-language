@@ -4937,6 +4937,8 @@ fn a_package_call_reads_the_package_under_the_callers_reader_limit() {
         value["details"]["path"], "/semantic_graph/nodes/1",
         "{value}"
     );
+    // QSL-3543: the stop names the limit and the setting that raises it.
+    assert!(value.to_string().contains("i2.nodes"), "{value}");
 }
 
 /// FR-255-AC-32: a call selection of an `items` run compiles under the

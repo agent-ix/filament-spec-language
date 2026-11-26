@@ -166,7 +166,7 @@ fn package_failure(file: &str, error: fsl_package::PackageAdmissionRefusal) -> R
             code: error.code,
             cause: error.cause,
             pointer: error.pointer,
-            message: format!("{file}: {limit:?}"),
+            message: format!("{file}: {limit}"),
         };
     }
     RunCause::AnalyzePackage {
