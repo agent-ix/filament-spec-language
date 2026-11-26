@@ -2350,7 +2350,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// Supplied finite replay or recording over an admitted protocol declaration.
+    /// Resolve conformance or supplied replay/recording over a package protocol.
+    #[implements("FR-896-AC-7", "FR-990-AC-11")]
     fn supplied_protocol(
         &self,
         index: RequestIndex,
@@ -2388,8 +2389,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ) {
             return Ok(Resolution::Settled(refused));
         }
-        if (kind == Capability::GlobalConformance && selection.recording.is_none())
-            || !crate::protocol_analysis::recording::package_recording_supported(
+        if !(kind == Capability::GlobalConformance && selection.recording.is_none())
+            && !crate::protocol_analysis::recording::package_recording_supported(
                 &input.input(),
                 name,
             )
