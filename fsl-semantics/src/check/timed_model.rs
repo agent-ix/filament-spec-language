@@ -40,8 +40,9 @@ use fsl_forms::{
     BinaryOperator, ExprId, ExprNode, ExpressionForm, QuantityForm, StateClauseKind,
     TimeInvariantForm, TypeFormHead, UrgentForm, UrgentTarget,
 };
-use fsl_foundation::Span;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
+use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 pub use self::collection_write::{CollectionWrite, Written};
 use super::assemble::TimedDeclaration;
@@ -2170,6 +2171,8 @@ impl Clocks<'_> {
     /// `self`, `o.x`: a read no clock constraint admits (FR-230). The field
     /// is looked up on the operand's object type; when that type is not
     /// known, `.x` reads a clock when every package field named `x` is one.
+    #[implements("FR-230-AC-11")]
+    #[implements("FR-230-AC-54")]
     fn foreign(
         &self,
         form: &ExpressionForm,
@@ -3684,6 +3687,8 @@ fn post_presence(located: &Located<'_>, id: ExprId) -> Option<(ClockId, bool)> {
 /// writing a clock-bearing record whole, whose clock components are resets
 /// and whose data components stay a data write (FR-230 "Records, tuples
 /// and unions").
+#[implements("FR-230-AC-11")]
+#[implements("FR-230-AC-67")]
 fn resets(
     located: &Located<'_>,
     clause: &StateClauseDeclaration,
@@ -5663,6 +5668,7 @@ fn check_part(
     })
 }
 
+#[implements("FR-230-AC-58")]
 pub(crate) fn check(
     drafts: TimedDrafts,
     checking: &Checking<'_, '_>,
