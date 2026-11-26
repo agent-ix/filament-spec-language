@@ -301,7 +301,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     }
     let instances = match timed_instances(read, &system, timed.initial().len()) {
         Ok(instances) => instances,
-        Err(settled) => return settled,
+        Err(settled) => return *settled,
     };
     let graph = match fsl_replay::explore_digital_state_graph(
         &timed,
@@ -1003,13 +1003,13 @@ fn timed_instances(
     read: &Run<'_, '_>,
     system: &ModelSystem<'_>,
     initial_states: usize,
-) -> Result<Vec<Option<ModelInstance>>, EngineReport> {
+) -> Result<Vec<Option<ModelInstance>>, Box<EngineReport>> {
     let vacuous = |vacuity: TimedVacuity| {
         no_timed_graph_decision(read, undecided_cause(&ZoneUndecided::from(vacuity)))
     };
     let Some(parameter) = read.claim.over() else {
         return if initial_states == 0 {
-            Err(vacuous(TimedVacuity::NoInitialState))
+            Err(Box::new(vacuous(TimedVacuity::NoInitialState)))
         } else {
             Ok(vec![None])
         };
@@ -1017,10 +1017,10 @@ fn timed_instances(
     let over = system.claim_instances(&ValueType::Reference(parameter.object.clone()));
     match claim_start(initial_states, over) {
         Ok(Ok(instances)) => Ok(instances.as_slice().iter().cloned().map(Some).collect()),
-        Ok(Err(vacuity)) => Err(vacuous(vacuity)),
-        Err(refusal) => Err(EngineReport::Refused(subject_refusal(
+        Ok(Err(vacuity)) => Err(Box::new(vacuous(vacuity))),
+        Err(refusal) => Err(Box::new(EngineReport::Refused(subject_refusal(
             &TimedSubjectRefusal::NotSimulated(refusal),
-        ))),
+        )))),
     }
 }
 
@@ -1063,7 +1063,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     let instances = match timed_instances(read, &system, timed.initial().len()) {
         Ok(instances) => instances,
-        Err(settled) => return settled,
+        Err(settled) => return *settled,
     };
     let graph = match explore_timed_state_graph(
         &timed,
