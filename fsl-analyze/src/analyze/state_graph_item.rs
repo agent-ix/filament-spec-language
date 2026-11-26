@@ -282,6 +282,9 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let (Some(record), Some(instance)) = (records.get(chosen), instances.get(chosen)) else {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
+    let Some(bound) = bound_instance(&system, claim, instance.over.as_ref()) else {
+        return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+    };
     let property = property_form(claim.form());
     let parameter = claim.over().map(|over| over.name.as_str());
     let spelled = evidence_of(&system, claim, instance).map(|evidence| {
@@ -325,7 +328,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     EngineReport::StateGraph(Box::new(GraphReport {
         record: record.clone(),
-        instance: item_instance(record, claim, instance.over.as_ref()),
+        instance: item_instance(record, claim, bound.as_ref()),
         exploration,
         counterexample,
         evidence,
@@ -1300,7 +1303,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             end: None,
             undefined: None,
         };
-        let selected_instance = item_instance(&record, read.claim, instance.over.as_ref());
+        let selected_instance = item_instance(&record, read.claim, instance.as_ref());
         let certificate_document = (accepted || refuted).then(|| {
             serde_json::json!({
                 "state_graph": {
