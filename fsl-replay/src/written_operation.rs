@@ -55,6 +55,7 @@ impl WrittenOperation {
     ///
     /// # Errors
     /// The JSON encoder's, for a name it cannot write.
+    #[implements("FR-120-AC-39", "FR-120-AC-40")]
     pub(crate) fn into_identity_text(self) -> Result<String, serde_json::Error> {
         if Self::is_identity_text(&self.0) {
             Ok(self.0)
