@@ -234,6 +234,12 @@ impl World {
         Self::with_profiles(model, "", body, starts)
     }
 
+    /// A world for fixtures whose function bodies deliberately retain
+    /// runtime definedness or range refusals while clauses remain linked.
+    pub(crate) fn kernel(model: Model, body: &str, starts: &[&[Object<'_>]]) -> Self {
+        Self::build(model, DIVISION_PROFILE, body, starts, CheckMode::Kernel)
+    }
+
     /// The world of `model` with function bodies checked under Kernel and
     /// integer division enabled, for fixtures whose runtime evaluation has
     /// an intentionally refused result.
