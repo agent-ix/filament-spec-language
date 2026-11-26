@@ -65,8 +65,8 @@ server is available. Each estimate comes with its confidence and the grid
   FR-407 "Time windows" states: every position from the activating one whose
   stamp is at most `h` after it, inclusive, each step's post-state its own
   position, several at one stamp included; a delay and the instant `h` add
-  none. This holds for a formula and for every measure: an unweighted
-  fraction is the positions where `P` holds over the positions in the window,
+  none. This holds for a formula, a `fraction`, `steps` and `accumulate`: an
+  unweighted fraction is the positions where `P` holds over the positions in the window,
   never over `h + 1`, and the positions of `accumulate` and `steps` are
   positions of the window. No form with a time horizon SHALL be read with a
   step horizon.
