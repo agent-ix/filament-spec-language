@@ -15,8 +15,8 @@ letters and contracts of the positions past it read, that the read is charged
 to the run's budgets and joins no product total, and that the
 unbuilt-certificate case refuses.
 
-Scope: FR-126-AC-12 to FR-126-AC-15, and FR-126 "Bindings and ranking (TP-4)"
-and "Model-only pass (TP-4)".
+Scope: FR-126-AC-12 to FR-126-AC-15 and FR-126-AC-27 to FR-126-AC-29, and
+FR-126 "Bindings and ranking" and "Model-only pass (TP-4)".
 
 ## Test Procedure
 
@@ -37,6 +37,16 @@ Fixtures for steps 1 to 5: ADR-018 §6's ConfigVersion example unit, universe
    `eventually holds(c.value = 1)` with a letter that reads true at every
    state, with `max_states` 32, the default limits, and `max_states` 31.
 
+7. With initial versions `a` 0 and `b` 1, `always
+   holds(mod_defined(c.versionNumber))` with `max_depth` 1 and with
+   `max_depth` 2, and `always eventually
+   holds(mod_defined(c.versionNumber))` with `max_depth` 1 and no fairness
+   constraint.
+8. Step 7's safety request with `max_depth` 2 and `max_states` 3.
+9. Step 7's safety claim over a test `TransitionSystem` whose expansion of
+   `(1,1)` records `ContractUndetermined` with one `Refused` evaluation and
+   whose other expansions are the subject's own.
+
 ## Expected Results
 
 - Step 1: `Violated` bound to `a`, `kind: UndefinedEvaluation` with cause
@@ -55,3 +65,9 @@ Fixtures for steps 1 to 5: ADR-018 §6's ConfigVersion example unit, universe
   default limits; `Stopped{ResourceExhausted, {MaxStates, 31}}` with 0 product
   states and edges at 31: both bindings' 16-state model-only passes are
   charged to the one run budget.
+- Step 7: at `max_depth` 1, both claims return `Violated` bound to `b` with
+  the prefix `(0,1) -upd(b)-> (0,2)` and `where: position 1`; at `max_depth`
+  2, `Violated` bound to `a` with the prefix `(0,1) -upd(a)-> (1,1)
+  -upd(a)-> (2,1)` and `where: position 2`.
+- Step 8: `Violated` bound to `b` with step 7's depth-1 prefix.
+- Step 9: `Violated` bound to `b` with step 7's depth-1 prefix.
