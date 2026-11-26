@@ -1317,7 +1317,12 @@ fn run_timed_mean(
 /// route reads a digital value or calls the form unsupported. `None` for
 /// every other request, one whose subject does not admit included: the claim's
 /// own route reports it.
-#[implements("FR-204-AC-1", "FSpec-FR-421-AC-8", "FSpec-FR-421-AC-13")]
+#[implements(
+    "FSpec-FR-421-AC-8",
+    "FSpec-FR-421-AC-10",
+    "FSpec-FR-421-AC-12",
+    "FSpec-FR-421-AC-13"
+)]
 fn region_not_built(request: &ProductRequest<'_>, cancel: &Cancel) -> Option<EngineReport> {
     let simulation = request.subject.simulation.clone();
     let meter = simulation.meter;

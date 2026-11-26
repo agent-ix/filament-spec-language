@@ -209,7 +209,7 @@ pub enum Admission {
 }
 
 /// The row of [`EN5_DIGITAL`] that admits `conditions`, or why none does.
-#[implements("FR-204-AC-1", "FSpec-FR-421-AC-8")]
+#[implements("FSpec-FR-421-AC-8", "FR-921-AC-5")]
 pub fn en5_admission(conditions: RouteConditions) -> Admission {
     let RouteConditions {
         closed,
@@ -307,7 +307,7 @@ mod tests {
     /// Each row of FSpec FR-421's table, written out by form and position:
     /// what a given subject gets, what a free one gets for the value that is
     /// not the event's maximum, and what it gets for the maximum.
-    #[trace("FSpec-FR-421-AC-8", "FR-921-AC-5")]
+    #[trace("FSpec-FR-421-AC-8")]
     #[test]
     fn every_row_gives_its_hand_route() {
         let later = Region(RegionCause::LaterPosition);

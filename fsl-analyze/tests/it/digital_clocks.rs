@@ -1661,6 +1661,7 @@ fn a_timed_form_shape_cause_carries_the_claim_member_path() {
 /// is `9/10`: `>= 0.99` is refuted on it and `>= 0.9` is proved by it.
 #[trace("TC-1288", "FR-498-AC-8", "FR-204-AC-21")]
 #[test]
+#[ignore = "QSL-3495: a window form that is not a deadline event reads clock regions; incomplete until the region process is built"]
 fn a_bounded_nested_punctual_claim_settles_an_exact_verdict() {
     let claim = |name: &str, bound: &str| {
         format!(

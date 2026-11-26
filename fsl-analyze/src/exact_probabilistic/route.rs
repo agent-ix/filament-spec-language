@@ -44,7 +44,7 @@ pub(crate) enum TimedRoute {
 /// The route of `claim` over `timed`, or `None` where the table does not
 /// apply: a continuous delay, which the product refuses as
 /// `DelayDistribution`.
-#[implements("FR-204-AC-1", "FSpec-FR-421-AC-8")]
+#[implements("FSpec-FR-421-AC-8", "FR-921-AC-5")]
 pub(crate) fn timed_route(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
