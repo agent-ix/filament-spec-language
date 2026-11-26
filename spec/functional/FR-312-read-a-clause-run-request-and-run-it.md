@@ -5,6 +5,8 @@ type: FR
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-120
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-014
     type: implements
   - target: ix://agent-ix/filament-spec-language/FR-109
