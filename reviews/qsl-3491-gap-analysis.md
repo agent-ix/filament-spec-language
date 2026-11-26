@@ -25,3 +25,12 @@ The production readers are covered. Several test tags report coverage that the t
 | FND-002 | medium | Every FR-204-AC-26 tag in the repository is in this oracle. The tagged tests are hand tests that never run EN-5, ignored tests, or routes tests that also pass on a decline, and none asserts the certificate route region, so the criterion reads covered while an EN-5 regression to unsupported on its own vectors passes. | fsl-analyze/tests/it/timed_oracle/probability.rs:335-540 |
 | FND-003 | low | FR-632-AC-2 is about the AC-1 claims on the closed subject settling on en-1 with basis exhaustive and replay. The two QSL-3485 tests use another subject and assert neither. | fsl-analyze/tests/it/timed_oracle/temporal.rs:391-492 |
 | FND-004 | low | timed_steps carries implements FSpec-FR-407-AC-23 and its tests the same tag, but only steps is built and tested. accumulate is not, so the matrix reports the whole criterion implemented and covered. | fsl-eval/src/temporal/timed_measure.rs:215-216 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Falsifier-only hand tests carry no criterion tag. |
+| FND-002 | fixed | All FR-204-AC-26 tags removed, so the criterion no longer reads covered. |
+| FND-003 | fixed | FR-632-AC-2 tags removed from the QSL-3485 tests. |
+| FND-004 | fixed | The AC-23 implements attribute and tags are removed. |

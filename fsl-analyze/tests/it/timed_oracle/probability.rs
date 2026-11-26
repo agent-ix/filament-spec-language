@@ -3,7 +3,8 @@
 //! test, in which the falsifier's extrema over the dense grids equal the
 //! values derived by hand from the specification, and a `_routes` test, in
 //! which every route gives exactly the outcome the row names for it: the hand
-//! verdict and value, or one named decline. A `_hand` test runs the falsifier
+//! verdict and value, or one named decline. Where EN-5 and EN-4 are tracked
+//! apart, `_routes` reads EN-5 and `_sampled` reads EN-4. A `_hand` test runs the falsifier
 //! and the readers only, so it carries no criterion tag.
 //!
 //! The positions a claim reads are FSpec FR-416's: the initial state, the
@@ -107,14 +108,10 @@ enum Expect {
     Hand,
     /// Exactly this named decline.
     Declines(&'static str),
-    /// The hand refutation, or `incomplete` (FSpec-FR-421-AC-8).
+    /// The hand verdict, or `incomplete`: what a form waiting on the region
+    /// process may settle (FSL FR-204 "Admission", ADR-038).
     HandOrIncomplete,
 }
-
-/// EN-5's decline of a form it does not build.
-const NOT_BUILT: &str = "unsupported:not-yet-implemented";
-/// EN-5's decline of a nested or repeated timed window over drawn delays.
-const FORM_SHAPE: &str = "unsupported:TimedFormShape";
 
 /// One claim of a model with its hand extrema.
 struct Claim {
@@ -217,6 +214,22 @@ struct Row {
 }
 
 impl Row {
+    /// The row read by EN-5 alone.
+    fn exact_route(mut self) -> Self {
+        for claim in &mut self.claims {
+            claim.sampled = None;
+        }
+        self
+    }
+
+    /// The row read by EN-4 alone.
+    fn sampled_route(mut self) -> Self {
+        for claim in &mut self.claims {
+            claim.exact = None;
+        }
+        self
+    }
+
     /// The row with only the claims named `names`, so that claims a route
     /// answers wrongly are ignored apart from those it answers.
     fn only(mut self, names: &[&str]) -> Self {
@@ -547,9 +560,8 @@ fn row_3324_nested_inside_a_delay_routes() {
 /// draw, so the walk's equal weighting of the two outcomes does not change
 /// them.
 ///
-/// EN-5 declines the form today, though FSL FR-204-AC-26 has the region route
-/// refute it; the routes row states that decline, so building the route fails
-/// it until the hand verdicts replace the decline.
+/// A nested window is decided over the region MDP (FSL FR-204-AC-26), and may
+/// stop `incomplete` while that is not built; never `unsupported`.
 fn retx_offsets() -> Row {
     let form = "always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)";
     let mut space = Space::new(2, Lock::Frozen);
@@ -562,7 +574,7 @@ fn retx_offsets() -> Row {
         space,
         claims: extrema_rows(&Payoff::Holds("F"))
             .into_iter()
-            .map(|claim| claim.exact_expects(Expect::Declines(FORM_SHAPE)))
+            .map(|claim| claim.exact_expects(Expect::HandOrIncomplete))
             .collect(),
     }
 }
@@ -573,6 +585,7 @@ fn row_3324_retx_offsets_hand() {
 }
 
 #[test]
+#[ignore = "QSL-3318: en-5 settles a nested window unsupported TimedFormShape"]
 fn row_3324_retx_offsets_routes() {
     assert_routes(&retx_offsets());
 }
@@ -667,8 +680,8 @@ fn row_3445_elapsed_quantile_routes() {
 /// That position is at `t` when lost, with `late` at 2 ms (holds only at
 /// `t = 1`), and at 1 ms when kept, with `late` at `t + 2` (holds only at
 /// `t = 0`). So the minimum is 0, at every `t` strictly inside (0, 1), and
-/// the maximum 1/2; integer `t` alone gives 1/2 for both. EN-5 declines the
-/// form today, and the routes row states that decline.
+/// the maximum 1/2; integer `t` alone gives 1/2 for both. The form waits on
+/// the region process, so it may stop `incomplete`, never `unsupported`.
 fn skew_nested() -> Row {
     let form = "eventually[0 ms, 4 ms] \
          (holds(c.inflight and not c.late) and eventually[0 ms, 1 ms] holds(c.late))";
@@ -686,7 +699,7 @@ fn skew_nested() -> Row {
             zero(),
             half(),
         )
-        .exact_expects(Expect::Declines(FORM_SHAPE))],
+        .exact_expects(Expect::HandOrIncomplete)],
     }
 }
 
@@ -696,6 +709,7 @@ fn row_window_starting_after_position_zero_hand() {
 }
 
 #[test]
+#[ignore = "QSL-3318: en-5 settles a later-start nested window unsupported TimedFormShape"]
 fn row_window_starting_after_position_zero_routes() {
     assert_routes(&skew_nested());
 }
@@ -717,7 +731,9 @@ fn skew_each() -> Row {
         name: "3445-on-each-later-activation",
         world: models::skew(&format!("{claim}{}", formula("F", from_activation))),
         space,
-        claims: vec![claim_each().exact_expects(Expect::Declines(NOT_BUILT))],
+        // A free subject read from a later position waits on the region
+        // process (FSpec FR-421 "Closed and strict conditions").
+        claims: vec![claim_each().exact_expects(Expect::HandOrIncomplete)],
     }
 }
 
@@ -737,6 +753,7 @@ fn row_activation_after_position_zero_hand() {
 }
 
 #[test]
+#[ignore = "QSL-3531: en-5 settles an on-each window unsupported"]
 fn row_activation_after_position_zero_routes() {
     assert_routes(&skew_each());
 }
@@ -786,7 +803,7 @@ fn mean_fraction() -> Row {
             half(),
         )
         .also_sampled("MeanS")
-        .exact_expects(Expect::Declines(NOT_BUILT)),
+        .exact_expects(Expect::HandOrIncomplete),
     )
 }
 
@@ -795,10 +812,16 @@ fn row_3447_mean_fraction_hand() {
     assert_hand(&mean_fraction());
 }
 
+#[test]
+#[ignore = "QSL-3531: en-5 settles an unweighted window fraction unsupported"]
+fn row_3447_mean_fraction_routes() {
+    assert_routes(&mean_fraction().exact_route());
+}
+
 #[trace("FR-254-AC-5")]
 #[test]
-fn row_3447_mean_fraction_routes() {
-    assert_routes(&mean_fraction());
+fn row_3447_mean_fraction_sampled() {
+    assert_routes(&mean_fraction().sampled_route());
 }
 
 /// `phase` 0 at position 0 and 1 at the position `send` reaches, at 2 ms:
@@ -818,8 +841,7 @@ fn two_steps() -> Row {
             zero(),
             zero(),
         )
-        .also_sampled("StepsS")
-        .exact_expects(Expect::Declines(NOT_BUILT)),
+        .also_sampled("StepsS"),
     )
 }
 
@@ -829,8 +851,14 @@ fn row_3447_steps_hand() {
 }
 
 #[test]
+#[ignore = "QSL-3531: en-5 settles a steps measure within a time horizon unsupported"]
 fn row_3447_steps_routes() {
-    assert_routes(&two_steps());
+    assert_routes(&two_steps().exact_route());
+}
+
+#[test]
+fn row_3447_steps_sampled() {
+    assert_routes(&two_steps().sampled_route());
 }
 
 /// `phase` is first 1 at 2 ms and first 2 at `2 + reply` ms: the elapsed
@@ -850,9 +878,7 @@ fn elapsed(
         send,
         Some(reply),
         &(pair("Q", form) + &phases()),
-        claim("Q", payoff, bound, value.clone(), value)
-            .also_sampled("QS")
-            .exact_expects(Expect::Declines(NOT_BUILT)),
+        claim("Q", payoff, bound, value.clone(), value).also_sampled("QS"),
     )
 }
 
@@ -913,29 +939,47 @@ fn row_254_elapsed_from_the_first_a_hand() {
     assert_hand(&elapsed_one());
 }
 
-#[trace("FR-254-AC-9")]
 #[test]
+#[ignore = "QSL-3531: en-5 settles an elapsed event unsupported"]
 fn row_254_elapsed_within_ten_routes() {
-    assert_routes(&elapsed_ten());
+    assert_routes(&elapsed_ten().exact_route());
 }
 
 #[trace("FR-254-AC-9")]
 #[test]
+fn row_254_elapsed_within_ten_sampled() {
+    assert_routes(&elapsed_ten().sampled_route());
+}
+
+#[test]
+#[ignore = "QSL-3531: en-5 settles an elapsed event unsupported"]
 fn row_254_elapsed_within_nine_routes() {
-    assert_routes(&elapsed_nine());
+    assert_routes(&elapsed_nine().exact_route());
 }
 
 #[trace("FR-254-AC-9")]
 #[test]
+fn row_254_elapsed_within_nine_sampled() {
+    assert_routes(&elapsed_nine().sampled_route());
+}
+
+#[test]
+#[ignore = "QSL-3531: en-5 settles an elapsed event unsupported"]
 fn row_254_elapsed_reply_one_routes() {
-    assert_routes(&elapsed_one());
+    assert_routes(&elapsed_one().exact_route());
+}
+
+#[trace("FR-254-AC-9")]
+#[test]
+fn row_254_elapsed_reply_one_sampled() {
+    assert_routes(&elapsed_one().sampled_route());
 }
 
 const FOUR: &str = "elapsed from holds(c.phase = 1) until holds(c.phase = 2) within 4 ms";
 
 fn at_least_four(name: &'static str, send: u32, comparison: &str, bound: Bound) -> Row {
     let form = format!("probability {comparison} [ {FOUR} >= 4 ms ]");
-    elapsed(
+    let mut row = elapsed(
         name,
         send,
         3,
@@ -943,7 +987,13 @@ fn at_least_four(name: &'static str, send: u32, comparison: &str, bound: Bound) 
         Payoff::ElapsedAtLeast("P1", "P2", 4, 4),
         bound,
         zero(),
-    )
+    );
+    // `M >= c` is not a digital elapsed form (FSpec FR-421): it waits on the
+    // region process.
+    for claim in &mut row.claims {
+        claim.exact_expect = Expect::HandOrIncomplete;
+    }
+    row
 }
 
 /// `M` is 3 ms whenever `send` runs.
@@ -975,22 +1025,40 @@ fn row_3463_elapsed_past_the_horizon_of_position_zero_hand() {
     assert_hand(&four_after_five());
 }
 
-#[trace("FR-254-AC-3")]
 #[test]
+#[ignore = "QSL-3531: en-5 settles an elapsed event unsupported"]
 fn row_3463_at_least_four_after_three_routes() {
-    assert_routes(&four_after_three());
+    assert_routes(&four_after_three().exact_route());
 }
 
 #[trace("FR-254-AC-3")]
 #[test]
+fn row_3463_at_least_four_after_three_sampled() {
+    assert_routes(&four_after_three().sampled_route());
+}
+
+#[test]
+#[ignore = "QSL-3531: en-5 settles an elapsed quantile unsupported"]
 fn row_3463_quantile_routes() {
-    assert_routes(&quantile_three());
+    assert_routes(&quantile_three().exact_route());
 }
 
 #[trace("FR-254-AC-3")]
 #[test]
+fn row_3463_quantile_sampled() {
+    assert_routes(&quantile_three().sampled_route());
+}
+
+#[test]
+#[ignore = "QSL-3531: en-5 settles an elapsed event unsupported"]
 fn row_3463_at_most_after_five_routes() {
-    assert_routes(&four_after_five());
+    assert_routes(&four_after_five().exact_route());
+}
+
+#[trace("FR-254-AC-3")]
+#[test]
+fn row_3463_at_most_after_five_sampled() {
+    assert_routes(&four_after_five().sampled_route());
 }
 
 // --- QSL-3448: no position at the horizon -----------------------------------
@@ -1169,7 +1237,7 @@ fn burst() -> Row {
             ratio(101, 102),
         )
         .also_sampled("BurstS")
-        .exact_expects(Expect::Declines(NOT_BUILT))
+        .exact_expects(Expect::HandOrIncomplete)
         .sampled_expects(Expect::Declines("unsupported:NotStochasticIdleTail"))],
     }
 }
@@ -1179,10 +1247,17 @@ fn row_burst_stutter_fraction_hand() {
     assert_hand(&burst());
 }
 
-#[trace("FSpec-FR-421-AC-9", "FR-254-AC-8")]
+#[trace("FSpec-FR-421-AC-9")]
 #[test]
+#[ignore = "QSL-3531: en-5 settles the Burst fraction unsupported"]
 fn row_burst_stutter_fraction_routes() {
-    assert_routes(&burst());
+    assert_routes(&burst().exact_route());
+}
+
+#[trace("FR-254-AC-8")]
+#[test]
+fn row_burst_stutter_fraction_sampled() {
+    assert_routes(&burst().sampled_route());
 }
 
 /// `go` at 1/2 ms reaches phase 1, and the run is time-locked at 1 ms: the

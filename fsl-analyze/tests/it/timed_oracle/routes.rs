@@ -175,15 +175,18 @@ fn item_verdict(item: &Value) -> Verdict {
         Some(result @ ("unsupported" | "declined" | "incomplete")) => {
             let diagnostic = &record["diagnostic"];
             // FSpec FR-272's `not_digitisable` member of an EN-1 decline.
-            let rule = [
+            let member = [
                 &diagnostic["not_digitisable"],
                 &diagnostic["detail"]["not_digitisable"],
             ]
             .into_iter()
-            .find_map(|member| member["rule"].as_str())
-            .unwrap_or("none");
+            .find(|member| member.is_object());
+            let rule = member.and_then(|m| m["rule"].as_str()).unwrap_or("none");
+            let span = member.map_or_else(String::new, |m| {
+                format!("{}-{}", m["span"]["start"], m["span"]["end"])
+            });
             Verdict::Declined(format!(
-                "{result}:{}/{}:{rule}",
+                "{result}:{}/{}:{rule}@{span}",
                 text(&diagnostic["code"]),
                 text(&diagnostic["cause"]),
             ))
