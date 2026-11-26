@@ -4007,7 +4007,7 @@ fn digital_workload_choices(
         if let Some(first) = free_now.first().filter(|_| !resolve.is_empty()) {
             choices.push(resolve);
             let schedule = crate::Schedule::of(run.system, &first.identity)
-                .map_err(|_| ProbabilityDocumentError::Malformed)?;
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
             scheduler_actions.extend(time_actions.into_iter().map(|action| vec![action]));
             scheduler_actions.push(vec![crate::ProductAction::WorkloadResolve {
                 schedule,

@@ -722,6 +722,23 @@ fn a_workload_refutation_through_a_resolution_replays() {
     let world = one_step(" and self.x >= 3 ms", "", &claim);
     let record = settle(&world, "Hit");
     assert!(is_refuted(&record), "{record:#?}");
+    let counterexample = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation has reproduced path evidence");
+    let resolves = counterexample
+        .evidence()
+        .scheduler
+        .iter()
+        .any(|(_, choice)| {
+            matches!(
+                choice,
+                fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+                    fsl_replay::ProductAction::WorkloadResolve { delay: 0, .. }
+                )
+            )
+        });
+    assert!(resolves, "{counterexample:#?}");
 }
 
 /// `a` fires by 1 ms and resets `x`, and `b` fires 2 ms later: a path with a
