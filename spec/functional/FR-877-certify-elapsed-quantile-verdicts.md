@@ -17,6 +17,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-753
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-421
+    type: depends_on
 ---
 # FR-877: Certify elapsed-quantile verdicts over timed subjects
 
@@ -65,8 +69,10 @@ every scheduler delivers within 2 ms with probability at least `9/10`:
   when the tight actions reach no activated state, since no scheduler then
   meets equality while activating (ADR-028 CE-4, FR-201).
 - The comparison `M < c` is strict, so a `>=` claim takes the region route
-  (FR-922); `M <= c` keeps the digital route when every other constraint is
-  closed.
+  (FR-922). `M <= c` takes the route FR-204 Admission "Route" gives it, which
+  is digital only over a closed subject that FSpec FR-421 admits: from a
+  measure that starts at position 0 on every run, or with every delay given
+  (ADR-038).
 
 ## Acceptance Criteria
 
