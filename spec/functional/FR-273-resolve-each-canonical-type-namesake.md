@@ -149,10 +149,6 @@ FR-273-AC-n.
 | 46 | `filament_exact::location::Origin` (O-07) | `pub use` in `fsl-replay/src/lib.rs` | the facade path CG reaches FSL through (ADR-011 FB-05) | keep; the `pub use` names `filament_exact::Origin`, the owner crate's public path |
 | 47 | `filament_exact::integer::Integer` (O-13) | `pub use` in `fsl-replay/src/lib.rs` | the facade path CG reaches FSL through (ADR-011 FB-05) | keep; the `pub use` names `filament_exact::Integer`, the owner crate's public path |
 | 48 | `filament_checked::key::DeclarationKey` (O-03) | `pub use` in `fsl-replay/src/lib.rs` | the facade path CG reaches FSL through (ADR-011 FB-05) | keep; the `pub use` names `filament_checked::key::DeclarationKey` |
-| 52 | `fsl_semantics::value::member::Member` (O-06 member identity) | `fsl_analyze::model_check::hyper::closed::reduction::Member` | one joint-position orbit member with positions and a permutation | rename `ClosedOrderMember` |
-| 53 | same | `fsl_replay::planner::from_admitted::Member<'p>` | one source composition member with a value and source region | rename `CompositionSourceMember` |
-| 54 | `fsl_cst::ParsedSource` (O-15) | `fsl_forms::cst::ParsedSource` | the forms-layer facade over the CST parse result, exposing a token view | rename `FormsSource` |
-| 55 | `fsl_semantics::check::refusal::CheckRefusal` (the semantic checking stage's located refusal) | `filament_contract_runtime::exact::expression::CheckRefusal` | one refusal from generated-package admission, whose cause vocabulary is deliberately narrowed | rename the FSL type `SemanticCheckRefusal`; retain the runtime type's stage-specific name |
 
 ## Shared-leaf namesakes
 
@@ -166,6 +162,18 @@ gate. Row n is checked by FR-273-AC-n, and FR-273-AC-51 checks both.
 | --- | --- | --- | --- | --- |
 | 49 | `filament_exact::location::Location` (O-12) | `filament_semantic_value::location::Location` | a declaration and a child-index path to an expression | rename `ExpressionLocation`; checked by a scan of `filament-semantic-value` |
 | 50 | `filament_exact::location::Origin` (an occurrence key within a node, O-07) | `filament_semantic_value::location::Origin` | the declaration a location belongs to | rename `ExpressionOwner`; checked by a scan of `filament-semantic-value` |
+
+## Additional workspace namesakes
+
+These namesakes were reported after the original verdict table was authored.
+Row n is checked by FR-273-AC-n.
+
+| Row | Canonical type | Namesake | Namesake's meaning | Verdict |
+| --- | --- | --- | --- | --- |
+| 52 | `fsl_semantics::value::member::Member` (O-06 member identity) | `fsl_analyze::model_check::hyper::closed::reduction::Member` | one joint-position orbit member with positions and a permutation | rename `ClosedOrderMember` |
+| 53 | same | `fsl_replay::planner::from_admitted::Member<'p>` | one source composition member with a value and source region | rename `CompositionSourceMember` |
+| 54 | `fsl_cst::ParsedSource` (O-15) | `fsl_forms::cst::ParsedSource` | the forms-layer facade over the CST parse result, exposing a token view | rename `FormsSource` |
+| 55 | `fsl_semantics::check::refusal::CheckRefusal` (the semantic checking stage's located refusal) | `filament_contract_runtime::exact::expression::CheckRefusal` | one refusal from generated-package admission, whose cause vocabulary is deliberately narrowed | rename the FSL type `SemanticCheckRefusal`; retain the runtime type's stage-specific name |
 
 ## Acceptance Criteria
 
