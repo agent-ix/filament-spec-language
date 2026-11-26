@@ -15,6 +15,14 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-990
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-126
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1033
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-059
     type: implements
   - target: ix://agent-ix/filament-specification/FR-060
@@ -75,6 +83,34 @@ modes, selected by the item.
   refused `missing_declaration`/`missing-name` naming the role, before any
   analysis. The claim is never settled `unsupported` for want of an engine.
 
+### The objects checked over every behaviour
+
+Over every behaviour, a protocol clause whose `over` parameter binds an
+object type is checked over protocol subjects, each binding `over` to one
+object (FR-205).
+
+- When the item's subject (FR-1033) carries a `protocol` member naming the
+  claimed clause, FSL SHALL decide the item over the protocol subject built
+  from that binding, its `over` object the only object checked.
+- When the item's subject carries no `protocol` member, FSL SHALL check one
+  protocol subject for each admitted key of the `over` type (FR-125
+  "Instancing"), in FR-125's canonical instance order. It SHALL NOT check
+  the first admitted key alone. The item reports one record, combined as
+  FR-621 "Items over several claim instances" states, and the run's limits
+  and stops apply over the keys as FR-126 "Bindings and ranking" states them
+  over the bindings of a TP-4 item.
+- The item's `obligations`, `closure`, `global`, `projections`,
+  counterexample and replay SHALL be those of the instance whose record the
+  item reports: for a proved item, the instance FR-621 "The proved record
+  over several instances" chooses. A counterexample's protocol subject, and
+  the subject its replay reads (FR-991), bind that instance's object.
+- When the subject gives no instance, the item SHALL settle as FR-125
+  "Instancing" states, `NoInstance` or `NoInitialState` among its outcomes,
+  and never as a fault.
+
+An `over` input that is not an object reference ranges over its type's
+values within one protocol system (FR-882).
+
 The capability `Capability::GlobalConformance` (FR-057) is served by the
 protocol-analysis provider in both modes. A request routed to it settles by
 this requirement, never with a stub's pending obligation. In both modes the
@@ -107,6 +143,8 @@ recording, where replay mode reports it as `unexpected`.
 | FR-896-AC-4 | A protocol whose role `Courier on N::Truck` names a model `N` that the linked package does not select is refused `missing_declaration`/`missing-name` naming `Courier`, and no verdict is settled. No `global-conformance` item settles `unsupported` with a pending obligation in the corpus. | Test (TC-2532) |
 | FR-896-AC-5 | The AC-10 recording of FR-895 named by an item with `assessment` `incremental` settles `refuted` and carries six `prefixes` whose `label`s are `inconclusive`, then `refuted` five times, each with `observations` counts 1 to 6; its `Note` enabledness is `violated`, cause `unexpected`, from `prefixes[1]` on, and the last prefix's `obligations` equal the item's. The same item with `assessment` `batch`, or none, carries no `prefixes`. The word `streaming`, or `assessment` on an item with no `recording`, is refused `invalid-request` naming `/items/0/assessment`. | Test (TC-2531) |
 | FR-896-AC-6 | An `on each` protocol recording of two instances `a` and `b`, listed one after the other, with an activated population naming both, assessed with `assessment` `incremental` settles `proved` with six `prefixes`; no prefix is refused for naming an unrecorded instance, each prefix holding the population of the instances it has begun, and the last prefix's `obligations` equal the `batch` item's. A refused prefix refuses the whole item `invalid_runtime_input`, with the refusal's cause, its detail and the `prefix` index. | Test (TC-2531) |
+| FR-896-AC-7 | The keyed order fixture is the FR-636 order fixture with `check Ready { k.r1 = 0 }` as the first control of `Main`, over the universe `cores` `[p, q]` with an initial state holding `p.r1 = 0` and `q.r1 = 1`. With no `subject.protocol`, `global-conformance` settles `refuted`, `p` being proved and `q` blocked at `Ready`: the counterexample is the deadlock with the empty prefix, its protocol subject's `over` names `q`, it replays, and `closure.state` is `open`. With `q.r1 = 0` too, the item settles `proved` with `closure.state` `closed`. | Test (TC-2532) |
+| FR-896-AC-8 | Over AC-7's first state, with `subject.protocol` naming `Flow` and binding both roles, `over` `p` settles `proved`, and `over` `q` settles `refuted` with AC-7's counterexample. | Test (TC-2532) |
 
 ## Dependencies
 
@@ -118,6 +156,12 @@ recording, where replay mode reports it as `unexpected`.
   replay mode and the obligation list.
 - [FR-205](FR-205-define-the-protocol-subject-and-its-state-key.md): the
   protocol system and role bindings.
+- [FR-1033](FR-1033-select-a-protocol-subject-and-memory-models-in-an-analyze-request.md):
+  the request's protocol binding.
+- [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md),
+  [FR-621](FR-621-write-the-analyze-result-as-one-outcome-document-per-request.md)
+  and [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md):
+  the admitted keys, the one record over them and the stops.
 - [FR-990](FR-990-report-per-obligation-and-global-conformance-results.md)
   and [FR-991](FR-991-publish-in-process-replay-of-a-global-conformance-counterexample.md):
   the result shape and its in-process replay.
