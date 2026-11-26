@@ -5,6 +5,7 @@ use super::document::{
     check_probability_certificate_document_as, ProbabilityDocumentError, ProbabilityDocumentLimits,
 };
 use super::{CertificateRole, ExactProbabilityCertificateCheck, ObligationIdentity};
+use ix_trace_rs::implements;
 use crate::spine::{
     self, DependencyInput, FrontEndFailure, ParseRequest, SourceComponent, SpineLimits,
 };
@@ -149,6 +150,7 @@ pub struct ProbabilityPackageRequest<'a> {
 /// Recompile exact admitted source through S1–S3, construct the production
 /// model system and check the document. No emitted package, solver product,
 /// ambient I/O or analyzer implementation enters this path.
+#[implements("FR-282-AC-11")]
 pub fn check_probability_certificate_source(
     request: ProbabilitySourceRequest<'_>,
     limits: ProbabilitySourceLimits,
@@ -161,6 +163,7 @@ pub fn check_probability_certificate_source(
 /// source and package name, the byte provision recompiles through S1–S4, and
 /// the recompiled package must be byte-identical to the one named before the
 /// document is checked.
+#[implements("FR-282-AC-1")]
 pub fn check_probability_certificate_package(
     request: ProbabilityPackageRequest<'_>,
     limits: ProbabilitySourceLimits,

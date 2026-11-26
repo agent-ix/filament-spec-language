@@ -13,6 +13,7 @@ use filament_exact::{
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObject};
 use quire_canonical::{Error, Limits, Sink, Writer};
+use ix_trace_rs::implements;
 
 use super::{DeclarationRecord, Enc, KeyNames, Placeholder, Typing};
 
@@ -1015,6 +1016,7 @@ fn project_clock_shell<S: ValueSink>(sink: &mut S) -> Result<(), S::Error> {
     })
 }
 
+#[implements("FR-120-AC-4")]
 pub(super) fn project_model_state<S: ValueSink>(
     sink: &mut S,
     model: &StateModel,
@@ -1158,6 +1160,7 @@ pub(super) fn project_reference_parts<S: StructuralSink>(
     })
 }
 
+#[implements("FR-120-AC-16")]
 pub(super) fn project_unit<S: ValueSink>(sink: &mut S, source: &UnitId) -> Result<(), S::Error> {
     sink.begin_object()?;
     if let Some(node) = source.declared_key() {
@@ -1196,6 +1199,7 @@ fn pending_slot<'a>(value: &'a FieldValue, normalize: bool) -> ValueTask<'a> {
     }
 }
 
+#[implements("FR-120-AC-16")]
 pub(super) fn project_value<'a, S: ValueSink>(
     sink: &mut S,
     value: &'a Value,
