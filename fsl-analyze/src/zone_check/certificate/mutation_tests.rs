@@ -4,16 +4,18 @@
 //! reader does not read the `state_graph` member.
 
 use filament_exact::{Cancel, ValueType};
-use fsl_certificate_mutation::{Verdict, check_typed_with_adapter};
-use fsl_eval::simulation::model::{DEFAULT_MAX_CLOCKS, TimedSystem};
+use fsl_certificate_mutation::{
+    check_typed_with_adapter, AllowedMutation, MutationId, MutationKind, Verdict,
+};
+use fsl_eval::simulation::model::{TimedSystem, DEFAULT_MAX_CLOCKS};
 use fsl_replay::{
-    CertificateCheckLimits, CertifiedItem, StateGraphCertificateForm, StateGraphPart,
-    ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict, check_zone_certificate,
+    check_zone_certificate, CertificateCheckLimits, CertifiedItem, StateGraphCertificateForm,
+    StateGraphPart, ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_semantics::check::StateGraphForm;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const TIMED: &str = "profile tt = \"filament.temporal.timed/v1\";\n";
 const CLAIMS: &str = "possible ReplyPossible using v over (c: M::Call) { c.phase = 2 }\n\
@@ -137,12 +139,32 @@ fn check_fixture(claim_name: &str, route: &str) {
         certificate,
         malformed: false,
     };
+    let mut allowed = fixture
+        .certificate
+        .edges
+        .iter()
+        .enumerate()
+        .map(|(index, _)| AllowedMutation {
+            id: MutationId {
+                member: format!("$/edges/{index}"),
+                kind: MutationKind::RowDuplicated,
+            },
+            reason: "The repeated edge has the same transition identity and endpoints, so it adds no distinct graph transition; reachability and the unique transition-word count are unchanged.".into(),
+        })
+        .collect::<Vec<_>>();
+    allowed.push(AllowedMutation {
+        id: MutationId {
+            member: "$/nodes/2".into(),
+            kind: MutationKind::RowDuplicated,
+        },
+        reason: "This fixture duplicates its last reachable node row at the same index; existing numeric edges still point to an identical node, and the shifted extra copy is unreferenced, so reachability and unique transition-word counts are unchanged.".into(),
+    });
 
     let mutations = check_typed_with_adapter(
         route,
         claim_name,
         &fixture,
-        Vec::new(),
+        allowed,
         |adapter| {
             let mut base = adapter.certificate.clone();
             let state_graph = base.state_graph.take();
