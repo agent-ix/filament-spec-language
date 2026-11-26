@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! S4 verification-plan emission and strict reading (FR-753, TC-2103).
 
+#![cfg(feature = "std")]
+
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{
     emit_verification_plans, read_verification_plan, CheckedPackage, VerificationPlanRefusal,

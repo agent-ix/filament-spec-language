@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Temporal occurrence emission, row identity and clock-selection refusals.
 
+#![cfg(feature = "std")]
+
 use filament_contract_model::ClockConfiguration;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{

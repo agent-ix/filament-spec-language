@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
-use crate::written_operation::WrittenOperation;
+use crate::shared_wire::{StateLocus, TransitionIdentity, WireDefectKind};
 use filament_exact::{CollectionKind, Identifier, Integer, Rational, ScalarLimits};
 use fsl_eval::temporal::{LateCutoff, StampInterval};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
@@ -510,37 +510,10 @@ pub struct ModelWire {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelStepWire {
-    /// The step's transition identity.
-    pub transition: ModelTransitionWire,
-    /// The state key of the step's post-state.
-    pub post_state: PostStateWire,
-}
-
-/// A post-state key, base64url of its canonical bytes.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PostStateWire {
-    /// The key text.
-    pub key: String,
-}
-
-/// A transition identity: `{"type": "transition", operation, receiver,
-/// arguments}` or `{"type": "terminal-stutter"}`.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelTransitionWire {
-    /// `transition` or `terminal-stutter`.
-    #[serde(rename = "type")]
-    pub kind: String,
-    /// The operation's typed value.
-    #[serde(default)]
-    pub operation: Option<Box<RawValue>>,
-    /// The receiver's typed value.
-    #[serde(default)]
-    pub receiver: Option<Box<RawValue>>,
-    /// The arguments' typed values.
-    #[serde(default)]
-    pub arguments: Option<Vec<Box<RawValue>>>,
+    /// The step's transition identity or `{"type": "terminal-stutter"}`.
+    pub transition: Box<RawValue>,
+    /// The State locus of the step's post-state.
+    pub post_state: Box<RawValue>,
 }
 
 /// The temporal member of an FR-312 request.
@@ -978,75 +951,56 @@ fn canonical_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestR
     String::from_utf8(bytes).map_err(|error| invalid(member, error.to_string()))
 }
 
-/// The identity text of the operation member `raw`, by FR-120's reader rule:
-/// a string holding an identity text is that text, any other string is a name,
-/// and an object is its canonical text.
-#[implements("FR-120-AC-39")]
-fn operation_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestReadError> {
-    let text = canonical_text(raw, member)?;
-    match text.bytes().next() {
-        Some(b'"') => {
-            let wire: String =
-                serde_json::from_str(&text).map_err(|error| invalid(member, error.to_string()))?;
-            WrittenOperation::from_wire(wire)
-                .into_identity_text()
-                .map_err(|error| invalid(member, error.to_string()))
-        }
-        Some(b'{') => Ok(text),
-        _ => Err(invalid(member, "an operation is a string or an object")),
-    }
-}
-
 /// One step of a model-arm behaviour; `None` for the terminal stutter step.
+/// A transition is FSpec FR-181's, read by the one [`TransitionIdentity`].
+#[implements("FR-120-AC-39")]
 fn model_step(
     step: &ModelStepWire,
     member: &str,
 ) -> Result<Option<crate::ModelStep>, ClauseRequestReadError> {
-    use base64::Engine;
-    let transition = &step.transition;
-    let post_state = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(step.post_state.key.as_bytes())
-        .map_err(|error| invalid(format!("{member}.post_state.key"), error.to_string()))?;
-    let identity = match transition.kind.as_str() {
-        "terminal-stutter" => return Ok(None),
-        "transition" => {
-            let operation = transition.operation.as_deref().ok_or_else(|| {
-                invalid(
-                    format!("{member}.transition.operation"),
-                    "an operation is required",
-                )
-            })?;
-            let at = format!("{member}.transition");
-            filament_semantic_value::model_transition::ModelTransition::new(
-                operation_text(operation, &format!("{at}.operation"))?,
-                transition
-                    .receiver
-                    .as_deref()
-                    .map(|receiver| canonical_text(receiver, &format!("{at}.receiver")))
-                    .transpose()?,
-                transition
-                    .arguments
-                    .iter()
-                    .flatten()
-                    .enumerate()
-                    .map(|(index, argument)| {
-                        canonical_text(argument, &format!("{at}.arguments[{index}]"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-                quire_canonical::Limits::new(u64::MAX),
-            )
-            .map_err(|error| invalid(&at, error.to_string()))?
+    let post_member = format!("{member}.post_state");
+    let post_state: serde_json::Value =
+        serde_json::from_str(&canonical_text(&step.post_state, &post_member)?)
+            .map_err(|error| invalid(&post_member, error.to_string()))?;
+    let post_state = StateLocus::read(&post_state)
+        .map_err(|defect| {
+            let at = defect.pointer.replace('/', ".");
+            invalid(format!("{post_member}{at}"), defect.kind.to_string())
+        })?
+        .into_key();
+    let at = format!("{member}.transition");
+    let transition: serde_json::Value =
+        serde_json::from_str(&canonical_text(&step.transition, &at)?)
+            .map_err(|error| invalid(&at, error.to_string()))?;
+    let identity = match transition.get("type").and_then(serde_json::Value::as_str) {
+        Some("terminal-stutter") => {
+            let mut rest = transition.as_object().cloned().unwrap_or_default();
+            rest.remove("type");
+            let extra = rest.keys().next();
+            return match extra {
+                Some(extra) => Err(invalid(
+                    format!("{at}.{extra}"),
+                    WireDefectKind::UnknownMember.to_string(),
+                )),
+                None => Ok(None),
+            };
         }
+        Some("transition") => TransitionIdentity::read(&transition)
+            .map_err(|defect| {
+                let path = defect.pointer.replace('/', ".");
+                invalid(format!("{at}{path}"), defect.kind.to_string())
+            })?
+            .into_model(),
         _ => {
             return Err(invalid(
-                format!("{member}.transition.type"),
+                format!("{at}.type"),
                 "a transition or a terminal-stutter",
             ));
         }
     };
     Ok(Some(crate::ModelStep {
         transition: identity,
-        post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(post_state),
+        post_state,
         delay: None,
     }))
 }
@@ -2138,8 +2092,8 @@ mod tests {
     }
 
     /// FR-120-AC-39 (TC-471): an operation string spelled like a JSON literal
-    /// or array is a name, an object member is its canonical text, and any
-    /// other member is refused.
+    /// or array is a name, and a member that is not a string, an object among
+    /// them, is refused.
     #[trace("TC-471", "FR-120-AC-39")]
     #[test]
     fn an_observed_model_step_reads_a_literal_spelling_as_a_name() {
@@ -2153,19 +2107,72 @@ mod tests {
             super::model_step(&step, "trace.steps[0]")
                 .map(|step| step.expect("not the terminal stutter").transition)
         };
-        for name in ["tick", "true", "false", "null", "1", "[1]"] {
+        for name in ["tick", "true", "false", "null", "1", "[1]", "ix://a/b/C/d"] {
             let transition = read(serde_json::json!(name)).expect("a name");
             assert_eq!(transition.operation(), format!("\"{name}\""));
         }
-        let object = read(serde_json::json!({"name": "tick"})).expect("an object");
-        assert_eq!(object.operation(), r#"{"name":"tick"}"#);
         for other in [
+            serde_json::json!({"name": "tick"}),
             serde_json::json!(true),
             serde_json::json!(1),
             serde_json::json!([1]),
         ] {
-            let refused = read(other).expect_err("neither a string nor an object");
+            let refused = read(other).expect_err("not a string");
             assert_eq!(refused.member, "trace.steps[0].transition.operation");
+        }
+    }
+
+    /// FR-120-AC-39 (TC-471): the observed model step reads the whole closed
+    /// transition: every member is required, the receiver is null or an
+    /// object, and the empty string is no name.
+    #[trace("TC-471", "FR-120-AC-39")]
+    #[test]
+    fn an_observed_model_step_refuses_a_defective_transition() {
+        for (transition, member) in [
+            (
+                serde_json::json!({"type": "transition", "operation": "tick", "arguments": []}),
+                "receiver",
+            ),
+            (
+                serde_json::json!({"type": "transition", "operation": "tick", "receiver": null}),
+                "arguments",
+            ),
+            (
+                serde_json::json!({"type": "transition", "operation": "tick", "receiver": 1,
+                    "arguments": []}),
+                "receiver",
+            ),
+            (
+                serde_json::json!({"type": "transition", "operation": "tick",
+                    "receiver": "c1", "arguments": []}),
+                "receiver",
+            ),
+            (
+                serde_json::json!({"type": "transition", "operation": "", "receiver": null,
+                    "arguments": []}),
+                "operation",
+            ),
+            (
+                serde_json::json!({"type": "transition", "operation": "\"\"",
+                    "receiver": null, "arguments": []}),
+                "operation",
+            ),
+            (
+                serde_json::json!({"type": "terminal-stutter", "operation": "tick"}),
+                "operation",
+            ),
+        ] {
+            let step: super::ModelStepWire = serde_json::from_value(serde_json::json!({
+                "transition": transition,
+                "post_state": {"key": ""},
+            }))
+            .expect("the closed step shape");
+            let refused = super::model_step(&step, "trace.steps[0]").expect_err("defective");
+            assert_eq!(
+                refused.member,
+                format!("trace.steps[0].transition.{member}"),
+                "{transition}"
+            );
         }
     }
 
