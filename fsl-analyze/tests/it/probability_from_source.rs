@@ -2663,13 +2663,26 @@ fn run_over_base(name: &str, scope: &str, event: &str) -> Value {
         "generatorVersion": "1.0.0", "inputIdentities": [BASE]}});
     types.push(base);
     let claim = format!(
-        "probabilistic OverBase using ev on M {scope} {{ probability >= rational(1, 2) \
+        "probabilistic OverBase {scope} {{ probability >= rational(1, 2) \
          [ {event} ] }}"
     );
+    let mut text = unit(&claim);
+    if scope == EACH_BASE {
+        // `on each` takes a type a population names, so `msgs` names `Base`
+        // too; a `terminal when` allows one member type, so the unit drops it.
+        for population in model["populations"].as_array_mut().expect("populations") {
+            population["members"] = json!(["ix://test/link/Msg", BASE]);
+        }
+        text = text
+            .lines()
+            .filter(|line| !line.starts_with("terminal "))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
     let ws = Workspace::new(name);
     analyze(&request_over(
         &ws,
-        &unit(&claim),
+        &text,
         &serde_json::to_vec(&model).expect("model JSON"),
         &[LINK_START.to_vec()],
         json!({"items": [{"claim": "OverBase"}]}),
@@ -2677,8 +2690,8 @@ fn run_over_base(name: &str, scope: &str, event: &str) -> Value {
     .document()
 }
 
-const OVER_BASE: &str = "over (b: M::Base) under Even on origin";
-const EACH_BASE: &str = "under Even on each (b: M::Base) when (b = b)";
+const OVER_BASE: &str = "using ev on M over (b: M::Base) under Even on origin";
+const EACH_BASE: &str = "using inf on M under Even on each (b: M::Base) when (b = b)";
 
 /// `binding` is the FR-181 reference to the key `m` with the admitted type
 /// `Msg`, with no other member.
@@ -2741,16 +2754,13 @@ fn a_probability_entry_over_binding_carries_no_population() {
 #[trace("TC-520", "FR-125-AC-9")]
 #[test]
 fn a_probability_on_each_instance_names_the_admitted_member_type() {
-    let refuted = run_over_base(
-        "each-base-refuted",
-        EACH_BASE,
-        "eventually[0,2] holds(b != b)",
-    );
+    let refuted = run_over_base("each-base-refuted", EACH_BASE, "eventually holds(b != b)");
     let item = &refuted["items"][0];
+    assert!(item.is_object(), "{refuted}");
     assert_eq!(label(item), "refuted", "{refuted}");
     assert_admitted_msg_reference(&item["counterexample"]["instance"]);
 
-    let proved = run_over_base("each-base-entry", EACH_BASE, "eventually[0,2] holds(b = b)");
+    let proved = run_over_base("each-base-entry", EACH_BASE, "eventually holds(b = b)");
     let item = &proved["items"][0];
     assert_eq!(label(item), "proved", "{proved}");
     let entry = &item["record"]["basis"]["entries"][0];

@@ -65,10 +65,14 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    fixture_of(SOURCE, &tc1070::document())
+    fixture_of(
+        SOURCE,
+        &tc1070::document(),
+        json!({"total": {"integer": "5"}}),
+    )
 }
 
-fn fixture_of(source: &str, document: &serde_json::Value) -> Fixture {
+fn fixture_of(source: &str, document: &serde_json::Value, fields: serde_json::Value) -> Fixture {
     let domain = serde_json::to_vec(document).expect("domain fixture serializes");
     let packages = package_input([domain.as_slice()]).expect("domain package admitted");
     let parsed = fsl_cst::parse(
@@ -120,7 +124,7 @@ fn fixture_of(source: &str, document: &serde_json::Value) -> Fixture {
             "objects": [{
                 "key": "node-1",
                 "type": tc1070::model::id("Node"),
-                "fields": {"total": {"integer": "5"}}
+                "fields": fields
             }]
         }]
     }))
@@ -273,14 +277,22 @@ fn a_protocol_over_binding_names_the_admitted_member_type() {
     base["identity"] = json!(tc1070::model::id("Base"));
     base["displayName"] = json!("Base");
     base["supertypes"] = json!([]);
-    base["identityFields"] = json!([]);
-    base["fields"] = json!([]);
+    base["identityFields"] = json!([tc1070::model::id("Base/tag")]);
+    base["fields"] = json!([tc1070::model::field(
+        "Base",
+        "tag",
+        &tc1070::model::id("Total")
+    )]);
     base["operations"] = json!([]);
     base["relationships"] = json!([]);
     base["origin"] = tc1070::model::origin("Base");
     types.push(base);
     let source = SOURCE.replace("over (view: M::Node)", "over (view: M::Base)");
-    let fixture = fixture_of(&source, &document);
+    let fixture = fixture_of(
+        &source,
+        &document,
+        json!({"total": {"integer": "5"}, "tag": {"integer": "1"}}),
+    );
 
     let (request, over) = simulation(&fixture);
     let reference = over_reference(request, "Flow", &over).expect("the instance binds");
