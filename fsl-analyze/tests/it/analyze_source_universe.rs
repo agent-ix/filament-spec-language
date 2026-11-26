@@ -38,9 +38,9 @@ fn run_with_source_population_universe() -> Run {
     ))
 }
 
-/// FR-569-AC-2: a request snapshot's scheme-less source population name
-/// resolves among source declarations, independently of its model identity.
-#[trace("FR-569-AC-2", "FR-106-AC-3")]
+/// FR-569-AC-9: a scheme-less source population is admitted alongside a
+/// model population in the same snapshot.
+#[trace("FR-569-AC-9")]
 #[test]
 fn request_snapshot_admits_a_scheme_less_source_population_universe() {
     let run = run_with_source_population_universe();

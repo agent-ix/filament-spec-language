@@ -5,9 +5,9 @@ use crate::common::{interpreted, jitted, package_of, prepare, UNLIMITED};
 use filament_exact::{Integer, Value};
 use ix_trace_rs::trace;
 
-/// FR-562-AC-5: an unbounded Integer argument remains valid when its value
-/// exceeds the JIT's machine-width fast path.
-#[trace("FR-560-AC-1", "FR-562-AC-5", "FR-563-AC-2")]
+/// FR-295-AC-1: the JIT returns the interpreter's value for an unbounded
+/// Integer argument that exceeds machine width.
+#[trace("FR-295-AC-1")]
 #[test]
 fn a_wide_unbounded_integer_argument_matches_the_interpreter() {
     let package = package_of("function echoValue using v(x: Integer): Integer pure { x }\n");

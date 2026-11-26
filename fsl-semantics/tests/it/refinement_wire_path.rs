@@ -5,9 +5,9 @@ use crate::refinement_declarations::{cas_refines_counter, checked_counter, only_
 use filament_exact::PathSegment;
 use ix_trace_rs::trace;
 
-/// FR-901-AC-1: S4 writes the checked refinement as its relation/refinement
-/// node, using the path fixed by FSpec FR-375.
-#[trace("FR-901-AC-1", "FSpec-FR-375")]
+/// FSpec-FR-375-AC-1: an admitted refinement is emitted as a
+/// `relation`/`refinement` node.
+#[trace("FSpec-FR-375-AC-1")]
 #[test]
 fn refinement_node_identity_uses_the_relation_refinement_path() {
     let graph = checked_counter(&cas_refines_counter());

@@ -5,9 +5,9 @@ use fsl_command::command;
 use ix_trace_rs::trace;
 use serde_json::json;
 
-/// FR-961 Behavior steps 1–2: a malformed request is refused during request
-/// preparation before the provider registry is built.
-#[trace("FR-961-AC-4", "FR-1047-AC-2")]
+/// FR-1047-AC-2: `{}` is refused with the exact missing-members request
+/// diagnostic, even when provider registration would also fail.
+#[trace("FR-1047-AC-2")]
 #[test]
 fn run_prepares_the_request_before_registering_providers() {
     let directory = tempfile::tempdir().expect("a temporary directory");
