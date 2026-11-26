@@ -1048,7 +1048,8 @@ fn check_hyper_library(cases: &[Case]) {
         };
         let library = case.library(&Route::ForallForall.claim("C", over, &p));
         let clause = &library.package.graph().hyper_clauses()[0];
-        let subjects = vec![library.subject(), library.subject()];
+        // One subject for the one model alias, `M`.
+        let subjects = vec![library.subject()];
         let mut keys: Vec<&str> = case
             .listed
             .iter()
