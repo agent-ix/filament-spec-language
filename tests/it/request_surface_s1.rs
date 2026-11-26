@@ -585,7 +585,8 @@ fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
     let fsl_replay::spine::NativeRunResult::Clause(record) = read else {
         panic!("expected a clause result");
     };
-    assert_eq!(record.extraction(), Some(extraction));
+    let decoded_extraction = serde_json::to_value(record.extraction()).unwrap();
+    assert_eq!(&decoded_extraction, extraction);
 }
 
 /// FR-031-AC-8 (TC-109): a compile refusal's body span is mapped into exact
