@@ -3793,26 +3793,29 @@ fn earlier_steps_precede(
                 .map_or(occurrence, |(nth, _)| nth + 1);
         }
         if parent.kind.label() == "sequence" {
-            // A repeat body's earlier sequence steps are predecessors only
-            // for the iteration the recording identifies. Without a counter
-            // on the main sequence, a prior choice cannot be assigned to this
-            // step's outer iteration; requiring every observed case would
-            // retroactively invalidate steps when another case is recorded.
+            // A choice before a repeat body's nested control belongs to that
+            // step only when the recording identifies its outer iteration.
             let body_repeat = level.checked_sub(1).and_then(|repeat_level| {
                 let repeat = ancestry[repeat_level];
                 (repeat.kind.label() == "repeat" && repeat.children.first() == Some(&parent.node))
                     .then_some(repeat_level)
             });
-            if body_repeat.is_some_and(|repeat_level| {
+            let choice_iteration_unknown = body_repeat.is_some_and(|repeat_level| {
                 repeat_iteration(protocol, document, position, ancestry, repeat_level).is_none()
-            }) {
-                continue;
-            }
+            });
             for sibling in parent
                 .children
                 .iter()
                 .take_while(|sibling| **sibling != child.node)
             {
+                if choice_iteration_unknown
+                    && protocol
+                        .controls
+                        .control(*sibling)
+                        .is_some_and(|control| control.kind.label() == "choice")
+                {
+                    continue;
+                }
                 collect_predecessors(
                     protocol,
                     document,
