@@ -2652,10 +2652,11 @@ fn undefined_terminal_aliases_refute_with_replayed_first_declaration() {
         undefined.cause,
         fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
     );
+    let model_identity = format!("ix://{}/{}", world.model.package, world.model.object);
     assert_eq!(
         undefined.locus,
         system(&world, &["v"]).terminal_locus(
-            &TerminalModel::new("ix://test/terminal", "M").with_ordinal(0)
+            &TerminalModel::new(model_identity, "M").with_ordinal(0)
         )
     );
     assert_eq!(
