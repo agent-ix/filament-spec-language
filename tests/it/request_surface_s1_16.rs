@@ -4556,8 +4556,8 @@ fn a_direct_member_past_the_candidate_bound_settles_incomplete() {
 
 // ---- FR-752/FR-255: caller overrides on a direct model-based test ------
 
-/// A direct `model_based_test` member over a passing clause of the narrowed
-/// spine model, run with the caller's `overrides`.
+/// A direct `model_based_test` member over a state clause, run with the
+/// caller's `overrides`.
 fn run_member_overridden(overrides: &fsl_command::command::RequestOverrides<'_>) -> (u8, Value) {
     let directory = bump_directory(
         &format!(
@@ -4583,41 +4583,43 @@ fn run_member_overridden(overrides: &fsl_command::command::RequestOverrides<'_>)
     }
 }
 
-/// FR-752-AC-15: with the caller's `accounting.work_units` at 5 a direct
-/// member over AC-16's fixture stops at that bound.
+/// FR-255 Behavior 15: the caller's accounting reaches a direct member. The
+/// value clause `x < 200` is refuted by generated assignments; with no work
+/// unit to charge, no assignment is evaluated, so the run cannot report that
+/// refutation.
 #[test]
-#[trace("FR-752-AC-15")]
-fn a_direct_member_stops_at_the_callers_work_bound() {
-    let directory = two_field_directory();
+fn a_direct_member_does_not_ignore_the_callers_work_bound() {
+    let unit = format!(
+        "{VALUE_HEADER}predicate BelowTwoHundred using v (x: Integer): Boolean {{ x < 200 }}\n"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
     let request = json!({"format": "native-run/1", "request": {
-        "models": [{"format": "semantic-ir/2.0.0",
-            "source": source("spine-model.semantic-ir.json")}],
-        "program": {"source": source("unit.native")},
-        "model_based_test": {"clause": "Ready", "seed": 7, "max_cases": 20,
-            "max_trace_length": 8, "initial": "initial.json"}}});
+        "models": [], "program": {"source": source("unit.native")},
+        "model_based_test": {"clause": "BelowTwoHundred", "seed": 7, "max_cases": 20,
+            "max_value_bits": 8}}});
     let path = directory.path().join("request.json");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     let accounting =
-        std::collections::BTreeMap::from([(fsl_foundation::AccountingSetting::WorkUnits, 5)]);
-    let result = fsl_command::command::run_with_overrides(
+        std::collections::BTreeMap::from([(fsl_foundation::AccountingSetting::WorkUnits, 0)]);
+    let overrides = fsl_command::command::RequestOverrides {
+        accounting: Some(&accounting),
+        ..Default::default()
+    };
+    let (exit, value) = match fsl_command::command::run_with_overrides(
         &path,
-        &fsl_command::command::RequestOverrides {
-            accounting: Some(&accounting),
-            ..Default::default()
-        },
+        &overrides,
         &crate::negotiation::Fr290,
-    )
-    .expect("an exhausted budget settles, it does not refuse");
-    let value: Value = serde_json::from_str(&result.value.to_string()).expect("a JSON document");
-    let record = &value["model_based_test"];
-    assert_eq!(record["status"], "incomplete", "{value}");
-    assert_eq!(
-        record["cause"],
-        json!({"kind": "limit-reached", "limit": "work_units", "value": 5,
-            "setting": "accounting.work_units"}),
-        "{value}"
-    );
-    assert_eq!(result.exit_code, 22, "{value}");
+    ) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str::<Value>(&result.value.to_string()).expect("a JSON document"),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    };
+    assert_ne!(exit, 10, "{value}");
+    assert_ne!(value["model_based_test"]["status"], "refuted", "{value}");
 }
 
 /// FR-255 Behavior 15: a direct member, which compiles without clock

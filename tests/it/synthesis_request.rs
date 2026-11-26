@@ -837,7 +837,8 @@ fn work_stop() -> Value {
 #[test]
 #[trace("FR-255-AC-32")]
 fn a_synthesis_run_applies_the_callers_accounting_counters() {
-    let unit = pick("Pick * Pick = 49", "");
+    // No equality application, so the package needs no equality file.
+    let unit = pick("Pick * Pick > 48", "");
     let no_work = BTreeMap::from([(AccountingSetting::WorkUnits, 0)]);
     let other = BTreeMap::from([(AccountingSetting::ResultUnits, 1_000_000)]);
     for package in [false, true] {
