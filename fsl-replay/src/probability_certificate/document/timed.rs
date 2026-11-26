@@ -4427,6 +4427,9 @@ fn digital_state_after_delay(
 /// is unchanged, and the walk to the time successor then never carries a clock
 /// off an integer and another onto one in the same unit. A nested formula's
 /// monitor reads concrete times, so its representative stays.
+///
+/// Interim: part of a walk over a finer grid, not the symbolic region MDP of
+/// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
 #[implements("FR-922-AC-4")]
 fn lower_fractions(
     watch: &Watch<'_>,

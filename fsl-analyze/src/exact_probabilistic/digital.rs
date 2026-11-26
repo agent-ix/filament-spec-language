@@ -2106,6 +2106,9 @@ impl<'c> Builder<'_, '_, 'c> {
     /// The region route's delay, taken to the time successor (FR-922): the
     /// first region the walk reaches that differs from the one `state` is in,
     /// both read under the tail `tail`.
+    ///
+    /// Interim: a walk over a finer grid, not the symbolic region MDP of
+    /// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
     #[implements("FR-922-AC-4")]
     fn successor_delay(
         &mut self,
