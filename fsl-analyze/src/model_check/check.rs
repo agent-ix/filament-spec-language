@@ -127,7 +127,6 @@ use fsl_replay::{
 use fsl_semantics::check::{Activation, CaptureSite, FormulaNodeId, TemporalProfile};
 use fsl_semantics::family::ClassifyFailure;
 use fsl_semantics::model::observation::AdmissionFailure;
-use ix_trace_rs::implements;
 
 use super::ample::{Atoms, Por};
 use super::concretise::{Lift, LiftStop};

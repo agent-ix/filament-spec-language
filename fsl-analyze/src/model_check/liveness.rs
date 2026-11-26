@@ -401,7 +401,7 @@ where
             }),
             instance_bound: options.instance_bound,
             constraint: options.constraint,
-            retained,
+            retained: options.retained,
             root_cancelled,
             no_initial: simulation.initial.is_empty(),
             certify: Certify {
