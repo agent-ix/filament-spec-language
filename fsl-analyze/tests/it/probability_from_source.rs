@@ -1921,6 +1921,27 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
         &certificate["document"],
         "the proved item's certificate document",
     );
+    let certificate_bytes =
+        serde_json::to_vec(&certificate["document"]).expect("the emitted certificate is JSON");
+    let model = prob_world::link(EVENTUALLY);
+    let world = prob_world::World::new(&model);
+    let subject = world.subject();
+    let system = ModelSystem::new(subject.simulation).expect("the checked Link model admits");
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        system.meter_limits(),
+    );
+    let cancel = Cancel::new();
+    let decoded = fsl_replay::read_probability_certificate(&certificate_bytes, limits, &cancel)
+        .expect("the emitted certificate passes the strict reader");
+    let rewritten = fsl_replay::write_probability_certificate(&decoded, limits, &cancel)
+        .expect("the admitted certificate writes canonically");
+    let read_again = fsl_replay::read_probability_certificate(&rewritten, limits, &cancel)
+        .expect("the canonical rewrite passes the strict reader");
+    assert_eq!(
+        read_again, decoded,
+        "certificate values survive the round trip"
+    );
     assert_eq!(
         certificate["document"]["identity"], certificate["identity"],
         "{item}"

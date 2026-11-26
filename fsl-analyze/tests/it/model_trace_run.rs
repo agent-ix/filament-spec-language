@@ -272,7 +272,18 @@ fn a_model_trace_whose_expansion_stops_is_incomplete_naming_the_limit() {
         serde_json::json!({"kind": "incomplete", "limit": "work_units"}),
         "{written}"
     );
-    fsl_replay::spine::read_native_run_result(&bytes).expect("the written record reads back");
+    let fsl_replay::spine::NativeRunResult::Clause(read_back) =
+        fsl_replay::spine::read_native_run_result(&bytes).expect("the written record reads back")
+    else {
+        panic!("the clause result writer selects a clause result");
+    };
+    assert_eq!(read_back.category(), "incomplete");
+    assert!(matches!(
+        read_back.outcome(),
+        Some(fsl_replay::spine::NativeRunOutcome::Incomplete(
+            "work_units"
+        ))
+    ));
 }
 
 /// FR-330 "Admit": a post-state no successor of the step has refuses with
