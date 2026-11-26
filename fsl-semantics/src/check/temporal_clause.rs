@@ -707,8 +707,10 @@ impl DebugWith for CheckedTemporalClause {
             horizon,
             claim,
             formula,
-            formula_spans,
-            first_fairness_span,
+            // Source locations, which a package keeps none of: not part of
+            // the form the two routes are compared by.
+            formula_spans: _,
+            first_fairness_span: _,
             activation,
             trigger,
             captures,
@@ -735,8 +737,6 @@ impl DebugWith for CheckedTemporalClause {
             .field("horizon", &horizon)
             .field("claim", &claim)
             .field("formula", &formula)
-            .field("formula_spans", &formula_spans)
-            .field("first_fairness_span", &first_fairness_span)
             .field("activation", &activation)
             .field("trigger", &trigger)
             .field("captures", &captures)
