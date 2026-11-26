@@ -9,7 +9,8 @@
 //! FR-125-AC-11 and AC-12 read the bound parameter through the production
 //! letters of the checked clause (`ModelSystem::clause_letters`).
 //!
-//! Not covered: FR-125-AC-9, whose reads are of the reference itself.
+//! FR-125-AC-9 is covered only for the written binding: its reads and the
+//! key-alone instance identity are not asserted here.
 
 use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
@@ -50,7 +51,8 @@ use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, Observati
 use ix_trace_rs::trace;
 use serde_json::{Value as Json, json};
 
-use crate::counter::{UNLIMITED, declarations_in, declarations_with_model_profile};
+use crate::analyze_cli_support::{Workspace, analyze, label, request_over};
+use crate::counter::{UNLIMITED, declarations_in, declarations_with_model_profile, unit_text_in};
 
 const PACKAGE: &str = "test/things";
 
@@ -2341,18 +2343,18 @@ fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
     assert_eq!(generated_initial_states() - generated_before, 0);
 }
 
-/// FR-172 Object parameters and FR-125 Instancing: `v: M::Lamp` resolves to
-/// `P1`, the one population that overlaps `Lamp`, so its instances are the
-/// keys of `P1`'s universe, held or not. `P1`'s other member type is `Dog`.
-/// `Q`, a population of `Dog`'s supertype `Animal`, does not overlap `Lamp`:
-/// it contributes no instance, and replay refuses its key.
+/// FR-172 Object parameters and FR-125 Instancing: `v: M::Thing` resolves to
+/// `P1`, the one population that overlaps `Thing` (through `Lamp`), so its
+/// instances are the keys of `P1`'s universe, held or not. `P1`'s other member
+/// type is `Dog`. `Q`, a population of `Dog`'s supertype `Animal`, does not
+/// overlap `Thing`: it contributes no instance, and replay refuses its key.
 #[test]
 fn hyper_instances_are_the_keys_of_the_resolved_population_alone() {
     let world = world(
         &[("P1", &["Dog", "Lamp"]), ("Q", &["Animal"])],
         &[("P1", &[("l", "Lamp")]), ("Q", &[("a", "Animal")])],
     );
-    let body = "hyper H using t0 over behaviours (v: M::Lamp) \
+    let body = "hyper H using t0 over behaviours (v: M::Thing) \
         exists trace a of M { always holds((v = v) @ a) }\n";
     let graph = declarations_in(PACKAGE, &world.document, body)
         .check(
@@ -2413,4 +2415,155 @@ fn hyper_instances_are_the_keys_of_the_resolved_population_alone() {
         settle_existential(&request, &foreign, &method, &Cancel::new()),
         Err(ProductClosureRefusal::Input("HP-5-instance"))
     ));
+}
+
+/// The `native-analyze/1` run of the claim `body` declares over the
+/// population `pets`, which declares `Dog`, ordered before `Lamp` and in
+/// `Animal`'s universe, and holds a `Lamp` under `l`.
+fn analyze_over_pets(name: &str, body: &str, item: Json) -> crate::analyze_cli_support::Run {
+    let world = world(&[("pets", &["Dog", "Lamp"])], &[("pets", &[("l", "Lamp")])]);
+    let workspace = Workspace::new(name);
+    let snapshot = world.snapshots.values().next().expect("one snapshot");
+    analyze(&request_over(
+        &workspace,
+        &unit_text_in(PACKAGE, body),
+        &world.document,
+        std::slice::from_ref(snapshot),
+        json!({"items": [item]}),
+    ))
+}
+
+/// FR-125 "Instancing"'s written binding of the key `l`: `Thing`'s universe,
+/// the admitted type `Lamp` and the key.
+fn the_admitted_lamp() -> Json {
+    json!({
+        "identity": "l",
+        "object_type": {
+            "original": {"node": "ix://test/things/Lamp", "package": "test/things"},
+            "owner_effective_type": null
+        },
+        "type": "reference",
+        "universe": {
+            "ordinal": 0,
+            "package": "test/things",
+            "path": ["model", "object_type", "ix://test/things/Thing"]
+        }
+    })
+}
+
+/// FR-125 "Instancing", FR-181: the HP-5 witness of `v: M::Thing` names the
+/// admitted `Lamp`, neither the declared type `Thing` nor the population's
+/// least member type `Dog`.
+#[trace("TC-520")]
+#[test]
+fn an_hp5_witness_binds_the_admitted_member_type() {
+    let run = analyze_over_pets(
+        "instances-hp5-admitted-type",
+        "hyper H using t0 over behaviours (v: M::Thing) \
+            exists trace a of M { eventually always holds((v = v) @ a) }\n",
+        json!({"claim": "H", "temporal": {"witness_samples": 0}}),
+    );
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(
+        run.item(0)["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "v", "key": the_admitted_lamp()}),
+        "{}",
+        run.document()
+    );
+}
+
+/// FR-125 "Instancing": the state-graph evidence of `over (x: M::Thing)`
+/// names the admitted `Lamp`, not the declared `over` type.
+#[trace("TC-520")]
+#[test]
+fn state_graph_evidence_binds_the_admitted_member_type() {
+    let run = analyze_over_pets(
+        "instances-state-graph-admitted-type",
+        "possible P using v over (x: M::Thing) { true }\n",
+        json!({"claim": "P"}),
+    );
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(
+        run.item(0)["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "x", "key": the_admitted_lamp()}),
+        "{}",
+        run.document()
+    );
+}
+
+/// FR-125 "Instancing": a refuted temporal `over_binding` of
+/// `over (x: M::Thing)` names the admitted `Lamp`, not the declared `over`
+/// type.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_refuted_over_binding_names_the_admitted_member_type() {
+    let run = analyze_over_pets(
+        "instances-temporal-admitted-type",
+        "temporal C using t0 over (x: M::Thing) clock \"model-steps\" on origin \
+            { always holds(x != x) }\n",
+        json!({"claim": "C"}),
+    );
+    assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
+    assert_eq!(
+        run.item(0)["counterexample"]["over_binding"],
+        the_admitted_lamp(),
+        "{}",
+        run.document()
+    );
+}
+
+/// A key of the resolved population's universe that no initial state admits
+/// is still an HP-5 instance, and its written binding carries the parameter's
+/// declared type `Thing`. The item reports its last instance, `m`; the initial
+/// state holds only `l`.
+#[trace("TC-520")]
+#[test]
+fn an_hp5_witness_of_an_unadmitted_key_binds_the_declared_type() {
+    let initial = world(&[("pets", &["Dog", "Lamp"])], &[("pets", &[("l", "Lamp")])]);
+    let later = world(
+        &[("pets", &["Dog", "Lamp"])],
+        &[("pets", &[("l", "Lamp"), ("m", "Lamp")])],
+    );
+    let workspace = Workspace::new("instances-hp5-unadmitted-key");
+    // The universe snapshot is a second document, distinct from `s0`.
+    let universe = String::from_utf8(
+        later
+            .snapshots
+            .values()
+            .next()
+            .expect("one snapshot")
+            .clone(),
+    )
+    .expect("snapshot text")
+    .replace("\"identity\":\"s0\"", "\"identity\":\"u0\"")
+    .into_bytes();
+    let held = initial.snapshots.values().next().expect("one snapshot");
+    let run = analyze(&request_over(
+        &workspace,
+        &unit_text_in(
+            PACKAGE,
+            "hyper H using t0 over behaviours (v: M::Thing) \
+                exists trace a of M { eventually always holds(true) }\n",
+        ),
+        &initial.document,
+        &[held.clone(), universe],
+        json!({
+            "items": [{"claim": "H", "temporal": {"witness_samples": 0}}],
+            "subject": {
+                "initial_states": [{"authority": "test", "identity": "s0"}],
+                "universes": [{"authority": "test", "identity": "u0"}],
+                "proof_bounds": []
+            }
+        }),
+    ));
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    let mut declared = the_admitted_lamp();
+    declared["identity"] = json!("m");
+    declared["object_type"]["original"]["node"] = json!("ix://test/things/Thing");
+    assert_eq!(
+        run.item(0)["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "v", "key": declared}),
+        "{}",
+        run.document()
+    );
 }

@@ -3322,6 +3322,92 @@ fn package_clause_model_violations_match_source_decisive_locations() {
     );
 }
 
+/// FR-125 "Instancing": over `c: Config::Draft` at a key whose admitted
+/// record is a `Published`, a sibling of `Draft`, a violated model trace keeps
+/// its counterexample, bound to the admitted type in the universe of
+/// `ConfigVersion`, on the source and package routes.
+#[test]
+#[trace("TC-520", "FR-125-AC-9")]
+fn a_model_counterexample_keeps_a_non_conforming_admitted_binding() {
+    let identity = |name: &str| format!("ix://example/config-version/{name}");
+    let unit = bump_low()
+        .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
+        .replace(
+            "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
+            "false",
+        )
+        .replace(
+            "over (c: Config::ConfigVersion)",
+            "over (c: Config::Draft)",
+        )
+        .replace(LOW_BODY, "holds(false)");
+    let directory = bump_directory(&unit, &["a"], true);
+
+    let path = directory.path().join("spine-model.semantic-ir.json");
+    let mut model: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let types = model["types"].as_array_mut().unwrap();
+    let base = types
+        .iter()
+        .find(|node| node["identity"] == identity("ConfigVersion").as_str())
+        .expect("the model declares ConfigVersion")
+        .clone();
+    for name in ["Draft", "Published"] {
+        let mut subtype = base.clone();
+        subtype["identity"] = json!(identity(name));
+        subtype["displayName"] = json!(identity(name));
+        subtype["supertypes"] = json!([identity("ConfigVersion")]);
+        for member in ["fields", "operations", "relationships", "constraints"] {
+            subtype[member] = json!([]);
+        }
+        types.push(subtype);
+    }
+    std::fs::write(&path, serde_json::to_vec(&model).unwrap()).unwrap();
+    let mut snapshot = snapshot_of(directory.path(), &["a"], true);
+    snapshot["populations"][0]["objects"][0]["type"] = json!(identity("Published"));
+    let population = snapshot["populations"][0]["population"].clone();
+    std::fs::write(
+        directory.path().join("s.json"),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+
+    let snapshot_identity = snapshot["identity"]["identity"].as_str().unwrap().to_owned();
+    let clause = json!({
+        "selection": {"temporal": {"name": "Low",
+            "trace": {"model": {"initial": snapshot_identity.as_str(),
+                "universes": [snapshot_identity.as_str()], "prefix": [],
+                "loop": [{"transition": {"type": "terminal-stutter"},
+                    "post_state": {"key": "W10"}}]}},
+            "over": {"reference": {"population": population, "key": "a"}}}},
+        "observations": {snapshot_identity.as_str(): "s.json"}});
+    let expected = json!({
+        "type": "reference",
+        "identity": "a",
+        "object_type": {"owner_effective_type": null, "original": {
+            "package": "example/config-version", "node": identity("Published")}},
+        "universe": {"package": "example/config-version", "ordinal": 0,
+            "path": ["model", "object_type", identity("ConfigVersion")]}});
+    let execute = |request: Value| {
+        let path = directory.path().join("request.json");
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+            .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+        let document = result.value.as_value().clone();
+        assert_eq!(result.exit_code, 10, "{document}");
+        assert_eq!(
+            document["disposition"]["temporal"]["counterexample"]["over_binding"], expected,
+            "{document}"
+        );
+    };
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    execute(json!({"format": "native-run/1", "request": {
+        "models": models, "program": {"source": source("unit.native")}, "clause": clause}}));
+    let models = compile_handoff(directory.path(), &unit);
+    execute(json!({"format": "native-run/1", "request": {
+        "models": models, "package": {"directory": "handoff"}, "clause": clause}}));
+}
+
 /// The decisive walk follows the taken `if` arm and authored connective to
 /// the quantifier which supplied the actual false element.
 #[test]
