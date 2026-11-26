@@ -34,6 +34,7 @@ use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
 use fsl_route::StateGraphFormKind;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
+use ix_trace_rs::implements;
 
 use super::items::{model_refusal, INVALID_VALUE};
 use super::timed_item::subject_refusal;
@@ -1023,6 +1024,7 @@ fn no_timed_graph_decision(
     }))
 }
 
+#[implements("FR-852-AC-2", "FR-852-AC-32")]
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let Some(model) = read
         .input
@@ -1624,6 +1626,7 @@ impl<'a> PackageStateGraphSubject<'a> {
 /// one it refuted, the checker's own decision that the claim is violated.
 /// Never the rule a rejection names: the coverage checks reject a broken
 /// certificate under the same rules.
+#[implements("FR-852-AC-32")]
 fn checker_confirms(
     held: bool,
     verdict: &ZoneCertificateVerdict,

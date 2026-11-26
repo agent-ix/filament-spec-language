@@ -416,6 +416,7 @@ impl TimedSystem<'_, '_> {
     /// Every atomic clock constraint of the model: each guard part's, those
     /// of each quantifier family below it (FR-230 "Family parts"), and each
     /// time invariant's bounds. Empty for a model with no clocks.
+    #[implements("FR-236-AC-3")]
     pub(in crate::simulation::model) fn compared_constraints(&self) -> Vec<&ClockConstraint> {
         let Some(model) = self.timed_model() else {
             return Vec::new();

@@ -4508,7 +4508,7 @@ fn scaled(value: &Rational, scale: &Integer) -> Option<Integer> {
 /// field or in one a collection write carries it into, from below and from
 /// above, scaled; `None` when the scale makes any constant
 /// not an integer.
-#[implements("FR-245-AC-2", "FR-245-AC-7")]
+#[implements("FR-245-AC-2")]
 #[allow(
     clippy::type_complexity,
     reason = "one list of lower and one of upper bounds"

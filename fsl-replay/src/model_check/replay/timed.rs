@@ -26,6 +26,7 @@ use fsl_eval::temporal::{
     evaluate_timed_at, TemporalOutcome, TemporalPosition, TemporalRefusal, TimedTrace,
 };
 use fsl_semantics::check::TemporalProfile;
+use ix_trace_rs::implements;
 
 use super::{
     check_formula, disagreement, disagrees, fault, hints_of, no_value, position_of, refused,
@@ -462,6 +463,7 @@ fn delay_by(
 /// terminal-stutter loop stands where the idle tail lets time diverge
 /// (FR-231): a quiescent state, or under a tick source a terminal one.
 /// `discrete` holds each position's discrete state key.
+#[implements("FR-236-AC-3")]
 fn close_loop(
     timed: &TimedSystem<'_, '_>,
     positions: &[TimedPosition],

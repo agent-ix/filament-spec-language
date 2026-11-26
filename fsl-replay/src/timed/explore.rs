@@ -29,6 +29,7 @@ use num_integer::Integer as _;
 
 use crate::certificate::zone::{Zone, ZoneError};
 use crate::timed::model_constants;
+use ix_trace_rs::implements;
 
 /// What the exploration finds.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,6 +249,7 @@ struct Scale {
 }
 
 impl Scale {
+    #[implements("FR-237-AC-4")]
     fn of(timed: &TimedSystem<'_, '_>, start: &TimedState) -> Self {
         let constants = model_constants(timed);
         let factor = constants

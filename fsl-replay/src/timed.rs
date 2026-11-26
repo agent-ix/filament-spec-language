@@ -63,6 +63,7 @@ pub(crate) fn model_constants<'a>(timed: &'a TimedSystem<'_, '_>) -> Vec<&'a Rat
 /// the constants of the field a value is carried into are compared with it.
 /// The core's own reading of the writes, apart from every engine's (ADR-026
 /// CF-6).
+#[implements("FR-245-AC-2")]
 pub(crate) fn follow_carries<T: Clone + Ord>(timed: &TimedSystem<'_, '_>, largest: &mut [T]) {
     let model = timed.model();
     // Each clock field in a collection: the collection field, and the path
