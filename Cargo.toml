@@ -22,15 +22,15 @@ filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1
 # repository so IR, RT and CG depend on it without the FSL repo. Only
 # `fsl-semantics` requests `construct` in its manifest; Cargo unifies the
 # feature across the workspace build.
-filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "7fc24dcbb3bf74f77a61dfde897fbdc9883918d3" }
+filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "af0b962f8634337ec654cd62af495ba3459b1982" }
 # ADR-011 §6.1 layer E: the shared evaluation-core interface (FR-262, FR-401),
 # its own repository so RT and CG depend on it without the FSL repo.
-filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "7fc24dcbb3bf74f77a61dfde897fbdc9883918d3" }
+filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "af0b962f8634337ec654cd62af495ba3459b1982" }
 # Quire's extraction result types (`semantic`), which
 # `fsl-replay` reads and writes and `fsl-source` produces: one pin, one type.
 quire-rs = { git = "https://github.com/agent-ix/quire-rs", tag = "v0.62.3", default-features = false }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "67ba7b9e2a0d55b54e2a070633a4a28e30a560e5" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "7bcbd63ee946716cd0cbf8d90d6db84abcc0957c" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "a36e5ed2e1bde35a27461fa38084d3e140e09fcd" }
 
