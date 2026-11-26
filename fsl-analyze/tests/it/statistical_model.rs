@@ -3871,3 +3871,77 @@ fn the_provider_entry_settles_an_on_each_claim_over_no_instance() {
         TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInstance)
     );
 }
+
+/// The estimate and decision of `Probe` at delay grid `2^-q`; `q = 0` draws
+/// every grid value as `u = 0`.
+fn measured_at_grid(world: &crate::timed_world::World, q: u32) -> (Option<Rational>, Decision) {
+    let sampling = fsl_replay::statistical::TimedSampling {
+        q,
+        ..Default::default()
+    };
+    let verdict = completed(run_timed_method(
+        world,
+        "Probe",
+        StatisticalMethod::Okamoto,
+        7,
+        sampling,
+        1,
+    ));
+    (verdict.estimate, verdict.decision)
+}
+
+/// `send`'s window is `(2 ms, 4 ms]`, so every draw is in it, every sample
+/// sends and the event has probability 1.
+#[trace("FSpec-FR-420-AC-2")]
+#[test]
+fn a_delay_drawn_over_an_open_window_end_stays_in_the_window() {
+    for law in ["uniform", "exponential(rational(1, 1))"] {
+        let world = timed_world_with(
+            &[("send", &["phase"])],
+            &format!(
+                "pre Send using v on M::Call::send {{ self.phase = 0 and self.x > 2 ms }}\n\
+                 post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+                 time invariant Held when {{ self.phase = 0 }} {{ self.x <= 4 ms }}\n\
+                 delay M::Call::send ~ {law};\n\
+                 workload Even on M {{ weight Call::send = 1; }}\n\
+                 {}",
+                window_claim("probability >= 0.5 [eventually[0 ms, 8 ms] holds(c.phase = 1)]")
+            ),
+        );
+        for q in [0, 1, 64] {
+            assert_eq!(
+                measured_at_grid(&world, q),
+                (Some(ratio(1, 1)), Decision::Accepted),
+                "{law} at q = {q}"
+            );
+        }
+    }
+}
+
+/// `send`'s window is `[0, 2 ms)` and `uniform[2 ms, 6 ms]` has no mass in
+/// it, so only `reply` races, at 3 ms.
+#[trace("FSpec-FR-420-AC-2", "FSpec-FR-420-AC-4")]
+#[test]
+fn a_law_with_no_mass_before_an_excluded_end_does_not_race() {
+    let world = timed_world_with(
+        &[("send", &["phase"]), ("reply", &["phase"])],
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 and self.x < 2 ms }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             pre Reply using v on M::Call::reply {{ self.phase = 0 }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::send ~ uniform[2 ms, 6 ms];\n\
+             delay M::Call::reply ~ discrete {{ 3 ms: 1 }};\n\
+             workload Even on M {{ weight Call::send = 1; weight Call::reply = 1; }}\n\
+             {}",
+            window_claim("probability >= 0.5 [eventually[0 ms, 8 ms] holds(c.phase = 2)]")
+        ),
+    );
+    for q in [0, 64] {
+        assert_eq!(
+            measured_at_grid(&world, q),
+            (Some(ratio(1, 1)), Decision::Accepted),
+            "q = {q}"
+        );
+    }
+}

@@ -38,8 +38,9 @@ impl From<InternalFault> for TimedDelayRefusal {
 }
 
 /// Draw one exact delay from `distribution` conditioned on the union of
-/// `windows` (in time order), using `at` as its one sampler choice
-/// (FR-253/FR-254).
+/// `windows`, using `at` as its one sampler choice (FR-253/FR-254). The
+/// delay returned is always one the windows include.
+#[implements("FSpec-FR-420-AC-2")]
 pub fn draw_timed_delay(
     distribution: &DelayDistribution,
     windows: &[DelayInterval],
@@ -63,100 +64,122 @@ pub fn draw_timed_delay(
             let index = selected.map_err(|_| TimedDelayRefusal::NoMass)?;
             delays.get(index).cloned().ok_or(TimedDelayRefusal::NoMass)
         }
-        DelayDistribution::Uniform => {
-            let ranges = ranges(windows, None)?;
-            draw_uniform(&ranges, at, q)
-        }
+        DelayDistribution::Uniform => draw_uniform(&ranges(windows, None)?, at, q),
         DelayDistribution::UniformRange { a, b } => {
             let ranges = ranges(windows, Some((a, b)))?;
+            // A law over `[a, b]` with `a < b` has no mass on points alone.
+            if a < b && !ranges.iter().any(DelayInterval::has_length) {
+                return Err(TimedDelayRefusal::NoMass);
+            }
             draw_uniform(&ranges, at, q)
         }
         DelayDistribution::Exponential { rate } => {
             let ranges = ranges(windows, None)?;
-            conditioned_exponential(rate, &ranges, &grid(at, q)?)
+            conditioned_exponential(rate, &ranges, &grid(at, q)?, q)
         }
     }
 }
 
-/// A set of clipped intervals represented by their finite ends.
+/// The delays of `windows`, within `clip` where the law has a support, as
+/// disjoint intervals in time order.
 fn ranges(
     windows: &[DelayInterval],
     clip: Option<(&Rational, &Rational)>,
-) -> Result<Vec<(Rational, Option<Rational>)>, TimedDelayRefusal> {
-    let mut ranges = Vec::new();
-    for window in windows {
-        let (mut lower, _) = window.lower();
-        let mut upper = window.upper().map(|(upper, _)| upper);
-        if let Some((a, b)) = clip {
-            if lower < a {
-                lower = a;
-            }
-            if upper.is_none_or(|upper| upper > b) {
-                upper = Some(b);
-            }
-        }
-        if upper.is_some_and(|upper| upper < lower) {
-            continue;
-        }
-        ranges.push((lower.clone(), upper.cloned()));
-    }
+) -> Result<Vec<DelayInterval>, TimedDelayRefusal> {
+    let clip = clip.map(|(a, b)| DelayInterval::closed(a.clone(), b.clone()));
+    let ranges: Vec<_> = windows
+        .iter()
+        .map(|window| {
+            clip.as_ref()
+                .map_or_else(|| window.clone(), |clip| window.meet(clip))
+        })
+        .filter(|range| !range.is_empty())
+        .collect();
     if ranges.is_empty() {
         Err(TimedDelayRefusal::NoMass)
     } else {
-        Ok(union(ranges))
+        Ok(DelayInterval::union(ranges))
     }
 }
 
-/// The union of `ranges` in time order: the parts of a disjunctive guard
-/// may overlap, and a law is conditioned on each instant once.
-fn union(mut ranges: Vec<(Rational, Option<Rational>)>) -> Vec<(Rational, Option<Rational>)> {
-    ranges.sort_by(|(left, _), (right, _)| left.cmp(right));
-    let mut merged: Vec<(Rational, Option<Rational>)> = Vec::with_capacity(ranges.len());
-    for (lower, upper) in ranges {
-        match merged.last_mut() {
-            Some((_, end)) if end.as_ref().is_none_or(|end| lower <= *end) => {
-                if end.is_some()
-                    && upper
-                        .as_ref()
-                        .is_none_or(|upper| Some(upper) > end.as_ref())
-                {
-                    *end = upper;
-                }
-            }
-            _ => merged.push((lower, upper)),
-        }
+/// `delay`, or where it is at or past an excluded end of `range`, the delay
+/// `2^-(q+1)` of the range's length inside that end (`unbounded` stands for
+/// the length of an unbounded range). An included end is kept.
+fn inside(delay: Rational, range: &DelayInterval, q: u32, unbounded: &Rational) -> Rational {
+    let (lower, lower_closed) = range.lower();
+    let upper = range.upper();
+    let length = upper.map_or_else(|| unbounded.clone(), |(upper, _)| upper.sub(lower));
+    let step = length.divided_by_power_of_two(u64::from(q) + 1);
+    if delay <= *lower {
+        return if lower_closed {
+            lower.clone()
+        } else {
+            lower.add(&step)
+        };
     }
-    merged
+    match upper {
+        Some((upper, closed)) if delay >= *upper => {
+            if closed {
+                upper.clone()
+            } else {
+                upper.sub(&step)
+            }
+        }
+        _ => delay,
+    }
 }
 
 fn draw_uniform(
-    ranges: &[(Rational, Option<Rational>)],
+    ranges: &[DelayInterval],
     at: ChoicePoint,
     q: u32,
 ) -> Result<Rational, TimedDelayRefusal> {
-    if ranges.iter().any(|(_, upper)| upper.is_none()) {
+    if ranges.iter().any(|range| range.upper().is_none()) {
         return Err(TimedDelayRefusal::UnboundedUniform);
     }
-    let total = ranges.iter().fold(
-        Rational::from_integer(Integer::zero()),
-        |sum, (lower, upper)| sum.add(&upper.as_ref().expect("finite range").sub(lower)),
-    );
-    if total.is_zero() {
-        if ranges.len() == 1 {
-            return Ok(ranges[0].0.clone());
-        }
-        let weights = vec![Rational::from_integer(Integer::one()); ranges.len()];
-        let (selected, _) = weighted_choice_counted(at, &weights);
-        return selected
-            .map(|index| ranges[index].0.clone())
-            .map_err(|_| TimedDelayRefusal::NoMass);
+    if ranges.iter().any(DelayInterval::has_length) {
+        return conditioned_uniform(ranges, &grid(at, q)?, q);
     }
-    let u = grid(at, q)?;
-    let mut remaining = total.mul(&u);
-    for (lower, upper) in ranges {
-        let length = upper.as_ref().expect("finite range").sub(lower);
+    // A set of zero length is uniform over its points.
+    let points: Vec<_> = ranges.iter().map(|range| range.lower().0).collect();
+    let index = if points.len() == 1 {
+        0
+    } else {
+        let weights = vec![Rational::from_integer(Integer::one()); points.len()];
+        weighted_choice_counted(at, &weights)
+            .0
+            .map_err(|_| TimedDelayRefusal::NoMass)?
+    };
+    points
+        .get(index)
+        .map(|point| (*point).clone())
+        .ok_or(TimedDelayRefusal::NoMass)
+}
+
+/// The uniform law over the bounded `ranges` at the grid value `u` in
+/// `[0, 1)`: uniform in length, so a point beside an interval has no mass.
+#[implements("FSpec-FR-420-AC-2")]
+fn conditioned_uniform(
+    ranges: &[DelayInterval],
+    u: &Rational,
+    q: u32,
+) -> Result<Rational, TimedDelayRefusal> {
+    let long: Vec<_> = ranges
+        .iter()
+        .filter(|range| range.has_length())
+        .filter_map(|range| {
+            let (upper, _) = range.upper()?;
+            Some((range, upper.sub(range.lower().0)))
+        })
+        .collect();
+    let zero = Rational::from_integer(Integer::zero());
+    let total = long
+        .iter()
+        .fold(zero.clone(), |sum, (_, length)| sum.add(length));
+    let mut remaining = total.mul(u);
+    for (range, length) in long {
         if remaining <= length {
-            return Ok(lower.add(&remaining));
+            return Ok(inside(range.lower().0.add(&remaining), range, q, &zero));
         }
         remaining = remaining.sub(&length);
     }
@@ -177,22 +200,23 @@ const SURVIVAL_BITS: u64 = 96;
 /// conditional probability below it is `u` (FSpec FR-420).
 ///
 /// Survival is measured from the first interval of positive length, so the
-/// law is read the same however late the window starts. An interval
-/// `[a, b]` has mass `E(a) - E(b)` with `E(t) = e^-(rate · (t - first))`.
+/// law is read the same however late the window starts. An interval from
+/// `a` to `b` has mass `E(a) - E(b)` with `E(t) = e^-(rate · (t - first))`.
 #[implements("FSpec-FR-420-AC-2")]
 fn conditioned_exponential(
     rate: &Rational,
-    ranges: &[(Rational, Option<Rational>)],
+    ranges: &[DelayInterval],
     u: &Rational,
+    q: u32,
 ) -> Result<Rational, TimedDelayRefusal> {
     // A continuous law has no mass on points.
-    let ranges: Vec<_> = ranges
-        .iter()
-        .filter(|(lower, upper)| upper.as_ref() != Some(lower))
-        .collect();
-    let Some((first, _)) = ranges.first().copied() else {
+    let ranges: Vec<_> = ranges.iter().filter(|range| range.has_length()).collect();
+    let Some(first) = ranges.first().map(|range| range.lower().0) else {
         return Err(TimedDelayRefusal::NoMass);
     };
+    let unbounded = Rational::from_integer(Integer::one())
+        .div(rate)
+        .ok_or(TimedDelayRefusal::NoMass)?;
     let survival = |at: &Rational| -> Result<Rational, TimedDelayRefusal> {
         Ok(exp_neg(&rate.mul(&at.sub(first)))?.lower)
     };
@@ -200,21 +224,21 @@ fn conditioned_exponential(
     let one = Rational::from_integer(Integer::one());
     let mut intervals = Vec::with_capacity(ranges.len());
     let mut total = zero.clone();
-    for (lower, upper) in ranges.iter().copied() {
-        let from = survival(lower)?;
-        let to = match upper {
-            Some(upper) => survival(upper)?,
+    for range in ranges {
+        let from = survival(range.lower().0)?;
+        let to = match range.upper() {
+            Some((upper, _)) => survival(upper)?,
             None => zero.clone(),
         };
         total = total.add(&from.sub(&to));
-        intervals.push((lower, upper.as_ref(), from, to));
+        intervals.push((range, from, to));
     }
     // A single unbounded interval needs no exponential: its survival value
     // is exactly `1 - u`.
-    let exact = intervals.len() == 1 && intervals[0].1.is_none();
+    let exact = intervals.len() == 1 && intervals[0].0.upper().is_none();
     let mut remaining = total.mul(u);
     let last = intervals.len() - 1;
-    for (index, (lower, upper, from, to)) in intervals.into_iter().enumerate() {
+    for (index, (range, from, to)) in intervals.into_iter().enumerate() {
         let mass = from.sub(&to);
         if remaining > mass && index < last {
             remaining = remaining.sub(&mass);
@@ -223,7 +247,8 @@ fn conditioned_exponential(
         let mut value = from.sub(&remaining);
         if value <= zero {
             // Only a bounded interval's far end is left within the precision.
-            return upper.cloned().ok_or(TimedDelayRefusal::NoMass);
+            let (upper, _) = range.upper().ok_or(TimedDelayRefusal::NoMass)?;
+            return Ok(inside(upper.clone(), range, q, &unbounded));
         }
         if !exact {
             value = significant_floor(&value, SURVIVAL_BITS)?;
@@ -231,11 +256,7 @@ fn conditioned_exponential(
         let inverse = one.div(&value).ok_or(TimedDelayRefusal::NoMass)?;
         let elapsed = ln(&inverse)?.upper;
         let delay = first.add(&elapsed.div(rate).ok_or(TimedDelayRefusal::NoMass)?);
-        return Ok(match upper {
-            _ if delay < *lower => lower.clone(),
-            Some(upper) if delay > *upper => upper.clone(),
-            _ => delay,
-        });
+        return Ok(inside(delay, range, q, &unbounded));
     }
     Err(TimedDelayRefusal::NoMass)
 }
@@ -249,16 +270,26 @@ mod tests {
         Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("a rational")
     }
 
+    fn closed(lower: i64, upper: i64) -> DelayInterval {
+        DelayInterval::closed(exact(lower, 1), exact(upper, 1))
+    }
+
+    /// From `lower` to `upper`, each end as its flag says.
+    fn range(lower: (i64, bool), upper: (i64, bool)) -> DelayInterval {
+        DelayInterval::between(
+            (exact(lower.0, 1), lower.1),
+            Some((exact(upper.0, 1), upper.1)),
+        )
+    }
+
+    fn from(lower: i64, closed: bool) -> DelayInterval {
+        DelayInterval::between((exact(lower, 1), closed), None)
+    }
+
     /// The delay of rate 1 at `u`, checked to lie in `[low, high]`, each a
     /// count of ten-millionths or millionths over `scale`.
-    fn within(
-        ranges: &[(Rational, Option<Rational>)],
-        u: &Rational,
-        low: i64,
-        high: i64,
-        scale: i64,
-    ) {
-        let delay = conditioned_exponential(&exact(1, 1), ranges, u).expect("a delay");
+    fn within(ranges: &[DelayInterval], u: &Rational, low: i64, high: i64, scale: i64) {
+        let delay = conditioned_exponential(&exact(1, 1), ranges, u, 64).expect("a delay");
         assert!(
             delay >= exact(low, scale) && delay <= exact(high, scale),
             "{delay:?} is outside [{low}, {high}] / {scale}"
@@ -269,19 +300,16 @@ mod tests {
     #[test]
     fn an_exponential_delay_is_the_inverse_of_the_law_conditioned_on_the_window() {
         // Over [0, 1] at u = 1/2: -ln((1 + e^-1) / 2) = 0.37988549304...
-        let bounded = [(exact(0, 1), Some(exact(1, 1)))];
+        let bounded = [closed(0, 1)];
         within(&bounded, &exact(1, 2), 3_798_854, 3_798_855, 10_000_000);
         // Over [0, 1] and [2, 3] at u = 15/16: the mass is
         // (1 - e^-1) + (e^-2 - e^-3) = 0.71766877369..., and the survival value
         // e^-2 - (u · mass - (1 - e^-1)) = 0.09464136672..., whose
         // -ln is 2.35766062...
-        let split = [
-            (exact(0, 1), Some(exact(1, 1))),
-            (exact(2, 1), Some(exact(3, 1))),
-        ];
+        let split = [closed(0, 1), closed(2, 3)];
         within(&split, &exact(15, 16), 2_357_660, 2_357_662, 1_000_000);
         // Over [0, inf) at u = 1 - 2^-20: 20 ln 2 = 13.86294361119...
-        let unbounded = [(exact(0, 1), None)];
+        let unbounded = [from(0, true)];
         within(
             &unbounded,
             &exact(1_048_575, 1_048_576),
@@ -290,30 +318,127 @@ mod tests {
             1_000_000,
         );
         // A window that starts later shifts the same law: 5 + 0.379885...
-        let late = [(exact(5, 1), Some(exact(6, 1)))];
+        let late = [closed(5, 6)];
         within(&late, &exact(1, 2), 53_798_854, 53_798_855, 10_000_000);
     }
 
     #[trace("FSpec-FR-420-AC-2")]
     #[test]
-    fn a_window_of_overlapping_parts_counts_each_instant_once() {
-        let range = |lower: i64, upper: i64| (exact(lower, 1), Some(exact(upper, 1)));
+    fn a_union_counts_each_instant_once_and_keeps_excluded_ones_excluded() {
+        let union = DelayInterval::union;
         assert_eq!(
-            union(vec![range(4, 5), range(0, 2), range(0, 1), range(2, 3)]),
-            vec![range(0, 3), range(4, 5)]
+            union(vec![closed(4, 5), closed(0, 2), closed(0, 1), closed(2, 3)]),
+            vec![closed(0, 3), closed(4, 5)]
         );
         assert_eq!(
-            union(vec![(exact(1, 1), None), range(0, 2), range(3, 4)]),
-            vec![(exact(0, 1), None)]
+            union(vec![from(1, true), closed(0, 2), closed(3, 4)]),
+            vec![from(0, true)]
+        );
+        // [0, 1) and (1, 2] both exclude 1; either including it joins them.
+        let below = range((0, true), (1, false));
+        let above = range((1, false), (2, true));
+        assert_eq!(
+            union(vec![above.clone(), below.clone()]),
+            vec![below.clone(), above.clone()]
+        );
+        assert_eq!(union(vec![closed(0, 1), above]), vec![closed(0, 2)]);
+        assert_eq!(union(vec![below, closed(1, 2)]), vec![closed(0, 2)]);
+        // (0, 2] and [0, 1] include 0.
+        assert_eq!(
+            union(vec![range((0, false), (2, true)), closed(0, 1)]),
+            vec![closed(0, 2)]
+        );
+    }
+
+    /// The one sampler choice at `q = 0` takes `u = 0`.
+    fn draw_at_zero(
+        distribution: &DelayDistribution,
+        window: DelayInterval,
+    ) -> Result<Rational, TimedDelayRefusal> {
+        let at = ChoicePoint {
+            seed: 7,
+            trace: 0,
+            step: 0,
+            choice: 0,
+        };
+        draw_timed_delay(distribution, &[window], at, 0)
+    }
+
+    #[trace("FSpec-FR-420-AC-2")]
+    #[test]
+    fn a_law_with_no_mass_in_the_window_draws_nothing() {
+        let two_to_six = DelayDistribution::UniformRange {
+            a: exact(2, 1),
+            b: exact(6, 1),
+        };
+        // [0, 2) excludes 2; [0, 2] meets [2, 6] in one point of no mass.
+        for window in [range((0, true), (2, false)), closed(0, 2)] {
+            assert_eq!(
+                draw_at_zero(&two_to_six, window),
+                Err(TimedDelayRefusal::NoMass)
+            );
+        }
+        let at_two = DelayDistribution::UniformRange {
+            a: exact(2, 1),
+            b: exact(2, 1),
+        };
+        assert_eq!(draw_at_zero(&at_two, closed(0, 2)), Ok(exact(2, 1)));
+        assert_eq!(
+            draw_at_zero(&at_two, range((0, true), (2, false))),
+            Err(TimedDelayRefusal::NoMass)
+        );
+        // A window that is one point is uniform over that point.
+        assert_eq!(
+            draw_at_zero(&DelayDistribution::Uniform, closed(2, 2)),
+            Ok(exact(2, 1))
+        );
+    }
+
+    #[trace("FSpec-FR-420-AC-2")]
+    #[test]
+    fn an_excluded_end_is_never_drawn() {
+        // (2, 4] at u = 0, q = 0: half the length inside the open end.
+        let open = range((2, false), (4, true));
+        assert_eq!(
+            draw_at_zero(&DelayDistribution::Uniform, open.clone()),
+            Ok(exact(3, 1))
+        );
+        let rate = DelayDistribution::Exponential { rate: exact(1, 1) };
+        assert_eq!(draw_at_zero(&rate, open), Ok(exact(3, 1)));
+        // (2, inf) at rate 2: half of the mean 1/2 inside the open end.
+        let rate = DelayDistribution::Exponential { rate: exact(2, 1) };
+        assert_eq!(draw_at_zero(&rate, from(2, false)), Ok(exact(9, 4)));
+        // An included lower end is drawn.
+        assert_eq!(
+            draw_at_zero(&DelayDistribution::Uniform, closed(2, 4)),
+            Ok(exact(2, 1))
+        );
+        // [0, 1) and [2, 3] at u = 1/2 is the boundary at length 1: the open
+        // end 1 is not drawn, but 1 - 1/4 at q = 1.
+        let split = [range((0, true), (1, false)), closed(2, 3)];
+        assert_eq!(
+            conditioned_uniform(&split, &exact(1, 2), 1),
+            Ok(exact(3, 4))
+        );
+        // The same boundary at an included end is drawn.
+        let split = [closed(0, 1), closed(2, 3)];
+        assert_eq!(
+            conditioned_uniform(&split, &exact(1, 2), 1),
+            Ok(exact(1, 1))
+        );
+        // A point beside an interval has no mass.
+        let beside = [closed(0, 0), closed(2, 3)];
+        assert_eq!(
+            conditioned_uniform(&beside, &exact(0, 1), 1),
+            Ok(exact(2, 1))
         );
     }
 
     #[trace("FSpec-FR-420-AC-2")]
     #[test]
     fn an_exponential_law_has_no_mass_on_points() {
-        let points = [(exact(1, 1), Some(exact(1, 1)))];
         assert_eq!(
-            conditioned_exponential(&exact(1, 1), &points, &exact(1, 2)),
+            conditioned_exponential(&exact(1, 1), &[closed(1, 1)], &exact(1, 2), 64),
             Err(TimedDelayRefusal::NoMass)
         );
     }
