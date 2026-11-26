@@ -56,6 +56,7 @@ use crate::value::Provenance;
 
 mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
+pub mod admission;
 mod race;
 pub use race::{
     advance_timed, replay_timed_sample, sample_timed, sample_timed_race, TimedAdvance, TimedRace,

@@ -33,6 +33,7 @@ mod finite_horizon;
 pub mod manifest;
 pub(crate) mod plan;
 mod reward_interval;
+mod route;
 mod rows;
 mod settle;
 mod unbounded;
@@ -119,6 +120,7 @@ pub(crate) use build::{
 };
 pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use digital::model_constraints;
+pub(crate) use route::{TimedRoute, timed_route};
 pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,

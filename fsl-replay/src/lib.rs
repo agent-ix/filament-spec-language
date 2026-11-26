@@ -503,6 +503,7 @@ pub use probability_certificate::{
     measure_probability_certificate_document, measure_probability_objective,
     measure_probability_product_key, on_each_has_instance, on_each_outcome,
     partial_lower_measure_probability_certificate_document,
+    timed_certificate_route,
     partial_lower_probability_proof_document, probabilistic_claim_identity,
     probabilistic_formula_monitor_context, probability_certificate_document,
     probability_proof_document, read_long_run_probability_certificate,

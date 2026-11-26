@@ -11,6 +11,7 @@ use ix_trace_rs::trace;
 
 use crate::timed_world::{self, World};
 
+mod admission;
 mod falsifier;
 mod models;
 mod probability;

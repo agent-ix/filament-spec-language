@@ -261,15 +261,17 @@ pub(super) fn replay(
         return Err(unsupported());
     }
     let timed = TimedSystem::new(system, &claim.subject.alias).map_err(|_| unsupported())?;
-    let region = region_route(&timed, claim);
-    if region != at_least {
+    let route = super::admission::certificate_route(
+        system,
+        &timed,
+        claim,
+        ProbabilityDocumentLimits::for_exact(limits, system.meter_limits()),
+        cancel,
+    )
+    .map_err(from_document)?;
+    if (route == TimedProbabilityRoute::Region) != at_least {
         return Err(unsupported());
     }
-    let route = if region {
-        TimedProbabilityRoute::Region
-    } else {
-        TimedProbabilityRoute::Digital
-    };
     let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
     let reference = claim_binding(system, claim)
         .map_err(|_| unsupported())?

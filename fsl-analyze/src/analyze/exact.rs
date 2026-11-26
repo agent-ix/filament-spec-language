@@ -17,7 +17,7 @@ mod subsystem;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational, WorkScope};
-use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem};
+use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, TimedSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::{ClaimForm, SubjectLimits};
@@ -52,8 +52,9 @@ use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
     admit_in_scope, build_retaining_monitor, build_retaining_monitor_in_scope, decide_always,
     decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
-    manifest as en5, settle_product_refusal, ExtRational, FhError, FhResult, ProbBuild,
-    ProbProduct, ProductRefusal, ProductRequest, UnboundedError, UnboundedObjective,
+    manifest as en5, settle_product_refusal, timed_route, ExtRational, FhError, FhResult,
+    ProbBuild, ProbProduct, ProductRefusal, ProductRequest, ProductStop, TimedRoute,
+    UnboundedError, UnboundedObjective,
 };
 
 /// The FR-413 claim type for a checked exact form, using the shared type
@@ -1311,6 +1312,33 @@ fn run_timed_mean(
     checked_report(checked, certificate, binding, extremum, subject)
 }
 
+/// ADR-038 RL-3: a timed claim the route admission table takes off digital
+/// clocks, whose region process is not built, settles `incomplete` before any
+/// route reads a digital value or calls the form unsupported. `None` for
+/// every other request, one whose subject does not admit included: the claim's
+/// own route reports it.
+#[implements("FR-204-AC-1", "FSpec-FR-421-AC-8", "FSpec-FR-421-AC-13")]
+fn region_not_built(request: &ProductRequest<'_>, cancel: &Cancel) -> Option<EngineReport> {
+    let simulation = request.subject.simulation.clone();
+    let meter = simulation.meter;
+    let subject = SubjectLimits {
+        expansion: simulation.expansion,
+        meter: &meter,
+    };
+    simulation.source_package()?;
+    let system = ModelSystem::new_with_cancel(simulation, cancel).ok()?;
+    let timed = TimedSystem::new(&system, &request.claim.subject.alias).ok()?;
+    let issue = match timed_route(&system, &timed, request.claim, &request.limits, cancel)? {
+        TimedRoute::Product => return None,
+        TimedRoute::RegionNotBuilt(cause) => ExactProbBuildIssue::RegionNotBuilt(cause),
+        TimedRoute::Stopped(ProductStop::Limit { limit, value }) => {
+            ExactProbBuildIssue::Limit { limit, value }
+        }
+        TimedRoute::Stopped(ProductStop::Cancelled(cause)) => ExactProbBuildIssue::Cancelled(cause),
+    };
+    Some(settled(&issue, subject))
+}
+
 pub(super) fn run_package_exact(request: ProductRequest<'_>, cancel: &Cancel) -> EngineReport {
     run(request, cancel, None, None)
 }
@@ -1321,6 +1349,9 @@ fn run(
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    if let Some(report) = region_not_built(&request, cancel) {
+        return report;
+    }
     // Every `on each` form is settled by its instances first (FR-875), so an
     // empty instance set is `no-instance` whatever the form.
     if matches!(

@@ -2428,6 +2428,9 @@ pub struct AnalyzeRecord {
     pub exact_probabilistic: Option<Box<ExactProbabilityEvidence>>,
     /// The independently replayed EN-5 probabilistic counterexample.
     pub probabilistic_counterexample: Option<Spelled<fsl_replay::ReproducedProbabilityWitness>>,
+    /// Why an `incomplete` EN-5 item left digital clocks: the region process
+    /// it needs is not built (ADR-038 RL-3).
+    pub region_cause: Option<fsl_eval::simulation::model::RegionCause>,
     /// The object an EN-1 clause counterexample's `over` parameter is bound
     /// to, which only the run's subject can name (FSpec FR-364).
     pub over_reference: Option<ObjectReference>,
@@ -2509,6 +2512,7 @@ impl AnalyzeRecord {
             contract_check: None,
             exact_probabilistic: None,
             probabilistic_counterexample: None,
+            region_cause: None,
             over_reference: None,
             refinement_steps: None,
             protocol_subject: None,
@@ -3470,8 +3474,13 @@ fn settle(
             ..record(terminal(report.terminal), None)
         },
         EngineReport::Exact(exact) => {
+            let region_cause = match exact.as_ref() {
+                exact::ExactReport::Settled(stop) => stop.region_cause(),
+                _ => None,
+            };
             let (settled_record, evidence, counterexample) = exact.settle(index, backend);
             let mut settled = record(terminal(settled_record), None);
+            settled.region_cause = region_cause;
             settled.exact_probabilistic = evidence;
             settled.probabilistic_counterexample =
                 counterexample.map(|(found, wire)| Spelled { found, wire });

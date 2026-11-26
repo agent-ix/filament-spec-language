@@ -13,7 +13,9 @@ use ix_trace_rs::implements;
 use num_traits::Zero;
 use serde_json::{Value as JsonValue, json};
 
+mod admission;
 mod elapsed;
+pub use admission::timed_certificate_route;
 
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -45,11 +47,9 @@ pub(super) fn check(
     };
     let timed = fsl_eval::simulation::model::TimedSystem::new(system, &claim.subject.alias)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-    let route = if region_route(&timed, claim) {
-        TimedProbabilityRoute::Region
-    } else {
-        TimedProbabilityRoute::Digital
-    };
+    // The route the declared table admits for the conditions the checker
+    // establishes itself; no certificate exists for any other claim.
+    let route = admission::certificate_route(system, &timed, claim, limits, cancel)?;
     let scale = certificate_scale(system, &timed, claim, route)?;
     if objective.route != route
         || objective.unit != timed.source().unit_node
@@ -4867,11 +4867,14 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         return Err(unsupported());
     }
     let timed = TimedSystem::new(system, &claim.subject.alias).map_err(|_| unsupported())?;
-    let route = if region_route(&timed, claim) {
-        TimedProbabilityRoute::Region
-    } else {
-        TimedProbabilityRoute::Digital
-    };
+    let route = admission::certificate_route(
+        system,
+        &timed,
+        claim,
+        ProbabilityDocumentLimits::for_exact(limits, system.meter_limits()),
+        cancel,
+    )
+    .map_err(from_document)?;
     let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
     let timed_watch = deadline_event(claim)
         .map(|(bound, predicate)| (bound, Watch::Deadline(predicate)))

@@ -3,7 +3,7 @@
 
 use filament_exact::{CancelCause, Rational};
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_eval::simulation::model::ClauseOutcome;
+use fsl_eval::simulation::model::{ClauseOutcome, RegionCause};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_foundation::{BackendId, RequestIndex};
 
@@ -48,6 +48,9 @@ pub enum ExactProbBuildIssue {
     Failed(CatalogCode),
     /// A timed-product form the digital engine recognizes but does not admit.
     Unsupported(UnavailabilityCause),
+    /// A timed claim that needs a region process that is not built (ADR-038
+    /// RL-3).
+    RegionNotBuilt(RegionCause),
 }
 
 /// One settled EN-5 build issue. It is always non-refuted: a counterexample
@@ -56,9 +59,16 @@ pub enum ExactProbBuildIssue {
 pub struct ExactProbBuildRecord {
     value: TerminalValue,
     diagnostic: Option<CatalogCode>,
+    region: Option<RegionCause>,
 }
 
 impl ExactProbBuildRecord {
+    /// Why the claim leaves digital clocks, when the run stopped because the
+    /// region process it needs is not built.
+    pub fn region_cause(&self) -> Option<RegionCause> {
+        self.region
+    }
+
     /// The FR-331 result kind this stop settles.
     pub fn value(&self) -> &TerminalValue {
         &self.value
@@ -101,16 +111,19 @@ pub fn settle_exact_prob_build_issue(
             required: None,
         }),
         diagnostic: None,
+        region: None,
     };
     let failed = |diagnostic| ExactProbBuildRecord {
         value: TerminalValue::Failed,
         diagnostic: Some(diagnostic),
+        region: None,
     };
     match issue {
         ExactProbBuildIssue::Limit { limit, value } => incomplete(*limit, *value),
         ExactProbBuildIssue::Cancelled(source) => ExactProbBuildRecord {
             value: TerminalValue::Incomplete(IncompleteCause::Cancelled { source: *source }),
             diagnostic: None,
+            region: None,
         },
         ExactProbBuildIssue::PrecisionBudget { lower, upper } => ExactProbBuildRecord {
             value: TerminalValue::Incomplete(IncompleteCause::PrecisionBudget {
@@ -118,14 +131,17 @@ pub fn settle_exact_prob_build_issue(
                 upper: Box::new(crate::proof_result::ExactRational::new(upper.clone())),
             }),
             diagnostic: None,
+            region: None,
         },
         ExactProbBuildIssue::NotMarkov(cause) => ExactProbBuildRecord {
             value: TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(cause.clone())),
             diagnostic: None,
+            region: None,
         },
         ExactProbBuildIssue::UndecidedSuccessor => ExactProbBuildRecord {
             value: TerminalValue::Inconclusive(InconclusiveCause::UndecidedSuccessor),
             diagnostic: None,
+            region: None,
         },
         ExactProbBuildIssue::Expansion(stop) => match stop.limit {
             Some(ExpansionLimit::EvaluationMeter(counter)) => incomplete(
@@ -142,9 +158,19 @@ pub fn settle_exact_prob_build_issue(
         ExactProbBuildIssue::Predicate(outcome) => predicate(outcome, incomplete, failed),
         ExactProbBuildIssue::BrokenInvariant => failed(BROKEN),
         ExactProbBuildIssue::Failed(diagnostic) => failed(*diagnostic),
+        // FSpec FR-421: the run stops `incomplete`, with no verdict. FSpec
+        // FR-331's closed cause set has no member for an unbuilt region
+        // process; the record carries the cause beside the nearest member,
+        // dense dynamics the run cannot resolve.
+        ExactProbBuildIssue::RegionNotBuilt(cause) => ExactProbBuildRecord {
+            value: TerminalValue::Incomplete(IncompleteCause::UnresolvedDynamics),
+            diagnostic: None,
+            region: Some(*cause),
+        },
         ExactProbBuildIssue::Unsupported(cause) => ExactProbBuildRecord {
             value: TerminalValue::Unsupported(cause.clone()),
             diagnostic: None,
+            region: None,
         },
     }
 }

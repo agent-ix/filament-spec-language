@@ -657,7 +657,10 @@ fn skew_elapsed() -> Row {
             AtLeast(ratio(2, 5)),
             zero(),
             half(),
-        )],
+        )
+        // A free subject read from a later position waits on the region
+        // process (FSpec FR-421 "Closed and strict conditions").
+        .exact_expects(Expect::HandOrIncomplete)],
     }
 }
 

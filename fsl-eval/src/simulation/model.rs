@@ -223,6 +223,10 @@ pub use task_product::{
     TaskTransitionAction, TaskTransitionIdentity,
 };
 pub use terminal::{TerminalClass, TerminalModel};
+pub use timed::admission::{
+    Admission, AdmissionRow, ClaimForm, DelayClass, EN1_DIGITAL, EN5_DIGITAL, FreeSubject, ReadFrom,
+    RegionCause, RouteConditions, SearchItem, en5_admission,
+};
 pub use timed::{
     BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
     DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,

@@ -54,7 +54,7 @@ pub use long_run::{
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
-pub use timed::digital_key_clocks;
+pub use timed::{digital_key_clocks, timed_certificate_route};
 pub(super) use timed::{is_timed_witness_claim, replay_timed_witness};
 mod unit;
 mod value_bounds;

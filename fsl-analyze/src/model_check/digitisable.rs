@@ -2,13 +2,14 @@
 //! FSL FR-243: which items the digital-clock route declines because
 //! digitisation does not preserve their dense-time verdict.
 //!
-//! This is an interim rule. It is kept whole in [`digitisation_decline`] so
-//! that the consolidation step QSL-3494 can replace it in one place. The
-//! closed condition (a strict constraint or interval) is checked before it,
-//! by [`super::digital`] and the state-graph item.
+//! ADR-038 RL-7: which state-graph forms `digital-clocks` admits is read from
+//! the declared table (`EN1_DIGITAL`); the claim conditions of FR-243 (b) to
+//! (f) are established here. The closed condition (a strict constraint or
+//! interval) is checked before it, by [`super::digital`] and the
+//! state-graph item.
 
 use filament_exact::{Integer, Rational};
-use fsl_eval::simulation::model::TimedSystem;
+use fsl_eval::simulation::model::{SearchItem, TimedSystem, EN1_DIGITAL};
 use fsl_foundation::bound::TemporalUpper;
 use fsl_replay::{NotDigitisable, NotDigitisableRule};
 use fsl_semantics::check::{
@@ -55,12 +56,24 @@ pub(crate) fn digitisation_decline(
     let (subject, clause) = match item {
         DigitalItem::Temporal { subject, clause } => (subject, clause),
         DigitalItem::StateGraph(claim) => {
+            let item = match claim.form() {
+                StateGraphForm::Possible { .. } => SearchItem::Possible,
+                StateGraphForm::AlwaysPossible { .. } => SearchItem::AlwaysPossible,
+                StateGraphForm::UniquePath { .. } => SearchItem::UniquePath,
+            };
+            // ADR-038's EN-1 rows are the declared table; this module names
+            // the FR-243 rule of a form no row admits.
+            if EN1_DIGITAL.contains(&item) {
+                return Ok(None);
+            }
             // Each of these two forms quantifies over every reachable timed
             // state, which an integer-clock reading does not visit.
-            let rule = match claim.form() {
-                StateGraphForm::Possible { .. } => return Ok(None),
-                StateGraphForm::AlwaysPossible { .. } => NotDigitisableRule::AlwaysPossible,
-                StateGraphForm::UniquePath { .. } => NotDigitisableRule::UniquePath,
+            let rule = match item {
+                SearchItem::AlwaysPossible => NotDigitisableRule::AlwaysPossible,
+                SearchItem::UniquePath => NotDigitisableRule::UniquePath,
+                SearchItem::DigitisableTemporalClaim
+                | SearchItem::Possible
+                | SearchItem::DeadlockFreedom => return Err("digital-admission-table"),
             };
             return Ok(Some(NotDigitisable {
                 rule,
