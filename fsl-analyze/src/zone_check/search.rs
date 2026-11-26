@@ -36,7 +36,8 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    GuardedStep, ModelSimState, PlaceConstraint, TerminalClass, TimedStop, TimedSystem,
+    admitted_refutation, admitted_start, GuardedStep, ModelSimState, PlaceConstraint,
+    TerminalClass, TimedStop, TimedSystem, TimedVacuity,
 };
 use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup};
 use fsl_eval::temporal::AtomReading;
@@ -595,12 +596,16 @@ pub enum ZoneCheckRefusal {
     /// The alive hidden candidates of one product step apply different
     /// clock carries or resets, which needs one clock block per candidate;
     /// the product keeps one abstract clock block per position.
-    #[error("the refinement checker does not decide a timed abstract side whose alive hidden candidates apply different clock carries or resets at one step")]
+    #[error(
+        "the refinement checker does not decide a timed abstract side whose alive hidden candidates apply different clock carries or resets at one step"
+    )]
     HiddenCandidateClockBlocks,
     /// The liveness half of a timed abstract side under a concrete tick
     /// source: abstract class enabledness is read over the instants between
     /// positions, which a tick source does not have.
-    #[error("the refinement checker does not decide the liveness half of a timed abstract side under a tick source")]
+    #[error(
+        "the refinement checker does not decide the liveness half of a timed abstract side under a tick source"
+    )]
     TimedAbstractLivenessTickSource,
     /// A symmetry declaration does not admit (FR-151).
     #[error(transparent)]
@@ -608,6 +613,16 @@ pub enum ZoneCheckRefusal {
     /// An invariant of the engine broke.
     #[error("the zone engine broke an invariant: {0}")]
     Fault(&'static str),
+}
+
+/// The timed outcome layer's classification as an EN-6 run states it.
+impl From<TimedVacuity> for ZoneUndecided {
+    fn from(vacuity: TimedVacuity) -> Self {
+        match vacuity {
+            TimedVacuity::NoInitialState => Self::NoInitialState,
+            TimedVacuity::NoAdmittedBehaviour => Self::NoAdmittedBehaviour,
+        }
+    }
 }
 
 impl From<WindowRefusal> for ZoneCheckRefusal {
@@ -729,9 +744,7 @@ pub fn check_timed_model<S: Clone>(
         }
         Err(ClosureRefusal::Encoding(_)) => return Err(ZoneCheckRefusal::Fault("state-key")),
         Err(
-            ClosureRefusal::Unordered
-            | ClosureRefusal::Stopped(_)
-            | ClosureRefusal::Initial(_),
+            ClosureRefusal::Unordered | ClosureRefusal::Stopped(_) | ClosureRefusal::Initial(_),
         ) => {
             return Err(ZoneCheckRefusal::Fault("symmetry-closure"));
         }
@@ -1485,7 +1498,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn search(&mut self) -> Result<Searched, Halt> {
         let initial = self.timed.initial();
         if initial.is_empty() {
-            return Err(self.undecided(ZoneUndecided::NoInitialState));
+            return Err(self.undecided(TimedVacuity::NoInitialState.into()));
         }
         if self.window.is_some() && self.limits.max_automaton_states == 0 {
             return Err(
@@ -1529,7 +1542,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             }
         }
         if roots.is_empty() {
-            return Err(self.undecided(ZoneUndecided::NoInitialState));
+            return Err(self.undecided(TimedVacuity::NoInitialState.into()));
         }
         while let Some(node) = queue.pop_front() {
             self.poll()?;
@@ -1555,34 +1568,35 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             }
         }
         // Vacuity (ADR-026 TD-6): an initial state with a time-divergent
-        // behaviour.
-        let mut admitted = None;
-        for &root in &roots {
-            let escape = self.node_escape(root)?;
-            if escape.diverges {
-                admitted = Some((root, escape.witness));
-                break;
+        // behaviour, this route's evidence for the timed outcome layer.
+        let admitted = admitted_start(roots.len(), || {
+            for &root in &roots {
+                let escape = self.node_escape(root)?;
+                if escape.diverges {
+                    return Ok(Some((root, escape.witness)));
+                }
             }
-        }
+            Ok::<_, Halt>(None)
+        })?;
         match admitted {
-            None => Err(self.undecided(ZoneUndecided::NoAdmittedBehaviour)),
+            Err(vacuity) => Err(self.undecided(vacuity.into())),
             // STD-493: a deadlock reached only by waiting at a quiescent
             // state has no counterexample form (FR-236 gives `final_delay`
             // to time-locks only), so it is neither proved away nor refuted.
-            Some(_) if delayed_deadlock => Err(self.undecided(ZoneUndecided::DeadlockAfterDelay)),
+            Ok(_) if delayed_deadlock => Err(self.undecided(ZoneUndecided::DeadlockAfterDelay)),
             // ADR-024 WA-4: an admitted behaviour read a window short of
             // data, which the evaluator reports `InsufficientData`.
-            Some(_) if self.insufficient.is_some() => {
+            Ok(_) if self.insufficient.is_some() => {
                 let instance = self.insufficient.take();
                 Err(self.undecided(ZoneUndecided::InsufficientData(
                     instance.ok_or(ZoneCheckRefusal::Fault("insufficient-instance"))?,
                 )))
             }
             // FR-160: a symmetry-reduced graph has no certificate.
-            Some(_) if self.reduced => Ok(Searched::HoldsReduced {
+            Ok(_) if self.reduced => Ok(Searched::HoldsReduced {
                 stats: self.stats(),
             }),
-            Some((root, witness)) => {
+            Ok((root, witness)) => {
                 // FR-240: a claim decided on the liveness product, once
                 // the subject admits a behaviour; its proof is the
                 // product's (FR-244).
@@ -2024,13 +2038,15 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             }
         };
         let escape = self.node_escape(node)?;
-        if !escape.diverges {
+        let found = admitted_refutation(escape.diverges, || {
+            self.counterexample(node, badness, escape)
+        })?;
+        let Some(counterexample) = found else {
             // Every behaviour through it is Zeno: the violation holds
             // vacuously and the time-lock-freedom item reports it.
             self.nodes[node].locked = true;
             return Ok(false);
-        }
-        let counterexample = self.counterexample(node, badness, escape)?;
+        };
         Err(Halt::Outcome(Box::new(Searched::Violated {
             counterexample: Box::new(counterexample),
             stats: self.stats(),
@@ -2048,13 +2064,14 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         else {
             return Ok(());
         };
-        if !self.node_escape(node)?.diverges {
+        let diverges = self.node_escape(node)?.diverges;
+        let Some(at) = admitted_refutation(diverges, || Ok::<_, Halt>(at))? else {
             // Every behaviour through it is Zeno: as a violation on
             // time-locked valuations, it is kept `locked`, which the
             // certificate checker confirms (FR-245).
             self.nodes[node].locked = true;
             return Ok(());
-        }
+        };
         if self.insufficient.is_none() {
             let instance = self
                 .claim()

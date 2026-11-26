@@ -1026,7 +1026,7 @@ pub(crate) fn check(
 
 /// FR-244 "Reachability part", checked by the core (FR-245): every edge's
 /// successor is covered by its target, and the certificate is accepted.
-fn assert_edges_cover(world: &World, certificate: &Certificate) {
+pub(crate) fn assert_edges_cover(world: &World, certificate: &Certificate) {
     assert_eq!(
         check(world, certificate, CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Accepted)

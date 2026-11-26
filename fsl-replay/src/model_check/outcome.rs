@@ -12,6 +12,7 @@ use crate::proof_result::{
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::fairness::PropertyForm;
 use filament_semantic_value::model_transition::ModelTransition;
+use fsl_eval::simulation::model::TimedVacuity;
 use fsl_eval::simulation::protocol::WeakAccessShape;
 use fsl_eval::simulation::SubjectTransition;
 use fsl_foundation::ReductionKind;
@@ -86,6 +87,16 @@ impl UndecidedCause {
             Self::InstanceBoundReached { bound, states } => {
                 InconclusiveCause::InstanceBoundReached { bound, states }
             }
+        }
+    }
+}
+
+/// The timed outcome layer's classification as an EN-1 run states it.
+impl From<TimedVacuity> for UndecidedCause {
+    fn from(vacuity: TimedVacuity) -> Self {
+        match vacuity {
+            TimedVacuity::NoInitialState => Self::NoInitialState,
+            TimedVacuity::NoAdmittedBehaviour => Self::NoAdmittedBehaviour,
         }
     }
 }

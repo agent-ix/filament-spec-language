@@ -32,9 +32,12 @@
 //! stutter forever (FR-231's idle tail). A fair cycle through every
 //! acceptance set, a position and a divergent vertex is a violation, found
 //! by FR-126's fairness kernels; none, over every `over` instance, is a
-//! proof with basis `exhaustive` (FR-235), unless the subject admits no fair
-//! time-divergent behaviour at all, which is `inconclusive`
-//! `no-admitted-behaviour` (FR-232 and FR-240 "Vacuity").
+//! proof with basis `exhaustive` (FR-235). Before any claim product, the
+//! timed outcome layer ([`admitted_start`]) classifies a subject with no
+//! initial state (`no-initial-state`) and one that admits no fair
+//! time-divergent behaviour (`inconclusive` `no-admitted-behaviour`, FR-232
+//! and FR-240 "Vacuity"). An undefined reading on a time-locked state
+//! refutes nothing and the search goes on ([`admitted_refutation`]).
 //!
 //! **Counterexamples.** The canonical lasso is written with its exact
 //! delays, whole units as rationals, its loop repeated until each clock it
@@ -51,7 +54,8 @@ use fsl_eval::automaton::{
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    ClockValuation, GuardedStep, ModelSimState, TimedState, TimedStop, TimedSystem,
+    admitted_refutation, admitted_start, ClockValuation, GuardedStep, ModelSimState, TimedState,
+    TimedStop, TimedSystem, TimedVacuity,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::source::Span;
@@ -297,7 +301,6 @@ struct Product {
 struct UndefinedAt {
     path: Vec<usize>,
     initial: usize,
-    state: TimedState,
     locus: UndefinedLocus,
     cause: UndefinedCause,
     instance: ModelInstance,
@@ -318,6 +321,8 @@ struct Digital<'q, 'r, 's, 'a, L> {
     stats: RunStats,
     non_zeno: Option<NonZeno>,
     steps: BTreeMap<Vec<u8>, Vec<(GuardedStep, TimedState)>>,
+    /// Each searched state's [`Digital::diverges`].
+    divergence: BTreeMap<Vec<u8>, bool>,
 }
 
 impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
@@ -360,6 +365,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             stats: RunStats::default(),
             non_zeno: None,
             steps: BTreeMap::new(),
+            divergence: BTreeMap::new(),
         })
     }
 
@@ -649,7 +655,9 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     }
 
     /// Build one instance's product breadth first: the first undefined
-    /// position it reaches, if any.
+    /// position it reaches on a state time can diverge from, if any. An
+    /// undefined position on a time-locked state is left out of the product
+    /// and the rest is built.
     fn build(
         &mut self,
         product: &mut Product,
@@ -665,14 +673,19 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             let state = self.capped_state(initial);
             match self.reading(instance, automaton, universal, state.discrete(), true)? {
                 Reading::Undefined(locus, cause) => {
-                    return Ok(Some(UndefinedAt {
-                        path: Vec::new(),
-                        initial: index,
-                        state,
-                        locus,
-                        cause,
-                        instance: instance.clone(),
-                    }));
+                    let diverges = self.diverges(&state)?;
+                    let found = admitted_refutation(diverges, || {
+                        Ok::<_, Halt>(UndefinedAt {
+                            path: Vec::new(),
+                            initial: index,
+                            locus,
+                            cause,
+                            instance: instance.clone(),
+                        })
+                    })?;
+                    if found.is_some() {
+                        return Ok(found);
+                    }
                 }
                 Reading::Defined(letter) => {
                     for (q, clocks) in self.reads(automaton, universal, start, letter, &zeros)? {
@@ -741,23 +754,28 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 let post = self.capped_state(&post);
                 match self.reading(instance, automaton, universal, post.discrete(), false)? {
                     Reading::Undefined(locus, cause) => {
-                        let mut path = Self::path_to(product, at);
-                        let initial = root(product, &path, at)?;
-                        // The step to the undefined position closes the path.
-                        product.edges.push(DEdge {
-                            from: at,
-                            to: at,
-                            via: Via::Step(index),
-                        });
-                        path.push(product.edges.len() - 1);
-                        return Ok(Err(UndefinedAt {
-                            path,
-                            initial,
-                            state: post,
-                            locus,
-                            cause,
-                            instance: instance.clone(),
-                        }));
+                        let diverges = self.diverges(&post)?;
+                        let found = admitted_refutation(diverges, || {
+                            let mut path = Self::path_to(product, at);
+                            let initial = root(product, &path, at)?;
+                            // The step to the undefined position closes the path.
+                            product.edges.push(DEdge {
+                                from: at,
+                                to: at,
+                                via: Via::Step(index),
+                            });
+                            path.push(product.edges.len() - 1);
+                            Ok::<_, Halt>(UndefinedAt {
+                                path,
+                                initial,
+                                locus,
+                                cause,
+                                instance: instance.clone(),
+                            })
+                        })?;
+                        if let Some(found) = found {
+                            return Ok(Err(found));
+                        }
                     }
                     Reading::Defined(letter) => {
                         for (q, clocks) in
@@ -824,7 +842,6 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 return Ok(Err(UndefinedAt {
                     path,
                     initial,
-                    state: vertex.state,
                     locus,
                     cause,
                     instance: instance.clone(),
@@ -979,13 +996,27 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         Ok(Some((entry.index(), cycle)))
     }
 
-    /// The decision over every instance (FR-240, FR-126).
-    #[implements("FR-232-AC-3", "FR-240-AC-4")]
+    /// The decision over every instance (FR-240, FR-126). A would-be proof
+    /// is classified first, once, by the timed outcome layer: a subject with
+    /// no admitted behaviour has no counterexample either, so no claim
+    /// product is built over it.
+    #[implements("FR-232-AC-3")]
     fn decide(&mut self, automaton: &mut PositionAutomaton) -> Result<ModelCheckOutcome, Halt> {
         let system = self.timed().system();
         let instances = system
             .instances(&self.request.clause.over().1)
             .map_err(|_| DigitalRefusal::Fault("instances"))?;
+        let initial_states = self.timed().initial().len();
+        let start = admitted_start(initial_states, || match instances.first() {
+            // QSL-3484: an empty instance set is FR-125's `NoInstance`,
+            // which the instance set's own computation states; it is not
+            // decided here.
+            None => Ok::<_, Halt>(Some(())),
+            Some(instance) => Ok(self.admits_behaviour(automaton, instance)?.then_some(())),
+        })?;
+        if let Err(vacuity) = start {
+            return Ok(self.vacuous(vacuity));
+        }
         for instance in &instances {
             let mut product = Product::default();
             let built = self.build(&mut product, automaton, false, instance)?;
@@ -999,10 +1030,8 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 .automaton_states
                 .max(u64::try_from(automaton_states.len()).unwrap_or(u64::MAX));
             if let Some(undefined) = built {
-                if let Some(found) = self.undefined(&product, undefined)? {
-                    return Ok(self.violated(found));
-                }
-                continue;
+                let found = self.undefined(&product, undefined)?;
+                return Ok(self.violated(found));
             }
             let model = self.fair_model(&product, automaton, false, true)?;
             if let Some((entry, cycle)) = self.fair_cycle(&product, &model)? {
@@ -1015,21 +1044,6 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 self.non_zeno = Some(NonZeno::Assumed);
             }
         }
-        // FR-240 and FR-232 "Vacuity": a proof needs a fair time-divergent
-        // behaviour or a quiescent state, with or without a declared fairness.
-        if let Some(instance) = instances.first() {
-            let mut product = Product::default();
-            self.build(&mut product, automaton, true, instance)?;
-            let tail = product.vertices.iter().any(|vertex| vertex.tail);
-            let model = self.fair_model(&product, automaton, true, true)?;
-            if !tail && self.fair_cycle(&product, &model)?.is_none() {
-                self.non_zeno = Some(NonZeno::Refuted);
-                return Ok(ModelCheckOutcome::Undecided {
-                    cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
-                    stats: self.stats,
-                });
-            }
-        }
         if self.non_zeno.is_none() {
             self.non_zeno = Some(NonZeno::NotRequired);
         }
@@ -1037,6 +1051,31 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             reductions: Vec::new(),
             stats: self.stats,
         })
+    }
+
+    /// FR-240 and FR-232 "Vacuity", this route's evidence: whether the
+    /// subject read by no claim has a fair time-divergent cycle or reaches a
+    /// quiescent state, with or without a declared fairness. The product
+    /// depends on no instance's letters.
+    fn admits_behaviour(
+        &mut self,
+        automaton: &mut PositionAutomaton,
+        instance: &ModelInstance,
+    ) -> Result<bool, Halt> {
+        let mut product = Product::default();
+        self.build(&mut product, automaton, true, instance)?;
+        if product.vertices.iter().any(|vertex| vertex.tail) {
+            return Ok(true);
+        }
+        let model = self.fair_model(&product, automaton, true, true)?;
+        Ok(self.fair_cycle(&product, &model)?.is_some())
+    }
+
+    fn vacuous(&self, vacuity: TimedVacuity) -> ModelCheckOutcome {
+        ModelCheckOutcome::Undecided {
+            cause: vacuity.into(),
+            stats: self.stats,
+        }
     }
 
     fn violated(&self, counterexample: TemporalCounterexample) -> ModelCheckOutcome {
@@ -1183,24 +1222,20 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         ))
     }
 
-    /// The counterexample of an undefined position, when its state has a
-    /// time-divergent continuation (FR-241).
+    /// The counterexample of an undefined position the product reached
+    /// (FR-241).
     fn undefined(
         &mut self,
         product: &Product,
         undefined: UndefinedAt,
-    ) -> Result<Option<TemporalCounterexample>, Halt> {
+    ) -> Result<TemporalCounterexample, Halt> {
         let UndefinedAt {
             path,
             initial,
-            state,
             locus,
             cause,
             instance,
         } = undefined;
-        if !self.diverges(&state)? {
-            return Ok(None);
-        }
         let (prefix, reached, stamp) = self.concrete(product, initial, &path)?;
         let (discrete_key, _) = self
             .timed()
@@ -1218,7 +1253,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             .filter(|(place, _)| self.timed().live(place, reached.discrete()))
             .map(|(_, value)| value.clone())
             .collect();
-        Ok(Some(TemporalCounterexample {
+        Ok(TemporalCounterexample {
             initial_state: initial,
             kind: CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
                 site: UndefinedSite {
@@ -1238,12 +1273,24 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             refinement: None,
             final_delay: None,
             closure_stutters: Vec::new(),
-        }))
+        })
     }
 
     /// Whether `start` has a time-divergent continuation: it reaches a
-    /// quiescent state, or a cycle through a delay.
+    /// quiescent state, or a cycle through a delay. This route's evidence
+    /// for the time-lock rule, searched once per state.
     fn diverges(&mut self, start: &TimedState) -> Result<bool, Halt> {
+        let mut from = self.discrete_key(start.discrete())?;
+        push_clocks(&mut from, start.clocks());
+        if let Some(&known) = self.divergence.get(&from) {
+            return Ok(known);
+        }
+        let found = self.search_divergence(start)?;
+        self.divergence.insert(from, found);
+        Ok(found)
+    }
+
+    fn search_divergence(&mut self, start: &TimedState) -> Result<bool, Halt> {
         let mut index: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
         let mut states: Vec<TimedState> = Vec::new();
         let mut edges: Vec<(usize, usize, bool)> = Vec::new();

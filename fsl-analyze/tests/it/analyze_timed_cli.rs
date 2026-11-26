@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Meter, Undefined};
 use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
+use fsl_analyze::zone_check::ZoneCheckLimits;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, TimedSystem};
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
@@ -18,8 +19,10 @@ use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit, rpc_unit_with};
+use crate::zone_replay::{replay, reproduced};
+use crate::zone_search::{assert_edges_cover, claim, operations, proved, violated};
 
 /// ADR-026 section 11's `Settles`: every `Waiting` position is followed within
 /// `interval` by a position that is not `Waiting`.
@@ -873,7 +876,9 @@ fn stalling(name: &str, resets: bool) -> Vec<(String, String, String)> {
         .collect()
 }
 
-fn expected_on_both_routes(per_claim: [(&str, &str); 3]) -> Vec<(String, String, String)> {
+fn expected_on_both_routes<const N: usize>(
+    per_claim: [(&str, &str); N],
+) -> Vec<(String, String, String)> {
     ["en-6", "en-1"]
         .iter()
         .flat_map(|backend| {
@@ -912,4 +917,411 @@ fn digital_clocks_decide_claims_once_time_can_diverge() {
         stalling("timed-digital-stall-reset", true)[1..],
         expected_on_both_routes([("proved", ""), ("proved", ""), ("refuted", "")])[1..]
     );
+}
+
+/// Each claim of `claims` over `document`'s timed model with `body`'s
+/// operations, on both timed routes, read from the source program and then
+/// from its checked package: each item's (backend, value, cause kind), EN-6's
+/// items first. `subject` is the request's `subject` member, when it states
+/// one.
+fn routes_over_both_inputs(
+    name: &str,
+    model: &[u8],
+    body: &str,
+    claims: &[(&str, &str)],
+    snapshots: &[Vec<u8>],
+    subject: Option<Value>,
+) -> [Vec<(String, String, String)>; 2] {
+    use crate::timed_world::{unit_text, DENSE, PACKAGE};
+    let temporal: String = claims
+        .iter()
+        .map(|(claim, formula)| {
+            format!(
+                "temporal {claim} using tt over (c: M::Call) clock \"model-time\" on origin \
+                 {{ {formula} }}\n"
+            )
+        })
+        .collect();
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!("{DENSE}{body}{temporal}"),
+    );
+    let digital = json!({"method": "digital-clocks"});
+    let items: Vec<Value> = claims
+        .iter()
+        .map(|(claim, _)| json!({"claim": claim}))
+        .chain(
+            claims
+                .iter()
+                .map(|(claim, _)| json!({"claim": claim, "options": digital.clone()})),
+        )
+        .collect();
+    let mut extra = json!({"items": items});
+    if let Some(subject) = subject {
+        extra["subject"] = subject;
+    }
+    let ws = Workspace::new(name);
+    let source = request_over(&ws, &unit, model, snapshots, extra);
+    let document: Value =
+        serde_json::from_slice(&std::fs::read(&source).expect("the request file"))
+            .expect("the request is JSON");
+    let (selected, _) = package_selection(&ws, &document["request"]);
+    let packaged = ws.write(
+        "analyze-package.json",
+        json!({"format": "native-analyze/1", "request": selected})
+            .to_string()
+            .as_bytes(),
+    );
+    [source, packaged].map(|request| {
+        let run = analyze(&request);
+        (0..claims.len() * 2)
+            .map(|n| {
+                let item = run.item(n);
+                (
+                    item["record"]["backend"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                    label(&item).to_owned(),
+                    item["record"]["cause"]["kind"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect()
+    })
+}
+
+/// From `phase` 0, `block` enters `phase` 2, where the invariant lets no time
+/// pass and no step is enabled, and `go` enters the quiescent `phase` 1.
+const LOCKING: &str = "pre Block using v on M::Call::block { self.phase = 0 }\n\
+     post Blocked using v on M::Call::block { self.phase = 2 }\n\
+     pre Go using v on M::Call::go { self.phase = 0 }\n\
+     post Gone using v on M::Call::go { self.phase = 1 }\n\
+     time invariant Locked when { self.phase = 2 } { self.x <= 0 ms }\n";
+
+/// `6 mod (2 - phase)`, undefined only at `phase` 2. Only a package checked
+/// under `Kernel` holds it: a source program is refused before it runs.
+const MOD_DEFINED: &str = "function mod_defined using v(n: Int[0, 3]): Boolean pure \
+     { 6 mod (2 - n) >= 0 }\n";
+
+fn locking_document() -> Vec<u8> {
+    crate::timed_world::document(&["x"], &[("block", &["phase"]), ("go", &["phase"])])
+}
+
+/// [`rpc_snapshot`] as the snapshot `identity` with `phase`.
+fn snapshot_at(identity: &str, phase: u8) -> Vec<u8> {
+    let mut snapshot: Value = serde_json::from_slice(&rpc_snapshot()).expect("the snapshot");
+    snapshot["identity"]["identity"] = json!(identity);
+    snapshot["populations"][0]["objects"][0]["fields"]["phase"] =
+        json!({"integer": phase.to_string()});
+    snapshot.to_string().into_bytes()
+}
+
+/// FR-239-AC-5's time-lock rule on both routes: `phase != 2` is false only on
+/// the time-locked state, so it is proved, and the search goes on from there
+/// to `go`, where `phase = 0` is false.
+#[trace("FR-239-AC-5", "FR-632-AC-2")]
+#[test]
+fn a_false_reading_on_a_time_locked_branch_refutes_nothing_on_either_route() {
+    let expected = expected_on_both_routes([("proved", ""), ("refuted", "")]);
+    let found = routes_over_both_inputs(
+        "timed-lock-branch",
+        &locking_document(),
+        LOCKING,
+        &[
+            ("NotLocked", "always holds(c.phase != 2)"),
+            ("Wrong", "always holds(c.phase = 0)"),
+        ],
+        &[rpc_snapshot()],
+        None,
+    );
+    assert_eq!(found, [expected.clone(), expected]);
+}
+
+/// The same rule over two initial states, one healthy (`phase` 0) and one
+/// time-locked from the start (`phase` 2).
+#[trace("FR-239-AC-5", "FR-632-AC-2")]
+#[test]
+fn a_locked_initial_state_beside_a_healthy_one_refutes_nothing() {
+    let reference = |identity: &str| json!({"authority": "test", "identity": identity});
+    let expected = expected_on_both_routes([("proved", ""), ("refuted", "")]);
+    let found = routes_over_both_inputs(
+        "timed-lock-initial",
+        &locking_document(),
+        LOCKING,
+        &[
+            ("NotLocked", "always holds(c.phase != 2)"),
+            ("Wrong", "always holds(c.phase = 1)"),
+        ],
+        &[snapshot_at("s0", 0), snapshot_at("s1", 2)],
+        Some(json!({"initial_states": [reference("s1"), reference("s0")],
+            "universes": [reference("s0")], "proof_bounds": []})),
+    );
+    assert_eq!(found, [expected.clone(), expected]);
+}
+
+/// The Kernel-checked package of one claim over [`LOCKING`].
+fn partial_world(formula: &str) -> crate::timed_world::World {
+    crate::timed_world::world_with_mode(
+        &locking_document(),
+        crate::zone_search::TIMED,
+        &format!(
+            "{}{MOD_DEFINED}{LOCKING}temporal Partial using tt over (c: M::Call) clock \
+             \"model-time\" on origin {{ {formula} }}\n",
+            crate::timed_world::DENSE
+        ),
+        filament_semantic_value::checking::CheckMode::Kernel,
+    )
+}
+
+/// [`check_digital`] on `system`'s timed model and the claim of `world`.
+fn digital_on(
+    world: &crate::timed_world::World,
+    system: &fsl_eval::simulation::model::ModelSystem<'_>,
+) -> ModelCheckOutcome {
+    let timed = TimedSystem::new(system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("clause letters");
+    let request = DigitalRequest {
+        subject: &timed,
+        clause: node.clause(),
+        letters: &letters,
+        limits: UNLIMITED,
+    };
+    check_digital(&request, &Cancel::new())
+        .expect("digital route accepts")
+        .outcome
+}
+
+const UNLIMITED: DigitalLimits = DigitalLimits {
+    max_states: u64::MAX,
+    max_transitions: u64::MAX,
+    max_automaton_states: u64::MAX,
+};
+
+/// QSL-3485 over the production evaluator and a checked package: the reading
+/// undefined only on the locked branch hides nothing. By hand `phase = 0` is
+/// false after `go` (so the conjunction refutes there), on both engines, and
+/// both counterexamples replay.
+#[trace("TC-1592", "FR-239-AC-5", "FR-632-AC-2")]
+#[test]
+fn an_undefined_reading_on_a_time_locked_branch_hides_no_violation() {
+    let world = partial_world("always holds(mod_defined(c.phase) and c.phase = 0)");
+    let system = world.system();
+    let ModelCheckOutcome::Violated { counterexample, .. } = digital_on(&world, &system) else {
+        panic!("en-1: `go` violates the claim");
+    };
+    let zones = violated(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    for counterexample in [*counterexample, zones] {
+        assert_eq!(counterexample.kind, CounterexampleKind::Formula);
+        assert_eq!(operations(&counterexample), ["go"]);
+        let settlement = replay(&world, &counterexample).expect("replays");
+        assert!(reproduced(&settlement), "{settlement:?}");
+    }
+}
+
+/// Where the claim holds on every admitted behaviour, the reading undefined
+/// on the locked one leaves it proved: EN-1 holds, and EN-6's certificate
+/// passes the independent checker.
+#[trace("FR-239-AC-5", "FR-632-AC-2")]
+#[test]
+fn an_undefined_reading_only_on_a_time_locked_branch_leaves_the_claim_proved() {
+    let world = partial_world("always holds(mod_defined(c.phase) and c.phase <= 1)");
+    let system = world.system();
+    let digital = digital_on(&world, &system);
+    assert!(
+        matches!(digital, ModelCheckOutcome::HoldsReduced { .. }),
+        "{digital:?}"
+    );
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_edges_cover(&world, &certificate);
+}
+
+/// An initial state that is time-locked and reads undefined, listed before a
+/// healthy one: EN-1 goes on to the healthy one and proves.
+#[trace("FR-239-AC-5")]
+#[test]
+fn digital_clocks_pass_an_undefined_time_locked_initial_state() {
+    let world = partial_world("always holds(mod_defined(c.phase))");
+    let locked = snapshot_at("locked", 2);
+    let mut snapshots = world.snapshots.clone();
+    snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&locked)
+            .expect("a document names itself"),
+        locked,
+    );
+    let mut request = world.request();
+    request.snapshots = &snapshots;
+    request.initial.insert(
+        0,
+        fsl_semantics::model::observation::DocumentRef {
+            authority: "test".to_owned(),
+            identity: "locked".to_owned(),
+        },
+    );
+    let system = fsl_eval::simulation::model::ModelSystem::new(request).expect("admits");
+    assert_eq!(system.initial_states().len(), 2);
+    let outcome = digital_on(&world, &system);
+    assert!(
+        matches!(outcome, ModelCheckOutcome::HoldsReduced { .. }),
+        "{outcome:?}"
+    );
+}
+
+/// FR-125-AC-13: a timed subject with no initial state is `inconclusive`
+/// `no-initial-state` on both routes, never proved, and ahead of the
+/// instance set, which is empty too.
+#[trace("FR-125-AC-13")]
+#[test]
+fn a_timed_claim_over_no_initial_state_is_never_proved() {
+    let start = json!({"authority": "test", "identity": "s0"});
+    let expected = expected_on_both_routes([("inconclusive", "no-initial-state"); 2]);
+    let found = routes_over_both_inputs(
+        "timed-no-initial",
+        &locking_document(),
+        LOCKING,
+        &[
+            ("Safe", "always holds(true)"),
+            ("Wrong", "always holds(false)"),
+        ],
+        &[rpc_snapshot()],
+        Some(json!({"initial_states": [], "universes": [start], "proof_bounds": []})),
+    );
+    assert_eq!(found, [expected.clone(), expected]);
+}
+
+/// Counts the atom reads and reads as `inner` does, but for the first false
+/// atom when `undefine_first_false` is set.
+struct CountedLetters<'a> {
+    inner: &'a dyn ModelLetters,
+    atoms: Cell<u64>,
+    undefine_first_false: Cell<bool>,
+}
+
+impl<'a> CountedLetters<'a> {
+    fn new(inner: &'a dyn ModelLetters, undefine_first_false: bool) -> Self {
+        Self {
+            inner,
+            atoms: Cell::new(0),
+            undefine_first_false: Cell::new(undefine_first_false),
+        }
+    }
+}
+
+impl ModelLetters for CountedLetters<'_> {
+    fn atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        self.atoms.set(self.atoms.get() + 1);
+        let reading = self.inner.atom(atom, instance, state, meter)?;
+        if matches!(reading, AtomReading::False) && self.undefine_first_false.replace(false) {
+            return Ok(AtomReading::Undefined(UndefinedCause::Kernel(
+                Undefined::DivisionByZero,
+            )));
+        }
+        Ok(reading)
+    }
+
+    fn activation(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        self.inner.activation(instance, state, meter)
+    }
+
+    fn captures(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<CaptureReading, AtomStop> {
+        self.inner.captures(instance, state, meter)
+    }
+
+    fn reads(&self, atom: FormulaNodeId) -> crate::units::Reads {
+        self.inner.reads(atom)
+    }
+
+    fn activation_reads(&self) -> crate::units::Reads {
+        self.inner.activation_reads()
+    }
+}
+
+/// [`check_digital`] on the checked package of `body`'s one claim over
+/// `document`, with the letters [`CountedLetters`] wraps: the outcome and the
+/// atom reads.
+fn digital_over(model: &[u8], body: &str, undefine_first_false: bool) -> (ModelCheckOutcome, u64) {
+    let world = crate::timed_world::world(
+        model,
+        crate::zone_search::TIMED,
+        &format!("{}{body}", crate::timed_world::DENSE),
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let inner = system.clause_letters(node).expect("clause letters");
+    let letters = CountedLetters::new(&inner, undefine_first_false);
+    let request = DigitalRequest {
+        subject: &timed,
+        clause: node.clause(),
+        letters: &letters,
+        limits: UNLIMITED,
+    };
+    let outcome = check_digital(&request, &Cancel::new()).expect("digital route accepts");
+    (outcome.outcome, letters.atoms.get())
+}
+
+/// QSL-3485: `block`, searched first, locks time, and the reading there is
+/// made undefined; `go` still refutes `always holds(c.phase = 0)`.
+#[trace("TC-1592", "FR-239-AC-5", "FR-632-AC-2")]
+#[test]
+fn digital_undefined_at_a_time_lock_does_not_hide_a_violation() {
+    let body = "pre Block using v on M::Call::block { self.phase = 0 }\n\
+         post Blocked using v on M::Call::block { self.phase = 2 }\n\
+         pre Go using v on M::Call::go { self.phase = 0 }\n\
+         post Gone using v on M::Call::go { self.phase = 1 }\n\
+         time invariant Locked when { self.phase = 2 } { self.x <= 0 ms }\n\
+         temporal Stays using tt over (c: M::Call) clock \"model-time\" on origin \
+         { always holds(c.phase = 0) }\n";
+    let (outcome, _) = digital_over(&locking_document(), body, true);
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("`go` violates the claim: {outcome:?}");
+    };
+    assert_eq!(counterexample.kind, CounterexampleKind::Formula);
+    assert_eq!(operations(&counterexample), ["go"]);
+}
+
+/// FR-232 "Vacuity": the subject's admitted behaviour is classified before
+/// any claim product, so over the stalled subject no claim atom is read.
+#[trace("FR-232-AC-3")]
+#[test]
+fn digital_clocks_read_no_claim_over_a_stalled_subject() {
+    let body = "time invariant Stall when { true } { self.x <= 1 ms }\n\
+         temporal Wrong using tt over (c: M::Call) clock \"model-time\" on origin \
+         { always holds(c.phase = 1) }\n";
+    let (outcome, atoms) = digital_over(
+        &crate::timed_world::document(&["x"], &[("ping", &[])]),
+        body,
+        false,
+    );
+    assert!(
+        matches!(
+            outcome,
+            ModelCheckOutcome::Undecided {
+                cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(atoms, 0);
 }
