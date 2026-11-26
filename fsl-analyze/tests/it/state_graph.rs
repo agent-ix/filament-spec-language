@@ -2472,7 +2472,7 @@ fn terminal_alias_world(
          {terminals}\n\
          {possible_item}\n"
     );
-    World::kernel(model, &body, &[&[("v", &[("l", 0)])]])
+    World::new(model, &body, &[&[("v", &[("l", 0)])]])
 }
 
 /// FR-391-AC-13: an unknown terminal keeps the completed node open; a witness
