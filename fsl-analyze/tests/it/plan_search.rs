@@ -1185,11 +1185,12 @@ fn source_policy_instances_share_the_request_work_counter() {
     );
 }
 
-/// Closing an unmet eventual policy rejects the candidate; quantifying the
-/// same policy over an empty population holds vacuously.
+/// Closing an unmet eventual policy rejects the candidate; the low-level
+/// clause reader retains logical empty-quantifier semantics. Plan search
+/// rejects an empty requested policy before reaching this reader.
 #[test]
 #[trace("FSpec-FR-803")]
-fn source_policy_acceptance_requires_closed_truth_and_preserves_vacuity() {
+fn source_policy_acceptance_requires_closed_truth_and_raw_clause_reading() {
     use filament_exact::Meter;
     use fsl_analyze::plan_source::SourcePlan;
     use fsl_eval::simulation::model::{read_clause, ClauseReading};
@@ -3609,16 +3610,16 @@ fn positive_source_policy_accounting_and_cancellation_keep_the_original_session(
 }
 
 /// The budgeted model-owned instance collector preserves ordinary ordering,
-/// two-instance source bindings and empty-population policy vacuity.
+/// two-instance source bindings and the empty listing.
 #[test]
 #[trace("FR-1011", "FR-1012", "FSpec-FR-803")]
-fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials() {
+fn positive_source_policy_instances_preserve_order_and_original_denials() {
     use filament_exact::{CancelCause, LimitKind, Meter, ScalarLimits};
     use fsl_analyze::plan_source::SourcePlan;
     use fsl_eval::automaton::PolicyStateError;
     for start in [
         vec![
-            ("z", json!({"number":{"integer":"0"}})),
+            ("b", json!({"number":{"integer":"0"}})),
             ("a", json!({"number":{"integer":"0"}})),
         ],
         vec![],
@@ -3644,7 +3645,7 @@ fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials(
                     .iter()
                     .map(|instance| instance.key.as_str())
                     .collect::<Vec<_>>(),
-                ["z", "a"]
+                ["b", "a"]
             );
             let error = system
                 .instances_with_meter(
@@ -3669,7 +3670,7 @@ fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials(
         .unwrap();
         let state = system.initial().remove(0);
         let MonitorStep::Continue(bytes) = rules.policy_start(0, &state).unwrap() else {
-            panic!("all instances safe or vacuous")
+            panic!("all admitted instances are safe")
         };
         assert!(rules.policy_accepts(0, &bytes, &state).unwrap());
         for cause in [CancelCause::Requested, CancelCause::Deadline] {
@@ -3681,6 +3682,34 @@ fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials(
             assert!(matches!(error,PolicyStateError::Cancelled(actual) if actual == cause));
         }
     }
+}
+
+/// FR-1012 policy instancing uses FR-125's admitted keys, so a key that is
+/// only available for a later operation is not monitored as an instance.
+#[test]
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10")]
+fn source_policy_instances_exclude_unadmitted_universe_keys() {
+    use filament_exact::Meter;
+
+    let world = source_policy_world(&[("c", json!({"value": {"integer": "0"}}))]);
+    let system = ModelSystem::new(
+        world
+            .subject(&["c", "created-later"], UNLIMITED)
+            .simulation,
+    )
+    .expect("the population is bounded");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let actual = system
+        .instances_with_meter(&node.clause().over().1, &mut Meter::new(UNLIMITED))
+        .expect("the metered listing succeeds");
+
+    assert_eq!(
+        actual
+            .iter()
+            .map(|instance| instance.key.as_str())
+            .collect::<Vec<_>>(),
+        ["c"]
+    );
 }
 
 /// Positive unsupported forms remain explicit; staged monitor support does
