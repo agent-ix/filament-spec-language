@@ -27,7 +27,7 @@ use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::{
     ClauseOutcome, ExpansionLimits, LettersRefusal, ModelSimState, ModelSimulationRequest,
-    ModelSystem, PopulationUniverse,
+    ModelSystem, NoClaimInstances, PopulationUniverse,
 };
 use fsl_eval::simulation::{NotSimulated, RequiresBound};
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
@@ -841,9 +841,31 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         matches!(refusal, ModelCheckRefusal::RequiresBound(_)),
         "{refusal:?}"
     );
+    let (package, clause) = unbounded.clause("Animal");
+    let selector = ModelSystem::new(
+        unbounded
+            .subject(&package, Vec::new())
+            .simulation,
+    )
+    .expect("system construction leaves extent classification to the selector");
+    assert!(matches!(
+        selector.claim_instances(&clause.over().1),
+        Err(NoClaimInstances::NotSimulated(NotSimulated::RequiresBound(_)))
+    ));
 
     let mut empty = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
     empty.initial.clear();
+    let (package, clause) = empty.clause("Animal");
+    let selector = ModelSystem::new(
+        empty
+            .subject(&package, universes(&[("animals", &["c"])]))
+            .simulation,
+    )
+    .expect("bounded system construction");
+    assert!(matches!(
+        selector.claim_instances(&clause.over().1),
+        Err(NoClaimInstances::NoInitialState)
+    ));
     assert!(matches!(
         empty.run("Animal", universes(&[("animals", &["c"])]), true),
         Ok(ModelCheckOutcome::Undecided {
@@ -1027,6 +1049,17 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         Ok(vec![instance("animals", "c")])
     );
     let no_key = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
+    let (package, clause) = no_key.clause("Animal");
+    let selector = ModelSystem::new(
+        no_key
+            .subject(&package, universes(&[("animals", &["c"])]))
+            .simulation,
+    )
+    .expect("bounded system construction");
+    assert!(matches!(
+        selector.claim_instances(&clause.over().1),
+        Err(NoClaimInstances::NoInstance)
+    ));
     let no_key_result = no_key.run("Animal", universes(&[("animals", &["c"])]), true);
     assert!(
         matches!(

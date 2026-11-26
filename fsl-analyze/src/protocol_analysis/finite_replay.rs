@@ -30,6 +30,7 @@ use fsl_replay::{
     UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CheckedProtocol, TemporalClauseNode};
+use ix_trace_rs::implements;
 use serde_json::Value;
 
 use filament_semantic_value::catalog::CatalogCode;
@@ -324,6 +325,8 @@ pub(crate) enum ReplayFault {
     Protocol,
     /// The model admission refused the subject.
     Admission(Box<fsl_semantics::model::observation::AdmissionFailure>),
+    /// A claim's object population is empty or has no initial state.
+    ClaimInstances(fsl_eval::simulation::model::NoClaimInstances),
     /// An expansion stopped before the step could be decided.
     Stopped(fsl_eval::simulation::ExpansionStop),
     /// An invariant of the system broke.
@@ -729,6 +732,25 @@ impl<'a> ReplaySubject<'a, '_> {
             .map_err(|_| ReplayFault::Broken)
     }
 
+    /// The non-empty object population for the protocol's `over` input.
+    #[implements("FR-125-AC-13")]
+    pub(crate) fn claim_instances(
+        &self,
+    ) -> Result<fsl_eval::simulation::model::ClaimInstances, ReplayFault> {
+        let input = self
+            .protocol
+            .slots
+            .binders
+            .first()
+            .filter(|binder| binder.node.is_none())
+            .ok_or(ReplayFault::Broken)?;
+        let model = ModelSystem::new(self.simulation())
+            .map_err(|failure| ReplayFault::Admission(Box::new(failure)))?;
+        model
+            .claim_instances(&input.value_type)
+            .map_err(ReplayFault::ClaimInstances)
+    }
+
     /// The temporal clauses the protocol requires (FR-218), in `requires`
     /// order.
     pub(crate) fn required(&self) -> Result<Vec<&'a TemporalClauseNode>, ReplayFault> {
@@ -1070,7 +1092,7 @@ fn report_fault(error: ReplayFault) -> EngineReport {
         }
         ReplayFault::Stopped(stop) => EngineReport::Refused(Refusal::Failed(stop.cause)),
         ReplayFault::UnboundCapacity => EngineReport::Refused(Refusal::RequiresBound),
-        ReplayFault::Protocol | ReplayFault::Broken => fault(),
+        ReplayFault::Protocol | ReplayFault::Broken | ReplayFault::ClaimInstances(_) => fault(),
     }
 }
 

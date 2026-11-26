@@ -9,7 +9,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, label, litmus_request, order_protocol, package_selection, Run, Workspace, HANDOFF,
+    analyze, label, litmus_request, order_protocol, package_selection, request_over, Run,
+    Workspace, HANDOFF,
 };
 use crate::protocol_composition::{order_steps, trace_document};
 
@@ -35,7 +36,7 @@ fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, R
         order_protocol(true)
     };
     let path = litmus_request(&ws, &protocol, json!({"items": items}));
-    let mut request: Value =
+    let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
     for (file, document) in documents {
         ws.write(file, document.to_string().as_bytes());
@@ -53,6 +54,36 @@ fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, R
             assert_recording_charge_parity(&ws, &bytes, document);
         }
     }
+    std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
+    let sources = ws.path(&format!("{HANDOFF}/sources"));
+    std::fs::remove_dir_all(&sources).expect("the handoff sources are removed");
+    assert!(!sources.exists(), "the handoff sources are gone");
+    let document = json!({"format": "native-analyze/1", "request": members});
+    let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
+    (source, package)
+}
+
+/// [`both_routes`] with a hand-supplied subject snapshot set.
+fn both_routes_with_snapshots(
+    name: &str,
+    items: Value,
+    snapshots: &[Vec<u8>],
+    subject: Value,
+) -> (Run, Run) {
+    let ws = Workspace::new(name);
+    let protocol = order_protocol(true);
+    let path = request_over(
+        &ws,
+        &crate::litmus::unit_text(&protocol),
+        &crate::litmus::resulting_document(),
+        snapshots,
+        json!({"items": items, "subject": subject}),
+    );
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
+    let source = analyze(&path);
+    assert_eq!(source.exit, 0, "{}", source.document());
+    let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
     let sources = ws.path(&format!("{HANDOFF}/sources"));
     std::fs::remove_dir_all(&sources).expect("the handoff sources are removed");
@@ -214,6 +245,60 @@ fn a_conformance_recording_settles_as_the_source_route() {
     );
     assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
     assert_eq!(source.item(0)["global"]["complete"], true);
+    assert_equal(&source, &package);
+}
+
+/// FR-125-AC-13 and FR-990: the source and checked-package conformance routes
+/// both report the hand-computed NoInstance cause for an empty admitted set.
+#[trace("TC-2410", "FR-125-AC-13", "FR-990-AC-11")]
+#[test]
+fn empty_protocol_over_settles_no_instance_in_both_routes() {
+    let snapshots: Vec<Vec<u8>> = crate::litmus::Documents::new()
+        .snapshots
+        .into_values()
+        .collect();
+    let mut initial: Value =
+        serde_json::from_slice(snapshots.first().expect("one initial snapshot"))
+            .expect("snapshot JSON");
+    initial["identity"]["identity"] = json!("s0");
+    initial["populations"][2]["objects"] = json!([]);
+    let mut universe = initial.clone();
+    universe["identity"]["identity"] = json!("u0");
+    universe["populations"][2]["objects"] = json!([
+        {"key": "q", "type": "ix://test/litmus/Core", "fields": {
+            "r1": {"integer": "3"}, "r2": {"integer": "3"},
+            "r3": {"integer": "3"}, "r4": {"integer": "3"}
+        }}
+    ]);
+    let snapshots = [
+        serde_json::to_vec(&initial).expect("initial snapshot JSON"),
+        serde_json::to_vec(&universe).expect("universe snapshot JSON"),
+    ];
+    let (source, package) = both_routes_with_snapshots(
+        "package-no-instance",
+        json!([{"claim": "Flow", "kind": "global-conformance"}]),
+        &snapshots,
+        json!({
+            "initial_states": [{"authority": "test", "identity": "s0"}],
+            "universes": [{"authority": "test", "identity": "u0"}]
+        }),
+    );
+    for run in [&source, &package] {
+        let item = run.item(0);
+        assert_eq!(label(&item), "inconclusive", "{}", run.document());
+        assert_eq!(item["record"]["cause"], "no-instance", "{item}");
+        for member in ["obligations", "closure", "global", "projections", "counterexample"] {
+            assert!(item[member].is_null(), "NoInstance omits {member}: {item}");
+        }
+    }
+    assert_equal(&source, &package);
+
+    let (source, package) = both_routes(
+        "package-no-instance-control",
+        json!([{"claim": "Flow", "kind": "global-conformance"}]),
+        &[],
+    );
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
     assert_equal(&source, &package);
 }
 

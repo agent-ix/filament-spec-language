@@ -8,7 +8,9 @@
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol, Workspace};
+use crate::analyze_cli_support::{
+    analyze, label, litmus_request, order_protocol, request_over, Workspace,
+};
 
 /// The order protocol with a second channel `Tell` from `Seller` to `Buyer`,
 /// on which `Seller` sends `Told` only after `Ship`.
@@ -133,6 +135,64 @@ fn matching_implementations_conform_globally() {
         .filter_map(|p| p["role"].as_str())
         .collect();
     assert_eq!(roles, ["Buyer", "Seller"]);
+}
+
+/// FR-125-AC-13 and FR-990: global conformance over a bounded subject with no
+/// admitted key is inconclusive with `no-instance`; an admitted-key source
+/// control still runs the engine to completion.
+#[trace(
+    "TC-2800",
+    "FR-125-AC-13",
+    "FR-896-AC-1",
+    "FR-896-AC-7",
+    "FR-990-AC-11"
+)]
+#[test]
+fn global_conformance_classifies_empty_over_as_no_instance() {
+    let ws = Workspace::new("gc-no-instance");
+    let mut snapshots: Vec<Vec<u8>> = crate::litmus::Documents::new()
+        .snapshots
+        .into_values()
+        .collect();
+    let mut snapshot: Value =
+        serde_json::from_slice(snapshots.first().expect("one initial snapshot"))
+            .expect("snapshot JSON");
+    let populations = snapshot["populations"]
+        .as_array_mut()
+        .expect("snapshot populations");
+    populations[2]["objects"] = json!([]);
+    snapshots[0] = serde_json::to_vec(&snapshot).expect("snapshot JSON");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&order_protocol(true)),
+        &crate::litmus::resulting_document(),
+        &snapshots,
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+    );
+    let item = analyze(&request).item(0);
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert_eq!(item["record"]["cause"], "no-instance", "{item}");
+    for member in ["obligations", "closure", "global", "projections", "counterexample"] {
+        assert!(item[member].is_null(), "NoInstance omits {member}: {item}");
+    }
+
+    let admitted = conformance("gc-no-instance-control", &order_protocol(true), json!({}), &[]);
+    assert_eq!(label(&admitted), "proved", "{admitted}");
+
+    let every_key = order_protocol(true)
+        .replace("over (k: M::Core)", "over (k: M::Cell)")
+        .replace(
+            "finish Done as (zz: Boolean) { true };",
+            "finish Done as (zz: Boolean) { k.id = 0 };",
+        );
+    let later_instance = conformance("gc-every-key", &every_key, json!({}), &[]);
+    assert_eq!(
+        label(&later_instance),
+        "refuted",
+        "the first canonical key x satisfies the finish predicate, but y does not: {later_instance}"
+    );
+    assert_eq!(later_instance["counterexample"]["kind"], "deadlock");
+    assert_eq!(later_instance["replay"]["reproduced"], true);
 }
 
 /// QSL-2209 AC-2; FR-896-AC-3, FR-991-AC-4: over a recording, a send on

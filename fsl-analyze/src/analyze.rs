@@ -3461,7 +3461,7 @@ fn settle(
             settled
         }
         EngineReport::GlobalConformance(report) => AnalyzeRecord {
-            protocol_conformance: Some(report.output),
+            protocol_conformance: report.output,
             protocol_conformance_counterexample: report.counterexample,
             ..record(terminal(report.terminal), None)
         },

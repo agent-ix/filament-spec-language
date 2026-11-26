@@ -14,15 +14,34 @@ use fsl_replay::TemporalCounterexample;
 use fsl_replay::{
     CounterexampleKind, FamilyPayload, ProtocolConformanceOutput, ReplayLimits, TerminalRecord,
 };
+use ix_trace_rs::implements;
 
-/// The independently settled global-conformance record and its FR-990 output.
+/// The independently settled global-conformance record and optional FR-990 output.
 ///
-/// The terminal record remains the authority for item settlement. The output
-/// carries the obligation-level findings and closure evidence alongside it.
+/// The terminal record remains the authority for item settlement. FR-125
+/// instancing refusals carry no obligation-level output.
 pub(crate) struct ConformanceReport {
     pub(crate) terminal: TerminalRecord,
-    pub(crate) output: ProtocolConformanceOutput,
+    pub(crate) output: Option<ProtocolConformanceOutput>,
     pub(crate) counterexample: Option<serde_json::Value>,
+}
+
+#[implements("FR-125-AC-13", "FR-990-AC-11")]
+fn empty_population_report(
+    index: fsl_foundation::RequestIndex,
+    cause: fsl_replay::InconclusiveCause,
+) -> crate::analyze::EngineReport {
+    use fsl_replay::TerminalRecord;
+
+    crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
+        terminal: TerminalRecord::inconclusive(
+            index,
+            fsl_foundation::BackendId::new(super::manifest::BACKEND_ID),
+            cause,
+        ),
+        output: None,
+        counterexample: None,
+    }))
 }
 
 fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -313,7 +332,7 @@ fn recording_result(
     };
     crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
-        output,
+        output: Some(output),
         counterexample: (assessment.global.label == "refuted" && refused_replay.is_none()).then(
             || {
                 serde_json::json!({
@@ -460,6 +479,7 @@ pub(crate) fn missing_role_item(
 }
 
 /// The every-behavior arm of a global-conformance request.
+#[implements("FR-125-AC-13", "FR-896-AC-7", "FR-990-AC-11")]
 pub(crate) fn global_behavior_item<'a>(
     index: fsl_foundation::RequestIndex,
     analysis: &crate::analyze::RunInput<'a>,
@@ -485,8 +505,30 @@ pub(crate) fn global_behavior_item<'a>(
                 limits: &limits,
                 protocol,
             };
-            let instances = match subject_builder.instances() {
+            let instances = match subject_builder.claim_instances() {
                 Ok(instances) => instances,
+                Err(super::finite_replay::ReplayFault::ClaimInstances(
+                    fsl_eval::simulation::model::NoClaimInstances::NoInstance,
+                )) => {
+                    return empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance);
+                }
+                Err(super::finite_replay::ReplayFault::ClaimInstances(
+                    fsl_eval::simulation::model::NoClaimInstances::NoInitialState,
+                )) => {
+                    return empty_population_report(
+                        index,
+                        fsl_replay::InconclusiveCause::NoInitialState,
+                    );
+                }
+                Err(super::finite_replay::ReplayFault::ClaimInstances(
+                    fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
+                        fsl_eval::simulation::NotSimulated::RequiresBound(_),
+                    ),
+                )) => {
+                    return crate::analyze::EngineReport::Refused(
+                        crate::analyze::Refusal::RequiresBound,
+                    );
+                }
                 Err(_) => {
                     return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
                         filament_semantic_value::catalog::CatalogCode::new(
@@ -496,52 +538,67 @@ pub(crate) fn global_behavior_item<'a>(
                     ));
                 }
             };
-            let Some(over) = instances.into_iter().next() else {
-                return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
-                    filament_semantic_value::catalog::CatalogCode::new(
-                        "runtime_invariant",
-                        "established-invariant-broken",
-                    ),
-                ));
-            };
-            let subject = match subject_builder.subject(over.clone()) {
-                Ok(subject) => subject,
-                // FSpec FR-785: a symbolic capacity with no binding.
-                Err(super::finite_replay::ReplayFault::UnboundCapacity) => {
-                    return crate::analyze::EngineReport::Refused(
-                        crate::analyze::Refusal::RequiresBound,
-                    );
+            let mut reports = Vec::with_capacity(instances.as_slice().len());
+            for over in instances.as_slice() {
+                let subject = match subject_builder.subject(over.clone()) {
+                    Ok(subject) => subject,
+                    // FSpec FR-785: a symbolic capacity with no binding.
+                    Err(super::finite_replay::ReplayFault::UnboundCapacity) => {
+                        return crate::analyze::EngineReport::Refused(
+                            crate::analyze::Refusal::RequiresBound,
+                        );
+                    }
+                    Err(_) => return internal_fault(),
+                };
+                let replay_subject = match subject_builder.subject(over.clone()) {
+                    Ok(subject) => subject,
+                    Err(_) => return internal_fault(),
+                };
+                let certificate_subject = match subject_builder.subject(over.clone()) {
+                    Ok(subject) => subject,
+                    Err(_) => return internal_fault(),
+                };
+                let scan_subject = match subject_builder.subject(over.clone()) {
+                    Ok(subject) => subject,
+                    Err(_) => return internal_fault(),
+                };
+                match every_behavior_result(
+                    index,
+                    protocol,
+                    &form,
+                    subject,
+                    replay_subject,
+                    certificate_subject,
+                    scan_subject,
+                    limits.replay,
+                    cancel,
+                ) {
+                    crate::analyze::EngineReport::GlobalConformance(report) => {
+                        reports.push(report)
+                    }
+                    other => return other,
                 }
-                Err(_) => return internal_fault(),
-            };
-            let replay_subject = match subject_builder.subject(over.clone()) {
-                Ok(subject) => subject,
-                Err(_) => return internal_fault(),
-            };
-            let certificate_subject = match subject_builder.subject(over) {
-                Ok(subject) => subject,
-                Err(_) => return internal_fault(),
-            };
-            let scan_subject = match subject_builder
-                .instances()
-                .ok()
-                .and_then(|mut instances| (!instances.is_empty()).then(|| instances.remove(0)))
-                .and_then(|over| subject_builder.subject(over).ok())
-            {
-                Some(subject) => subject,
-                None => return internal_fault(),
-            };
-            every_behavior_result(
-                index,
-                protocol,
-                &form,
-                subject,
-                replay_subject,
-                certificate_subject,
-                scan_subject,
-                limits.replay,
-                cancel,
-            )
+            }
+            let selected = reports
+                .iter()
+                .position(|report| {
+                    report
+                        .output
+                        .as_ref()
+                        .is_some_and(|output| output.global.label == "refuted")
+                })
+                .or_else(|| {
+                    reports
+                        .iter()
+                        .position(|report| {
+                            report
+                                .output
+                                .as_ref()
+                                .is_some_and(|output| output.global.label != "proved")
+                        })
+                })
+                .unwrap_or(0);
+            crate::analyze::EngineReport::GlobalConformance(reports.remove(selected))
         },
     )
 }
@@ -739,7 +796,7 @@ fn behavior_report(
         });
     crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
-        output: ProtocolConformanceOutput {
+        output: Some(ProtocolConformanceOutput {
             obligations,
             closure: ConformanceClosureOutput {
                 state: if closed {
@@ -838,7 +895,7 @@ fn behavior_report(
             recording: None,
             replay: refuted.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true }),
             prefixes: None,
-        },
+        }),
         counterexample,
     }))
 }
