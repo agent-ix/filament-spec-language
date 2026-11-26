@@ -7,7 +7,8 @@
 //! preservation-table rows and subject admit. Every pair must settle the same
 //! verdict, and every counterexample from either run must replay.
 //!
-//! The corpus is ADR-021 §7.1, §7.2, §7.5 and §7.6 and FR-156-AC-3's ring.
+//! The corpus is ADR-021 §7.1, §7.2, §7.5 and §7.6, FR-156-AC-3's ring and
+//! §7.1's counters refuted only at a later binding in a later orbit.
 //! ADR-021 §7.4 is over `ProtocolSystem`, which `fsl-analyze` does not build
 //! yet, and ADR-018's and ADR-019's worked examples are checked unreduced by
 //! their own tests; neither is in this corpus. A liveness `Holds` that the
@@ -52,16 +53,24 @@ fn verdict(outcome: &Outcome) -> Option<Verdict> {
 /// counterexample of it.
 struct Case {
     name: &'static str,
-    /// Whether the subject declares a `symmetric` population.
-    symmetric: bool,
+    /// The classes of the subject's `symmetric` population, none when it
+    /// declares none.
+    classes: Vec<Vec<String>>,
     run: Box<dyn Fn(Reductions) -> Outcome>,
     replay: Box<dyn Fn(TemporalCounterexample) -> ModelTraceSettlement>,
 }
 
-fn symmetry() -> Vec<SymmetryDeclaration> {
+fn classes(classes: &[&[&str]]) -> Vec<Vec<String>> {
+    classes
+        .iter()
+        .map(|class| class.iter().map(|key| (*key).to_owned()).collect())
+        .collect()
+}
+
+fn symmetry(classes: &[Vec<String>]) -> Vec<SymmetryDeclaration> {
     vec![SymmetryDeclaration {
         population: counters(),
-        classes: vec![vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]],
+        classes: classes.to_vec(),
     }]
 }
 
@@ -75,18 +84,18 @@ fn selections(case: &Case) -> Vec<(&'static str, Reductions)> {
             ..Reductions::default()
         },
     )];
-    if case.symmetric {
+    if !case.classes.is_empty() {
         selections.push((
             "symmetry",
             Reductions {
-                symmetry: symmetry(),
+                symmetry: symmetry(&case.classes),
                 ..Reductions::default()
             },
         ));
         selections.push((
             "symmetry and partial-order",
             Reductions {
-                symmetry: symmetry(),
+                symmetry: symmetry(&case.classes),
                 partial_order: true,
                 ..Reductions::default()
             },
@@ -95,8 +104,9 @@ fn selections(case: &Case) -> Vec<(&'static str, Reductions)> {
     selections
 }
 
-/// A case over a `reduction_world` subject: clause `0`, read by `atoms`, or
-/// the deadlock-freedom item when `atoms` is `None`.
+/// A case over a `reduction_world` subject from all counters at 0: clause
+/// `0`, read by `atoms`, or the deadlock-freedom item when `formula` is
+/// `None`. A `symmetric` subject takes the one class of all three counters.
 fn counter_case(
     name: &'static str,
     symmetric: bool,
@@ -104,6 +114,24 @@ fn counter_case(
     formula: Option<&'static str>,
     atoms: fn() -> Vec<crate::reduction_world::Atom>,
 ) -> Case {
+    let classes = if symmetric {
+        classes(&[&["a", "b", "c"]])
+    } else {
+        Vec::new()
+    };
+    started_case(name, classes, [0, 0, 0], contracts, formula, atoms)
+}
+
+/// [`counter_case`] from `start_at`, with the symmetry classes `classes`.
+fn started_case(
+    name: &'static str,
+    classes: Vec<Vec<String>>,
+    start_at: [i64; 3],
+    contracts: &'static str,
+    formula: Option<&'static str>,
+    atoms: fn() -> Vec<crate::reduction_world::Atom>,
+) -> Case {
+    let symmetric = !classes.is_empty();
     let build = move || {
         let clauses: Vec<Clause<'_>> = formula
             .map(|formula| {
@@ -121,7 +149,7 @@ fn counter_case(
             },
             contracts,
             &clauses,
-            &[start([0, 0, 0])],
+            &[start(start_at)],
             &["a", "b", "c"],
         )
     };
@@ -129,7 +157,7 @@ fn counter_case(
     let clause = formula.map(|_| 0);
     Case {
         name,
-        symmetric,
+        classes,
         run: Box::new(move |selection| {
             world.run(
                 clause,
@@ -156,7 +184,7 @@ fn fixture_case(
     let (fixture, replay_fixture) = (build(), build());
     Case {
         name,
-        symmetric: false,
+        classes: Vec::new(),
         run: Box::new(move |selection| fixture.run(clause, atoms(), selection)),
         replay: Box::new(move |payload| replay_fixture.replay(clause, atoms(), payload)),
     }
@@ -218,7 +246,7 @@ fn fair_whole_symmetry_preserves_every_counterexample_member_and_replays() {
     };
     let plain = counterexample(Reductions::default());
     let reduced = counterexample(Reductions {
-        symmetry: symmetry(),
+        symmetry: symmetry(&classes(&[&["a", "b", "c"]])),
         ..Reductions::default()
     });
     assert_eq!(reduced, plain, "all concrete witness members must agree");
@@ -268,6 +296,16 @@ fn corpus() -> Vec<Case> {
             CYCLE,
             Some("fair weak M::Counter::bump; always eventually holds(x.v = 2)"),
             reaches_two,
+        ),
+        // Only the later binding `c`, in the later orbit, is refuted; its
+        // orbit's stabiliser swaps `a` and `b` (QSL-3482).
+        started_case(
+            "7.1 from (0,0,1): later orbit refutation",
+            classes(&[&["a", "b"], &["c"]]),
+            [0, 0, 1],
+            CYCLE,
+            Some("eventually holds(x.v = 0)"),
+            || vec![atom(|v| Some(v == 0))],
         ),
         // ADR-021 §7.2: independent bumps.
         counter_case(
