@@ -29,6 +29,7 @@ mod long_run_support;
 mod model_settle;
 mod model_settle_support;
 mod native_correlation;
+mod object_sets;
 mod package_forms;
 mod prob_world;
 mod probabilistic_request_support;
