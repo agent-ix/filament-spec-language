@@ -31,6 +31,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-364
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-181
+    type: depends_on
 ---
 # FR-237: Replay a timed model or task-automaton counterexample
 
