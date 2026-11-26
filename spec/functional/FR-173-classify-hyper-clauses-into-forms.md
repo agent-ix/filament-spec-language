@@ -173,7 +173,13 @@ variable, so its form is decided over tuples of closed finite traces.
   existential, with no loop. `fsl_replay::replay` reads each trace of that
   counterexample as a closed trace under its own row's configuration and
   reproduces the verdict. Bounds, limits and undefined evaluation settle as
-  ADR-023 HV-3, HV-5 and HV-8 state for the infinite-trace forms.
+  ADR-023 HV-3, HV-5 and HV-8 state for the infinite-trace forms. A state
+  of a closed execution whose expansion evaluates a contract conjunction
+  with no value, an undefined precondition guard included, is never read as
+  a disabled step (ADR-018 UE-6), so no execution ends there: every form
+  except HP-5 returns the refusal `ClosedUndefined`, which settles
+  `unsupported`, never `proved`, and a refused conjunction returns
+  `Undecided(UndecidedSuccessor)`. HP-5 returns `Undefined` (FR-181-AC-15).
 
 ## Acceptance Criteria
 
@@ -185,6 +191,7 @@ variable, so its form is decided over tuples of closed finite traces.
 | FR-173-AC-4 | A request with `SavesPower` supplies subjects for `S` and `N` and carries two deadlock-freedom items; a request with `NonInterference` and `Opaque` over `V` carries one. | Test (TC-598) |
 | FR-173-AC-5 | For a request containing an HP-4 `Other` item and a supported `Universal` sibling, negotiation settles the HP-4 item as `unsupported` V-8 without an engine outcome and `fsl-route` gives it no target; the sibling keeps its `supported` disposition and selected candidate. | Test (TC-598) |
 | FR-173-AC-6 | Under the event-position profile, analyzed through `native-analyze/1` with EN-1, never `not-yet-implemented`. Fixtures: `fsl-analyze`'s two Secure vault models `V` and `N` (`v: V::Vault`, `w: N::Vault`), each with the one initial state `h = 1`, `l = 0`, whose `step(i)` sets `l = i` for `i` in `{0, 1}` and which have no terminal state, and FR-178-AC-1's busy vault. (HP-2) `forall trace a of V forall trace b of N { always [0, 3] holds(v.l @ a = w.l @ b) }` settles `refuted`: its counterexample holds one trace for `a` and one for `b`, neither with a loop, each of four positions, 0 to 3, and `fsl_replay::replay` reads each as a closed trace under its own `temporal_bindings` row and reproduces the refutation; the same clause with body `always [0, 3] holds(v.h @ a = w.h @ b)` settles `proved`. (HP-3) `forall trace a of V exists trace b of N { always [0, 3] holds(v.l @ a = w.l @ b) }` settles `proved`, and with `!=` in place of `=` settles `refuted` at position 0 with a universal trace that has no loop. (HP-6) FR-178-AC-1's `align skip { V::Vault::mix }` clause over the busy vault from its idle initial states, with body `always [0, 2] holds(v.l @ a = v.l @ b)`, settles `proved`, and FR-178-AC-2's leaky vault started mid-operation with the same body settles `refuted` with a projected counterexample of two closed traces, no loop, that replays. (HP-5) `exists trace b of V { eventually [0, 2] holds(v.l @ b = 1) }` settles `proved` with one closed witness of three positions; `exists trace b of V { eventually [0, 2] holds(v.h @ b = 0) }` settles `refuted` with a trap at the initial state. FR-640-AC-12's `Saves` settles `proved` or `refuted` by the HP-2 construction above, never `FormNotDecided`. | Test (TC-2243) |
+| FR-173-AC-7 | Under the event-position profile over the leaky vault whose `step` has the precondition `quotient(1 - self.l + self.h) >= 0` (`function quotient using v(x: Integer): Integer pure { 1 div x }`, `CheckMode::Kernel`), so the guard has no value at `(h, l) = (0, 1)`, which `step(1)` reaches from `(0, 0)` and which is an initial state when started there: `forall trace a of V forall trace b of V { eventually [0, 3] holds(v.h @ a = v.h @ a) }` and `forall trace a of V exists trace b of V { eventually [0, 3] holds(v.h @ a = v.h @ b) }` each return the refusal `ClosedUndefined`, settle `unsupported`, never `proved`, from `(0, 0)` and from `(0, 1)`. | Test (TC-2243) |
 
 ## Dependencies
 
