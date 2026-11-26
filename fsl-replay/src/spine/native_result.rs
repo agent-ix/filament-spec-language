@@ -11,7 +11,7 @@ use fsl_foundation::LocatedSpan;
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
-use serde::{Deserialize, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use super::call::{CallOutcome, CallRefusal, CallValue};
@@ -266,7 +266,8 @@ pub struct ClauseRunRecord(
 impl ClauseRunRecord {
     /// The Quire-backed source extraction record, when this run consumed a
     /// Markdown source through extraction.
-    pub fn extraction(&self) -> Option<&serde_json::Value> {
+    #[implements("FR-267-AC-17")]
+    pub fn extraction(&self) -> Option<&ExtractionRecord> {
         self.0.extraction.as_ref()
     }
 
@@ -1217,7 +1218,7 @@ struct ClauseRead {
     #[serde(default, deserialize_with = "present")]
     witness: Option<RecordWire<Box<RawValue>>>,
     #[serde(default, deserialize_with = "present")]
-    extraction: Option<serde_json::Value>,
+    extraction: Option<ExtractionRecord>,
     #[serde(default, deserialize_with = "present")]
     ledger: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present")]
@@ -1241,61 +1242,7 @@ struct ClauseRead {
     _evidence_ledger: Option<serde_json::Value>,
 }
 
-trait ExtractionShape {
-    fn validate_shape(value: &serde_json::Value, path: &str) -> Result<(), NativeRunReadError>;
-}
-
-macro_rules! extraction_leaf_shape {
-    ($($type:ty),* $(,)?) => {
-        $(
-            impl ExtractionShape for $type {
-                fn validate_shape(
-                    _value: &serde_json::Value,
-                    _path: &str,
-                ) -> Result<(), NativeRunReadError> {
-                    Ok(())
-                }
-            }
-        )*
-    };
-}
-
-extraction_leaf_shape!(
-    String,
-    u8,
-    u64,
-    bool,
-    serde_json::Value,
-    ExtractionAvailabilityStateRead
-);
-
-impl ExtractionShape for std::collections::BTreeMap<String, String> {
-    fn validate_shape(_value: &serde_json::Value, _path: &str) -> Result<(), NativeRunReadError> {
-        Ok(())
-    }
-}
-
-impl<T: ExtractionShape> ExtractionShape for Vec<T> {
-    fn validate_shape(value: &serde_json::Value, path: &str) -> Result<(), NativeRunReadError> {
-        if let Some(entries) = value.as_array() {
-            for (index, entry) in entries.iter().enumerate() {
-                T::validate_shape(entry, &format!("{path}[{index}]"))?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<T: ExtractionShape> ExtractionShape for Option<T> {
-    fn validate_shape(value: &serde_json::Value, path: &str) -> Result<(), NativeRunReadError> {
-        if !value.is_null() {
-            T::validate_shape(value, path)?;
-        }
-        Ok(())
-    }
-}
-
-macro_rules! extraction_read_type {
+macro_rules! extraction_record_type {
     (
         $name:ident {
             $($field:ident: $field_type:ty),* $(,)?
@@ -1303,68 +1250,35 @@ macro_rules! extraction_read_type {
             $($(#[$optional_attribute:meta])* $optional_field:ident: $optional_type:ty),* $(,)?
         }
     ) => {
-        #[derive(Deserialize)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(deny_unknown_fields)]
+        #[allow(missing_docs, reason = "fields implement the native extraction wire record")]
         #[allow(
             dead_code,
             reason = "the closed wire shape is validated during deserialization"
         )]
-        struct $name {
-            $($field: $field_type,)*
-            $($(#[$optional_attribute])* $optional_field: $optional_type,)*
+        pub struct $name {
+            $(pub $field: $field_type,)*
+            $($(#[$optional_attribute])* pub $optional_field: $optional_type,)*
         }
 
-        impl ExtractionShape for $name {
-            fn validate_shape(
-                value: &serde_json::Value,
-                path: &str,
-            ) -> Result<(), NativeRunReadError> {
-                let Some(object) = value.as_object() else {
-                    return Ok(());
-                };
-                $(
-                    let name = stringify!($field);
-                    let Some(child) = object.get(name) else {
-                        return Err(NativeRunReadError::MalformedMember {
-                            member: format!("{path}.{name}"),
-                            source: serde_json::Error::custom(format!(
-                                "missing required member `{name}`"
-                            )),
-                        });
-                    };
-                    <$field_type as ExtractionShape>::validate_shape(
-                        child,
-                        &format!("{path}.{name}"),
-                    )?;
-                )*
-                $(
-                    if let Some(child) = object.get(stringify!($optional_field)) {
-                        <$optional_type as ExtractionShape>::validate_shape(
-                            child,
-                            &format!("{path}.{}", stringify!($optional_field)),
-                        )?;
-                    }
-                )*
-                Ok(())
-            }
-        }
     };
 }
 
-extraction_read_type! {
-    ExtractionRead {
-        original: ExtractionOriginalRead,
-        body: ExtractionBodyRead,
-        binding: ExtractionBindingRead,
-        outcome: ExtractionOutcomeRead,
-        map: ExtractionMapRead;
-        #[serde(default, deserialize_with = "present")]
-        original_regions: Option<Vec<ExtractionRegionRead>>
+extraction_record_type! {
+    ExtractionRecord {
+        original: ExtractionOriginal,
+        body: ExtractionBody,
+        binding: ExtractionBinding,
+        outcome: ExtractionOutcome,
+        map: ExtractionMap;
+        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        original_regions: Option<Vec<ExtractionRegion>>
     }
 }
 
-extraction_read_type! {
-    ExtractionOriginalRead {
+extraction_record_type! {
+    ExtractionOriginal {
         authority: String,
         identity: String,
         path: String,
@@ -1372,8 +1286,8 @@ extraction_read_type! {
     }
 }
 
-extraction_read_type! {
-    ExtractionBodyRead {
+extraction_record_type! {
+    ExtractionBody {
         authority: String,
         identity: String,
         document: String,
@@ -1381,29 +1295,29 @@ extraction_read_type! {
     }
 }
 
-extraction_read_type! {
-    ExtractionBindingRead {
+extraction_record_type! {
+    ExtractionBinding {
         clause: String,
         package: String;
     }
 }
 
-extraction_read_type! {
-    ExtractionMapRead {
-        region: ExtractionSpanRead,
-        segments: Vec<ExtractionSegmentRead>;
+extraction_record_type! {
+    ExtractionMap {
+        region: ExtractionSpan,
+        segments: Vec<ExtractionSegment>;
     }
 }
 
-extraction_read_type! {
-    ExtractionSpanRead {
+extraction_record_type! {
+    ExtractionSpan {
         start: u64,
         end: u64;
     }
 }
 
-extraction_read_type! {
-    ExtractionSegmentRead {
+extraction_record_type! {
+    ExtractionSegment {
         body_start: u64,
         body_end: u64,
         original_start: u64,
@@ -1411,61 +1325,69 @@ extraction_read_type! {
     }
 }
 
-extraction_read_type! {
-    ExtractionRegionRead {
-        start: ExtractionPositionRead,
-        end: ExtractionPositionRead;
+extraction_record_type! {
+    ExtractionRegion {
+        start: ExtractionPosition,
+        end: ExtractionPosition;
     }
 }
 
-extraction_read_type! {
-    ExtractionPositionRead {
+extraction_record_type! {
+    ExtractionPosition {
         byte: u64,
         line: u64,
         column: u64;
     }
 }
 
-extraction_read_type! {
-    ExtractionOutcomeRead {
-        availability: ExtractionKindAvailabilityRead,
+extraction_record_type! {
+    ExtractionOutcome {
+        availability: ExtractionAvailability,
         clause_text: std::collections::BTreeMap<String, String>,
         diagnostics: Vec<serde_json::Value>;
-        #[serde(default, deserialize_with = "present")]
+        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
         clauses: Option<Vec<serde_json::Value>>
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum ExtractionAvailabilityStateRead {
+#[allow(
+    missing_docs,
+    reason = "variants are the closed native extraction wire labels"
+)]
+pub enum ExtractionAvailabilityState {
     Available,
     NotApplicable,
     Missing,
     Unavailable,
 }
 
-extraction_read_type! {
-    ExtractionKindAvailabilityRead {
-        state: ExtractionAvailabilityStateRead,
+extraction_record_type! {
+    ExtractionAvailability {
+        state: ExtractionAvailabilityState,
         lossy: bool;
-        #[serde(default, deserialize_with = "present")]
+        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
         reason: Option<String>
     }
 }
 
 #[implements("FR-267-AC-17")]
-fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadError> {
-    ExtractionRead::validate_shape(value, "extraction")?;
-    let extraction: ExtractionRead =
+fn validate_extraction(bytes: &[u8]) -> Result<(), NativeRunReadError> {
+    let document: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|source| NativeRunReadError::MalformedMember {
+            member: "extraction".to_owned(),
+            source,
+        })?;
+    let Some(value) = document.get("extraction").filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    let extraction: ExtractionRecord =
         serde_path_to_error::deserialize(value.clone()).map_err(|error| {
-            let member = error.path().to_string();
+            let member =
+                extraction_error_member(&error.path().to_string(), &error.inner().to_string());
             NativeRunReadError::MalformedMember {
-                member: if member.is_empty() {
-                    "extraction".to_owned()
-                } else {
-                    format!("extraction.{member}")
-                },
+                member,
                 source: error.into_inner(),
             }
         })?;
@@ -1486,6 +1408,45 @@ fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadErr
         });
     }
     Ok(())
+}
+
+fn extraction_error_member(path: &str, reason: &str) -> String {
+    let mut path = path.trim_matches('.').to_owned();
+    let field = reason
+        .split_once("missing field `")
+        .and_then(|(_, tail)| tail.split_once('`').map(|(field, _)| field.to_owned()))
+        .or_else(|| {
+            let (_, tail) = reason.split_once("expected struct ")?;
+            let name = tail
+                .trim_start_matches('`')
+                .split(|character: char| !character.is_ascii_alphanumeric())
+                .next()?;
+            name.strip_prefix("Extraction").map(camel_to_snake)
+        });
+    if let Some(field) = field {
+        if path.rsplit('.').next() != Some(field.as_str()) {
+            if !path.is_empty() {
+                path.push('.');
+            }
+            path.push_str(&field);
+        }
+    }
+    if path.is_empty() {
+        "extraction".to_owned()
+    } else {
+        format!("extraction.{path}")
+    }
+}
+
+fn camel_to_snake(value: &str) -> String {
+    let mut snake = String::with_capacity(value.len());
+    for (index, character) in value.chars().enumerate() {
+        if character.is_ascii_uppercase() && index > 0 {
+            snake.push('_');
+        }
+        snake.push(character.to_ascii_lowercase());
+    }
+    snake
 }
 
 #[derive(Deserialize)]
@@ -2936,6 +2897,7 @@ pub fn read_native_run_result_bounded(
             .canonical(&splice)
             .map_err(|_| budget.copy_failure("witness", "cannot traverse witness document"))?;
         budget.charge(u64::try_from(shallow.len()).unwrap_or(u64::MAX))?;
+        validate_extraction(&shallow)?;
         let document: ClauseRead = read_typed(&shallow)?;
         if let Some(limits) = &document.limits {
             let value = &limits.0.max_candidates;
@@ -2947,9 +2909,6 @@ pub fn read_native_run_result_bounded(
                     reason: "a canonical positive Count string",
                 });
             }
-        }
-        if let Some(extraction) = &document.extraction {
-            validate_extraction(extraction)?;
         }
         let deciding_element = splice
             .element
@@ -3503,7 +3462,7 @@ struct ClauseRunDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<RecordWire<Box<RawValue>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    extraction: Option<serde_json::Value>,
+    extraction: Option<ExtractionRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ledger: Option<serde_json::Value>,
     /// FR-641-AC-8, FSpec FR-352-AC-19: the effective limits a `model`
@@ -4322,10 +4281,11 @@ pub fn write_clause_run_result_for(
 
 /// [`write_clause_run_result_for`] with the source extraction record required
 /// for a command run that selected a Markdown clause through Quire.
+#[implements("FR-267-AC-17")]
 pub fn write_clause_run_result_for_with_extraction(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
-    extraction: Option<serde_json::Value>,
+    extraction: Option<ExtractionRecord>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
     if matches!(
         report.counterexample,
@@ -4378,7 +4338,7 @@ fn verdict_basis(report: &ClauseRunReport) -> bool {
 fn write_document(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
-    extraction: Option<serde_json::Value>,
+    extraction: Option<ExtractionRecord>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
     let witness = report.witness.as_ref().map(RecordWire::of).transpose()?;
     let ledger = report
@@ -4495,9 +4455,9 @@ fn run_limits(
 
 #[cfg(test)]
 mod qsl_3117_deciding_run {
-    use super::{NativeRunReadError, read_native_run_result};
+    use super::{read_native_run_result, NativeRunReadError};
     use ix_trace_rs::trace;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn valid_extraction_outcome() -> Value {
         json!({
@@ -4615,8 +4575,13 @@ mod qsl_3117_deciding_run {
 
         let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
         assert!(
-            matches!(result, Err(NativeRunReadError::Invalid { member: "extraction.map", .. }))
-                || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.map"),
+            matches!(
+                result,
+                Err(NativeRunReadError::Invalid {
+                    member: "extraction.map",
+                    ..
+                })
+            ) || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.map"),
             "missing extraction.map must be reported at that member"
         );
     }
@@ -4640,8 +4605,13 @@ mod qsl_3117_deciding_run {
 
         let result = read_native_run_result(&serde_json::to_vec(&document).unwrap());
         assert!(
-            matches!(result, Err(NativeRunReadError::Invalid { member: "extraction.original_regions", .. }))
-                || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.original_regions"),
+            matches!(
+                result,
+                Err(NativeRunReadError::Invalid {
+                    member: "extraction.original_regions",
+                    ..
+                })
+            ) || matches!(result, Err(NativeRunReadError::MalformedMember { member, .. }) if member == "extraction.original_regions"),
             "empty extraction.original_regions must be reported at that member"
         );
     }
@@ -4651,9 +4621,21 @@ mod qsl_3117_deciding_run {
     #[trace("TC-109", "FR-267-AC-17")]
     fn strict_reader_names_malformed_extraction_outcome_members() {
         let cases = [
-            ("extraction.outcome.availability", "/outcome/availability", None),
-            ("extraction.outcome.clause_text", "/outcome/clause_text", None),
-            ("extraction.outcome.diagnostics", "/outcome/diagnostics", None),
+            (
+                "extraction.outcome.availability",
+                "/outcome/availability",
+                None,
+            ),
+            (
+                "extraction.outcome.clause_text",
+                "/outcome/clause_text",
+                None,
+            ),
+            (
+                "extraction.outcome.diagnostics",
+                "/outcome/diagnostics",
+                None,
+            ),
             (
                 "extraction.outcome.availability",
                 "/outcome/availability",
