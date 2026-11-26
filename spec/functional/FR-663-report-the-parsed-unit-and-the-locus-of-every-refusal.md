@@ -16,7 +16,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-106
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-267
-    type: depends_on
+    type: references
 ---
 # FR-663: Report the parsed unit and the locus of every refusal
 

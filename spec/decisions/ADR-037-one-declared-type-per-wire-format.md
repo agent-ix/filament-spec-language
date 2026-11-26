@@ -88,36 +88,72 @@ hand-written table when the owner schema or shared type already defines it.
 
 ### Format owners and implementation homes
 
-| Format or shared value | Normative owner | Shared Rust definition | FSL requirement links |
-| --- | --- | --- | --- |
-| State locus `{key}` | FSpec FR-331 | `filament-contract-model` | FR-145, FR-149, FR-169, FR-244, FR-245 |
-| `TransitionIdentity` and its typed value | FSpec FR-181; schema form in FR-331 | `filament-contract-model` | FR-120, FR-331, FR-128, FR-237, and the task-product certificate requirement |
-| `ProbabilisticBound` | FSpec FR-413 | `filament-contract-model` | FSL requirements that write or strictly read the probability certificate, including FR-201 |
-| Certificate identity `CertificateNodeId` and `CertificatePathSegment` | FSpec FR-412-AC-34 | `filament-contract-model` | FR-201 |
-| `native-run-result/2` | FSpec FR-352, with witness members from FR-351 | FSL `fsl-replay` wire module | FR-267 and every FSL requirement that writes or reads the document |
+| Format or shared value | Normative owner item(s) | Shared Rust definition |
+| --- | --- | --- |
+| State locus `{key}` | FSpec FR-331 | `filament-contract-model` |
+| `TransitionIdentity` and its typed value | FSpec FR-181; its wire schema is in FR-331 | `filament-contract-model` |
+| `ProbabilisticBound` | FSpec FR-413 for probabilistic counterexamples and the statistical verdict | `filament-contract-model` |
+| Certificate identity `CertificateNodeId` and `CertificatePathSegment` | FSpec FR-412-AC-34 | `filament-contract-model` |
+| Certificate rejection locus and rule (`CertificateLocus`, `CertificateRule`) | FSpec FR-331 | `filament-contract-model` |
+| Zone certificate | FSpec FR-418 | `filament-contract-model` |
+| Task-product certificate | FSpec FR-331; transition identities within it use FSpec FR-181 | `filament-contract-model` |
+| Hybrid certificate | FSpec FR-331 | `filament-contract-model` |
+| Probability certificate document | FSL FR-201; certificate-member vocabulary is FSpec FR-331 and Contract IR FR-070 | FSL `fsl-replay` probability-certificate document module |
+| `filament.checked-package/v2` node forms and protocol-location ordinals | FSpec FR-322 and FR-375; in particular FR-322-AC-291 and FR-375-AC-36; Contract IR FR-038 and FR-061 | `filament-contract-model::checked_package::v2` |
+| Certificate-member vocabulary | FSpec FR-331; Contract IR FR-070 | `filament-contract-model` |
+| `native-run-result/2` | FSpec FR-352 `Members`, `Outcome axes`, `Temporal disposition` and `Protocol-analysis result` sections, plus AC-1–3 and AC-6–22; FSpec FR-351 owns witness members; FSL FR-267 implements the FSL boundary | FSL `fsl-replay` wire module |
+| `native-replay/1` request | FSpec FR-336; FSL FR-862 | FSL `fsl-command` replay-request module |
+| `filament-outcome/1` | FSpec FR-300 format identity, FR-520 analyze document, FR-301 CLI contract and FR-331 terminal records; FSL FR-027, FR-100 and FR-109 use the outcome | FSL `fsl-replay::outcome` |
 
-For each listed format, a requirement whose implementation writes, strictly
-reads, or checks it SHALL declare a `depends_on` relationship to its owner in
-frontmatter. The requirement that defines the format has no sideways
+For each listed format, every requirement whose implementation writes,
+strictly reads, or checks it SHALL declare a `depends_on` relationship to its
+owner in frontmatter. The requirement that defines the format has no sideways
 relationship to a reader. FSL requirements that implement or check a
 cross-repository value also link to the shared model requirement that owns
-that value. The links for formats outside this table are added when their
-migration step begins; this ADR does not claim their type consolidation is
-complete.
+that value. The owner and reader relationships are recorded only in each
+requirement's frontmatter; this ADR does not keep a second list of those links.
+
+A rule found only in a reader is a gap in the format owner's specification.
+Before consolidating that reader and its writer, the reader-only rule SHALL be
+added to the owner's acceptance criteria. A writer-to-reader relationship does
+not replace that owner criterion.
+
+The `cargo xtask canonical-types` gate SHALL apply its wire rule to flag new
+hand copies outside the owning module: tagged transition or State-locus JSON
+objects, literal `WireFormat` labels, and `Deserialize` structs with the same
+member set as a canonical wire type. Rejecting a hand-maintained name list as
+the source of truth does not remove this duplicate-definition gate.
 
 For `native-run-result/2`, the one FSL type SHALL cover the extraction record
-and the complete document accepted by FSpec FR-352. It SHALL be used by the
-production writer and the strict reader. Ad hoc command output and `*Read`
-mirror structs do not define alternate forms of that document. FR-267 remains
-the FSL implementation requirement and refers to the FSpec schema for the
-wire shape.
+and the complete document accepted by FSpec FR-352. FR-352 defines the shape
+in its `Members`, `Outcome axes`, `Temporal disposition` and
+`Protocol-analysis result` sections and AC-1–3 and AC-6–22; it does not
+publish a JSON Schema for this format. The type SHALL be
+used by the production writer and the strict reader. Ad hoc command output and
+`*Read` mirror structs do not define alternate forms of that document. FSL
+FR-267 remains the implementation requirement; this ADR does not claim that
+FR-267 refers to an FSpec JSON Schema.
+
+The FSL one-type rule preserves the existing reader's observable behavior.
+Reads SHALL keep charging resource meters as members are consumed and enforce
+the `NativeRunLimits` budgets at the same admission boundary. They SHALL keep
+member pointers and the existing typed refusal codes, including
+`TaskProductShapeReason`, the non-empty extraction segments required by
+FR-267-AC-17, and the certificate loci required by FR-245. In the
+Contract-IR checked-package body and details, input-depth nodes SHALL retain
+their hand `Encode` boundary. Where a reader accepts legacy operation forms,
+the read result SHALL collapse them into the single declared type while
+preserving the accepted meaning. These constraints state behavior to retain;
+the migration steps decide their implementation.
 
 ### Acceptance net
 
-Each shared type SHALL have a schema-conformance test that exercises the real
-writer, validates the emitted value against the owner's schema, strictly
-reads it through the same type, and checks typed equality and canonical-byte
-equality. Where the owner publishes positive vectors, the test SHALL strictly
+Each shared type SHALL have a conformance test that exercises the real writer,
+validates the emitted value against the owner's normative schema where that
+schema exists, strictly reads it through the same type, and checks typed
+equality and canonical-byte equality. Where no schema exists, the test SHALL
+check the owner's normative member tables and acceptance criteria instead.
+Where the owner publishes positive vectors, the test SHALL strictly
 read every such vector and write it back with the same canonical bytes. Where
 the owner publishes no positive vectors, the test SHALL use explicit valid
 values from the owner's acceptance criteria and mutations of those values
@@ -129,12 +165,15 @@ schema or the implementation tags required by ADR-032.
 
 ## Consequences
 
-Writer and reader shape changes now occur at the shared type, and schema
-changes are detected by the same conformance tests that exercise the actual
-writer and reader. A change to a cross-repository format is made in its owner
-schema and the shared model type; consumers adopt that definition rather than
-reconstructing it. Bounded read behavior and typed refusal codes remain at the
-existing admission boundary.
+Writer and reader shape changes now occur at the shared type, and changes to
+an owner's schema or acceptance criteria are detected by the same conformance
+tests that exercise the actual writer and reader. A change to a
+cross-repository format is made in its owner requirement and shared model
+type; consumers adopt that definition rather than reconstructing it. Bounded
+read behavior, incremental meter charging, `NativeRunLimits`, member pointers
+and typed refusal codes remain at the existing admission boundary. Input-depth
+Contract-IR body/details retain their hand `Encode`, and accepted legacy
+operation forms collapse into the shared typed representation.
 
 This decision does not remove identity or semantic disagreements that are
 outside the member shape, such as a different node preimage. Those require
@@ -151,6 +190,7 @@ their own owner rule and one derivation function, as ADR-013 already requires.
   formats or would not express canonical bytes, bounded reads, refusal codes,
   and cross-member checks. Tests against the normative FSpec schema provide
   drift protection without changing ownership.
-- **Keep a list of canonical type names in a gate.** Rejected because it is a
-  second definition that can drift. The type and its owner requirement remain
-  the source of the implementation definition.
+- **Keep a list of canonical type names in a gate.** Rejected as the source of
+  the implementation definition because it is a second definition that can
+  drift. The `canonical-types` wire rule remains a gate and flags new hand
+  copies of the canonical shapes; it does not own or replace those definitions.

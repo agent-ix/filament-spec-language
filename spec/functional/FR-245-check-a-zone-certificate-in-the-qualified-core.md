@@ -25,6 +25,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-418
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-181
+    type: depends_on
+  - target: ix://agent-ix/filament-contract-ir/FR-070
+    type: depends_on
 ---
 # FR-245: Check a zone certificate in the qualified core
 

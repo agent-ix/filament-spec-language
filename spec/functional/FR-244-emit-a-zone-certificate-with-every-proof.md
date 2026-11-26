@@ -21,6 +21,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-418
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-181
+    type: depends_on
+  - target: ix://agent-ix/filament-contract-ir/FR-070
+    type: depends_on
 ---
 # FR-244: Emit a zone certificate with every zone-engine proof
 
