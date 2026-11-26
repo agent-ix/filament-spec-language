@@ -409,6 +409,7 @@ impl Serialize for FailedStep {
 
 /// FSpec FR-364's encoding of a transition identity, written as FR-120 writes
 /// every transition.
+#[implements("FR-120-AC-40")]
 fn transition_wire(transition: &ModelTransition) -> Result<serde_json::Value, String> {
     crate::task_source_transition_wire(transition).map_err(|error| error.to_string())
 }

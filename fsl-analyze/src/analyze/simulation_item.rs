@@ -19,6 +19,7 @@ use fsl_eval::simulation::{
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::{RequestIndex, Setting};
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -242,6 +243,7 @@ fn state_value(key: &StateKey) -> Result<Value, SimulationFault> {
 }
 
 /// A trace step's written transition, spelled as FR-120 writes every one.
+#[implements("FR-120-AC-40")]
 fn transition_value(
     transition: &filament_semantic_value::model_transition::ModelTransition,
 ) -> Result<Value, SimulationFault> {

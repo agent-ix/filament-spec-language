@@ -1445,6 +1445,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         self.encode_transition_in(transition, &mut scope)
     }
 
+    #[implements("FR-120-AC-40")]
     fn encode_transition_in(
         &self,
         transition: &ModelTransition,
