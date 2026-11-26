@@ -21,7 +21,7 @@ use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
+use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit, rpc_unit_with};
 use crate::zone_replay::{replay, reproduced};
 use crate::zone_search::{assert_edges_cover, claim, operations, proved, violated};
@@ -921,19 +921,18 @@ fn digital_clocks_decide_claims_once_time_can_diverge() {
     );
 }
 
-/// Each claim of `claims` over `document`'s timed model with `body`'s
-/// operations, on both timed routes, read from the source program and then
-/// from its checked package: each item's (backend, value, cause kind), EN-6's
-/// items first. `subject` is the request's `subject` member, when it states
-/// one.
-fn routes_over_both_inputs(
+/// Each claim of `claims` over `model`'s timed model with `body`'s
+/// operations, on both timed routes: backend, value and cause kind. `analyze`
+/// refuses a package selection of a timed model, so the source program is the
+/// one input; the tests over [`partial_world`] read checked packages.
+fn routes_over(
     name: &str,
     model: &[u8],
     body: &str,
     claims: &[(&str, &str)],
     snapshots: &[Vec<u8>],
     subject: Option<Value>,
-) -> [Vec<(String, String, String)>; 2] {
+) -> Vec<(String, String, String)> {
     use crate::timed_world::{unit_text, DENSE, PACKAGE};
     let temporal: String = claims
         .iter()
@@ -964,37 +963,26 @@ fn routes_over_both_inputs(
         extra["subject"] = subject;
     }
     let ws = Workspace::new(name);
-    let source = request_over(&ws, &unit, model, snapshots, extra);
-    let document: Value =
-        serde_json::from_slice(&std::fs::read(&source).expect("the request file"))
-            .expect("the request is JSON");
-    let (selected, _) = package_selection(&ws, &document["request"]);
-    let packaged = ws.write(
-        "analyze-package.json",
-        json!({"format": "native-analyze/1", "request": selected})
-            .to_string()
-            .as_bytes(),
-    );
-    [source, packaged].map(|request| {
-        let run = analyze(&request);
-        (0..claims.len() * 2)
-            .map(|n| {
-                let item = run.item(n);
-                assert!(!item.is_null(), "{}", run.document());
-                (
-                    item["record"]["backend"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    label(&item).to_owned(),
-                    item["record"]["cause"]["kind"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                )
-            })
-            .collect()
-    })
+    let run = analyze(&request_over(&ws, &unit, model, snapshots, extra));
+    (0..claims.len() * 2)
+        .map(|n| {
+            let item = run.item(n);
+            if label(&item) == "failed" {
+                eprintln!("DEBUG {item}\nDEBUG {}", run.document()["diagnostics"]);
+            }
+            (
+                item["record"]["backend"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                label(&item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
 }
 
 /// From `phase` 0, `block` enters `phase` 2, where the invariant lets no time
@@ -1030,7 +1018,7 @@ fn snapshot_at(identity: &str, phase: u8) -> Vec<u8> {
 #[test]
 fn a_false_reading_on_a_time_locked_branch_refutes_nothing_on_either_route() {
     let expected = expected_on_both_routes([("proved", ""), ("refuted", "")]);
-    let found = routes_over_both_inputs(
+    let found = routes_over(
         "timed-lock-branch",
         &locking_document(),
         LOCKING,
@@ -1041,29 +1029,30 @@ fn a_false_reading_on_a_time_locked_branch_refutes_nothing_on_either_route() {
         &[rpc_snapshot()],
         None,
     );
-    assert_eq!(found, [expected.clone(), expected]);
+    assert_eq!(found, expected);
 }
 
 /// The same rule over two initial states, one healthy (`phase` 0) and one
-/// time-locked from the start (`phase` 2).
+/// time-locked from the start (`phase` 2): `phase != 2` is proved, and
+/// `phase != 1` is refuted after `go`.
 #[trace("FR-239-AC-5", "FR-632-AC-2")]
 #[test]
 fn a_locked_initial_state_beside_a_healthy_one_refutes_nothing() {
     let reference = |identity: &str| json!({"authority": "test", "identity": identity});
     let expected = expected_on_both_routes([("proved", ""), ("refuted", "")]);
-    let found = routes_over_both_inputs(
+    let found = routes_over(
         "timed-lock-initial",
         &locking_document(),
         LOCKING,
         &[
             ("NotLocked", "always holds(c.phase != 2)"),
-            ("Wrong", "always holds(c.phase = 1)"),
+            ("Wrong", "always holds(c.phase != 1)"),
         ],
         &[snapshot_at("s0", 0), snapshot_at("s1", 2)],
         Some(json!({"initial_states": [reference("s1"), reference("s0")],
             "universes": [reference("s0")], "proof_bounds": []})),
     );
-    assert_eq!(found, [expected.clone(), expected]);
+    assert_eq!(found, expected);
 }
 
 /// The Kernel-checked package of one claim over [`LOCKING`].
@@ -1182,7 +1171,7 @@ fn digital_clocks_pass_an_undefined_time_locked_initial_state() {
 fn a_timed_claim_over_no_initial_state_is_never_proved() {
     let start = json!({"authority": "test", "identity": "s0"});
     let expected = expected_on_both_routes([("inconclusive", "no-initial-state"); 2]);
-    let found = routes_over_both_inputs(
+    let found = routes_over(
         "timed-no-initial",
         &locking_document(),
         LOCKING,
@@ -1193,7 +1182,7 @@ fn a_timed_claim_over_no_initial_state_is_never_proved() {
         &[rpc_snapshot()],
         Some(json!({"initial_states": [], "universes": [start], "proof_bounds": []})),
     );
-    assert_eq!(found, [expected.clone(), expected]);
+    assert_eq!(found, expected);
 }
 
 /// Counts the atom reads and reads as `inner` does, but for the first false
@@ -1331,7 +1320,7 @@ fn digital_clocks_read_no_claim_over_a_stalled_subject() {
 
 /// FR-125 "Instancing": a claim whose `over` type admits no key settles
 /// `inconclusive` `no-instance`, the false one included, on both timed
-/// routes and both input shapes.
+/// routes.
 #[trace("FR-125-AC-7")]
 #[test]
 fn timed_claims_over_no_instance_are_never_proved() {
@@ -1341,7 +1330,7 @@ fn timed_claims_over_no_instance_are_never_proved() {
         ("inconclusive", "no-instance"),
         ("inconclusive", "no-instance"),
     ]);
-    let found = routes_over_both_inputs(
+    let found = routes_over(
         "timed-no-instance",
         &locking_document(),
         LOCKING,
@@ -1352,7 +1341,7 @@ fn timed_claims_over_no_instance_are_never_proved() {
         &[snapshot.to_string().into_bytes()],
         None,
     );
-    assert_eq!(found, [expected.clone(), expected]);
+    assert_eq!(found, expected);
 }
 
 /// The EN-6 certificate checker accepts no certificate over a subject with no

@@ -43,7 +43,9 @@ pub fn claim_start(
     match instances {
         Err(NoClaimInstances::NotSimulated(refusal)) => Err(refusal),
         Err(NoClaimInstances::NoInitialState) => Ok(Err(TimedVacuity::NoInitialState)),
-        _ if initial_states == 0 => Ok(Err(TimedVacuity::NoInitialState)),
+        Err(NoClaimInstances::NoInstance) | Ok(_) if initial_states == 0 => {
+            Ok(Err(TimedVacuity::NoInitialState))
+        }
         Err(NoClaimInstances::NoInstance) => Ok(Err(TimedVacuity::NoInstance)),
         Ok(instances) => Ok(Ok(instances)),
     }

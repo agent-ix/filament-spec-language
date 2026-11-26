@@ -719,7 +719,7 @@ pub fn check_timed_model<S: Clone>(
     }
     // FR-239's bound check ran when the timed subject was built.
     let system = request.subject.system();
-    let mut symmetric = !reductions.symmetry.is_empty();
+    let symmetric = !reductions.symmetry.is_empty();
     // EN-6 applies symmetry to its search only: the time-lock search and
     // the liveness product read the unreduced graph's edges, so an item
     // decided by either settles V-8 naming symmetry, as an unapplied
