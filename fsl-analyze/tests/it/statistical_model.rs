@@ -3088,9 +3088,12 @@ fn a_timed_formula_reads_no_position_inside_a_delay_on_either_route() {
         expected.push((name, Some(ratio(i64::from(holds), 1)), holds));
     }
     assert_eq!(sampled, expected, "sampled route");
+    // Each window starts above 0 ms, so ADR-038 reads the claim over clock
+    // regions: until that process is built the exact route stops
+    // `incomplete` (QSL-3495). The hand values above stand.
     let exact_expected: Vec<_> = expected
         .iter()
-        .map(|(name, _, holds)| (*name, if *holds { "proved" } else { "refuted" }.to_owned()))
+        .map(|(name, _, _)| (*name, "incomplete".to_owned()))
         .collect();
     assert_eq!(exact, exact_expected, "exact route");
 }
