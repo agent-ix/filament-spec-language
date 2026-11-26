@@ -30,6 +30,7 @@ use fsl_semantics::check::{
     CheckedProbabilisticModel, ProbabilisticOperation, ReadReward, Reward, Workload,
 };
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 
 use super::contracts::{verdict, Verdict};
 use super::domain::{Domain, Odometer};
@@ -764,6 +765,7 @@ impl ModelSystem<'_> {
     /// The [`ExpansionStop`] FR-120's expansion stops with;
     /// `resource_exhausted`/`insufficient-next-charge` when a reward
     /// evaluation exhausts the meter.
+    #[implements("FR-187-AC-1", "FR-187-AC-2")]
     pub fn actions(
         &self,
         state: &ModelSimState,
@@ -980,6 +982,7 @@ impl ModelSystem<'_> {
     /// [`Self::actions`]; `runtime_invariant`/`established-invariant-broken`
     /// when `workload` gives no weight to an enabled operation, which a
     /// workload of another model's subject does.
+    #[implements("FR-187-AC-1", "FR-187-AC-2")]
     pub fn weighted_steps(
         &self,
         state: &ModelSimState,

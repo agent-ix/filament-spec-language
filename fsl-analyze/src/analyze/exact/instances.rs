@@ -181,6 +181,7 @@ fn instance_failure(
 /// exact route settles them (FR-741 Budgets), an undefined guard or target
 /// read as an item this route does not yet refute by undefined path, and the
 /// rest through the shared document failures.
+#[implements("FR-281-AC-11")]
 fn failure(
     error: fsl_replay::ProbabilityDocumentError,
     limits: &crate::exact_probabilistic::ExactProbLimits,

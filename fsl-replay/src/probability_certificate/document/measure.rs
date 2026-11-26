@@ -2436,7 +2436,8 @@ fn acceptance(
     })
 }
 
-#[implements("FR-203-AC-30", "FR-1042-AC-27")]
+#[implements("FR-203-AC-30", "FR-1043-AC-1")]
+#[implements("FR-1042-AC-27")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

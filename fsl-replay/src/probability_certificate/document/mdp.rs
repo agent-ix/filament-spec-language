@@ -26,18 +26,6 @@ impl ProbabilityProofDocument {
         }
     }
 
-    /// Keep the values of this whole stopped graph's states, whose keys are
-    /// the ranking's. An explored part continues past a target, so it can
-    /// offer values the graph does not hold.
-    #[implements("FR-1042-AC-25")]
-    pub(super) fn keep_graph_values(&mut self) {
-        let ProbabilityCertificateDocument {
-            values, ranking, ..
-        } = &mut self.document;
-        let graph: BTreeSet<_> = ranking.iter().map(|(key, _)| key).collect();
-        values.retain(|row| graph.contains(&row.state));
-    }
-
     /// Rank the named states alone, as a `lower` document does (FR-1042
     /// "Document"). The cyclic and fair MDP routes keep their own ranks.
     #[implements("FR-1042-AC-26")]
@@ -1547,6 +1535,7 @@ pub(super) fn check_with_value_bound_control<'a, 'control>(
 }
 
 #[implements("FR-1042-AC-19")]
+#[implements("FR-201-AC-3")]
 fn check_with_context(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

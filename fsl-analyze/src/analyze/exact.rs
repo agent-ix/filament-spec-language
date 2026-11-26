@@ -1596,16 +1596,13 @@ fn run(
     } else {
         document_limits
     };
-    let mut candidate_budget = (expected_reward
-        || eventual
-        || bounded_formula.is_some()
-        || bounded_fair
-        || fair_eventual)
-        .then(|| candidate::CandidateBudget::new(candidate_limits, &work, cancel));
+    let mut candidate_budget =
+        (expected_reward || eventual || bounded_formula.is_some() || bounded_fair || fair_eventual)
+            .then(|| candidate::CandidateBudget::new(candidate_limits, &work, cancel));
     record_work_checkpoint(ExactWorkPhase::Product, &work, false);
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            build_retaining_monitor_with_budget_in_scope, BudgetedProductError,
+            BudgetedProductError, build_retaining_monitor_with_budget_in_scope,
         };
         record_work_checkpoint(ExactWorkPhase::ProofOnlyBuild, &work, false);
         let identity = budget.identity;
@@ -2586,7 +2583,7 @@ fn run(
             &work,
         );
         record_work_checkpoint(ExactWorkPhase::CertificateCheck, &work, check.is_ok());
-        Ok::<_, ProbabilityDocumentError>(check?)
+        check
     })();
     checked_report(checked, certificate, binding, extremum, subject)
 }
@@ -3004,6 +3001,7 @@ struct IntervalSettlement<'a> {
 /// Settle a decided interval from its two checked documents: `proved` with
 /// `ValueBounds` only when the claim side's document and its counterpart are
 /// both accepted, and a rejection of either as that document's rejection.
+#[implements("FR-1042-AC-1")]
 fn finish_interval(
     settlement: IntervalSettlement<'_>,
     subject: SubjectLimits<'_>,
@@ -3181,6 +3179,7 @@ fn build_refusal(refusal: ProductRefusal, subject: SubjectLimits<'_>) -> EngineR
 
 /// FR-201's certificate for `product`: the solved value of every state, under
 /// the key the checker gives the same model state.
+#[implements("FR-201-AC-1")]
 fn certificate_of(
     product: &ProbProduct,
     binding: Option<&ObjectReference>,

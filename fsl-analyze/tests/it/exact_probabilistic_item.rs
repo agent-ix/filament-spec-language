@@ -118,7 +118,10 @@ fn assert_phase_work(
     expected_start: u64,
     expected_end: u64,
 ) {
-    assert_eq!(phase_span(checkpoints, phase), (expected_start, expected_end));
+    assert_eq!(
+        phase_span(checkpoints, phase),
+        (expected_start, expected_end)
+    );
 }
 
 #[cfg(feature = "test-support")]
@@ -128,13 +131,13 @@ fn assert_phase_starts_without_completing(
     expected_start: u64,
 ) {
     assert!(checkpoints.iter().any(|checkpoint| {
-        checkpoint.phase == phase
-            && !checkpoint.completed
-            && checkpoint.consumed == expected_start
+        checkpoint.phase == phase && !checkpoint.completed && checkpoint.consumed == expected_start
     }));
-    assert!(!checkpoints
-        .iter()
-        .any(|checkpoint| checkpoint.phase == phase && checkpoint.completed));
+    assert!(
+        !checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.phase == phase && checkpoint.completed)
+    );
 }
 
 #[cfg(feature = "test-support")]
@@ -216,9 +219,11 @@ fn product_and_certificate_production_share_the_item_remainder() {
         ExactWorkPhase::CertificateProduction,
         COIN_PRODUCT_WORK,
     );
-    assert!(!short_checkpoints
-        .iter()
-        .any(|checkpoint| checkpoint.phase == ExactWorkPhase::CertificateCheck));
+    assert!(
+        !short_checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.phase == ExactWorkPhase::CertificateCheck)
+    );
 
     let (production_complete, production_checkpoints) =
         settle_with_work_and_checkpoints(&world, "WorkProof", combined);
@@ -250,9 +255,7 @@ fn product_and_certificate_production_share_the_item_remainder() {
 #[test]
 fn certificate_checking_spends_only_the_item_work_remainder() {
     let world = World::new(&prob_world::coin(WORK_PROOF));
-    let total = COIN_PRODUCT_WORK
-        + COIN_CERTIFICATE_PRODUCTION_WORK
-        + COIN_CERTIFICATE_CHECK_WORK;
+    let total = COIN_PRODUCT_WORK + COIN_CERTIFICATE_PRODUCTION_WORK + COIN_CERTIFICATE_CHECK_WORK;
     let (complete_record, complete_checkpoints) =
         settle_with_work_and_checkpoints(&world, "WorkProof", total);
     assert_phase_work(
@@ -277,8 +280,7 @@ fn certificate_checking_spends_only_the_item_work_remainder() {
         complete_record.terminal().unwrap().value(),
         TerminalValue::Proved { .. }
     ));
-    let (short, checkpoints) =
-        settle_with_work_and_checkpoints(&world, "WorkProof", total - 1);
+    let (short, checkpoints) = settle_with_work_and_checkpoints(&world, "WorkProof", total - 1);
     assert!(matches!(
         short.terminal().map(|terminal| terminal.value()),
         Some(TerminalValue::Incomplete(
@@ -329,9 +331,11 @@ fn witness_production_spends_the_remainder_after_product_work() {
         ExactWorkPhase::WitnessProduction,
         product,
     );
-    assert!(!short_checkpoints
-        .iter()
-        .any(|checkpoint| checkpoint.phase == ExactWorkPhase::WitnessReplay));
+    assert!(
+        !short_checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.phase == ExactWorkPhase::WitnessReplay)
+    );
 
     let (production_complete, production_checkpoints) =
         settle_with_work_and_checkpoints(&world, "WorkRefutation", product + production);
@@ -417,7 +421,11 @@ fn witness_replay_spends_the_remainder_after_production() {
     let package_claim = "probabilistic PackageRefuted using inf on M over (m: M::Msg) \
         under Even on origin { probability >= 0.99 [ eventually holds(m.delivered) ] }";
     let package_world = World::new(&prob_world::link(package_claim));
-    let package_record = settle(&package_world, "PackageRefuted", ModelCheckLimits::default());
+    let package_record = settle(
+        &package_world,
+        "PackageRefuted",
+        ModelCheckLimits::default(),
+    );
     assert_eq!(
         package_record.terminal().unwrap().value(),
         &TerminalValue::Refuted
@@ -430,11 +438,9 @@ fn witness_replay_spends_the_remainder_after_production() {
     use fsl_package::{BarePackage, BareSupply};
 
     let simulation = package_world.subject().simulation;
-    let emission = fsl_package::emit_checked(
-        &package_world.package,
-        fsl_package::EmitLimits::fixture(),
-    )
-    .expect("the checked Link package emits");
+    let emission =
+        fsl_package::emit_checked(&package_world.package, fsl_package::EmitLimits::fixture())
+            .expect("the checked Link package emits");
     let package_limits = fsl_package::V2ReadLimits::bounded(1 << 24);
     let admitted = fsl_package::admit_checked_package(
         emission.package().bytes(),
@@ -518,12 +524,7 @@ fn undefined_reexploration_spends_the_remaining_item_work() {
     let materialization = COIN_UNDEFINED_MATERIALIZATION_WORK;
     let replay = COIN_UNDEFINED_REPLAY_WORK;
     let reexplore_bound = proof_only + reexploration;
-    assert_phase_work(
-        &checkpoints,
-        ExactWorkPhase::ProofOnlyBuild,
-        0,
-        proof_only,
-    );
+    assert_phase_work(&checkpoints, ExactWorkPhase::ProofOnlyBuild, 0, proof_only);
     assert_phase_work(
         &checkpoints,
         ExactWorkPhase::UndefinedReexploration,
@@ -559,9 +560,11 @@ fn undefined_reexploration_spends_the_remaining_item_work() {
         ExactWorkPhase::UndefinedReexploration,
         proof_only,
     );
-    assert!(!short_checkpoints
-        .iter()
-        .any(|checkpoint| { checkpoint.phase == ExactWorkPhase::UndefinedMaterialization }));
+    assert!(
+        !short_checkpoints
+            .iter()
+            .any(|checkpoint| { checkpoint.phase == ExactWorkPhase::UndefinedMaterialization })
+    );
 
     let (reexplored, reexplored_checkpoints) =
         settle_with_work_and_checkpoints(&world, "Dropped", reexplore_bound);

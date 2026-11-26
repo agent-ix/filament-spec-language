@@ -1311,6 +1311,7 @@ fn malformed(member: &'static str) -> ExactProbabilityCertificateCheck {
 }
 
 #[implements("FR-203-AC-30")]
+#[implements("FR-201-AC-2")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
