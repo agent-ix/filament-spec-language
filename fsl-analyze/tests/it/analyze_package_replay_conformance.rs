@@ -297,12 +297,13 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
     }
     assert_equal(&source, &package);
 
-    let admitted = conformance(
-        "package-no-instance-control",
+    let ws = Workspace::new("package-no-instance-control");
+    let request = litmus_request(
+        &ws,
         &order_protocol(true),
-        json!({}),
-        &[],
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
     );
+    let admitted = analyze(&request);
     assert_eq!(label(&admitted), "proved", "{}", admitted.document());
 }
 
