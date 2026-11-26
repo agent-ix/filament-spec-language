@@ -615,3 +615,119 @@ fn a_zone_temporal_over_binding_names_the_admitted_member_type() {
         "{item}"
     );
 }
+
+/// `first` runs at a time `t` in [0, 1] ms and resets `x`; `y` reads the
+/// time. Phase 1 ends by `y = 2 ms`, where `zero` needs `x >= 2 ms` (`t` is
+/// 0) and `one` has the guard `one_guard`.
+fn trapped(name: &str, one_guard: &str, items: Value) -> Run {
+    trapped_with(
+        name,
+        one_guard,
+        "always possible Done using v over (c: M::Call) { c.phase >= 2 }",
+        items,
+    )
+}
+
+fn trapped_with(name: &str, one_guard: &str, claim: &str, items: Value) -> Run {
+    let body = format!(
+        "{}\
+         pre First using v on M::Call::first {{ self.phase = 0 }}\n\
+         post FirstDone using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Zero using v on M::Call::zero {{ self.phase = 1 and self.y >= 2 ms and self.x >= 2 ms }}\n\
+         post ZeroDone using v on M::Call::zero {{ self.phase = 2 }}\n\
+         pre One using v on M::Call::one {{ self.phase = 1 and {one_guard} }}\n\
+         post OneDone using v on M::Call::one {{ self.phase = 3 }}\n\
+         time invariant Early when {{ self.phase = 0 }} {{ self.y <= 1 ms }}\n\
+         time invariant Late when {{ self.phase = 1 }} {{ self.y <= 2 ms }}\n\
+         {claim}\n",
+        crate::timed_world::DENSE,
+    );
+    let unit = crate::timed_world::unit_text(
+        crate::timed_world::PACKAGE,
+        crate::zone_search::TIMED,
+        &body,
+    );
+    let document = crate::timed_world::document(
+        &["x", "y"],
+        &[
+            ("first", &["phase", "x"]),
+            ("zero", &["phase"]),
+            ("one", &["phase"]),
+        ],
+    );
+    analyze(&request_over(
+        &Workspace::new(name),
+        &unit,
+        &document,
+        &[rpc_snapshot()],
+        json!({"items": items}),
+    ))
+}
+
+/// With `one` never enabled, every `first` after time 0 leaves a reachable
+/// state from which no run reaches phase 2, so the claim is false.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[test]
+fn zones_refute_always_possible_when_part_of_a_zone_is_trapped() {
+    let run = trapped(
+        "timed-sg-part-zone-trap",
+        "false",
+        json!([{"claim": "Done"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    assert_eq!(label(&item), "refuted", "{item}");
+}
+
+/// With `one` taken when `first` ran at 1 ms, only `first` strictly inside
+/// (0, 1) ms is trapped. No integer time reaches such a state, so the
+/// digitized graph must not prove the claim.
+#[trace("TC-2412", "FR-852-AC-6")]
+#[test]
+fn digital_clocks_do_not_prove_always_possible_over_a_fractional_trap() {
+    let run = trapped(
+        "timed-sg-fraction-trap",
+        "self.y >= 2 ms and self.x <= 1 ms",
+        json!([{"claim": "Done", "options": {"method": "digital-clocks"}}]),
+    );
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_ne!(label(&item), "proved", "{item}");
+}
+
+/// `unique path` counts the ways from every reachable node: a trapped state
+/// has none, so the claim is false although every other state has one.
+fn unique_trapped(name: &str, one_guard: &str, items: Value) -> Run {
+    trapped_with(
+        name,
+        one_guard,
+        "unique path Done using v over (c: M::Call) from (c.phase = 1) to (c.phase >= 2);",
+        items,
+    )
+}
+
+#[trace("TC-2412", "FR-852-AC-3")]
+#[test]
+fn zones_refute_unique_path_when_part_of_a_zone_has_no_path() {
+    let run = unique_trapped(
+        "timed-sg-part-zone-unique",
+        "false",
+        json!([{"claim": "Done"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    assert_eq!(label(&item), "refuted", "{item}");
+}
+
+#[trace("TC-2412", "FR-852-AC-6")]
+#[test]
+fn digital_clocks_do_not_prove_unique_path_over_a_fractional_trap() {
+    let run = unique_trapped(
+        "timed-sg-fraction-unique",
+        "self.y >= 2 ms and self.x <= 1 ms",
+        json!([{"claim": "Done", "options": {"method": "digital-clocks"}}]),
+    );
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_ne!(label(&item), "proved", "{item}");
+}
