@@ -435,7 +435,7 @@ fn read_document(
         Rational::new(integer("numerator")?, integer("denominator")?)
             .map_err(|_| malformed("invalid-value", pointer))
     }
-    #[implements("FR-120-AC-39")]
+    #[implements("FR-120-AC-39", "FR-120-AC-40")]
     fn source_transition(
         value: &Json,
         pointer: &str,
@@ -3260,7 +3260,7 @@ mod tests {
 
     /// FSpec FR-364-AC-15: task-transition spelling preserves a checked
     /// declared priority and omits priority when the task has none.
-    #[trace("FSpec-FR-364-AC-15")]
+    #[trace("FSpec-FR-364-AC-15", "TC-471", "FR-120-AC-40")]
     #[test]
     fn task_transition_wire_preserves_optional_priority() {
         let release = ModelTransition::new(
