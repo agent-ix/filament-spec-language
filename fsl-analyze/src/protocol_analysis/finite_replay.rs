@@ -11,7 +11,7 @@ use filament_exact::{Identifier, ScalarLimits};
 use fsl_eval::model_subject::{
     ModelInstance, ModelLetters, ModelSubject, ProtocolSubject, RoleBinding,
 };
-use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
+use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
     Capacities, MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
     ResolvedMemory, SubjectMemory, live_instance_bound, over_reference, send_record_json,
@@ -627,9 +627,7 @@ impl<'a> ReplaySubject<'a, '_> {
             initial: self.binding.initial.clone(),
             universes: self.binding.universes.clone(),
             observation: self.limits.observation,
-            expansion: ExpansionLimits {
-                max_candidates: u64::MAX,
-            },
+            expansion: self.limits.expansion,
             meter: self.limits.accounting,
             emit: self.limits.emit,
         }
@@ -912,9 +910,7 @@ impl Run<'_, '_> {
                 timed: None,
                 initial: self.binding.initial.clone(),
                 universes: self.binding.universes.clone(),
-                expansion: ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: self.limits.expansion,
                 stutter_closure: false,
             },
             protocol: self.protocol.name.clone(),
@@ -1227,9 +1223,7 @@ pub(crate) fn package_finite_replay_item<'a>(
                 initial: binding.initial.clone(),
                 universes: binding.universes.clone(),
                 observation: limits.observation,
-                expansion: ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: limits.expansion,
                 meter: limits.accounting,
                 emit: limits.emit,
             };

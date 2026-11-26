@@ -182,6 +182,7 @@ pub fn deadlock_model_item<'a>(
         request,
         stutter_closure: false,
         certificate,
+        engines: limits.engines,
         replay,
     })
 }
@@ -281,6 +282,7 @@ impl<'a> PackageDeadlockSubject<'a> {
             request,
             stutter_closure: false,
             certificate,
+            engines: self.limits.engines,
             replay: Box::new(move |payload: &TemporalCounterexample| self.replay(payload)),
         }
     }

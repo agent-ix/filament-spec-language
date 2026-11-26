@@ -1980,6 +1980,7 @@ fn run_clause_reading_with_source_map(
         package_name: &request.package_name,
         sources: &sources,
         progress_capacity: request.limits.progress.covered_positions,
+        emit: request.limits.package.emit(),
     };
     let admitted_package = if matches!(
         &request.selection,
@@ -2682,6 +2683,7 @@ fn run_compiled_clause_selection(
         package_name: &request.package_name,
         sources: &compiled.sources,
         progress_capacity: request.limits.progress.covered_positions,
+        emit: request.limits.package.emit(),
     };
     match &request.selection {
         ClauseRunSelection::Clause(selection) => {
@@ -2832,6 +2834,9 @@ pub(crate) struct CompiledRun<'a> {
     pub(crate) sources: &'a [Source],
     /// The covered-position capacity for temporal progress admission.
     pub(crate) progress_capacity: u64,
+    /// The ceiling on the bytes of each package emission the run makes
+    /// (`emit.output_bytes`).
+    pub(crate) emit: fsl_package::EmitLimits,
 }
 
 impl CompiledRun<'_> {

@@ -472,9 +472,7 @@ pub(crate) fn package_global_behavior_item<'a>(
                 initial: binding.initial.clone(),
                 universes: binding.universes.clone(),
                 observation: limits.observation,
-                expansion: fsl_eval::simulation::model::ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: limits.expansion,
                 meter: limits.accounting,
                 emit: limits.emit,
             };
@@ -922,9 +920,7 @@ fn package_subject<'a>(
                 initial: binding.initial.clone(),
                 universes: binding.universes.clone(),
                 observation: limits.observation,
-                expansion: fsl_eval::simulation::model::ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: limits.expansion,
                 meter: limits.accounting,
                 emit: limits.emit,
             },

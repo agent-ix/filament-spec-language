@@ -769,6 +769,7 @@ pub(crate) fn assert_deadlock_declined(name: &str, item: &Value) {
 #[test]
 fn a_compiled_handoff_publishes_its_source_provision() {
     use fsl_analyze::analyze::document::SubjectSelection;
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{
         analyze, AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, Engines, SourceProvision,
     };
@@ -831,7 +832,7 @@ fn a_compiled_handoff_publishes_its_source_provision() {
     let world = crate::litmus::Documents::new();
     let selection = SubjectSelection::default_over(&world.snapshots);
     let binding = selection.binding(handoff.packages(), &world.snapshots);
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let engines = Engines::fsl().expect("FSL engines are registered");
     let cancel = filament_exact::Cancel::new();
     let complete = AnalyzeRequest {

@@ -363,6 +363,7 @@ pub(super) fn protocol_clause_item<'a>(
                             max_messages: form.max_messages,
                             max_live_instances: None,
                         },
+                        engines: limits.engines,
                         replay: Box::new(replay),
                     },
                     form.reductions.constraint.as_deref(),
