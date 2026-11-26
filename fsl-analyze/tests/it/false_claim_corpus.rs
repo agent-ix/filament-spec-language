@@ -581,8 +581,7 @@ fn qsl_3414_analysis_does_not_prove_a_bound_above_the_reference_value() {
     model.body = "bound B on M::coins [1]\n\
                   post Activate using ev on M::Coin::toss { self.v = b }\n\
                   random Coin::toss(b) ~ { 0: 1, 1: 1 };\n\
-                  probabilistic FalseBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.75 [ eventually[0,1] holds(c.v = 1) ] }\n\
-                  probabilistic TrueBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.5 [ eventually[0,1] holds(c.v = 1) ] }\n"
+                  probabilistic FalseBound using ev on M over (c: M::Coin) under every scheduler on origin { probability >= 0.75 [ eventually[0,1] holds(c.v = 1) ] }\n"
         .to_owned();
     let world = crate::prob_world::World::try_new_with_evaluator(
         &model,
