@@ -23,6 +23,8 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
+mod mutation;
+
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const VALUE_BOUNDS: &str = "filament.probability-objective/value-bounds/v1";
 

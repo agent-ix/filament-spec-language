@@ -34,6 +34,8 @@ use crate::graph_world::{
 };
 use crate::state_graph::{no_samples, reachable, run, system, AB};
 
+mod mutation;
+
 /// Check `certificate` for `claim`'s instance bound to `over` over `world`
 /// with universe `keys`, under `limits`.
 fn check(

@@ -26,6 +26,8 @@ use serde_json::json;
 use crate::counter::CONTRACT;
 use crate::model_world::{self, Clause, World, INFINITE};
 
+mod mutation;
+
 /// The Counter world with `always holds(c.value <= 1)`: `inc` breaks it at
 /// value 2.
 pub(crate) fn world() -> World {

@@ -1068,6 +1068,7 @@ dependencies = [
  "filament-observation",
  "filament-semantic-value",
  "filament-specification-qualification",
+ "fsl-certificate-mutation",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -1360,6 +1361,7 @@ dependencies = [
  "filament-checked",
  "filament-exact",
  "filament-semantic-value",
+ "fsl-certificate-mutation",
  "fsl-analyze",
  "fsl-command",
  "fsl-eval",
@@ -1372,6 +1374,18 @@ dependencies = [
  "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "fsl-certificate-mutation"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ix-trace-rs",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
