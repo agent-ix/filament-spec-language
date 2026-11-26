@@ -3412,7 +3412,7 @@ fn a_policy_over_an_omitted_or_incomplete_population_refuses_at_initial() {
     let path = directory.path().join("spine-initial.json");
     let bytes = std::fs::read(&path).unwrap();
     let initial: Value = serde_json::from_slice(&bytes).unwrap();
-    let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
+    let population = format!("{}/config_history", spine::PACKAGE_IDENTITY);
 
     let mut omitted: Value = initial.clone();
     omitted["populations"]
@@ -3678,7 +3678,7 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
             .expect("population records")
             .iter_mut()
             .find(|row| {
-                row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)
+                row["population"] == format!("{}/config_history", spine::PACKAGE_IDENTITY)
             })
             .expect("config_history population");
         let objects = population["objects"].as_array_mut().expect("objects");
@@ -3711,7 +3711,7 @@ fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
             .as_array_mut()
             .expect("population records")
             .iter_mut()
-            .find(|row| row["population"] == format!("ix://{}/config_history", spine::PACKAGE_IDENTITY))
+            .find(|row| row["population"] == format!("{}/config_history", spine::PACKAGE_IDENTITY))
             .expect("config_history population");
         let mut current_second = second.clone();
         current_second["fields"]["versionNumber"] = json!({"integer":second_value.to_string()});
