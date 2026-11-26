@@ -12,7 +12,7 @@ relationships:
 
 Analyze results write document-held node ids.
 
-Scope: FR-621-AC-16, FR-621-AC-17, FR-621-AC-23.
+Scope: FR-621-AC-16, FR-621-AC-17, FR-621-AC-23, FR-621-AC-24.
 
 ## Test Procedure
 
@@ -20,7 +20,9 @@ Analyze the probability fixtures `Eventually` and `TooLikely` with exact evidenc
 
 On a 512 KiB thread, call `check_probability_certificate_package` with default limits and a 10,000-node operand chain (9,999 links, within the default 1 MiB checked-package byte limit), then a held certificate whose first value indexes node 9,999 and whose next value indexes node 10,000. Test: `fsl-replay/tests/it/probability_certificate.rs` `package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack`.
 
-Tag the tests `#[trace("TC-3154", "FR-621-AC-16")]`, `#[trace("TC-3154", "FR-621-AC-17")]` and `#[trace("TC-3154", "FR-621-AC-23")]`.
+On a 512 KiB thread, call `check_probability_certificate_source` with source that compiles under default limits to a 10,000-node operand chain (9,999 links, within the default 1 MiB checked-package byte limit), then a held certificate whose first value indexes node 9,999 and whose next value indexes node 10,000. Test: `fsl-replay/tests/it/probability_certificate.rs` `source_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack`.
+
+Tag the tests `#[trace("TC-3154", "FR-621-AC-16")]`, `#[trace("TC-3154", "FR-621-AC-17")]`, `#[trace("TC-3154", "FR-621-AC-23")]` and `#[trace("TC-3154", "FR-621-AC-24")]`.
 
 ## Expected Results
 
@@ -31,3 +33,4 @@ Tag the tests `#[trace("TC-3154", "FR-621-AC-16")]`, `#[trace("TC-3154", "FR-621
 - A premise item names its dependency in `package` and holds no nested node id object outside a certificate identity; an own-package item has no `package` member.
 - The over-limit run reports the typed `NotEmitted` graph cause or the strict reader refusal, never a result with an unheld node id.
 - The 10,000-node chain with the held id followed by the out-of-range index returns typed `Malformed` without overflowing the 512 KiB thread stack.
+- The source route compiles the 10,000-node chain and returns the same typed `Malformed` result without overflowing the 512 KiB thread stack.

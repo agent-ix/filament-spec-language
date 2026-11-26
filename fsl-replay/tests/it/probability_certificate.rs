@@ -268,7 +268,7 @@ fn claim_fixes_the_objective_and_a_false_claim_is_rejected() {
     assert_eq!(accepted.side(), ProbabilityBoundSide::AtLeast);
 }
 
-#[trace("TC-3154", "FR-621-AC-16")]
+#[trace("TC-3154", "FR-621-AC-23")]
 #[test]
 fn package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack() {
     const DEEPEST_DEFAULT_CHAIN_NODES: usize = 10_000;
@@ -429,7 +429,7 @@ fn source_package_node_count(unit: &str) -> usize {
 /// The source route recompiles a 10,000-node unary operand chain and resolves
 /// the same hand-computed held ids as the package route. Node 9,999 is valid;
 /// node 10,000 is outside the emitted graph and must be a typed refusal.
-#[trace("TC-3154", "FR-621-AC-23")]
+#[trace("TC-3154", "FR-621-AC-24")]
 #[test]
 fn source_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack() {
     use filament_exact::{Cancel, NodeKey, PathSegment};
