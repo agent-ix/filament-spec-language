@@ -1389,6 +1389,7 @@ impl<'a> ModelSystem<'a> {
         Ok(system)
     }
 
+    #[implements("FR-125-AC-9")]
     fn over_scoped(
         request: ModelSimulationRequest<'a>,
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
