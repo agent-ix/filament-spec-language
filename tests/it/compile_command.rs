@@ -1260,8 +1260,10 @@ fn a_library_source_over_the_default_dependent_byte_ceiling_can_be_raised() {
     std::fs::write(directory.path().join("geometry.native"), padded_library).unwrap();
 
     let path = directory.path().join("compile.json");
-    let mut spine_limits = fsl_replay::spine::SpineLimits::default();
-    spine_limits.source.source_bytes = source_bytes - 1;
+    let mut spine_limits = std::collections::BTreeMap::from([(
+        fsl_foundation::Setting::S1InputBytes,
+        source_bytes as u64 - 1,
+    )]);
     let s1_error = fsl_command::command::compile_outcome_with_limits_and_overrides(
         &path,
         fsl_command::command::RunLimits {
@@ -1286,7 +1288,7 @@ fn a_library_source_over_the_default_dependent_byte_ceiling_can_be_raised() {
         "{s1_failure}"
     );
 
-    spine_limits.source.source_bytes = source_bytes;
+    spine_limits.insert(fsl_foundation::Setting::S1InputBytes, source_bytes as u64);
     let overrides = fsl_command::command::RequestOverrides {
         limits: Some(&spine_limits),
         ..Default::default()
@@ -1331,8 +1333,14 @@ fn rational_literal_over_the_default_bit_ceiling_refuses_at_its_literal() {
     let directory = tempfile::tempdir().expect("scratch compile directory");
     spine_request(directory.path(), program.as_bytes());
 
-    let limits = fsl_replay::spine::SpineLimits::default();
-    assert_eq!(limits.checking.rational_bits(), 65_536);
+    assert_eq!(
+        fsl_replay::spine::SpineLimits::default()
+            .checking
+            .rational_bits(),
+        65_536
+    );
+    let limits =
+        std::collections::BTreeMap::from([(fsl_foundation::Setting::S3RationalBits, 65_536)]);
     let overrides = fsl_command::command::RequestOverrides {
         limits: Some(&limits),
         ..Default::default()

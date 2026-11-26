@@ -1451,3 +1451,46 @@ fn a_loop_that_starves_a_store_cut_by_the_buffer_bound_is_unfair() {
         "{cut:?}"
     );
 }
+
+/// FR-255 behaviour 14 over a protocol subject's liveness product: one byte
+/// does not hold its first state.
+#[trace("FR-255-AC-42")]
+#[test]
+fn a_protocol_liveness_run_stops_at_a_one_byte_retention_allowance() {
+    use fsl_analyze::analyze::{
+        analyze_items, protocol_item, split_records, Engines, ProtocolItem,
+    };
+    use fsl_foundation::{RequestIndex, Setting};
+
+    let unit = Unit::new(&sb_run("", "", ""), AT_MOST_ONE, &AT_MOST);
+    let tso = unit.tso();
+    let mut item = ProtocolItem {
+        request: ProtocolCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &[],
+            subject: unit.subject(&tso),
+            item: unit.item(),
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: ModelCheckLimits::default(),
+            ignore_memory_constraints: false,
+        },
+        certificate: unit.certificate_request(&tso, unit.item()),
+        engines: Default::default(),
+        replay: Box::new(|_| panic!("a stopped run has no counterexample")),
+    };
+    assert!(item.engines.set(Setting::AnalysisRetainedBytes, 1));
+    let records = analyze_items(
+        &Engines::fsl().expect("the engines register"),
+        vec![protocol_item(RequestIndex::new(0), item).expect("a clause run")],
+        &Cancel::new(),
+    );
+    let (records, _) = split_records(records, &unit.checked);
+    let printed = format!("{records:?}");
+    assert!(
+        printed.contains("AnalysisRetainedBytes") && printed.contains("value: 1"),
+        "{printed}"
+    );
+}
