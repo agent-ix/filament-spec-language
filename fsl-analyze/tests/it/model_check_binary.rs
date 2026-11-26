@@ -88,6 +88,7 @@ mod config_lasso_fairness;
 mod counterexample_instance;
 mod deadlock_item;
 mod digital_clocks;
+mod family_constants;
 mod fill;
 mod fixture_ids;
 mod free_delays;

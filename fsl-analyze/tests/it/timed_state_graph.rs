@@ -876,6 +876,21 @@ fn check_listing(
     ef_nodes: &[usize],
     max_certificate_edges: u64,
 ) -> fsl_replay::ZoneCertificateVerdict {
+    decide_listing(one_guard, claim, ef_nodes, max_certificate_edges, |_| {}).0
+}
+
+/// [`check_listing`] after `forge` has changed the certificate, with the
+/// checker's decision on the claim's form beside its verdict.
+fn decide_listing(
+    one_guard: &str,
+    claim: &str,
+    ef_nodes: &[usize],
+    max_certificate_edges: u64,
+    forge: impl FnOnce(&mut fsl_replay::ZoneCertificate<fsl_route::deadlock::ItemObligation<()>>),
+) -> (
+    fsl_replay::ZoneCertificateVerdict,
+    Option<fsl_replay::StateGraphCertificateDecision>,
+) {
     use filament_exact::{Cancel, Integer};
     use fsl_analyze::zone_check::{explore_timed_state_graph, Bound, ZoneCheckLimits};
     use fsl_eval::simulation::model::TimedSystem;
@@ -951,7 +966,7 @@ fn check_listing(
     let over = system
         .bound_reference(claim.over().expect("over").object.clone(), &instance)
         .expect("bound c");
-    let certificate = fsl_replay::ZoneCertificate {
+    let mut certificate = fsl_replay::ZoneCertificate {
         obligation: ItemObligation {
             subject: (),
             kind: ObligationKind::StateGraphAuthored(
@@ -982,7 +997,8 @@ fn check_listing(
         refinement: None,
         task_product: None,
     };
-    fsl_replay::check_zone_certificate(
+    forge(&mut certificate);
+    fsl_replay::check_state_graph_certificate(
         fsl_replay::ZoneCertificateRequest {
             simulation: world.request(),
             model: "M",
@@ -1041,6 +1057,26 @@ fn the_checker_rejects_a_node_level_closure() {
         ),
         fsl_replay::ZoneCertificateVerdict::Accepted
     );
+}
+
+/// The coverage checks reject under the rule a violated form also reports, so
+/// only the checker's decision says that the claim is false. With `one` never
+/// run, phase 1 never reaches `done`: the honest listing is a violation. The
+/// same listing with its edges removed covers no successor and decides
+/// nothing.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FSpec-FR-712-AC-2")]
+#[test]
+fn a_coverage_rejection_is_no_state_graph_decision() {
+    use fsl_replay::{CertificateRule, StateGraphCertificateDecision};
+    let (verdict, decision) = decide_listing("false", ALWAYS_DONE, &[2], u64::MAX, |_| {});
+    assert_eq!(rule(verdict), CertificateRule::SuccessorMissing);
+    assert_eq!(decision, Some(StateGraphCertificateDecision::Violated));
+    let (verdict, decision) = decide_listing("false", ALWAYS_DONE, &[2], u64::MAX, |forged| {
+        forged.edges.clear();
+    });
+    assert_eq!(rule(verdict), CertificateRule::SuccessorMissing);
+    assert_eq!(decision, None);
 }
 
 /// The checker's own `unique path` and `possible`, and its budget.

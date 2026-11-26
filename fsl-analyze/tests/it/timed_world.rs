@@ -889,3 +889,41 @@ impl Refining {
         }
     }
 }
+
+/// A dense world whose `c` holds one `Timer` in each of `collections`, each
+/// a sequence with no declared maximum, so every guard quantifier over one
+/// is a quantifier family (FR-230 "Family parts"), and the clock fields
+/// `clocks` of its own.
+pub(crate) fn family_world(
+    collections: &[&str],
+    clocks: &[&str],
+    operations: &[(&str, &[&str])],
+    profiles: &str,
+    body: &str,
+) -> World {
+    let mut document: Json = serde_json::from_slice(&timers_document(1, operations)).expect("JSON");
+    let fields = document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields");
+    fields.retain(|field| field["name"] != "ts");
+    let mut holding = serde_json::Map::new();
+    for name in collections {
+        let mut field = wire_field(name, &ident("Timer"));
+        field["multiplicity"] = json!({"lower": 0, "ordered": true, "unique": false});
+        fields.push(field);
+        let timer = json!({"record": {
+            "type": ident("Timer"), "fields": {"n": {"integer": "0"}}}});
+        holding.insert((*name).to_owned(), json!({"sequence": [timer]}));
+    }
+    fields.extend(
+        clocks
+            .iter()
+            .map(|name| wire_field(name, "ix://filament/native/Clock")),
+    );
+    world_holding(
+        document.to_string().as_bytes(),
+        profiles,
+        &format!("{DENSE}{body}"),
+        &Json::Object(holding),
+    )
+}

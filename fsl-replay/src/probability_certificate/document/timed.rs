@@ -2,6 +2,7 @@
 //! FR-921's independent timed-product certificate admission.
 
 use super::*;
+use crate::timed::clock_constraints;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive};
@@ -4642,33 +4643,6 @@ fn region_route(
                 _ => false,
             })
         )
-}
-
-fn clock_constraints<'a>(
-    timed: &'a fsl_eval::simulation::model::TimedSystem<'_, '_>,
-) -> Vec<&'a fsl_semantics::check::ClockConstraint> {
-    fn part_constraints<'a>(
-        part: &'a fsl_semantics::check::ConvexPart,
-        found: &mut Vec<&'a fsl_semantics::check::ClockConstraint>,
-    ) {
-        found.extend(part.clocks());
-        for family in part.families() {
-            for inner in family.parts() {
-                part_constraints(inner, found);
-            }
-        }
-    }
-
-    let mut found = Vec::new();
-    for guard in timed.model().guards() {
-        for part in guard.parts() {
-            part_constraints(part, &mut found);
-        }
-    }
-    for invariant in timed.model().invariants() {
-        found.extend(invariant.bounds());
-    }
-    found
 }
 
 /// Recompute the canonical lattice and region refinement from the checked

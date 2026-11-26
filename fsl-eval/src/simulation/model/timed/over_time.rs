@@ -12,7 +12,8 @@
 
 use filament_exact::{Integer, NonZeroInteger, Rational};
 
-use fsl_semantics::check::{ClockOp, DelayDistribution};
+use fsl_semantics::check::{ClockConstraint, ClockOp, ConvexPart, DelayDistribution};
+use ix_trace_rs::implements;
 
 use super::{zero, GuardedStep, PlaceConstraint, TimedState, TimedStop, TimedSystem};
 use crate::simulation::model::TerminalClass;
@@ -410,38 +411,53 @@ impl TimedSystem<'_, '_> {
         Ok(covers(&intervals, delay))
     }
 
+    /// Every atomic clock constraint of the model: each guard part's, those
+    /// of each quantifier family below it (FR-230 "Family parts"), and each
+    /// time invariant's bounds. Empty for a model with no clocks.
+    pub(in crate::simulation::model) fn compared_constraints(&self) -> Vec<&ClockConstraint> {
+        let Some(model) = self.timed_model() else {
+            return Vec::new();
+        };
+        let mut parts: Vec<&ConvexPart> = model
+            .guards()
+            .iter()
+            .flat_map(|guard| guard.parts())
+            .collect();
+        let mut found = Vec::new();
+        let mut next = 0;
+        while let Some(part) = parts.get(next).copied() {
+            next += 1;
+            found.extend(part.clocks());
+            parts.extend(part.families().iter().flat_map(|family| family.parts()));
+        }
+        found.extend(
+            model
+                .invariants()
+                .iter()
+                .flat_map(|invariant| invariant.bounds()),
+        );
+        found
+    }
+
     /// The largest constant any guard, time invariant or reset of the model
     /// compares a clock with (FR-236 "Timed lasso").
+    #[implements("FR-236-AC-3")]
     pub fn max_constant(&self) -> Rational {
         let Some(model) = self.timed_model() else {
             return zero();
         };
-        let guards = model
-            .guards()
-            .iter()
-            .flat_map(|guard| guard.parts())
-            .flat_map(|part| part.clocks())
-            .map(|constraint| constraint.bound().clone());
-        let invariants = model
-            .invariants()
-            .iter()
-            .flat_map(|invariant| invariant.bounds())
+        let compared = self
+            .compared_constraints()
+            .into_iter()
             .map(|constraint| constraint.bound().clone());
         let resets = model
             .resets()
             .iter()
             .flat_map(|resets| resets.resets())
             .map(|reset| reset.value().clone());
-        guards.chain(invariants).chain(resets).fold(
-            zero(),
-            |max, value| {
-                if value > max {
-                    value
-                } else {
-                    max
-                }
-            },
-        )
+        compared
+            .chain(resets)
+            .fold(zero(), |max, value| if value > max { value } else { max })
     }
 
     /// FR-232 "Fairness over time": whether the loop of `behaviour` from

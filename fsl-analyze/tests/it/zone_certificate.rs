@@ -23,7 +23,7 @@ use ix_trace_rs::trace;
 use crate::certificate_rejection_support::{state_locus, written_cause};
 use crate::component_certificate::assert_written_rejection;
 use crate::provider_schema_support::{assert_valid, provider_definition};
-use crate::timed_world::{document, world, World, DENSE};
+use crate::timed_world::{document, family_world, world, World, DENSE};
 use crate::zone_replay::{fault, lock_resetting};
 use crate::zone_search::{
     check, claim, deadlock, lock, proved, quiet, rpc, Certificate, Outcome, INFINITE, SUBJECT,
@@ -1189,38 +1189,18 @@ fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
 /// phase `from` and `x >= 5 ms`. `ts` declares no maximum, so every read of
 /// `x` is in a quantifier family.
 fn family_gate(from: u8) -> World {
-    let mut document: serde_json::Value = serde_json::from_slice(&crate::timed_world::timers_document(
-        1,
+    family_world(
+        &["ts"],
+        &["y"],
         &[
             ("alpha", &["phase", "y"]),
             ("go", &["phase", "y"]),
             ("tick", &["phase"]),
             ("work", &["phase"]),
         ],
-    ))
-    .expect("JSON");
-    let fields = document["types"][1]["fields"]
-        .as_array_mut()
-        .expect("Call fields");
-    fields
-        .iter_mut()
-        .find(|field| field["name"] == "ts")
-        .expect("ts")["multiplicity"]
-        .as_object_mut()
-        .expect("a multiplicity")
-        .remove("upper");
-    fields.push(crate::timed_world::wire_field(
-        "y",
-        "ix://filament/native/Clock",
-    ));
-    let timer = serde_json::json!({"record": {
-        "type": crate::timed_world::ident("Timer"), "fields": {"n": {"integer": "0"}}}});
-    crate::timed_world::world_holding(
-        document.to_string().as_bytes(),
         INFINITE,
         &format!(
-            "{DENSE}\
-             pre Early using v on M::Call::alpha {{ self.phase = 0 and forall(e in self.ts: e.x <= 0 ms) }}\n\
+            "pre Early using v on M::Call::alpha {{ self.phase = 0 and forall(e in self.ts: e.x <= 0 ms) }}\n\
              post Earlied using v on M::Call::alpha {{ self.phase = 1 and self.y = 0 ms }}\n\
              pre Late using v on M::Call::go {{ self.phase = 0 and forall(e in self.ts: e.x >= 5 ms) }}\n\
              post Lated using v on M::Call::go {{ self.phase = 1 and self.y = 0 ms }}\n\
@@ -1232,29 +1212,125 @@ fn family_gate(from: u8) -> World {
              temporal NoTwo using inf over (c: M::Call) clock \"model-steps\" on origin \
              {{ always holds(not (c.phase = 2)) }}\n"
         ),
-        &serde_json::json!({"ts": {"sequence": [timer]}}),
     )
 }
 
+/// FR-245 over FR-230 "Family parts" (ADR-026 EZ-4): the checker's LU
+/// bounds include the constants inside a quantifier family. `x` of each
+/// element of `ts` is compared with 5 from below (`go`, `work`) and with 0
+/// from above (`alpha`); with one live element at most, `x` takes the first
+/// two places and `y` the third.
+///
+/// The property is false over `family_gate(1)`: `go` enters phase 1 with
+/// `x >= 5`, where `work` is enabled. The proof of the sibling, whose `work`
+/// needs phase 2, is forged for it: `go` is pointed at `alpha`'s phase-1
+/// node (`x <= 1`, where `work` is disabled), which covers `go`'s successor
+/// only if `x` has no bounds, and the nodes left unreached are dropped.
+#[trace("TC-700", "FR-245-AC-2")]
+#[trace("TC-1197", "FR-245-AC-7")]
 #[test]
-fn probe_family_lu() {
+fn bounds_below_a_quantifier_family_constant_are_rejected() {
     let real = family_gate(1);
+    assert_eq!(summary(&family_claim(&real)), "Violated");
     let sibling = family_gate(2);
-    println!(
-        "real: {}",
-        summary(&claim(&real, ZoneCheckLimits::default(), &Cancel::new()))
+    let honest = proved(family_claim(&sibling));
+    let bound = |value: i64| Some(filament_exact::Integer::from(value));
+    assert_eq!(honest.scale, filament_exact::Integer::from(1_i64));
+    assert_eq!(honest.lu_bounds.lower, [bound(5), bound(5), bound(0)]);
+    assert_eq!(honest.lu_bounds.upper, [bound(0), bound(0), bound(1)]);
+    assert_eq!(
+        family_verdict(&sibling, &honest),
+        ZoneCertificateVerdict::Accepted
     );
-    let certificate = retarget(
-        proved(claim(&sibling, ZoneCheckLimits::default(), &Cancel::new())),
-        &real,
+    let bounds = rejected(
+        CertificateRule::Malformed,
+        CertificateLocus::CertificateMember(CertificateMember::Bounds),
     );
-    println!("lu {:?} scale {:?}", certificate.lu_bounds, certificate.scale);
-    for (i, n) in certificate.nodes.iter().enumerate() {
-        println!("node {i} {:?}", n);
+
+    // Node 0 is the initial node, 1 follows `alpha`, 2 follows `go`, and 3
+    // and 4 follow `tick` from each.
+    let step = |certificate: &Certificate, from: usize, to: usize| {
+        certificate
+            .edges
+            .iter()
+            .position(|edge| edge.from == from && edge.to == to)
+            .expect("the edge")
+    };
+    assert_eq!(honest.nodes.len(), 5);
+    let mut forged = retarget(honest, &real);
+    let go = step(&forged, 0, 2);
+    forged.edges[go].to = 1;
+    step(&forged, 2, 4);
+    let mut forged = without_node(&without_node(&forged, 4), 2);
+    for place in [0, 1] {
+        forged.lu_bounds.lower[place] = None;
+        forged.lu_bounds.upper[place] = None;
     }
-    for (i, e) in certificate.edges.iter().enumerate() {
-        println!("edge {i} {} -> {} {:?}", e.from, e.to, e.transition.as_ref().map(|t| t.operation().to_owned()));
+    assert_eq!(family_verdict(&real, &forged), bounds);
+    // One family bound alone, one below its constant.
+    for (lower, value) in [(true, 4), (false, -1)] {
+        let mut lowered = proved(family_claim(&sibling));
+        let side = if lower {
+            &mut lowered.lu_bounds.lower
+        } else {
+            &mut lowered.lu_bounds.upper
+        };
+        side[1] = bound(value);
+        assert_eq!(family_verdict(&sibling, &lowered), bounds, "{lower}");
     }
-    println!("initials {:?} admitted {:?}", certificate.initials, certificate.admitted);
-    println!("over real: {:?}", verdict(&real, &certificate));
+}
+
+/// A quantifier family's live places: one clock field and two live clocks,
+/// the receiver's `y` and one element's `x`.
+const FAMILY_CLOCKS: std::num::NonZeroU64 = std::num::NonZeroU64::MIN.saturating_add(1);
+
+/// [`claim`] over a timed subject of at most [`FAMILY_CLOCKS`] live clocks.
+fn family_claim(world: &World) -> Outcome {
+    let system = world.system();
+    let timed = TimedSystem::with_max_clocks(&system, "M", FAMILY_CLOCKS).expect("a timed subject");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("letters");
+    fsl_analyze::zone_check::check_timed_model(
+        fsl_analyze::zone_check::ZoneCheckRequest {
+            subject: &timed,
+            item: fsl_analyze::zone_check::ZoneCheckItem::Clause {
+                clause: node.clause(),
+                letters: &letters,
+            },
+            obligation: ItemObligation {
+                subject: SUBJECT,
+                kind: ObligationKind::Authored(fsl_replay::node_occurrence(node)),
+                reductions: fsl_route::reductions::ObligationReductions::default(),
+            },
+            limits: ZoneCheckLimits::default(),
+            reductions: &fsl_route::reductions::Reductions::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("EN-6 takes the claim")
+}
+
+/// The core's verdict on `certificate` for `world`'s clause under
+/// [`FAMILY_CLOCKS`].
+fn family_verdict(world: &World, certificate: &Certificate) -> ZoneCertificateVerdict {
+    let system = world.system();
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("letters");
+    fsl_replay::check_zone_certificate(
+        fsl_replay::ZoneCertificateRequest {
+            simulation: world.request(),
+            model: "M",
+            max_clocks: FAMILY_CLOCKS,
+            item: fsl_replay::CertifiedItem::Clause {
+                clause: node.clause(),
+                letters: &letters,
+            },
+        },
+        &certificate.obligation,
+        certificate_item,
+        certificate,
+        CertificateCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the check runs")
 }

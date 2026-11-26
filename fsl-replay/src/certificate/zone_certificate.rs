@@ -131,6 +131,7 @@ use crate::refinement::{
     check_initial, check_step, open_systems, CandidateStep, ConcreteStep, RefinementPosition,
     StepVerdict, SubjectRefusal, Taken,
 };
+use crate::timed::clock_constraints;
 
 type CandidateRow = (
     usize,
@@ -1000,14 +1001,19 @@ pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
 /// A state-graph decision reached after all structural, initial and
 /// successor-coverage checks have completed successfully.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StateGraphCertificateDecision {
+pub enum StateGraphCertificateDecision {
+    /// The claim's form holds of the timed states.
     Holds,
+    /// The claim's form is false of the timed states.
     Violated,
 }
 
-/// Preserve the state-graph decision separately from rejection codes shared
-/// by graph-coverage checks. An invalid or unfinished certificate has no decision.
-pub(crate) fn check_state_graph_certificate<O: Clone + Eq>(
+/// [`check_zone_certificate`] for a state-graph item, returning the form's
+/// decision beside the verdict. A rejection's rule does not give the decision,
+/// since the graph-coverage checks share those rules: an invalid or unfinished
+/// certificate has no decision.
+#[implements("FSpec-FR-712-AC-1", "FSpec-FR-712-AC-2", "FSpec-FR-712-AC-3")]
+pub fn check_state_graph_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
     item_of: impl Fn(&O) -> CertificateItem<'_>,
@@ -1669,25 +1675,18 @@ impl<O> Checker<'_, '_, O> {
         if self.time_lock {
             self.divergence_part()?;
         }
-        if self.state_graph.is_some() {
-            let result = self.state_graph();
-            match &result {
-                Ok(()) => *decision = Some(StateGraphCertificateDecision::Holds),
-                Err(Halt::Verdict(ZoneCertificateVerdict::Rejected(rejection)))
-                    if matches!(
-                        rejection.rule,
-                        CertificateRule::InitialMissing
-                            | CertificateRule::SuccessorMissing
-                            | CertificateRule::CountBroken
-                    ) =>
-                {
-                    *decision = Some(StateGraphCertificateDecision::Violated);
-                }
-                _ => {}
+        if self.state_graph.is_none() {
+            return self.admitted();
+        }
+        match self.state_graph()? {
+            None => {
+                *decision = Some(StateGraphCertificateDecision::Holds);
+                Ok(())
             }
-            result
-        } else {
-            self.admitted()
+            Some(violation) => {
+                *decision = Some(StateGraphCertificateDecision::Violated);
+                Err(Halt::Verdict(ZoneCertificateVerdict::Rejected(violation)))
+            }
         }
     }
 
@@ -4529,25 +4528,12 @@ fn computed_bounds(
             upper[clock].push(bound.clone());
         }
     };
-    for guard in model.guards() {
-        for part in guard.parts() {
-            for constraint in part.clocks() {
-                record(
-                    constraint.clock().index(),
-                    constraint.op(),
-                    constraint.bound(),
-                );
-            }
-        }
-    }
-    for invariant in model.invariants() {
-        for constraint in invariant.bounds() {
-            record(
-                constraint.clock().index(),
-                constraint.op(),
-                constraint.bound(),
-            );
-        }
+    for constraint in clock_constraints(timed) {
+        record(
+            constraint.clock().index(),
+            constraint.op(),
+            constraint.bound(),
+        );
     }
     for resets in model.resets() {
         for reset in resets.resets() {

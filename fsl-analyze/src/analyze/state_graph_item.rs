@@ -23,12 +23,12 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
+    CertificateCheckLimits, CertificateChecker, CertifiedItem, GraphEvidence,
     GraphEvidenceEnvelope, GraphReplayResult, GraphReplaySettlement, ModelTraceSubject,
     ProfileSelection, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
-    RequestTargetWire, StateGraphCertificateForm, StateGraphInstanceOutcome, StateGraphOutcome,
-    StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    RequestTargetWire, StateGraphCertificateDecision, StateGraphCertificateForm,
+    StateGraphInstanceOutcome, StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord,
+    TerminalValue, TrapClosure, WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
@@ -1114,7 +1114,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             Ok(certificate) => certificate,
             Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
-        let check = fsl_replay::check_zone_certificate(
+        let check = fsl_replay::check_state_graph_certificate(
             ZoneCertificateRequest {
                 simulation: simulation.clone(),
                 model: &model,
@@ -1130,21 +1130,20 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             CertificateCheckLimits::default(),
             cancel,
         );
-        if let Ok(ZoneCertificateVerdict::Stopped(cause)) = &check {
+        if let Ok((ZoneCertificateVerdict::Stopped(cause), _)) = &check {
             return EngineReport::Refused(Refusal::Incomplete(cause.clone()));
         }
-        let accepted = matches!(check, Ok(ZoneCertificateVerdict::Accepted));
-        let refuted = matches!(
+        // The checker's own decision, never the rule a rejection names: the
+        // coverage checks reject a broken certificate under the same rules.
+        let checked = matches!(
             check,
-            Ok(ZoneCertificateVerdict::Rejected(ref refusal))
-                if matches!(
-                    refusal.rule,
-                    CertificateRule::InitialMissing
-                        | CertificateRule::SuccessorMissing
-                        | CertificateRule::CountBroken
-                )
+            Ok((ZoneCertificateVerdict::Accepted, Some(StateGraphCertificateDecision::Holds)))
+                if held
+        ) || matches!(
+            check,
+            Ok((_, Some(StateGraphCertificateDecision::Violated))) if !held
         );
-        if (held && !accepted) || (!held && !refuted) {
+        if !checked {
             return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
         }
         let evidence = timed_evidence(read.claim, decision, instance.clone());
@@ -1219,13 +1218,14 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             end: None,
             undefined: None,
         };
-        let certificate_document = (accepted || refuted).then(|| {
-            serde_json::json!({
-                "state_graph": {
-                    "form": form.as_str(),
-                    "ef_nodes": certificate.state_graph.as_ref().map_or_else(Vec::new, |part| part.ef_nodes.clone())
-                }
-            })
+        let certificate_document = serde_json::json!({
+            "state_graph": {
+                "form": form.as_str(),
+                "ef_nodes": certificate
+                    .state_graph
+                    .as_ref()
+                    .map_or_else(Vec::new, |part| part.ef_nodes.clone())
+            }
         });
         let report = GraphReport {
             record,
@@ -1236,8 +1236,8 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             },
             counterexample: (!held).then(|| wire.clone()).flatten(),
             evidence: held.then(|| wire.clone()).flatten(),
-            certificate_document,
-            checker: (accepted || refuted).then_some(CertificateChecker::Zone),
+            certificate_document: Some(certificate_document),
+            checker: Some(CertificateChecker::Zone),
         };
         if selected.is_none() || !held {
             selected = Some(report);
