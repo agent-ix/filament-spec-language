@@ -46,7 +46,8 @@ pub use protocol_system::{
     AbstractProtocolSystem, ProtocolAssumptionFairness, ProtocolCandidate, RequiredTemporalFairness,
 };
 pub use step::{
-    check_initial, check_protocol_initial, check_protocol_state_relations, check_protocol_step,
+    check_initial, check_protocol_initial, check_protocol_initial_with_transition_limit,
+    check_protocol_state_relations, check_protocol_step, check_protocol_step_with_transition_limit,
     check_step, check_step_for_model, protocol_observation_label, ConcreteStep,
     ProtocolRelationError, ProtocolStateRelation, RefinementPosition,
 };

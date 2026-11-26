@@ -3262,3 +3262,116 @@ fn a_failed_compensation_attempt_takes_no_abstract_operation_class() {
         .collect();
     assert_eq!(takes, [true, false], "add, then inc");
 }
+
+/// FR-148-AC-8 (TC-553): repeated failed compensation attempts do not make
+/// the abstract `inc` operation fair when the concrete loop never takes it.
+#[trace("TC-553", "FR-148-AC-8")]
+#[test]
+fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
+    let world = failing_compensation();
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_transitions = 1;
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits,
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+
+    assert!(
+        matches!(
+            outcome.safety,
+            SafetyOutcome::Stopped {
+                cause: fsl_replay::IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+                    value: 1
+                }),
+                ..
+            }
+        ),
+        "the tight closure budget stops as incomplete: {:?}",
+        outcome.safety
+    );
+}
+
+/// FR-148-AC-8 (TC-553): initial protocol closure work shares one product
+/// transition budget across distinct concrete initial states.
+#[trace("TC-553", "FR-148-AC-8")]
+#[test]
+fn protocol_initial_closures_share_the_product_transition_budget() {
+    let mut world = failing_compensation();
+    let first = world.concrete_initial();
+    let second = world.concrete_initial_busy_a();
+    let mut concrete = world.concrete_request(UNLIMITED);
+    concrete.initial = vec![first, second];
+    let systems = open_protocol_systems(
+        world.refinement(),
+        &concrete,
+        world.package(),
+        vec![world.abstract_initial()],
+        protocol_binding().over,
+        &[],
+    )
+    .expect("the abstract protocol subject is admitted");
+    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+    let initial = &systems.concrete.initial_states()[0];
+    let closure_work = check_protocol_initial(
+        world.refinement(),
+        &systems.concrete,
+        &systems.abstract_system,
+        protocol,
+        0,
+        initial.state(),
+    )
+    .expect("the first initial closure is checked")
+    .abstract_successors;
+    assert!(closure_work > 0, "the initial protocol closure has work");
+    drop(systems);
+
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_transitions =
+        usize::try_from(closure_work).expect("the fixture closure work fits in usize");
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: concrete,
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: Some(0),
+            limits,
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+
+    assert!(
+        matches!(
+            outcome.safety,
+            SafetyOutcome::Stopped {
+                cause: fsl_replay::IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+                    value
+                }),
+                ..
+            } if value == closure_work
+        ),
+        "the second initial closure exceeds the shared budget: {:?}",
+        outcome.safety
+    );
+}
