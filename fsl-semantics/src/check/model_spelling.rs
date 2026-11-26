@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, ValueType};
 use fsl_foundation::source::provenance::RawSourceRef;
+use ix_trace_rs::implements;
 
 use super::lowering::AdmittedModel;
 use crate::model::domain_package::DomainPackageRef;
@@ -368,6 +369,23 @@ impl ModelSpellings {
         }
     }
 
+    /// The type's declared model spelling, independent of a source import
+    /// alias. Source-model types keep their one-segment name.
+    #[implements("FR-363-AC-9")]
+    pub(crate) fn object_type_name(
+        &self,
+        unit: Option<&RawSourceRef>,
+        object: &EffectiveId,
+    ) -> Option<String> {
+        self.declared_aliases(unit).iter().find_map(|alias| {
+            let package = self.package(unit, alias)?;
+            package.names.iter().find_map(|(member, name)| {
+                (name.object.as_ref() == Some(object))
+                    .then(|| super::source_model::qualified(alias, member))
+            })
+        })
+    }
+
     /// Whether `name`, written in `unit`, names a package-owned type through
     /// the unit's model alias.
     pub(crate) fn declares(&self, unit: Option<&RawSourceRef>, name: &str) -> bool {
@@ -378,6 +396,7 @@ impl ModelSpellings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
 
     fn source(identity: &str) -> RawSourceRef {
         RawSourceRef::new("repo".to_owned(), identity.to_owned()).expect("a source reference")
@@ -394,6 +413,36 @@ mod tests {
             types: vec![value_type],
             ..ModelName::default()
         }
+    }
+
+    /// FR-363-AC-9: a one-segment source-model type remains bare.
+    #[test]
+    #[trace("FR-363-AC-9")]
+    fn a_source_model_object_type_name_keeps_its_single_segment_spelling() {
+        let object = EffectiveId::new(
+            None,
+            filament_exact::OriginalDeclarationKey::new("source", "Account"),
+        );
+        let mut spellings = ModelSpellings::new(source("a"));
+        let package = spellings.add_package(selection("source"));
+        spellings.bind_model(&source("a"), super::super::source_model::ALIAS, Some(package));
+        spellings.set_names(
+            package,
+            package_names(
+                super::super::source_model::ALIAS,
+                [("Account", ModelName {
+                    object: Some(object.clone()),
+                    ..ModelName::default()
+                })],
+            ),
+        );
+
+        assert_eq!(
+            spellings
+                .object_type_name(Some(&source("a")), &object)
+                .as_deref(),
+            Some("Account")
+        );
     }
 
     /// Unit `a` selects package 0 as `M` and `N`, unit `b` binds `N` to
