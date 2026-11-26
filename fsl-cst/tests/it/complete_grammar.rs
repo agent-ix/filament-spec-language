@@ -578,7 +578,13 @@ fn corpus() -> Vec<(&'static str, String)> {
     ]
 }
 
-#[trace("FSpec-TC-180", "FSpec-FR-339-AC-2", "FR-003-AC-14", "FR-600-AC-1", "FR-569-AC-1")]
+#[trace(
+    "FSpec-TC-180",
+    "FSpec-FR-339-AC-2",
+    "FR-003-AC-14",
+    "FR-600-AC-1",
+    "FR-569-AC-1"
+)]
 #[test]
 fn every_named_production_has_positive_vectors_and_exact_boundaries() {
     assert_eq!(Production::all(), ACCEPTED_PRODUCTIONS);
@@ -636,7 +642,13 @@ fn every_named_production_has_positive_vectors_and_exact_boundaries() {
     assert!(missing.is_empty(), "uncovered productions: {missing:?}");
 }
 
-#[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2", "FR-091-AC-49", "FR-569-AC-1")]
+#[trace(
+    "FSpec-TC-180",
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FR-091-AC-49",
+    "FR-569-AC-1"
+)]
 #[test]
 fn grammar_combinators_enforce_authored_boundaries_at_the_failing_token() {
     struct Vector {

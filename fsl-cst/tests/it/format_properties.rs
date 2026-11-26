@@ -360,7 +360,12 @@ const FAMILIES: &[Production] = &[
 /// Provenance: QSL-2058. Every production the parser can build is reached by a
 /// generated unit, the named families included, and the four laws hold on every
 /// one of those units (an exhaustive sweep, so coverage is not left to sampling).
-#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2", "FR-003-AC-14", "FR-091-AC-48")]
+#[trace(
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FR-003-AC-14",
+    "FR-091-AC-48"
+)]
 #[test]
 fn generated_units_reach_every_production_family() {
     let derivations = covering_derivations();
