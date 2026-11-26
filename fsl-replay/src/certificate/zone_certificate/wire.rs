@@ -20,8 +20,6 @@
 //!
 //! Reference-bearing certificates supply the original package-bound codec.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
 use filament_exact::Integer;
 use fsl_eval::simulation::model::{PlaceConstraint, TimedSystem};
 use fsl_eval::simulation::StateKey;
@@ -30,11 +28,12 @@ use serde_json::{json, Map, Value};
 
 use super::{CertEdge, CertNode, DivergenceWitness, DivergentTarget, ZoneCertificate};
 use crate::certificate::task_product::{
-    array, child, count, integer, member, object, rational, rational_wire, refuse,
+    array, child, count, integer, member, object, rational, rational_wire, refuse, shared_defect,
     source_transition, source_transition_wire, TaskProductCertificate, TaskProductShapeReason,
     TaskProductShapeRefusal, TaskTransitionTemplate,
 };
 use crate::certificate::zone::{LuBounds, Zone};
+use crate::shared_wire::StateLocus;
 
 /// Why a certificate has no wire, or a wire no certificate.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -159,20 +158,10 @@ fn read_zone(value: &Value, pointer: &str) -> Result<Zone, TaskProductShapeRefus
     Zone::from_matrix(dim, cells).or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))
 }
 
-fn state_wire(key: &StateKey) -> Value {
-    json!({"key": URL_SAFE_NO_PAD.encode(key.as_bytes())})
-}
-
 fn read_state(value: &Value, pointer: &str) -> Result<StateKey, TaskProductShapeRefusal> {
-    let map = object(value, pointer, &["key"], &[])?;
-    let at = child(pointer, "key");
-    let Some(text) = member(map, "key").as_str() else {
-        return refuse(&at, TaskProductShapeReason::WrongKind);
-    };
-    let bytes = URL_SAFE_NO_PAD
-        .decode(text)
-        .or_else(|_| refuse(&at, TaskProductShapeReason::NotCanonical))?;
-    Ok(StateKey::from_canonical_bytes(bytes))
+    StateLocus::read(value)
+        .map(StateLocus::into_key)
+        .map_err(|defect| shared_defect(pointer, defect))
 }
 
 fn source_names(source: &TimedSystem<'_, '_>) -> Result<Vec<String>, ZoneCertificateWireError> {
@@ -226,7 +215,7 @@ fn read_constraint(value: &Value, at: &str) -> Result<PlaceConstraint, TaskProdu
             return refuse(
                 &child(at, "operator"),
                 TaskProductShapeReason::UnknownVariant,
-            )
+            );
         }
     };
     let place =
@@ -361,7 +350,7 @@ impl<O> ZoneCertificate<O> {
                     continue;
                 }
                 for (index, name) in names.iter().enumerate() {
-                    bounds.push(json!({"state":state_wire(&node.state_key),"clock":name,"lower":lu_wire(&self.lu_bounds.lower[index]),"upper":lu_wire(&self.lu_bounds.upper[index])}));
+                    bounds.push(json!({"state":StateLocus::from(&node.state_key),"clock":name,"lower":lu_wire(&self.lu_bounds.lower[index]),"upper":lu_wire(&self.lu_bounds.upper[index])}));
                 }
             }
         }
@@ -390,7 +379,7 @@ impl<O> ZoneCertificate<O> {
             if node.locked {
                 map.insert("locked".to_owned(), json!(true));
             }
-            map.insert("state".to_owned(), state_wire(&node.state_key));
+            map.insert("state".to_owned(), json!(StateLocus::from(&node.state_key)));
             map.insert("zone".to_owned(), zone_wire(&node.zone)?);
             nodes.push(Value::Object(map));
         }
@@ -515,7 +504,7 @@ impl<O> ZoneCertificate<O> {
                 Some(Value::Bool(true)) => true,
                 Some(_) => {
                     return refuse(&child(&at, "locked"), TaskProductShapeReason::NotCanonical)
-                        .map_err(Into::into)
+                        .map_err(Into::into);
                 }
             };
             nodes.push(CertNode {

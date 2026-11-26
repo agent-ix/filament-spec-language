@@ -7,7 +7,6 @@
 //! step records. It builds no transition system of its own; the one
 //! `fsl-eval` protocol system steps the trace.
 
-use base64::Engine as _;
 use filament_exact::{Identifier, ScalarLimits};
 use fsl_eval::model_subject::{
     ModelInstance, ModelLetters, ModelSubject, ProtocolSubject, RoleBinding,
@@ -22,6 +21,7 @@ use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_eval::temporal::{TemporalOutcome, TemporalRefusal};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
+use fsl_replay::shared_wire::{StateLocus, WireDefectKind};
 use fsl_replay::{
     evaluate_protocol_trace, settle_protocol_check, undefined_finding, CounterexampleKind,
     ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep,
@@ -60,14 +60,8 @@ pub(crate) struct SuppliedTrace {
 #[derive(Clone, Debug)]
 struct SuppliedStep {
     transition: Value,
-    post_state: PostState,
+    post_state: StateLocus,
     send_record: Option<Value>,
-}
-
-/// A state key as the counterexample wire spells it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PostState {
-    key: String,
 }
 
 /// The format word of a supplied protocol trace.
@@ -221,7 +215,7 @@ impl SuppliedTrace {
 impl SuppliedStep {
     /// The step at `position` that `step` spells.
     fn read(position: usize, step: &Value) -> Result<Self, TraceDefect> {
-        use DefectKind::{MissingMember, UnknownMember, WrongValueKind};
+        use DefectKind::{InvalidValue, MissingMember, UnknownMember, WrongValueKind};
         let defect = |kind, member| TraceDefect::in_step(kind, position, member);
         let Value::Object(step) = step else {
             return Err(TraceDefect {
@@ -237,18 +231,15 @@ impl SuppliedStep {
         };
         let post_state = match step.get("post_state") {
             None => return Err(defect(MissingMember, "post_state")),
-            Some(Value::Object(post_state)) => {
-                let key = match post_state.get("key") {
-                    None => return Err(defect(MissingMember, "post_state/key")),
-                    Some(Value::String(key)) => key.clone(),
-                    Some(_) => return Err(defect(WrongValueKind, "post_state/key")),
+            Some(post_state) => StateLocus::read(post_state).map_err(|found| {
+                let kind = match found.kind {
+                    WireDefectKind::Missing => MissingMember,
+                    WireDefectKind::UnknownMember => UnknownMember,
+                    WireDefectKind::WrongKind => WrongValueKind,
+                    WireDefectKind::Invalid | WireDefectKind::UnknownVariant => InvalidValue,
                 };
-                if let Some(member) = unknown(post_state, &["key"]) {
-                    return Err(defect(UnknownMember, &format!("post_state/{member}")));
-                }
-                PostState { key }
-            }
-            Some(_) => return Err(defect(WrongValueKind, "post_state")),
+                TraceDefect::in_step(kind, position, &format!("post_state{}", found.pointer))
+            })?,
         };
         let send = transition.get("step").and_then(Value::as_str) == Some("send");
         let send_record = match (send, step.get("send_record")) {
@@ -331,13 +322,6 @@ pub(crate) enum ReplayFault {
     /// The protocol has a symbolic capacity, and a supplied trace's subject
     /// binds no capacity: requires-bound (FSpec FR-785).
     UnboundCapacity,
-}
-
-/// The state-key spelling of the counterexample wire.
-fn state_wire(key: &StateKey) -> PostState {
-    PostState {
-        key: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes()),
-    }
 }
 
 /// What a claim's required clauses add to a replay (FR-941 "Formula claims").
@@ -598,7 +582,7 @@ fn replay_steps<M: MemoryModel>(
                 continue;
             }
             let key = key_of(&post)?;
-            if state_wire(&key) == step.post_state {
+            if StateLocus::from(&key) == step.post_state {
                 reached = Some((transition, post, key));
                 break;
             }
@@ -886,7 +870,7 @@ fn undefined_where(counterexample: &TemporalCounterexample<ProtocolTransition>) 
     };
     let mut at = serde_json::json!({
         "position": site.position,
-        "state_key": {"key": state_wire(&site.state_key).key},
+        "state_key": StateLocus::from(&site.state_key),
         "locus": locus,
     });
     if let (Some(node), Some(members)) = (node, at.as_object_mut()) {
@@ -1203,59 +1187,130 @@ pub(crate) fn package_finite_replay_item<'a>(
     protocol: String,
     trace: Result<SuppliedTrace, TraceDefect>,
 ) -> AnalyzeItem<'a> {
-    AnalyzeItem::new(index, Capability::FiniteReplay, Some(DeclarationFamily::Protocol), Mode::Bounded, BACKEND_ID, move |_cancel| {
-        let trace = match trace {
-            Ok(trace) => trace,
-            Err(defect) => return declined(defect.cause(), defect.position(), Some(defect.path().to_owned()).filter(|path| !path.is_empty())),
-        };
-        let Some(form) = input.evaluator.package_protocol(&protocol) else { return fault(); };
-        let memory = match ResolvedMemory::resolve_package(&form, &[]) { Ok(memory) => memory, Err(_) => return fault() };
-        let program = match fsl_eval::simulation::protocol::PackageProtocolProgram::with_memory(&input, form, memory.clone()) {
-            Ok(program) => program,
-            Err(_) => return fault(),
-        };
-        let simulation = || ModelSimulationRequest {
-            input: input.clone(), packages: binding.packages, normalization: limits.normalization,
-            snapshots: binding.snapshots, initial: binding.initial.clone(), universes: binding.universes.clone(),
-            observation: limits.observation, expansion: ExpansionLimits { max_candidates: u64::MAX },
-            meter: limits.accounting, emit: limits.emit,
-        };
-        let model = match ModelSystem::new(simulation()) {
-            Ok(model) => model,
-            Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
-        };
-        let instances = match model.instances(&program.over_type) { Ok(instances) => instances, Err(_) => return fault() };
-        let selected = binding.universes.iter().map(|universe| universe.population.package.as_str()).collect::<std::collections::BTreeSet<_>>();
-        let roles = program.roles.iter().filter(|role| !role.replicated).filter_map(|role| {
-            let model = role.model_identity.original().package();
-            selected.contains(model).then(|| RoleBinding { role: role.name.clone(), model: model.to_owned() })
-        }).collect::<Vec<_>>();
-        let mut furthest = None;
-        for instance in instances {
-            let subject = ProtocolSubject {
-                model: ModelSubject { simulation: simulation(), proof_bounds: Vec::new() },
-                protocol: protocol.clone(), over: instance.clone(), roles: roles.clone(), capacities: Vec::new(), memory: memory.clone(),
+    AnalyzeItem::new(
+        index,
+        Capability::FiniteReplay,
+        Some(DeclarationFamily::Protocol),
+        Mode::Bounded,
+        BACKEND_ID,
+        move |_cancel| {
+            let trace = match trace {
+                Ok(trace) => trace,
+                Err(defect) => {
+                    return declined(
+                        defect.cause(),
+                        defect.position(),
+                        Some(defect.path().to_owned()).filter(|path| !path.is_empty()),
+                    );
+                }
+            };
+            let Some(form) = input.evaluator.package_protocol(&protocol) else {
+                return fault();
+            };
+            let memory = match ResolvedMemory::resolve_package(&form, &[]) {
+                Ok(memory) => memory,
+                Err(_) => return fault(),
+            };
+            let program = match fsl_eval::simulation::protocol::PackageProtocolProgram::with_memory(
+                &input,
+                form,
+                memory.clone(),
+            ) {
+                Ok(program) => program,
+                Err(_) => return fault(),
+            };
+            let simulation = || ModelSimulationRequest {
+                input: input.clone(),
+                packages: binding.packages,
+                normalization: limits.normalization,
+                snapshots: binding.snapshots,
+                initial: binding.initial.clone(),
+                universes: binding.universes.clone(),
+                observation: limits.observation,
+                expansion: ExpansionLimits {
+                    max_candidates: u64::MAX,
+                },
+                meter: limits.accounting,
+                emit: limits.emit,
             };
             let model = match ModelSystem::new(simulation()) {
                 Ok(model) => model,
                 Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
             };
-            let system = match ProtocolSystem::new_package(model, &subject, fsl_eval::simulation::protocol::Sc) {
-                Ok(system) => system.with_max_live_instances(live_instance_bound(None)),
-                Err(_) => return report_fault(ReplayFault::Protocol),
+            let instances = match model.instances(&program.over_type) {
+                Ok(instances) => instances,
+                Err(_) => return fault(),
             };
-            let formula = Formula { required: &[], instance: &instance, accounting: limits.accounting };
-            match replay_steps(&system, &trace, &formula) {
-                Ok(ReplayVerdict::Replayed(steps)) => return finite_report(FiniteReplayReport::Replayed(u64::try_from(steps).unwrap_or(u64::MAX))),
-                Ok(ReplayVerdict::StaleStep(position)) => furthest = Some(furthest.map_or(position, |held: usize| held.max(position))),
-                Ok(ReplayVerdict::NoInitialState) => {},
-                Ok(ReplayVerdict::Undefined(_) | ReplayVerdict::Claimed(_)) => return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new("unsupported_construct", "not-yet-implemented"))),
-                Err(error) => return report_fault(error),
+            let selected = binding
+                .universes
+                .iter()
+                .map(|universe| universe.population.package.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            let roles = program
+                .roles
+                .iter()
+                .filter(|role| !role.replicated)
+                .filter_map(|role| {
+                    let model = role.model_identity.original().package();
+                    selected.contains(model).then(|| RoleBinding {
+                        role: role.name.clone(),
+                        model: model.to_owned(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut furthest = None;
+            for instance in instances {
+                let subject = ProtocolSubject {
+                    model: ModelSubject {
+                        simulation: simulation(),
+                        proof_bounds: Vec::new(),
+                    },
+                    protocol: protocol.clone(),
+                    over: instance.clone(),
+                    roles: roles.clone(),
+                    capacities: Vec::new(),
+                    memory: memory.clone(),
+                };
+                let model = match ModelSystem::new(simulation()) {
+                    Ok(model) => model,
+                    Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
+                };
+                let system = match ProtocolSystem::new_package(
+                    model,
+                    &subject,
+                    fsl_eval::simulation::protocol::Sc,
+                ) {
+                    Ok(system) => system.with_max_live_instances(live_instance_bound(None)),
+                    Err(_) => return report_fault(ReplayFault::Protocol),
+                };
+                let formula = Formula {
+                    required: &[],
+                    instance: &instance,
+                    accounting: limits.accounting,
+                };
+                match replay_steps(&system, &trace, &formula) {
+                    Ok(ReplayVerdict::Replayed(steps)) => {
+                        return finite_report(FiniteReplayReport::Replayed(
+                            u64::try_from(steps).unwrap_or(u64::MAX),
+                        ));
+                    }
+                    Ok(ReplayVerdict::StaleStep(position)) => {
+                        furthest = Some(furthest.map_or(position, |held: usize| held.max(position)))
+                    }
+                    Ok(ReplayVerdict::NoInitialState) => {}
+                    Ok(ReplayVerdict::Undefined(_) | ReplayVerdict::Claimed(_)) => {
+                        return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new(
+                            "unsupported_construct",
+                            "not-yet-implemented",
+                        )));
+                    }
+                    Err(error) => return report_fault(error),
+                }
             }
-        }
-        match furthest {
-            Some(position) => declined("invalid-value", Some(position), None),
-            None => declined("invalid-value", None, Some("/initial_state".to_owned())),
-        }
-    })
+            match furthest {
+                Some(position) => declined("invalid-value", Some(position), None),
+                None => declined("invalid-value", None, Some("/initial_state".to_owned())),
+            }
+        },
+    )
 }

@@ -1360,14 +1360,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             return Err(scope.fail(ReferenceFailure::MalformedWire));
         }
         // FR-120's reader rule: a string holding an identity text is that
-        // text, any other string a name, and an object its canonical text.
+        // text and any other string a name.
         let operation = scope.member("operation", |s| match &map["operation"] {
             Value::String(text)
                 if crate::written_operation::WrittenOperation::is_identity_text(text) =>
             {
                 s.text(text)
             }
-            Value::String(_) | Value::Object(_) => {
+            Value::String(_) => {
                 let operation = s.json(&map["operation"], 0)?;
                 canonical_text(&operation, s, limits)
             }

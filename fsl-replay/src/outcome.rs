@@ -62,6 +62,7 @@ use crate::proof_result::{
     UnavailabilityCause, WeakAccessFailure,
 };
 use crate::result::{DisagreementCause, ReplayResult};
+use crate::shared_wire::{StateLocus, TransitionIdentity};
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
     classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
@@ -69,7 +70,6 @@ use crate::spine::{
     ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
-use crate::written_operation::WrittenOperation;
 use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
@@ -560,22 +560,22 @@ pub struct ItemCause {
     recompiled: Option<StaleIdentityWire>,
     /// The model state named by FR-331's probabilistic refusal causes.
     #[serde(skip_serializing_if = "Option::is_none")]
-    state: Option<TimedStateWire>,
+    state: Option<StateLocus>,
     /// `true` where `not-stochastic` names an idle tail, in `identity`'s place.
     #[serde(skip_serializing_if = "Option::is_none")]
     idle_tail: Option<bool>,
     /// The typed transition identity named by `not-stochastic`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    identity: Option<WrittenTransition>,
+    identity: Option<TransitionIdentity<'static>>,
     /// The complete drawn identity of a `not-markov` refusal.
     #[serde(skip_serializing_if = "Option::is_none")]
-    transition: Option<WrittenTransition>,
+    transition: Option<TransitionIdentity<'static>>,
     /// The actual count of a `not-markov` draw's model post-states.
     #[serde(skip_serializing_if = "Option::is_none")]
     post_state_count: Option<u64>,
     /// The first two actual distinct model posts, or none for count zero.
     #[serde(skip_serializing_if = "Option::is_none")]
-    post_states: Option<Vec<TimedStateWire>>,
+    post_states: Option<Vec<StateLocus>>,
     /// A clause run's FR-501 indeterminate reason, in the result report's
     /// own spelling; it supplies the cause's `kind`.
     #[serde(flatten)]
@@ -597,50 +597,6 @@ enum ItemCauseStates {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct TimedStateWire {
-    key: String,
-}
-
-/// A written source or model transition `{type, operation, receiver,
-/// arguments}`: the one type every writer of one fills.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct WrittenTransition {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    operation: WrittenOperation,
-    receiver: Option<serde_json::Value>,
-    arguments: Vec<serde_json::Value>,
-}
-
-impl WrittenTransition {
-    /// The written form of `identity`.
-    ///
-    /// # Errors
-    /// The JSON reader's, for a receiver or argument text it cannot read.
-    #[implements("FR-120-AC-40")]
-    fn read(
-        identity: &filament_semantic_value::model_transition::ModelTransition,
-    ) -> serde_json::Result<Self> {
-        Ok(Self {
-            kind: "transition",
-            operation: WrittenOperation::of(identity.operation()),
-            receiver: identity.receiver().map(serde_json::from_str).transpose()?,
-            arguments: identity
-                .arguments()
-                .iter()
-                .map(|text| serde_json::from_str(text))
-                .collect::<serde_json::Result<_>>()?,
-        })
-    }
-}
-
-impl From<&filament_semantic_value::model_transition::ModelTransition> for WrittenTransition {
-    fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
-        Self::read(identity).expect("canonical typed value")
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct TaskTransitionWire {
     #[serde(rename = "type")]
     kind: &'static str,
@@ -650,8 +606,8 @@ struct TaskTransitionWire {
     job: u64,
     slot: u64,
     generation: u64,
-    release: WrittenTransition,
-    source_transition: Option<WrittenTransition>,
+    release: TransitionIdentity<'static>,
+    source_transition: Option<TransitionIdentity<'static>>,
     demand: serde_json::Value,
     jitter: serde_json::Value,
     deadline: serde_json::Value,
@@ -689,25 +645,17 @@ impl From<&crate::TaskTransitionIdentity> for TaskTransitionWire {
             job: identity.job,
             slot: identity.slot,
             generation: identity.generation,
-            release: WrittenTransition::from(&identity.release),
+            release: TransitionIdentity::owned(identity.release.clone()),
             source_transition: identity
                 .source_transition
                 .as_ref()
-                .map(WrittenTransition::from),
+                .cloned()
+                .map(TransitionIdentity::owned),
             demand: task_rational(&identity.demand),
             jitter: task_rational(&identity.jitter),
             deadline: task_rational(&identity.deadline),
             priority: identity.priority,
             budget_delta: identity.budget_delta.as_ref().map(task_rational),
-        }
-    }
-}
-
-impl From<&fsl_eval::simulation::StateKey> for TimedStateWire {
-    fn from(key: &fsl_eval::simulation::StateKey) -> Self {
-        use base64::Engine;
-        Self {
-            key: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes()),
         }
     }
 }
@@ -1352,7 +1300,7 @@ impl OutcomeItem {
                 match cause {
                     UnavailabilityCause::NotMarkov(cause) => {
                         item.state = Some((&cause.state).into());
-                        item.transition = Some((&cause.drawn_transition).into());
+                        item.transition = Some(TransitionIdentity::owned(cause.drawn_transition.clone()));
                         item.post_state_count = Some(cause.post_states);
                         item.post_states =
                             Some(cause.post_state_examples.iter().map(Into::into).collect());
@@ -1408,7 +1356,7 @@ impl OutcomeItem {
                     | UnavailabilityCause::PunctualInterval { .. } => {}
                     UnavailabilityCause::NotStochastic { state, identity } => {
                         item.state = Some(state.into());
-                        item.identity = Some(identity.into());
+                        item.identity = Some(TransitionIdentity::owned(identity.clone()));
                     }
                     UnavailabilityCause::NotStochasticIdleTail { state } => {
                         item.state = Some(state.into());
@@ -1786,20 +1734,6 @@ impl OutcomeItem {
     }
 }
 
-/// The FR-413 claim-bound object a verdict carries (FR-410 `bound`): the
-/// claim's own comparison and threshold, and a quantile's separate `level`.
-pub fn verdict_bound_wire(bound: &statistical::VerdictBound) -> serde_json::Value {
-    let mut value = serde_json::json!({
-        "type": bound.form.bound_type(),
-        "comparison": bound.comparison.as_str(),
-        "threshold": rational_wire(&bound.threshold),
-    });
-    if let Some(level) = &bound.level {
-        value["level"] = rational_wire(level);
-    }
-    value
-}
-
 fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
     serde_json::json!({
         "numerator": value.numerator().to_string(),
@@ -2020,7 +1954,7 @@ fn statistical_verdict_wire(
     // none is today (`omitted_witnesses` says why).
     let mut value = serde_json::json!({
         "decision": decision,
-        "bound": verdict_bound_wire(&verdict.bound),
+        "bound": crate::shared_wire::ProbabilisticBound::from(&verdict.bound),
         "basis": basis,
         "provenance": provenance,
         "tests": tests,
@@ -4026,7 +3960,7 @@ mod tests {
         .expect("canonical transition values");
         let mut item = ItemCause::kind("not-stochastic");
         item.state = Some((&state).into());
-        item.identity = Some((&transition).into());
+        item.identity = Some(TransitionIdentity::owned(transition.clone()));
 
         let value = serde_json::to_value(item).expect("wire cause serializes");
         assert_eq!(value["kind"], "not-stochastic");
@@ -4050,8 +3984,8 @@ mod tests {
         )
         .expect("canonical transition values");
         let mut item = ItemCause::kind("not-markov");
-        item.identity = Some((&transition).into());
-        item.transition = Some((&transition).into());
+        item.identity = Some(TransitionIdentity::owned(transition.clone()));
+        item.transition = Some(TransitionIdentity::owned(transition.clone()));
 
         let value = serde_json::to_value(item).expect("wire cause serializes");
         assert_eq!(value["identity"]["operation"], "tick");

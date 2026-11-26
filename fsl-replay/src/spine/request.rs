@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
+use crate::shared_wire::StateLocus;
 use crate::written_operation::WrittenOperation;
 use filament_exact::{CollectionKind, Identifier, Integer, Rational, ScalarLimits};
 use fsl_eval::temporal::{LateCutoff, StampInterval};
@@ -512,16 +513,8 @@ pub struct ModelWire {
 pub struct ModelStepWire {
     /// The step's transition identity.
     pub transition: ModelTransitionWire,
-    /// The state key of the step's post-state.
-    pub post_state: PostStateWire,
-}
-
-/// A post-state key, base64url of its canonical bytes.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PostStateWire {
-    /// The key text.
-    pub key: String,
+    /// The State locus of the step's post-state.
+    pub post_state: Box<RawValue>,
 }
 
 /// A transition identity: `{"type": "transition", operation, receiver,
@@ -979,8 +972,8 @@ fn canonical_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestR
 }
 
 /// The identity text of the operation member `raw`, by FR-120's reader rule:
-/// a string holding an identity text is that text, any other string is a name,
-/// and an object is its canonical text.
+/// a string holding an identity text is that text and any other string is a
+/// name.
 #[implements("FR-120-AC-39")]
 fn operation_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestReadError> {
     let text = canonical_text(raw, member)?;
@@ -992,8 +985,7 @@ fn operation_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestR
                 .into_identity_text()
                 .map_err(|error| invalid(member, error.to_string()))
         }
-        Some(b'{') => Ok(text),
-        _ => Err(invalid(member, "an operation is a string or an object")),
+        _ => Err(invalid(member, "an operation is a string")),
     }
 }
 
@@ -1002,11 +994,17 @@ fn model_step(
     step: &ModelStepWire,
     member: &str,
 ) -> Result<Option<crate::ModelStep>, ClauseRequestReadError> {
-    use base64::Engine;
     let transition = &step.transition;
-    let post_state = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(step.post_state.key.as_bytes())
-        .map_err(|error| invalid(format!("{member}.post_state.key"), error.to_string()))?;
+    let post_member = format!("{member}.post_state");
+    let post_state: serde_json::Value =
+        serde_json::from_str(&canonical_text(&step.post_state, &post_member)?)
+            .map_err(|error| invalid(&post_member, error.to_string()))?;
+    let post_state = StateLocus::read(&post_state)
+        .map_err(|defect| {
+            let at = defect.pointer.replace('/', ".");
+            invalid(format!("{post_member}{at}"), defect.kind.to_string())
+        })?
+        .into_key();
     let identity = match transition.kind.as_str() {
         "terminal-stutter" => return Ok(None),
         "transition" => {
@@ -1046,7 +1044,7 @@ fn model_step(
     };
     Ok(Some(crate::ModelStep {
         transition: identity,
-        post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(post_state),
+        post_state,
         delay: None,
     }))
 }
@@ -2138,8 +2136,8 @@ mod tests {
     }
 
     /// FR-120-AC-39 (TC-471): an operation string spelled like a JSON literal
-    /// or array is a name, an object member is its canonical text, and any
-    /// other member is refused.
+    /// or array is a name, and a member that is not a string, an object among
+    /// them, is refused.
     #[trace("TC-471", "FR-120-AC-39")]
     #[test]
     fn an_observed_model_step_reads_a_literal_spelling_as_a_name() {
@@ -2157,14 +2155,13 @@ mod tests {
             let transition = read(serde_json::json!(name)).expect("a name");
             assert_eq!(transition.operation(), format!("\"{name}\""));
         }
-        let object = read(serde_json::json!({"name": "tick"})).expect("an object");
-        assert_eq!(object.operation(), r#"{"name":"tick"}"#);
         for other in [
+            serde_json::json!({"name": "tick"}),
             serde_json::json!(true),
             serde_json::json!(1),
             serde_json::json!([1]),
         ] {
-            let refused = read(other).expect_err("neither a string nor an object");
+            let refused = read(other).expect_err("not a string");
             assert_eq!(refused.member, "trace.steps[0].transition.operation");
         }
     }

@@ -132,9 +132,10 @@ impl Serialize for ProductStateRef {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use base64::Engine as _;
         let mut object = serializer.serialize_struct("ProductStateRef", 2)?;
-        let model_state =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.model_state.as_bytes());
-        object.serialize_field("model_state", &model_state)?;
+        object.serialize_field(
+            "model_state",
+            &crate::shared_wire::state_key_text(&self.model_state),
+        )?;
         let octets = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(self.automaton_state.as_bytes());
         object.serialize_field("automaton_state", &octets)?;

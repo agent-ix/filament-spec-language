@@ -1036,9 +1036,6 @@ fn refute_mean(
     }
     match replay_probabilistic_witness(package, system, &item, &witness, limits, cancel) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
-            let ProbForm::MeanOfFraction { bound, .. } = &claim.form else {
-                return broken();
-            };
             let mut spelled = Vec::new();
             for (key, action) in &token.evidence().scheduler {
                 let fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
@@ -1074,13 +1071,13 @@ fn refute_mean(
                 ));
             }
             let scope = package.graph().scope();
-            let Some(claim_type) = super::probabilistic_bound_type(&claim.form) else {
+            let Some(bound) = fsl_replay::shared_wire::ProbabilisticBound::of_claim(&claim.form)
+            else {
                 return broken();
             };
             let wire = fsl_replay::probabilistic_wire(
                 token.evidence(),
-                bound,
-                claim_type,
+                &bound,
                 &fsl_replay::ProbabilisticValueSchema::new(
                     scope.types(),
                     scope.variant_types(),

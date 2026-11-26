@@ -684,7 +684,7 @@ impl<'s, 'a> ContractTarget<'s, 'a> {
                     .get(*refinement)
                     .is_some_and(CheckedRefinement::proof_eligible) =>
             {
-                return Ok(Err(ContractCheckUnsupported::NoContractLevelReading))
+                return Ok(Err(ContractCheckUnsupported::NoContractLevelReading));
             }
             Target::Invariant { context, .. } => {
                 let relation = package.abstraction();
@@ -733,7 +733,7 @@ impl<'s, 'a> ContractTarget<'s, 'a> {
                 .concrete
                 .state_key_of(state)
                 .map_err(|_| Unspelled("contract state"))?;
-            serde_json::to_value(crate::outcome::TimedStateWire::from(&key))
+            serde_json::to_value(crate::shared_wire::StateLocus::from(&key))
                 .map_err(|_| Unspelled("contract state"))
         };
         let scope = self.package.graph().scope();
@@ -849,7 +849,7 @@ impl<'s, 'a> ContractTarget<'s, 'a> {
         let evaluated = match self.violations(case) {
             Ok(evaluated) => evaluated,
             Err(Stop::Expansion(stop)) if stop.is_internal_failure() => {
-                return Err(fault("contract-evaluation-invariant"))
+                return Err(fault("contract-evaluation-invariant"));
             }
             Err(Stop::Expansion(stop)) => return Ok(CaseVerdict::Stopped(stop)),
             Err(Stop::Fault(fault)) => return Err(fault),
@@ -1126,7 +1126,7 @@ impl<'s, 'a> ContractTarget<'s, 'a> {
         for finding in self.concrete.invariant_findings_at(state)? {
             match finding {
                 ModelFinding::InvariantViolated { clause, .. } if clause == name => {
-                    return Ok(Ok(Some(None)))
+                    return Ok(Ok(Some(None)));
                 }
                 ModelFinding::InvariantUndetermined {
                     clause, evaluation, ..
@@ -1392,7 +1392,7 @@ impl<'s, 'a> ContractTarget<'s, 'a> {
                     MappingFailure::Undefined { cause, .. } => Some(*cause),
                     MappingFailure::Undetermined(_) => None,
                     MappingFailure::WrongSystem(_) | MappingFailure::Fault(_) => {
-                        return Err(Stop::Fault(fault("the-refinements-own-systems-map")))
+                        return Err(Stop::Fault(fault("the-refinements-own-systems-map")));
                     }
                 };
                 evaluated.violations.push(self.violation(
@@ -1482,7 +1482,7 @@ impl<'s, 'a> ContractTarget<'s, 'a> {
                         "insufficient-next-charge",
                     ),
                     limit: None,
-                }))
+                }));
             }
             StepVerdict::Fault(fault) => return Err(Stop::Fault(fault)),
         }

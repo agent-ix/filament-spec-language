@@ -15,7 +15,7 @@ use fsl_replay::{
     ProbabilityUndefinedWitness, ProbabilityWitnessError, ProbabilityWitnessReplay, TerminalValue,
     UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
-use fsl_semantics::check::{Bound, EnumBinding};
+use fsl_semantics::check::EnumBinding;
 use ix_trace_rs::trace;
 use serde_json::json;
 
@@ -864,7 +864,15 @@ fn fix_round_fanout_checks_state_storage_before_queuing_successors() {
         let mut limits = ExactProbLimits::default();
         limits.model.limits.max_states = maximum;
         limits.model.limits.max_transitions = maximum;
-        assert!(matches!(replay(&world,&witness,&limits,&Cancel::new()),Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::LimitReached))),"state admission must stop before another fanout edge can exhaust the transition budget");
+        assert!(
+            matches!(
+                replay(&world, &witness, &limits, &Cancel::new()),
+                Err(ProbabilityWitnessError::Graph(
+                    ExactProbabilityGraphError::LimitReached
+                ))
+            ),
+            "state admission must stop before another fanout edge can exhaust the transition budget"
+        );
     }
 }
 
@@ -1025,7 +1033,13 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
             .ok()
             .map(|(_, key)| key)
     };
-    let bound = Bound::AtMost(ratio(1, 2));
+    let bound =
+        fsl_replay::shared_wire::ProbabilisticBound::from(&fsl_replay::statistical::VerdictBound {
+            form: fsl_replay::statistical::ClaimForm::Probability,
+            comparison: fsl_replay::statistical::BoundComparison::LessOrEqual,
+            threshold: ratio(1, 2),
+            level: None,
+        });
     let scope = world.package.graph().scope();
     let color = |member: &str| {
         json!({"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
@@ -1037,7 +1051,6 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
         probabilistic_wire(
             &witness,
             &bound,
-            "probability",
             &ProbabilisticValueSchema::new(scope.types(), scope.variant_types(), enums),
             &state_key,
             &scheduler,
@@ -1077,7 +1090,6 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
             &undefined,
             claim,
             &bound,
-            "probability",
             &ProbabilisticValueSchema::new(scope.types(), scope.variant_types(), enums),
             &state_key,
             &scheduler,

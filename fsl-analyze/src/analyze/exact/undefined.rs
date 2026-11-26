@@ -56,24 +56,9 @@ pub(super) fn run(
         cancel,
     ) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
-            let quantile_bound;
-            let Some(claim_type) = super::probabilistic_bound_type(&claim.form) else {
+            let Some(bound) = fsl_replay::shared_wire::ProbabilisticBound::of_claim(&claim.form)
+            else {
                 return not_yet();
-            };
-            let bound = match &claim.form {
-                ProbForm::Reach { bound, .. }
-                | ProbForm::Probability { bound, .. }
-                | ProbForm::LongRunFraction { bound, .. }
-                | ProbForm::ExpectedReward { bound, .. }
-                | ProbForm::MeanOfFraction { bound, .. } => bound,
-                ProbForm::Quantile { q, threshold, .. } => {
-                    quantile_bound = match threshold {
-                        Bound::AtMost(_) => Bound::AtLeast(q.clone()),
-                        Bound::AtLeast(_) => Bound::AtMost(q.clone()),
-                    };
-                    &quantile_bound
-                }
-                _ => return not_yet(),
             };
             let scope = package.graph().scope();
             let Some(occurrence) = claim.occurrence() else {
@@ -82,8 +67,7 @@ pub(super) fn run(
             let wire = fsl_replay::probabilistic_undefined_wire(
                 &witness,
                 occurrence,
-                bound,
-                claim_type,
+                &bound,
                 &fsl_replay::ProbabilisticValueSchema::new(
                     scope.types(),
                     scope.variant_types(),

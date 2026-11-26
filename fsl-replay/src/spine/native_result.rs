@@ -34,8 +34,8 @@ pub(crate) use temporal::{replay_locus_wire, replay_outcome_wire};
 pub use temporal::{
     ClosureRead, CounterexampleRead, DimensionRead, EffectiveIdRead, FairnessGranularityRead,
     FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead,
-    ModelBindingRead, ModelStepRead, ModelTransitionRead, ProgressValueRead, StateRead,
-    TemporalRecord, UndefinedLocusRead,
+    ModelBindingRead, ModelStepRead, ModelTransitionRead, ProgressValueRead, TemporalRecord,
+    UndefinedLocusRead,
 };
 
 /// Why a clause-run report could not be written as a canonical document.
@@ -2654,7 +2654,7 @@ pub fn read_outcome_diagnostics(
     let tree =
         match quire_canonical::read_with_reservation(bytes, limits.max_input_bytes, &mut budget) {
             Err(quire_canonical::ReadError::ReservationDenied { .. }) => {
-                return Err(budget.denied())
+                return Err(budget.denied());
             }
             other => other?,
         };

@@ -13,7 +13,7 @@ pub use key::{
 };
 pub(crate) use wire::{
     action_name, array, child, count, integer, member, object, rational, rational_wire, refuse,
-    source_transition, source_transition_wire, ACTIONS,
+    shared_defect, source_transition, source_transition_wire, ACTIONS,
 };
 pub use wire::{
     same_source_transition, TaskProductReferenceError, TaskProductShapeReason,

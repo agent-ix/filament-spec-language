@@ -1836,7 +1836,10 @@ fn a_quantile_claim_reports_its_empirical_quantile() {
     assert_eq!(verdict.quantile, three);
     // FR-410: the verdict's bound is the claim as written, with its level.
     assert_eq!(
-        fsl_replay::verdict_bound_wire(&verdict.bound),
+        serde_json::to_value(fsl_replay::shared_wire::ProbabilisticBound::from(
+            &verdict.bound
+        ))
+        .expect("writes"),
         json!({"type": "quantile", "comparison": "less-or-equal",
             "threshold": {"numerator": "5", "denominator": "1"},
             "level": {"numerator": "19", "denominator": "20"}})
@@ -2009,7 +2012,10 @@ fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
     assert_eq!(verdict.decision, Decision::Rejected);
     // FR-410: a rejection by `undefined-evaluation` still carries its bound.
     assert_eq!(
-        fsl_replay::verdict_bound_wire(&verdict.bound),
+        serde_json::to_value(fsl_replay::shared_wire::ProbabilisticBound::from(
+            &verdict.bound
+        ))
+        .expect("writes"),
         json!({"type": "probability", "comparison": "greater-or-equal",
             "threshold": {"numerator": "1", "denominator": "2"}})
     );
@@ -2670,7 +2676,10 @@ fn an_at_least_quantile_claim_writes_its_own_bound_with_its_level() {
     let world = World::new(&prob_world::service(claim));
     let verdict = decided(&world, "AtLeast", StatisticalMethod::Okamoto);
     assert_eq!(
-        fsl_replay::verdict_bound_wire(&verdict.bound),
+        serde_json::to_value(fsl_replay::shared_wire::ProbabilisticBound::from(
+            &verdict.bound
+        ))
+        .expect("writes"),
         json!({"type": "quantile", "comparison": "greater-or-equal",
             "threshold": {"numerator": "2", "denominator": "1"},
             "level": {"numerator": "1", "denominator": "2"}})
@@ -3296,15 +3305,60 @@ fn a_tick_subject_is_sampled_without_a_race_and_reads_its_stutter_positions() {
 #[test]
 fn an_idle_tail_reading_every_completion_agrees_on_is_decided() {
     for (rewards, claim, holds, decision) in [
-        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]", 1, Decision::Accepted),
-        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(2, 5)]", 0, Decision::Rejected),
-        ("", "mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25", 1, Decision::Rejected),
-        ("", "mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25", 0, Decision::Accepted),
-        (SEND_COST, "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25", 0, Decision::Accepted),
-        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]", 0, Decision::Rejected),
-        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]", 0, Decision::Rejected),
-        ("", "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]", 0, Decision::Rejected),
-        ("", "probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]", 1, Decision::Accepted),
+        (
+            "",
+            "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]",
+            1,
+            Decision::Accepted,
+        ),
+        (
+            "",
+            "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(2, 5)]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25",
+            1,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25",
+            0,
+            Decision::Accepted,
+        ),
+        (
+            SEND_COST,
+            "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25",
+            0,
+            Decision::Accepted,
+        ),
+        (
+            "",
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]",
+            1,
+            Decision::Accepted,
+        ),
     ] {
         assert_eq!(
             measured(&window_world(2, None, rewards, claim)),

@@ -304,7 +304,7 @@ pub use native_result::{
     NativeRunResultError, OutcomeDiagnosticRead, PositionRead, ProgressValueRead,
     ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
     ProtocolInconclusiveCause, ProtocolProofBasis, ProtocolRecordError, ProtocolSettlementEntry,
-    RefusalLocusRead, SourceRefRead, SpanRead, StateRead, TemporalRecord, UndefinedLocusRead,
+    RefusalLocusRead, SourceRefRead, SpanRead, TemporalRecord, UndefinedLocusRead,
     UnsupportedDiagnostic,
 };
 pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
@@ -1787,9 +1787,9 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ProtocolAnchorCause::RoleModel { role, context, .. } => format!(
                     "{message}: role `{role}` is on `{context}`, which is not a type a role takes"
                 ),
-                ProtocolAnchorCause::ConnectionAdmission { connection, detail, .. } => format!(
-                    "{message}: connection {}: {}", connection.node, detail
-                ),
+                ProtocolAnchorCause::ConnectionAdmission {
+                    connection, detail, ..
+                } => format!("{message}: connection {}: {}", connection.node, detail),
                 ProtocolAnchorCause::JoinList {
                     parallel, fault, ..
                 } => format!("{message}: the join of `{parallel}` is unsound ({fault:?})"),

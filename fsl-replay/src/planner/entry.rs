@@ -22,6 +22,7 @@
 //! `unknown_required_feature`/`unsupported-feature` at the point in the
 //! reading order where it is read.
 
+use crate::shared_wire::{StateLocus, WireDefectKind};
 use filament_contract_model::Std001Code;
 use filament_exact::CancelCause;
 use fsl_foundation::{BackendId, Code, RequestIndex};
@@ -979,14 +980,18 @@ fn read_task_search(value: &Value) -> Result<TaskSearchEvidence, Defect> {
         let state_object = state
             .as_object()
             .ok_or_else(|| Defect::wrong_kind(state_base.clone()))?;
-        check_task_members(state_object, &["key"], &state_base)?;
-        let state_key = state
-            .get("key")
-            .ok_or_else(|| Defect::missing(format!("{base}/state/key")))?;
-        let state_key = read_text(state_key, &format!("{base}/state/key"))?;
-        if !is_base64url(&state_key) {
-            return Err(Defect::invalid(format!("{base}/state/key")));
-        }
+        check_task_members(state_object, &StateLocus::MEMBERS, &state_base)?;
+        let state_key = StateLocus::read(state)
+            .map_err(|defect| {
+                let at = format!("{state_base}{}", defect.pointer);
+                match defect.kind {
+                    WireDefectKind::Missing => Defect::missing(at),
+                    WireDefectKind::UnknownMember => Defect::unknown(at),
+                    WireDefectKind::WrongKind => Defect::wrong_kind(at),
+                    WireDefectKind::Invalid | WireDefectKind::UnknownVariant => Defect::invalid(at),
+                }
+            })?
+            .key_text();
         let depth = object
             .get("depth")
             .ok_or_else(|| Defect::missing(format!("{base}/depth")))?;
@@ -1489,13 +1494,4 @@ fn assemble(
         limit_reached,
         task_search: rest.task_search,
     })
-}
-
-/// Whether `text` is FSpec FR-331's `Base64Url`: RFC 4648 section 5, no
-/// padding, zero unused trailing bits (the strict decoder refuses the rest).
-fn is_base64url(text: &str) -> bool {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(text)
-        .is_ok()
 }

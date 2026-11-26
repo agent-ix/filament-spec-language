@@ -20,7 +20,7 @@ use filament_exact::{Cancel, ObjectReference, Rational, WorkScope};
 use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
-use fsl_replay::statistical::{ClaimForm, SubjectLimits};
+use fsl_replay::statistical::SubjectLimits;
 use fsl_replay::{
     check_probability_certificate_document, claim_binding,
     partial_lower_probability_proof_document, probability_proof_document,
@@ -55,21 +55,6 @@ use crate::exact_probabilistic::{
     manifest as en5, settle_product_refusal, ExtRational, FhError, FhResult, ProbBuild,
     ProbProduct, ProductRefusal, ProductRequest, UnboundedError, UnboundedObjective,
 };
-
-/// The FR-413 claim type for a checked exact form, using the shared type
-/// spellings owned by `ClaimForm` wherever the exact and statistical forms
-/// overlap.
-pub(super) fn probabilistic_bound_type(form: &ProbForm) -> Option<&'static str> {
-    let form = match form {
-        ProbForm::Reach { .. } | ProbForm::Probability { .. } => ClaimForm::Probability,
-        ProbForm::MeanOfFraction { .. } => ClaimForm::MeanOfFraction,
-        ProbForm::LongRunFraction { .. } => ClaimForm::LongRunFraction,
-        ProbForm::Quantile { .. } => ClaimForm::Quantile,
-        ProbForm::ExpectedReward { .. } => return Some("expected-total"),
-        _ => return None,
-    };
-    Some(form.bound_type())
-}
 
 /// The certificate EN-5 produced and the core's checker accepted for a
 /// `proved` item (FR-281-AC-1: the record carries the certificate).
@@ -1182,7 +1167,7 @@ fn run_timed_mean(
         }
         Err(UnboundedError::MaxWorkingBytes) => return working_bytes_limit(&limits, subject),
         Err(UnboundedError::Cancelled(cause)) => {
-            return settled(&ExactProbBuildIssue::Cancelled(cause), subject)
+            return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
         }
         Err(_) => {
             return broken();
@@ -1957,7 +1942,7 @@ fn run(
                                     UnboundedError::MaxRationalBits,
                                     &limits,
                                     subject,
-                                )
+                                );
                             }
                         };
                         return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
@@ -3594,7 +3579,7 @@ fn replay_fair_refutation(
                         deterministic[state] = Some(rows[0].0 .0);
                     }
                     Some(crate::exact_probabilistic::SchedulerChoice::Randomized(_)) => {
-                        return not_yet()
+                        return not_yet();
                     }
                 }
             }
@@ -4042,26 +4027,9 @@ fn finish_replay(
     match replayed {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let input = system.input();
-            let quantile_bound;
-            let Some(claim_type) = probabilistic_bound_type(&claim.form) else {
+            let Some(bound) = fsl_replay::shared_wire::ProbabilisticBound::of_claim(&claim.form)
+            else {
                 return not_yet();
-            };
-            let bound = match &claim.form {
-                ProbForm::Reach { bound, .. }
-                | ProbForm::Probability { bound, .. }
-                | ProbForm::MeanOfFraction { bound, .. }
-                | ProbForm::LongRunFraction { bound, .. }
-                | ProbForm::ExpectedReward { bound, .. } => bound,
-                ProbForm::Quantile { q, threshold, .. } => {
-                    quantile_bound = match threshold {
-                        Bound::AtMost(_) => Bound::AtLeast(q.clone()),
-                        Bound::AtLeast(_) => Bound::AtMost(q.clone()),
-                    };
-                    &quantile_bound
-                }
-                _ => {
-                    return not_yet();
-                }
             };
             let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
                 system
@@ -4080,8 +4048,7 @@ fn finish_replay(
             };
             let wire = fsl_replay::probabilistic_wire(
                 witness,
-                bound,
-                claim_type,
+                &bound,
                 &value_schema,
                 &state_key,
                 spelled_scheduler,

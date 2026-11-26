@@ -4,6 +4,7 @@
 use serde_json::Value;
 
 use super::VerdictBound;
+use crate::shared_wire::ProbabilisticBound;
 
 /// Why a statistical result's claim bound could not be trusted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -36,46 +37,14 @@ pub fn verify_statistical_result_bound(
         .ok_or(StatisticalBoundReadError::Malformed)?
         .get("bound")
         .ok_or(StatisticalBoundReadError::Missing)?;
-    let object = bound
-        .as_object()
-        .ok_or(StatisticalBoundReadError::Malformed)?;
-    let has_level = checked_claim.level.is_some();
-    if object.len() != if has_level { 4 } else { 3 }
-        || !object.get("type").is_some_and(Value::is_string)
-        || !object.get("comparison").is_some_and(Value::is_string)
-        || !object.get("threshold").is_some_and(valid_rational)
-        || object
-            .get("level")
-            .is_some_and(|level| !valid_rational(level))
-        || object.contains_key("level") != has_level
-    {
+    // A `level` on the wrong form is a shape fault, not another claim.
+    if bound.get("level").is_some() != checked_claim.level.is_some() {
         return Err(StatisticalBoundReadError::Malformed);
     }
-
-    if bound != &crate::verdict_bound_wire(checked_claim) {
+    let written =
+        ProbabilisticBound::read(bound).map_err(|_| StatisticalBoundReadError::Malformed)?;
+    if written != ProbabilisticBound::from(checked_claim) {
         return Err(StatisticalBoundReadError::Mismatch);
     }
     Ok(())
-}
-
-fn valid_rational(value: &Value) -> bool {
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    if object.len() != 2 {
-        return false;
-    }
-    let Some(numerator) = object.get("numerator").and_then(Value::as_str) else {
-        return false;
-    };
-    let Some(denominator) = object.get("denominator").and_then(Value::as_str) else {
-        return false;
-    };
-    let (Ok(numerator), Ok(denominator)) = (
-        numerator.parse::<filament_exact::Integer>(),
-        denominator.parse::<filament_exact::Integer>(),
-    ) else {
-        return false;
-    };
-    filament_exact::Rational::new(numerator, denominator).is_ok()
 }
