@@ -21,8 +21,10 @@ use ix_trace_rs::implements;
 
 mod interpreter;
 pub use interpreter::{
-    evaluate_boolean, probability_weight, ReferenceClockState, ReferenceFiniteState,
-    ReferenceProbabilityWeight,
+    checked_random_operation_mdp, checked_support_expected_reward, checked_support_probability,
+    evaluate_boolean, evaluate_finite_value, measure_mass_at_most, probability_weight,
+    ReferenceClockState, ReferenceFiniteState, ReferenceLasso, ReferenceMeasureOutcome,
+    ReferenceProbabilityWeight, ReferenceTimedTrace, ReferenceTransitionGraph,
 };
 
 /// Maximum horizon enumerated by the reference's finite-horizon solver.

@@ -5,10 +5,12 @@ use std::collections::BTreeMap;
 
 use filament_checked::node::{Arithmetic, Connective, NodeKind, OrderedKind};
 use filament_exact::{Rational, Value};
-use fsl_semantics::check::{CheckedGraph, CheckedNode, StatePredicate, TimedModel};
+use fsl_semantics::check::{
+    CheckedGraph, CheckedNode, StateClauseKind, StatePredicate, TimedModel,
+};
 use ix_trace_rs::implements;
 
-use crate::ReferenceRefusal;
+use crate::{ReferenceRefusal, TinyMdp};
 
 const MAX_EXPRESSION_NODES: usize = 100_000;
 const MAX_EXPRESSION_DEPTH: usize = 256;
@@ -21,6 +23,43 @@ pub enum ReferenceProbabilityWeight {
     Literal(Rational),
     /// Any authored expression, retained only so refusal can name it.
     Expression(String),
+}
+
+/// One exact measure value and its literal rational path mass.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceMeasureOutcome {
+    /// The outcome's exact measure, such as elapsed time or path length.
+    pub measure: Rational,
+    /// The outcome's probability mass.
+    pub probability: Rational,
+}
+
+/// Computes the exact cumulative mass whose measure is at most `bound`.
+#[implements("FR-1051-AC-17")]
+pub fn measure_mass_at_most(
+    outcomes: &[ReferenceMeasureOutcome],
+    bound: &Rational,
+) -> Result<Rational, ReferenceRefusal> {
+    if outcomes.is_empty() {
+        return Err(unsupported("empty finite measure support"));
+    }
+    let zero = Rational::from_integer(filament_exact::Integer::zero());
+    let one = Rational::from_integer(filament_exact::Integer::one());
+    let mut total = zero.clone();
+    let mut cumulative = zero;
+    for outcome in outcomes {
+        if outcome.probability < Rational::from_integer(filament_exact::Integer::zero()) {
+            return Err(unsupported("negative path probability"));
+        }
+        total = total.add(&outcome.probability);
+        if outcome.measure <= *bound {
+            cumulative = cumulative.add(&outcome.probability);
+        }
+    }
+    if total != one {
+        return Err(unsupported("finite measure support does not sum to one"));
+    }
+    Ok(cumulative)
 }
 
 /// Admits only exact literal rational weights for an interpreted transition.
@@ -43,10 +82,385 @@ pub fn probability_weight(
     }
 }
 
+/// Computes the exact probability of a Boolean predicate over one checked
+/// random-parameter support, binding each support value into `parameter_slot`.
+#[implements("FR-1051-AC-17")]
+pub fn checked_support_probability(
+    graph: &CheckedGraph,
+    random: &fsl_semantics::check::RandomParameter,
+    parameter_slot: usize,
+    locals: &[Value],
+    pre_state: &ReferenceFiniteState,
+    current_state: &ReferenceFiniteState,
+    predicate: CheckedNode<'_>,
+) -> Result<Rational, ReferenceRefusal> {
+    if parameter_slot >= locals.len() {
+        return Err(unsupported("random parameter slot outside checked frame"));
+    }
+    let mut probability = Rational::from_integer(filament_exact::Integer::zero());
+    for support in random.support() {
+        let mut bound = locals.to_vec();
+        bound[parameter_slot] = support.value.0.clone();
+        if evaluate_boolean(graph, predicate, &bound, pre_state, current_state)? {
+            probability = probability.add(&support.probability);
+        }
+    }
+    Ok(probability)
+}
+
+/// Computes the exact expected integer or rational reward over one checked
+/// random-parameter support.
+#[implements("FR-1051-AC-17")]
+pub fn checked_support_expected_reward(
+    graph: &CheckedGraph,
+    random: &fsl_semantics::check::RandomParameter,
+    parameter_slot: usize,
+    locals: &[Value],
+    pre_state: &ReferenceFiniteState,
+    current_state: &ReferenceFiniteState,
+    reward: CheckedNode<'_>,
+) -> Result<Rational, ReferenceRefusal> {
+    if parameter_slot >= locals.len() {
+        return Err(unsupported("random parameter slot outside checked frame"));
+    }
+    let mut expected = Rational::from_integer(filament_exact::Integer::zero());
+    for support in random.support() {
+        let mut bound = locals.to_vec();
+        bound[parameter_slot] = support.value.0.clone();
+        let reward = match evaluate_finite_value(graph, reward, &bound, pre_state, current_state)? {
+            Value::Integer(value) => Rational::from_integer(value),
+            Value::Rational(value) => value,
+            _ => return Err(unsupported("reward outside integer or rational values")),
+        };
+        expected = expected.add(&support.probability.mul(&reward));
+    }
+    Ok(expected)
+}
+
+/// Builds an exact one-action MDP from one checked operation and one checked
+/// random parameter. Each support value must lead to exactly one enumerated
+/// post-state under the checked postconditions.
+#[implements("FR-1051-AC-17")]
+pub fn checked_random_operation_mdp(
+    graph: &CheckedGraph,
+    operation: &str,
+    parameter: &str,
+    locals: &[Value],
+    states: Vec<ReferenceFiniteState>,
+) -> Result<TinyMdp, ReferenceRefusal> {
+    if states.is_empty() || states.len() > MAX_FINITE_STATES {
+        return Err(unsupported(
+            "finite transition state count outside 1..=2^16",
+        ));
+    }
+    let random = graph
+        .probabilistic_model()
+        .random_parameters()
+        .iter()
+        .find(|random| random.operation().name() == operation && random.parameter() == parameter)
+        .ok_or_else(|| unsupported("missing checked random support"))?;
+    let slot = random
+        .position()
+        .checked_add(1)
+        .ok_or_else(|| unsupported("random parameter slot overflow"))?;
+    if slot >= locals.len() {
+        return Err(unsupported("random parameter slot outside checked frame"));
+    }
+    let clauses: Vec<_> = graph
+        .state_clauses()
+        .iter()
+        .filter(|clause| {
+            clause
+                .operation()
+                .is_some_and(|item| item.declaration.name() == operation)
+        })
+        .collect();
+    let preconditions: Vec<_> = clauses
+        .iter()
+        .copied()
+        .filter(|clause| clause.kind() == StateClauseKind::Precondition)
+        .collect();
+    let postconditions: Vec<_> = clauses
+        .iter()
+        .copied()
+        .filter(|clause| clause.kind() == StateClauseKind::Postcondition)
+        .collect();
+    if postconditions.is_empty() {
+        return Err(unsupported(
+            "random operation without a checked postcondition",
+        ));
+    }
+    let mut actions = Vec::with_capacity(states.len());
+    for source in &states {
+        let mut distribution = BTreeMap::<usize, Rational>::new();
+        for support in random.support() {
+            let mut bound = locals.to_vec();
+            bound[slot] = support.value.0.clone();
+            let mut enabled = true;
+            for clause in &preconditions {
+                enabled &= evaluate_boolean(graph, clause.body(), &bound, source, source)?;
+            }
+            if !enabled {
+                continue;
+            }
+            let mut destinations = Vec::new();
+            for (target_index, target) in states.iter().enumerate() {
+                let mut accepted = true;
+                for clause in &postconditions {
+                    accepted &= evaluate_boolean(graph, clause.body(), &bound, source, target)?;
+                }
+                if accepted {
+                    destinations.push(target_index);
+                }
+            }
+            if destinations.len() != 1 {
+                return Err(unsupported(if destinations.is_empty() {
+                    "random operation next-state outside finite valuation domain"
+                } else {
+                    "random operation has ambiguous next-state effect"
+                }));
+            }
+            let destination = destinations[0];
+            let mass = distribution
+                .entry(destination)
+                .or_insert_with(|| Rational::from_integer(filament_exact::Integer::zero()));
+            *mass = mass.add(&support.probability);
+        }
+        if distribution.is_empty() {
+            return Err(unsupported("random operation disabled at a finite state"));
+        }
+        actions.push(vec![distribution.into_iter().collect()]);
+    }
+    TinyMdp::new(actions)
+}
+
 /// One concrete finite state, indexed by object identity and field name.
 #[derive(Clone, Debug, Default)]
 pub struct ReferenceFiniteState {
     fields: BTreeMap<(String, String), Value>,
+}
+
+/// A finite transition graph derived from one operation's checked pre/post
+/// clauses over an explicitly enumerated state space.
+#[derive(Clone, Debug)]
+pub struct ReferenceTransitionGraph {
+    states: Vec<ReferenceFiniteState>,
+    successors: Vec<Vec<usize>>,
+}
+
+impl ReferenceTransitionGraph {
+    /// Derives an operation relation by evaluating its checked clauses over
+    /// every pre/post state pair. When no postcondition exists, the operation
+    /// is interpreted as a stutter; unsupported clause nodes refuse by name.
+    #[implements("FR-1051-AC-17")]
+    pub fn from_operation(
+        graph: &CheckedGraph,
+        operation: &str,
+        locals: &[Value],
+        states: Vec<ReferenceFiniteState>,
+    ) -> Result<Self, ReferenceRefusal> {
+        if states.is_empty() || states.len() > MAX_FINITE_STATES {
+            return Err(unsupported(
+                "finite transition state count outside 1..=2^16",
+            ));
+        }
+        let clauses: Vec<_> = graph
+            .state_clauses()
+            .iter()
+            .filter(|clause| {
+                clause
+                    .operation()
+                    .is_some_and(|item| item.declaration.name() == operation)
+            })
+            .collect();
+        if clauses.is_empty() {
+            return Err(unsupported("operation without checked clauses"));
+        }
+        let preconditions: Vec<_> = clauses
+            .iter()
+            .copied()
+            .filter(|clause| clause.kind() == StateClauseKind::Precondition)
+            .collect();
+        let postconditions: Vec<_> = clauses
+            .iter()
+            .copied()
+            .filter(|clause| clause.kind() == StateClauseKind::Postcondition)
+            .collect();
+        let mut successors = vec![Vec::new(); states.len()];
+        for (source_index, source) in states.iter().enumerate() {
+            let mut enabled = true;
+            for clause in &preconditions {
+                enabled &= evaluate_boolean(graph, clause.body(), locals, source, source)?;
+            }
+            if !enabled {
+                continue;
+            }
+            for (target_index, target) in states.iter().enumerate() {
+                let accepted = if postconditions.is_empty() {
+                    source_index == target_index
+                } else {
+                    let mut accepted = true;
+                    for clause in &postconditions {
+                        accepted &= evaluate_boolean(graph, clause.body(), locals, source, target)?;
+                    }
+                    accepted
+                };
+                if accepted {
+                    successors[source_index].push(target_index);
+                }
+            }
+        }
+        Ok(Self { states, successors })
+    }
+
+    /// The enumerated states in their deterministic input order.
+    pub fn states(&self) -> &[ReferenceFiniteState] {
+        &self.states
+    }
+
+    /// The successor indices of one state.
+    pub fn successors(&self, state: usize) -> Option<&[usize]> {
+        self.successors.get(state).map(Vec::as_slice)
+    }
+
+    /// Whether any path from `initial` reaches one of the target states.
+    #[implements("FR-1051-AC-17")]
+    pub fn can_reach(&self, initial: usize, targets: &[bool]) -> Result<bool, ReferenceRefusal> {
+        if initial >= self.states.len() || targets.len() != self.states.len() {
+            return Err(unsupported(
+                "reachability target set outside finite state space",
+            ));
+        }
+        let mut seen = vec![false; self.states.len()];
+        let mut pending = vec![initial];
+        while let Some(state) = pending.pop() {
+            if seen[state] {
+                continue;
+            }
+            seen[state] = true;
+            if targets[state] {
+                return Ok(true);
+            }
+            pending.extend(self.successors[state].iter().copied());
+        }
+        Ok(false)
+    }
+}
+
+/// A finite prefix followed by a nonempty loop, representing an infinite trace.
+#[derive(Clone, Debug)]
+pub struct ReferenceLasso {
+    states: Vec<ReferenceFiniteState>,
+    loop_start: usize,
+}
+
+/// A finite sequence of state observations at exact rational times.
+#[derive(Clone, Debug)]
+pub struct ReferenceTimedTrace {
+    observations: Vec<(Rational, ReferenceFiniteState)>,
+}
+
+impl ReferenceTimedTrace {
+    /// Builds a nonempty timed path with nondecreasing observation times.
+    pub fn new(
+        observations: Vec<(Rational, ReferenceFiniteState)>,
+    ) -> Result<Self, ReferenceRefusal> {
+        let zero = Rational::from_integer(filament_exact::Integer::zero());
+        if observations.is_empty()
+            || observations.iter().any(|(time, _)| time < &zero)
+            || observations
+                .windows(2)
+                .any(|window| window[0].0 > window[1].0)
+        {
+            return Err(unsupported("invalid timed trace observations"));
+        }
+        Ok(Self { observations })
+    }
+
+    /// Evaluates a closed eventually window relative to `origin`. A jump
+    /// from before the window to after it does not invent an observation at
+    /// an intermediate time.
+    #[implements("FR-1051-AC-17")]
+    pub fn eventually_within(
+        &self,
+        graph: &CheckedGraph,
+        predicate: CheckedNode<'_>,
+        locals: &[Value],
+        origin: &Rational,
+        lower: &Rational,
+        upper: &Rational,
+    ) -> Result<bool, ReferenceRefusal> {
+        if lower > upper {
+            return Err(unsupported("inverted timed observation window"));
+        }
+        for (time, state) in &self.observations {
+            let elapsed = time.sub(origin);
+            if elapsed >= *lower
+                && elapsed <= *upper
+                && evaluate_boolean(graph, predicate, locals, state, state)?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+impl ReferenceLasso {
+    /// Creates a lasso whose repeated suffix begins at `loop_start`.
+    pub fn new(
+        states: Vec<ReferenceFiniteState>,
+        loop_start: usize,
+    ) -> Result<Self, ReferenceRefusal> {
+        if states.is_empty() || loop_start >= states.len() {
+            return Err(unsupported("lasso has no nonempty loop"));
+        }
+        Ok(Self { states, loop_start })
+    }
+
+    /// Whether a checked state predicate holds at some position of the
+    /// represented infinite trace.
+    #[implements("FR-1051-AC-17")]
+    pub fn eventually(
+        &self,
+        graph: &CheckedGraph,
+        predicate: CheckedNode<'_>,
+        locals: &[Value],
+    ) -> Result<bool, ReferenceRefusal> {
+        for state in &self.states {
+            if evaluate_boolean(graph, predicate, locals, state, state)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether a checked state predicate holds at every position of the
+    /// represented infinite trace.
+    #[implements("FR-1051-AC-17")]
+    pub fn always(
+        &self,
+        graph: &CheckedGraph,
+        predicate: CheckedNode<'_>,
+        locals: &[Value],
+    ) -> Result<bool, ReferenceRefusal> {
+        for state in &self.states {
+            if !evaluate_boolean(graph, predicate, locals, state, state)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The first state of the trace.
+    pub fn initial(&self) -> &ReferenceFiniteState {
+        &self.states[0]
+    }
+
+    /// The repeated suffix's first state index.
+    pub fn loop_start(&self) -> usize {
+        self.loop_start
+    }
 }
 
 /// One exact clock valuation in a checked timed model's clock order.
@@ -279,6 +693,23 @@ pub fn evaluate_boolean(
     pre_state: &ReferenceFiniteState,
     current_state: &ReferenceFiniteState,
 ) -> Result<bool, ReferenceRefusal> {
+    match evaluate_finite_value(graph, expression, locals, pre_state, current_state)? {
+        Value::Boolean(value) => Ok(value),
+        _ => Err(ReferenceRefusal {
+            construct: "checked claim expression is not Boolean".to_owned(),
+        }),
+    }
+}
+
+/// Evaluates one finite scalar value from the checked graph.
+#[implements("FR-1051-AC-17")]
+pub fn evaluate_finite_value(
+    graph: &CheckedGraph,
+    expression: CheckedNode<'_>,
+    locals: &[Value],
+    pre_state: &ReferenceFiniteState,
+    current_state: &ReferenceFiniteState,
+) -> Result<Value, ReferenceRefusal> {
     let mut budget = MAX_EXPRESSION_NODES;
     let value = evaluate_value(
         graph,
@@ -289,11 +720,12 @@ pub fn evaluate_boolean(
         0,
         &mut budget,
     )?;
-    match value {
-        Value::Boolean(value) => Ok(value),
-        _ => Err(ReferenceRefusal {
-            construct: "checked claim expression is not Boolean".to_owned(),
-        }),
+    if finite_scalar(&value) {
+        Ok(value)
+    } else {
+        Err(unsupported(
+            "checked expression produced a non-finite value",
+        ))
     }
 }
 
