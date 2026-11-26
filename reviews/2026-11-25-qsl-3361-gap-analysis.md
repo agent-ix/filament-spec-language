@@ -16,7 +16,7 @@ Planless static traceability analysis of the filament-spec-language repository. 
 
 ## Verdict
 
-FAIL — the static matrix contains 989 live untagged criteria. The added FR-621-AC-23 is tagged and binds to the new test.
+FAIL — the static matrix contains 989 live untagged criteria. The added FR-621-AC-27 package-route and FR-621-AC-28 source-route criteria are tagged and bind to their tests.
 
 ## Findings
 
@@ -34,4 +34,4 @@ FAIL — the static matrix contains 989 live untagged criteria. The added FR-621
 - Untracked symbols: 6,613; unmatched tags: 7,603; extraction diagnostics: 24,977
 - Untraced behaviors / stubs: not inventoried in this run
 - Semantic review: skipped
-- QSL-3361 check: FR-621-AC-23 is `tagged`, bound to `fsl-replay/tests/it/probability_certificate.rs::package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack`.
+- QSL-3361 check: FR-621-AC-27 and FR-621-AC-28 are `tagged`, bound to the corresponding package-route and source-route tests in `fsl-replay/tests/it/probability_certificate.rs`.

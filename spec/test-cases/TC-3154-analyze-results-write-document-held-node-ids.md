@@ -12,7 +12,7 @@ relationships:
 
 Analyze results write document-held node ids.
 
-Scope: FR-621-AC-16, FR-621-AC-17, FR-621-AC-23, FR-621-AC-24.
+Scope: FR-621-AC-16, FR-621-AC-17, FR-621-AC-27, FR-621-AC-28.
 
 ## Test Procedure
 
@@ -22,7 +22,7 @@ On a 512 KiB thread, call `check_probability_certificate_package` with default l
 
 On a 512 KiB thread, call `check_probability_certificate_source` with source that compiles under default limits to a 10,000-node operand chain (9,999 links, within the default 1 MiB checked-package byte limit), then a held certificate whose first value indexes node 9,999 and whose next value indexes node 10,000. Test: `fsl-replay/tests/it/probability_certificate.rs` `source_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack`.
 
-Tag the tests `#[trace("TC-3154", "FR-621-AC-16")]`, `#[trace("TC-3154", "FR-621-AC-17")]`, `#[trace("TC-3154", "FR-621-AC-23")]` and `#[trace("TC-3154", "FR-621-AC-24")]`.
+Tag the tests `#[trace("TC-3154", "FR-621-AC-16")]`, `#[trace("TC-3154", "FR-621-AC-17")]`, `#[trace("TC-3154", "FR-621-AC-27")]` and `#[trace("TC-3154", "FR-621-AC-28")]`.
 
 ## Expected Results
 

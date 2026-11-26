@@ -3,7 +3,7 @@ id: SR-967175026302197768900474181941935084872
 title: "Code review — QSL-3361 certificate package refusal test"
 type: SpecReview
 analysis: code-review
-scope: "fsl-replay/tests/it/probability_certificate.rs; FR-621-AC-23; TC-3154"
+scope: "fsl-replay/tests/it/probability_certificate.rs; FR-621-AC-27, FR-621-AC-28; TC-3154"
 review_set: subset
 ---
 

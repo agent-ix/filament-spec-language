@@ -3,7 +3,7 @@ id: SR-967175026302197768900474181941935084869
 title: "QSL-3361 certificate package stack refusal spec review"
 type: SpecReview
 analysis: base
-scope: "QSL-3361; FR-621-AC-23; TC-3154"
+scope: "QSL-3361; FR-621-AC-27, FR-621-AC-28; TC-3154"
 review_set: subset
 ---
 
