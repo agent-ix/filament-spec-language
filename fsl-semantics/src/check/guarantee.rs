@@ -36,8 +36,8 @@ use fsl_foundation::{Code, Span};
 use super::CheckedGraph;
 use super::TemporalClauseNode;
 use super::abstraction::{
-    AbstractionNodeRefusal,
-    AbstractionKey, CheckedAbstractionRelation, CheckedBinding, OperationKey, RustPath, name_parts,
+    AbstractionKey, AbstractionNodeRefusal, CheckedAbstractionRelation, CheckedBinding,
+    OperationKey, RustPath, name_parts,
 };
 use super::capability::{Capability, DeclarationFamily};
 use super::lowering::SemanticNode;

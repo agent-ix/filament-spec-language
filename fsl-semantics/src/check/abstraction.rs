@@ -18,8 +18,8 @@
 //! (`fsl_forms::AbstractionDeclarationForm`) carries each spelling as
 //! written.
 
-use ix_trace_rs::implements;
 use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
+use ix_trace_rs::implements;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 

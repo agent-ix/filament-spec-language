@@ -248,10 +248,7 @@ pub enum RequestRefusal {
     Invalid(Fault),
     /// A premise's result entry is refused by FR-331's reader, at the slot
     /// (`invalid_result`).
-    #[error("{        let emission = linked.map_err(|refusal| DependencyGraphsRefusal::Emission {
-            package: name.clone(),
-            refusal: Box::new(refusal),
-        })?;} under `{pointer}`")]
+    #[error("{refusal} under `{pointer}`")]
     Entry {
         /// The pointer of the entry within the request.
         pointer: String,
@@ -941,11 +938,9 @@ pub fn dependency_graphs(
             Some(linked) => linked,
             None => fsl_package::emit_checked(dependency, emit),
         };
-        let emission = linked.map_err(|refusal| {
-            DependencyGraphsRefusal::Emission {
-                package: name.clone(),
-                refusal: Box::new(refusal),
-            }
+        let emission = linked.map_err(|refusal| DependencyGraphsRefusal::Emission {
+            package: name.clone(),
+            refusal: Box::new(refusal),
         })?;
         let graph = WireGraph::of_package_bytes(emission.package().bytes()).map_err(|message| {
             DependencyGraphsRefusal::Unreadable {
