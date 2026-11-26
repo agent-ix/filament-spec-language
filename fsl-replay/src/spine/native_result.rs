@@ -1354,20 +1354,18 @@ struct ExtractionPositionRead {
 
 #[implements("FR-267-AC-17")]
 fn validate_extraction(value: &serde_json::Value) -> Result<(), NativeRunReadError> {
-    let encoded = serde_json::to_vec(value).map_err(NativeRunReadError::Malformed)?;
-    let extraction: ExtractionRead = read_typed(&encoded).map_err(|error| match error {
-        NativeRunReadError::MalformedMember { member, source } => {
+    let extraction: ExtractionRead =
+        serde_path_to_error::deserialize(value.clone()).map_err(|error| {
+            let member = error.path().to_string();
             NativeRunReadError::MalformedMember {
                 member: if member.is_empty() {
                     "extraction".to_owned()
                 } else {
                     format!("extraction.{member}")
                 },
-                source,
+                source: error.into_inner(),
             }
-        }
-        other => other,
-    })?;
+        })?;
     if extraction.map.segments.is_empty() {
         return Err(NativeRunReadError::Invalid {
             member: "extraction.map.segments",
