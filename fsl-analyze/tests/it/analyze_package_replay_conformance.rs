@@ -531,6 +531,71 @@ fn global_conformance_shares_limits_across_object_keys() {
     assert_equal(&source_two, &package_two);
 }
 
+/// FR-896-AC-4: a role backed by an unselected model declines the item on
+/// both routes before conformance exploration.
+#[trace("TC-2532", "FR-896-AC-4", "FR-850-AC-2")]
+#[test]
+fn missing_protocol_role_declines_on_source_and_package_routes() {
+    let ws = Workspace::new("package-missing-role");
+    let protocol = order_protocol(true).replace(
+        "role Seller on M::Cell;",
+        "role Seller on M::Cell;\nrole Courier on N::Core;",
+    );
+    let request_path = litmus_request(
+        &ws,
+        &protocol,
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+    );
+    let source_unit = crate::litmus::unit_text(&protocol).replace(
+        "model M = \"test/litmus\";",
+        "model M = \"test/litmus\";\nmodel N = \"test/second\";",
+    );
+    ws.write("program.fsl", source_unit.as_bytes());
+    let second_model = String::from_utf8(crate::litmus::document())
+        .expect("litmus model is UTF-8")
+        .replace("test/litmus", "test/second");
+    ws.write("second-model.json", second_model.as_bytes());
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&request_path).expect("request"))
+            .expect("request JSON");
+    request["request"]["models"]
+        .as_array_mut()
+        .expect("model selections")
+        .push(json!({
+            "format": "semantic-ir/2.0.0",
+            "source": {"file": "second-model.json", "authority": "test",
+                "identity": "second-model", "document": "Second", "formal_revision": 1}
+        }));
+    ws.write("analyze.json", request.to_string().as_bytes());
+    let source = analyze(&request_path);
+    assert_eq!(source.exit, 0, "{}", source.document());
+    let (members, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("authored unit is removed");
+    let sources = ws.path(&format!("{HANDOFF}/sources"));
+    std::fs::remove_dir_all(&sources).expect("handoff sources are removed");
+    let package = analyze(
+        &ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
+    for run in [&source, &package] {
+        let item = run.item(0);
+        assert_eq!(item["record"]["result"], "declined", "{}", run.document());
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "missing_declaration",
+            "{item}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["cause"], "missing-name",
+            "{item}"
+        );
+    }
+    assert_equal(&source, &package);
+}
+
 fn recording_document(protocol: &str) -> Value {
     json!({
         "format": "filament.protocol-recording/1",
