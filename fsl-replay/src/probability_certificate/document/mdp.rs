@@ -2,6 +2,7 @@
 //! FR-201's exact cyclic MDP values, independently checked against all actions.
 
 use super::*;
+#[cfg(feature = "test-support")]
 use ix_trace_rs::implements;
 
 /// Unchecked exact document with its closed wire-profile selection retained.

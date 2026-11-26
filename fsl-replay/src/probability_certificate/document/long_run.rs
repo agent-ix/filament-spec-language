@@ -2,6 +2,7 @@
 //! Independent gain–bias checking of the closed DTMC long-run profiles.
 
 use super::*;
+#[cfg(feature = "test-support")]
 use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 use std::cell::RefCell;
