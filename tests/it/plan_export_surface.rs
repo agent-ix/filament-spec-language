@@ -1100,13 +1100,8 @@ fn an_export_stops_at_its_output_byte_limit() {
     assert!(value.get("export").is_none(), "{value}");
     let directory = tempfile::tempdir().unwrap();
     let path = braking_request(directory.path(), braking_member());
-    let limits = fsl_replay::spine::SpineLimits {
-        export: fsl_replay::spine::ExportLimits {
-            output_bytes: Some(1),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let limits =
+        std::collections::BTreeMap::from([(fsl_foundation::Setting::ExportOutputBytes, 1)]);
     let overrides = RequestOverrides {
         limits: Some(&limits),
         ..RequestOverrides::default()
@@ -3768,9 +3763,7 @@ fn transfer_run_overridden(overrides: &fsl_command::command::RequestOverrides<'_
 #[test]
 #[trace("FR-255-AC-32")]
 fn a_refinement_transfer_applies_the_callers_stage_limit() {
-    use fsl_foundation::SettingLimits;
-    let mut limits = fsl_replay::spine::SpineLimits::default();
-    assert!(limits.set_bound(fsl_foundation::Setting::S3Nodes, 4));
+    let limits = std::collections::BTreeMap::from([(fsl_foundation::Setting::S3Nodes, 4)]);
     let (exit, value) = transfer_run_overridden(&fsl_command::command::RequestOverrides {
         limits: Some(&limits),
         ..Default::default()
@@ -3783,7 +3776,6 @@ fn a_refinement_transfer_applies_the_callers_stage_limit() {
 /// FR-255 Behavior 15: a `refinement_transfer` run refuses an output override,
 /// naming it.
 #[test]
-#[trace("FR-255-AC-33")]
 fn a_refinement_transfer_refuses_an_output_override() {
     let output = std::path::PathBuf::from("transfer-output.json");
     let (exit, value) = transfer_run_overridden(&fsl_command::command::RequestOverrides {

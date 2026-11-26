@@ -238,3 +238,67 @@ fn a_malformed_override_refuses_as_a_malformed_member_does() {
         );
     }
 }
+
+/// FR-255 Behavior 15: a call run and a clause run write no file, so each
+/// refuses an output override by name.
+#[test]
+fn a_call_and_a_clause_run_refuse_an_output_override() {
+    let directory = tempfile::tempdir().unwrap();
+    let call = write(directory.path(), "call.json", PROGRAM, &run_request(None));
+    let clause = write(
+        directory.path(),
+        "clause.json",
+        PROGRAM,
+        &json!({"format": "native-run/1", "request": {
+            "models": [], "program": {"source": source()},
+            "clause": {"selection": {"temporal": {"name": "E", "trace": {"finite": []}}},
+                "observations": {"initial": "missing.json"}}}}),
+    );
+    let output = directory.path().join("out.json");
+    let overrides = RequestOverrides {
+        output: Some(&output),
+        ..Default::default()
+    };
+    for (path, route) in [(&call, "call"), (&clause, "clause")] {
+        for error in [
+            command::run_with_overrides(path, &overrides, &crate::negotiation::Fr290).unwrap_err(),
+            command::prepare_run_with_overrides(path, RunLimits::default(), &overrides)
+                .err()
+                .unwrap(),
+        ] {
+            let envelope = refusal_of(&error);
+            assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+            let message = envelope["message"].as_str().unwrap();
+            assert!(
+                message.contains("output override") && message.contains(route),
+                "{envelope}"
+            );
+        }
+    }
+    assert!(!output.exists());
+}
+
+/// FR-255 Behavior 15: a run that compiles has no place for an analysis
+/// setting, so naming one is refused rather than ignored.
+#[test]
+fn a_run_refuses_a_setting_it_does_not_hold() {
+    let directory = tempfile::tempdir().unwrap();
+    let call = write(directory.path(), "call.json", PROGRAM, &run_request(None));
+    let limits =
+        std::collections::BTreeMap::from([(fsl_foundation::Setting::ModelCheckMaxTransitions, 2)]);
+    let overrides = RequestOverrides {
+        limits: Some(&limits),
+        ..Default::default()
+    };
+    let error =
+        command::run_with_overrides(&call, &overrides, &crate::negotiation::Fr290).unwrap_err();
+    let envelope = refusal_of(&error);
+    assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+    assert!(
+        envelope["message"]
+            .as_str()
+            .unwrap()
+            .contains("model_check.max_transitions"),
+        "{envelope}"
+    );
+}

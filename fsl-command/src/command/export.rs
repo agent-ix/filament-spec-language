@@ -149,13 +149,11 @@ pub(super) fn run_selected_bytes(
             .and_then(Value::as_object)
             .and_then(|body| body.get("export"))
         {
-            let given = overrides
-                .limits
-                .map(|limits| limits.export)
-                .unwrap_or_default();
+            let given = overrides.spine_limits().export;
             request::read(member, &given)?;
         }
     }
+    super::overrides::refuse_unheld(super::overrides::RunRoute::Export, overrides)?;
     super::request_shape::admit(super::request_shape::Family::Export(selection), bytes)?;
     if let Some(result) = run_document(directory, bytes, document, limits, overrides)? {
         return Ok(result);
@@ -211,10 +209,7 @@ fn run_document(
             .collect();
         return Err(super::transfer_conflict(&present));
     }
-    let given = overrides
-        .limits
-        .map(|limits| limits.export)
-        .unwrap_or_default();
+    let given = overrides.spine_limits().export;
     let request = request::read(member, &given)?;
     for name in ["output", "handoff", "call_site"] {
         if body.contains_key(name) {
@@ -559,7 +554,7 @@ fn compile_and_map(
             Ok(document)
         })
         .transpose()?;
-    let spine_limits = overrides.limits.copied().unwrap_or_default();
+    let spine_limits = overrides.spine_limits();
     let effective = request.limits.effective();
     let mapped = check_sources(
         compile,

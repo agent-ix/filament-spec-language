@@ -31,7 +31,7 @@ use super::{
     ModelSampleError, ModelShrinkError, ModelSimState, ModelSimulationRequest, ModelSystem,
     ModelTrace,
 };
-use super::{AdmissionFailure, ContractClause, ContractClauseKind};
+use super::{AdmissionFailure, ClauseOutcome, ContractClause, ContractClauseKind};
 use crate::simulation::choice::ChoicePoint;
 use crate::simulation::trace::SampleProvenance;
 use crate::value::{CheckedPackageEvaluation, QualifiedName};
@@ -680,6 +680,10 @@ pub enum ModelBasedTestError {
     /// A temporal clause could not be evaluated for the generated model trace.
     #[error("the temporal clause's native model letters stopped: {0:?}")]
     TemporalLetters(crate::temporal::LetterStop),
+    /// The accounting budget could not cover a clause evaluation. The run
+    /// settles `incomplete` at the reached counter.
+    #[error("the accounting budget could not cover a clause evaluation: {}", .0.limit_kind.as_str())]
+    Exhausted(Box<filament_exact::Incomplete>),
     /// A checked clause returned an inconclusive outcome for a generated case.
     #[error("the selected clause was not decided for a generated case: {outcome}")]
     ClauseUndetermined {
@@ -841,6 +845,7 @@ pub fn run_model_based_test_with_value_bits(
     clippy::too_many_arguments,
     reason = "the checked-system compatibility entry feeds the one FR-752 entry"
 )]
+#[implements("FR-752-AC-15")]
 fn run_model_based_test_with_system_and_admission(
     system: &ModelSystem<'_>,
     identity: &NodeKey,
@@ -865,14 +870,29 @@ fn run_model_based_test_with_system_and_admission(
         reachability_limits,
         admission,
     );
-    if let Err(ModelBasedTestError::Expansion(ExpansionStop {
-        limit: Some(limit), ..
-    })) = &outcome
-    {
-        let value = match *limit {
-            ExpansionLimit::EvaluationMeter(kind) => scalar_limit(&system.meter_limits(), kind),
-            ExpansionLimit::MaxCandidates => system.limits.max_candidates,
-        };
+    let reached = match &outcome {
+        Err(ModelBasedTestError::Expansion(ExpansionStop {
+            limit: Some(limit), ..
+        })) => Some((
+            *limit,
+            match *limit {
+                ExpansionLimit::EvaluationMeter(kind) => scalar_limit(&system.meter_limits(), kind),
+                ExpansionLimit::MaxCandidates => system.limits.max_candidates,
+            },
+        )),
+        Err(ModelBasedTestError::Exhausted(incomplete)) => Some((
+            ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
+            incomplete.limit,
+        )),
+        Err(ModelBasedTestError::TemporalLetters(crate::temporal::LetterStop::Incomplete(
+            incomplete,
+        ))) => Some((
+            ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
+            incomplete.limit,
+        )),
+        _ => None,
+    };
+    if let Some((limit, value)) = reached {
         if let Some(name) = clause_name(system, identity) {
             return Ok(limit_record(
                 Some(system),
@@ -883,7 +903,7 @@ fn run_model_based_test_with_system_and_admission(
                 max_cases,
                 max_trace_length,
                 max_value_bits,
-                *limit,
+                limit,
                 value,
             ));
         }
@@ -1336,6 +1356,7 @@ fn model_size_bounded_roots(
     clippy::too_many_arguments,
     reason = "these are the model-based request inputs"
 )]
+#[implements("FR-752-AC-15")]
 fn run_model_based_value_function_entry(
     package: &fsl_package::CheckedPackage,
     identity: &NodeKey,
@@ -1407,7 +1428,7 @@ fn run_model_based_value_function_entry(
             stop.limit,
         ));
     }
-    run_model_based_value_function(
+    match run_model_based_value_function(
         package,
         identity,
         &function,
@@ -1419,7 +1440,21 @@ fn run_model_based_value_function_entry(
         accounting,
         limits,
         admission,
-    )
+    ) {
+        Err(ModelBasedTestError::Exhausted(incomplete)) => Ok(limit_record(
+            None,
+            limits,
+            name,
+            sampler,
+            seed,
+            max_cases,
+            trace_length,
+            max_value_bits,
+            ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
+            incomplete.limit,
+        )),
+        result => result,
+    }
 }
 
 #[allow(
@@ -1882,10 +1917,7 @@ fn value_function_result(
             CaseResult::Fail("undefined-evaluation".to_owned())
         }
         FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
-            return Err(ModelBasedTestError::ClauseUndetermined {
-                clause: function.to_string(),
-                outcome: format!("{incomplete:?}"),
-            });
+            return Err(ModelBasedTestError::Exhausted(Box::new(incomplete)));
         }
         outcome => {
             return Err(ModelBasedTestError::ClauseUndetermined {
@@ -2782,9 +2814,19 @@ fn has_false_invariant(
     system: &ModelSystem<'_>,
     state: &super::ModelSimState,
 ) -> Result<bool, ModelBasedTestError> {
-    Ok(system
+    let findings = system
         .invariant_findings_at(state)
-        .map_err(ModelBasedTestError::Expansion)?
+        .map_err(ModelBasedTestError::Expansion)?;
+    for finding in &findings {
+        if let ModelFinding::InvariantUndetermined {
+            evaluation: ClauseOutcome::Incomplete(incomplete),
+            ..
+        } = finding
+        {
+            return Err(ModelBasedTestError::Exhausted(Box::new(incomplete.clone())));
+        }
+    }
+    Ok(findings
         .iter()
         .any(|finding| matches!(finding, ModelFinding::InvariantViolated { .. })))
 }
@@ -3397,7 +3439,7 @@ fn build_partition_trace(
             .map_err(ModelBasedTestError::Key)?
         {
             Expanded::Successors { findings, .. } => findings,
-            Expanded::Stopped(stop) if stop.limit == Some(ExpansionLimit::MaxCandidates) => {
+            Expanded::Stopped(stop) if stop.limit.is_some() => {
                 return Err(ModelBasedTestError::Expansion(stop));
             }
             Expanded::Stopped(_) => {
@@ -3651,6 +3693,13 @@ fn invariant_result(
                 ModelFinding::InvariantViolated { clause: found, .. } if found == clause => {
                     failed = true;
                 }
+                ModelFinding::InvariantUndetermined {
+                    clause: found,
+                    evaluation: ClauseOutcome::Incomplete(incomplete),
+                    ..
+                } if found == clause => {
+                    return Err(ModelBasedTestError::Exhausted(Box::new(incomplete)));
+                }
                 ModelFinding::InvariantUndetermined { clause: found, .. } if found == clause => {
                     return Err(ModelBasedTestError::InvariantUndetermined {
                         clause: clause.to_owned(),
@@ -3714,6 +3763,9 @@ fn temporal_result(
             &mut temporal_letters,
             &mut Meter::new(system.meter_limits()),
         )?;
+        if let crate::temporal::TemporalOutcome::Incomplete(incomplete) = &outcome {
+            return Err(ModelBasedTestError::Exhausted(Box::new(incomplete.clone())));
+        }
         match outcome.category() {
             Category::Success => {}
             Category::Violation => {

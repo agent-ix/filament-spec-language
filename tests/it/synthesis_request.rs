@@ -8,9 +8,8 @@
 use std::collections::BTreeMap;
 
 use fsl_command::command::RequestOverrides;
-use fsl_foundation::{AccountingSetting, Setting, SettingLimits, SourceIdentity};
-use fsl_replay::spine::{DependencyInput, SpineLimits};
-use fsl_semantics::model::observation::ObservationLimits;
+use fsl_foundation::{AccountingSetting, Setting, SourceIdentity};
+use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;
 use serde_json::value::RawValue;
 use serde_json::{json, Value};
@@ -901,8 +900,7 @@ fn a_synthesis_run_refuses_clocks_given_twice() {
 #[test]
 #[trace("FR-255-AC-32")]
 fn a_source_synthesis_run_applies_the_callers_stage_limit() {
-    let mut limits = SpineLimits::default();
-    assert!(limits.set_bound(Setting::S3Nodes, 4));
+    let limits = std::collections::BTreeMap::from([(Setting::S3Nodes, 4)]);
     let (exit, found) = run_overridden(
         &format!(
             "{}function f using v(): Integer pure {{ 1 + 1 + 1 }}\n",
@@ -924,13 +922,12 @@ fn a_source_synthesis_run_applies_the_callers_stage_limit() {
 /// cannot apply: clocks, an output file, observation limits on a value
 /// synthesis, and a stage setting on a package, which compiles nothing.
 #[test]
-#[trace("FR-255-AC-33")]
 fn a_synthesis_run_refuses_an_override_it_cannot_apply() {
     let supplied = RawValue::from_string("{}".to_owned()).unwrap();
     let output = std::path::PathBuf::from("synthesis-output.json");
-    let observation = ObservationLimits::default();
-    let mut limits = SpineLimits::default();
-    assert!(limits.set_bound(Setting::S3Nodes, 4));
+    let observation =
+        std::collections::BTreeMap::from([(Setting::ObservationInputBytes, 1_048_576)]);
+    let limits = std::collections::BTreeMap::from([(Setting::S3Nodes, 4)]);
     let clocks = RequestOverrides {
         clocks: Some(&supplied),
         ..Default::default()
@@ -940,7 +937,7 @@ fn a_synthesis_run_refuses_an_override_it_cannot_apply() {
         ..Default::default()
     };
     let observed = RequestOverrides {
-        observation: Some(&observation),
+        limits: Some(&observation),
         ..Default::default()
     };
     let staged = RequestOverrides {
@@ -966,4 +963,19 @@ fn a_synthesis_run_refuses_an_override_it_cannot_apply() {
         assert_eq!(found["code"], "invalid-request", "{found}");
         names(&found["message"], &format!("{member} override"));
     }
+}
+
+/// FR-255 Behavior 15: a synthesis compile reads no clocks selection, so one
+/// the request states is refused rather than ignored, for a source and for a
+/// package synthesis.
+#[test]
+fn a_synthesis_run_refuses_the_requests_clocks() {
+    let clocks = json!({"spare": {"kind": "event_position", "sequence_authority": "spare"}});
+    let (exit, found) = run_with(
+        &pick("Pick = 7", ""),
+        json!({"synthesis": {"declaration": "Pick"}, "clocks": clocks}),
+    );
+    assert_eq!(exit, 20, "{found}");
+    assert_eq!(found["code"], "invalid-request", "{found}");
+    names(&found["message"], "reads no clocks selection");
 }

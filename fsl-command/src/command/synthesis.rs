@@ -9,7 +9,9 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::overrides::{effective_limits, refuse_unapplied, RequestLimits, RunRoute};
+use super::overrides::{
+    effective_limits, refuse_request_clocks, refuse_unapplied, RequestLimits, RunRoute,
+};
 
 const DEFAULT_MAX_CANDIDATES: u64 = 10_000_000;
 const DEFAULT_MAX_WORK: u64 = 100_000_000;
@@ -737,6 +739,11 @@ pub(super) fn run_bytes(
     // The synthesis member is removed above, so this reads the rest of the
     // request, refusing clocks given by both before any file is read.
     let request: super::wire::Request = super::request_with_overrides(&request_bytes, overrides)?;
+    // A caller's clocks override is refused by the route's own check below;
+    // here only the request's own member is left to refuse.
+    if overrides.clocks.is_none() {
+        refuse_request_clocks(RunRoute::Synthesis, &request.clocks)?;
+    }
     if request.package.is_some() {
         return run_package_synthesis(
             directory,

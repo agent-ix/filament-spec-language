@@ -4,7 +4,6 @@
 use std::path::Path;
 
 use fsl_command::command::{self, RequestOverrides, RunLimits};
-use fsl_replay::spine::SpineLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -76,10 +75,11 @@ fn compile_stage_and_output_limits_come_from_request_overrides() {
         "{failure}"
     );
 
-    let mut limits = SpineLimits::default();
-    limits.source.tokens = 1_000_000;
-    limits.source.nodes = 1_000_000;
-    limits.source.work_units = 1_000_000;
+    let mut limits = std::collections::BTreeMap::from([
+        (fsl_foundation::Setting::S1Tokens, 1_000_000),
+        (fsl_foundation::Setting::S1Nodes, 1_000_000),
+        (fsl_foundation::Setting::S1WorkUnits, 1_000_000),
+    ]);
     let overrides = RequestOverrides {
         limits: Some(&limits),
         ..RequestOverrides::default()
@@ -87,7 +87,10 @@ fn compile_stage_and_output_limits_come_from_request_overrides() {
     let outcome =
         command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
             .unwrap();
-    limits.package.output_bytes = outcome.package_bytes().len() as u64 - 1;
+    limits.insert(
+        fsl_foundation::Setting::EmitOutputBytes,
+        outcome.package_bytes().len() as u64 - 1,
+    );
     let overrides = RequestOverrides {
         limits: Some(&limits),
         ..RequestOverrides::default()

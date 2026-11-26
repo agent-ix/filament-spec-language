@@ -176,7 +176,7 @@ pub(super) fn run_bytes(
         &mut intake,
         sources,
         false,
-        overrides.limits.copied().unwrap_or_default(),
+        overrides.spine_limits(),
         integer_division,
         None,
         |intake, checked, _, _, packages, units, _, _, _, _| {
@@ -233,8 +233,8 @@ pub(super) fn run_bytes(
             let mut analyze_limits =
                 super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), None);
             analyze_limits.accounting = overrides.accounting_over(analyze_limits.accounting);
-            if let Some(observation) = overrides.observation {
-                analyze_limits.observation = *observation;
+            if let Some(observation) = overrides.observation_limits() {
+                analyze_limits.observation = observation;
             }
             let consumers =
                 plan_consumers(package, plan, &inputs, &analyze_limits).map_err(plan_refusal)?;

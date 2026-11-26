@@ -6,8 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use fsl_command::command::{self, RequestOverrides, RunError, RunResult};
-use fsl_foundation::{AccountingSetting, Setting, SettingLimits};
-use fsl_replay::spine::SpineLimits;
+use fsl_foundation::{AccountingSetting, Setting};
 use ix_trace_rs::trace;
 use serde_json::value::RawValue;
 use serde_json::{json, Value};
@@ -68,8 +67,7 @@ fn a_monitor_run_applies_the_callers_stage_limit() {
     let control = run(&path, &RequestOverrides::default()).expect("the control run completes");
     assert_eq!(control.exit_code, 0);
 
-    let mut limits = SpineLimits::default();
-    assert!(limits.set_bound(Setting::S3Nodes, 4));
+    let limits = std::collections::BTreeMap::from([(Setting::S3Nodes, 4)]);
     let envelope = refusal(
         &path,
         &RequestOverrides {
@@ -113,12 +111,10 @@ fn a_monitor_run_applies_the_callers_clocks() {
 /// FR-255 Behavior 15: a monitor run refuses an output override and a stage
 /// setting the operation does not expose, naming each.
 #[test]
-#[trace("FR-255-AC-33")]
 fn a_monitor_run_refuses_an_override_it_cannot_apply() {
     let (directory, path) = monitor_request(json!({}));
     let output = directory.path().join("out.json");
-    let mut limits = SpineLimits::default();
-    assert!(limits.set_bound(Setting::ProgressCoveredPositions, 3));
+    let limits = std::collections::BTreeMap::from([(Setting::ProgressCoveredPositions, 3)]);
     for (overrides, member) in [
         (
             RequestOverrides {

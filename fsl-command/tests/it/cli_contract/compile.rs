@@ -5,7 +5,6 @@
 //! and `--limit` overrides, and odd request and source input.
 
 use fsl_command::command::{RequestOverrides, RunLimits};
-use fsl_replay::spine::SpineLimits;
 use ix_trace_rs::trace;
 use serde_json::value::RawValue;
 use serde_json::{json, Value};
@@ -170,8 +169,10 @@ fn request_byte_ceiling_is_reached_and_raised() {
 #[trace("FR-001-AC-4", "FR-869-AC-2")]
 fn source_byte_stage_limit_is_reached_and_raised() {
     let (_case, path) = parcel(SOURCE.as_bytes());
-    let mut limits = SpineLimits::default();
-    limits.source.source_bytes = SOURCE.len() - 1;
+    let mut limits = std::collections::BTreeMap::from([(
+        fsl_foundation::Setting::S1InputBytes,
+        SOURCE.len() as u64 - 1,
+    )]);
     let overrides = RequestOverrides {
         limits: Some(&limits),
         ..RequestOverrides::default()
@@ -183,7 +184,7 @@ fn source_byte_stage_limit_is_reached_and_raised() {
         "{diagnostic}"
     );
 
-    limits.source.source_bytes = SOURCE.len();
+    limits.insert(fsl_foundation::Setting::S1InputBytes, SOURCE.len() as u64);
     let overrides = RequestOverrides {
         limits: Some(&limits),
         ..RequestOverrides::default()

@@ -4556,24 +4556,31 @@ fn a_direct_member_past_the_candidate_bound_settles_incomplete() {
 
 // ---- FR-752/FR-255: caller overrides on a direct model-based test ------
 
-/// A direct `model_based_test` member over a state clause, run with the
-/// caller's `overrides`.
-fn run_member_overridden(overrides: &fsl_command::command::RequestOverrides<'_>) -> (u8, Value) {
-    let directory = bump_directory(
-        &format!(
-            "{MODEL_HEADER}invariant Always using v on Config::ConfigVersion at current {{ true }}\n"
-        ),
-        &["a"],
-        true,
-    );
-    let request = json!({"format": "native-run/1", "request": {
-        "models": [{"format": "semantic-ir/2.0.0",
-            "source": source("spine-model.semantic-ir.json")}],
-        "program": {"source": source("unit.native")},
-        "model_based_test": {"clause": "Always", "seed": 7, "max_cases": 5,
-            "max_trace_length": 2, "initial": "s.json"}}});
+/// A direct `model_based_test` member of `clause` in `unit`, with the extra
+/// member entries `selection` and request entries `request`, over the
+/// narrowed spine model for a state clause, run with the caller's
+/// `overrides`.
+fn run_member(
+    unit: &str,
+    selection: Value,
+    request: Value,
+    overrides: &fsl_command::command::RequestOverrides<'_>,
+) -> (u8, Value) {
+    let state = selection.get("initial").is_some();
+    let directory = bump_directory(unit, &["a"], true);
+    let models = if state {
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}])
+    } else {
+        json!([])
+    };
+    let mut body = json!({"models": models, "program": {"source": source("unit.native")},
+        "model_based_test": selection});
+    for (name, value) in request.as_object().expect("request entries") {
+        body[name] = value.clone();
+    }
     let path = directory.path().join("request.json");
-    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let body = json!({"format": "native-run/1", "request": body});
+    std::fs::write(&path, serde_json::to_vec(&body).unwrap()).unwrap();
     match fsl_command::command::run_with_overrides(&path, overrides, &crate::negotiation::Fr290) {
         Ok(result) => (
             result.exit_code,
@@ -4583,49 +4590,84 @@ fn run_member_overridden(overrides: &fsl_command::command::RequestOverrides<'_>)
     }
 }
 
-/// FR-255 Behavior 15: the caller's accounting reaches a direct member. The
-/// value clause `x < 200` is refuted by generated assignments; with no work
-/// unit to charge, no assignment is evaluated, so the run cannot report that
-/// refutation.
+/// A state invariant true of every state, whose evaluation charges more than
+/// five work units.
+fn costly_invariant() -> (String, Value) {
+    (
+        format!(
+            "{MODEL_HEADER}invariant Costly using v on Config::ConfigVersion at current \
+             {{ self.versionNumber + 1 + 1 + 1 + 1 + 1 + 1 > 0 }}\n"
+        ),
+        json!({"clause": "Costly", "seed": 7, "max_cases": 5, "max_trace_length": 2,
+            "initial": "s.json"}),
+    )
+}
+
+/// A value predicate true of every argument, whose evaluation charges more
+/// than five work units.
+fn costly_predicate() -> (String, Value) {
+    (
+        format!(
+            "{VALUE_HEADER}type Digit = Int[0, 5];\n\
+             predicate Costly using v (x: Digit): Boolean {{ x + 1 + 1 + 1 + 1 + 1 + 1 > 0 }}\n"
+        ),
+        json!({"clause": "Costly", "seed": 7, "max_cases": 5}),
+    )
+}
+
+/// FR-752-AC-15: with the caller's `accounting.work_units` at 5 a direct
+/// member stops at that bound, over a state clause and over a value clause;
+/// the same runs with no caller setting complete.
 #[test]
-fn a_direct_member_does_not_ignore_the_callers_work_bound() {
-    let unit = format!(
-        "{VALUE_HEADER}predicate BelowTwoHundred using v (x: Integer): Boolean {{ x < 200 }}\n"
-    );
-    let directory = tempfile::tempdir().unwrap();
-    spine::write(directory.path(), Case::Healthy).unwrap();
-    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
-    let request = json!({"format": "native-run/1", "request": {
-        "models": [], "program": {"source": source("unit.native")},
-        "model_based_test": {"clause": "BelowTwoHundred", "seed": 7, "max_cases": 20,
-            "max_value_bits": 8}}});
-    let path = directory.path().join("request.json");
-    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+#[trace("FR-752-AC-15")]
+fn a_direct_member_stops_at_the_callers_work_bound() {
     let accounting =
-        std::collections::BTreeMap::from([(fsl_foundation::AccountingSetting::WorkUnits, 0)]);
-    let overrides = fsl_command::command::RequestOverrides {
+        std::collections::BTreeMap::from([(fsl_foundation::AccountingSetting::WorkUnits, 5)]);
+    let bounded = fsl_command::command::RequestOverrides {
         accounting: Some(&accounting),
         ..Default::default()
     };
-    let (exit, value) = match fsl_command::command::run_with_overrides(
-        &path,
-        &overrides,
-        &crate::negotiation::Fr290,
-    ) {
-        Ok(result) => (
-            result.exit_code,
-            serde_json::from_str::<Value>(&result.value.to_string()).expect("a JSON document"),
-        ),
-        Err(error) => (error.category().exit_code(), error.value().unwrap()),
-    };
-    assert_ne!(exit, 10, "{value}");
-    assert_ne!(value["model_based_test"]["status"], "refuted", "{value}");
+    for (unit, selection) in [costly_invariant(), costly_predicate()] {
+        let (exit, control) = run_member(&unit, selection.clone(), json!({}), &Default::default());
+        assert_eq!(control["model_based_test"]["status"], "tested", "{control}");
+        assert_eq!(exit, 0, "{control}");
+
+        let (exit, value) = run_member(&unit, selection, json!({}), &bounded);
+        let record = &value["model_based_test"];
+        assert_eq!(record["status"], "incomplete", "{value}");
+        assert_eq!(
+            record["cause"],
+            json!({"kind": "limit-reached", "limit": "work_units", "value": 5,
+                "setting": "accounting.work_units"}),
+            "{value}"
+        );
+        assert_eq!(exit, 22, "{value}");
+    }
+}
+
+/// FR-255 Behavior 15: a direct member reads no clocks selection, so one the
+/// request states is refused rather than ignored.
+#[test]
+fn a_direct_member_refuses_the_requests_clocks() {
+    let (unit, selection) = costly_predicate();
+    let clocks = json!({"clocks":
+        {"spare": {"kind": "event_position", "sequence_authority": "spare"}}});
+    let (exit, value) = run_member(&unit, selection, clocks, &Default::default());
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names_member(&value, "clocks");
+}
+
+fn names_member(value: &Value, member: &str) {
+    assert!(
+        value["message"].as_str().unwrap().contains(member),
+        "names {member}: {value}"
+    );
 }
 
 /// FR-255 Behavior 15: a direct member, which compiles without clock
 /// selections and writes no file, refuses a clocks or output override.
 #[test]
-#[trace("FR-255-AC-33")]
 fn a_direct_member_refuses_an_override_it_cannot_apply() {
     let supplied = serde_json::value::RawValue::from_string("{}".to_owned()).unwrap();
     let output = std::path::PathBuf::from("model-based-output.json");
@@ -4645,7 +4687,8 @@ fn a_direct_member_refuses_an_override_it_cannot_apply() {
             "output override",
         ),
     ] {
-        let (exit, value) = run_member_overridden(&overrides);
+        let (unit, selection) = costly_predicate();
+        let (exit, value) = run_member(&unit, selection, json!({}), &overrides);
         assert_eq!(exit, 20, "{value}");
         assert_eq!(value["code"], "invalid-request", "{value}");
         assert!(

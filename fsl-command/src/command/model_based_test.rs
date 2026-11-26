@@ -375,7 +375,7 @@ pub(super) struct Context<'a> {
     pub(super) overrides: &'a super::RequestOverrides<'a>,
 }
 
-#[implements("FR-752-AC-16")]
+#[implements("FR-752-AC-16", "FR-752-AC-15")]
 pub(super) fn prepare(
     intake: &mut Intake<'_>,
     request: &wire::Request,

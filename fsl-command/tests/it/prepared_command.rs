@@ -588,12 +588,15 @@ fn observation_override_conflict_refuses_before_observation_read() {
         }
     });
     let path = write_request(directory.path(), "clause.json", request);
-    let limits = fsl_semantics::model::observation::ObservationLimits::default();
+    let limits = std::collections::BTreeMap::from([(
+        fsl_foundation::Setting::ObservationInputBytes,
+        1_048_576,
+    )]);
     let error = command::prepare_run_with_overrides(
         &path,
         RunLimits::default(),
         &command::RequestOverrides {
-            observation: Some(&limits),
+            limits: Some(&limits),
             ..Default::default()
         },
     )
@@ -652,12 +655,14 @@ fn observation_override_matches_the_in_request_limit() {
     let member = write_request(directory.path(), "member.json", request(true));
     let bare = write_request(directory.path(), "bare.json", request(false));
     let expected = command::run(&member, &crate::negotiation::Fr290).unwrap();
-    let limits = fsl_semantics::model::observation::ObservationLimits::default()
-        .with_document_bytes(maximum);
+    let limits = std::collections::BTreeMap::from([(
+        fsl_foundation::Setting::ObservationInputBytes,
+        maximum as u64,
+    )]);
     let actual = command::run_with_overrides(
         &bare,
         &command::RequestOverrides {
-            observation: Some(&limits),
+            limits: Some(&limits),
             ..Default::default()
         },
         &crate::negotiation::Fr290,
@@ -709,11 +714,14 @@ fn extracted_clause_observation_override_conflict_refuses_before_observation_rea
         }
     });
     let path = write_request(directory.path(), "extracted.json", request);
-    let limits = fsl_semantics::model::observation::ObservationLimits::default();
+    let limits = std::collections::BTreeMap::from([(
+        fsl_foundation::Setting::ObservationInputBytes,
+        1_048_576,
+    )]);
     let error = command::run_with_overrides(
         &path,
         &command::RequestOverrides {
-            observation: Some(&limits),
+            limits: Some(&limits),
             ..Default::default()
         },
         &crate::negotiation::Fr290,

@@ -1281,7 +1281,7 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
 #[trace("TC-2701", "FR-961-AC-6")]
 #[test]
 fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
-    use fsl_foundation::{Setting, SettingLimits};
+    use fsl_foundation::Setting;
     use fsl_replay::Operation;
 
     let directory = tempfile::tempdir().unwrap();
@@ -1291,8 +1291,7 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
         json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
-    let mut stage_limits = fsl_replay::spine::SpineLimits::default();
-    assert!(stage_limits.set_bound(Setting::S1Nodes, 1));
+    let stage_limits = std::collections::BTreeMap::from([(Setting::S1Nodes, 1)]);
     let overrides = command::RequestOverrides {
         limits: Some(&stage_limits),
         ..command::RequestOverrides::default()
@@ -1348,7 +1347,7 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
     assert_eq!(negotiate.negotiations.load(Ordering::SeqCst), 0);
     assert_eq!(seen.lock().unwrap().settle_calls, 0);
 
-    let default_limits = fsl_replay::spine::SpineLimits::default();
+    let default_limits = std::collections::BTreeMap::new();
     let default_overrides = command::RequestOverrides {
         limits: Some(&default_limits),
         ..command::RequestOverrides::default()

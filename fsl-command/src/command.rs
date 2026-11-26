@@ -2213,6 +2213,7 @@ fn run_configured(
             )
             .map(Some)
         } else {
+            overrides::refuse_unheld(overrides::RunRoute::Direct, overrides)?;
             // FR-1045 closes the relationship selection. Check duplicate
             // names before special request readers (notably export's unique
             // JSON admission) normalize the raw request and lose the later
@@ -2825,8 +2826,10 @@ fn read_clause_run_request_bytes(
     dependent_bytes: Option<usize>,
     overrides: &RequestOverrides<'_>,
 ) -> Result<fsl_replay::spine::ClauseRunRequest> {
-    let observation_override = overrides.observation.copied();
+    let observation_override = overrides.observation_limits();
+    overrides::refuse_unheld(overrides::RunRoute::Clause, overrides)?;
     let mut request: wire::Request = request_with_overrides(bytes, overrides)?;
+    overrides::refuse_output(overrides::RunRoute::Clause, overrides)?;
     apply_accounting_override(&mut request, overrides);
     // FR-1047: of the checks below, only a package's member refusals and the
     // extraction clause count come before the no-run-member refusal.
@@ -2908,7 +2911,7 @@ fn read_clause_run_request_bytes(
             clause,
             source,
             extracted,
-            overrides.limits.copied().unwrap_or_default(),
+            overrides.spine_limits(),
             observation_override,
         );
     } else {
@@ -2921,7 +2924,7 @@ fn read_clause_run_request_bytes(
         &request,
         clause,
         source,
-        overrides.limits.copied().unwrap_or_default(),
+        overrides.spine_limits(),
         observation_override,
     )
 }
@@ -3150,6 +3153,7 @@ fn compile_outcome_inner(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
         request_shape::admit(request_shape::Family::Compile, bytes)?;
+        overrides::refuse_unheld(overrides::RunRoute::Compile, overrides)?;
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         // FR-767: a malformed or unknown law refuses before any file is read.
         let integer_division = request_integer_division(request.integer_division.clone())?;
@@ -3291,7 +3295,7 @@ fn compile_outcome_inner(
             &request,
             &mut intake,
             &sources,
-            overrides.limits,
+            overrides.limits.map(|_| overrides.spine_limits()).as_ref(),
             integer_division,
         )?;
         outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
@@ -4393,16 +4397,35 @@ pub struct RequestOverrides<'a> {
     /// names it (FR-810). Only a compile reads it; a request that also carries
     /// `output` is refused `invalid-request` at stage `request`.
     pub output: Option<&'a Path>,
-    /// Run or compile stage limits supplied by the caller (FR-869, FR-961).
-    /// `None` uses the published defaults.
-    pub limits: Option<&'a fsl_replay::spine::SpineLimits>,
-    /// Clause observation limits supplied by the caller (FR-312). A request
-    /// that also carries `clause.observation_limits` is refused at request
-    /// stage before any observation file is read.
-    pub observation: Option<&'a fsl_semantics::model::observation::ObservationLimits>,
+    /// The stage and observation settings the caller names (FR-312, FR-869,
+    /// FR-961), each with its value. A named setting replaces the published
+    /// default and the request's value, also when it equals the default; a
+    /// setting not named keeps the request's. A run that compiles refuses an
+    /// observation setting given beside `clause.observation_limits`.
+    pub limits: Option<&'a std::collections::BTreeMap<fsl_foundation::Setting, u64>>,
 }
 
 impl RequestOverrides<'_> {
+    /// The published stage limits with each stage setting the caller names.
+    fn spine_limits(&self) -> fsl_replay::spine::SpineLimits {
+        let mut limits = fsl_replay::spine::SpineLimits::default();
+        for (setting, bound) in self.limits.into_iter().flatten() {
+            fsl_foundation::SettingLimits::set_bound(&mut limits, *setting, *bound);
+        }
+        limits
+    }
+
+    /// The published observation limits with each setting the caller names, or
+    /// `None` when the caller names no observation setting.
+    fn observation_limits(&self) -> Option<fsl_semantics::model::observation::ObservationLimits> {
+        let mut limits = fsl_semantics::model::observation::ObservationLimits::default();
+        let mut named = false;
+        for (setting, bound) in self.limits.into_iter().flatten() {
+            named |= fsl_foundation::SettingLimits::set_bound(&mut limits, *setting, *bound);
+        }
+        named.then_some(limits)
+    }
+
     /// `request`'s accounting limits with each counter the caller names
     /// replaced.
     fn accounting_over(
@@ -4546,6 +4569,7 @@ fn prepare_run_bytes_with_sources(
     overrides: &RequestOverrides<'_>,
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
+    overrides::refuse_unheld(overrides::RunRoute::Direct, overrides)?;
     if let Some(member) =
         relationships::duplicate_selection_member(bytes).map_err(RunCause::Json)?
     {
@@ -4578,14 +4602,7 @@ fn prepare_run_bytes_with_sources(
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
     if let Some(package) = &request.package {
-        let progress_capacity = overrides.limits.map_or_else(
-            || {
-                fsl_replay::spine::SpineLimits::default()
-                    .progress
-                    .covered_positions
-            },
-            |limits| limits.progress.covered_positions,
-        );
+        let progress_capacity = overrides.spine_limits().progress.covered_positions;
         let prepared = package_run::prepare(
             directory,
             &request,
@@ -4625,6 +4642,13 @@ fn prepare_run_bytes_with_sources(
     if let Some(member) = &request.model_based_test {
         model_based_test::decode(member)?;
         overrides::refuse_unapplied(overrides::RunRoute::ModelBasedTest, overrides)?;
+        overrides::refuse_request_clocks(overrides::RunRoute::ModelBasedTest, &request.clocks)?;
+    }
+    // FR-255 Behavior 15: a call and a clause run write no file.
+    if request.call.is_some() {
+        overrides::refuse_output(overrides::RunRoute::Call, overrides)?;
+    } else if request.clause.is_some() {
+        overrides::refuse_output(overrides::RunRoute::Clause, overrides)?;
     }
     if request.tl_lowering.is_some() && request.model_based_test.is_some() {
         return Err(RunCause::ClauseRequest {
@@ -4999,8 +5023,8 @@ fn prepare_complete_run(
     library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
     overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
-    let stage_limits = overrides.limits.copied().unwrap_or_default();
-    let observation_override = overrides.observation.copied();
+    let stage_limits = overrides.spine_limits();
+    let observation_override = overrides.observation_limits();
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(
             intake,

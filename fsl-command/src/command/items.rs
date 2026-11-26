@@ -777,7 +777,7 @@ fn prepare_value_invariants(
         &request,
         &observation_files,
         observation_limits.as_ref(),
-        overrides.observation.copied(),
+        overrides.observation_limits(),
     )?;
     let (snapshot, invocation) = {
         let reference = |member: &str| {
@@ -821,7 +821,7 @@ fn prepare_value_invariants(
             package_name: super::package_name(source.source().identity()),
             packages: inputs.packages,
             dependencies: inputs.dependencies,
-            limits: overrides.limits.copied().unwrap_or_default(),
+            limits: overrides.spine_limits(),
             clocks: request.clocks,
         },
         request: fsl_replay::spine::ValueInvariantsBatchRequest {

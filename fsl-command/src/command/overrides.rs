@@ -6,7 +6,7 @@
 use std::fmt;
 
 use fsl_foundation::{Setting, SettingLimits, SettingName};
-use fsl_replay::spine::{ExportLimits, ProgressLimits, SpineLimits};
+use fsl_replay::spine::{ExportLimits, ProgressLimits, RequestClocks, SpineLimits};
 use fsl_replay::{AccountingLimits, CallerLimits};
 use fsl_semantics::model::observation::ObservationLimits;
 use ix_trace_rs::implements;
@@ -32,6 +32,16 @@ pub enum RunRoute {
     Monitor,
     /// A `native-replay/1` run.
     Replay,
+    /// A `call` run, from source or from a package.
+    Call,
+    /// A `clause` run, from source or from a package.
+    Clause,
+    /// A compile.
+    Compile,
+    /// An export.
+    Export,
+    /// Any other `run` request.
+    Direct,
 }
 
 impl fmt::Display for RunRoute {
@@ -45,6 +55,11 @@ impl fmt::Display for RunRoute {
             Self::RefinementTransfer => "refinement_transfer",
             Self::Monitor => "monitor",
             Self::Replay => "replay",
+            Self::Call => "call",
+            Self::Clause => "clause",
+            Self::Compile => "compile",
+            Self::Export => "export",
+            Self::Direct => "direct",
         })
     }
 }
@@ -72,33 +87,76 @@ fn unapplied(route: RunRoute, member: &'static str) -> RunCause {
     RunCause::OverrideUnapplied { route, member }
 }
 
-/// The stage settings the caller moved from their published values. A caller
-/// passes whole [`SpineLimits`], so a bound at its published value does not
-/// name that limit.
-fn stated_stage(overrides: &RequestOverrides<'_>) -> Vec<(Setting, u64)> {
-    let published = SpineLimits::default().bounds();
+/// Whether `setting` bounds observation admission.
+fn observes(setting: Setting) -> bool {
+    ObservationLimits::default().set_bound(setting, 0)
+}
+
+/// The settings the caller names, observation admission's excluded.
+fn named_stage<'a>(overrides: &RequestOverrides<'a>) -> impl Iterator<Item = (Setting, u64)> + 'a {
     overrides
         .limits
-        .map(SettingLimits::bounds)
-        .unwrap_or_default()
         .into_iter()
-        .filter(|bound| !published.contains(bound))
-        .collect()
+        .flatten()
+        .map(|(setting, bound)| (*setting, *bound))
+        .filter(|(setting, _)| !observes(*setting))
 }
 
 /// The `emit.output_bytes` bound the caller named.
 pub(super) fn stated_emit(overrides: &RequestOverrides<'_>) -> Option<u64> {
-    stated_stage(overrides)
-        .into_iter()
-        .find(|(setting, _)| *setting == Setting::EmitOutputBytes)
-        .map(|(_, bound)| bound)
+    overrides.limits?.get(&Setting::EmitOutputBytes).copied()
+}
+
+/// Refuse a setting that neither stage limits nor observation limits hold:
+/// no run but a monitor or a replay, which decide in [`command_limits`], has
+/// a place for it.
+///
+/// # Errors
+///
+/// `invalid-request` naming the setting.
+pub(super) fn refuse_unheld(route: RunRoute, overrides: &RequestOverrides<'_>) -> Result<()> {
+    match named_stage(overrides).find(|(setting, _)| !SpineLimits::default().set_bound(*setting, 0))
+    {
+        Some((setting, _)) => Err(unapplied(route, setting.name())),
+        None => Ok(()),
+    }
 }
 
 /// Whether a run that compiles one unit reads `setting`: the progress ledger
 /// and the export bounds belong to other routes.
 fn compiles_with(setting: Setting) -> bool {
-    !ProgressLimits::default().set_bound(setting, 0)
+    SpineLimits::default().set_bound(setting, 0)
+        && !ProgressLimits::default().set_bound(setting, 0)
         && !ExportLimits::default().set_bound(setting, 0)
+}
+
+/// Refuse a `clocks` request member on a route that reads none, so that the
+/// request's own selection is never ignored.
+///
+/// # Errors
+///
+/// `invalid-request` naming `clocks`.
+pub(super) fn refuse_request_clocks(route: RunRoute, clocks: &RequestClocks) -> Result<()> {
+    if *clocks == RequestClocks::default() {
+        return Ok(());
+    }
+    Err(RunCause::ClauseRequest {
+        member: "clocks".to_owned(),
+        reason: format!("a {route} run reads no clocks selection; remove it"),
+    })
+}
+
+/// Refuse the output override of a `call` or a `clause` run, which writes no
+/// file.
+///
+/// # Errors
+///
+/// `invalid-request` naming the override.
+pub(super) fn refuse_output(route: RunRoute, overrides: &RequestOverrides<'_>) -> Result<()> {
+    match overrides.output {
+        Some(_) => Err(unapplied(route, "output")),
+        None => Ok(()),
+    }
 }
 
 /// Refuse the first override `route` cannot apply. A monitor and a replay run
@@ -109,15 +167,13 @@ fn compiles_with(setting: Setting) -> bool {
 /// `invalid-request` naming the override.
 #[implements("FR-255-AC-33")]
 pub(super) fn refuse_unapplied(route: RunRoute, overrides: &RequestOverrides<'_>) -> Result<()> {
-    if overrides.output.is_some() {
-        return Err(unapplied(route, "output"));
-    }
+    refuse_output(route, overrides)?;
     if overrides.clocks.is_some()
         && !matches!(route, RunRoute::RefinementTransfer | RunRoute::Monitor)
     {
         return Err(unapplied(route, "clocks"));
     }
-    if overrides.observation.is_some()
+    if overrides.observation_limits().is_some()
         && matches!(route, RunRoute::ValueSynthesis | RunRoute::PackageSynthesis)
     {
         return Err(unapplied(route, "observation_limits"));
@@ -129,12 +185,14 @@ pub(super) fn refuse_unapplied(route: RunRoute, overrides: &RequestOverrides<'_>
         | RunRoute::ValueSynthesis
         | RunRoute::PlanSynthesis
         | RunRoute::ModelBasedTest
-        | RunRoute::RefinementTransfer => !compiles_with(setting),
+        | RunRoute::RefinementTransfer
+        | RunRoute::Call
+        | RunRoute::Clause
+        | RunRoute::Compile
+        | RunRoute::Export
+        | RunRoute::Direct => !compiles_with(setting),
     };
-    match stated_stage(overrides)
-        .into_iter()
-        .find(|(setting, _)| refused(*setting))
-    {
+    match named_stage(overrides).find(|(setting, _)| refused(*setting)) {
         Some((setting, _)) => Err(unapplied(route, setting.name())),
         None => Ok(()),
     }
@@ -154,20 +212,17 @@ pub(super) fn effective_limits(
     overrides: &RequestOverrides<'_>,
 ) -> Result<CallerLimits> {
     refuse_unapplied(route, overrides)?;
-    if request.observation.is_some() && overrides.observation.is_some() {
+    let observation = overrides.observation_limits();
+    if request.observation.is_some() && observation.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "observation_limits".to_owned(),
-            reason: "request member and RequestOverrides::observation were both supplied"
+            reason: "request member and an observation limit override were both supplied"
                 .to_owned(),
         });
     }
     Ok(CallerLimits {
-        spine: overrides.limits.copied().unwrap_or_default(),
-        observation: overrides
-            .observation
-            .copied()
-            .or(request.observation)
-            .unwrap_or_default(),
+        spine: overrides.spine_limits(),
+        observation: observation.or(request.observation).unwrap_or_default(),
         accounting: AccountingLimits(overrides.accounting_over(request.accounting)),
         ..CallerLimits::default()
     })
@@ -186,15 +241,8 @@ pub(super) fn command_limits(
     overrides: &RequestOverrides<'_>,
 ) -> Result<CommandLimits> {
     refuse_unapplied(route, overrides)?;
-    let published = ObservationLimits::default().bounds();
-    let observation = overrides
-        .observation
-        .map(SettingLimits::bounds)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|bound| !published.contains(bound));
-    for (setting, bound) in stated_stage(overrides).into_iter().chain(observation) {
-        base.set(SettingName::Stage(setting), bound)
+    for (setting, bound) in overrides.limits.into_iter().flatten() {
+        base.set(SettingName::Stage(*setting), *bound)
             .map_err(|_| unapplied(route, setting.name()))?;
     }
     for (setting, bound) in overrides.accounting.into_iter().flatten() {
