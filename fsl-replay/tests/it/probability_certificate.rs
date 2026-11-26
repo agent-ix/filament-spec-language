@@ -7,8 +7,9 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_package::ObligationIdentity;
 use fsl_replay::{
-    check_claim_exact_reachability, check_probability_certificate_package, ByteProvision,
-    CertificateRole, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
+    check_claim_exact_reachability, check_probability_certificate_package,
+    check_probability_certificate_source, spine, ByteProvision, CertificateRole,
+    DefinitionSourceRef, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
     ExactProbabilityGraphError, ExactProbabilityValue, ProbabilityBoundSide,
     ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
     ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityPackageRequest,
@@ -267,7 +268,7 @@ fn claim_fixes_the_objective_and_a_false_claim_is_rejected() {
     assert_eq!(accepted.side(), ProbabilityBoundSide::AtLeast);
 }
 
-#[trace("TC-3154", "FR-621-AC-23")]
+#[trace("TC-3154", "FR-621-AC-16")]
 #[test]
 fn package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack() {
     const DEEPEST_DEFAULT_CHAIN_NODES: usize = 10_000;
@@ -371,6 +372,167 @@ fn package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_
             ))
         ),
         "unexpected checker result: {result:?}"
+    );
+}
+
+/// Compile the same source input the source checker recompiles and count its
+/// emitted graph nodes, so the paired route uses exactly the same boundary
+/// indices as the package reader test.
+fn source_package_node_count(unit: &str) -> usize {
+    use filament_exact::Cancel;
+    use fsl_foundation::SourceIdentity;
+    use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits};
+    use fsl_semantics::model::intake::package_input;
+
+    let limits = SpineLimits::default();
+    let identity = SourceIdentity::new("test", "link.native");
+    let cancel = Cancel::new();
+    let parsed = spine::parse(
+        &ParseRequest {
+            source: &identity,
+            path: "link.native",
+            bytes: unit.as_bytes(),
+        },
+        limits.source,
+        &cancel,
+    )
+    .expect("the deep source parses")
+    .into_value();
+    let packages = package_input(std::iter::once(include_bytes!(
+        "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
+    ) as &[u8]))
+    .expect("the Link model package is admitted");
+    let models = spine::select(&parsed, &packages, limits.model, &cancel)
+        .expect("the Link model is selected")
+        .into_value();
+    let checked = spine::check(
+        &parsed,
+        "source-probe".to_owned(),
+        &models,
+        &DependencyInput::default(),
+        limits,
+        &cancel,
+    )
+    .expect("the Link unit checks")
+    .into_value();
+    let emitted = spine::package(&checked, limits.package, &cancel)
+        .expect("the Link package emits")
+        .into_value();
+    let package: serde_json::Value =
+        serde_json::from_slice(emitted.package().bytes()).expect("the package is JSON");
+    package["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the package has graph nodes")
+        .len()
+}
+
+/// The source route recompiles a 10,000-node unary operand chain and resolves
+/// the same hand-computed held ids as the package route. Node 9,999 is valid;
+/// node 10,000 is outside the emitted graph and must be a typed refusal.
+#[trace("TC-3154", "FR-621-AC-23")]
+#[test]
+fn source_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack() {
+    use filament_exact::{Cancel, NodeKey, PathSegment};
+    use fsl_eval::simulation::model::ExpansionLimits;
+    use fsl_replay::{ProbabilitySourceRequest, SpineLimits};
+    use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
+
+    const GRAPH_NODES: usize = 10_000;
+    let deep_unit = |depth: usize| {
+        format!(
+            "{}\nprobabilistic Deep using inf on M over (m: M::Msg) under Even on origin \
+             {{ probability >= rational(0, 1) [ eventually holds({}m.delivered) ] }}\n",
+            include_str!("../../../tools/fsl-probability-check/tests/fixtures/link.native"),
+            "not ".repeat(depth)
+        )
+    };
+    let baseline = deep_unit(0);
+    let baseline_nodes = source_package_node_count(&baseline);
+    let not_count = GRAPH_NODES
+        .checked_sub(baseline_nodes)
+        .expect("the baseline graph is smaller than 10,000 nodes");
+    let unit = deep_unit(not_count);
+    assert_eq!(source_package_node_count(&unit), GRAPH_NODES);
+
+    let source = DefinitionSourceRef::new("test".to_owned(), "link.native".to_owned());
+    let expected_source = spine::SourceComponent {
+        authority: "test".to_owned(),
+        identity: "link.native".to_owned(),
+        content: unit.clone(),
+    };
+    let provision = ByteProvision::admit(
+        vec![(
+            "test".to_owned(),
+            "link.native".to_owned(),
+            unit.into_bytes(),
+        )],
+        vec![
+            include_bytes!(
+                "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
+            )
+            .to_vec(),
+            include_bytes!(
+                "../../../tools/fsl-probability-check/tests/fixtures/link.snapshot.json"
+            )
+            .to_vec(),
+        ],
+        std::iter::empty::<(String, &DefinitionSourceRef)>(),
+    )
+    .expect("the source and Link model documents are provisioned");
+    let item = ObligationIdentity::new(
+        NodeKey::new("test/link", vec![PathSegment::Text("claim".to_owned())], 0)
+            .expect("the requested identity is valid"),
+        Some(fsl_package::ModelIdentity::new("test/link".to_owned())),
+        0,
+    );
+    let certificate = br#"{"identity":{"model":"test/link","node_id":{"package":"test/link","path":[{"name":"identity"}],"ordinal":0},"ordinal":0},"values":[{"state":{"package":"test/link","path":[{"node":9999}],"ordinal":0},"value":0},{"state":{"package":"test/link","path":[{"node":10000}],"ordinal":0},"value":0}]}"#;
+    let limits = ProbabilitySourceLimits {
+        spine: SpineLimits::default(),
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits { max_candidates: 1 },
+        scalar: UNLIMITED,
+        document: ProbabilityDocumentLimits {
+            bytes: u64::MAX,
+            storage_bytes: u64::MAX,
+            states: 1,
+            edges: 1,
+            scalar_bits: 64,
+            accounting: UNLIMITED,
+        },
+    };
+    let result = std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(move || {
+            check_probability_certificate_source(
+                ProbabilitySourceRequest {
+                    source: &source,
+                    expected_source: &expected_source,
+                    package_name: "source-probe",
+                    provision: &provision,
+                    item: &item,
+                    initial: vec![DocumentRef {
+                        authority: "test".to_owned(),
+                        identity: "s0".to_owned(),
+                    }],
+                    universes: Vec::new(),
+                    certificate,
+                    role: CertificateRole::Claim,
+                },
+                limits,
+                &Cancel::new(),
+            )
+        })
+        .expect("spawn the bounded-stack source checker")
+        .join()
+        .expect("the source checker must not overflow the 512 KiB stack");
+    assert!(
+        matches!(
+            result,
+            Err(ProbabilitySourceError::Document(
+                ProbabilityDocumentError::Malformed
+            ))
+        ),
+        "unexpected source checker result: {result:?}"
     );
 }
 
