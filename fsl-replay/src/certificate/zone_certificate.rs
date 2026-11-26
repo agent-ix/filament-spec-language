@@ -1037,6 +1037,7 @@ pub(crate) fn check_state_graph_certificate<O: Clone + Eq>(
     Ok((verdict, decision))
 }
 
+#[implements("FR-125-AC-7")]
 fn check_zone_certificate_with_time_source<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,

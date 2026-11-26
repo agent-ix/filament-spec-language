@@ -684,7 +684,7 @@ impl From<DbmError> for Halt {
 /// [`ZoneCheckRefusal`] when the clause is of no form EN-6 decides, its
 /// automaton does not build, its instances are not finite, an atom gives
 /// no reading, or the engine breaks an invariant.
-#[implements("FR-239-AC-1")]
+#[implements("FR-239-AC-1", "FR-125-AC-7")]
 pub fn check_timed_model<S: Clone>(
     request: ZoneCheckRequest<'_, '_, '_, S>,
     cancel: &Cancel,
