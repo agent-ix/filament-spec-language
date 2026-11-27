@@ -827,7 +827,7 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
         panic!("the reduced token run refutes: {unrestricted:?}");
     };
     let explored = usize::try_from(stats.product_edges).expect("small");
-    let full_transition_budget = explored + 2 * 2;
+    let full_transition_budget = explored + 1;
 
     let completion_work = minimum_work(&world, full_transition_budget, |outcome| {
         matches!(outcome, ModelCheckOutcome::Violated { .. })
@@ -851,9 +851,9 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
         .expect("the exact budget concretises");
     assert_eq!(violation(&Ok(completed)).len(), 2);
 
-    // M is the exact budget that admits quotient exploration plus the two
-    // concrete steps. M-1 refuses the counterexample; M-2 completes quotient
-    // exploration but cannot pay for any lifted transition.
+    // M is the exact budget that admits quotient exploration plus the one
+    // concrete step. M-1 completes exploration but cannot pay for the lift;
+    // M-2 stops during quotient exploration.
     let m = full_transition_budget;
     let one_short = with_budgets(&world, m - 1, u64::MAX).expect("typed stop");
     assert!(
