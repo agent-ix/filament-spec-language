@@ -3,6 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
+use filament_exact::Cancel;
+use fsl_analyze::provider::ProviderOptions;
 use fsl_command::command::{self, RequestOverrides, RunLimits};
 use fsl_foundation::Setting;
 use ix_trace_rs::trace;
@@ -68,6 +70,147 @@ fn compile_request_with_semantic_model(directory: &Path, source: &str, model: &V
     )
     .expect("request writes");
     path
+}
+
+struct FslNegotiate;
+
+impl fsl_analyze::analyze::document::Negotiate for FslNegotiate {
+    fn negotiate(
+        &self,
+        item: &fsl_analyze::analyze::ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (
+        fsl_route::routing::Disposition,
+        Option<fsl_analyze::analyze::Diagnostic>,
+    ) {
+        use fsl_analyze::analyze::{Diagnostic, Payload};
+        use fsl_route::NegotiationOutcome;
+        use fsl_route::routing::Disposition;
+
+        match candidates {
+            fsl_route::CandidateOutcome::UnknownBackend(backend) => (
+                Disposition::InvalidRequest,
+                Some(Diagnostic {
+                    code: NegotiationOutcome::UnknownBackend.code(),
+                    payload: Payload::Backend(backend.clone()),
+                }),
+            ),
+            fsl_route::CandidateOutcome::Candidates(set) => match set.candidates() {
+                [candidate] => (Disposition::Supported(candidate.clone()), None),
+                [] => (
+                    Disposition::Unsupported,
+                    Some(Diagnostic {
+                        code: NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                        payload: Payload::Kind(item.kind),
+                    }),
+                ),
+                _ => (
+                    Disposition::InvalidRequest,
+                    Some(Diagnostic::new(NegotiationOutcome::AmbiguousBackend.code())),
+                ),
+            },
+        }
+    }
+}
+
+fn nested_analyze_source() -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile values = \"filament.value.complete/v1\";\n\
+         profile paths = \"filament.temporal.infinite-trace/v1\";\n\
+         model Queue = \"test/counter\";\n\
+         function nested using values(): Boolean pure {{ {}true{} }}\n\
+         temporal Bounded using paths over (q: Queue::Counter) clock \"model-steps\" on origin {{\n\
+           always holds(q.value <= 2)\n\
+         }}\n",
+        "not (".repeat(NESTED),
+        ")".repeat(NESTED)
+    )
+}
+
+fn analyze_request(directory: &Path, source_text: &str) -> PathBuf {
+    std::fs::write(directory.join("workflow.fsl"), source_text).expect("program writes");
+    std::fs::write(
+        directory.join("counter.json"),
+        include_bytes!("../../fixtures/cli-contract/counter.semantic-ir.json"),
+    )
+    .expect("counter model writes");
+    let start = json!({"format":"filament.state.snapshot/v1",
+        "identity":{"authority":"contracts","identity":"queue-start"},
+        "observation":"current","model":{"identity":"test/counter"},
+        "anchor":{"kind":"initialization","name":"queue-start"},
+        "populations":[{"population":"ix://test/counter/counters","complete":true,
+            "objects":[{"key":"queue-east","type":"ix://test/counter/Counter",
+                "fields":{"value":{"integer":"0"}}}]}]});
+    std::fs::write(
+        directory.join("start.json"),
+        serde_json::to_vec(&start).expect("snapshot serializes"),
+    )
+    .expect("snapshot writes");
+    let request = json!({"format":"native-analyze/1","request":{
+        "program":{"source":{"file":"workflow.fsl","authority":"contracts",
+            "identity":"qsl-3570","document":"SizeMatrix","formal_revision":1}},
+        "models":[{"format":"semantic-ir/2.0.0","source":{"file":"counter.json",
+            "authority":"contracts","identity":"counter-reference",
+            "document":"CounterInput","formal_revision":1}}],
+        "documents":[{"file":"start.json"}],"items":[{"claim":"Bounded"}]}});
+    let path = directory.join("analyze.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&request).expect("analyze request serializes"),
+    )
+    .expect("analyze request writes");
+    path
+}
+
+fn analyze_with_request_bound(
+    path: &Path,
+    request_bytes: u64,
+) -> Result<command::RunResult, Box<command::RunError>> {
+    command::analyze_with_providers_and_limits(
+        path,
+        RunLimits {
+            request_bytes,
+            ..RunLimits::default()
+        },
+        &command::CommandLimits::analyze(),
+        &FslNegotiate,
+        Vec::new(),
+        &ProviderOptions::default(),
+        &Cancel::new(),
+    )
+}
+
+/// Analyze admits the nested-source request exactly and rejects one appended
+/// request byte before any item runs.
+#[trace("TC-3242", "FR-620-AC-12")]
+#[test]
+fn analyze_admits_the_thousand_nested_expression_at_its_request_byte_bound() {
+    let directory = tempfile::tempdir().expect("analyze workspace");
+    let path = analyze_request(directory.path(), &nested_analyze_source());
+    let request_bytes = std::fs::metadata(&path).expect("request metadata").len();
+    let result = analyze_with_request_bound(&path, request_bytes)
+        .expect("the request at its exact byte count is admitted");
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.value.as_value()["items"][0]["record"]["result"],
+        "proved"
+    );
+
+    let mut bytes = std::fs::read(&path).expect("request reads");
+    bytes.push(b' ');
+    std::fs::write(&path, bytes).expect("one byte appends");
+    let error = analyze_with_request_bound(&path, request_bytes)
+        .err()
+        .expect("one byte above the request limit refuses before the item");
+    let document = error.outcome_document(fsl_replay::Operation::Analyze);
+    let value: Value =
+        serde_json::from_slice(&document.to_bytes().expect("incomplete outcome serializes"))
+            .expect("incomplete outcome is JSON");
+    assert_eq!(error.category().exit_code(), 22);
+    assert_eq!(value["category"], "resource_exhausted");
+    assert_eq!(value["last_stage"], Value::Null);
+    assert_eq!(value["items"], json!([]));
 }
 
 fn chain_model(prefix: &str, redefines: bool) -> String {
