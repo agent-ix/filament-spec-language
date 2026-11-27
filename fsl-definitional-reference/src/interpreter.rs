@@ -753,14 +753,7 @@ pub fn evaluate_finite_value(
     current_state: &ReferenceFiniteState,
 ) -> Result<Value, ReferenceRefusal> {
     let mut budget = MAX_EXPRESSION_NODES;
-    let value = evaluate_value(
-        expression,
-        locals,
-        pre_state,
-        current_state,
-        0,
-        &mut budget,
-    )?;
+    let value = evaluate_value(expression, locals, pre_state, current_state, 0, &mut budget)?;
     if finite_scalar(&value) {
         Ok(value)
     } else {
