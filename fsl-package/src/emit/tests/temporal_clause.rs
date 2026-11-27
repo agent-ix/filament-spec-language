@@ -253,7 +253,7 @@ pub(super) fn check_graph(unit: &str) -> fsl_semantics::check::CheckedGraph {
 fn check_graph_with_s3_input_limit(
     unit: &str,
     input_bytes: u64,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
@@ -1987,7 +1987,10 @@ fn s3_checks_the_on_each_guard_and_binder() {
 }
 
 /// The one refusal of `activation` and `body` and the unit text it refuses.
-fn refusal_of(activation: &str, body: &str) -> (fsl_semantics::check::CheckRefusal, String) {
+fn refusal_of(
+    activation: &str,
+    body: &str,
+) -> (fsl_semantics::check::SemanticCheckRefusal, String) {
     let text = unit(INFINITE, &declared_on("Each", activation, body));
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let refusals = assemble_with_models(text.as_bytes(), &packages)

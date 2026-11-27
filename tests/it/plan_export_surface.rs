@@ -1100,13 +1100,8 @@ fn an_export_stops_at_its_output_byte_limit() {
     assert!(value.get("export").is_none(), "{value}");
     let directory = tempfile::tempdir().unwrap();
     let path = braking_request(directory.path(), braking_member());
-    let limits = fsl_replay::spine::SpineLimits {
-        export: fsl_replay::spine::ExportLimits {
-            output_bytes: Some(1),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let limits =
+        std::collections::BTreeMap::from([(fsl_foundation::Setting::ExportOutputBytes, 1)]);
     let overrides = RequestOverrides {
         limits: Some(&limits),
         ..RequestOverrides::default()
@@ -2174,14 +2169,21 @@ fn transfer_run_over(
     supply_spec: bool,
     closure_unit: bool,
 ) -> (u8, Value) {
-    transfer_run_declaring(members, supply_spec, &transfer_declarations(closure_unit))
+    transfer_run_declaring(
+        members,
+        supply_spec,
+        &transfer_declarations(closure_unit),
+        &Default::default(),
+    )
 }
 
-/// [`transfer_run_over`] over a unit with `declarations`.
+/// [`transfer_run_over`] over a unit with `declarations`, run with the
+/// caller's `overrides`.
 fn transfer_run_declaring(
     members: &[(&str, Value)],
     supply_spec: bool,
     declarations: &str,
+    overrides: &fsl_command::command::RequestOverrides<'_>,
 ) -> (u8, Value) {
     use crate::support::refinement_cas::{self, Variant};
     let directory = tempfile::tempdir().unwrap();
@@ -2242,10 +2244,16 @@ fn transfer_run_declaring(
     for (name, member) in members {
         request[*name] = member.clone();
     }
-    write_request(
-        directory.path(),
-        &json!({"format": "native-run/1", "request": request}),
-    )
+    let path = directory.path().join("request.json");
+    let request = json!({"format": "native-run/1", "request": request});
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    match fsl_command::command::run_with_overrides(&path, overrides, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).expect("a JSON document"),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
 }
 
 /// The held-id precondition of a refuted transfer premise: the exact closure
@@ -2612,6 +2620,7 @@ fn a_protocol_abstract_subject_is_refused_not_settled_as_a_model() {
         )],
         true,
         &declarations,
+        &Default::default(),
     );
     assert_eq!(exit, 20, "{value}");
     names(&value, "select");
@@ -3406,8 +3415,8 @@ fn a_plan_without_initial_refuses_its_missing_snapshot() {
 #[test]
 #[trace(
     "TC-2860",
-    "FR-1012-AC-10",
-    "FR-1012-AC-11",
+    "FR-1012-AC-12",
+    "FR-1012-AC-13",
     "FR-1013-AC-3",
     "FSpec-FR-806-AC-7",
     "FSpec-FR-803-AC-11"
@@ -3606,7 +3615,7 @@ fn genuine_spine_outcomes_preserve_status_members_and_typed_objective() {
 
 /// FR-1010 writes the whole no-instance plan document with zero exploration.
 #[test]
-#[trace("TC-2860", "FR-1010-AC-4", "FR-1012-AC-9", "FSpec-FR-803-AC-6")]
+#[trace("TC-2860", "FR-1010-AC-4", "FR-1012-AC-11", "FSpec-FR-803-AC-6")]
 fn a_plan_policy_with_no_admitted_instance_is_inconclusive() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -3655,10 +3664,10 @@ fn a_plan_policy_with_no_admitted_instance_is_inconclusive() {
     );
 }
 
-/// FR-1012-AC-9: with no requested policy, an empty population is not the
+/// FR-1012-AC-11: with no requested policy, an empty population is not the
 /// no-instance condition; the goal `true` holds of the empty plan.
 #[test]
-#[trace("TC-2862", "FR-1012-AC-9", "FSpec-FR-803-AC-6")]
+#[trace("TC-2862", "FR-1012-AC-11", "FSpec-FR-803-AC-6")]
 fn an_empty_policy_list_over_an_empty_population_is_not_no_instance() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -3711,7 +3720,7 @@ fn an_unknown_later_policy_refuses_before_no_instance() {
 /// Policy instances follow the snapshot list order, and max_work is charged
 /// once for the clause even when its second instance decides the result.
 #[test]
-#[trace("TC-2862", "FR-1012-AC-8", "FSpec-FR-803-AC-8")]
+#[trace("TC-2862", "FR-1012-AC-10", "FSpec-FR-803-AC-8")]
 fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -3792,7 +3801,7 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
         std::fs::write(&path, serde_json::to_vec(&current).unwrap()).unwrap();
         let (exit, value) = plan_in(
             directory.path(),
-            &unit,
+            unit,
             "spine-model.semantic-ir.json",
             "spine-initial.json",
             settings,
@@ -4052,4 +4061,51 @@ fn positive_bounded_source_policy_runs_through_the_host_request() {
     assert_eq!(first.0, 0, "{}", first.1);
     assert_eq!(first.1["synthesis"]["status"], "optimal", "{}", first.1);
     assert!(!first.1["synthesis"]["plan"].is_null(), "{}", first.1);
+}
+
+/// A transfer unit that also holds `1 + 1 + 1`, five expression nodes.
+fn transfer_run_overridden(overrides: &fsl_command::command::RequestOverrides<'_>) -> (u8, Value) {
+    let declarations = format!(
+        "{}function f using v(): Integer pure {{ 1 + 1 + 1 }}\n",
+        transfer_declarations(false)
+    );
+    transfer_run_declaring(
+        &[(
+            "refinement_transfer",
+            transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["PrevSafe"]),
+        )],
+        true,
+        &declarations,
+        overrides,
+    )
+}
+
+/// FR-255-AC-32: a `refinement_transfer` request whose checked source holds
+/// `1 + 1 + 1`, run with the caller's `s3.nodes` at 4, returns
+/// `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`.
+#[test]
+#[trace("FR-255-AC-32")]
+fn a_refinement_transfer_applies_the_callers_stage_limit() {
+    let limits = std::collections::BTreeMap::from([(fsl_foundation::Setting::S3Nodes, 4)]);
+    let (exit, value) = transfer_run_overridden(&fsl_command::command::RequestOverrides {
+        limits: Some(&limits),
+        ..Default::default()
+    });
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(value["code"], "stage_limit_exceeded", "{value}");
+    names(&value, "S3 node limit 4 reached (5)");
+}
+
+/// FR-255 Behavior 15: a `refinement_transfer` run refuses an output override,
+/// naming it.
+#[test]
+fn a_refinement_transfer_refuses_an_output_override() {
+    let output = std::path::PathBuf::from("transfer-output.json");
+    let (exit, value) = transfer_run_overridden(&fsl_command::command::RequestOverrides {
+        output: Some(&output),
+        ..Default::default()
+    });
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names(&value, "output override");
 }

@@ -7,9 +7,9 @@ use std::fmt;
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_replay::{OutcomeDiagnostic, TerminalRecord};
 use fsl_semantics::model::observation::{AdmissionFailure, AdmissionRecord, DocumentProvision};
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Node, NodeRef};
 use serde_json::{Map, Value};
-use ix_trace_rs::implements;
 
 use super::{DocumentSelection, ItemSelection, SettledRun};
 
@@ -369,6 +369,7 @@ struct Receipt {
     effect_request: Vec<u8>,
 }
 
+#[ix_trace_rs::string_edge]
 fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptError> {
     let malformed = |cause, pointer: &str| {
         ReceiptError::Refusal(Box::new(ReceiptRefusal::Malformed {

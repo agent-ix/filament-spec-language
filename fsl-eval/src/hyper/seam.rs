@@ -14,11 +14,76 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 
 use fsl_semantics::check::FormulaNodeId;
+use ix_trace_rs::implements;
 
 use crate::model_subject::{AtomStop, ModelInstance};
-use crate::simulation::model::ClauseOutcome;
 use crate::simulation::model::ModelSimState;
+use crate::simulation::model::{ClauseOutcome, ModelSystem, NoClaimInstances};
 use crate::temporal::{AtomReading, UndefinedCause};
+
+/// One object parameter of a hyper clause with the system of its alias.
+pub struct ParameterRequest<'a, 'm> {
+    /// The parameter's name.
+    pub name: &'a str,
+    /// The parameter's object type.
+    pub object: &'a filament_exact::EffectiveId,
+    /// The model system of the parameter's alias.
+    pub system: &'a ModelSystem<'m>,
+}
+
+/// FR-125 "Instancing" over a clause's object parameters (ADR-023 HS-3): the
+/// product of the parameters' admitted instances, the first parameter
+/// varying slowest, or the first outcome in FR-125's order across all
+/// parameters. A required bound of any parameter comes first, then a subject
+/// with no initial state, then a conflicting identity, then no instance when
+/// any parameter has none.
+///
+/// # Errors
+///
+/// [`NoClaimInstances`] naming the first outcome in that order.
+#[implements("FR-125-AC-13", "FR-125-AC-21", "FR-125-AC-23")]
+pub fn claim_instance_tuples(
+    subjects: &[&ModelSystem<'_>],
+    parameters: &[ParameterRequest<'_, '_>],
+) -> Result<Vec<Vec<ParameterBinding>>, NoClaimInstances> {
+    for parameter in parameters {
+        parameter
+            .system
+            .check_parameter_bound(parameter.object)
+            .map_err(NoClaimInstances::NotSimulated)?;
+    }
+    if subjects.iter().any(|subject| !subject.has_initial_state()) {
+        return Err(NoClaimInstances::NoInitialState);
+    }
+    if let Some(conflict) = subjects
+        .iter()
+        .find_map(|subject| subject.identity_conflict())
+    {
+        return Err(NoClaimInstances::NotSimulated(
+            crate::simulation::NotSimulated::ConflictingIdentity(Box::new(conflict.clone())),
+        ));
+    }
+    let mut lists = Vec::with_capacity(parameters.len());
+    for parameter in parameters {
+        let list = parameter
+            .system
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
+            .map_err(NoClaimInstances::NotSimulated)?
+            .into_iter()
+            .map(|instance| ParameterBinding {
+                parameter: parameter.name.to_owned(),
+                instance,
+            })
+            .collect::<Vec<_>>();
+        if list.is_empty() {
+            return Err(NoClaimInstances::NoInstance);
+        }
+        lists.push(list);
+    }
+    Ok(super::cartesian(&lists))
+}
 
 /// One object parameter of the clause bound to a key of its population's
 /// universe (ADR-023 HS-3): within an instance, `parameter` denotes the object

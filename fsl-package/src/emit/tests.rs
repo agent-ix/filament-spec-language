@@ -23,8 +23,8 @@ use fsl_forms::{
 };
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef, SourceRegion};
 use fsl_semantics::check::wire_id::WireGraph;
-use fsl_semantics::check::CheckRefusal;
 use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::check::SemanticCheckRefusal;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::value::{always_roles, native_diagnostics_catalog, DefinitionRole};
 use ix_trace_rs::trace;
@@ -50,10 +50,10 @@ mod admission_corpus;
 mod bare_world;
 mod bytes_operations;
 mod carried_quantity_paths;
-mod class_c;
 mod check_mode;
 mod checked_views;
 mod child_composite;
+mod class_c;
 mod clock_places;
 mod collection_if;
 mod composition;
@@ -114,7 +114,7 @@ mod selected_model_rows;
 mod source_enum_carrier;
 mod source_enum_rows;
 mod source_map_debug;
-mod source_objects;
+pub(in crate::emit) mod source_objects;
 mod source_record_rows;
 mod source_tuple_rows;
 mod source_union_rows;
@@ -2012,7 +2012,7 @@ fn an_empty_package_refuses_during_check() {
             .expect_err("an empty package has no graph to emit");
     assert!(matches!(
         refusals.as_slice(),
-        [CheckRefusal { cause, .. }]
+        [SemanticCheckRefusal { cause, .. }]
             if matches!(cause.as_ref(), fsl_semantics::check::CheckCause::EmptyPackage { .. })
     ));
 }
@@ -2980,7 +2980,7 @@ fn text_function(text_type: &str, literal: &str) -> String {
 }
 
 /// The checked package for `declarations`, or the checker's refusals.
-fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
@@ -3308,7 +3308,7 @@ fn emit_model_unit(unit: &str, evidence_identity: Option<&str>) -> (Emission, Va
 /// package by identity alone, with no version, while the emitted model nodes are keyed by the
 /// content-only `ModelOwner`, which carries no version. FSL's I2 read, given the package
 /// as domain package evidence, returns Verified exporting `keep` and `held`.
-#[trace("TC-442", "FR-027-AC-9", "FR-056-AC-9")]
+#[trace("TC-442", "FR-027-AC-9", "FR-056-AC-9", "FSpec-FR-322-AC-137")]
 #[test]
 fn a_model_bearing_unit_emits_its_model_selection_and_reads_back_verified() {
     let unit = spine_model_without(&[FIELD_ACCESS, CONFORMING_EQUALITY]);
@@ -3375,9 +3375,9 @@ fn a_model_bearing_unit_emits_its_model_selection_and_reads_back_verified() {
     );
     // FSL FR-094 "Model declaration nodes": every ordinary object of the selected
     // document is rooted, including the unused `Rock`.
-    // FSpec FR-322-AC-132/134/136: exactly one `model_root` for the one row,
-    // last in graph order with its `generated` source-map entry last, keyed by
-    // its identity alone, never by the alias.
+    // FSpec FR-322-AC-132/134/136: exactly one self-typed `model_root` for
+    // the selected identity. FR-322-AC-137 requires it and its generated
+    // source-map entry to be last.
     let graph = nodes(&wire);
     assert_eq!(
         graph
@@ -4245,7 +4245,7 @@ const VERSION_UNCHANGED: &str =
 fn check_attempt_unit(
     unit: &str,
     with_sub: bool,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-309"),
         "program.native",

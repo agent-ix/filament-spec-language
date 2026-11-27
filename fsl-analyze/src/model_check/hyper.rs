@@ -114,14 +114,14 @@ use fsl_eval::fairness::{
     analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::hyper::{
-    cartesian, copy_symmetry, BodySense, ComponentStep, CopySwapInputs, Halt, HyperFinding,
-    HyperInputs, HyperLetters, HyperProduct, HyperState, HyperTransition, ParameterBinding,
-    Partner, PartnerStep, ProjectedInputs, ProjectedProduct, Property, StepMatch, WitnessInputs,
+    copy_symmetry, BodySense, ComponentStep, CopySwapInputs, Halt, HyperFinding, HyperInputs,
+    HyperLetters, HyperProduct, HyperState, HyperTransition, ParameterBinding, Partner,
+    PartnerStep, ProjectedInputs, ProjectedProduct, Property, StepMatch, WitnessInputs,
     WitnessProduct,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
-    check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem,
+    check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem, NoClaimInstances,
 };
 use fsl_eval::simulation::{
     Expansion, ExpansionLimit, ExpansionStop, Limit, Limits, Outcome, SymmetryClass, SymmetryGroup,
@@ -473,32 +473,31 @@ fn orbit_representatives(
 
 /// The instances of the clause's object parameters: one binding of each
 /// parameter to a key of its population's universe, over the product of the
-/// universes in parameter order (ADR-023 HS-3).
+/// universes in parameter order (ADR-023 HS-3), through the one rule of
+/// FR-125 "Instancing". A subject with no initial state and a clause with no
+/// instance give no tuple here: `decide` settles them, in that order.
 fn instances(
     clause: &CheckedHyperClause,
     systems: &[ModelSystem<'_>],
     slot_of: &impl Fn(&str) -> Result<usize, ModelCheckRefusal>,
 ) -> Result<Vec<Vec<ParameterBinding>>, ModelCheckRefusal> {
-    let mut lists = Vec::with_capacity(clause.parameters().len());
+    let mut requests = Vec::with_capacity(clause.parameters().len());
     for parameter in clause.parameters() {
         let system = systems
             .get(slot_of(parameter.alias.as_str())?)
             .ok_or_else(|| fault("a-parameter-names-an-alias-of-the-clause"))?;
-        let keys = system
-            .instances(&filament_exact::ValueType::Reference(
-                parameter.object.clone(),
-            ))
-            .map_err(not_simulated)?;
-        lists.push(
-            keys.into_iter()
-                .map(|instance| ParameterBinding {
-                    parameter: parameter.name.clone(),
-                    instance,
-                })
-                .collect::<Vec<_>>(),
-        );
+        requests.push(fsl_eval::hyper::ParameterRequest {
+            name: parameter.name.as_str(),
+            object: &parameter.object,
+            system,
+        });
     }
-    Ok(cartesian(&lists))
+    let subjects: Vec<&ModelSystem<'_>> = systems.iter().collect();
+    match fsl_eval::hyper::claim_instance_tuples(&subjects, &requests) {
+        Ok(tuples) => Ok(tuples),
+        Err(NoClaimInstances::NotSimulated(refusal)) => Err(not_simulated(refusal)),
+        Err(NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance) => Ok(Vec::new()),
+    }
 }
 
 /// The counts of the products explored so far.
@@ -718,6 +717,13 @@ enum Found {
         guard_of: Option<ModelTransition>,
         cause: fsl_eval::temporal::UndefinedCause,
     },
+    /// HP-3: a contract conjunction of an existential member's component is
+    /// undefined at the member's state (ADR-018 UE-6).
+    MemberContract {
+        component: usize,
+        contract: fsl_eval::simulation::model::UndefinedContract,
+        partner: Rc<Partner>,
+    },
     /// HP-6: `μ_U` has no value on the visible move that reached the state.
     MatchAt {
         conjunct: usize,
@@ -793,12 +799,63 @@ enum FirstHit {
     Unstated,
 }
 
+/// Finalize the refused first-phase candidate without making an undefined
+/// counterexample.
+#[implements("FR-177-AC-7")]
+fn finalize_refused_candidate(depth: usize, candidate: Candidate) -> Option<(usize, FirstHit)> {
+    match candidate {
+        Candidate::Refused(cause) => Some((depth, FirstHit::Undecided(cause))),
+        Candidate::Found(..) | Candidate::Rejected(_) => None,
+    }
+}
+
 /// Keep, of the refused findings of one state, the one at the earliest joint
 /// position; the first in the list on a tie.
 fn sooner(refused: &mut Option<(usize, UndecidedCause)>, depth: usize, cause: UndecidedCause) {
     if refused.is_none_or(|(known, _)| depth < known) {
         *refused = Some((depth, cause));
     }
+}
+
+/// Aggregate an HP-3 member's contract findings for the first phase. An
+/// undefined conjunction is a counterexample candidate; a refused-only
+/// conjunction makes the member's successors unknown and settles undecided.
+#[implements("FR-177-AC-7")]
+fn member_contract_candidates(
+    id: ProductStateId,
+    depth: usize,
+    findings: &[HyperFinding],
+) -> Vec<(usize, u8, Candidate)> {
+    let mut candidates = Vec::new();
+    let mut refused = None;
+    for finding in findings {
+        match finding {
+            HyperFinding::MemberUndefined {
+                component,
+                contract,
+                partner,
+            } => candidates.push((
+                depth,
+                0,
+                Candidate::Found(
+                    id,
+                    Found::MemberContract {
+                        component: *component,
+                        contract: contract.clone(),
+                        partner: partner.clone(),
+                    },
+                ),
+            )),
+            HyperFinding::MemberContract => {
+                sooner(&mut refused, depth, UndecidedCause::UndecidedSuccessor)
+            }
+            _ => {}
+        }
+    }
+    if let Some((depth, cause)) = refused {
+        candidates.push((depth, 1, Candidate::Refused(cause)));
+    }
+    candidates
 }
 
 /// The second phase's result for one instance.
@@ -1813,6 +1870,7 @@ impl<'a> Run<'_, 'a> {
     /// whose letter is undefined, or whose expansion found an undefined
     /// `μ_U` or contract, ends the run; failing that, a refused one leaves it
     /// undecided. The finding comes with the depth it was at.
+    #[implements("FR-177-AC-7")]
     fn first_phase(
         &self,
         run: &Explored<'_, '_>,
@@ -1934,12 +1992,18 @@ impl<'a> Run<'_, 'a> {
                             UndecidedCause::MatchUndetermined,
                         );
                     }
-                    HyperFinding::MemberContract => {
-                        sooner(
-                            &mut refused,
+                    HyperFinding::MemberUndefined { .. } | HyperFinding::MemberContract => {
+                        for (depth, rank, candidate) in member_contract_candidates(
+                            id,
                             state.depth,
-                            UndecidedCause::UndecidedSuccessor,
-                        );
+                            std::slice::from_ref(finding),
+                        ) {
+                            if rank == 0 {
+                                offer(depth, rank, candidate);
+                            } else if let Candidate::Refused(cause) = candidate {
+                                sooner(&mut refused, depth, cause);
+                            }
+                        }
                     }
                     HyperFinding::Enabled { .. } => {}
                 }
@@ -1950,8 +2014,8 @@ impl<'a> Run<'_, 'a> {
         }
         Ok(match best {
             None => None,
-            Some((depth, _, Candidate::Refused(cause))) => {
-                Some((depth, FirstHit::Undecided(cause)))
+            Some((depth, _, candidate @ Candidate::Refused(_))) => {
+                finalize_refused_candidate(depth, candidate)
             }
             Some((depth, _, Candidate::Rejected(id))) => {
                 let hit = match self.confirmed_rejection(run, id, totals)? {
@@ -2260,6 +2324,34 @@ impl<'a> Run<'_, 'a> {
                 cause,
                 None,
             ),
+            Found::MemberContract {
+                component,
+                contract,
+                partner: member,
+            } => {
+                let slot = component
+                    .checked_sub(universals)
+                    .ok_or_else(|| fault("a-member-contract-is-of-an-existential-component"))?;
+                let state_key = member
+                    .state_keys()
+                    .get(slot)
+                    .cloned()
+                    .ok_or_else(|| fault("a-member-names-its-component-state"))?;
+                let named = variables
+                    .get(component)
+                    .cloned()
+                    .ok_or_else(|| fault("a-contract-finding-names-a-variable"))?;
+                partner = Some(member);
+                (
+                    stem,
+                    vec![state_key],
+                    vec![named],
+                    HyperLocus::Contract(contract.clause),
+                    contract.guard_of,
+                    contract.cause,
+                    None,
+                )
+            }
             Found::Contract {
                 component,
                 clause,
@@ -2626,6 +2718,9 @@ impl<'a> Run<'_, 'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 /// A trace's step of `component` in the joint step `transition`, with the
 /// state key of its post-state; `None` when the component does not move in it.

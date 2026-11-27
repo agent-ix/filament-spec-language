@@ -56,8 +56,9 @@ evaluator, does not count.
 - FR-098's request: package reference, byte provision (the subject's
   initial snapshot documents by their `identity`) and limits, with the subject's
   universes.
-- A `GraphEvidenceEnvelope` whose obligation identity binds the subject,
-  the claim and its instance, and whose checked claim occurrence selects the
+- A `GraphEvidenceEnvelope` whose obligation identity binds the model
+  subject, the claim kind, its predicates and the `over` parameter, and no
+  instance (FSpec FR-475; the envelope names its instance separately), and whose checked claim occurrence selects the
   declaration after recompilation. It has no generic replay target or nested
   backend/input transcript source:
 

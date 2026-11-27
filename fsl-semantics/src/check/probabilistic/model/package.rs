@@ -15,8 +15,8 @@
 //! record's source order is its order in the package.
 
 use filament_exact::{
-    EffectiveId, Integer, Meter, NodeKey, Quantity, Rational, ScalarLimits, TextPayload, Value,
-    ValueType, admit_text,
+    admit_text, EffectiveId, Integer, Meter, NodeKey, Quantity, Rational, ScalarLimits,
+    TextPayload, Value, ValueType,
 };
 
 use filament_checked::node::CheckedLiteral;

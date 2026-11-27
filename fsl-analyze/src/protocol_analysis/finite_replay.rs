@@ -7,30 +7,29 @@
 //! step records. It builds no transition system of its own; the one
 //! `fsl-eval` protocol system steps the trace.
 
-use base64::Engine as _;
 use filament_exact::{Identifier, ScalarLimits};
 use fsl_eval::model_subject::{
     ModelInstance, ModelLetters, ModelSubject, ProtocolSubject, RoleBinding,
 };
-use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
+use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    Capacities, MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
-    ResolvedMemory, SubjectMemory, live_instance_bound, over_reference, send_record_json,
-    transition_json,
+    live_instance_bound, over_reference, send_record_json, transition_json, Capacities,
+    MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
+    ResolvedMemory, SubjectMemory,
 };
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_eval::temporal::{TemporalOutcome, TemporalRefusal};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
+use fsl_replay::shared_wire::{StateLocus, WireDefectKind};
 use fsl_replay::{
-    CounterexampleKind, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
-    ModelStep, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceEnd,
-    ProtocolTraceSubject, ProtocolWire, QualifiedName, ReplayTargetMembers, RequestTargetWire,
-    TemporalCounterexample, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
-    evaluate_protocol_trace, settle_protocol_check, undefined_finding,
+    evaluate_protocol_trace, settle_protocol_check, undefined_finding, CounterexampleKind,
+    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep,
+    ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceEnd, ProtocolTraceSubject,
+    ProtocolWire, QualifiedName, ReplayTargetMembers, RequestTargetWire, TemporalCounterexample,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CheckedProtocol, TemporalClauseNode};
-use ix_trace_rs::implements;
 use serde_json::Value;
 
 use filament_semantic_value::catalog::CatalogCode;
@@ -40,8 +39,8 @@ use fsl_semantics::check::{Capability, DeclarationFamily};
 
 use super::manifest::BACKEND_ID;
 use crate::analyze::{
-    AnalyzeItem, AnalyzeLimits, EngineReport, NoLetters, ProtocolReplayInputs, Refusal,
-    ReplayShape, SourceProvision, SubjectBinding, derived_target, replay_protocol_over,
+    derived_target, replay_protocol_over, AnalyzeItem, AnalyzeLimits, EngineReport, NoLetters,
+    ProtocolReplayInputs, Refusal, ReplayShape, SourceProvision, SubjectBinding,
 };
 
 /// The FSpec FR-433 trace document a `finite-replay` item names: a format
@@ -61,14 +60,8 @@ pub(crate) struct SuppliedTrace {
 #[derive(Clone, Debug)]
 struct SuppliedStep {
     transition: Value,
-    post_state: PostState,
+    post_state: StateLocus,
     send_record: Option<Value>,
-}
-
-/// A state key as the counterexample wire spells it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PostState {
-    key: String,
 }
 
 /// The format word of a supplied protocol trace.
@@ -170,6 +163,7 @@ impl SuppliedTrace {
     /// missing, extra or mistyped member, and a `send` step without a
     /// `send_record` or another step with one, are each a wire-shape defect,
     /// and the first one is reported (FR-941 "Read", FSpec FR-433-AC-8).
+    #[ix_trace_rs::string_edge]
     pub(crate) fn read(bytes: &[u8]) -> Result<Self, TraceDefect> {
         use DefectKind::{InvalidValue, MissingMember, UnknownMember, WrongValueKind};
         let document: Value =
@@ -222,7 +216,7 @@ impl SuppliedTrace {
 impl SuppliedStep {
     /// The step at `position` that `step` spells.
     fn read(position: usize, step: &Value) -> Result<Self, TraceDefect> {
-        use DefectKind::{MissingMember, UnknownMember, WrongValueKind};
+        use DefectKind::{InvalidValue, MissingMember, UnknownMember, WrongValueKind};
         let defect = |kind, member| TraceDefect::in_step(kind, position, member);
         let Value::Object(step) = step else {
             return Err(TraceDefect {
@@ -238,18 +232,15 @@ impl SuppliedStep {
         };
         let post_state = match step.get("post_state") {
             None => return Err(defect(MissingMember, "post_state")),
-            Some(Value::Object(post_state)) => {
-                let key = match post_state.get("key") {
-                    None => return Err(defect(MissingMember, "post_state/key")),
-                    Some(Value::String(key)) => key.clone(),
-                    Some(_) => return Err(defect(WrongValueKind, "post_state/key")),
+            Some(post_state) => StateLocus::read(post_state).map_err(|found| {
+                let kind = match found.kind {
+                    WireDefectKind::Missing => MissingMember,
+                    WireDefectKind::UnknownMember => UnknownMember,
+                    WireDefectKind::WrongKind => WrongValueKind,
+                    WireDefectKind::Invalid | WireDefectKind::UnknownVariant => InvalidValue,
                 };
-                if let Some(member) = unknown(post_state, &["key"]) {
-                    return Err(defect(UnknownMember, &format!("post_state/{member}")));
-                }
-                PostState { key }
-            }
-            Some(_) => return Err(defect(WrongValueKind, "post_state")),
+                TraceDefect::in_step(kind, position, &format!("post_state{}", found.pointer))
+            })?,
         };
         let send = transition.get("step").and_then(Value::as_str) == Some("send");
         let send_record = match (send, step.get("send_record")) {
@@ -332,13 +323,6 @@ pub(crate) enum ReplayFault {
     /// The protocol has a symbolic capacity, and a supplied trace's subject
     /// binds no capacity: requires-bound (FSpec FR-785).
     UnboundCapacity,
-}
-
-/// The state-key spelling of the counterexample wire.
-fn state_wire(key: &StateKey) -> PostState {
-    PostState {
-        key: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes()),
-    }
 }
 
 /// What a claim's required clauses add to a replay (FR-941 "Formula claims").
@@ -599,7 +583,7 @@ fn replay_steps<M: MemoryModel>(
                 continue;
             }
             let key = key_of(&post)?;
-            if state_wire(&key) == step.post_state {
+            if StateLocus::from(&key) == step.post_state {
                 reached = Some((transition, post, key));
                 break;
             }
@@ -644,9 +628,7 @@ impl<'a> ReplaySubject<'a, '_> {
             initial: self.binding.initial.clone(),
             universes: self.binding.universes.clone(),
             observation: self.limits.observation,
-            expansion: ExpansionLimits {
-                max_candidates: u64::MAX,
-            },
+            expansion: self.limits.expansion,
             meter: self.limits.accounting,
             emit: self.limits.emit,
         }
@@ -887,7 +869,7 @@ fn undefined_where(counterexample: &TemporalCounterexample<ProtocolTransition>) 
     };
     let mut at = serde_json::json!({
         "position": site.position,
-        "state_key": {"key": state_wire(&site.state_key).key},
+        "state_key": StateLocus::from(&site.state_key),
         "locus": locus,
     });
     if let (Some(node), Some(members)) = (node, at.as_object_mut()) {
@@ -929,9 +911,7 @@ impl Run<'_, '_> {
                 timed: None,
                 initial: self.binding.initial.clone(),
                 universes: self.binding.universes.clone(),
-                expansion: ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: self.limits.expansion,
                 stutter_closure: false,
             },
             protocol: self.protocol.name.clone(),
@@ -975,7 +955,7 @@ impl Run<'_, '_> {
         let shape = match clause {
             Some(node) => {
                 let name = QualifiedName::new(vec![
-                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?,
+                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?
                 ])
                 .map_err(|_| ReplayFault::Broken)?;
                 ReplayShape {
@@ -1244,9 +1224,7 @@ pub(crate) fn package_finite_replay_item<'a>(
                 initial: binding.initial.clone(),
                 universes: binding.universes.clone(),
                 observation: limits.observation,
-                expansion: ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: limits.expansion,
                 meter: limits.accounting,
                 emit: limits.emit,
             };

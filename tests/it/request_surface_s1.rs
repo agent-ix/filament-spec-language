@@ -96,7 +96,10 @@ fn run_applies_request_extension_definitions() {
     let result = fsl_command::command::run(&request, &crate::negotiation::Fr290)
         .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert_eq!(result.exit_code, 0, "{}", result.value);
-    assert!(result.value.to_string().contains("\"type\":\"integer\",\"value\":\"7\""));
+    assert!(result
+        .value
+        .to_string()
+        .contains("\"type\":\"integer\",\"value\":\"7\""));
 }
 
 /// FR-660: source-only check admits the extension form supplied in its check
@@ -585,7 +588,8 @@ fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
     let fsl_replay::spine::NativeRunResult::Clause(record) = read else {
         panic!("expected a clause result");
     };
-    assert_eq!(record.extraction(), Some(extraction));
+    let decoded_extraction = serde_json::to_value(record.extraction()).unwrap();
+    assert_eq!(&decoded_extraction, extraction);
 }
 
 /// FR-031-AC-8 (TC-109): a compile refusal's body span is mapped into exact

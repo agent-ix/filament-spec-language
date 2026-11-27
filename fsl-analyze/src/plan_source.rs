@@ -152,6 +152,7 @@ pub struct SourcePlan<'a> {
 impl<'a> SourcePlan<'a> {
     /// Whether a checked policy has a canonical positive-length source adapter.
     /// Model compatibility is admitted separately against the plan grammar.
+    #[ix_trace_rs::string_edge]
     pub fn supports_positive_policy(node: &TemporalClauseNode) -> bool {
         node.clause().clock() == "model-steps" && StepPolicy::new(node.clause()).is_some()
     }
@@ -721,7 +722,7 @@ impl<'a> SourcePlan<'a> {
         Ok(self.policy_cache[index])
     }
 
-    #[implements("FR-1012-AC-8", "FR-1012-AC-9")]
+    #[implements("FR-1012-AC-10", "FR-1012-AC-11")]
     fn canonical_policy(
         &mut self,
         index: usize,
@@ -1207,7 +1208,7 @@ impl PlanRules for SourcePlan<'_> {
         self.policies.len()
     }
 
-    #[implements("FR-1012-AC-9")]
+    #[implements("FR-1012-AC-11")]
     fn has_empty_policy_instance(&mut self) -> Result<bool, RuleStop> {
         if let Some(instances) = &self.policy_instances {
             return Ok(instances

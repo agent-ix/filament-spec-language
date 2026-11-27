@@ -13,8 +13,8 @@ use filament_exact::{CardinalityBound, CollectionKind, CollectionType, NodeKey, 
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    ApplicationTerm, Binding, BindingValue, BodyTerm, CheckRefusal, CheckedGraph, LeafTerm,
-    LiteralValue, MemberTerm, NodeRef, NodeTag, Owner, SemanticGraph,
+    ApplicationTerm, Binding, BindingValue, BodyTerm, CheckedGraph, LeafTerm, LiteralValue,
+    MemberTerm, NodeRef, NodeTag, Owner, SemanticCheckRefusal, SemanticGraph,
 };
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, RelationshipDirection,
@@ -30,7 +30,7 @@ use crate::named_population::fixture as population_fixture;
 
 /// Check `body` after a header selecting the value profile as `v` and, when
 /// `temporal`, the temporal layer as `t`; no model is selected.
-fn check_source(temporal: bool, body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check_source(temporal: bool, body: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let temporal = if temporal {
         "profile t = \"filament.temporal.complete/v1\";\n"
     } else {
@@ -66,7 +66,7 @@ fn check_source(temporal: bool, body: &str) -> Result<CheckedGraph, Vec<CheckRef
 
 /// `result` is exactly one refusal with `code` and `cause`.
 fn assert_one_refusal(
-    result: Result<CheckedGraph, Vec<CheckRefusal>>,
+    result: Result<CheckedGraph, Vec<SemanticCheckRefusal>>,
     what: &str,
     code: Code,
     cause: &str,
@@ -83,7 +83,7 @@ fn assert_one_refusal(
     );
 }
 
-fn checks(result: Result<CheckedGraph, Vec<CheckRefusal>>, what: &str) -> CheckedGraph {
+fn checks(result: Result<CheckedGraph, Vec<SemanticCheckRefusal>>, what: &str) -> CheckedGraph {
     result.unwrap_or_else(|refusals| panic!("{what} checks: {refusals:?}"))
 }
 
@@ -747,19 +747,39 @@ fn bounded_min_max_folds_and_reductions_check() {
 fn min_max_refuse_unordered_or_mismatched_types() {
     let function = "function p using v(s: Set<Boolean>[0, 2]): B pure { fold<B>(acc, x in s: min(acc, x), identity: true) }";
     let body = format!("{FOLD_TYPES}\n{function}");
-    assert_one_refusal(check_source(false, &body), function, Code::IllTyped, "operator-ineligible");
+    assert_one_refusal(
+        check_source(false, &body),
+        function,
+        Code::IllTyped,
+        "operator-ineligible",
+    );
 
     let function = "function pmax using v(s: Set<Boolean>[0, 2]): B pure { fold<B>(acc, x in s: max(acc, x), identity: true) }";
     let body = format!("{FOLD_TYPES}\n{function}");
-    assert_one_refusal(check_source(false, &body), function, Code::IllTyped, "operator-ineligible");
+    assert_one_refusal(
+        check_source(false, &body),
+        function,
+        Code::IllTyped,
+        "operator-ineligible",
+    );
 
     let function = "function q using v(s: Bag<Int[0, 9]>[0, 3]): R pure { fold<R>(acc, x in s: min(acc, x), identity: rational(0, 1)) }";
     let body = format!("{FOLD_TYPES}\n{function}");
-    assert_one_refusal(check_source(false, &body), function, Code::IllTyped, "type-mismatch");
+    assert_one_refusal(
+        check_source(false, &body),
+        function,
+        Code::IllTyped,
+        "type-mismatch",
+    );
 
     let function = "function r using v(s: Bag<Rational[0, 4; 1, 2]>[0, 3]): R pure { fold<R>(acc, x in s: min(acc, x), identity: 0) }";
     let body = format!("{FOLD_TYPES}\n{function}");
-    assert_one_refusal(check_source(false, &body), function, Code::IllTyped, "type-mismatch");
+    assert_one_refusal(
+        check_source(false, &body),
+        function,
+        Code::IllTyped,
+        "type-mismatch",
+    );
 }
 
 /// FR-488-AC-29 (TC-3082): `seq` and the population forms of a state clause

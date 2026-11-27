@@ -74,7 +74,7 @@ pub enum StateGraphForm {
 - The claim's `Requirements{kind: temporal-satisfaction, extent:
   Unbounded{domains}}`, with `domains` naming the claim, and its
   `StateGraphForm` recorded beside it.
-- A typed `CheckRefusal` with a span, and no checked claim, on refusal.
+- A typed `SemanticCheckRefusal` with a span, and no checked claim, on refusal.
 - For the request writer: the request's deadlock-freedom items.
 
 ## Behavior

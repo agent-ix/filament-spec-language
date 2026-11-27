@@ -73,37 +73,37 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{
-    Atom, AutomatonStateKey, BoundedKind, BoundedState, BoundedTranslation, Letter, Monitor,
-    PropertyAutomaton, SafetyItem, SafetyState, SafetyStates, SafetyTranslation, StateId,
-    SubjectKind, translate, translate_counted,
+    translate, translate_counted, Atom, AutomatonStateKey, BoundedKind, BoundedState,
+    BoundedTranslation, Letter, Monitor, PropertyAutomaton, SafetyItem, SafetyState, SafetyStates,
+    SafetyTranslation, StateId, SubjectKind,
 };
 use fsl_eval::model_subject::{
-    AtomStop, ModelLetters, ModelSubject, ProtocolSubject, refused_invariant,
+    refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
     ModelFinding, ModelSimState, ModelSystem, ProtocolDefinition, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    Capacities, MemoryModel, ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget,
-    ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory, activates_on_each, check_protocol_bounds,
-    live_instance_bound,
+    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, MemoryModel,
+    ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
+    ProtocolSystem, Sc, SubjectMemory,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    BOUND_POSITIONS, ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion,
-    ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress,
-    ZeroProgressError,
+    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated,
+    SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError,
+    BOUND_POSITIONS,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::model::observation::AdmissionFailure;
-use serde::{Serialize, Serializer, ser::SerializeStruct};
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::certificate::check::{
-    Budgets, Checker, Halt, Step, admit, admit_read_identities, expansion_halt, finish, poll,
-    stopped, widen,
+    admit, admit_read_identities, expansion_halt, finish, poll, stopped, widen, Budgets, Checker,
+    Halt, Step,
 };
 use crate::certificate::recording::Recording;
-use crate::certificate::scc::{Component, ComponentCertificate, check_partition};
+use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
 use crate::certificate::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::ClauseRootRefusal;
 use crate::model_check::item::{
@@ -132,9 +132,10 @@ impl Serialize for ProductStateRef {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use base64::Engine as _;
         let mut object = serializer.serialize_struct("ProductStateRef", 2)?;
-        let model_state =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.model_state.as_bytes());
-        object.serialize_field("model_state", &model_state)?;
+        object.serialize_field(
+            "model_state",
+            &crate::shared_wire::state_key_text(&self.model_state),
+        )?;
         let octets = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(self.automaton_state.as_bytes());
         object.serialize_field("automaton_state", &octets)?;
@@ -2331,7 +2332,7 @@ fn fault(invariant: &'static str) -> ClosureRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProtocolLoopProofKind, ProtocolLoopProofTarget, loop_proof_target};
+    use super::{loop_proof_target, ProtocolLoopProofKind, ProtocolLoopProofTarget};
     use crate::ModelCheckItem;
     use fsl_semantics::check::ProtocolNodeId;
 

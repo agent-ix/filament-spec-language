@@ -11,7 +11,8 @@
 use filament_checked::key::DeclarationKey;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::model::accounting::{
-    NormalizationChargePoint, NormalizationLimitKind, NormalizationMeter, ModelNormalizationLimits, NormalizationIncomplete,
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationLimitKind, NormalizationMeter,
 };
 use fsl_semantics::model::admitted::AdmittedPackage;
 use fsl_semantics::model::domain_package::{
@@ -144,7 +145,10 @@ fn resolve(
     required: Kind,
     name: &str,
     limits: ModelNormalizationLimits,
-) -> (Result<ResolvedSystemsElement, ResolveFailure>, NormalizationMeter) {
+) -> (
+    Result<ResolvedSystemsElement, ResolveFailure>,
+    NormalizationMeter,
+) {
     let mut meter = NormalizationMeter::new(limits);
     let result = resolve_systems(
         &world.admitted,
@@ -161,7 +165,10 @@ fn resolve_m(
     world: &World,
     required: Kind,
     name: &str,
-) -> (Result<ResolvedSystemsElement, ResolveFailure>, NormalizationMeter) {
+) -> (
+    Result<ResolvedSystemsElement, ResolveFailure>,
+    NormalizationMeter,
+) {
     let aliases = [ModelAlias {
         alias: "M",
         selection: &world.selection,
@@ -328,7 +335,10 @@ fn an_unresolvable_name_refuses_without_ambient_lookup() {
             segment: 1,
         }
     );
-    assert_eq!(meter.admitted_charges(), [NormalizationChargePoint::SystemsResolve]);
+    assert_eq!(
+        meter.admitted_charges(),
+        [NormalizationChargePoint::SystemsResolve]
+    );
 
     let (result, _) = resolve_m(&world, Kind::Part, "pump_out");
     assert_eq!(
@@ -438,7 +448,10 @@ fn a_name_resolving_to_another_kind_is_wrong_export() {
         let refusal = refused(result);
         assert_eq!(refusal.code, Code::InvalidModelBinding, "{name}");
         assert_eq!(refusal.cause, ModelRefusalCause::WrongExport, "{name}");
-        assert_eq!(meter.admitted_charges(), [NormalizationChargePoint::SystemsResolve]);
+        assert_eq!(
+            meter.admitted_charges(),
+            [NormalizationChargePoint::SystemsResolve]
+        );
     }
 }
 
@@ -517,7 +530,10 @@ fn y02_an_allocation_targeting_a_port_does_not_resolve() {
     assert_eq!(refusal.cause, ModelRefusalCause::WrongExport);
     assert_eq!(
         meter.admitted_charges(),
-        [NormalizationChargePoint::SystemsResolve, NormalizationChargePoint::SystemsAllocation]
+        [
+            NormalizationChargePoint::SystemsResolve,
+            NormalizationChargePoint::SystemsAllocation
+        ]
     );
 }
 

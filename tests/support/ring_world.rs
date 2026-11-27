@@ -252,7 +252,11 @@ fn queue_document(variant: Variant) -> Vec<u8> {
             &node(QUEUE, "Digit"),
         ));
     }
-    if variant.boxed_reference || variant.tuple_reference || variant.union_reference || variant.parcel_reference {
+    if variant.boxed_reference
+        || variant.tuple_reference
+        || variant.union_reference
+        || variant.parcel_reference
+    {
         types.push(ring_queue::declaration(
             QUEUE,
             "Box",
@@ -412,7 +416,11 @@ fn ring_document(variant: Variant) -> Vec<u8> {
         ring_queue::bounded(RING, "Digit", 1),
         ring_queue::bounded(RING, "Two", 2),
     ];
-    if variant.boxed_reference || variant.tuple_reference || variant.union_reference || variant.parcel_reference {
+    if variant.boxed_reference
+        || variant.tuple_reference
+        || variant.union_reference
+        || variant.parcel_reference
+    {
         types.push(ring_queue::declaration(
             RING,
             "Box",

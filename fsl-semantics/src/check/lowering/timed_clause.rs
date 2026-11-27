@@ -21,14 +21,14 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{EffectiveId, Identifier, NodeKey, Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::{Binder, Binders, Lowering, PlaceStep, refuse, require_admitted};
+use super::{refuse, require_admitted, Binder, Binders, Lowering, PlaceStep};
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{
     Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, LiteralValue, MemberTerm,
     NodeTag, Operation, Operator, TupleMember, TupleTerm,
 };
-use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
+use crate::check::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use crate::check::state_clause::ClauseOperation;
 use crate::check::timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockId, ConstraintNodes,
@@ -73,7 +73,7 @@ impl Lowering<'_> {
     pub(crate) fn timed_clauses(
         &mut self,
         input: &TimedClauseInput<'_>,
-    ) -> Result<TimedClauseNodes, CheckRefusal> {
+    ) -> Result<TimedClauseNodes, SemanticCheckRefusal> {
         let model = input.model;
         // Every guard and reset is of a state clause of the unit.
         let clause_at = |index: usize| {
@@ -145,7 +145,7 @@ impl Lowering<'_> {
                                 self.parameter(binding.name(), level, integer.clone(), location)?;
                             Ok((binding.clone(), parameter))
                         })
-                        .collect::<Result<Vec<_>, CheckRefusal>>()?
+                        .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?
                 };
                 let mut conjuncts =
                     self.self_presences(model.clocks(), part.presences(), context.clone(), &site)?;
@@ -350,7 +350,7 @@ impl Lowering<'_> {
                         )?;
                         Ok((binding.clone(), parameter))
                     })
-                    .collect::<Result<Vec<_>, CheckRefusal>>()?
+                    .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?
             };
             let binders = slot_binders
                 .iter()
@@ -388,7 +388,7 @@ impl Lowering<'_> {
         &mut self,
         operation: &ClauseOperation,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let anchor = super::AnchorInput {
             declaring: operation.declaring.clone(),
             operation: &operation.declaration,
@@ -407,7 +407,7 @@ impl Lowering<'_> {
         operation: &ClauseOperation,
         point: Option<&AcceptedPoint>,
         location: &Location,
-    ) -> Result<Option<NodeKey>, CheckRefusal> {
+    ) -> Result<Option<NodeKey>, SemanticCheckRefusal> {
         let Some(point) = point else {
             return Ok(None);
         };
@@ -431,7 +431,7 @@ impl Lowering<'_> {
         operation: &ClauseOperation,
         location: &Location,
         slot_binders: &[(ElementBinding, NodeKey)],
-    ) -> Result<ConstraintNodes, CheckRefusal> {
+    ) -> Result<ConstraintNodes, SemanticCheckRefusal> {
         match constraint.parameter() {
             Some(position) => Ok(ConstraintNodes {
                 target: ConstraintTargetNodes::Parameter {
@@ -454,7 +454,7 @@ impl Lowering<'_> {
         context: EffectiveId,
         location: &Location,
         slot_binders: &[(ElementBinding, NodeKey)],
-    ) -> Result<ConstraintNodes, CheckRefusal> {
+    ) -> Result<ConstraintNodes, SemanticCheckRefusal> {
         let slots = if let Some(binding) = constraint.binding() {
             constraint
                 .slots()
@@ -492,7 +492,7 @@ impl Lowering<'_> {
         context: EffectiveId,
         via: &[PlaceStep],
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let mut owner = self.timed_self(context.clone(), location)?;
         let mut at = context;
         for step in via {
@@ -542,7 +542,7 @@ impl Lowering<'_> {
         &mut self,
         context: EffectiveId,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let self_type = self.type_node(&ValueType::Reference(context), location)?;
         self.record(self_type.clone(), OccurrenceRole::Type, location.clone());
         self.parameter("self", 0, self_type, location)
@@ -554,7 +554,7 @@ impl Lowering<'_> {
         &mut self,
         predicate: &CheckedTimedPredicate,
         site: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let body = predicate.checked_body();
         let mut scope = Vec::new();
         for (slot, (name, value_type)) in predicate.parameters().iter().enumerate() {
@@ -579,7 +579,7 @@ impl Lowering<'_> {
     }
 
     /// The `expression` node of the predicate `true`.
-    fn timed_true(&mut self, location: &Location) -> Result<NodeKey, CheckRefusal> {
+    fn timed_true(&mut self, location: &Location) -> Result<NodeKey, SemanticCheckRefusal> {
         let boolean = self.type_node(&ValueType::Boolean, location)?;
         let literal = self.insert(
             location,
@@ -605,7 +605,7 @@ impl Lowering<'_> {
         left: NodeKey,
         right: NodeKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let boolean = self.type_node(&ValueType::Boolean, location)?;
         let term = self.typed_application(
             location,
@@ -626,7 +626,7 @@ impl Lowering<'_> {
         &mut self,
         conjuncts: &[NodeKey],
         location: &Location,
-    ) -> Result<Option<NodeKey>, CheckRefusal> {
+    ) -> Result<Option<NodeKey>, SemanticCheckRefusal> {
         let Some((first, rest)) = conjuncts.split_first() else {
             return Ok(None);
         };
@@ -775,7 +775,7 @@ impl Lowering<'_> {
         clocks: &[ClockField],
         model_node: NodeKey,
         location: &Location,
-    ) -> Result<Vec<NodeKey>, CheckRefusal> {
+    ) -> Result<Vec<NodeKey>, SemanticCheckRefusal> {
         if clocks.is_empty() {
             return Ok(Vec::new());
         }
@@ -957,7 +957,7 @@ impl Lowering<'_> {
         owner: NodeKey,
         slots: &[NodeKey],
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let boolean = self.type_node(&ValueType::Boolean, location)?;
         let mut arguments = vec![
             MemberTerm::Leaf(LeafTerm::reference(place)),
@@ -989,7 +989,7 @@ impl Lowering<'_> {
         presences: &[(ClockId, bool)],
         context: EffectiveId,
         location: &Location,
-    ) -> Result<Vec<NodeKey>, CheckRefusal> {
+    ) -> Result<Vec<NodeKey>, SemanticCheckRefusal> {
         let mut reads = Vec::with_capacity(presences.len());
         for (clock, present) in presences {
             let unplaced = || super::fault(location, KeyFault::UnkeyableRequirements);
@@ -1028,7 +1028,7 @@ impl Lowering<'_> {
         slot_binders: &[(ElementBinding, NodeKey)],
         context: EffectiveId,
         location: &Location,
-    ) -> Result<Vec<NodeKey>, CheckRefusal> {
+    ) -> Result<Vec<NodeKey>, SemanticCheckRefusal> {
         let mut reads = Vec::with_capacity(presences.len());
         for (clock, binding, present) in presences {
             let unplaced = || super::fault(location, KeyFault::UnkeyableRequirements);
@@ -1075,7 +1075,7 @@ impl Lowering<'_> {
         context: EffectiveId,
         alternatives: &[StateAlternative],
         sites: &[Location],
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let mut disjuncts = Vec::with_capacity(alternatives.len());
         for (alternative, site) in alternatives.iter().zip(sites) {
             let mut conjuncts =
@@ -1109,7 +1109,7 @@ impl Lowering<'_> {
         &mut self,
         key: NodeKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let tag = self.graph.nodes.get(&key).map(|node| node.content.node_tag);
         if tag == Some(NodeTag::Expression) {
             return Ok(key);
@@ -1137,7 +1137,7 @@ fn clock_parameter_name(
     operation: &ClauseOperation,
     position: usize,
     location: &Location,
-) -> Result<String, CheckRefusal> {
+) -> Result<String, SemanticCheckRefusal> {
     operation
         .declaration
         .clock_parameters()

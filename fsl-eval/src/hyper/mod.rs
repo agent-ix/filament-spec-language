@@ -53,8 +53,8 @@ pub use product::{
 };
 pub use projected::{ProjectedInputs, ProjectedProduct};
 pub use seam::{
-    HyperLetters, HyperSlot, MatchIncomplete, MatchPart, MatchReading, ParameterBinding, StepLabel,
-    StepMatch,
+    claim_instance_tuples, HyperLetters, HyperSlot, MatchIncomplete, MatchPart, MatchReading,
+    ParameterBinding, ParameterRequest, StepLabel, StepMatch,
 };
 pub(crate) use step_value::{decode, slot_value};
 pub use witness::{Partner, PartnerStep, WitnessInputs, WitnessMember, WitnessProduct, WitnessSet};

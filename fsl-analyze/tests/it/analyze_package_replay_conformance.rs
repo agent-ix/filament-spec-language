@@ -82,7 +82,6 @@ fn both_routes_with_snapshots(
     let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
     let source = analyze(&path);
-    assert_eq!(source.exit, 0, "{}", source.document());
     let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
     let sources = ws.path(&format!("{HANDOFF}/sources"));
@@ -139,7 +138,6 @@ fn both_routes_for_unit_with_snapshots(
     let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("request JSON");
     let source = analyze(&path);
-    assert_eq!(source.exit, 0, "{}", source.document());
     let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("authored unit is removed");
     let sources = ws.path(&format!("{HANDOFF}/sources"));
@@ -347,6 +345,8 @@ fn empty_protocol_over_settles_no_instance_in_both_routes() {
             "universes": [{"authority": "test", "identity": "u0"}]
         }),
     );
+    // FR-990-AC-11: `inconclusive` / `no-instance` is exit 22.
+    assert_eq!(source.exit, 22, "{}", source.document());
     for run in [&source, &package] {
         let item = run.item(0);
         assert_eq!(
@@ -390,9 +390,10 @@ fn bound_protocol_subject(key: &str) -> Value {
 #[trace("TC-2410", "FR-896-AC-7", "FR-896-AC-8", "FR-850-AC-2")]
 #[test]
 fn source_and_package_global_conformance_check_the_expected_instances() {
+    // FR-896-AC-7: the constraint of `send Placed` is `{ k.r1 = 0 }`.
     let protocol = order_protocol(true).replace(
-        "run sequence Main {",
-        "run sequence Main {\ncheck Ready using pp { k.r1 = 0 };",
+        "send Placed via Order as (placed: Ack) { true }",
+        "send Placed via Order as (placed: Ack) { k.r1 = 0 }",
     );
     let snapshots = keyed_core_snapshots("1");
     let items = json!([{"claim": "Flow", "kind": "global-conformance"}]);
@@ -403,6 +404,8 @@ fn source_and_package_global_conformance_check_the_expected_instances() {
         &snapshots,
         None,
     );
+    // FR-896-AC-7: `refuted` is exit 10.
+    assert_eq!(source.exit, 10, "{}", source.document());
     assert_eq!(label(&source.item(0)), "refuted", "q violates Ready");
     assert_eq!(label(&package.item(0)), "refuted", "q violates Ready");
     assert_equal(&source, &package);
@@ -415,6 +418,8 @@ fn source_and_package_global_conformance_check_the_expected_instances() {
             &snapshots,
             Some(bound_protocol_subject(key)),
         );
+        // FR-896-AC-8: `proved` is exit 0, `refuted` exit 10.
+        assert_eq!(source.exit, if expected == "proved" { 0 } else { 10 });
         assert_eq!(label(&source.item(0)), expected, "bound to {key}");
         assert_eq!(label(&package.item(0)), expected, "bound to {key}");
         assert_equal(&source, &package);
@@ -422,15 +427,34 @@ fn source_and_package_global_conformance_check_the_expected_instances() {
 }
 
 /// FR-125-AC-13: an empty initial list settles NoInitialState on both routes.
-#[trace("TC-2410", "FR-125-AC-13", "FR-990-AC-11", "FR-850-AC-2")]
+#[trace("TC-2410", "FR-125-AC-13", "FR-850-AC-2")]
 #[test]
 fn no_initial_protocol_over_settles_on_source_and_package_routes() {
+    // FR-125-AC-13: "A subject in which an overlapping population has no
+    // universe returns `RequiresBound` naming it, also when its `initial`
+    // list is empty. A subject with an empty `initial` list and bounded
+    // universes reports `NoInitialState`" (FR-125-AC-23: "With a universe
+    // removed and an empty `initial` list it returns `NotSimulated(RequiresBound)`").
+    // So `universes: []` is RequiresBound; the universe `u0` bounds it.
+    let mut universe: Value = serde_json::from_slice(
+        crate::litmus::Documents::new()
+            .snapshots
+            .into_values()
+            .next()
+            .as_ref()
+            .expect("one snapshot"),
+    )
+    .expect("snapshot JSON");
+    universe["identity"]["identity"] = json!("u0");
+    let snapshots = [serde_json::to_vec(&universe).expect("universe snapshot JSON")];
     let (source, package) = both_routes_with_snapshots(
         "package-no-initial",
         json!([{"claim": "Flow", "kind": "global-conformance"}]),
-        &[],
-        json!({"initial_states": [], "universes": []}),
+        &snapshots,
+        json!({"initial_states": [], "universes": [{"authority": "test", "identity": "u0"}]}),
     );
+    // FR-125-AC-13: `inconclusive` is exit 22.
+    assert_eq!(source.exit, 22, "{}", source.document());
     for run in [&source, &package] {
         let item = run.item(0);
         assert_eq!(
@@ -448,24 +472,84 @@ fn no_initial_protocol_over_settles_on_source_and_package_routes() {
 }
 
 /// FR-896 scalar `over` ranges over Boolean values, including on the package route.
-#[trace("TC-2410", "FR-896-AC-7", "FR-850-AC-2")]
+#[trace("TC-2410", "FR-882-AC-3", "FR-850-AC-2")]
 #[test]
 fn scalar_protocol_over_is_checked_on_source_and_package_routes() {
     let protocol = order_protocol(true).replace("over (k: M::Core)", "over (n: Boolean)");
+    // FR-125-AC-13: an empty `initial` list reports `NoInitialState` for any
+    // claim, so the scalar run is given the litmus initial state.
+    let snapshots: Vec<Vec<u8>> = crate::litmus::Documents::new()
+        .snapshots
+        .into_values()
+        .collect();
     let (source, package) = both_routes_for_unit_with_snapshots(
         "package-scalar-over",
         &protocol,
         json!([{"claim": "Flow", "kind": "global-conformance"}]),
-        &[],
+        &snapshots,
         None,
     );
+    assert_eq!(source.exit, 0, "{}", source.document());
     assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
     assert_eq!(label(&package.item(0)), "proved", "{}", package.document());
     assert_equal(&source, &package);
 }
 
+/// FR-896-AC-9 on both routes: the first item inherits a `subject.protocol`
+/// that binds `Other` and is declined, the second binds `Flow` to `p` and
+/// settles proved.
+#[trace("TC-2410", "FR-896-AC-9", "FR-850-AC-2")]
+#[test]
+fn a_binding_to_another_protocol_is_declined_on_source_and_package_routes() {
+    let flow = order_protocol(true).replace(
+        "send Placed via Order as (placed: Ack) { true }",
+        "send Placed via Order as (placed: Ack) { k.r1 = 0 }",
+    );
+    let (_, other) = flow.split_once("protocol Flow").expect("Flow declaration");
+    let unit = format!("{flow}\nprotocol Other{other}");
+    let mut subject = bound_protocol_subject("p");
+    subject["protocol"]["protocol"] = json!("Other");
+    let (source, package) = both_routes_for_unit_with_snapshots(
+        "package-other-protocol",
+        &unit,
+        json!([
+            {"claim": "Flow", "kind": "global-conformance"},
+            {"claim": "Flow", "kind": "global-conformance",
+                "temporal": {"subject": bound_protocol_subject("p")}}
+        ]),
+        &keyed_core_snapshots("1"),
+        Some(subject),
+    );
+    for run in [&source, &package] {
+        crate::protocol_conformance::assert_other_protocol_declined(&run.item(0));
+        assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
+    }
+    assert_equal(&source, &package);
+}
+
+/// FR-896-AC-10 on both routes: a protocol deadlock item, as the plain
+/// deadlock-freedom kind and as `global-conformance`, declines without a
+/// `subject.protocol`.
+#[trace("TC-2410", "FR-896-AC-10", "FR-850-AC-2")]
+#[test]
+fn a_deadlock_item_without_subject_protocol_is_declined_on_both_routes() {
+    for (name, item) in crate::protocol_conformance::deadlock_items() {
+        let (source, package) = both_routes_for_unit_with_snapshots(
+            &format!("package-deadlock-{name}"),
+            &order_protocol(true),
+            json!([item]),
+            &[],
+            None,
+        );
+        for run in [&source, &package] {
+            crate::protocol_conformance::assert_deadlock_declined(name, &run.item(0));
+        }
+        assert_equal(&source, &package);
+    }
+}
+
 /// FR-896-AC-7 and FR-101: the max-state budget is shared by all object keys.
-/// One run fits in 20 product states; two such runs do not.
+/// One run explores 5 product states: 9 fits one run, not two (FR-101-AC-15).
 #[trace("TC-2410", "FR-896-AC-7", "FR-101-AC-15", "FR-850-AC-2")]
 #[test]
 fn global_conformance_shares_limits_across_object_keys() {
@@ -487,7 +571,7 @@ fn global_conformance_shares_limits_across_object_keys() {
         *bytes = serde_json::to_vec(&snapshot).expect("snapshot JSON");
     }
     let item = json!([{"claim": "Flow", "kind": "global-conformance",
-        "temporal": {"limits": {"max_states": 20}}}]);
+        "temporal": {"limits": {"max_states": 9}}}]);
     let (source_one, package_one) = both_routes_for_unit_with_snapshots(
         "package-one-key-budget",
         &order_protocol(true),
@@ -507,6 +591,7 @@ fn global_conformance_shares_limits_across_object_keys() {
         "{}",
         package_one.document()
     );
+    assert_eq!(source_one.exit, 0, "{}", source_one.document());
     assert_equal(&source_one, &package_one);
 
     let (source_two, package_two) = both_routes_for_unit_with_snapshots(
@@ -528,6 +613,8 @@ fn global_conformance_shares_limits_across_object_keys() {
         "{}",
         package_two.document()
     );
+    // FR-101-AC-15: a budget run out is `incomplete`, exit 22.
+    assert_eq!(source_two.exit, 22, "{}", source_two.document());
     assert_equal(&source_two, &package_two);
 }
 
@@ -568,7 +655,6 @@ fn missing_protocol_role_declines_on_source_and_package_routes() {
         }));
     ws.write("analyze.json", request.to_string().as_bytes());
     let source = analyze(&request_path);
-    assert_eq!(source.exit, 0, "{}", source.document());
     let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("authored unit is removed");
     let sources = ws.path(&format!("{HANDOFF}/sources"));
@@ -581,6 +667,8 @@ fn missing_protocol_role_declines_on_source_and_package_routes() {
                 .as_bytes(),
         ),
     );
+    // FR-896-AC-4: `declined` is exit 20.
+    assert_eq!(source.exit, 20, "{}", source.document());
     for run in [&source, &package] {
         let item = run.item(0);
         assert_eq!(item["record"]["result"], "declined", "{}", run.document());
@@ -815,4 +903,61 @@ fn a_predicate_join_over_a_package_settles_unsupported() {
     let diagnostic = &settled["diagnostics"][0];
     assert_eq!(diagnostic["code"], "unsupported_construct", "{settled}");
     assert_eq!(diagnostic["cause"], "not-yet-implemented", "{settled}");
+}
+
+/// FR-895-AC-46 (TC-2531): package recording assessment refuses a protocol
+/// containing `repeat` as one typed unsupported result, without obligation
+/// verdicts.
+#[trace("TC-2531", "FR-895-AC-46")]
+#[test]
+fn a_repeat_over_a_package_recording_has_no_partial_obligation_verdicts() {
+    let mut protocol = order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { repeat Loop by Seller visible () max 2 while { true } sequence Body {",
+    );
+    let finish = protocol.find("finish Done").expect("finish terminal");
+    let close = protocol[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes");
+    protocol.replace_range(close..close + 2, " } exhausted sequence Out { } }");
+
+    let recording = json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "identity": {"authority": "test", "identity": "recording"},
+        "observations": [], "local_order": {}, "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    });
+    let ws = Workspace::new("package-repeat-recording-assessment");
+    let items = json!([{"claim": "Flow", "kind": "global-conformance",
+        "recording": {"authority": "test", "identity": "recording"}}]);
+    let path = litmus_request(&ws, &protocol, json!({"items": items}));
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    ws.write("recording.json", recording.to_string().as_bytes());
+    request["request"]["documents"]
+        .as_array_mut()
+        .expect("documents")
+        .push(json!({"file": "recording.json"}));
+    ws.write("analyze.json", request.to_string().as_bytes());
+
+    let (members, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove authored source");
+    let sources = ws.path(&format!("{HANDOFF}/sources"));
+    std::fs::remove_dir_all(&sources).expect("remove retained source files");
+    let package = analyze(
+        &ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
+    let settled = package.document();
+    assert_eq!(settled["category"], "unsupported", "{settled}");
+    let diagnostic = &settled["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "unsupported_construct", "{settled}");
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{settled}");
+    let item = &settled["items"][0];
+    assert!(item.get("record").is_none(), "{settled}");
+    assert!(item.get("obligations").is_none(), "{settled}");
 }

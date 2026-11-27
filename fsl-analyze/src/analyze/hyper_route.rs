@@ -9,22 +9,22 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
     CheckedHyperLetters, ExpansionLimits, ModelSimulationRequest, ModelSystem,
 };
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    BoundCovers, HyperOutcome, HyperReplay, IncompleteCause, InconclusiveCause, RunStats,
-    UndecidedCause, replay_hyper_trace_tuple, settle_hyper_check,
+    replay_hyper_trace_tuple, settle_hyper_check, BoundCovers, HyperOutcome, HyperReplay,
+    IncompleteCause, InconclusiveCause, RunStats, UndecidedCause,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::implements;
 
 use super::instance_records::{decisive, undecided};
-use super::items::{BROKEN, admission, model_refusal};
+use super::items::{admission, model_refusal, BROKEN};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
 use crate::model_check::{
-    HyperCheckRequest, ModelRelationOutcome, ModelRelationRefusal, ModelRelationStats,
-    alias_provisions, alias_system, check_hyper, manifest,
+    alias_provisions, alias_system, check_hyper, manifest, HyperCheckRequest, ModelRelationOutcome,
+    ModelRelationRefusal, ModelRelationStats,
 };
 
 /// The item that runs the checked hyper clause `key` names, or none when the
@@ -178,38 +178,16 @@ pub(super) fn hyper_item<'a>(
                     Some(&certificate),
                     cancel,
                     |payload| {
-                        let mut instance = Vec::with_capacity(clause.parameters().len());
-                        for parameter in clause.parameters() {
-                            let key = payload
-                                .instance
-                                .iter()
-                                .find(|(name, _)| name == &parameter.name)
-                                .map(|(_, key)| key);
-                            let fault = |cause| {
-                                fsl_replay::ReplayRefusal::Fault(
-                                    filament_semantic_value::catalog::InternalFault::new(
-                                        "hyper-item",
-                                        cause,
-                                    ),
-                                )
-                            };
-                            let system = slot_of(parameter.alias.as_str())
-                                .and_then(|slot| owned.get(slot))
-                                .ok_or_else(|| fault("parameter-alias"))?;
-                            let admitted = system
-                                .instances(&filament_exact::ValueType::Reference(
-                                    parameter.object.clone(),
-                                ))
-                                .map_err(|_| fault("parameter-universe"))?;
-                            let bound = admitted
-                                .into_iter()
-                                .find(|instance| Some(&instance.key) == key)
-                                .ok_or_else(|| fault("counterexample-instance"))?;
-                            instance.push(ParameterBinding {
-                                parameter: parameter.name.clone(),
-                                instance: bound,
-                            });
-                        }
+                        let instance =
+                            counterexample_instance(clause, &owned, &slot_of, &payload.instance)
+                                .ok_or_else(|| {
+                                    fsl_replay::ReplayRefusal::Fault(
+                                        filament_semantic_value::catalog::InternalFault::new(
+                                            "hyper-item",
+                                            "counterexample-instance",
+                                        ),
+                                    )
+                                })?;
                         replay_hyper_trace_tuple(
                             &HyperReplay {
                                 clause,
@@ -342,9 +320,26 @@ fn single(
         }
         let refuted = matches!(settled.record.value, TerminalValue::Refuted);
         let proved = matches!(settled.record.value, TerminalValue::Proved { .. });
+        // FSpec FR-390: a non-proved record names its instance,
+        // in the one typed form of the state-graph items (FR-621-AC-24).
+        let named = if proved {
+            None
+        } else {
+            clause
+                .parameters()
+                .first()
+                .zip(instance.instance.first())
+                .map(|(parameter, (_, key))| {
+                    serde_json::json!({
+                        "type": "instance",
+                        "parameter": parameter.name,
+                        "key": key,
+                    })
+                })
+        };
         let report = super::GraphReport {
             record: settled.record,
-            instance: None,
+            instance: named,
             exploration: instance.stats,
             counterexample: if refuted { wire.clone() } else { None },
             evidence: if !refuted { wire } else { None },
@@ -633,4 +628,36 @@ impl<'a> PackageRelationSubject<'a> {
         )
         .claimed(key)
     }
+}
+
+/// The instance a counterexample names: the tuple of FR-125 "Instancing" over
+/// the clause's parameters (the one derivation of `claim_instance_tuples`)
+/// whose keys are the counterexample's. `None` when no tuple matches or the
+/// clause has no instance.
+pub(super) fn counterexample_instance(
+    clause: &fsl_semantics::check::CheckedHyperClause,
+    owned: &[fsl_eval::simulation::model::ModelSystem<'_>],
+    slot_of: &impl Fn(&str) -> Option<usize>,
+    named: &[(String, String)],
+) -> Option<Vec<fsl_eval::hyper::ParameterBinding>> {
+    let mut requests = Vec::with_capacity(clause.parameters().len());
+    for parameter in clause.parameters() {
+        requests.push(fsl_eval::hyper::ParameterRequest {
+            name: parameter.name.as_str(),
+            object: &parameter.object,
+            system: owned.get(slot_of(parameter.alias.as_str())?)?,
+        });
+    }
+    let subjects: Vec<_> = owned.iter().collect();
+    fsl_eval::hyper::claim_instance_tuples(&subjects, &requests)
+        .ok()?
+        .into_iter()
+        .find(|tuple| {
+            tuple.len() == named.len()
+                && tuple.iter().all(|binding| {
+                    named.iter().any(|(name, key)| {
+                        name == &binding.parameter && key == &binding.instance.key
+                    })
+                })
+        })
 }

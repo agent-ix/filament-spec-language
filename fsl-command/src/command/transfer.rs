@@ -10,22 +10,23 @@ use fsl_analyze::analyze::document::{
     analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, DocumentSelection,
     ItemSelection, ResolvedItem, SubjectSelection,
 };
-use fsl_analyze::analyze::{AnalyzeLimits, SourceProvision};
+use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, SourceProvision};
 use fsl_foundation::Code;
 use fsl_replay::planner::{
     read_premise_item, read_result_entry, strength_implies, EntryOrigin, ItemKey, TransferFacts,
     TransferPremiseValue, TransferSettlement,
 };
 use fsl_replay::spine::CheckedUnit;
-use fsl_replay::{Certification, ItemLabel};
+use fsl_replay::{CallerLimits, Certification, ItemLabel};
 use fsl_semantics::check::{
     AbstractSide, CheckedGraph, CheckedRefinement, StepClass, StepTarget, TemporalClauseNode,
     TemporalProfile,
 };
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    document_reference, AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits,
+    document_reference, AdmissionFailure, DocumentProvision, DocumentRef,
 };
+use ix_trace_rs::implements;
 use serde_json::{json, Map, Value};
 
 use super::{
@@ -41,6 +42,8 @@ pub struct PreparedTransfer {
     pub(super) request: wire::Request,
     pub(super) source: FormalSource,
     pub(super) integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    /// The run's effective limits.
+    pub(super) limits: Box<CallerLimits>,
 }
 
 pub(super) fn execute(prepared: PreparedTransfer, settle: &Settle<'_>) -> Result<RunResult> {
@@ -50,7 +53,9 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &Settle<'_>) -> Result
         request,
         source,
         integer_division,
+        limits,
     } = prepared;
+    let limits = *limits;
     let wire::Request {
         models,
         program,
@@ -74,14 +79,11 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &Settle<'_>) -> Result
         },
         dependent_bytes,
     )?;
-    let observation_limits =
-        fsl_replay::spine::ObservationLimitsWire::resolve(member.observation_limits.as_ref())
-            .map_err(|error| invalid(&error.member, error.reason))?;
     let mut observation_bytes = BTreeMap::new();
     for file in files {
         let bytes = intake.file(
             file,
-            usize::try_from(observation_limits.document_bytes).unwrap_or(usize::MAX),
+            usize::try_from(limits.observation.document_bytes).unwrap_or(usize::MAX),
         )?;
         observation_bytes.insert(file.clone(), bytes);
     }
@@ -116,7 +118,7 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &Settle<'_>) -> Result
         &mut intake,
         &sources,
         false,
-        fsl_replay::spine::SpineLimits::default(),
+        limits.spine,
         integer_division,
         None,
         |_, checked, _, _, packages, _libraries, _, _, _, _| {
@@ -125,7 +127,7 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &Settle<'_>) -> Result
                 checked: &checked,
                 packages: &packages,
                 settle,
-                observation_limits,
+                limits,
                 observation_bytes: &observation_bytes,
             }
             .run()
@@ -139,7 +141,7 @@ struct Transfer<'a> {
     checked: &'a CheckedUnit,
     packages: &'a PackageInput,
     settle: &'a Settle<'a>,
-    observation_limits: ObservationLimits,
+    limits: CallerLimits,
     observation_bytes: &'a BTreeMap<String, Vec<u8>>,
 }
 
@@ -165,6 +167,7 @@ struct Premise {
 }
 
 impl Transfer<'_> {
+    #[ix_trace_rs::string_edge]
     fn run(&self) -> Result<RunResult> {
         let package = self.checked.package();
         let graph = package.graph();
@@ -179,10 +182,7 @@ impl Transfer<'_> {
                 .register(descriptor.clone())
                 .map_err(|_| RunCause::AnalyzeFault)?;
         }
-        let limits = AnalyzeLimits {
-            observation: self.observation_limits,
-            ..AnalyzeLimits::unbounded()
-        };
+        let limits = self.analyze_limits();
         let abstract_binding = subjects
             .abstract_subject
             .binding(self.packages, &subjects.documents);
@@ -535,10 +535,23 @@ impl Transfer<'_> {
         })
     }
 
+    /// The published analysis limits under the run's effective limits.
+    #[implements("FR-255-AC-32")]
+    fn analyze_limits(&self) -> AnalyzeLimits {
+        AnalyzeLimits {
+            observation: self.limits.observation,
+            normalization: self.limits.spine.model,
+            accounting: self.limits.accounting.0,
+            emit: self.limits.spine.package.emit(),
+            ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
+        }
+    }
+
     /// FR-1031's `initial` row: FR-106 admits each initial snapshot of each
     /// subject for its model before any premise or transfer settles.
     fn admit_snapshots(&self, refinement: &CheckedRefinement, subjects: &Subjects) -> Result<()> {
         let package = self.checked.package();
+        let published = self.analyze_limits();
         for (side, subject, model) in [
             (
                 "abstract",
@@ -556,16 +569,14 @@ impl Transfer<'_> {
                 let request = fsl_eval::simulation::model::ModelSimulationRequest {
                     input: fsl_eval::simulation::model::ModelCheckInput::source(package),
                     packages: self.packages,
-                    normalization: AnalyzeLimits::unbounded().normalization,
+                    normalization: published.normalization,
                     snapshots: &subjects.documents,
                     initial: vec![initial.clone()],
                     universes: binding.universes.clone(),
-                    observation: self.observation_limits,
-                    expansion: fsl_eval::simulation::model::ExpansionLimits {
-                        max_candidates: u64::MAX,
-                    },
-                    meter: AnalyzeLimits::unbounded().accounting,
-                    emit: AnalyzeLimits::unbounded().emit,
+                    observation: published.observation,
+                    expansion: published.expansion,
+                    meter: published.accounting,
+                    emit: published.emit,
                 };
                 // Admitted over the subject's own model, so a snapshot of another
                 // selected model is refused here and not read as a premise.

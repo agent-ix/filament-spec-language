@@ -38,26 +38,26 @@ mod sim_state;
 pub use sim_state::ModelSimState;
 mod operation_coverage;
 pub use operation_coverage::{
-    ModelOperation, ModelOperationCase, ModelOperationCoverage, ModelOperationCoverageEntry,
-    ModelOperationCoverageLimit, ModelOperationCoverageLimits, ModelOperationCoverageReason,
-    ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
-    ModelOperationCoverageSummaryStatus, model_operation_coverage,
+    model_operation_coverage, ModelOperation, ModelOperationCase, ModelOperationCoverage,
+    ModelOperationCoverageEntry, ModelOperationCoverageLimit, ModelOperationCoverageLimits,
+    ModelOperationCoverageReason, ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
+    ModelOperationCoverageSummaryStatus,
 };
 mod model_based_test;
 pub use model_based_test::{
+    read_clause, run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
+    run_model_based_test, run_model_based_test_with_system, run_model_based_test_with_value_bits,
     ClauseReading, ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
     ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedRunLimits,
     ModelBasedSizeBoundedRoot, ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts,
     ModelBasedTestDefect, ModelBasedTestDiscardCount, ModelBasedTestDiscardReason,
     ModelBasedTestError, ModelBasedTestEvidence, ModelBasedTestRecord, ModelBasedTestRefusal,
     ModelBasedTestRequest, ModelBasedTestResult, ModelBasedTestSubject, ModelBasedValueBoundCut,
-    ModelBasedValueBoundCuts, NativeAdmission, RootAdmission, read_clause,
-    run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
-    run_model_based_test, run_model_based_test_with_system, run_model_based_test_with_value_bits,
+    ModelBasedValueBoundCuts, NativeAdmission, RootAdmission,
 };
 mod key_budget;
 mod letters;
-pub use behaviours::{BehaviourState, BehavioursEnd, model_behaviours};
+pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
 mod reference_bindings;
@@ -85,9 +85,9 @@ use filament_exact::{
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
+use fsl_foundation::IdentityLimits;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::OperationKey;
 use fsl_semantics::family::ClassifyFailure;
@@ -103,20 +103,20 @@ use ix_trace_rs::implements;
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
-use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
-use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
+use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
+use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
-use crate::simulation::order::{Expanded, expand, sorted_initial};
+use crate::simulation::order::{expand, sorted_initial, Expanded};
 use crate::simulation::protocol::WeakAccessShape;
 use crate::simulation::reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
 };
 use crate::simulation::sample::{
-    ObservedSample, ObserverDecision, SampleObservation, SampleRequest, sample_request,
-    sample_request_observed_using, sample_request_until,
+    sample_request, sample_request_observed_using, sample_request_until, ObservedSample,
+    ObserverDecision, SampleObservation, SampleRequest,
 };
-use crate::simulation::trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
+use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
 use crate::value::QualifiedName;
 
 struct UnmeteredModelKeyBudget;
@@ -139,6 +139,22 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
     }
 }
 
+use crate::model_subject::ModelInstance;
+use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
+use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
+use crate::simulation::footprint::{Footprint, Location};
+use crate::simulation::not_simulated::NotSimulated;
+use crate::simulation::order::{expand, sorted_initial, Expanded};
+use crate::simulation::protocol::WeakAccessShape;
+use crate::simulation::reduction::{
+    ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
+};
+use crate::simulation::sample::{
+    sample_request, sample_request_observed_using, sample_request_until, ObservedSample,
+    ObserverDecision, SampleObservation, SampleRequest,
+};
+use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
+use crate::value::QualifiedName;
 /// The keys [`ModelSystem::selects_instance`] has selected, and what its
 /// caller charges for the work.
 trait SelectedKeys<'k> {
@@ -185,6 +201,65 @@ impl<'k> SelectedKeys<'k> for MeteredKeys<'k, '_, '_> {
     }
 }
 
+pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
+pub use cells::Cell;
+pub use contract::{
+    ContractClause, ContractClauseKind, DeclaredStates, DeclaredStatesRefusal, OperationCases,
+    OperationStep, PreconditionCase, UndecidedContract,
+};
+pub(crate) use contracts::{verdict, Verdict};
+use encode::declaration_text;
+pub use encode::{
+    canonical_json, declaration_identity_text, encode_reference, package_value_json,
+    reference_canonical_text, run_declaration_name, run_value_bytes, typed_value_json,
+    typed_value_json_with_enum_members, value_json, ModelKey, RunValueBudget, RunValueContext,
+    SingleOwnerRunBudget,
+};
+pub use footprints::{FootprintError, FootprintViolation, WithinStop};
+pub use frames::judge::{
+    operation_identity_text, AbstractApplication, Judged, Judgement, Rejection, ResolvedStep,
+};
+pub(crate) use reference_bindings::ReferenceBinding;
+pub use reference_bindings::ReferenceBindings;
+mod hyper_letters;
+pub use hyper_letters::CheckedHyperLetters;
+pub use letters::{ClauseLetters, DecisiveObservation, LettersPreparationError, LettersRefusal};
+pub use probabilistic::{
+    draw_weights, same_rewards, same_values, Action, Draw, NotMarkov, ScheduledIdentity,
+    TransitionId, UndecidedSuccessor, Unsteppable, WeightedStep,
+};
+pub use refine::{RowReading, StateObservation};
+pub use state_predicate::PredicateReading;
+pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
+pub use task_automaton::{
+    delay_valuation, AutomatonClock, AutomatonDiagonal, BoundedSubtraction, CertificationRefusal,
+    ClockAtom, ClockCarry, ClockReset, ClockRole, EdgeKind, Guard, JobPhase, LiveJob, LiveJobKey,
+    LocationInfo, LocationKey, Overflow, Successors, TaskAutomaton, TaskAutomatonRefusal,
+    TaskControl, TaskEdge, TaskLocation, TaskTemplate,
+};
+pub use task_key::{
+    write_task_control, TaskKeyControl, TaskKeyIdentityRefusal, TaskKeyJob, TaskKeyPending,
+};
+pub use task_product::{
+    AllowancePhase, CriticalityMode, TaskProductClock, TaskProductClockKind,
+    TaskProductDerivedStep, TaskProductJob, TaskProductModeSwitch, TaskProductMoveRefusal,
+    TaskProductPlan, TaskProductPlanRefusal, TaskProductRelease, TaskProductReplayRefusal,
+    TaskProductSourceStep, TaskProductState, TaskProductStateKeyRefusal, TaskProductSystem,
+    TaskProductTask, TaskProductTrace, TaskProductTraceStep, TaskProductTransition,
+    TaskTransitionAction, TaskTransitionIdentity,
+};
+pub use terminal::{TerminalClass, TerminalModel};
+pub use timed::{
+    advance_timed, replay_timed_sample, sample_timed, sample_timed_from, sample_timed_race,
+    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep,
+    MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding,
+    TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw,
+    TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleEnd,
+    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
+};
+pub(crate) use walk::{Applied, Budget};
+
 /// A non-empty, canonically ordered set of admitted claim instances.
 ///
 /// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
@@ -193,12 +268,6 @@ impl<'k> SelectedKeys<'k> for MeteredKeys<'k, '_, '_> {
 pub struct ClaimInstances(Vec<ModelInstance>);
 
 impl ClaimInstances {
-    /// The first instance in canonical order.
-    pub fn first(&self) -> &ModelInstance {
-        // The private field is only constructed after checking non-emptiness.
-        &self.0[0]
-    }
-
     /// All instances in canonical order.
     pub fn as_slice(&self) -> &[ModelInstance] {
         &self.0
@@ -218,65 +287,6 @@ pub enum NoClaimInstances {
     #[error("the claim has no admitted instance")]
     NoInstance,
 }
-
-pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
-pub use cells::Cell;
-pub use contract::{
-    ContractClause, ContractClauseKind, DeclaredStates, DeclaredStatesRefusal, OperationCases,
-    OperationStep, PreconditionCase, UndecidedContract,
-};
-pub(crate) use contracts::{Verdict, verdict};
-use encode::declaration_text;
-pub use encode::{
-    ModelKey, RunValueBudget, RunValueContext, SingleOwnerRunBudget, canonical_json,
-    declaration_identity_text, encode_reference, package_value_json, reference_canonical_text,
-    run_declaration_name, run_value_bytes, typed_value_json, typed_value_json_with_enum_members,
-    value_json,
-};
-pub use footprints::{FootprintError, FootprintViolation, WithinStop};
-pub use frames::judge::{
-    AbstractApplication, Judged, Judgement, Rejection, ResolvedStep, operation_identity_text,
-};
-pub(crate) use reference_bindings::ReferenceBinding;
-pub use reference_bindings::ReferenceBindings;
-mod hyper_letters;
-pub use hyper_letters::CheckedHyperLetters;
-pub use letters::{ClauseLetters, DecisiveObservation, LettersPreparationError, LettersRefusal};
-pub use probabilistic::{
-    Action, Draw, NotMarkov, ScheduledIdentity, TransitionId, UndecidedSuccessor, Unsteppable,
-    WeightedStep, draw_weights, same_rewards, same_values,
-};
-pub use refine::{RowReading, StateObservation};
-pub use state_predicate::PredicateReading;
-pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
-pub use task_automaton::{
-    AutomatonClock, AutomatonDiagonal, BoundedSubtraction, CertificationRefusal, ClockAtom,
-    ClockCarry, ClockReset, ClockRole, EdgeKind, Guard, JobPhase, LiveJob, LiveJobKey,
-    LocationInfo, LocationKey, Overflow, Successors, TaskAutomaton, TaskAutomatonRefusal,
-    TaskControl, TaskEdge, TaskLocation, TaskTemplate, delay_valuation,
-};
-pub use task_key::{
-    TaskKeyControl, TaskKeyIdentityRefusal, TaskKeyJob, TaskKeyPending, write_task_control,
-};
-pub use task_product::{
-    AllowancePhase, CriticalityMode, TaskProductClock, TaskProductClockKind,
-    TaskProductDerivedStep, TaskProductJob, TaskProductModeSwitch, TaskProductMoveRefusal,
-    TaskProductPlan, TaskProductPlanRefusal, TaskProductRelease, TaskProductReplayRefusal,
-    TaskProductSourceStep, TaskProductState, TaskProductStateKeyRefusal, TaskProductSystem,
-    TaskProductTask, TaskProductTrace, TaskProductTraceStep, TaskProductTransition,
-    TaskTransitionAction, TaskTransitionIdentity,
-};
-pub use terminal::{TerminalClass, TerminalModel};
-pub use timed::{
-    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
-    DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,
-    TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
-    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
-    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed, replay_timed_sample,
-    sample_timed, sample_timed_race,
-};
-pub(crate) use walk::{Applied, Budget};
 
 /// `resource_exhausted`/`insufficient-next-charge`: a candidate count, or an
 /// evaluation meter, ran out (FR-120 "Post-states", "Contract clauses").
@@ -787,6 +797,8 @@ pub enum NativeCandidateEvent<'a> {
     Undetermined {
         /// The invocation being evaluated.
         transition: &'a ModelTransition,
+        /// The name of the contract clause that was not decided.
+        clause: &'a str,
         /// The closed native outcome classification.
         outcome: &'a ClauseOutcome,
     },
@@ -867,7 +879,7 @@ pub struct ModelSystem<'a> {
     admitted_types: BTreeMap<(UniverseId, String), DeclarationKey>,
     /// Conflicting identities are retained until the requested claim has
     /// passed extent and initial-state checks (FR-125).
-    conflicting_identity: bool,
+    conflicting_identity: Option<crate::simulation::ConflictingIdentity>,
     clauses: Clauses,
     applications: BTreeMap<EffectiveId, Vec<Application>>,
     fields: BTreeMap<DeclarationKey, Vec<StateField>>,
@@ -1086,9 +1098,15 @@ fn admitted_types(
     model: &StateModel,
     universes: &BTreeMap<DeclarationKey, Vec<String>>,
     initial: &[ModelSimState],
-) -> Result<(BTreeMap<(UniverseId, String), DeclarationKey>, bool), AdmissionFailure> {
+) -> Result<
+    (
+        BTreeMap<(UniverseId, String), DeclarationKey>,
+        Option<crate::simulation::ConflictingIdentity>,
+    ),
+    AdmissionFailure,
+> {
     let mut admitted = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
-    let mut conflicting_identity = false;
+    let mut conflicting_identity = None;
     for state in initial {
         for (population, objects) in &state.state().populations {
             if !universes.contains_key(population) {
@@ -1102,7 +1120,13 @@ fn admitted_types(
                 let identity = (universe, key.clone());
                 match admitted.get(&identity) {
                     Some(first_type) if first_type != &object.type_identity => {
-                        conflicting_identity = true;
+                        conflicting_identity.get_or_insert_with(|| {
+                            crate::simulation::ConflictingIdentity {
+                                key: key.clone(),
+                                first_type: first_type.node.clone(),
+                                second_type: object.type_identity.node.clone(),
+                            }
+                        });
                     }
                     Some(_) => {}
                     None => {
@@ -1352,7 +1376,7 @@ impl<'a> ModelSystem<'a> {
     /// The first population overlapping `over` that the initial snapshot did
     /// not list. This is a request refusal check, performed after policy
     /// declaration resolution and before policy instancing.
-    #[implements("FR-1012-AC-11", "FR-1013-AC-3")]
+    #[implements("FR-1012-AC-13", "FR-1013-AC-3")]
     pub fn unlisted_population_overlapping(
         &self,
         over: &ValueType,
@@ -1654,7 +1678,7 @@ impl<'a> ModelSystem<'a> {
         // population or initial snapshot supplied the row.
         let (admitted_types, conflicting_identity) = admitted_types(&model, &universes, &initial)?;
 
-        let reference_bindings = if conflicting_identity {
+        let reference_bindings = if conflicting_identity.is_some() {
             ReferenceBindings::default()
         } else if let Some(package) = input.source_package() {
             ReferenceBindings::bind(
@@ -1696,10 +1720,8 @@ impl<'a> ModelSystem<'a> {
         let mut counts: Vec<ClockCount> = Vec::new();
         for timed in input.timed_models {
             for clock in timed.clocks() {
-                let [
-                    fsl_semantics::check::PlaceStep::Field(name),
-                    fsl_semantics::check::PlaceStep::Slot(shape),
-                ] = clock.path()
+                let [fsl_semantics::check::PlaceStep::Field(name), fsl_semantics::check::PlaceStep::Slot(shape)] =
+                    clock.path()
                 else {
                     continue;
                 };
@@ -2608,9 +2630,17 @@ impl<'a> ModelSystem<'a> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
+        let members = self.universe_members(parameter)?;
+        // FR-125-AC-13 and AC-23: after the bound and the empty-initial
+        // outcomes, which claim_instances orders first.
+        if let Some(conflict) = &self.conflicting_identity {
+            return Err(NotSimulated::ConflictingIdentity(Box::new(
+                conflict.clone(),
+            )));
+        }
         let mut seen = BTreeSet::new();
         let mut instances = Vec::new();
-        for (population, key) in self.universe_members(parameter)? {
+        for (population, key) in members {
             let Ok(selected) = self.selects_instance(population, key, &mut seen);
             if selected {
                 instances.push(ModelInstance {
@@ -2663,30 +2693,28 @@ impl<'a> ModelSystem<'a> {
         if self.initial_base.is_empty() {
             return Err(NoClaimInstances::NoInitialState);
         }
-        if matches!(over, ValueType::Reference(_)) && self.conflicting_identity {
-            return Err(NoClaimInstances::NotSimulated(
-                NotSimulated::ConflictingIdentity,
-            ));
-        }
         if instances.is_empty() {
             return Err(NoClaimInstances::NoInstance);
         }
         Ok(ClaimInstances(instances))
     }
 
-    /// FR-125 Instancing: the instances of a hyper clause parameter of object
-    /// type `object`, under the one rule of [`Self::instances`]. `self` is the
-    /// system of the parameter's alias.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::instances`].
-    #[implements("FR-125-AC-19", "FR-125-AC-20")]
-    pub fn hyper_instances(
-        &self,
-        object: &EffectiveId,
-    ) -> Result<Vec<ModelInstance>, NotSimulated> {
-        self.instances(&ValueType::Reference(object.clone()))
+    /// The first of FR-125's outcomes a parameter of object type `object`
+    /// raises before any initial state is read: `RequiresBound` when an
+    /// overlapping population has no universe.
+    pub(crate) fn check_parameter_bound(&self, object: &EffectiveId) -> Result<(), NotSimulated> {
+        self.universe_members(object).map(|_| ())
+    }
+
+    /// Whether some initial state of the subject exists.
+    pub(crate) fn has_initial_state(&self) -> bool {
+        !self.initial_base.is_empty()
+    }
+
+    /// The conflicting identity two initial member records of the subject
+    /// make, when they do.
+    pub(crate) fn identity_conflict(&self) -> Option<&crate::simulation::ConflictingIdentity> {
+        self.conflicting_identity.as_ref()
     }
 
     /// Every key a hyper parameter of object type `object` may name in an
@@ -2829,7 +2857,7 @@ impl<'a> ModelSystem<'a> {
         meter: &mut Meter,
     ) -> Result<Vec<ModelInstance>, crate::automaton::PolicyStateError> {
         use crate::automaton::PolicyStateError;
-        use crate::policy_budget::{Budget, declaration_bytes};
+        use crate::policy_budget::{declaration_bytes, Budget};
         let budget = Budget {
             meter: std::cell::RefCell::new(meter),
             stopped: std::cell::RefCell::new(None),
@@ -3890,6 +3918,9 @@ pub struct SampledDraw {
     pub coverage: crate::simulation::Coverage,
     /// The meter's refusal, when it stopped the run.
     pub stopped: Option<filament_exact::Incomplete>,
+    /// For each trace, the budget its final stopped expansion ran out of;
+    /// `None` for a trace that no expansion stopped or whose stop names none.
+    pub stop_limits: Vec<Option<ExpansionLimit>>,
 }
 
 /// FSL FR-634's sampled runs over `system`: `runs.samples` traces drawn by
@@ -3914,7 +3945,7 @@ pub fn sample_model_runs(
     meter: &mut filament_exact::Meter,
     mut poll: impl FnMut() -> bool,
 ) -> Result<SampledDraw, NotSimulated> {
-    use filament_exact::{Charge, ChargePoint, length_amount};
+    use filament_exact::{length_amount, Charge, ChargePoint};
     check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
@@ -3922,12 +3953,14 @@ pub fn sample_model_runs(
         .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
         .collect();
     let mut traces = Vec::new();
+    let mut stop_limits = Vec::new();
     let mut stopped = None;
     for trace in 0..runs.samples {
         if poll() {
             break;
         }
-        let drawn = sample_request_until(
+        let mut stop_limit = None;
+        let drawn = crate::simulation::sample::sample_request_using_observed(
             system,
             SampleRequest {
                 domains: &roots,
@@ -3939,14 +3972,24 @@ pub fn sample_model_runs(
                 max_steps: runs.max_steps,
                 identity: identity_limits(),
             },
-            |_| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
+            |_, _| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
                 Ok(()) => false,
                 Err(incomplete) => {
                     stopped = Some(incomplete);
                     true
                 }
             },
+            |state, _| expand(system, state, identity_limits()),
+            |observation| {
+                if let crate::simulation::sample::SampleExpansion::Stopped(stop) =
+                    &observation.expansion
+                {
+                    stop_limit = stop.limit;
+                }
+                crate::simulation::sample::ObserverDecision::Continue
+            },
         )?;
+        stop_limits.push(stop_limit);
         let retained = std::iter::once(&drawn.initial)
             .chain(drawn.steps.iter().map(|step| &step.key))
             .map(|key| length_amount(key.as_bytes().len()))
@@ -3969,6 +4012,7 @@ pub fn sample_model_runs(
         traces,
         coverage,
         stopped,
+        stop_limits,
     })
 }
 
@@ -4035,7 +4079,7 @@ impl WalkMemo {
         key: &crate::simulation::StateKey,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<OrderedModelExpansion, crate::simulation::EncodingRefusal> {
-        use filament_exact::{Charge, ChargePoint, Meter, length_amount};
+        use filament_exact::{length_amount, Charge, ChargePoint, Meter};
         let mut work = Meter::new(system.meter);
         if let Some(cancel) = cancel {
             work = work.with_cancel(cancel.clone());

@@ -43,7 +43,7 @@ mod hybrid_process;
 mod hyper_route;
 pub(crate) mod instance_records;
 mod invariant_item;
-mod items;
+pub(crate) mod items;
 mod package_hyper;
 pub(crate) mod protocol_item;
 mod reduction_item;
@@ -56,18 +56,19 @@ pub use task_product_item::TaskProductReport;
 pub(crate) mod simulation_item;
 mod state_graph_item;
 mod timed_item;
-pub(crate) use request::{AnalyzeExecution, analyze_bound};
+pub(crate) use request::{analyze_bound, AnalyzeExecution};
 
 pub use request::{
-    ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm, ItemOptions,
-    NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision,
-    TemporalItem, analyze,
+    analyze, ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm,
+    ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal,
+    SourceProvision, TemporalItem,
 };
 
 use filament_exact::{Cancel, ObjectReference, ScalarLimits};
 use filament_semantic_value::catalog::{CatalogCode, Category};
-use fsl_eval::simulation::model::PopulationUniverse;
+use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_eval::simulation::protocol::ProtocolTransition;
+use fsl_foundation::budget::Budget;
 use fsl_foundation::diagnostic::category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex, Setting};
@@ -84,32 +85,33 @@ use fsl_route::routing::Disposition;
 use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, RegistrationRefusal};
 use fsl_route::{NegotiationCause, NegotiationOutcome};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use ix_trace_rs::implements;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
     AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits,
 };
+use ix_trace_rs::implements;
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
+pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
 pub use clause_item::{
-    CLAUSE_TRANSCRIPT, ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject,
+    ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
 };
-pub(crate) use clause_item::{ProtocolReplayInputs, ReplayShape, replay_protocol_over};
-pub(crate) use derived_item::{NoLetters, derived_target};
-pub use derived_item::{PackageDeadlockSubject, deadlock_model_item};
-pub use exact::{ExactProbabilityEvidence, exact_probabilistic_item};
+pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
+pub(crate) use derived_item::{derived_target, NoLetters};
+pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{
     exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered,
-    settle_exact_engine_report,
+    exact_work_checkpoints, reset_exact_work_checkpoints, settle_exact_engine_report,
+    ExactWorkCheckpoint, ExactWorkPhase,
 };
 pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{
-    DerivedItemMismatch, ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem,
-    TimedRefinementItem, derived_model_item, derived_protocol_item, derived_zone_item,
-    hyper_form_item, model_item, protocol_item, statistical_item, timed_refinement_item, zone_item,
+    derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
+    protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
+    ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 #[cfg(feature = "test-support")]
@@ -692,7 +694,14 @@ impl SubjectBinding<'_> {
 /// exception: it is accepted and carried in [`EngineBounds`], but no engine
 /// in this repository reads it yet (FR-255 states only that it is carried).
 /// `plan_search.*` is never listed: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 16] = [
+pub const ENGINE_SETTINGS: [Setting; 23] = [
+    Setting::ExpansionMaxCandidates,
+    Setting::ZoneCheckMaxSymbolicStates,
+    Setting::ZoneCheckMaxSymbolicTransitions,
+    Setting::ZoneCheckMaxAutomatonStates,
+    Setting::ZoneCheckMaxZoneBytes,
+    Setting::ZoneCheckMaxCheckWork,
+    Setting::AnalysisRetainedBytes,
     Setting::SimulationMaxSteps,
     Setting::ScheduleMaxDemandPoints,
     Setting::ExactProbMaxStates,
@@ -770,6 +779,42 @@ impl EngineBounds {
         })
     }
 
+    /// [`EngineBounds::conflict`] for the `temporal.limits` members, which
+    /// state `zone_check.*` settings only on an item that reads a timed model
+    /// (FR-239 "Budget sources"), so it is judged over the resolved items.
+    /// `selected` is the number of items the caller stated.
+    #[must_use]
+    #[implements("FR-255-AC-25")]
+    pub fn timed_conflict(
+        &self,
+        package: &CheckedPackage,
+        binding: &SubjectBinding<'_>,
+        selected: usize,
+        resolved: &[document::ResolvedItem],
+    ) -> Option<(usize, Setting)> {
+        resolved.iter().find_map(|item| {
+            let document::ResolvedItem::Claim(claim) = item else {
+                return None;
+            };
+            let item = &claim.item;
+            let position = item.request_index.get();
+            if position >= selected || !document::claim_timed(package, &item.claim, binding) {
+                return None;
+            }
+            [
+                (item.options.max_states, Setting::ZoneCheckMaxSymbolicStates),
+                (
+                    item.options.max_transitions,
+                    Setting::ZoneCheckMaxSymbolicTransitions,
+                ),
+                (item.options.max_check_work, Setting::ZoneCheckMaxCheckWork),
+            ]
+            .into_iter()
+            .find(|(member, setting)| member.is_some() && self.get(*setting).is_some())
+            .map(|(_, setting)| (position, setting))
+        })
+    }
+
     /// The settings `item` states in its own members.
     fn stated(&self, item: &document::ItemSelection) -> Vec<Setting> {
         use Setting as S;
@@ -816,6 +861,16 @@ impl EngineBounds {
     }
 }
 
+impl EngineBounds {
+    /// One analysis item's allowance: every setting at the caller's bound,
+    /// else its published default, polling `cancel`. The retained exploration
+    /// state of the item draws on it (`analysis.retained_bytes`).
+    #[must_use]
+    pub fn item_budget(&self, accounting: ScalarLimits, cancel: &Cancel) -> Budget {
+        Budget::from_settings(self, accounting, cancel)
+    }
+}
+
 /// The caller's shared accounting, observation, normalization and deadline
 /// limits for one analyze request (FR-277, FR-281).
 ///
@@ -827,11 +882,8 @@ impl EngineBounds {
 ///
 /// ```
 /// use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply};
-/// let limits = AnalyzeLimits {
-///     deadline: DeadlineSupply::Unbounded,
-///     ..AnalyzeLimits::unbounded()
-/// };
-/// assert_eq!(limits.deadline, DeadlineSupply::Unbounded);
+/// let limits = AnalyzeLimits::published(DeadlineSupply::Milliseconds(5));
+/// assert_eq!(limits.deadline, DeadlineSupply::Milliseconds(5));
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AnalyzeLimits {
@@ -841,6 +893,14 @@ pub struct AnalyzeLimits {
     pub observation: ObservationLimits,
     /// The model normalization budgets.
     pub normalization: ModelNormalizationLimits,
+    /// The work of each model expansion (`expansion.max_candidates`).
+    pub expansion: ExpansionLimits,
+    /// The state exploration and trace length of a `model_based_test` plan
+    /// step; an `analyze` item's own `simulation` member keeps its settings.
+    pub simulation: SimulationLimits,
+    /// The most model-domain positions of a model-based test. It has no
+    /// FR-255 setting and is not the trace-step limit.
+    pub position_limit: u64,
     /// The operation deadline in milliseconds, if one was supplied.
     pub deadline: DeadlineSupply,
     /// The ceiling on the canonical bytes of each package emission the
@@ -856,27 +916,63 @@ pub struct AnalyzeLimits {
 }
 
 impl AnalyzeLimits {
-    /// Published default budgets with an explicitly unbounded deadline.
-    pub fn unbounded() -> Self {
+    /// Every budget at its published default, with the caller's `deadline`.
+    #[implements("FR-281-AC-26")]
+    #[must_use]
+    pub fn published(deadline: DeadlineSupply) -> Self {
         Self {
-            accounting: ScalarLimits {
-                integer_bits: u64::MAX,
-                decimal_digits: u64::MAX,
-                scale_expansion: u64::MAX,
-                text_input_bytes: u64::MAX,
-                text_scalars: u64::MAX,
-                normalized_scalars: u64::MAX,
-                unit_edges: u64::MAX,
-                value_occurrences: u64::MAX,
-                work_units: 1_000_000,
-                result_units: u64::MAX,
-            },
+            accounting: fsl_replay::spine::default_accounting(
+                fsl_replay::spine::DEFAULT_WORK_UNITS,
+            ),
             observation: ObservationLimits::default(),
             normalization: ModelNormalizationLimits::default(),
-            deadline: DeadlineSupply::Unbounded,
+            expansion: ExpansionLimits {
+                max_candidates: const {
+                    Setting::ExpansionMaxCandidates
+                        .default_bound()
+                        .expect("FR-255 tabulates a default")
+                },
+            },
+            simulation: SimulationLimits::default(),
+            position_limit: crate::plan::MODEL_BASED_POSITIONS,
+            deadline,
             emit: fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT),
             replay: fsl_replay::ReplayLimits::default(),
             engines: EngineBounds::default(),
+        }
+    }
+}
+
+/// The exploration and trace-length limits of a `model_based_test` plan step
+/// (FR-281 "Inputs").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SimulationLimits {
+    /// `explore.states`: the distinct states discovered.
+    pub max_states: u64,
+    /// `explore.transitions`: the transitions explored.
+    pub max_transitions: u64,
+    /// `simulation.max_steps`: the positions of a generated trace.
+    pub max_steps: u64,
+}
+
+impl Default for SimulationLimits {
+    fn default() -> Self {
+        Self {
+            max_states: const {
+                Setting::ExploreStates
+                    .default_bound()
+                    .expect("FR-255 tabulates a default")
+            },
+            max_transitions: const {
+                Setting::ExploreTransitions
+                    .default_bound()
+                    .expect("FR-255 tabulates a default")
+            },
+            max_steps: const {
+                Setting::SimulationMaxSteps
+                    .default_bound()
+                    .expect("FR-255 tabulates a default")
+            },
         }
     }
 }
@@ -1407,18 +1503,16 @@ impl AnalyzeRefusal {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
                 OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
-                    .with_diagnostics(vec![
-                        OutcomeDiagnostic::new(
-                            Some(catalog.cause()),
-                            catalog.code(),
-                            None,
-                            refusal.to_string(),
-                        )
-                        .with_selection(
-                            (catalog == CatalogCode::new("missing_import", "missing-selection"))
-                                .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
-                        ),
-                    ])
+                    .with_diagnostics(vec![OutcomeDiagnostic::new(
+                        Some(catalog.cause()),
+                        catalog.code(),
+                        None,
+                        refusal.to_string(),
+                    )
+                    .with_selection(
+                        (catalog == CatalogCode::new("missing_import", "missing-selection"))
+                            .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
+                    )])
             }
         }
     }
@@ -1448,10 +1542,13 @@ pub(crate) fn refusal_document(
         }
         AdmissionFailure::Fault(fault) => (fault.catalog_code(), fault.category(), None),
     };
-    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![
-        OutcomeDiagnostic::new(Some(catalog.cause()), catalog.code(), None, message)
-            .with_details(details),
-    ])
+    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![OutcomeDiagnostic::new(
+        Some(catalog.cause()),
+        catalog.code(),
+        None,
+        message,
+    )
+    .with_details(details)])
 }
 
 impl AnalyzeOutcome {
@@ -1861,7 +1958,7 @@ impl Payload {
     /// `family`).
     #[must_use]
     pub fn detail(&self) -> serde_json::Map<String, serde_json::Value> {
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
         let entries: Vec<(&str, Value)> = match self {
             Self::None => Vec::new(),
             Self::Kind(kind) => vec![("kind", json!(kind.to_wire()))],
@@ -4013,10 +4110,8 @@ mod tests {
                 panic!("inapplicable pair has its typed family diagnostic");
             };
             assert_eq!(*request_index, record.request_index);
-            assert!(
-                !capability
-                    .applies_to_declaration(family.expect("this matrix row has a known family"))
-            );
+            assert!(!capability
+                .applies_to_declaration(family.expect("this matrix row has a known family")));
             assert_eq!(code.cause(), "inapplicable-kind");
         }
     }
@@ -4317,33 +4412,24 @@ mod tests {
             en7.advertises().collect::<Vec<_>>(),
             [(Capability::Schedulability, Mode::Unbounded)]
         );
-        assert!(
-            registrations
-                .iter()
-                .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked)
-        );
-        assert!(
-            en1.advertises()
-                .any(|(kind, _)| kind == Capability::TemporalSatisfaction)
-        );
-        assert!(
-            en4.advertises()
-                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
-        );
-        assert!(
-            en5.advertises()
-                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
-        );
-        assert!(
-            value
-                .advertises()
-                .any(|(kind, _)| kind == Capability::ValueValidity)
-        );
-        assert!(
-            contract
-                .advertises()
-                .any(|(kind, _)| kind == Capability::OperationContract)
-        );
+        assert!(registrations
+            .iter()
+            .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked));
+        assert!(en1
+            .advertises()
+            .any(|(kind, _)| kind == Capability::TemporalSatisfaction));
+        assert!(en4
+            .advertises()
+            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
+        assert!(en5
+            .advertises()
+            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
+        assert!(value
+            .advertises()
+            .any(|(kind, _)| kind == Capability::ValueValidity));
+        assert!(contract
+            .advertises()
+            .any(|(kind, _)| kind == Capability::OperationContract));
         let mut kinds: Vec<_> = protocol.advertises().map(|(kind, _)| kind).collect();
         kinds.sort_by_key(|kind| kind.to_wire());
         assert_eq!(
@@ -4994,7 +5080,7 @@ fn proof_value(
 #[cfg(test)]
 mod proof_value_tests {
     use super::task_product_item::{ProofVerdict, TaskProof};
-    use super::{TerminalValue, proof_value};
+    use super::{proof_value, TerminalValue};
     use crate::zone_check::{TaskProductSearchOutcome, TaskProductSearchStop};
     use filament_exact::CancelCause;
     use fsl_replay::{

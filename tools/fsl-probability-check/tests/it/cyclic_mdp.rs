@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Cyclic MDP certificates checked in a fresh analyzer-free process.
-use super::bounded::{alter_keys, document, mutate, request_with, run};
+use super::bounded::{alter_keys, document, mutate, request_with, request_with_accounting, run};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
+const CYCLIC_MDP_PRODUCER_WORK: u64 = 10_000_000;
 fn domain() -> String {
     include_str!("../fixtures/reward.semantic-ir.json").replace(
         "\"typeRef\":\"ix://filament/native/Boolean\"}],\"post\"",
@@ -40,6 +41,20 @@ fn proof(source: &str) -> Value {
         domain().as_bytes(),
     );
     request.unwrap_or_else(|| panic!("expected MDP proof: {settlement:?}\n{source}"))
+}
+fn proof_with_producer_allowance(source: &str) -> Value {
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = CYCLIC_MDP_PRODUCER_WORK;
+    let (request, settlement) = request_with_accounting(
+        source,
+        SNAPSHOT,
+        ExactProbLimits::default(),
+        domain().as_bytes(),
+        accounting,
+        false,
+    );
+    request
+        .unwrap_or_else(|| panic!("cyclic MDP source emits its document: {settlement:?}\n{source}"))
 }
 fn replace_source(request: &mut Value, source: &str) {
     super::bounded::replace_source_and_rebind(request, source);
@@ -219,7 +234,7 @@ fn strict_rows_boundaries_and_quantitative_source_scope_are_closed() {
         let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref() else {
             panic!("threshold {threshold} is a checking refusal: {refusal:?}");
         };
-        let [fsl_semantics::check::CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        let [fsl_semantics::check::SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
             panic!("one refusal for threshold {threshold}: {refusals:?}");
         };
         let fsl_semantics::check::CheckCause::Probabilistic(cause) = cause.as_ref() else {
@@ -256,7 +271,7 @@ fn cyclic_pair_accepts_equal_positive_ranks_with_only_zero_lower_successor() {
             .replace("post CD using v on M::Msg::send_c { self.attempts = 0 and not self.delivered }",
                 "post CD using v on M::Msg::send_c { self.attempts = 0 and self.delivered = (lost = 0) }")
             .replace("random Msg::send_c(lost) ~ { 0: 1, 1: 1, 2: 1 }","random Msg::send_c(lost) ~ { 0: 4, 1: 1, 2: 1 }");
-        let request = proof(&src);
+        let request = proof_with_producer_allowance(&src);
         let doc = document(&request);
         let offered: Vec<_> = doc["values"]
             .as_array()

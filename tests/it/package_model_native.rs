@@ -321,9 +321,7 @@ fn replay_read_witness(
             };
             ModelStep {
                 transition: transition.clone(),
-                post_state: StateKey::from_canonical_bytes(
-                    URL_SAFE_NO_PAD.decode(step.post_state.key()).unwrap(),
-                ),
+                post_state: step.post_state.key().clone(),
                 delay: None,
             }
         })

@@ -2,15 +2,17 @@
 //! Named-reward documents are recomputed by a fresh qualified-core process.
 
 use super::bounded::{
-    alter_keys, document, document_limits, key, mutate, request_with, requests_with_mode, run,
-    run_with,
+    alter_keys, document, document_limits, key, mutate, request_with, requests_with_accounting,
+    run, run_with,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/reward.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
+// Checker conformance fixtures need room for analyzer certificate production.
+const CHECKER_FIXTURE_WORK: u64 = 10_000_000;
 fn header() -> String {
     // Retain the production fixture's admitted language identity.
     let language = include_str!("../fixtures/link.native")
@@ -265,7 +267,10 @@ fn low_budget_expected_reward_bounds_are_accepted_by_the_separate_checker() {
         max_precision_bits: 16,
         ..ExactProbLimits::default()
     };
-    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = CHECKER_FIXTURE_WORK;
+    let (requests, settlement) =
+        requests_with_accounting(&source, SNAPSHOT, limits, DOMAIN, accounting, false);
     let [lower, upper] = requests.as_slice() else {
         panic!("the reward interval has two documents: {settlement:?}");
     };
@@ -797,7 +802,8 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
             let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref() else {
                 panic!("the negative reward is a checking refusal: {refusal:?}");
             };
-            let [fsl_semantics::check::CheckRefusal { cause, .. }] = refusals.as_slice() else {
+            let [fsl_semantics::check::SemanticCheckRefusal { cause, .. }] = refusals.as_slice()
+            else {
                 panic!("one negative-reward refusal: {refusals:?}");
             };
             let fsl_semantics::check::CheckCause::Probabilistic(cause) = cause.as_ref() else {
@@ -823,12 +829,10 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
     foreign_item["item"]["ordinal"] = json!(99);
     let (code, output) = run(&foreign_item);
     assert_eq!(code, 2, "{output}");
-    assert!(
-        output["reason"]
-            .as_str()
-            .unwrap()
-            .contains("conflicting_identity")
-    );
+    assert!(output["reason"]
+        .as_str()
+        .unwrap()
+        .contains("conflicting_identity"));
 }
 
 #[trace("TC-636", "FR-201-AC-22", "FR-282-AC-17")]
@@ -836,10 +840,10 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
 fn cancellation_inside_qualified_reward_evaluation_stops_and_old_actions_still_work() {
     use filament_checked::key::DeclarationKey;
     use filament_exact::{Cancel, CancelCause};
-    use fsl_eval::simulation::TransitionSystem;
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
     };
+    use fsl_eval::simulation::TransitionSystem;
     use fsl_replay::spine::SpineLimits;
     use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
     use std::sync::atomic::{AtomicBool, Ordering};

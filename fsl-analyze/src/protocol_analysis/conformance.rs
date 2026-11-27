@@ -6,8 +6,8 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind, SubjectMemory, Tso,
-    live_instance_bound,
+    live_instance_bound, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind,
+    SubjectMemory, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
@@ -114,6 +114,7 @@ fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::R
     clippy::too_many_arguments,
     reason = "the recording assessment binds the subject, package, recording, cancellation, and replay limits"
 )]
+#[ix_trace_rs::string_edge]
 fn recording_result(
     index: fsl_foundation::RequestIndex,
     package: &super::recording_input::Input<'_>,
@@ -472,9 +473,7 @@ pub(crate) fn package_global_behavior_item<'a>(
                 initial: binding.initial.clone(),
                 universes: binding.universes.clone(),
                 observation: limits.observation,
-                expansion: fsl_eval::simulation::model::ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: limits.expansion,
                 meter: limits.accounting,
                 emit: limits.emit,
             };
@@ -491,6 +490,13 @@ pub(crate) fn package_global_behavior_item<'a>(
                 None => return unsupported_global_protocol(),
             };
             let over_type = program.over_type.clone();
+            // FR-882-AC-3: a scalar `over` is observed through the one model
+            // the request selects; several selections are not yet admitted.
+            if !matches!(over_type, filament_exact::ValueType::Reference(_))
+                && input.model_selections.len() > 1
+            {
+                return unsupported_global_protocol();
+            }
             if !matches!(over_type, filament_exact::ValueType::Reference(_))
                 && binding.initial.is_empty()
             {
@@ -694,6 +700,13 @@ pub(crate) fn global_behavior_item<'a>(
             else {
                 return internal_fault();
             };
+            // FR-882-AC-3: a scalar `over` is observed through the one model
+            // the request selects; several selections are not yet admitted.
+            if !matches!(over_type, filament_exact::ValueType::Reference(_))
+                && input.model_selections.len() > 1
+            {
+                return unsupported_global_protocol();
+            }
             if !matches!(over_type, filament_exact::ValueType::Reference(_))
                 && binding.initial.is_empty()
             {
@@ -795,38 +808,17 @@ fn claim_over_instances(
     if matches!(over_type, filament_exact::ValueType::Reference(_)) {
         return model
             .claim_instances(over_type)
-            .map(|instances| {
-                std::iter::once(instances.first())
-                    .chain(instances.as_slice().iter().skip(1))
-                    .cloned()
-                    .collect()
-            })
-            .map_err(|failure| match failure {
-                fsl_eval::simulation::model::NoClaimInstances::NoInstance => Box::new({
-                    empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance)
-                }),
-                fsl_eval::simulation::model::NoClaimInstances::NoInitialState => Box::new({
-                    empty_population_report(index, fsl_replay::InconclusiveCause::NoInitialState)
-                }),
-                fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
-                    fsl_eval::simulation::NotSimulated::RequiresBound(_),
-                ) => Box::new(crate::analyze::EngineReport::Refused(
-                    crate::analyze::Refusal::RequiresBound,
-                )),
-                fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
-                    fsl_eval::simulation::NotSimulated::ConflictingIdentity,
-                ) => Box::new(crate::analyze::EngineReport::Refused(
-                    crate::analyze::Refusal::Declined(
-                        fsl_replay::ProofRefusalCause::InvalidInput,
-                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
-                        fsl_foundation::diagnostic::CatalogCode::new(
-                            "invalid_runtime_input",
-                            "conflicting-identity",
-                        ),
-                    ),
-                )),
-                _ => Box::new(internal_fault()),
-            });
+            .map(|instances| instances.as_slice().to_vec())
+            .map_err(
+                |failure| match crate::analyze::items::instance_stop(failure) {
+                    crate::analyze::items::InstanceStop::Inconclusive(cause) => {
+                        Box::new(empty_population_report(index, cause))
+                    }
+                    crate::analyze::items::InstanceStop::Refused(refusal) => {
+                        Box::new(crate::analyze::EngineReport::Refused(refusal))
+                    }
+                },
+            );
     }
     Ok(vec![fsl_eval::model_subject::ModelInstance {
         population: filament_checked::key::DeclarationKey {
@@ -844,6 +836,7 @@ fn unsupported_global_protocol() -> crate::analyze::EngineReport {
     )))
 }
 
+#[implements("FR-896-AC-4")]
 fn missing_package_role(
     program: &fsl_eval::simulation::protocol::PackageProtocolProgram<'_>,
     binding: &crate::analyze::SubjectBinding<'_>,
@@ -924,9 +917,7 @@ fn package_subject<'a>(
                 initial: binding.initial.clone(),
                 universes: binding.universes.clone(),
                 observation: limits.observation,
-                expansion: fsl_eval::simulation::model::ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: limits.expansion,
                 meter: limits.accounting,
                 emit: limits.emit,
             },
@@ -1008,6 +999,7 @@ fn wrong_over_subject() -> crate::analyze::EngineReport {
 }
 
 #[implements("FR-896-AC-7", "FR-990-AC-11")]
+#[ix_trace_rs::string_edge]
 fn behavior_report(
     index: fsl_foundation::RequestIndex,
     protocol: &super::recording_input::Protocol<'_>,
@@ -1679,6 +1671,7 @@ impl ConformanceReplayRefusal {
 ///
 /// [`ConformanceReplayRefusal`] when the counterexample is malformed or the
 /// subject cannot build its protocol system.
+#[ix_trace_rs::string_edge]
 pub fn replay_counterexample(
     subject: &ProtocolSubject<'_>,
     counterexample: &ConformanceCounterexample,
@@ -1987,11 +1980,9 @@ mod tests {
         ));
         assert_eq!(code.to_string(), "invalid_runtime_input/invalid-value");
         assert_eq!(detail["prefix"], serde_json::json!(3));
-        assert!(
-            detail["detail"]
-                .as_str()
-                .is_some_and(|text| text.contains("a prefix was refused"))
-        );
+        assert!(detail["detail"]
+            .as_str()
+            .is_some_and(|text| text.contains("a prefix was refused")));
     }
 
     #[trace("TC-2805", "FR-990-AC-1")]

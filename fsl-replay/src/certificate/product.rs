@@ -29,8 +29,9 @@ pub use relation::{
 };
 
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
-use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
+use super::scc::{check_partition, CertificateState, Component, ComponentWitness, ProductGraph};
 use super::{CertificateLocus, CertificateRule};
+use crate::shared_wire::state_key_text;
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};
 
 /// The full canonical tuple and property key, including HP-3 witness members.
@@ -46,9 +47,8 @@ impl serde::Serialize for ProductStateKey {
 }
 
 pub(super) fn product_key_wire(key: &StateKey) -> Result<serde_json::Value, ProductClosureRefusal> {
-    use base64::Engine as _;
     use serde_json::json;
-    let encode = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let encode = |bytes: &[u8]| state_key_text(&StateKey::from_canonical_bytes(bytes.to_vec()));
     let value: serde_json::Value = serde_json::from_slice(key.as_bytes())
         .map_err(|_| ProductClosureRefusal::Input("product-key"))?;
     let pair = value
@@ -447,50 +447,33 @@ fn complete_hyper_scope(
 ) -> Result<(), ProductClosureRefusal> {
     let clause = request.hyper_clause()?;
     let systems = alias_systems(request)?;
-    let mut domains = Vec::new();
+    let mut requests = Vec::with_capacity(clause.parameters().len());
     for parameter in clause.parameters() {
-        let slot = request
-            .hyper_clause()?
+        let slot = clause
             .aliases()
             .iter()
-            .position(|alias| alias == &parameter.alias)
+            .position(|alias| alias.as_str() == parameter.alias.as_str())
             .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
         let system = systems
             .get(slot)
             .ok_or(ProductClosureRefusal::Input("parameter-subject"))?;
-        let instances = system
-            .instances(&filament_exact::ValueType::Reference(
-                parameter.object.clone(),
-            ))
-            .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
-        domains.push(
-            instances
-                .into_iter()
-                .map(|instance| (parameter.name.clone(), instance.key))
-                .collect::<Vec<_>>(),
-        );
+        requests.push(fsl_eval::hyper::ParameterRequest {
+            name: parameter.name.as_str(),
+            object: &parameter.object,
+            system,
+        });
     }
-    let count = domains
-        .iter()
-        .try_fold(1_usize, |count, domain| count.checked_mul(domain.len()))
-        .ok_or(ProductClosureRefusal::Input("instance-count"))?;
-    if count == 0 || count != certificates.len() {
+    let subjects: Vec<_> = systems.iter().collect();
+    let tuples = fsl_eval::hyper::claim_instance_tuples(&subjects, &requests)
+        .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
+    if tuples.len() != certificates.len() {
         return Err(ProductClosureRefusal::Input("certificate-scope"));
     }
-    for (index, certificate) in certificates.iter().enumerate() {
-        let mut ordinal = index;
-        let mut expected = Vec::with_capacity(domains.len());
-        for domain in domains.iter().rev() {
-            let position = ordinal % domain.len();
-            ordinal /= domain.len();
-            expected.push(
-                domain
-                    .get(position)
-                    .ok_or(ProductClosureRefusal::Input("instance-index"))?
-                    .clone(),
-            );
-        }
-        expected.reverse();
+    for (tuple, certificate) in tuples.iter().zip(certificates) {
+        let expected: Vec<(String, String)> = tuple
+            .iter()
+            .map(|binding| (binding.parameter.clone(), binding.instance.key.clone()))
+            .collect();
         if expected != certificate.instance {
             return Err(ProductClosureRefusal::Input("certificate-scope"));
         }
@@ -626,10 +609,11 @@ fn check(
         let system = systems
             .get(slot(parameter.alias.as_str())?)
             .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
+        // FR-125-AC-21: over an empty `initial` list the declared universe
+        // keys are bindable, so the item reaches `no-initial-state` instead
+        // of refusing the key.
         let admitted = system
-            .instances(&filament_exact::ValueType::Reference(
-                parameter.object.clone(),
-            ))
+            .hyper_bindable(&parameter.object)
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         let found = admitted
             .into_iter()

@@ -828,7 +828,7 @@ their wire strings.
 | --- | --- |
 | Owner | Codes: FSpec `native-diagnostics.md` (`filament.native.diagnostics/v1`). Typed causes: each layer and stage. |
 | Implementing ticket | #213 S-5a for `CatalogCode` and FSL `catalog_code()` (landed, #258); #213 S-5b for the shared `RefusalRecord` type; each downstream layer implements its own mapping (IR reader codes: IR conformance work with no ticket, §7). |
-| Public type | Each stage keeps its typed refusal cause (`CheckRefusal`, `InputRefusal`, `PackageRefusal`, `LibraryRefusal`, `ModelRefusal`, IR `CheckedPackageRefusalCode`, …). Each cause type has one exhaustive `fn catalog_code(&self) -> CatalogCode` with no `_` arm (AD-016), and a fixed O-16 category. |
+| Public type | Each stage keeps its typed refusal cause (`SemanticCheckRefusal`, `InputRefusal`, `PackageRefusal`, `LibraryRefusal`, `ModelRefusal`, IR `CheckedPackageRefusalCode`, …). Each cause type has one exhaustive `fn catalog_code(&self) -> CatalogCode` with no `_` arm (AD-016), and a fixed O-16 category. |
 | Serialized authority | The catalog in `agent-ix/filament-specification` `main`. Code claims no catalog revision. |
 | Conversions | typed cause → catalog code (total, C-15). Catalog code → typed cause does not exist; a consumer reads the code and its structured fields, never the message. |
 | Validation and diagnostics | Per-layer `catalog_code()` totality test against the catalog. IR's reader implements every FR-322 code; the 13-of-16 gap (OBS-035) is IR-owned conformance work. |

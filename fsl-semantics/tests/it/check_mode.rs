@@ -9,7 +9,8 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedGraph, MeasureObligation, Obligation, PackageDeclarations,
+    CheckCause, CheckedGraph, MeasureObligation, Obligation, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::value::{admit_integer_division, DefinitionRole};
@@ -18,7 +19,7 @@ use ix_trace_rs::trace;
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
                       profile v = \"filament.value.complete/v1\";\n";
 
-fn check(declarations: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("{HEADER}{declarations}\n");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "check-mode"),
@@ -51,12 +52,12 @@ fn check(declarations: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<CheckR
     )
 }
 
-fn refusals(declarations: &str, mode: CheckMode) -> Vec<CheckRefusal> {
+fn refusals(declarations: &str, mode: CheckMode) -> Vec<SemanticCheckRefusal> {
     check(declarations, mode).expect_err("the unit is refused")
 }
 
 /// The one refusal of `declarations` under `mode`.
-fn refusal(declarations: &str, mode: CheckMode) -> CheckRefusal {
+fn refusal(declarations: &str, mode: CheckMode) -> SemanticCheckRefusal {
     let mut all = refusals(declarations, mode);
     assert_eq!(all.len(), 1, "{declarations}: {all:?}");
     all.remove(0)
@@ -169,7 +170,7 @@ fn a_state_clause_still_refuses_its_obligation_under_kernel() {
 #[trace("FR-495-AC-12", "TC-1419")]
 #[test]
 fn kernel_mode_still_refuses_a_nonterminating_recursion() {
-    let missing = |refusal: &CheckRefusal, path: &[usize]| {
+    let missing = |refusal: &SemanticCheckRefusal, path: &[usize]| {
         assert_eq!(
             refusal.cause.as_ref(),
             &CheckCause::UnprovedDecrease {

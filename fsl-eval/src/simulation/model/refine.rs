@@ -639,7 +639,7 @@ impl<'a> ModelSystem<'a> {
             admitted_types(&self.model, &self.universes, &self.initial_base)?;
         self.admitted_types = admitted_types;
         self.conflicting_identity = conflicting_identity;
-        if conflicting_identity {
+        if self.conflicting_identity.is_some() {
             self.reference_bindings = super::ReferenceBindings::default();
         }
         self.initial_stages.clear();

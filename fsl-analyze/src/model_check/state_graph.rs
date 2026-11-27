@@ -310,12 +310,9 @@ fn instances<'a>(
                                         .map_err(|_| fault("state-graph-instance-references"))
                                 })
                                 .collect::<Result<_, _>>()?,
-                            Err(NoClaimInstances::NotSimulated(refusal)) => match refusal {
-                                NotSimulated::ConflictingIdentity => {
-                                    return Err(ModelCheckRefusal::ConflictingIdentity);
-                                }
-                                refusal => return Err(bounds_refusal(refusal)),
-                            },
+                            Err(NoClaimInstances::NotSimulated(refusal)) => {
+                                return Err(super::check::not_simulated(refusal));
+                            }
                             Err(
                                 NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance,
                             ) => Vec::new(),
@@ -410,17 +407,6 @@ fn common_stabiliser(views: &[Vec<InstanceView<'_>>], declared: &SymmetryGroup) 
                 (class.keys.len() >= 2).then_some(class)
             })
             .collect(),
-    }
-}
-
-/// The refusal of an unbounded or unclassifiable subject.
-fn bounds_refusal(refusal: NotSimulated) -> ModelCheckRefusal {
-    match refusal {
-        NotSimulated::ConflictingIdentity => ModelCheckRefusal::ConflictingIdentity,
-        NotSimulated::RequiresBound(roots) => ModelCheckRefusal::RequiresBound(roots),
-        NotSimulated::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
-        NotSimulated::Extent(failure) => ModelCheckRefusal::Extent(Box::new(failure)),
-        _ => fault("bounds-precheck-returns-only-requires-bound-or-extent"),
     }
 }
 
@@ -557,7 +543,7 @@ pub fn check_state_graph(
     let no_initial = request.subject.simulation.initial.is_empty();
     let system = ModelSystem::new(request.subject.simulation)
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
-    check_model_bounds(&system, BOUND_POSITIONS).map_err(bounds_refusal)?;
+    check_model_bounds(&system, BOUND_POSITIONS).map_err(super::check::not_simulated)?;
     // FR-158 "Resolution": before any expansion.
     if let Some(name) = &request.reductions.constraint {
         if !system.has_constraint(name) {

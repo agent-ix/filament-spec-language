@@ -15,33 +15,34 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use filament_exact::{Cancel, Meter, ObjectReference};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::model_check::{
-    ModelCheckRefusal, ModelCheckRequest, StateGraphItem, StateGraphRequest, check_model,
-    check_state_graph,
+    check_model, check_state_graph, ModelCheckRefusal, ModelCheckRequest, StateGraphItem,
+    StateGraphRequest,
 };
 use fsl_analyze::plan_search::{
-    PlanLengths, PlanSearchLimits, PlanSearchRequest, PlanStatus, search,
+    search, PlanLengths, PlanSearchLimits, PlanSearchRequest, PlanStatus,
 };
 use fsl_analyze::plan_source::SourcePlan;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CertificateRequest, ClosureCertificate, ComponentCertificate, HyperQueryRequest,
-    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure, ProductClosureCertificate,
-    ProductClosureClause, ProductClosureRequest, ProofCertificate, SmtEncodingLimits, SmtQueryKind,
-    StateGraphCertificate, StateGraphCertificateRequest, StateGraphOutcome, check_closure,
-    check_components, check_product_closure, encode_hyper_query, encode_temporal_smt_query,
+    check_closure, check_components, check_product_closure, encode_hyper_query,
+    encode_temporal_smt_query, CertificateRequest, ClosureCertificate, ComponentCertificate,
+    HyperQueryRequest, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure,
+    ProductClosureCertificate, ProductClosureClause, ProductClosureRequest, ProofCertificate,
+    SmtEncodingLimits, SmtQueryKind, StateGraphCertificate, StateGraphCertificateRequest,
+    StateGraphOutcome,
 };
 use fsl_semantics::check::{CheckedStateGraphClaim, HyperForm};
 use fsl_semantics::model::intake::package_input;
-use fsl_semantics::model::observation::{DocumentRef, document_reference};
+use fsl_semantics::model::observation::{document_reference, DocumentRef};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::analyze_cli_support::{Run, Workspace, analyze, request_over};
-use crate::counter::{UNLIMITED, declarations_in, unit_text_with_profiles};
-use crate::model_instances::{Held, PACKAGE, World, document, ident, universes, world};
-use crate::timed_world::{DENSE, unit_text};
+use crate::analyze_cli_support::{analyze, request_over, Run, Workspace};
+use crate::counter::{declarations_in, unit_text_with_profiles, UNLIMITED};
+use crate::model_instances::{document, ident, universes, world, Held, World, PACKAGE};
+use crate::timed_world::{unit_text, DENSE};
 
 #[path = "liveness_empty_components.rs"]
 mod liveness_empty_components;
@@ -1413,14 +1414,12 @@ fn hp5_ranges_over_a_subtype_population() {
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20")]
 #[test]
-#[ignore = "QSL-3408: HP-5 instances universe keys no initial state admits (FR-125-AC-19, AC-20)"]
 fn hp5_excludes_unadmitted_keys() {
     check_route(Route::SingleExistential, &[UNADMITTED_KEY, CREATED]);
 }
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
 #[test]
-#[ignore = "QSL-3408: a hyper parameter over several populations is refused ambiguous (FR-172-AC-10)"]
 fn hp5_ranges_over_several_populations() {
     check_route(
         Route::SingleExistential,
@@ -1436,7 +1435,6 @@ fn hp5_names_the_causes_before_instancing() {
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-#[ignore = "QSL-3366: a single-existential clause over no instance fails established-invariant-broken (FR-125-AC-21)"]
 fn hp5_reports_an_empty_universe() {
     check_route(
         Route::SingleExistential,
@@ -1446,28 +1444,24 @@ fn hp5_reports_an_empty_universe() {
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-#[ignore = "QSL-3408: HP-5 instances a universe key no initial state admits instead of NoInstance (FR-125-AC-21)"]
 fn hp5_reports_no_instance_over_unadmitted_keys() {
     check_route(Route::SingleExistential, &[ONLY_UNADMITTED]);
 }
 
 #[trace("TC-3219", "FR-172-AC-11")]
 #[test]
-#[ignore = "QSL-3408: a hyper parameter of a type no population overlaps is refused missing-name (FR-172-AC-11)"]
 fn hp5_checks_a_type_no_population_overlaps() {
     check_route(Route::SingleExistential, &[ORPHAN, ORPHAN_NO_INITIAL]);
 }
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-#[ignore = "QSL-3408: conflicting member records are refused ambiguous before conflicting-identity (FR-125-AC-21)"]
 fn hp5_refuses_conflicting_identity() {
     check_route(Route::SingleExistential, &[CONFLICT]);
 }
 
 #[trace("TC-520", "FR-125-AC-13")]
 #[test]
-#[ignore = "QSL-3408: overlapping hyper populations are refused ambiguous before the missing universe (FR-125-AC-13)"]
 fn hyper_names_a_missing_universe_before_a_conflict() {
     check_route(Route::SingleExistential, &[CONFLICT_NO_UNIVERSE]);
     check_route(Route::ForallForall, &[CONFLICT_NO_UNIVERSE]);
@@ -1483,7 +1477,6 @@ fn hyper_ranges_over_a_subtype_population() {
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20")]
 #[test]
-#[ignore = "QSL-3408: hyper clauses instance universe keys no initial state admits (FR-125-AC-19, AC-20)"]
 fn hyper_excludes_unadmitted_keys() {
     check_route(Route::ForallForall, &[UNADMITTED_KEY, CREATED]);
     check_route(Route::ForallExists, &[UNADMITTED_KEY, CREATED]);
@@ -1491,7 +1484,6 @@ fn hyper_excludes_unadmitted_keys() {
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-172-AC-10")]
 #[test]
-#[ignore = "QSL-3408: a hyper parameter over several populations is refused ambiguous (FR-172-AC-10)"]
 fn hyper_ranges_over_several_populations() {
     check_route(Route::ForallForall, &[UNADMITTED_ACROSS, TWO_POPULATIONS]);
     check_route(Route::ForallExists, &[UNADMITTED_ACROSS, TWO_POPULATIONS]);
@@ -1512,7 +1504,6 @@ fn hyper_names_the_causes_before_instancing() {
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-#[ignore = "QSL-3408: hyper clauses instance a universe key no initial state admits instead of NoInstance (FR-125-AC-21)"]
 fn hyper_reports_no_instance_over_unadmitted_keys() {
     check_route(Route::ForallForall, &[ONLY_UNADMITTED]);
     check_route(Route::ForallExists, &[ONLY_UNADMITTED]);
@@ -1520,7 +1511,6 @@ fn hyper_reports_no_instance_over_unadmitted_keys() {
 
 #[trace("TC-3219", "FR-172-AC-11")]
 #[test]
-#[ignore = "QSL-3408: a hyper parameter of a type no population overlaps is refused missing-name (FR-172-AC-11)"]
 fn hyper_checks_a_type_no_population_overlaps() {
     check_route(Route::ForallForall, &[ORPHAN, ORPHAN_NO_INITIAL]);
     check_route(Route::ForallExists, &[ORPHAN, ORPHAN_NO_INITIAL]);
@@ -1528,7 +1518,6 @@ fn hyper_checks_a_type_no_population_overlaps() {
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-#[ignore = "QSL-3408: conflicting member records are refused ambiguous before conflicting-identity (FR-125-AC-21)"]
 fn hyper_refuses_conflicting_identity() {
     check_route(Route::ForallForall, &[CONFLICT]);
     check_route(Route::ForallExists, &[CONFLICT]);
@@ -1542,14 +1531,12 @@ fn hyper_smt_takes_the_admitted_keys() {
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20", "FR-315-AC-59")]
 #[test]
-#[ignore = "QSL-3408: the hyper SMT encoder binds a universe key no initial state admits (FR-315-AC-59)"]
 fn hyper_smt_refuses_excluded_keys() {
     check_hyper_excluded_keys(&[ONLY_UNADMITTED, UNADMITTED_KEY, CREATED]);
 }
 
 #[trace("TC-3219", "FR-125-AC-19", "FR-315-AC-59")]
 #[test]
-#[ignore = "QSL-3408: a hyper parameter over several populations is refused AmbiguousPopulation (FR-125-AC-19)"]
 fn hyper_smt_takes_only_instances_of_several_populations() {
     check_hyper_admitted_keys(&[UNADMITTED_ACROSS, TWO_POPULATIONS]);
     check_hyper_excluded_keys(&[UNADMITTED_ACROSS]);
@@ -1563,14 +1550,12 @@ fn hyper_product_checker_refuses_a_key_where_there_is_no_instance() {
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-#[ignore = "QSL-3408: the product checker refuses the key before the empty initial list (FR-125-AC-21)"]
 fn hyper_product_checker_names_no_initial_state_over_an_empty_universe() {
     check_product_refuses_non_instances(&[EMPTY_UNIVERSE_NO_INITIAL]);
 }
 
 #[trace("TC-3219", "FR-125-AC-21")]
 #[test]
-#[ignore = "QSL-3408: the product checker takes a universe key no initial state admits (FR-125-AC-21)"]
 fn hyper_product_checker_refuses_excluded_keys() {
     check_product_refuses_non_instances(&[ONLY_UNADMITTED, UNADMITTED_KEY, CREATED]);
 }
@@ -1583,7 +1568,6 @@ fn hyper_product_checker_takes_instances() {
 
 #[trace("TC-3219", "FR-125-AC-19")]
 #[test]
-#[ignore = "QSL-3408: the product checker refuses an instance of a parameter over several populations (FR-125-AC-19)"]
 fn hyper_product_checker_takes_instances_of_several_populations() {
     check_product_takes_instances(&[UNADMITTED_ACROSS, TWO_POPULATIONS]);
 }
@@ -1627,7 +1611,6 @@ fn digital_names_no_initial_state() {
 
 #[trace("TC-520", "FR-125-AC-13")]
 #[test]
-#[ignore = "QSL-3492: en-1 digital clocks fails established-invariant-broken for a missing universe (FR-125-AC-13)"]
 fn digital_names_a_missing_universe() {
     check_route(Route::Digital, &[single(NO_UNIVERSE)]);
 }
@@ -1665,7 +1648,6 @@ fn timed_state_graph_names_why_there_is_no_instance() {
 
 #[trace("TC-520", "FR-125-AC-13")]
 #[test]
-#[ignore = "QSL-3492: the timed state graph fails established-invariant-broken for a missing universe (FR-125-AC-13)"]
 fn timed_state_graph_names_a_missing_universe() {
     check_route(Route::TimedStateGraph, &[single(NO_UNIVERSE)]);
 }

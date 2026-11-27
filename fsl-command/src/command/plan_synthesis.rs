@@ -25,11 +25,11 @@ use fsl_eval::simulation::model::{
 use fsl_foundation::Code;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::CheckedSynthesis;
-use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::observation::{DocumentProvision, ObservationLimits};
+use fsl_semantics::model::observation::DocumentProvision;
 use ix_trace_rs::implements;
 use serde_json::{json, Map, Value as Json};
 
+use super::overrides::{effective_limits, stated_emit, RequestLimits, RunRoute};
 use super::plan_request::{
     self, OutcomeHeader, PlanObjective, PlanRequest, PlanRequestRefusal, RenderedPlan,
     RenderedStep, ValueForm, NATIVE_RUN_POINTER,
@@ -128,10 +128,10 @@ fn objective(checked: &CheckedSynthesis) -> PlanObjective {
 }
 
 /// Run `plan` over the plan synthesis.
-#[implements("FR-1012-AC-10", "FR-1012-AC-11", "FR-1013-AC-3")]
+#[implements("FR-1012-AC-12", "FR-1012-AC-13", "FR-1013-AC-3")]
 pub(super) fn run(
     plan: PlanRun<'_, '_>,
-    accounting: filament_exact::ScalarLimits,
+    overrides: &super::RequestOverrides<'_>,
     started: std::time::Instant,
 ) -> super::Result<(u8, Json)> {
     let PlanRun {
@@ -178,7 +178,18 @@ pub(super) fn run(
         ..SubjectSelection::default()
     };
     let binding = subject.binding(packages, &documents);
-    let limits = scalar_limits(&request, accounting);
+    let effective = effective_limits(
+        RunRoute::PlanSynthesis,
+        RequestLimits {
+            accounting: scalar_limits(
+                &request,
+                super::call_accounting(&super::wire::Accounting::default()),
+            ),
+            observation: None,
+        },
+        overrides,
+    )?;
+    let limits = effective.accounting.0;
     let model_alias = checked
         .grammar_model()
         .ok_or_else(|| method_failure("the checked plan grammar has no model alias"))?;
@@ -190,21 +201,24 @@ pub(super) fn run(
         ModelSimulationRequest {
             input: ModelCheckInput::source(package),
             packages: binding.packages,
-            normalization: ModelNormalizationLimits::default(),
+            normalization: effective.spine.model,
             snapshots: binding.snapshots,
             initial: binding.initial.clone(),
             universes: binding.universes.clone(),
-            observation: ObservationLimits::default(),
+            observation: effective.observation,
             // Source search, replay and certificate re-derivation use the
             // accounted native cursor exclusively. A legacy eager expansion
             // is denied rather than borrowing a planner work counter.
             expansion: ExpansionLimits { max_candidates: 0 },
             meter: limits,
-            emit: fsl_package::EmitLimits::new(u64::try_from(intake.remaining).map_err(|_| {
-                method_failure(
-                    "the source intake byte allowance exceeds the native emit limit representation",
-                )
-            })?),
+            emit: fsl_package::EmitLimits::new(match stated_emit(overrides) {
+                Some(bound) => bound,
+                None => u64::try_from(intake.remaining).map_err(|_| {
+                    method_failure(
+                        "the source intake byte allowance exceeds the native emit limit representation",
+                    )
+                })?,
+            }),
         },
         model_identity,
     )

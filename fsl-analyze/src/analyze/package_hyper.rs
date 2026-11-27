@@ -183,30 +183,13 @@ impl<'a> PackageHyperSubject<'a> {
                         ),
                     )
                 };
-                let mut instance = Vec::with_capacity(clause.parameters().len());
-                for parameter in clause.parameters() {
-                    let key = payload
-                        .instance
-                        .iter()
-                        .find(|(name, _)| name == &parameter.name)
-                        .map(|(_, key)| key);
-                    let system = slot_of(parameter.alias.as_str())
-                        .and_then(|slot| owned.get(slot))
-                        .ok_or_else(|| fault("parameter-alias"))?;
-                    let admitted = system
-                        .instances(&filament_exact::ValueType::Reference(
-                            parameter.object.clone(),
-                        ))
-                        .map_err(|_| fault("parameter-universe"))?;
-                    let bound = admitted
-                        .into_iter()
-                        .find(|instance| Some(&instance.key) == key)
-                        .ok_or_else(|| fault("counterexample-instance"))?;
-                    instance.push(ParameterBinding {
-                        parameter: parameter.name.clone(),
-                        instance: bound,
-                    });
-                }
+                let instance = super::hyper_route::counterexample_instance(
+                    clause,
+                    &owned,
+                    &slot_of,
+                    &payload.instance,
+                )
+                .ok_or_else(|| fault("counterexample-instance"))?;
                 fsl_replay::replay_hyper_trace_tuple(
                     &fsl_replay::HyperReplay {
                         clause,

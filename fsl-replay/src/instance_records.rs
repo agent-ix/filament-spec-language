@@ -152,7 +152,11 @@ mod tests {
             truth: crate::Truth::Pending,
             method: crate::EXPLICIT_STATE,
             max_depth: None,
-            limits: Default::default(),
+            limits: [
+                (crate::ModelCheckLimit::MaxStates, 0),
+                (crate::ModelCheckLimit::MaxTransitions, 0),
+                (crate::ModelCheckLimit::MaxAutomatonStates, 0),
+            ],
             limit_reached: None,
             seed: 0,
             witness_samples: 0,
