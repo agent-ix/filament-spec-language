@@ -2695,7 +2695,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     }
 
     /// Resolve universal hyper analysis from its authenticated package form.
-    #[implements("FR-173-AC-5", "FR-281-AC-3")]
+    #[implements("FR-173-AC-3", "FR-173-AC-5", "FR-281-AC-3")]
     fn hyper(
         &self,
         index: RequestIndex,
@@ -2716,8 +2716,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let unsupported_form = package
             .hyper_clause_hp4_reason(&claim)
             .map_err(|_| fault())?;
-        if profile != fsl_semantics::check::TemporalProfile::InfiniteTrace
-            || unsupported_form.is_some()
+        if !matches!(
+            profile,
+            fsl_semantics::check::TemporalProfile::InfiniteTrace
+                | fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+        ) || unsupported_form.is_some()
         {
             return Ok(Resolution::Settled(ResolvedItem::Settled {
                 claim_name: Some(name.to_owned()),

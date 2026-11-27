@@ -400,8 +400,8 @@ fn package_hp4_projection_outside_safety_has_no_route() {
 }
 
 /// FR-173-AC-3 / FR-173-AC-5 / FR-182-AC-1: a fixed-sample clause with no
-/// decided form settles V-8; HP-4 and the supported sibling keep their own
-/// negotiation outcomes.
+/// decided form settles V-8; an event-position Universal clause reaches EN-1,
+/// while HP-4 and the supported sibling keep their own negotiation outcomes.
 #[trace("FR-173-AC-3", "FR-173-AC-5", "FR-182-AC-1")]
 #[test]
 fn no_form_and_hp4_hyper_items_settle_v8_and_keep_the_universal_sibling() {
@@ -409,13 +409,15 @@ fn no_form_and_hp4_hyper_items_settle_v8_and_keep_the_universal_sibling() {
         exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }
 hyper Universal using inf over behaviours (v: V::Vault)
         forall trace a of V { always holds(v.h @ a = v.h @ a) }
+hyper EventPosition using ep over behaviours (v: V::Vault)
+        forall trace a of V { always holds(v.h @ a = v.h @ a) }
 hyper FixedSample using fs over behaviours (v: V::Vault)
         forall trace a of V { always [0, 1] holds(v.h @ a = v.h @ a) }"#;
     let (unit, model, snapshots) =
         request_files_over_starts(Vault::Secure, false, &STARTS, declaration);
     let unit = unit.replace(
         "profile inf = \"filament.temporal.infinite-trace/v1\";",
-        "profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile fs = \"filament.temporal.fixed-sample.false-extension/v1\";",
+        "profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile ep = \"filament.temporal.event-position.false-extension/v1\";\nprofile fs = \"filament.temporal.fixed-sample.false-extension/v1\";",
     );
     let ws = Workspace::new("hyper-wire-fixed-sample-no-form");
     let run = analyze(&request_over(
@@ -426,6 +428,7 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         json!({"items": [
             {"claim": "Other"},
             {"claim": "Universal"},
+            {"claim": "EventPosition"},
             {"claim": "FixedSample"}
         ]}),
     ));
@@ -445,7 +448,13 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         universal["request"]["candidates"]["backends"],
         json!([fsl_route::tie::EN1])
     );
-    let fixed_sample = run.item(2);
+    let event_position = run.item(2);
+    assert_eq!(label(&event_position), "proved", "{document}");
+    assert_eq!(
+        event_position["request"]["candidates"]["backends"],
+        json!([fsl_route::tie::EN1])
+    );
+    let fixed_sample = run.item(3);
     assert_eq!(run.exit, 21, "{document}");
     assert_eq!(label(&fixed_sample), "unsupported", "{document}");
     assert_eq!(

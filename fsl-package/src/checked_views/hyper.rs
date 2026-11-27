@@ -246,6 +246,7 @@ impl BarePackage<'_> {
     /// # Errors
     /// A missing occurrence or inconsistent slot is `MalformedNode`; a
     /// source-checked feature this form does not read is `Pending`.
+    #[implements("FR-173-AC-3")]
     #[ix_trace_rs::string_edge]
     pub fn hyper_clause_form(
         &self,
@@ -280,7 +281,10 @@ impl BarePackage<'_> {
             return Err(malformed(claim));
         };
         let profile = self.hyper_clause_profile(claim)?;
-        if profile != TemporalProfile::InfiniteTrace {
+        if !matches!(
+            profile,
+            TemporalProfile::InfiniteTrace | TemporalProfile::EventPositionFalseExtension
+        ) {
             return Err(pending(&node.node_id, "hyper-profile"));
         }
         let [over, _, _, _, _, formula] = arguments.as_slice() else {
