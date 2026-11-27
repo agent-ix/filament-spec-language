@@ -112,8 +112,10 @@ value, ADR-038 RL-7):
 For an `expected-elapsed` document the checker SHALL compute, on its own
 rebuilt product and with its own graph code, the states from which some policy
 reaches a target with probability one: the greatest set whose members reach a
-target through choices that never leave the set. A quiescent state that is not
-a target has no move, so no target is reached from it. When the initial state
+target through choices that never leave the set. A quiescent state (FR-231:
+no time invariant and not urgent) keeps the steps enabled at it, which the
+checker derives for it as for any state; only a state with no enabled step is
+dead, and no target is reached from it. When the initial state
 is outside that set, the least expected time is `+infinity` (ADR-028 CE-3).
 The checker SHALL then accept the document as `AcceptedInfinite` only for a
 `>=` bound with no `values` row and no `ranking` row, rejecting it
