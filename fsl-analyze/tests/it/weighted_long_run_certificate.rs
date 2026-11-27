@@ -87,13 +87,13 @@ fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
                 reward cost on Server::to_a = 0;\n\
                 reward cost on Server::stay_b = 1;\n\
                 probabilistic Maximum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.at_a) weighted by cost <= rational(999,1000) }\n\
-                probabilistic Minimum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.at_a) weighted by cost <= rational(1,1000) }\n".to_owned(),
+                probabilistic Minimum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(true) weighted by cost >= rational(999,1000) }\n".to_owned(),
         initial: serde_json::json!({"at_a":{"boolean":true}}),
     });
     let bytes = produce(&world, "Minimum");
     let mut forged =
         read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new())
-            .expect("analyzer supplies a structurally valid maximum certificate");
+            .expect("analyzer supplies a structurally valid weighted certificate");
     assert_eq!(
         forged.certificate.optimization,
         LongRunOptimization::Minimum
@@ -104,6 +104,18 @@ fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
     assert_eq!(forged.certificate.components.len(), 1);
 
     let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let target_shell = fsl_replay::weighted_long_run_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &forged.certificate.identity,
+        vec![],
+        vec![],
+        limits(),
+        &Cancel::new(),
+    )
+    .expect("the maximum claim has a checked weighted objective");
+    forged.certificate.predicate_states = target_shell.certificate.predicate_states;
+    let a_key = forged.certificate.predicate_states[0].clone();
     let state_a = system.initial().remove(0);
     let actions_a = system
         .actions_with_cancel(&state_a, &Cancel::new())
@@ -136,7 +148,6 @@ fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
     for value in &mut forged.certificate.values {
         value.value = ratio(0, 1);
     }
-    let a_key = forged.certificate.predicate_states[0].clone();
     let policy = component
         .policy
         .as_mut()
