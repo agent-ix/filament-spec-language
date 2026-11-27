@@ -646,9 +646,13 @@ impl<'p> BarePackage<'p> {
         let identities = self
             .source_object_effective_ids()
             .map_err(|_| fault("source-object-rows-have-declaring-unit-identities"))?;
+        let declarations = self
+            .source_object_declarations()
+            .map_err(|_| fault("source-object-rows-have-direct-field-declarations"))?;
         self.project_selected_function_with_source_objects(
             FunctionSelector::Node(node),
             Some(&identities),
+            Some(&declarations),
             true,
         )?
         .ok_or_else(|| SlotSelectionFailure::MissingNode(node.clone()).into())
@@ -1022,7 +1026,7 @@ impl<'p> BarePackage<'p> {
         &self,
         function: FunctionSelector<'_>,
     ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
-        self.project_selected_function_with_source_objects(function, None, false)
+        self.project_selected_function_with_source_objects(function, None, None, false)
     }
 
     fn project_selected_function_with_source_objects(
@@ -1030,6 +1034,9 @@ impl<'p> BarePackage<'p> {
         function: FunctionSelector<'_>,
         source_object_ids: Option<
             &std::collections::BTreeMap<CheckedNodeId, filament_exact::EffectiveId>,
+        >,
+        source_object_declarations: Option<
+            &[filament_semantic_value::declaration::ObjectTypeDeclaration],
         >,
         include_source_objects_in_world: bool,
     ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
@@ -1042,7 +1049,7 @@ impl<'p> BarePackage<'p> {
             self.dependency_views(),
         )
         .map_err(SlotSelectionFailure::Fault)?
-        .with_source_objects(source_object_ids);
+        .with_source_objects(source_object_ids, source_object_declarations);
         let world = || {
             if include_source_objects_in_world {
                 self.world_with_source_objects()
