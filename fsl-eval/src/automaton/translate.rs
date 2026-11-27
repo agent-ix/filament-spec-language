@@ -755,7 +755,43 @@ pub fn translate_position_negation(
     clause: &CheckedTemporalClause,
     max_states: u64,
 ) -> Result<PropertyAutomaton, AutomatonError> {
-    let profile = match clause.profile() {
+    translate_position(clause, Selection::Negation, max_states)
+}
+
+/// Translate a timed-profile clause without timed intervals as the property
+/// itself, using the same position semantics as EN-6. This is the safety
+/// automaton from which a finite bad-prefix monitor can be built.
+///
+/// # Errors
+///
+/// As [`translate_position_negation`].
+#[implements("FR-243-AC-8")]
+pub fn translate_position_clause(
+    clause: &CheckedTemporalClause,
+    max_states: u64,
+) -> Result<PropertyAutomaton, AutomatonError> {
+    translate_position(clause, Selection::Clause, max_states)
+}
+
+fn translate_position(
+    clause: &CheckedTemporalClause,
+    selection: Selection,
+    max_states: u64,
+) -> Result<PropertyAutomaton, AutomatonError> {
+    let profile = position_profile(clause);
+    translate_formula(
+        clause.formula(),
+        profile,
+        clause.activation(),
+        selection,
+        Counting::Every,
+        max_states,
+        None,
+    )
+}
+
+fn position_profile(clause: &CheckedTemporalClause) -> TemporalProfile {
+    match clause.profile() {
         TemporalProfile::Timed
             if clause.formula().nodes().iter().all(|node| {
                 !matches!(
@@ -773,16 +809,7 @@ pub fn translate_position_negation(
             TemporalProfile::InfiniteTrace
         }
         profile => profile,
-    };
-    translate_formula(
-        clause.formula(),
-        profile,
-        clause.activation(),
-        Selection::Negation,
-        Counting::Every,
-        max_states,
-        None,
-    )
+    }
 }
 
 /// Which automaton [`translate_formula`] builds.

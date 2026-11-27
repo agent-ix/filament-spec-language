@@ -47,8 +47,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Integer, Meter, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    position_automaton, translate, Atom, AutomatonError, ClockedEdge, Letter, Monitor,
-    PositionAutomaton, StateId,
+    position_automaton, translate_position_clause, Atom, AutomatonError, ClockedEdge, Letter,
+    Monitor, PositionAutomaton, StateId,
 };
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
@@ -1023,20 +1023,23 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         &mut self,
         instance: &ModelInstance,
     ) -> Result<Option<TemporalCounterexample>, Halt> {
-        let Ok(property) = translate(
+        let property = match translate_position_clause(
             self.request.clause,
             self.request.limits.max_automaton_states,
-        ) else {
-            return Ok(None);
-        };
-        let mut monitor = match Monitor::bad_prefix(
-            property,
-            self.request.limits.max_automaton_states,
         ) {
-            Ok(monitor) => monitor,
-            Err(AutomatonError::NotSafetyAutomaton { .. }) => return Ok(None),
-            Err(_) => return Ok(None),
+            Ok(property) => property,
+            Err(error) => {
+                return self.automaton_stop::<()>(Err(error)).map(|()| None);
+            }
         };
+        let mut monitor =
+            match Monitor::bad_prefix(property, self.request.limits.max_automaton_states) {
+                Ok(monitor) => monitor,
+                Err(AutomatonError::NotSafetyAutomaton { .. }) => return Ok(None),
+                Err(error) => {
+                    return self.automaton_stop::<()>(Err(error)).map(|()| None);
+                }
+            };
         let start = self.automaton_stop(monitor.initial())?;
         for (initial_state, initial) in self.timed().initial().iter().enumerate() {
             self.poll()?;
@@ -1048,7 +1051,8 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 false,
                 state.discrete(),
                 true,
-            )? else {
+            )?
+            else {
                 continue;
             };
             let after = self.automaton_stop(monitor.step(start, letter))?;
