@@ -168,6 +168,9 @@ settings! {
     ExactProbMaxRationalBits => "exact_prob.max_rational_bits", "EN-5", RationalBits, Some(65_536);
     ExactProbMaxPolicyIterations => "exact_prob.max_policy_iterations", "EN-5", WorkBudget, Some(10_000);
     ExactProbMaxWitnessPaths => "exact_prob.max_witness_paths", "EN-5", NodeCount, Some(1024);
+    ExactProbMaxClocks => "exact_prob.max_clocks", "EN-5 timed regions", NodeCount, Some(10);
+    ExactProbMaxClockScale => "exact_prob.max_clock_scale", "EN-5 timed regions", NodeCount, Some(1_048_576);
+    ExactProbMaxClockCap => "exact_prob.max_clock_cap", "EN-5 timed regions", NodeCount, Some(1_048_576);
     StatisticalMaxSamples => "statistical.max_samples", "EN-4", NodeCount, Some(16_777_216);
     StatisticalMaxDraws => "statistical.max_draws", "EN-4", NodeCount, Some(67_108_864);
     StatisticalMaxCycleSteps => "statistical.max_cycle_steps", "EN-4", EdgeCount, Some(16_777_216);
@@ -263,6 +266,9 @@ impl Setting {
                 | Self::ExactProbMaxRationalBits
                 | Self::ExactProbMaxPolicyIterations
                 | Self::ExactProbMaxWitnessPaths
+                | Self::ExactProbMaxClocks
+                | Self::ExactProbMaxClockScale
+                | Self::ExactProbMaxClockCap
                 | Self::StatisticalMaxSamples
                 | Self::StatisticalMaxDraws
                 | Self::StatisticalMaxCycleSteps
@@ -691,6 +697,9 @@ mod tests {
             ("exact_prob.max_rational_bits", Some(65536)),
             ("exact_prob.max_policy_iterations", Some(10000)),
             ("exact_prob.max_witness_paths", Some(1024)),
+            ("exact_prob.max_clocks", Some(10)),
+            ("exact_prob.max_clock_scale", Some(1048576)),
+            ("exact_prob.max_clock_cap", Some(1048576)),
             ("statistical.max_samples", Some(16777216)),
             ("statistical.max_draws", Some(67108864)),
             ("statistical.max_cycle_steps", Some(16777216)),

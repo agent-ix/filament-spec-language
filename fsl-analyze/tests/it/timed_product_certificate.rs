@@ -2326,3 +2326,86 @@ fn a_given_draw_product_over_the_edge_limit_is_refused() {
         other => panic!("expected the edge limit at 4 against 3, got {other:?}"),
     }
 }
+
+// --- FR-922 region limits (TC-2491, FR-255) ---------------------------------
+
+fn settle_limited(
+    world: &World,
+    claim: &str,
+    set: impl Fn(&mut ExactProbLimits),
+) -> AnalyzeRecord {
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let mut request = request(world, claim);
+    set(&mut request.limits);
+    let item = exact_probabilistic_item(RequestIndex::new(0), request);
+    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+}
+
+/// The resident set of this process, in bytes, as the kernel reports it.
+fn resident_bytes() -> u64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|text| text.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map_or(0, |pages| pages * 4096)
+}
+
+/// FR-922-AC-8: a region subject over a region limit settles `incomplete`,
+/// `LimitReached` naming the setting; at the smallest bound that admits it the
+/// strict guard still proves `99/100`. The line printed at the bound is the
+/// measured cost the PR body records.
+#[trace("TC-2491", "FR-922-AC-8")]
+#[test]
+fn a_region_subject_over_a_region_limit_settles_limit_reached_naming_the_setting() {
+    use fsl_replay::ModelCheckLimit as Limit;
+    let world = retx(STRICT, true, "", &every_deadlines());
+    let rows: [(Limit, fn(&mut ExactProbLimits, u64)); 3] = [
+        (Limit::ExactProbMaxClocks, |limits, bound| {
+            limits.max_clocks = bound;
+        }),
+        (Limit::ExactProbMaxClockScale, |limits, bound| {
+            limits.max_clock_scale = bound;
+        }),
+        (Limit::ExactProbMaxClockCap, |limits, bound| {
+            limits.max_clock_cap = bound;
+        }),
+    ];
+    for (limit, set) in rows {
+        // The smallest bound that admits the subject.
+        let admitted = (0..=64_u64)
+            .find(|bound| {
+                matches!(
+                    settle_limited(&world, "Deadline", |limits| set(limits, *bound))
+                        .terminal()
+                        .map(|terminal| terminal.value()),
+                    Some(TerminalValue::Proved { .. })
+                )
+            })
+            .unwrap_or_else(|| panic!("{limit:?}: no bound up to 64 admits the subject"));
+        let before = resident_bytes();
+        let started = std::time::Instant::now();
+        let record = settle_limited(&world, "Deadline", |limits| set(limits, admitted));
+        let elapsed = started.elapsed();
+        assert_eq!(proved_value(&record), ratio(99, 100), "{limit:?} at {admitted}");
+        let bytes = record
+            .terminal()
+            .and_then(|terminal| terminal.exact_certificate_document())
+            .map_or(0, <[u8]>::len);
+        eprintln!(
+            "region-limit {limit:?}: at the bound {admitted}, {elapsed:?}, certificate {bytes} bytes, \
+             resident set grew {} bytes",
+            resident_bytes().saturating_sub(before)
+        );
+        if admitted > 0 {
+            let refused = settle_limited(&world, "Deadline", |limits| set(limits, admitted - 1));
+            assert_eq!(
+                refused.terminal().expect("a terminal record").value(),
+                &TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
+                    limit,
+                    value: admitted - 1,
+                    required: None,
+                }),
+                "{limit:?} one below {admitted}: {refused:#?}"
+            );
+        }
+    }
+}

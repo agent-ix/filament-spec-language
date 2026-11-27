@@ -38,6 +38,14 @@ pub const DEFAULT_EXACT_PROB_MAX_RATIONAL_BITS: u64 = 65_536;
 pub const DEFAULT_EXACT_PROB_MAX_POLICY_ITERATIONS: u64 = 10_000;
 /// FR-203's published finite witness path budget.
 pub const DEFAULT_EXACT_PROB_MAX_WITNESS_PATHS: u64 = 1_024;
+/// FR-922's published region clock-count bound: the model clocks plus the
+/// claim clock.
+pub const DEFAULT_EXACT_PROB_MAX_CLOCKS: u64 = 10;
+/// FR-922's published bound on the plain LCD scale of the constraint
+/// constants, in ticks per base unit.
+pub const DEFAULT_EXACT_PROB_MAX_CLOCK_SCALE: u64 = 1_048_576;
+/// FR-922's published bound on the largest constraint constant, in ticks.
+pub const DEFAULT_EXACT_PROB_MAX_CLOCK_CAP: u64 = 1_048_576;
 
 /// FR-166's published default seed, which a request that names none runs
 /// under (FSpec FR-392, ADR-022 QS-7).
@@ -98,6 +106,15 @@ pub struct ExactProbLimits {
     pub max_policy_iterations: u64,
     /// Maximum emitted finite witness paths.
     pub max_witness_paths: u64,
+    /// Maximum clock count of a region product: model clocks plus the claim
+    /// clock (FR-922, `exact_prob.max_clocks`).
+    pub max_clocks: u64,
+    /// Maximum plain LCD scale of a region product's constraint constants
+    /// (FR-922, `exact_prob.max_clock_scale`).
+    pub max_clock_scale: u64,
+    /// Maximum constraint constant of a region product, in ticks (FR-922,
+    /// `exact_prob.max_clock_cap`).
+    pub max_clock_cap: u64,
 }
 
 impl Default for ExactProbLimits {
@@ -111,6 +128,9 @@ impl Default for ExactProbLimits {
             max_rational_bits: DEFAULT_EXACT_PROB_MAX_RATIONAL_BITS,
             max_policy_iterations: DEFAULT_EXACT_PROB_MAX_POLICY_ITERATIONS,
             max_witness_paths: DEFAULT_EXACT_PROB_MAX_WITNESS_PATHS,
+            max_clocks: DEFAULT_EXACT_PROB_MAX_CLOCKS,
+            max_clock_scale: DEFAULT_EXACT_PROB_MAX_CLOCK_SCALE,
+            max_clock_cap: DEFAULT_EXACT_PROB_MAX_CLOCK_CAP,
         }
     }
 }
@@ -224,6 +244,13 @@ pub enum ModelCheckLimit {
     ExactProbMaxPolicyIterations,
     /// EN-5 finite witness path count.
     ExactProbMaxWitnessPaths,
+    /// EN-5 region product clock count; setting `exact_prob.max_clocks`.
+    ExactProbMaxClocks,
+    /// EN-5 region product LCD scale; setting `exact_prob.max_clock_scale`.
+    ExactProbMaxClockScale,
+    /// EN-5 region product constraint constant; setting
+    /// `exact_prob.max_clock_cap`.
+    ExactProbMaxClockCap,
     /// The subject's evaluation meter budget.
     EvaluationMeter {
         /// The denied accounting counter.
@@ -325,6 +352,9 @@ impl ModelCheckLimit {
             Self::ExactProbMaxRationalBits => "max_rational_bits",
             Self::ExactProbMaxPolicyIterations => "max_policy_iterations",
             Self::ExactProbMaxWitnessPaths => "max_witness_paths",
+            Self::ExactProbMaxClocks => "max_clocks",
+            Self::ExactProbMaxClockScale => "max_clock_scale",
+            Self::ExactProbMaxClockCap => "max_clock_cap",
             Self::EvaluationMeter { counter } => match counter {
                 LimitKind::IntegerBits => "integer_bits",
                 LimitKind::DecimalDigits => "decimal_digits",
@@ -405,6 +435,9 @@ impl ModelCheckLimit {
             Self::ExactProbMaxRationalBits => "exact_prob.max_rational_bits",
             Self::ExactProbMaxPolicyIterations => "exact_prob.max_policy_iterations",
             Self::ExactProbMaxWitnessPaths => "exact_prob.max_witness_paths",
+            Self::ExactProbMaxClocks => "exact_prob.max_clocks",
+            Self::ExactProbMaxClockScale => "exact_prob.max_clock_scale",
+            Self::ExactProbMaxClockCap => "exact_prob.max_clock_cap",
             Self::EvaluationMeter { counter } => {
                 crate::limits::AccountingLimits::setting_name(counter)
             }
@@ -611,6 +644,11 @@ mod tests {
             ModelCheckLimit::ExactProbMaxWitnessPaths => {
                 ("max_witness_paths", "exact_prob.max_witness_paths")
             }
+            ModelCheckLimit::ExactProbMaxClocks => ("max_clocks", "exact_prob.max_clocks"),
+            ModelCheckLimit::ExactProbMaxClockScale => {
+                ("max_clock_scale", "exact_prob.max_clock_scale")
+            }
+            ModelCheckLimit::ExactProbMaxClockCap => ("max_clock_cap", "exact_prob.max_clock_cap"),
             ModelCheckLimit::EvaluationMeter { counter } => match counter {
                 LimitKind::IntegerBits => ("integer_bits", "accounting.integer_bits"),
                 LimitKind::DecimalDigits => ("decimal_digits", "accounting.decimal_digits"),
@@ -723,6 +761,9 @@ mod tests {
             ModelCheckLimit::ExactProbMaxRationalBits,
             ModelCheckLimit::ExactProbMaxPolicyIterations,
             ModelCheckLimit::ExactProbMaxWitnessPaths,
+            ModelCheckLimit::ExactProbMaxClocks,
+            ModelCheckLimit::ExactProbMaxClockScale,
+            ModelCheckLimit::ExactProbMaxClockCap,
             ModelCheckLimit::MaxCandidates,
             ModelCheckLimit::SolverSteps,
             ModelCheckLimit::SmtMaxSolverSteps,

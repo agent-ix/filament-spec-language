@@ -115,7 +115,9 @@ unsupported cause `DelayDistribution{operation}`.
   of the claim is strict, EN-5 SHALL decide the claim over the region MDP
   instead of the digital MDP: each clock keeps its integer part, capped as in
   the digital MDP, together with whether its fractional part is zero and the
-  order of the clocks' fractional parts. Region MDPs give exact minimum and
+  order of the clocks' fractional parts. A clock above its largest compared
+  constant is saturated and has no fractional part in the key: the order of
+  fractions matters only among clocks at most their constants. Region MDPs give exact minimum and
   maximum probabilities and expected times for these forms, which digital
   clocks do not once a constraint is strict, so the strict case keeps an
   exact verdict. Its certificate keys each value by region in place of

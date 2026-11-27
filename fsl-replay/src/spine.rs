@@ -782,6 +782,9 @@ impl CompileRefusal {
                 | Setting::ExactProbMaxRationalBits
                 | Setting::ExactProbMaxPolicyIterations
                 | Setting::ExactProbMaxWitnessPaths
+                | Setting::ExactProbMaxClocks
+                | Setting::ExactProbMaxClockScale
+                | Setting::ExactProbMaxClockCap
                 | Setting::StatisticalMaxSamples
                 | Setting::StatisticalMaxDraws
                 | Setting::StatisticalMaxCycleSteps

@@ -1115,6 +1115,12 @@ struct ExactLimitsSelection {
     max_policy_iterations: Option<NonZeroU64>,
     #[serde(default)]
     max_witness_paths: Option<u64>,
+    #[serde(default)]
+    max_clocks: Option<NonZeroU64>,
+    #[serde(default)]
+    max_clock_scale: Option<NonZeroU64>,
+    #[serde(default)]
+    max_clock_cap: Option<NonZeroU64>,
 }
 
 impl ExactLimitsSelection {
@@ -1147,6 +1153,15 @@ impl ExactLimitsSelection {
         }
         if let Some(value) = self.max_witness_paths {
             limits.max_witness_paths = value;
+        }
+        if let Some(value) = self.max_clocks {
+            limits.max_clocks = value.get();
+        }
+        if let Some(value) = self.max_clock_scale {
+            limits.max_clock_scale = value.get();
+        }
+        if let Some(value) = self.max_clock_cap {
+            limits.max_clock_cap = value.get();
         }
         if limits.precision_bits > limits.max_precision_bits {
             return Err(());

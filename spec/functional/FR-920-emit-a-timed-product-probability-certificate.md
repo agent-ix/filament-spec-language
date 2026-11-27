@@ -87,12 +87,16 @@ would have refused the certificate before reading a value.
 - A region key SHALL use the model member
   `["region",discrete,unit,scale,clocks,deadline,tail]` whose `clocks`
   entries are `[clock_identity,integer,cap,fraction]`: `integer` is the
-  clock's integer part in scaled units, at most `cap`; `fraction` is `"0"`
-  when the fractional part is zero or the clock is at its cap, and otherwise
+  clock's integer part in scaled units, at most `cap`; a clock above its
+  largest compared constant `c` (`cap` is `c + 1`) is saturated, whatever its
+  fractional part, and is written with `integer` equal to `cap`; `fraction`
+  is `"0"` when the fractional part is zero or the clock is saturated, and
+  otherwise
   the canonical decimal position, from `"1"`, of its fractional part in the
   increasing order of the state's nonzero fractional parts, equal fractions
-  sharing a position. `deadline` is `["deadline",D,t,fraction]` with the same
-  reading. Clock identity, order and caps are FR-196's.
+  sharing a position; only clocks at most their constant have a fractional
+  part that counts. `deadline` is `["deadline",D,t,fraction]` with the same
+  reading, saturated above `D` (`t` is then `D + 1`). Clock identity, order and caps are FR-196's.
 - For `bounded-window`, whose route is always `"region"` (FR-204 Admission
   "Route"), the key SHALL be the region key with the monitor member FR-196's
   `["window",residual]`. Each obligation's `[kind,o,integer,fraction]` reads

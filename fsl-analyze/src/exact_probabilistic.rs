@@ -32,6 +32,7 @@ mod fair_interval;
 mod finite_horizon;
 pub mod manifest;
 pub(crate) mod plan;
+mod region;
 mod reward_interval;
 mod route;
 mod rows;

@@ -15,6 +15,7 @@ use serde_json::{json, Value as JsonValue};
 
 mod admission;
 mod elapsed;
+mod region;
 pub use admission::timed_certificate_route;
 
 #[implements("FR-203-AC-30", "FR-204-AC-21")]
@@ -1093,6 +1094,13 @@ fn mean_target(
     }
 }
 
+/// One clock of a mean-time state on the interim grid.
+struct MeanClock {
+    identity: JsonValue,
+    value: u64,
+    cap: u64,
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
@@ -1154,7 +1162,7 @@ fn mean_region_key(
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         let receiver: JsonValue =
             serde_json::from_str(&receiver).map_err(|_| ProbabilityDocumentError::Malformed)?;
-        clocks.push(crate::RegionClockKey {
+        clocks.push(MeanClock {
             identity: json!([declaring, field.name(), receiver]),
             value: time_units(value, scale).ok_or(ProbabilityDocumentError::Unsupported)?,
             cap: *cap,
@@ -1183,37 +1191,50 @@ fn mean_region_key(
         })
         .map_err(ProbabilityDocumentError::Graph);
     }
-    let mut coordinates = clocks
+    // Interim grid corner: the coordinates are the refined clock values.
+    let coordinates = clocks.iter().map(|clock| clock.value).collect();
+    let fractions: BTreeSet<u64> = clocks
         .iter()
-        .map(|clock| {
-            quire_canonical::to_vec(&clock.identity, quire_canonical::Limits::new(u64::MAX))
-                .map(|identity| (identity, clock.value.to_string()))
-                .map_err(|_| ProbabilityDocumentError::Unsupported)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    coordinates.sort_by(|left, right| left.0.cmp(&right.0));
-    let corner = Some(
-        coordinates
-            .into_iter()
-            .map(|(_, coordinate)| coordinate)
-            .collect(),
-    );
-    crate::region_probability_product_key(crate::RegionProductKeyInput {
+        .filter(|clock| clock.value < clock.cap)
+        .map(|clock| clock.value % subdivisions)
+        .filter(|fraction| *fraction > 0)
+        .collect();
+    crate::RegionKey {
         binding,
         discrete,
         unit,
         scale: base_scale,
-        subdivisions,
-        clocks,
-        deadline: None,
+        clocks: clocks
+            .into_iter()
+            .map(|clock| crate::RegionClock {
+                identity: clock.identity,
+                cap: clock.cap.div_ceil(subdivisions),
+                place: if clock.value >= clock.cap {
+                    crate::ClockPlace::Saturated
+                } else if clock.value % subdivisions == 0 {
+                    crate::ClockPlace::Integer(clock.value / subdivisions)
+                } else {
+                    crate::ClockPlace::Open {
+                        integer: clock.value / subdivisions,
+                        class: u32::try_from(
+                            fractions.range(..=clock.value % subdivisions).count(),
+                        )
+                        .unwrap_or(u32::MAX),
+                    }
+                },
+            })
+            .collect(),
+        claim_clocks: Vec::new(),
         tail: crate::DigitalTail::Running,
         monitor: None,
         accumulator: None,
         pending: None,
-        elapsed: None,
-        kind: crate::RegionKeyKind::BoundaryRegion,
-        corner,
-    })
+        corner: Some(crate::Corner {
+            coordinates,
+            ticks_per_unit: subdivisions,
+        }),
+    }
+    .encode()
     .map_err(ProbabilityDocumentError::Graph)
 }
 
@@ -2901,111 +2922,73 @@ fn region_key(
         _ => None,
     };
     let monitor = monitor_json(&state.phase);
-    let mut keyed_clocks = clocks
-        .into_iter()
-        .map(|(identity, value, cap)| {
-            if identity.as_array().is_none_or(|parts| parts.len() != 3) || value > cap {
-                return Err(ProbabilityDocumentError::Malformed);
-            }
-            let bytes =
-                super::super::canonical_json(&identity).map_err(ProbabilityDocumentError::Graph)?;
-            Ok((bytes, identity, value, cap))
-        })
-        .collect::<Result<Vec<_>, ProbabilityDocumentError>>()?;
-    keyed_clocks.sort_by(|left, right| left.0.cmp(&right.0));
-    if keyed_clocks.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-        return Err(ProbabilityDocumentError::Malformed);
-    }
-    let mut fractions = keyed_clocks
+    // The checker's own reading of the grid (FR-920 "Keys"): a clock above
+    // its largest constant is saturated; the class of a nonzero fraction is
+    // its rank among the distinct nonzero fractions of the unsaturated
+    // clocks, the claim clock included.
+    let claim_live = |value: u64| value <= deadline;
+    let mut fractions: Vec<u64> = clocks
         .iter()
-        .filter_map(|(_, _, value, cap)| {
-            (*value < *cap)
-                .then_some(*value % subdivisions)
-                .filter(|fraction| *fraction > 0)
-        })
-        .collect::<BTreeSet<_>>();
-    if state.elapsed < deadline.saturating_add(subdivisions) && state.phase != Phase::Inactive {
-        let fraction = state.elapsed % subdivisions;
-        if fraction > 0 {
-            fractions.insert(fraction);
-        }
+        .filter(|(_, value, cap)| value < cap)
+        .map(|(_, value, _)| value % subdivisions)
+        .collect();
+    if state.phase != Phase::Inactive && claim_live(state.elapsed) {
+        fractions.push(state.elapsed % subdivisions);
     }
-    let fraction_rank = |value: u64, cap: u64| -> String {
-        if value >= cap {
-            return "0".to_owned();
+    fractions.retain(|fraction| *fraction > 0);
+    fractions.sort_unstable();
+    fractions.dedup();
+    let place = |value: u64, saturated: bool| {
+        if saturated {
+            return ClockPlace::Saturated;
         }
-        let fraction = value % subdivisions;
-        if fraction == 0 {
-            return "0".to_owned();
+        match value % subdivisions {
+            0 => ClockPlace::Integer(value / subdivisions),
+            fraction => ClockPlace::Open {
+                integer: value / subdivisions,
+                class: fractions
+                    .iter()
+                    .position(|candidate| *candidate == fraction)
+                    .and_then(|position| u32::try_from(position + 1).ok())
+                    .unwrap_or(u32::MAX),
+            },
         }
-        fractions
-            .iter()
-            .position(|candidate| *candidate == fraction)
-            .and_then(|position| u64::try_from(position + 1).ok())
-            .map(|rank| rank.to_string())
-            .unwrap_or_else(|| "0".to_owned())
     };
-    let encoded_clocks = keyed_clocks
-        .into_iter()
-        .map(|(_, identity, value, cap)| {
-            json!([
-                identity,
-                if value >= cap {
-                    value.div_ceil(subdivisions)
-                } else {
-                    value / subdivisions
-                }
-                .to_string(),
-                cap.div_ceil(subdivisions).to_string(),
-                fraction_rank(value, cap)
-            ])
-        })
-        .collect::<Vec<_>>();
-    let deadline_key = match measure {
-        Some((_, value)) => json!([
-            "elapsed",
-            (deadline / subdivisions).to_string(),
-            value.map(|value| (value / subdivisions).to_string()),
-            value.map_or_else(
-                || "0".to_owned(),
-                |value| fraction_rank(value, deadline.saturating_add(subdivisions))
-            )
-        ]),
-        None => json!([
-            "deadline",
-            (deadline / subdivisions).to_string(),
-            (state.elapsed / subdivisions).to_string(),
-            fraction_rank(state.elapsed, deadline.saturating_add(subdivisions))
-        ]),
+    let claim_clock = match measure {
+        Some((_, value)) => crate::ClaimClock::Elapsed {
+            window: deadline / subdivisions,
+            place: value.map(|value| place(value, !claim_live(value))),
+        },
+        None => crate::ClaimClock::Deadline {
+            limit: deadline / subdivisions,
+            place: place(state.elapsed, !claim_live(state.elapsed)),
+        },
     };
-    let model = json!([
-        "filament.simulation.state-key/v1",
-        [
-            "region",
-            discrete,
-            unit,
-            base_scale.to_string(),
-            encoded_clocks,
-            deadline_key,
-            "running"
-        ]
-    ]);
-    let product = json!([
-        "filament.probability-product-key/v1",
+    crate::RegionKey {
         binding,
-        null,
-        null,
-        model,
-        match measure {
+        discrete,
+        unit,
+        scale: base_scale,
+        clocks: clocks
+            .into_iter()
+            .map(|(identity, value, cap)| crate::RegionClock {
+                identity,
+                cap: cap.div_ceil(subdivisions),
+                place: place(value, value >= cap),
+            })
+            .collect(),
+        claim_clocks: vec![claim_clock],
+        tail: DigitalTail::Running,
+        monitor: Some(match measure {
             Some((name, _)) => json!(["measure", null, name]),
             None => monitor,
-        },
-        null,
-        null
-    ]);
-    super::super::canonical_json(&product)
-        .map(ProbabilityProductKey::from_canonical_bytes)
-        .map_err(ProbabilityDocumentError::Graph)
+        }),
+        accumulator: None,
+        pending: None,
+        corner: None,
+    }
+    .encode()
+    .map_err(ProbabilityDocumentError::Graph)
 }
 
 fn digital_key(

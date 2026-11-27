@@ -32,9 +32,9 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::StateKey;
 use fsl_replay::{
-    digital_probability_product_key, region_probability_product_key, DigitalClockKey,
+    digital_probability_product_key, DigitalClockKey,
     DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
-    ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
+    ProbabilityProductKey, ClaimClock, ClockPlace, Corner, RegionClock, RegionKey,
 };
 use fsl_semantics::check::{
     BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim,
@@ -92,6 +92,9 @@ pub(super) fn build<'s, 'a>(
         .checked_mul(subdivisions)
         .ok_or_else(|| fault("region-scale-fits-u64"))?;
     let caps = caps_of(&timed, &scale)?;
+    if subdivisions > 1 {
+        region_preflight(limits, &timed, &form, base_scale, subdivisions, &caps)?;
+    }
     let bindings = match &claim.over {
         None => vec![(None, None)],
         Some(over) => {
@@ -485,6 +488,53 @@ fn add_rewards(
         .collect()
 }
 
+/// Refuse a region subject over one of the three region limits before any
+/// state is built (FR-922, FR-255): the clock count (the model clocks plus the
+/// claim clock), the plain LCD scale and the largest constraint constant, each
+/// a stop naming its setting and bound, never a verdict.
+#[implements("FR-922-AC-8")]
+fn region_preflight(
+    limits: &ExactProbLimits,
+    timed: &TimedSystem<'_, '_>,
+    form: &Form<'_>,
+    base_scale: u64,
+    subdivisions: u64,
+    caps: &[u64],
+) -> Result<(), ProductRefusal> {
+    let claim_clock = usize::from(matches!(
+        form,
+        Form::Deadline { .. } | Form::NestedDeadline(_) | Form::Elapsed { .. }
+    ));
+    let clocks = u64::try_from(timed.places().len() + claim_clock).unwrap_or(u64::MAX);
+    // A cap is the largest compared constant, in refined ticks, plus one.
+    let largest = caps
+        .iter()
+        .map(|cap| cap.saturating_sub(1) / subdivisions)
+        .max()
+        .unwrap_or(0);
+    for (limit, value, bound) in [
+        (ModelCheckLimit::ExactProbMaxClocks, clocks, limits.max_clocks),
+        (
+            ModelCheckLimit::ExactProbMaxClockScale,
+            base_scale,
+            limits.max_clock_scale,
+        ),
+        (
+            ModelCheckLimit::ExactProbMaxClockCap,
+            largest,
+            limits.max_clock_cap,
+        ),
+    ] {
+        if value > bound {
+            return Err(ProductRefusal::Stopped(ProductStop::Limit {
+                limit,
+                value: bound,
+            }));
+        }
+    }
+    Ok(())
+}
+
 /// The least common denominator of every time constant of the model and the
 /// claim (ADR-028 TA-3), as one positive integer.
 #[implements("FR-204-AC-1")]
@@ -722,16 +772,6 @@ struct DelayMove<'a> {
     elapsed_ticks: u64,
     planned: &'a [Planned],
     omit_unchanged: bool,
-}
-
-enum ClockKey {
-    Digital(DigitalClockKey),
-    Region(RegionClockKey),
-}
-
-enum DeadlineKey {
-    Digital(DigitalDeadlineKey),
-    Region(RegionDeadlineKey),
 }
 
 enum Halt {
@@ -1225,19 +1265,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 let receiver: JsonValue = serde_json::from_str(&receiver)
                     .map_err(|_| fault("certificate-clock-receiver-is-json"))?;
                 let identity = json!([declaring, field.name(), receiver]);
-                Ok(if self.subdivisions == 1 {
-                    ClockKey::Digital(DigitalClockKey {
-                        identity,
-                        value: *value,
-                        cap: *cap,
-                    })
-                } else {
-                    ClockKey::Region(RegionClockKey {
-                        identity,
-                        value: *value,
-                        cap: *cap,
-                    })
-                })
+                Ok((identity, *value, *cap))
             })
             .collect::<Result<Vec<_>, ProductRefusal>>()?;
         let measure = match (&self.form, self.deadline_bound()?) {
@@ -1249,11 +1277,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 let limit = self
                     .deadline_bound()?
                     .ok_or_else(|| fault("certificate-deadline-bound-exists"))?;
-                Some(if self.subdivisions == 1 {
-                    DeadlineKey::Digital(DigitalDeadlineKey { limit, elapsed })
-                } else {
-                    DeadlineKey::Region(RegionDeadlineKey { limit, elapsed })
-                })
+                Some((limit, elapsed))
             }
             None => None,
         };
@@ -1318,19 +1342,13 @@ impl<'c> Builder<'_, '_, 'c> {
                 scale: self.base_scale,
                 clocks: clocks
                     .into_iter()
-                    .map(|clock| match clock {
-                        ClockKey::Digital(clock) => Ok(clock),
-                        ClockKey::Region(_) => Err(fault("digital-route-clock-key-is-digital")),
+                    .map(|(identity, value, cap)| DigitalClockKey {
+                        identity,
+                        value,
+                        cap,
                     })
-                    .collect::<Result<Vec<_>, ProductRefusal>>()?,
-                deadline: deadline
-                    .map(|deadline| match deadline {
-                        DeadlineKey::Digital(deadline) => Ok(deadline),
-                        DeadlineKey::Region(_) => {
-                            Err(fault("digital-route-deadline-key-is-digital"))
-                        }
-                    })
-                    .transpose()?,
+                    .collect(),
+                deadline: deadline.map(|(limit, elapsed)| DigitalDeadlineKey { limit, elapsed }),
                 tail,
                 monitor,
                 accumulator: None,
@@ -1338,67 +1356,95 @@ impl<'c> Builder<'_, '_, 'c> {
                 elapsed: measure,
             })
         } else {
-            let region_clocks = clocks
-                .into_iter()
-                .map(|clock| match clock {
-                    ClockKey::Region(clock) => Some(clock),
-                    ClockKey::Digital(_) => None,
-                })
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| fault("region-clock-key-is-present"))?;
             let boundary_region = matches!(&self.form, Form::MeanTime { .. });
-            let corner = if boundary_region {
-                let mut coordinates = region_clocks
-                    .iter()
-                    .map(|clock| {
-                        quire_canonical::to_vec(
-                            &clock.identity,
-                            quire_canonical::Limits::new(u64::MAX),
-                        )
-                        .map(|identity| (identity, clock.value.to_string()))
-                        .map_err(|_| fault("boundary-region-corner-identity-encodes"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                coordinates.sort_by(|left, right| left.0.cmp(&right.0));
-                Some(
-                    coordinates
-                        .into_iter()
-                        .map(|(_, coordinate)| coordinate)
-                        .collect(),
-                )
-            } else {
-                None
-            };
-            region_probability_product_key(RegionProductKeyInput {
+            let (clocks, claim_clocks) = self.region_places(clocks, deadline, measure)?;
+            RegionKey {
                 binding,
                 discrete,
                 unit,
                 scale: self.base_scale,
-                subdivisions: self.subdivisions,
-                clocks: region_clocks,
-                deadline: deadline
-                    .map(|deadline| match deadline {
-                        DeadlineKey::Region(deadline) => Ok(deadline),
-                        DeadlineKey::Digital(_) => {
-                            Err(fault("region-route-deadline-key-is-region"))
-                        }
-                    })
-                    .transpose()?,
+                corner: boundary_region.then(|| Corner {
+                    coordinates: state.clocks.clone(),
+                    ticks_per_unit: self.subdivisions,
+                }),
+                clocks,
+                claim_clocks,
                 tail,
                 monitor,
                 accumulator: None,
                 pending: None,
-                elapsed: measure,
-                kind: if boundary_region {
-                    RegionKeyKind::BoundaryRegion
-                } else {
-                    RegionKeyKind::Region
-                },
-                corner,
-            })
+            }
+            .encode()
         }
         .map_err(|_| fault("certificate-timed-product-key-encodes"))?;
         Ok(key)
+    }
+
+    /// The places of one refined-grid state, read by the producer's own
+    /// rule (FR-920 "Keys"): a clock above its largest constant is saturated;
+    /// among the others, the class of a nonzero fraction is its 1-based rank
+    /// among the distinct nonzero fractions of every unsaturated clock,
+    /// claim clocks included. Interim, until the symbolic region of QSL-3495
+    /// replaces the grid.
+    #[implements("FR-920-AC-1")]
+    fn region_places(
+        &self,
+        clocks: Vec<(JsonValue, u64, u64)>,
+        deadline: Option<(u64, u64)>,
+        measure: Option<(u64, Option<u64>)>,
+    ) -> Result<(Vec<RegionClock>, Vec<ClaimClock>), ProductRefusal> {
+        let parts = self.subdivisions;
+        let inside_claim = |limit: u64, value: u64| value <= limit;
+        let fractions: BTreeSet<u64> = clocks
+            .iter()
+            .filter(|(_, value, cap)| value < cap)
+            .map(|(_, value, _)| *value)
+            .chain(
+                deadline
+                    .filter(|(limit, value)| inside_claim(*limit, *value))
+                    .map(|(_, value)| value),
+            )
+            .chain(
+                measure
+                    .and_then(|(limit, value)| value.filter(|value| inside_claim(limit, *value))),
+            )
+            .map(|value| value % parts)
+            .filter(|fraction| *fraction > 0)
+            .collect();
+        let place = |value: u64, saturated: bool| {
+            if saturated {
+                return ClockPlace::Saturated;
+            }
+            match value % parts {
+                0 => ClockPlace::Integer(value / parts),
+                fraction => ClockPlace::Open {
+                    integer: value / parts,
+                    class: u32::try_from(fractions.range(..=fraction).count()).unwrap_or(u32::MAX),
+                },
+            }
+        };
+        let region_clocks = clocks
+            .into_iter()
+            .map(|(identity, value, cap)| RegionClock {
+                identity,
+                cap: cap.div_ceil(parts),
+                place: place(value, value >= cap),
+            })
+            .collect();
+        let mut claim_clocks = Vec::new();
+        if let Some((limit, value)) = deadline {
+            claim_clocks.push(ClaimClock::Deadline {
+                limit: limit / parts,
+                place: place(value, value > limit),
+            });
+        }
+        if let Some((limit, value)) = measure {
+            claim_clocks.push(ClaimClock::Elapsed {
+                window: limit / parts,
+                place: value.map(|value| place(value, value > limit)),
+            });
+        }
+        Ok((region_clocks, claim_clocks))
     }
 
     fn truths(&mut self, state: &ModelSimState, binding: usize) -> Step<Result<Vec<bool>, Hit>> {
@@ -2037,10 +2083,10 @@ impl<'c> Builder<'_, '_, 'c> {
         }
         // The deadline or measure clock has a fraction while it is inside the
         // range its key ranks.
-        let deadline_end = self.deadline_bound()?.map(|bound| bound + parts);
+        let deadline_end = self.deadline_bound()?;
         let deadline = state
             .deadline
-            .filter(|elapsed| deadline_end.is_some_and(|end| *elapsed < end));
+            .filter(|elapsed| deadline_end.is_some_and(|end| *elapsed <= end));
         let fractions: BTreeSet<u64> = state
             .clocks
             .iter()

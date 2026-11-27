@@ -527,6 +527,15 @@ impl ProbabilisticLimits {
                 if let Some(bound) = engines.get(S::ExactProbMaxWitnessPaths) {
                     limits.max_witness_paths = bound;
                 }
+                if let Some(bound) = engines.get(S::ExactProbMaxClocks) {
+                    limits.max_clocks = bound;
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxClockScale) {
+                    limits.max_clock_scale = bound;
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxClockCap) {
+                    limits.max_clock_cap = bound;
+                }
                 Self::Exact(limits)
             }
         }
@@ -2129,7 +2138,7 @@ mod caller_limit_tests {
         use crate::exact_probabilistic::ExactProbLimits;
         let base = ExactProbLimits::default();
         type ExactLimitReader = fn(&ExactProbLimits) -> u64;
-        let rows: [(Setting, ExactLimitReader); 9] = [
+        let rows: [(Setting, ExactLimitReader); 12] = [
             (Setting::ExactProbMaxStates, |l| {
                 l.model.limits.max_states as u64
             }),
@@ -2151,6 +2160,9 @@ mod caller_limit_tests {
                 l.max_policy_iterations
             }),
             (Setting::ExactProbMaxWitnessPaths, |l| l.max_witness_paths),
+            (Setting::ExactProbMaxClocks, |l| l.max_clocks),
+            (Setting::ExactProbMaxClockScale, |l| l.max_clock_scale),
+            (Setting::ExactProbMaxClockCap, |l| l.max_clock_cap),
         ];
         for (setting, read) in rows {
             let bound = 7;

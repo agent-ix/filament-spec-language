@@ -694,7 +694,7 @@ impl SubjectBinding<'_> {
 /// exception: it is accepted and carried in [`EngineBounds`], but no engine
 /// in this repository reads it yet (FR-255 states only that it is carried).
 /// `plan_search.*` is never listed: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 23] = [
+pub const ENGINE_SETTINGS: [Setting; 26] = [
     Setting::ExpansionMaxCandidates,
     Setting::ZoneCheckMaxSymbolicStates,
     Setting::ZoneCheckMaxSymbolicTransitions,
@@ -713,6 +713,9 @@ pub const ENGINE_SETTINGS: [Setting; 23] = [
     Setting::ExactProbMaxRationalBits,
     Setting::ExactProbMaxPolicyIterations,
     Setting::ExactProbMaxWitnessPaths,
+    Setting::ExactProbMaxClocks,
+    Setting::ExactProbMaxClockScale,
+    Setting::ExactProbMaxClockCap,
     Setting::StatisticalMaxSamples,
     Setting::StatisticalMaxDraws,
     Setting::StatisticalMaxCycleSteps,
@@ -842,6 +845,9 @@ impl EngineBounds {
                 ("max_rational_bits", S::ExactProbMaxRationalBits),
                 ("max_policy_iterations", S::ExactProbMaxPolicyIterations),
                 ("max_witness_paths", S::ExactProbMaxWitnessPaths),
+                ("max_clocks", S::ExactProbMaxClocks),
+                ("max_clock_scale", S::ExactProbMaxClockScale),
+                ("max_clock_cap", S::ExactProbMaxClockCap),
                 ("max_samples", S::StatisticalMaxSamples),
                 ("max_draws", S::StatisticalMaxDraws),
                 ("max_cycle_steps", S::StatisticalMaxCycleSteps),

@@ -1,0 +1,79 @@
+{
+  "doc": "Hand-written region successor paths read by the unit tests of the producer's and the checker's region modules (QSL-3495 step 6.2). Places: iN = the clock equals integer N; oN.K = integer part N, open, fraction class K (1-based, ascending); s = saturated (above its largest constant, cap = largest constant + 1). Each case lists the caps, then steps: start, succ (one time successor, with the expected places), reset (the clock is set to the integer value, with the expected places). Checked by a person other than the author before use (QSL-3495 design 8, FND-012).",
+  "cases": [
+    {
+      "name": "two clocks from zero to saturation",
+      "caps": [3, 3],
+      "steps": [
+        {"op": "start", "places": ["i0", "i0"]},
+        {"op": "succ", "expect": ["o0.1", "o0.1"]},
+        {"op": "succ", "expect": ["i1", "i1"]},
+        {"op": "succ", "expect": ["o1.1", "o1.1"]},
+        {"op": "succ", "expect": ["i2", "i2"]},
+        {"op": "succ", "expect": ["s", "s"]},
+        {"op": "succ", "expect": ["s", "s"]}
+      ]
+    },
+    {
+      "name": "reset of one clock separates the fraction classes (H1 shape)",
+      "caps": [2, 3],
+      "steps": [
+        {"op": "start", "places": ["i0", "i0"]},
+        {"op": "succ", "expect": ["o0.1", "o0.1"]},
+        {"op": "reset", "clock": 0, "value": 0, "expect": ["i0", "o0.1"]},
+        {"op": "succ", "expect": ["o0.1", "o0.2"]},
+        {"op": "succ", "expect": ["o0.1", "i1"]},
+        {"op": "succ", "expect": ["o0.2", "o1.1"]},
+        {"op": "succ", "expect": ["i1", "o1.1"]},
+        {"op": "succ", "expect": ["s", "o1.1"]},
+        {"op": "succ", "expect": ["s", "i2"]},
+        {"op": "succ", "expect": ["s", "s"]}
+      ]
+    },
+    {
+      "name": "a zero set and two classes",
+      "caps": [4, 4, 4],
+      "steps": [
+        {"op": "start", "places": ["i1", "o0.1", "o0.2"]},
+        {"op": "succ", "expect": ["o1.1", "o0.2", "o0.3"]},
+        {"op": "succ", "expect": ["o1.1", "o0.2", "i1"]},
+        {"op": "succ", "expect": ["o1.2", "o0.3", "o1.1"]},
+        {"op": "succ", "expect": ["o1.2", "i1", "o1.1"]}
+      ]
+    },
+    {
+      "name": "a clock at its constant saturates and leaves its class empty",
+      "caps": [2, 4],
+      "steps": [
+        {"op": "start", "places": ["i1", "o2.1"]},
+        {"op": "succ", "expect": ["s", "o2.1"]},
+        {"op": "succ", "expect": ["s", "i3"]},
+        {"op": "succ", "expect": ["s", "s"]}
+      ]
+    },
+    {
+      "name": "the regions between two integer crossings are visited",
+      "caps": [3, 3],
+      "steps": [
+        {"op": "start", "places": ["o0.1", "o0.2"]},
+        {"op": "succ", "expect": ["o0.1", "i1"]},
+        {"op": "succ", "expect": ["o0.2", "o1.1"]},
+        {"op": "succ", "expect": ["i1", "o1.1"]},
+        {"op": "succ", "expect": ["o1.1", "o1.2"]},
+        {"op": "succ", "expect": ["o1.1", "i2"]},
+        {"op": "succ", "expect": ["o1.1", "s"]},
+        {"op": "succ", "expect": ["i2", "s"]},
+        {"op": "succ", "expect": ["s", "s"]}
+      ]
+    },
+    {
+      "name": "a reset above the constant saturates the clock",
+      "caps": [2, 2],
+      "steps": [
+        {"op": "start", "places": ["o0.1", "o0.1"]},
+        {"op": "reset", "clock": 1, "value": 2, "expect": ["o0.1", "s"]},
+        {"op": "succ", "expect": ["i1", "s"]}
+      ]
+    }
+  ]
+}
