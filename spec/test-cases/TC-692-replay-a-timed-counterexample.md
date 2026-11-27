@@ -12,7 +12,7 @@ relationships:
 
 Verify replay of timed prefixes and lassos, the refusals, local time-lock replay and non-local time-lock replay by fresh exploration.
 
-Scope: FR-237-AC-1 to FR-237-AC-4, FR-237-AC-6.
+Scope: FR-237-AC-1 to FR-237-AC-4, FR-237-AC-6 and FR-230-AC-72.
 
 ## Test Procedure
 

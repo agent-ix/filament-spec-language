@@ -10,11 +10,13 @@ relationships:
 
 ## Description
 
-Verify that hyper items of every form settle on the package route with the
+Verify that supported hyper items settle on the package route with the
 source route's records, counterexamples, replays and certificates, that
 atoms and conjuncts evaluate equally through the evaluator port, and that a
-malformed hyper node or a refused package is refused without a verdict.
-Scope: FR-940-AC-17 and FR-940-AC-19.
+single-existential HP-5 item with an object parameter remains supported on the
+source route but is unsupported on the package route per FR-181-AC-10. Also
+verify that a malformed hyper node or a refused package is refused without a
+verdict. Scope: FR-940-AC-17 and FR-940-AC-19.
 
 ## Test Procedure
 
@@ -39,11 +41,14 @@ Scope: FR-940-AC-17 and FR-940-AC-19.
 
 ## Expected Results
 
-- Step 2: equal records, counterexamples (one trace per copy, `Partner`'s
-  exhausted witness set), replays with `reproduced` `true`, and accepted
-  certificates; `Equal` is `proved` and `certified` on both routes; no
-  record is `unsupported`, no diagnostic is `not-yet-implemented`; equal
-  values and charge logs per atom and conjunct.
+- Step 2: `Equal`, `Partner` and the projection-aligned clause have equal
+  records, counterexamples (one trace per copy, `Partner`'s exhausted witness
+  set), replays with `reproduced` `true`, and accepted certificates; `Equal`
+  is `proved` and `certified` on both routes. `CanReachThree` is `proved` on
+  the source route, while its package-selected object-parameter HP-5 item
+  settles `unsupported_construct`/`not-yet-implemented`, exit 21, with no
+  record verdict and no instance. Values and charge logs match per atom and
+  conjunct for the supported items.
 - Step 3: the modified clause settles `failed` with `MalformedNode` naming
   its `hyperproperty` node key and no verdict; `Partner` and the unmodified
   projection-aligned clause (an atom slot and a conjunct slot both at level
