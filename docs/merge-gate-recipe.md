@@ -57,10 +57,12 @@ target/debug/xtask merge-gate-recipe --workspace /path/to/this-pr-worktree --pre
 ```
 
 By default the command only prints the recipe and does not invoke Cargo. Add
-`--preflight` before the paths to check each name filter with normal and
-ignored `cargo test -- --list` output; an explicit filter with no non-ignored
-matches then fails closed. A local library-module filter with no matches is
-reported as a note.
+`--preflight` before the paths to build selected test targets once per package
+with Cargo JSON artifact output, then check each name filter by running its
+resolved test binary with `--list` in normal and ignored modes. Package build
+and selector listing durations are reported on stderr. An explicit filter with
+no non-ignored matches fails closed. A local library-module filter with no
+matches is reported as a note.
 
 The output is one command per line, with target `--no-run` compilation commands
 first, named-filter test commands next, any external driver note after those,
