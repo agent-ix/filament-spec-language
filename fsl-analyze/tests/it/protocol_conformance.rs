@@ -50,7 +50,7 @@ fn conformance(name: &str, unit: &str, members: Value, documents: &[(&str, Value
 
 /// A closed-or-not recording of the order fixture: `Placed`, `Got`, `Ship`
 /// and `finish`, with the closure record `closure`.
-fn order_recording(closure: Value) -> Value {
+pub(crate) fn order_recording(closure: Value) -> Value {
     json!({
         "format": "filament.protocol-recording/1",
         "identity": {"authority": "test", "identity": "recording"},
@@ -74,7 +74,7 @@ fn order_recording(closure: Value) -> Value {
 }
 
 /// The required premises of instance `w-1` of the order fixture.
-fn order_premises() -> Value {
+pub(crate) fn order_premises() -> Value {
     json!([
         {"kind": "execution", "node": "Flow::Done"},
         {"kind": "branch", "node": "Flow::Main::Decide::no"},
@@ -82,7 +82,7 @@ fn order_premises() -> Value {
     ])
 }
 
-fn recording_member() -> Value {
+pub(crate) fn recording_member() -> Value {
     json!({"recording": {"authority": "test", "identity": "recording"}})
 }
 
@@ -839,6 +839,7 @@ fn a_compiled_handoff_publishes_its_source_provision() {
         binding: binding.clone(),
         items: Vec::new(),
         provision: handoff.sources().clone(),
+        certification: Default::default(),
     };
     assert!(
         analyze(handoff.checked(), &complete, &engines, &limits, &cancel).is_ok(),
@@ -856,6 +857,7 @@ fn a_compiled_handoff_publishes_its_source_provision() {
         binding,
         items: Vec::new(),
         provision: without_unit,
+        certification: Default::default(),
     };
     let refusal = analyze(handoff.checked(), &incomplete, &engines, &limits, &cancel)
         .expect_err("analyze refuses a provision without the unit source")
@@ -914,4 +916,38 @@ fn closure_premises_carry_their_componentwise_identity() {
         );
         assert!(item["obligations"].is_null(), "{name}: {item}");
     }
+}
+
+/// FR-896-AC-11: the behaviour route runs the closure check alone, so a
+/// requirement it never evaluates stays `pending`, not `satisfied`. The
+/// order fixture's `Order` channel is `exactly-once-premise`, so under the
+/// default policy the protocol, which closes, settles `proved`,
+/// `uncertified`; the requirement is not a reason to refuse the proof.
+#[trace("TC-2532", "FR-896-AC-11")]
+#[test]
+fn a_requirement_no_check_evaluates_stays_pending_beside_an_uncertified_proof() {
+    let unit = format!(
+        "temporal Never using t0 over (k: M::Core) clock \"model-steps\" on origin \
+         {{ always holds(false) }}\n{}",
+        order_protocol(true).replacen(
+            "run sequence Main {",
+            "requires temporal Never;\nrun sequence Main {",
+            1,
+        )
+    );
+    let ws = Workspace::new("gc-requirement");
+    let item = analyze(&litmus_request(
+        &ws,
+        &unit,
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+    ))
+    .item(0);
+    let requirement = obligations(&item)
+        .into_iter()
+        .find(|entry| entry["obligation"]["kind"] == "requirement")
+        .unwrap_or_else(|| panic!("a requirement obligation: {item}"));
+    assert_eq!(requirement["verdict"], "pending", "{item}");
+    assert_eq!(item["record"]["certification"], "uncertified", "{item}");
+    assert_eq!(item["global"]["label"], "proved", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
 }

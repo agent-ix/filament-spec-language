@@ -192,6 +192,7 @@ fn empty_multiple_bindings_and_refuted_fair_bound_never_emit_new_profile_proofs(
                 world.request("Likely", ModelCheckLimits::default()),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         assert!(records[0].terminal().is_none());
         assert!(
@@ -230,6 +231,7 @@ fn multiple_receivers_require_actual_markov_draws_and_keep_each_identity() {
             invalid.request("Likely", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert!(records[0].terminal().is_none());
     assert!(
@@ -251,6 +253,7 @@ fn multiple_receivers_require_actual_markov_draws_and_keep_each_identity() {
             world.request("Likely", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().unwrap_or_else(|| {
         panic!(

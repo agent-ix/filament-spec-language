@@ -44,6 +44,8 @@ use crate::graph_world::{
 
 #[path = "state_graph/replay_contracts.rs"]
 mod replay_contracts;
+#[path = "state_graph/replay_route_rules.rs"]
+pub(crate) mod replay_route_rules;
 
 pub(crate) const AB: &[&str] = &["a", "b"];
 
