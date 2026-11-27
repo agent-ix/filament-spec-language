@@ -1829,7 +1829,9 @@ fn decide_step(
                     let contract = finding.undefined_contract()?;
                     match finding {
                         ModelFinding::ContractUndetermined { candidate, .. }
-                            if candidate.as_ref().is_none_or(|key| mapped_keys.contains(key)) =>
+                            if candidate
+                                .as_ref()
+                                .is_none_or(|key| mapped_keys.contains(key)) =>
                         {
                             Some(contract)
                         }

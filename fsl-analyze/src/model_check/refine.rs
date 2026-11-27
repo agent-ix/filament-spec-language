@@ -2064,10 +2064,10 @@ impl Run<'_, '_> {
             .iter()
             .find_map(ModelFinding::undefined_contract)
         {
-            let (bytes, _) = Self::encoding(
-                self.concrete
-                    .state_key(&self.nodes[at].state, fsl_foundation::IdentityLimits::default()),
-            )?;
+            let (bytes, _) = Self::encoding(self.concrete.state_key(
+                &self.nodes[at].state,
+                fsl_foundation::IdentityLimits::default(),
+            ))?;
             let position = u64::try_from(self.nodes[at].depth).unwrap_or(u64::MAX);
             let clause = contract.clause.clone();
             let evaluation = fsl_replay::UndefinedEvaluation::of_contract(

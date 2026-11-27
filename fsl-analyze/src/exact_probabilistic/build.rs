@@ -1379,21 +1379,14 @@ impl Builder<'_, '_, '_, '_> {
             model: swept[last].key.model.clone(),
             read: UndefinedRead::Contract(Box::new(contract)),
         };
-        let Halt::Undefined(mut path) = self.undefined(
-            Some(root),
-            None,
-            None,
-            node.initial,
-            node.key.clone(),
-            hit,
-        ) else {
+        let Halt::Undefined(mut path) =
+            self.undefined(Some(root), None, None, node.initial, node.key.clone(), hit)
+        else {
             return fault("an-undefined-path-is-undefined").into();
         };
         let mut trail = Vec::new();
         let mut cursor = last;
-        while let (Some(parent), Some(taken)) =
-            (swept[cursor].parent, swept[cursor].step.clone())
-        {
+        while let (Some(parent), Some(taken)) = (swept[cursor].parent, swept[cursor].step.clone()) {
             trail.push(PathStep {
                 action: taken.action,
                 draw: taken.draw,
@@ -1508,7 +1501,8 @@ impl Builder<'_, '_, '_, '_> {
                                         TraceStep {
                                             action: Some(action.identity.clone()),
                                             draw: Some(draw.random.clone()),
-                                            probability: draw.probability.clone(),                                        },
+                                            probability: draw.probability.clone(),
+                                        },
                                         post,
                                     ));
                                 }

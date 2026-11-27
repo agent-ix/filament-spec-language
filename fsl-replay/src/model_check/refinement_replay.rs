@@ -1408,13 +1408,15 @@ fn settle_positions(
                     mapped,
                 }
             }
-            (CounterexampleKind::UndefinedEvaluation(claimed), UndefinedLocus::Contract(clause))
-                if claimed == evaluation.as_ref()
-                    && *recorded
-                        == (RefinementFailure::UndefinedContract {
-                            position: evaluation.site.position,
-                            clause: clause.clone(),
-                        }) =>
+            (
+                CounterexampleKind::UndefinedEvaluation(claimed),
+                UndefinedLocus::Contract(clause),
+            ) if claimed == evaluation.as_ref()
+                && *recorded
+                    == (RefinementFailure::UndefinedContract {
+                        position: evaluation.site.position,
+                        clause: clause.clone(),
+                    }) =>
             {
                 RefinementTraceSettlement::Reproduced {
                     failure: recorded.clone(),
