@@ -1788,12 +1788,14 @@ fn check_scheduled(
     if !workload && !cx.refutation {
         return check_mdp(
             system,
-            &subject.graph,
             &document,
-            &subject.bound,
-            subject.reference.as_ref(),
-            &subject.constraints,
-            subject.weight.as_ref().map(|_| &subject.action_weights),
+            MdpSubject {
+                graph: &subject.graph,
+                bound: &subject.bound,
+                reference: subject.reference.as_ref(),
+                constraints: &subject.constraints,
+                action_weights: subject.weight.as_ref().map(|_| &subject.action_weights),
+            },
             cx,
         )
         .map(|mut check| {
@@ -2300,6 +2302,15 @@ fn maximal_end_components(
     }
 }
 
+/// The rebuilt graph and the claim facts `check_mdp` verifies the document against.
+struct MdpSubject<'a> {
+    graph: &'a CheckerGraph,
+    bound: &'a Bound,
+    reference: Option<&'a ObjectReference>,
+    constraints: &'a [filament_semantic_value::fairness::FairnessConstraint],
+    action_weights: Option<&'a BTreeMap<ProbabilityProductKey, Vec<Rational>>>,
+}
+
 /// FR-412-AC-26 over every scheduler with no fairness set: one entry per
 /// maximal end component of the rebuilt graph, each with its gain-bias pair
 /// and policy; the equalities under the policy and the inequalities over every
@@ -2310,14 +2321,17 @@ fn maximal_end_components(
 #[implements("FR-199-AC-6")]
 fn check_mdp(
     system: &ModelSystem<'_>,
-    graph: &CheckerGraph,
     document: &LongRunProbabilityDocument,
-    bound: &Bound,
-    reference: Option<&ObjectReference>,
-    constraints: &[filament_semantic_value::fairness::FairnessConstraint],
-    action_weights: Option<&BTreeMap<ProbabilityProductKey, Vec<Rational>>>,
+    subject: MdpSubject<'_>,
     cx: &mut Context<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let MdpSubject {
+        graph,
+        bound,
+        reference,
+        constraints,
+        action_weights,
+    } = subject;
     let minimum = document.optimization == LongRunOptimization::Minimum;
     let keys = graph.states.keys().collect::<Vec<_>>();
     let positions = keys
