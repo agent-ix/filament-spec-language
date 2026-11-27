@@ -459,6 +459,7 @@ pub use filament_semantic_value::declaration::EqualityOperator;
 pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
+pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
@@ -478,7 +479,6 @@ pub use outcome::{
     ResultLimit, ResultValue, TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
     TemporalCounterexampleReadRefusal, TraceAlphabet, WitnessOmission, OUTCOME_FORMAT,
 };
-pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,
     PlannerResult, PremiseItem, PremiseResult, ResultEntry, SettlementRequest,

@@ -1378,7 +1378,8 @@ fn read_diagnostic(value: &Value, pointer: &str) -> Result<Diagnostic, Defect> {
                 return Err(Defect::unknown(pointer));
             }
             // The type refuses a byte range whose end precedes its start.
-            let read = NotDigitisable::deserialize(written).map_err(|_| Defect::invalid(pointer))?;
+            let read =
+                NotDigitisable::deserialize(written).map_err(|_| Defect::invalid(pointer))?;
             Some(read)
         }
     };
