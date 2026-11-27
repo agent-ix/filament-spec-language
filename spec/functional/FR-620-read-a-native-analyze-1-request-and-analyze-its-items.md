@@ -73,7 +73,7 @@ multiplicities and spellings: the program or package selection, `models`,
 `items`, `limits`, `deadline_ms` (0 to 2^53 - 1 milliseconds, absent
 meaning `DeadlineSupply::Unbounded`) and `integer_division`, the program's
 integer-division law name, also admitted on each `libraries` entry
-([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md)); and per item `claim`, `kind` (an FSpec
+([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md)) and `require_certified`, a boolean selecting FR-281's `CertificationPolicy` ([FR-1052](FR-1052-settle-a-proof-that-is-not-certified-inconclusive-when-the-request-requires-certified-proofs.md)); and per item `claim`, `kind` (an FSpec
 FR-290 kind or `simulation`, FR-634), `backend`, `required`, the FSpec FR-331
 members with `temporal.item_kind`, `trace` and `simulation`. This requirement
 states how FSL reads them.

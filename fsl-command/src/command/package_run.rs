@@ -12,6 +12,8 @@
 
 use std::path::Path;
 
+use fsl_replay::CertificationPolicy;
+
 use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
 /// The FR-517 files a `{directory}` selection reads.
@@ -32,6 +34,8 @@ pub struct PreparedPackageRun {
     packages: fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
     work: Work,
+    /// FR-1052: which of a call's item proofs settle `proved`.
+    certification: CertificationPolicy,
     /// The limits its requirement items settle under.
     item_limits: fsl_analyze::analyze::AnalyzeLimits,
     /// The request's `package` selection, echoed by the result.
@@ -318,6 +322,7 @@ pub(super) fn prepare(
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Call(Box::new(spine_call), requirements),
+        certification: super::analyze::read_certification(request.require_certified.clone())?,
         item_limits: super::overrides::item_limits(overrides),
         selection: admitted.selection,
         models: admitted.models,
@@ -491,6 +496,8 @@ fn prepare_clause(
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Clause(Box::new(work)),
+        // A clause or lowering run settles no proof.
+        certification: CertificationPolicy::AdmitAny,
         item_limits: super::overrides::item_limits(overrides),
         selection: admitted.selection,
         models: admitted.models,
@@ -661,6 +668,8 @@ fn prepare_lowering(
             observation_limits: overrides.observation_limits().unwrap_or_default(),
         })),
         item_limits: super::overrides::item_limits(overrides),
+        // A clause or lowering run settles no proof.
+        certification: CertificationPolicy::AdmitAny,
         selection: admitted.selection,
         models: admitted.models,
         sources: admitted.sources,
@@ -1036,6 +1045,7 @@ fn execute_inner(
         packages,
         model_limits,
         work,
+        certification,
         item_limits,
         selection,
         models,
@@ -1271,6 +1281,7 @@ fn execute_inner(
             function: &call.function,
             requirements,
             settle,
+            certification,
             limits: item_limits,
             budget,
         })?)
@@ -1296,6 +1307,7 @@ struct ValueCall<'a> {
     function: &'a str,
     requirements: &'a super::requirements::Requirements,
     settle: &'a super::settle::Settle<'a>,
+    certification: CertificationPolicy,
     limits: fsl_analyze::analyze::AnalyzeLimits,
     budget: filament_contract_model::NativeJoinBudget,
 }
@@ -1310,6 +1322,7 @@ fn settle_value_call(
         function,
         requirements,
         settle,
+        certification,
         limits,
         budget,
     }: ValueCall<'_>,
@@ -1404,6 +1417,7 @@ fn settle_value_call(
             engines: settle.engines,
             limits,
             budget,
+            certification,
         },
         function,
         &items,

@@ -1486,6 +1486,7 @@ fn a_protocol_liveness_run_stops_at_a_one_byte_retention_allowance() {
         &Engines::fsl().expect("the engines register"),
         vec![protocol_item(RequestIndex::new(0), item).expect("a clause run")],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (records, _) = split_records(records, &unit.checked);
     let printed = format!("{records:?}");

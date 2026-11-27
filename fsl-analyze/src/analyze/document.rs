@@ -4017,6 +4017,8 @@ pub struct AnalyzeRun<'a> {
     pub engines: &'a Engines,
     /// The shared limits.
     pub limits: AnalyzeLimits,
+    /// Which proofs settle `proved`.
+    pub certification: fsl_replay::CertificationPolicy,
     /// The items as the caller stated them, in request order: the run
     /// refuses an item that states a limit the caller also set (FR-255
     /// "Caller limits and item limits"). Empty states no item members.
@@ -4152,6 +4154,7 @@ pub fn settle_run_with_smt_proofs(
         items,
         engines,
         limits,
+        certification,
         selections,
     } = run;
     if let Some((position, setting)) = limits.engines.conflict(selections).or_else(|| {
@@ -4208,6 +4211,7 @@ pub fn settle_run_with_smt_proofs(
             engines,
             limits: &limits,
             cancel,
+            certification,
         },
     )
     .map_err(|failure| match failure {

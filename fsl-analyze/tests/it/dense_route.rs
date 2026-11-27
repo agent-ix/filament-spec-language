@@ -222,6 +222,7 @@ fn analyzed(world: &World) -> fsl_analyze::analyze::AnalyzeRecord {
         &Engines::fsl().expect("the layer-A manifests register"),
         vec![zone_item(fsl_foundation::RequestIndex::new(0), item).expect("a clause run")],
         &filament_exact::Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(records.len(), 1);
     records.remove(0)
