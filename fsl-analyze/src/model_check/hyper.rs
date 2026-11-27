@@ -146,14 +146,14 @@ use super::check::{
     atom_refusal, fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS,
     EN1_STATE_OVERHEAD_BYTES,
 };
-use crate::analyze::EngineBounds;
-use filament_semantic_value::catalog::CatalogCode;
 use super::fair_walk::{tree_path, FairModel};
 use super::graph::{
-    retain, retain_reduced_admitting, GraphExploration, ProductStateId,
-    RetainConfig, RetainedEdge, RetainedGraph,
+    retain, retain_reduced_admitting, GraphExploration, ProductStateId, RetainConfig, RetainedEdge,
+    RetainedGraph,
 };
 use super::reduce;
+use crate::analyze::EngineBounds;
+use filament_semantic_value::catalog::CatalogCode;
 use fsl_route::reductions::Reductions;
 use lift::{through, Lifted};
 
@@ -366,9 +366,10 @@ pub fn check_hyper(
         witness: matches!(clause.form(), Some(HyperForm::ForallExistsSafety)),
         projected,
         cancel,
-        retained: request.retained.cloned().unwrap_or_else(|| {
-            EngineBounds::default().item_budget(request.meter, cancel)
-        }),
+        retained: request
+            .retained
+            .cloned()
+            .unwrap_or_else(|| EngineBounds::default().item_budget(request.meter, cancel)),
         retain_stop: std::cell::RefCell::new(None),
     };
     run.decide(&instances)
@@ -1452,9 +1453,20 @@ impl<'a> Run<'_, 'a> {
                 system,
                 stop: Cell::new(None),
             };
-            let exploration = retain(&watched, limits, IdentityLimits::default(), None, || {
-                self.cancel.poll() && self.cancel.cause().is_some()
-            })
+            // Each subject state is charged to the item's retained-bytes
+            // allowance before the graph stores it (FR-255-AC-43).
+            let exploration = retain_reduced_admitting(
+                &watched,
+                &SymmetryGroup::default(),
+                None,
+                RetainConfig {
+                    limits,
+                    identity: IdentityLimits::default(),
+                    max_depth: None,
+                },
+                || self.cancel.poll() && self.cancel.cause().is_some(),
+                |_: &_, key_len: usize| self.admit(key_len),
+            )
             .map_err(|error| error.model_refusal(IdentityLimits::default()))?;
             match exploration.outcome {
                 Outcome::Exhaustive(_) => {}
@@ -1470,9 +1482,10 @@ impl<'a> Run<'_, 'a> {
                 }
                 Outcome::Cancelled { .. } => return self.cancelled(totals).map(Some),
                 Outcome::Stopped { .. } => {
-                    let ending = match watched.stop.take() {
-                        Some(stop) => self.expansion_ending(None, stop)?,
-                        None => {
+                    let ending = match (self.retain_stop.borrow_mut().take(), watched.stop.take()) {
+                        (Some(ending), _) => ending,
+                        (None, Some(stop)) => self.expansion_ending(None, stop)?,
+                        (None, None) => {
                             return Err(fault("a-stopped-expansion-recorded-its-stop"));
                         }
                     };

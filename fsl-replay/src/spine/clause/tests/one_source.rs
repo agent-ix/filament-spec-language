@@ -109,7 +109,7 @@ fn a_hyper_clause_stops_at_an_s3_node_bound_of_one() {
     };
     assert_eq!(denied.setting(), fsl_foundation::Setting::S3Nodes);
     assert_eq!(denied.configured_bound(), 1);
-    assert!(denied.actual() > 1);
+    assert_eq!(denied.actual(), 2, "the count the stop reports");
     let (_, unbounded) = produce(INFINITE, &declarations);
     unbounded.expect("the default bound admits the same clause");
 }

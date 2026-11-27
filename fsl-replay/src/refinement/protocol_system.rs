@@ -153,7 +153,8 @@ impl<'a> AbstractProtocolSystem<'a> {
     }
 
     /// The total transition allowance of the replay and what it has used.
-    pub(super) fn replay_transitions(&self) -> (u64, u64) {
+    #[must_use]
+    pub fn replay_transitions(&self) -> (u64, u64) {
         (
             self.replay_transitions.max.get(),
             self.replay_transitions.consumed.get(),

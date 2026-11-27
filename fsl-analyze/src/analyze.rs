@@ -3878,6 +3878,31 @@ mod tests {
 
     use super::*;
 
+    /// FR-255-AC-25: a non-timed item that states an engine limit in its own
+    /// member, with the caller's bound for the same setting, is a conflict at
+    /// the item's request position; the item silent, or the caller silent, is
+    /// none.
+    #[trace("FR-255-AC-25")]
+    #[test]
+    fn an_item_limit_and_the_callers_bound_conflict_at_the_items_position() {
+        let item = |value: serde_json::Value| -> document::ItemSelection {
+            serde_json::from_value(value).expect("a well-formed item")
+        };
+        let silent = item(serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate"}}));
+        let stating = item(
+            serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}),
+        );
+        let mut bounds = EngineBounds::default();
+        assert!(bounds.set(Setting::SimulationMaxSteps, 2));
+        let items = [silent, stating];
+        assert_eq!(
+            bounds.conflict(&items),
+            Some((1, Setting::SimulationMaxSteps))
+        );
+        assert_eq!(bounds.conflict(&items[..1]), None);
+        assert_eq!(EngineBounds::default().conflict(&items), None);
+    }
+
     fn engine(id: &str, kind: Capability) -> Engine {
         Engine::new(
             descriptor_from_manifest(

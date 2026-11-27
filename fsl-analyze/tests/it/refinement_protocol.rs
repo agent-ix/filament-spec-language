@@ -1600,7 +1600,7 @@ fn assert_refuted_and_replayed(
     protocol_name: &str,
     expected_position: u64,
 ) {
-    let settled = refuted_and_replayed_under(
+    let (settled, _) = refuted_and_replayed_under(
         source,
         variant,
         refinement_name,
@@ -1612,7 +1612,8 @@ fn assert_refuted_and_replayed(
 }
 
 /// The settlement of replaying the protocol refinement's counterexample under
-/// `limits`, after checking that the run refutes it at `expected_position`.
+/// `limits`, after checking that the run refutes it at `expected_position`,
+/// with the protocol transitions the replay expanded.
 fn refuted_and_replayed_under(
     source: String,
     variant: Variant,
@@ -1620,7 +1621,7 @@ fn refuted_and_replayed_under(
     protocol_name: &str,
     expected_position: u64,
     limits: &fsl_replay::ModelCheckLimits,
-) -> RefinementTraceSettlement {
+) -> (RefinementTraceSettlement, u64) {
     let world = World::with_internals(
         variant,
         &source,
@@ -1659,8 +1660,14 @@ fn refuted_and_replayed_under(
         &[],
     )
     .expect("replay opens the same abstract protocol system");
-    replay_refinement_trace(world.refinement(), &systems, &counterexample, limits)
-        .expect("counterexample replay runs")
+    let settled = replay_refinement_trace(world.refinement(), &systems, &counterexample, limits)
+        .expect("counterexample replay runs");
+    let (_, expanded) = systems
+        .abstract_protocol
+        .as_ref()
+        .expect("a protocol subject")
+        .replay_transitions();
+    (settled, expanded)
 }
 
 /// FR-255-AC-30: a replay bounded to two protocol transitions stops at the
@@ -1684,7 +1691,8 @@ fn a_replay_with_a_two_transition_allowance_stops_a_protocol_refinement_step() {
             &limits,
         )
     };
-    let RefinementTraceSettlement::Stopped(reached) = at(2) else {
+    let (stopped, expanded) = at(2);
+    let RefinementTraceSettlement::Stopped(reached) = stopped else {
         panic!("two transitions stop the replay");
     };
     assert_eq!(
@@ -1694,10 +1702,15 @@ fn a_replay_with_a_two_transition_allowance_stops_a_protocol_refinement_step() {
             value: 2
         }
     );
+    assert_eq!(reached.limit.setting(), "model_check.max_transitions");
+    // The closures expanded no third transition.
+    assert!(expanded <= 2, "{expanded} transitions expanded");
+    let (reproduced, needed) = at(usize::MAX);
     assert!(matches!(
-        at(usize::MAX),
+        reproduced,
         RefinementTraceSettlement::Reproduced { .. }
     ));
+    assert!(needed >= 3, "the check needs at least three: {needed}");
 }
 
 /// FR-148-AC-3 (TC-553): a lost update fails at the commit that leaves the

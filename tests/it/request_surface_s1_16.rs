@@ -4870,6 +4870,10 @@ fn a_clause_run_over_a_model_stops_at_the_callers_emit_limit() {
     let text = value.to_string();
     assert!(text.contains("stage_limit_exceeded"), "{value}");
     assert!(text.contains("emit.output_bytes"), "{value}");
+    let fields = &value["disposition"]["refusal"]["fields"];
+    assert_eq!(fields["bound"], "1", "{value}");
+    assert_eq!(fields["actual"], "2", "{value}");
+    assert_eq!(fields["setting"], "emit.output_bytes", "{value}");
 }
 
 /// FR-255-AC-32: a `tl_lowering` cross-evaluation charges the caller's
@@ -4961,8 +4965,25 @@ fn a_package_call_reads_the_package_under_the_callers_reader_limit() {
         value["details"]["path"], "/semantic_graph/nodes/1",
         "{value}"
     );
-    // QSL-3543: the stop names the limit and the setting that raises it.
-    assert!(value.to_string().contains("i2.nodes"), "{value}");
+    // QSL-3543: the stop names the limit, its bound, the count reached and
+    // the setting that raises it.
+    let message = value["message"].as_str().unwrap_or_default();
+    assert!(message.contains("node limit 1 reached (3)"), "{value}");
+    assert!(message.contains("--limit i2.nodes="), "{value}");
+    // A bound of two admits nodes 0 and 1 and stops at node 2, of three.
+    let two_nodes = std::collections::BTreeMap::from([(Setting::I2Nodes, 2)]);
+    let (code, value) = write_request_overridden(
+        directory.path(),
+        &request,
+        &fsl_command::command::RequestOverrides {
+            limits: Some(&two_nodes),
+            ..Default::default()
+        },
+    );
+    assert_ne!(code, 0, "{value}");
+    assert_eq!(value["details"]["path"], "/semantic_graph/nodes/2", "{value}");
+    let message = value["message"].as_str().unwrap_or_default();
+    assert!(message.contains("node limit 2 reached (3)"), "{value}");
 }
 
 /// FR-255-AC-32: a call selection of an `items` run compiles under the
