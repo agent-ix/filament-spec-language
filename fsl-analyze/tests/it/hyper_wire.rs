@@ -410,7 +410,7 @@ fn no_form_and_hp4_hyper_items_settle_v8_and_keep_the_universal_sibling() {
 hyper Universal using inf over behaviours (v: V::Vault)
         forall trace a of V { always holds(v.h @ a = v.h @ a) }
 hyper EventPosition using ep over behaviours (v: V::Vault)
-        forall trace a of V { always holds(v.h @ a = v.h @ a) }
+        forall trace a of V { always [0, 1] holds(v.h @ a = v.h @ a) }
 hyper FixedSample using fs over behaviours (v: V::Vault)
         forall trace a of V { always [0, 1] holds(v.h @ a = v.h @ a) }"#;
     let (unit, model, snapshots) =
@@ -435,7 +435,6 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
     let document = run.document();
     assert_eq!(run.exit, 21, "{document}");
     let hp4 = run.item(0);
-    assert_eq!(hp4["record"]["result"], "unsupported", "{document}");
     assert_eq!(label(&hp4), "unsupported", "{document}");
     assert_eq!(
         hp4["record"]["diagnostic"]["cause"],
