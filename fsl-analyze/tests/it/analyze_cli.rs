@@ -342,6 +342,87 @@ fn simulation_enumerates_the_counter_subject() {
     assert!(item.get("record").is_none());
 }
 
+/// FR-634-AC-8, FR-634-AC-9: a candidate bound of 1 stops the initial
+/// state's expansion, so a sample and an enumeration each report the one
+/// state they hold, `incomplete` naming the setting, with the findings of
+/// that state kept.
+#[trace("FR-634-AC-8", "FR-634-AC-9")]
+#[test]
+fn a_simulation_stopped_by_the_candidate_bound_is_incomplete() {
+    const POSITIVE: &str =
+        "invariant Positive using v on M::Counter at current { self.value >= 1 }\n";
+    for mode in ["sample", "enumerate"] {
+        let ws = Workspace::new(&format!("cli-simulation-candidates-{mode}"));
+        let request = counter_request(
+            &ws,
+            POSITIVE,
+            json!([{"kind": "simulation", "simulation": {"mode": mode}}]),
+        );
+        let run = crate::analyze_cli_support::analyze_under(
+            &request,
+            &[(fsl_foundation::Setting::ExpansionMaxCandidates, 1)],
+        );
+        let item = run.item(0);
+        assert_eq!(run.exit, 22, "{item}");
+        assert_eq!(item["category"], "incomplete", "{item}");
+        assert_eq!(
+            item["cause"],
+            json!({"kind": "limit-reached", "limit": "max_candidates",
+                "setting": "expansion.max_candidates", "value": 1}),
+            "{item}"
+        );
+        assert_eq!(item["coverage"]["states"], "1", "{item}");
+        assert_eq!(item["coverage"]["transitions"], "0", "{item}");
+        assert_eq!(item["findings"].as_array().map(Vec::len), Some(1), "{item}");
+        let frontier = item["frontier"].as_array().map(Vec::len);
+        assert_eq!(frontier, Some(usize::from(mode == "enumerate")), "{item}");
+    }
+}
+
+/// FR-634-AC-10: an expansion that runs out of an evaluation-meter counter
+/// is `incomplete` naming that counter and its `accounting.*` setting, never
+/// the candidate bound.
+#[trace("FR-634-AC-10")]
+#[test]
+fn a_simulation_stopped_by_an_accounting_counter_names_it() {
+    for mode in ["sample", "enumerate"] {
+        let ws = Workspace::new(&format!("cli-simulation-meter-stop-{mode}"));
+        let mut request = crate::analyze_cli_support::request_members(Some(
+            json!([{"kind": "simulation", "simulation": {"mode": mode}}]),
+        ));
+        request["limits"] = json!({"accounting": {"integer_bits": 1}});
+        let request = crate::analyze_cli_support::counter_request_with(&ws, "", request);
+        let run = analyze(&request);
+        let item = run.item(0);
+        assert_eq!(item["category"], "incomplete", "{item}");
+        assert_eq!(item["cause"]["limit"], "integer_bits", "{item}");
+        assert_eq!(
+            item["cause"]["setting"], "accounting.integer_bits",
+            "{item}"
+        );
+        assert_eq!(item["cause"]["value"], 1, "{item}");
+    }
+}
+
+/// FR-255-AC-25: `temporal.limits.max_states` on an item that reads no timed
+/// model bounds its own engine, so the caller's `zone_check.*` setting is not
+/// the same bound given twice.
+#[trace("FR-255-AC-25")]
+#[test]
+fn an_untimed_item_limit_does_not_state_a_zone_setting() {
+    let ws = Workspace::new("cli-untimed-zone-conflict");
+    let request = counter_request(
+        &ws,
+        &bounded(),
+        json!([{"claim": "Bounded", "temporal": {"limits": {"max_states": 100}}}]),
+    );
+    let run = crate::analyze_cli_support::analyze_under(
+        &request,
+        &[(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5)],
+    );
+    assert_eq!(run.exit, 0, "{}", run.document());
+}
+
 /// FR-634 "Inputs" and "Refusals": every simulation bound is a positive
 /// count, so `max_steps` 0 refuses the whole request `invalid-request`;
 /// `seed` on an `enumerate` item refuses it naming the member; and a
@@ -1093,7 +1174,8 @@ fn caller_s1_diagnostics_moves_the_syntax_error_cut() {
     let broken: String = (0..150)
         .map(|n| format!("record R{n} {{ z: ; }}\n"))
         .collect();
-    let path = crate::analyze_cli_support::counter_request(&ws, &broken, json!([{"claim": "Bounded"}]));
+    let path =
+        crate::analyze_cli_support::counter_request(&ws, &broken, json!([{"claim": "Bounded"}]));
     let default = crate::analyze_cli_support::analyze(&path);
     let text = String::from_utf8_lossy(&default.stdout).into_owned();
     assert!(text.contains("cut after 100 syntax errors"), "{text}");
@@ -1108,8 +1190,16 @@ fn caller_s1_diagnostics_moves_the_syntax_error_cut() {
     let text = String::from_utf8_lossy(&widened.stdout).into_owned();
     assert!(!text.contains("diagnostic list was cut"), "{text}");
     assert_eq!(widened.exit, default.exit);
-    for operand in ["s1.diagnostics=-1", "s1.diagnostics=many", "s1.diagnostics="] {
+    for operand in [
+        "s1.diagnostics=-1",
+        "s1.diagnostics=many",
+        "s1.diagnostics=",
+    ] {
         let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
-        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
+        assert_eq!(
+            refusal.cause,
+            fsl_foundation::UsageCause::NotAnInteger,
+            "{operand}"
+        );
     }
 }

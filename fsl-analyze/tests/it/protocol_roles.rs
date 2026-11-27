@@ -1939,6 +1939,7 @@ fn a_protocol_derived_items_max_live_instances_reaches_the_run_and_the_check() {
                 max_messages: None,
                 max_live_instances: None,
             },
+            engines: Default::default(),
             replay: Box::new(|_| panic!("the run reports no counterexample")),
         };
         analyze_items(

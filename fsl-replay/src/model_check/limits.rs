@@ -116,6 +116,11 @@ impl Default for ExactProbLimits {
 }
 
 impl ExactProbLimits {
+    /// Create a meter under the caller's ordinary accounting ceilings.
+    pub fn accounting_meter(&self, limits: filament_exact::ScalarLimits) -> filament_exact::Meter {
+        filament_exact::Meter::new(limits)
+    }
+
     /// The configured value for a limit owned by this EN-5 request. Limits
     /// owned by the subject or by operation context have no value here.
     pub fn value_of(&self, limit: ExactProbLimit) -> Option<u64> {
@@ -273,6 +278,9 @@ pub enum ModelCheckLimit {
     /// FSpec FR-418's checker work limit `max_check_work`; setting
     /// `zone_check.max_check_work`.
     ZoneMaxCheckWork,
+    /// The retained-byte allowance of one analysis item; setting
+    /// `analysis.retained_bytes`.
+    AnalysisRetainedBytes,
     /// FSpec FR-415's `max_task_product_work`: product nodes a bounded
     /// task-product search expands; setting `temporal.limits.max_task_product_work`.
     TaskProductWork,
@@ -352,6 +360,7 @@ impl ModelCheckLimit {
             Self::ZoneMaxAutomatonStates => "max_automaton_states",
             Self::ZoneMaxZoneBytes => "max_zone_bytes",
             Self::ZoneMaxCheckWork => "max_check_work",
+            Self::AnalysisRetainedBytes => "retained_bytes",
             Self::TaskProductWork => "max_task_product_work",
             Self::MaxClocks => "max_clocks",
             Self::IdentityInputBytes => "input_bytes",
@@ -361,6 +370,22 @@ impl ModelCheckLimit {
             Self::CertificateMaxRank => "max_rank",
             Self::ValueCheckMaxCases | Self::ContractCheckMaxCases => "max_cases",
             Self::ScheduleMaxDemandPoints => "max_demand_points",
+        }
+    }
+
+    /// The limit a run reports for a reached EN-6 or retained-state
+    /// `setting`, or `None` for a setting of another engine or stage.
+    #[must_use]
+    pub const fn from_setting(setting: fsl_foundation::Setting) -> Option<Self> {
+        use fsl_foundation::Setting as S;
+        match setting {
+            S::ZoneCheckMaxSymbolicStates => Some(Self::ZoneMaxSymbolicStates),
+            S::ZoneCheckMaxSymbolicTransitions => Some(Self::ZoneMaxSymbolicTransitions),
+            S::ZoneCheckMaxAutomatonStates => Some(Self::ZoneMaxAutomatonStates),
+            S::ZoneCheckMaxZoneBytes => Some(Self::ZoneMaxZoneBytes),
+            S::ZoneCheckMaxCheckWork => Some(Self::ZoneMaxCheckWork),
+            S::AnalysisRetainedBytes => Some(Self::AnalysisRetainedBytes),
+            _ => None,
         }
     }
 
@@ -405,6 +430,7 @@ impl ModelCheckLimit {
             Self::ZoneMaxAutomatonStates => "zone_check.max_automaton_states",
             Self::ZoneMaxZoneBytes => "zone_check.max_zone_bytes",
             Self::ZoneMaxCheckWork => "zone_check.max_check_work",
+            Self::AnalysisRetainedBytes => "analysis.retained_bytes",
             Self::TaskProductWork => "temporal.limits.max_task_product_work",
             Self::MaxClocks => "model_check.max_clocks",
             Self::IdentityInputBytes => "identity.input_bytes",
@@ -661,6 +687,7 @@ mod tests {
             }
             ModelCheckLimit::ZoneMaxZoneBytes => ("max_zone_bytes", "zone_check.max_zone_bytes"),
             ModelCheckLimit::ZoneMaxCheckWork => ("max_check_work", "zone_check.max_check_work"),
+            ModelCheckLimit::AnalysisRetainedBytes => ("retained_bytes", "analysis.retained_bytes"),
             ModelCheckLimit::TaskProductWork => (
                 "max_task_product_work",
                 "temporal.limits.max_task_product_work",
@@ -721,6 +748,7 @@ mod tests {
             ModelCheckLimit::ZoneMaxAutomatonStates,
             ModelCheckLimit::ZoneMaxZoneBytes,
             ModelCheckLimit::ZoneMaxCheckWork,
+            ModelCheckLimit::AnalysisRetainedBytes,
             ModelCheckLimit::TaskProductWork,
             ModelCheckLimit::MaxClocks,
             ModelCheckLimit::IdentityInputBytes,

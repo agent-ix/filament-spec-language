@@ -98,6 +98,18 @@ pub enum ClosedStop {
     },
     /// The run was cancelled.
     Cancelled,
+    /// A state's expansion evaluated a contract conjunction with no value
+    /// (ADR-018 UE-6), never read as a disabled step: the execution that
+    /// reaches the state, which ends there, and the conjunction.
+    Undefined {
+        /// The path from an initial state to the state with no value.
+        prefix: ClosedExecution,
+        /// The conjunction.
+        contract: crate::simulation::model::UndefinedContract,
+    },
+    /// A state's expansion refused a contract conjunction, so what the state
+    /// enables is not exactly known.
+    Refused,
 }
 
 /// The body's horizon (ADR-014 TR-4): the greatest sum of interval upper
@@ -187,10 +199,25 @@ pub fn closed_executions(
             let successors = if execution.visible_steps() >= depth {
                 Vec::new()
             } else {
-                system
-                    .successors(last)
-                    .map_err(ClosedStop::Expansion)?
-                    .successors
+                let expansion = system.successors(last).map_err(ClosedStop::Expansion)?;
+                if let Some(contract) = expansion
+                    .findings
+                    .iter()
+                    .find_map(crate::simulation::model::ModelFinding::undefined_contract)
+                {
+                    return Err(ClosedStop::Undefined {
+                        prefix: execution,
+                        contract,
+                    });
+                }
+                if expansion
+                    .findings
+                    .iter()
+                    .any(crate::simulation::model::ModelFinding::is_refused_contract)
+                {
+                    return Err(ClosedStop::Refused);
+                }
+                expansion.successors
             };
             if successors.is_empty() {
                 complete.push(execution);

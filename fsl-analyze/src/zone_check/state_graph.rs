@@ -5,9 +5,11 @@ use std::collections::VecDeque;
 
 use filament_exact::{Cancel, ObjectReference};
 use fsl_eval::simulation::model::{ModelSystem, PredicateReading};
+use fsl_eval::simulation::ConstraintValue;
 use fsl_semantics::check::{
     CheckedStateGraphClaim, CheckedStatePredicate, PredicateRole, StateGraphForm,
 };
+use ix_trace_rs::implements;
 
 use super::search::{TimedStateGraph, ZoneCheckRefusal};
 
@@ -34,6 +36,17 @@ pub enum TimedStateGraphDecision {
         /// possible or always-possible refutation.
         paths: Option<(Vec<usize>, Vec<usize>)>,
     },
+    /// The earliest reachable undefined timed-subject evaluation.
+    Undefined {
+        /// The shortest path from an initial node to the deciding node.
+        stem: Vec<usize>,
+        /// The deciding node.
+        node: usize,
+        /// The timed-subject reading that was undefined.
+        reading: fsl_replay::GraphUndefined,
+        /// The `E(P)` nodes, when the form is `always possible`.
+        ef_nodes: Vec<usize>,
+    },
 }
 
 /// Decide `possible` and `always possible` over the reachable zone graph.
@@ -42,6 +55,20 @@ pub enum TimedStateGraphDecision {
 ///
 /// [`ZoneCheckRefusal`] when evaluating a predicate does not produce a
 /// Boolean reading.
+#[implements(
+    "FR-852-AC-8",
+    "FR-852-AC-9",
+    "FR-852-AC-10",
+    "FR-852-AC-11",
+    "FR-852-AC-16",
+    "FR-852-AC-17",
+    "FR-852-AC-18",
+    "FR-852-AC-19",
+    "FR-852-AC-24",
+    "FR-852-AC-25",
+    "FR-852-AC-26",
+    "FR-852-AC-27"
+)]
 pub fn decide_timed_state_graph(
     system: &ModelSystem<'_>,
     graph: &TimedStateGraph,
@@ -57,18 +84,22 @@ pub fn decide_timed_state_graph(
             return decide_unique_path(system, graph, claim, over, cancel);
         }
     };
+    let mut undefined = Vec::new();
     let p = graph
         .nodes
         .iter()
-        .map(|node| {
+        .enumerate()
+        .map(|(index, node)| {
             predicate(
                 system,
                 target,
                 claim,
                 PredicateRole::Target,
+                index,
                 &node.state,
                 over,
                 cancel,
+                &mut undefined,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -78,53 +109,98 @@ pub fn decide_timed_state_graph(
             let mut witness_paths = Vec::with_capacity(graph.initials.len());
             for &initial in &graph.initials {
                 let Some(path) = path_to(graph, initial, &p) else {
-                    return Ok(TimedStateGraphDecision::Refuted {
+                    return Ok(prefer_undefined(system, graph, TimedStateGraphDecision::Refuted {
                         stem: Vec::new(),
                         node: initial,
                         ef_nodes: Vec::new(),
                         paths: None,
-                    });
+                    }, undefined));
                 };
                 witness_paths.push(path);
             }
-            Ok(TimedStateGraphDecision::Holds {
+            Ok(prefer_undefined(system, graph, TimedStateGraphDecision::Holds {
                 witness_paths,
                 ef_nodes: Vec::new(),
-            })
+            }, undefined))
         }
         StateGraphForm::AlwaysPossible { from, .. } => {
+            let mut source_undefined = undefined;
             let q = graph
                 .nodes
                 .iter()
-                .map(|node| {
+                .enumerate()
+                .map(|(index, node)| {
                     predicate(
                         system,
                         from,
                         claim,
                         PredicateRole::From,
+                        index,
                         &node.state,
                         over,
                         cancel,
+                        &mut source_undefined,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             for (node, (is_from, can_reach)) in q.iter().zip(&ef_nodes).enumerate() {
                 if *is_from && !*can_reach {
-                    return Ok(TimedStateGraphDecision::Refuted {
+                    return Ok(prefer_undefined(system, graph, TimedStateGraphDecision::Refuted {
                         stem: path_from_initial(graph, node),
                         node,
                         ef_nodes: indices(&ef_nodes),
                         paths: None,
-                    });
+                    }, source_undefined));
                 }
             }
-            Ok(TimedStateGraphDecision::Holds {
+            Ok(prefer_undefined(system, graph, TimedStateGraphDecision::Holds {
                 witness_paths: Vec::new(),
                 ef_nodes: indices(&ef_nodes),
-            })
+            }, source_undefined))
         }
         StateGraphForm::UniquePath { .. } => unreachable!("handled above"),
     }
+}
+
+/// Decide a timed graph form while applying the request's selected FR-158
+/// state constraint to every reachable node for undefined-evaluation
+/// precedence.
+#[implements("FR-852-AC-11", "FR-852-AC-19", "FR-852-AC-27")]
+pub fn decide_timed_state_graph_with_constraint(
+    system: &ModelSystem<'_>,
+    graph: &TimedStateGraph,
+    claim: &CheckedStateGraphClaim,
+    over: Option<&ObjectReference>,
+    constraint: Option<&str>,
+    cancel: &Cancel,
+) -> Result<TimedStateGraphDecision, ZoneCheckRefusal> {
+    let decision = decide_timed_state_graph(system, graph, claim, over, cancel)?;
+    let Some(constraint) = constraint else {
+        return Ok(decision);
+    };
+    let mut undefined = Vec::new();
+    for (node, graph_node) in graph.nodes.iter().enumerate() {
+        let ConstraintValue::Undefined { cause, .. } = system
+            .constraint_value(&graph_node.state, constraint)
+            .map_err(|_| ZoneCheckRefusal::Fault("state-graph-constraint"))?
+        else {
+            continue;
+        };
+        let (_, state_key) = system
+            .state_key(&graph_node.state, fsl_foundation::IdentityLimits::default())
+            .map_err(|_| ZoneCheckRefusal::Fault("state-graph-key"))?;
+        undefined.push((
+            node,
+            fsl_replay::GraphUndefined {
+                predicate: None,
+                transition: None,
+                state_key,
+                locus: system.state_clause_locus(constraint),
+                cause,
+            },
+        ));
+    }
+    Ok(prefer_undefined(system, graph, decision, undefined))
 }
 
 fn decide_unique_path(
@@ -137,33 +213,40 @@ fn decide_unique_path(
     let StateGraphForm::UniquePath { from, to } = claim.form() else {
         return Err(ZoneCheckRefusal::Fault("state-graph-form"));
     };
+    let mut undefined = Vec::new();
     let x = graph
         .nodes
         .iter()
-        .map(|node| {
+        .enumerate()
+        .map(|(index, node)| {
             predicate(
                 system,
                 from,
                 claim,
                 PredicateRole::From,
+                index,
                 &node.state,
                 over,
                 cancel,
+                &mut undefined,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let y = graph
         .nodes
         .iter()
-        .map(|node| {
+        .enumerate()
+        .map(|(index, node)| {
             predicate(
                 system,
                 to,
                 claim,
                 PredicateRole::Target,
+                index,
                 &node.state,
                 over,
                 cancel,
+                &mut undefined,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -180,18 +263,61 @@ fn decide_unique_path(
                 )),
                 _ => None,
             };
-            return Ok(TimedStateGraphDecision::Refuted {
+            return Ok(prefer_undefined(system, graph, TimedStateGraphDecision::Refuted {
                 stem: path_from_initial(graph, node),
                 node,
                 ef_nodes: Vec::new(),
                 paths,
-            });
+            }, undefined));
         }
     }
-    Ok(TimedStateGraphDecision::Holds {
+    Ok(prefer_undefined(system, graph, TimedStateGraphDecision::Holds {
         witness_paths: Vec::new(),
         ef_nodes: Vec::new(),
-    })
+    }, undefined))
+}
+
+#[implements("FR-852-AC-9", "FR-852-AC-13", "FR-852-AC-17", "FR-852-AC-25")]
+fn prefer_undefined(
+    system: &ModelSystem<'_>,
+    graph: &TimedStateGraph,
+    decision: TimedStateGraphDecision,
+    mut candidates: Vec<(usize, fsl_replay::GraphUndefined)>,
+) -> TimedStateGraphDecision {
+    for entry in &graph.undefined {
+        let Some(cause) = entry.reading.cause.clone() else {
+            continue;
+        };
+        let Some(state) = graph.nodes.get(entry.node).map(|node| &node.state) else {
+            continue;
+        };
+        let Ok((_, state_key)) = system.state_key(state, fsl_foundation::IdentityLimits::default()) else {
+            continue;
+        };
+        candidates.push((entry.node, fsl_replay::GraphUndefined {
+            predicate: None,
+            transition: entry.reading.transition.clone(),
+            state_key,
+            locus: entry.reading.location.clone(),
+            cause,
+        }));
+    }
+    let Some((node, reading)) = candidates.into_iter().min_by_key(|(node, _)| *node) else {
+        return decision;
+    };
+    if matches!(&decision, TimedStateGraphDecision::Refuted { node: refuted, .. } if *refuted < node) {
+        return decision;
+    }
+    TimedStateGraphDecision::Undefined {
+        stem: path_from_initial(graph, node),
+        node,
+        reading,
+        ef_nodes: match decision {
+            TimedStateGraphDecision::Holds { ef_nodes, .. }
+            | TimedStateGraphDecision::Refuted { ef_nodes, .. } => ef_nodes,
+            TimedStateGraphDecision::Undefined { ef_nodes, .. } => ef_nodes,
+        },
+    }
 }
 
 #[derive(Clone)]
@@ -345,9 +471,11 @@ fn predicate(
     predicate: &CheckedStatePredicate,
     claim: &CheckedStateGraphClaim,
     role: PredicateRole,
+    index: usize,
     state: &fsl_eval::simulation::model::ModelSimState,
     over: Option<&ObjectReference>,
     cancel: &Cancel,
+    undefined: &mut Vec<(usize, fsl_replay::GraphUndefined)>,
 ) -> Result<bool, ZoneCheckRefusal> {
     if predicate.is_constant_true() {
         return Ok(true);
@@ -361,8 +489,18 @@ fn predicate(
     match readings.as_slice() {
         [PredicateReading::True] => Ok(true),
         [PredicateReading::False] => Ok(false),
-        [PredicateReading::Undefined { .. }] => {
-            Err(ZoneCheckRefusal::Fault("state-graph-undefined-predicate"))
+        [PredicateReading::Undefined { cause, location }] => {
+            let (_, state_key) = system
+                .state_key(state, fsl_foundation::IdentityLimits::default())
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-key"))?;
+            undefined.push((index, fsl_replay::GraphUndefined {
+                predicate: Some(role),
+                transition: None,
+                state_key,
+                locus: location.clone(),
+                cause: cause.clone(),
+            }));
+            Ok(false)
         }
         [PredicateReading::Refused(_)] => Err(ZoneCheckRefusal::Fault("state-graph-predicate")),
         _ => Err(ZoneCheckRefusal::Fault("state-graph-predicate-count")),

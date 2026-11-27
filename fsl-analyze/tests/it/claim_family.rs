@@ -16,8 +16,8 @@ use filament_exact::{Cancel, NodeKey, Origin, Role};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
     analyze, analyze_items, AnalyzeItem, AnalyzeLimits, AnalyzeRecord, AnalyzeRequest, BackendTool,
-    ClaimItem, Diagnostic, DispositionKind, Engine, Engines, ItemForm, ItemOptions, NegotiatedItem,
-    Payload, Settlement, SubjectBinding, TemporalItem,
+    ClaimItem, DeadlineSupply, Diagnostic, DispositionKind, Engine, Engines, ItemForm, ItemOptions,
+    NegotiatedItem, Payload, Settlement, SubjectBinding, TemporalItem,
 };
 use fsl_analyze::claim_family::claim_family;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -773,7 +773,7 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
         package,
         &request,
         &engines,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the package binding admits")

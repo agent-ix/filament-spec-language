@@ -122,6 +122,7 @@ pub(super) fn invariant_item<'a>(
                 request,
                 stutter_closure: false,
                 certificate,
+                engines: limits.engines,
                 replay,
             },
         )
@@ -243,6 +244,7 @@ impl<'a> PackageInvariantSubject<'a> {
                 request,
                 stutter_closure: false,
                 certificate,
+                engines: self.limits.engines,
                 replay: Box::new(move |payload: &TemporalCounterexample| self.replay(payload)),
             },
         )

@@ -45,6 +45,14 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-297
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-312
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-810
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-1015
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-254
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-315
@@ -280,7 +288,7 @@ its row (FR-315 "Size limits").
 | `model_check.max_live_instances` | `max_live_instances` | EN-1 protocol subjects | `ModelCheckRequest` max_live_instances | 3 instances | FR-209 |
 | `model_check.max_store_buffer` | `max_store_buffer` | EN-1 weak memory | `ModelCheckRequest` max_store_buffer | 4 entries | FR-225 |
 | `model_check.max_messages` | `max_messages` | EN-1 weak memory and protocol channels: the live messages per location after garbage collection under `ra`, and each channel's occupancy, counted per channel | `ModelCheckRequest` max_messages | 4 messages | FR-225 |
-| `expansion.max_candidates` | `max_candidates` | model-subject expansion; independent local per-expansion ceiling | `ExpansionLimits.max_candidates`, including `AnalyzeLimits.expansion.max_candidates` | `AnalyzeLimits::unbounded` publishes 200000 candidate units; a caller may set the value through the caller-limit interface; native analyze probability items retain their 1000000 default (FR-741, FR-641) | FR-120, FR-281 |
+| `expansion.max_candidates` | `max_candidates` | model-subject expansion; independent local per-expansion ceiling | `ExpansionLimits.max_candidates`, including `AnalyzeLimits.expansion.max_candidates` | `AnalyzeLimits::published` publishes 200000 candidate units; a caller may set the value through the caller-limit interface; native analyze probability items retain their 1000000 default (FR-741, FR-641) | FR-120, FR-281 |
 | `simulation.max_steps` | `max_steps` | simulation and model-based test traces | `SimulationLimits` max_steps; a `simulation` item's `max_steps` | 16777216 steps | FR-634, FR-752 |
 | `exact_prob.max_states` | `max_states` | EN-5 product | `ExactProbLimits.model.limits` max_states | 10000000 states | FR-203 |
 | `exact_prob.max_transitions` | `max_transitions` | EN-5 product | `ExactProbLimits.model.limits` max_transitions | 100000000 transitions | FR-203 |
@@ -299,6 +307,8 @@ its row (FR-315 "Size limits").
 | `zone_check.max_symbolic_transitions` | `max_symbolic_transitions` | EN-6 zone search | `ZoneCheckLimits` max_symbolic_transitions | 16777216 edges | FR-239 |
 | `zone_check.max_automaton_states` | `max_automaton_states` | EN-6 zone search | `ZoneCheckLimits` max_automaton_states | 1048576 states | FR-239 |
 | `zone_check.max_zone_bytes` | `max_zone_bytes` | EN-6 zone search | `ZoneCheckLimits` max_zone_bytes | 1073741824 bytes | FR-239 |
+| `zone_check.max_check_work` | `max_check_work` | EN-6 task-product search pass and certificate checker | `CertificateCheckLimits` max_check_work | 100000000 work units | FR-239 |
+| `analysis.retained_bytes` | `retained_bytes` | analysis item retained exploration state | the item's retained-byte allowance, carried in `AnalyzeLimits.engines` | 4294967296 bytes | FR-255 |
 | `certificate_check.max_certificate_edges` | `max_certificate_edges` | certificate checkers | `CertificateCheckLimits` max_certificate_edges | 16777216 edges | FR-245 |
 | `certificate_check.max_certificate_bytes` | `max_certificate_bytes` | certificate checkers | `CertificateCheckLimits` max_certificate_bytes; EN-5 `ExactProbLimits.document.bytes` | 1073741824 bytes | FR-245, FR-201 |
 | `certificate_check.max_working_bytes` | `max_working_bytes` | probability document writer/reader, the EN-5 dense linear solver (`dense_system`, FR-203-AC-28) | `ExactProbLimits.document.storage_bytes`; source checker document storage ceiling | 1073741824 working bytes | FR-201, FR-203, FR-282 |
@@ -361,8 +371,8 @@ observation, identity, I2-read and accounting settings:
 `replay.input_bytes`. It SHALL also accept the limits consumed by analysis
 items: `emit.output_bytes`, `expansion.max_candidates`, `simulation.max_steps`,
 all ten `model_check.*` settings, all nine `exact_prob.*` settings, all four
-`statistical.*` settings, all four `zone_check.*` settings,
-`schedule.max_demand_points`, `hybrid.max_solver_steps`,
+`statistical.*` settings, all five `zone_check.*` settings,
+`analysis.retained_bytes`, `schedule.max_demand_points`, `hybrid.max_solver_steps`,
 `hybrid.max_solver_time`, `smt_encoding.max_constants`,
 `smt_encoding.max_applications`, `smt_encoding.max_monitor_atoms`,
 `smt_encoding.max_monitor_states`, `smt_encoding.max_candidates`,
@@ -404,7 +414,8 @@ effective value for that setting. Without a target, an explicit
 work. The preparation settings are accepted but unused without a target; with
 a target they bound plan preparation. If `items` requests provider-routed analysis,
 monitor also accepts all ten `model_check.*`, all nine `exact_prob.*`, all
-four `statistical.*`, all four `zone_check.*`, `schedule.max_demand_points`,
+four `statistical.*`, all five `zone_check.*`, `analysis.retained_bytes`,
+`schedule.max_demand_points`,
 `hybrid.max_solver_steps`, `hybrid.max_solver_time`, all six
 `smt_encoding.*`,
 `expansion.max_candidates`, `simulation.max_steps`, and the four applicable
@@ -457,6 +468,10 @@ bound given twice: `analyze` and `monitor` SHALL refuse the request
 before any work, so no run depends on which of the two bounds wins (as FR-312
 refuses `observation_limits` and FR-1015 refuses `export.limits`). A caller
 setting no item states takes effect for every item whose engine reads it.
+An item's `temporal.limits.max_states`, `max_transitions` and
+`max_check_work` state the `zone_check.*` settings only when the item reads a
+timed model; that refusal is made once the program is compiled, before any
+item runs.
 
 “All ten `accounting.*` settings” expands to `accounting.integer_bits`,
 `accounting.decimal_digits`, `accounting.scale_expansion`,
@@ -491,9 +506,10 @@ The operation lists' grouped names expand to these exact `--limit` spellings:
 - The four `statistical.*` names are `statistical.max_samples`,
   `statistical.max_draws`, `statistical.max_cycle_steps`, and
   `statistical.max_sample_steps`.
-- The four `zone_check.*` names are `zone_check.max_symbolic_states`,
+- The five `zone_check.*` names are `zone_check.max_symbolic_states`,
   `zone_check.max_symbolic_transitions`,
-  `zone_check.max_automaton_states`, and `zone_check.max_zone_bytes`.
+  `zone_check.max_automaton_states`, `zone_check.max_zone_bytes`, and
+  `zone_check.max_check_work`.
 - The six `smt_encoding.*` names are `smt_encoding.max_constants`,
   `smt_encoding.max_applications`, `smt_encoding.max_monitor_atoms`,
   `smt_encoding.max_monitor_states`, `smt_encoding.max_candidates`, and
@@ -719,6 +735,66 @@ these names through the same operand grammar as the stage settings
    that limit by that setting name, as SHALL a replay request's `stage_limits`
    for an engine limit replay consumes ("Lifecycle caller-limit coverage").
 
+12. **Charge before the step.** Every bounded count, work unit and retained
+    byte SHALL be charged before the allocation or loop step it pays for. The
+    first denied charge SHALL stop the operation with the outcome of its
+    setting's row, and nothing past the bound SHALL be allocated or run. A
+    loop bounded by a setting SHALL also poll the caller's `Cancel` handle. A
+    certificate checker that reaches a limit SHALL settle `incomplete` and
+    SHALL never accept the certificate.
+
+13. **Effective value.** The effective value of a setting SHALL be the
+    caller's value when the caller names it; otherwise the value the request
+    states for it; otherwise the published default for the operation. A
+    caller value that equals the published default still replaces the
+    request's. No layer below SHALL substitute a literal, the value of another
+    setting, or the maximum of the bound's type unless that maximum is the
+    published default. "Two sources of one bound" below states the bounds that
+    are refused, and not ranked, when both sources state them.
+
+14. **Retained bytes.** `analysis.retained_bytes` SHALL bound a deterministic
+    estimate computed from lengths: for each retained entry, a fixed overhead
+    per entry kind plus the lengths of the buffers the entry owns (the bytes
+    of its keys, 8 bytes for each limb of a big integer, and length times
+    element size for a sequence), never an allocator capacity or a resident
+    set size. An EN-1 stored state's fixed overhead is 256 bytes. The
+    retained entries are an EN-6 symbolic vertex, a protocol closure path,
+    an EN-1 stored state and a model-expansion successor. Each entry SHALL be charged before it is stored, the charges of one item SHALL
+    accumulate and SHALL NOT be refunded, and the item's producer, certificate
+    checker and witness replay SHALL charge one shared allowance. A per-engine
+    byte setting remains a separate local ceiling.
+
+15. **Two sources of one bound.** A caller's value SHALL replace the
+    request's value for what the caller names and for nothing else: a caller's
+    `accounting.<counter>` value replaces that counter, every other counter
+    keeps the request's value, and a caller's stage or observation setting
+    replaces the request's value of that setting, a `native-replay/1`
+    request's `stage_limits` entry included. A setting given twice by one
+    source SHALL be refused. Four bounds are refused when both sources state
+    them: a bound an item states in its own member and the caller states by
+    setting, `observation_limits` beside a caller observation setting,
+    `export.limits` beside the same caller setting, and `clocks`, each as its
+    owner states. A request's `output` member beside a caller output override
+    is refused likewise.
+
+16. **Every override member is applied or refused.** The override members are
+    each accounting counter, `clocks`, `output`, and each stage and
+    observation setting. Every run, compile and export route, over source or
+    over a checked package, SHALL apply each member the caller gives or SHALL
+    refuse it `invalid-request` at stage `request`, exit 20, naming the member
+    or setting. No route SHALL ignore one. This holds for the `synthesis`,
+    `model_based_test`, `refinement_transfer`, monitor, replay, `call`,
+    `clause`, `tl_lowering`, items, verification-plan, compile, export,
+    export-evidence, `version` and `check` routes. A member the route never
+    reads SHALL be refused. A member the route applies SHALL reach every part
+    of the run that reads it. Only compile and export write the file an
+    `output` override names, so every other route SHALL refuse that override.
+    A `synthesis` or `model_based_test` run reads no clock selection, so it
+    SHALL refuse a `clocks` override and a non-empty `clocks` member of its own
+    request, naming `clocks`. A `native-replay/1` run SHALL apply the caller's
+    stage limits and SHALL refuse a `clocks` override and an `output`
+    override.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -749,6 +825,22 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-24 | The `analyze`, `monitor` and `replay` command entry points accept exactly the operation-relevant caller-limit settings enumerated in “Lifecycle caller-limit coverage”; each accepted setting changes only its corresponding bound, while recognized but operation-unavailable settings are refused before work. Monitor accepts `monitor.preparation_work_units` and `monitor.preparation_storage`; for a request with `target`, it requires and accepts `monitor.max_activations`, which sets only `MonitorTarget.max_activations` / plan-root `activation_capacity`; without `target`, `monitor.max_activations` is operation-unavailable and no preparation occurs. With a target, each preparation setting is enforced: if its bound is one less than the preparation charge, the request returns `stage_limit_exceeded` before reading records with the exact `kind`, `bound`, `actual` and setting name of FR-255 Behavior 1; setting it to the measured charge permits preparation. Replay accepts the stage settings it executes plus `replay.input_bytes` through its replay-reader argument, but not as a `stage_limits` member. | Test (TC-721) |
 | FR-255-AC-25 | An `analyze` request whose item states an engine limit in its own member (for example a `simulation` item with `max_steps` 5 or a probabilistic item with `limits.max_states` 5) and whose caller also passes that setting (`--limit simulation.max_steps=2`) is refused `invalid-request` naming the item and the setting, exit 20, with no item run; with the item silent, the caller's bound takes effect on the source route and the package route alike. | Test (TC-721) |
 | FR-255-AC-26 | For every setting-table row, setting its value to the maximum representable value of the bound's type is accepted and preserved unchanged by every entry point listed for that row; a setting above that type's maximum cannot be represented and is refused at the entry point's input boundary. No setting applies an additional configured ceiling. | Test (TC-720) |
+| FR-255-AC-27 | Given no setting, the settings operation returns `s1.tokens` 100000, `emit.output_bytes` 16777216, `zone_check.max_symbolic_states` 1048576, `zone_check.max_check_work` 100000000 and `analysis.retained_bytes` 4294967296. Given `analysis.retained_bytes=0` or `zone_check.max_check_work=0`, it returns a usage refusal naming the operand. | Test |
+| FR-255-AC-28 | A setting bound of 3, charged one unit at a time by two parts of one item that share its allowance, admits the first three charges and refuses the fourth with bound 3, count 4 and the setting's name; the step the fourth charge would have paid for does not run. | Test |
+| FR-255-AC-29 | An analyze item over a protocol subject run with `analysis.retained_bytes=1` stops at its first closure path, before that path is stored, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. Two runs give equal outcomes. | Test |
+| FR-255-AC-30 | A replay request whose `stage_limits` holds `model_check.max_transitions` 2, replaying a protocol refinement step whose check needs at least three transitions, stops naming `max_transitions`, value 2 and setting `model_check.max_transitions`, and expands no third transition. | Test |
+| FR-255-AC-31 | A replay of a clause over a model with caller setting `emit.output_bytes` 1 returns `stage_limit_exceeded` with bound 1 and setting `emit.output_bytes`. A hyper clause whose body has five expression nodes (`1 + 1 + 1`), checked with `s3.nodes` 4, returns `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. An 11-byte snapshot read with `observation.input_bytes` 10 refuses with bound 10, count 11 and that setting. | Test |
+| FR-255-AC-32 | A synthesis request whose own accounting gives `work_units` 1000000, run with the caller override `accounting.work_units=0`, settles `incomplete` naming `work_units`, bound 0, count 1 and setting `accounting.work_units`. A `refinement_transfer` request and a monitor request whose checked source holds `1 + 1 + 1`, each run with `s3.nodes` 4, return `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. | Test |
+| FR-255-AC-33 | A synthesis run given a clocks override both by its request and by its caller, and any run given one `--limit` setting twice, are refused before work starts. A `native-replay/1` run given a clocks override or an output override is refused `invalid-request` naming it. | Test |
+| FR-255-AC-34 | A synthesis request whose own accounting gives `work_units` 1, run with the caller override `accounting.work_units=1000000`, runs under 1000000 and does not stop on `work_units`; the same request with the caller naming only `accounting.value_occurrences` keeps `work_units` 1 and settles `incomplete` naming it. A `native-replay/1` run whose request's `stage_limits` gives `s1.tokens` 1, run with the caller setting `s1.tokens` at its published default 100000, runs under 100000. | Test |
+| FR-255-AC-35 | A `synthesis` request and a direct `model_based_test` request that each carry a non-empty `clocks` member are refused `invalid-request` naming `clocks`, exit 20; each request without the member, run with a caller `clocks` override, is refused the same way. A `clause` run over a selected package and an export, each given a `clocks` override, are refused naming `clocks`. | Test |
+| FR-255-AC-36 | Given a caller `output` override naming a new path, each of these runs is refused `invalid-request` naming `output`, exit 20, and no file exists at the path afterwards: `synthesis`, `model_based_test`, `refinement_transfer`, monitor, `native-replay/1`, `call` and `clause` (each from source and from a package), `tl_lowering`, an items run with a clause selection, an items run with only a `value_invariants` selection, a verification-plan run, `version` and `check`. | Test |
+| FR-255-AC-37 | A `call` run from source and a `clause` run from source, each given the caller setting `export.output_bytes` 1, are refused `invalid-request` naming `export.output_bytes`, exit 20. A `call` run over a package and a synthesis over a package, each given `s1.tokens` 1, are refused naming `s1.tokens`, since neither reads source text. A `version` run given any override member is refused naming it. | Test |
+| FR-255-AC-38 | An export and an export-evidence run, each given the caller override `accounting.work_units=5`, and a compile given `accounting.work_units=5` or an observation setting, are refused `invalid-request` naming the counter or setting. A `check` run given a `clocks` override or an accounting counter is refused naming it; given `s1.tokens` 1 over a source of more than one token, it either stops at that bound or is refused naming `s1.tokens`, and never reports the source as checked. | Test |
+| FR-255-AC-39 | A `clause` run over a selected package, given the caller setting `observation.input_bytes` one byte below the length of its observation file, stops at that bound naming `observation.input_bytes`, as the same run from source does. | Test |
+| FR-255-AC-40 | A deadlock-freedom analyze item over a model subject, decided by EN-1, run with `analysis.retained_bytes=1`, stops before it stores its first state, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. The same item with no setting settles as it does at the published default. | Test |
+| FR-255-AC-41 | A synthesis goal whose typed expression has five nodes, checked under a caller's `s3.nodes` 4, is refused at the typing stage naming the node limit, bound 4 and count 5; under `s3.nodes` 5 it checks. | Test |
+| FR-255-AC-42 | An EN-1 liveness item over a model or protocol subject charges `analysis.retained_bytes` for each product state before storing it: run with `analysis.retained_bytes=1`, it stops with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`; a model liveness item whose product has four states stops likewise at 1024, and with no setting settles as it does at the published default. | Test |
 
 ## Status
 
@@ -756,6 +848,18 @@ The existing setting table, the one-mapping-per-limits-type rule, the
 builders, the settings operation, a request's `stage_limits` and their
 defaults are implemented (TC-720, TC-721). FR-255-AC-15 to FR-255-AC-19 specify native-join
 setting bindings, defaults and refusals; their implementation is not yet complete.
+Of the retained entries, the states of EN-1's safety and reduced searches
+(FR-255-AC-40), the product states of its liveness searches (FR-255-AC-42) and
+EN-6 symbolic vertices charge `analysis.retained_bytes`. The states of EN-1's
+hyper searches, the model states a liveness search keeps where its automaton
+has no move, protocol closure paths and model-expansion successors do not yet
+charge it.
+FR-255-AC-29 (a protocol closure path), FR-255-AC-30 (a replay request's
+`stage_limits` at a protocol refinement step) and FR-255-AC-31 (a replay's
+`emit.output_bytes`, `s3.nodes` and `observation.input_bytes` stops) are
+specified here and not implemented or tested in QSL-3508's limits
+consolidation; each waits on its own ticket.
+
 Backing of the criteria:
 
 The `inspect.max_view_entries` row and its typed-view behavior are specified

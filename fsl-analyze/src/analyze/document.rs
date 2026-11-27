@@ -1801,6 +1801,8 @@ fn resolve_call_item(
             max_cases: None,
             max_task_product_work: None,
             max_check_work: None,
+            max_states: None,
+            max_transitions: None,
             trace: None,
             traces: None,
             recording: None,
@@ -1828,7 +1830,7 @@ fn requirement_items(
     fsl_route::request::items_from_requirements(package.graph().requirements(), registry, named)
 }
 
-#[implements("FR-940-AC-10")]
+#[implements("FR-940-AC-10", "FR-173-AC-3")]
 fn resolve_one(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -2130,25 +2132,38 @@ fn resolve_one(
     );
     // FR-173: no provider advertises an HP-4 form, so its item reaches the
     // negotiator with no candidate.
-    let candidates = package
+    let candidates = match package
         .graph()
         .hyper_clauses()
         .iter()
         .find(|clause| clause.assembled_occurrence() == Some(&claim))
-        .and_then(|clause| clause.form())
-        .filter(|form| {
-            kind == Capability::TemporalSatisfaction && form.unsupported_reason().is_some()
-        })
-        .map_or(candidates, |form| {
-            fsl_route::request::requirement_candidates(
+        .filter(|_| kind == Capability::TemporalSatisfaction)
+    {
+        Some(clause)
+            if clause.profile() != fsl_semantics::check::TemporalProfile::InfiniteTrace
+                && clause.form().is_none() =>
+        {
+            // FR-173-AC-3 / FR-182 V-8: a profile with no decided form
+            // has no engine route, just like an explicitly classified HP-4
+            // form.
+            CandidateOutcome::Candidates(fsl_route::CandidateSet::none(kind, named.as_ref()))
+        }
+        Some(clause) => match clause
+            .form()
+            .filter(|form| form.unsupported_reason().is_some())
+        {
+            Some(form) => fsl_route::request::requirement_candidates(
                 &fsl_semantics::family::Requirements::hyper_form(
                     fsl_semantics::family::ClaimExtent::Bounded,
                     form,
                 ),
                 registry,
                 named.as_ref(),
-            )
-        });
+            ),
+            None => candidates,
+        },
+        None => candidates,
+    };
     let temporal = selection.temporal.clone().unwrap_or_default();
     let protocol_analysis = if protocol_analysis_kind {
         match protocol_analysis_selection(index, name, selection, kind, projection_role.clone()) {
@@ -2278,6 +2293,8 @@ fn resolve_one(
                 .limits
                 .and_then(|limits| limits.max_task_product_work),
             max_check_work: temporal.limits.and_then(|limits| limits.max_check_work),
+            max_states: temporal.limits.and_then(|limits| limits.max_states),
+            max_transitions: temporal.limits.and_then(|limits| limits.max_transitions),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
             traces: selection.traces.as_ref().map(DocumentSelection::reference),
             recording: selection
@@ -2461,6 +2478,8 @@ fn resolve_derived(
         max_cases: None,
         max_task_product_work: None,
         max_check_work: None,
+        max_states: None,
+        max_transitions: None,
         trace: None,
         traces: None,
         recording: None,
@@ -2567,6 +2586,16 @@ fn resolve_schedule_claim(
                     .as_ref()
                     .and_then(|temporal| temporal.limits)
                     .and_then(|limits| limits.max_check_work),
+                max_states: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.limits)
+                    .and_then(|limits| limits.max_states),
+                max_transitions: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.limits)
+                    .and_then(|limits| limits.max_transitions),
                 trace: None,
                 traces: None,
                 recording: None,
@@ -2825,6 +2854,8 @@ fn resolve_protocol_freedom(
                 max_cases: None,
                 max_task_product_work: None,
                 max_check_work: None,
+                max_states: None,
+                max_transitions: None,
                 trace: None,
                 traces: selection.traces.as_ref().map(DocumentSelection::reference),
                 recording: None,
@@ -3447,6 +3478,8 @@ fn derived_claim(
                 max_cases: None,
                 max_task_product_work: None,
                 max_check_work: None,
+                max_states: None,
+                max_transitions: None,
                 trace: None,
                 traces: None,
                 recording: None,
@@ -3729,6 +3762,12 @@ impl ClaimItem {
             }
             if let Some(max_work) = self.options.max_check_work {
                 limits.insert("max_check_work".to_owned(), json!(max_work.get()));
+            }
+            if let Some(max_states) = self.options.max_states {
+                limits.insert("max_states".to_owned(), json!(max_states.get()));
+            }
+            if let Some(max_transitions) = self.options.max_transitions {
+                limits.insert("max_transitions".to_owned(), json!(max_transitions.get()));
             }
             if !limits.is_empty() {
                 item.insert("temporal".to_owned(), json!({"limits": limits}));
