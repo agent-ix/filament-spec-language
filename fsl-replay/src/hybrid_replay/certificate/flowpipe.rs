@@ -436,8 +436,9 @@ pub(super) fn check(
             Ok(false)
         };
         if coverage.exhaustive.contains(&BoundDimension::Time) && dwell.depth == jumps {
-            for k in dwell.first..=dwell.last {
-                if lay.s[k].0 <= *horizon && can_fire(machine, k)? {
+            for (offset, step) in lay.s[dwell.first..=dwell.last].iter().enumerate() {
+                let k = dwell.first + offset;
+                if step.0 <= *horizon && can_fire(machine, k)? {
                     return reject(Rule::Coverage, step_pointer(k));
                 }
             }

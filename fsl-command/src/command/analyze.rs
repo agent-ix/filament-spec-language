@@ -1208,6 +1208,7 @@ pub(super) fn settle_items<'u>(
         return Err(engine_conflict(conflict));
     }
     let run = AnalyzeRun {
+        selections: routed.items.as_deref().unwrap_or_default(),
         package,
         binding,
         provision,
@@ -1219,6 +1220,10 @@ pub(super) fn settle_items<'u>(
         settle_run(run, settle.negotiate, settle.cancel)
     })
     .map_err(|error| match error {
+        AnalyzeDocumentError::Refused(fsl_analyze::analyze::AnalyzeRefusal::EngineConflict {
+            position,
+            setting,
+        }) => engine_conflict((position, setting)),
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
         AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
         AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
@@ -1807,7 +1812,9 @@ pub(super) fn read_documents(
             authority: identity.authority.clone(),
             identity: identity.identity.clone(),
         };
-        if format.as_deref() == Some("filament.protocol-recording/1") {
+        if format.as_deref()
+            == Some(fsl_foundation::wire_format::WireFormat::ProtocolRecording.as_str())
+        {
             recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
         }
         if documents.insert(reference, bytes).is_some() {

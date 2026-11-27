@@ -43,15 +43,16 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
-use std::sync::OnceLock;
+use std::sync::{PoisonError, RwLock};
 
-use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, Maybe, With};
+use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, With};
 #[cfg(feature = "std")]
 use fsl_foundation::Code;
 use fsl_semantics::check::{
     AbstractionRefusal, AuthoredBinding, CheckedAbstractionRelation, CheckedGraph,
 };
 use fsl_semantics::library::LibraryName;
+use ix_trace_rs::implements;
 
 /// The caller-owned ceiling of one `filament.checked-package/v2` emission
 /// (FR-255 `emit.output_bytes`, FR-264 Behavior 5). It has no `Default`: the
@@ -186,20 +187,24 @@ pub struct CheckedPackage {
     /// names. [`LibraryName`]'s order is UTF-8 byte order, the order FR-322
     /// writes (ADR-015 D-3).
     selections: BTreeMap<LibraryName, ResolvedDependency>,
+    /// Each library of the closure as this package linked it: the emission
+    /// that library held at the link. This package's bytes and every closure
+    /// handed out with them come from these, so a library emitted again
+    /// later changes neither. Keyed as `selections`.
+    #[cfg(feature = "std")]
+    dependency_emissions: BTreeMap<LibraryName, Arc<Emission>>,
     /// Identities named by this unit's imports. Kept separately because a
     /// direct identity may first be reached through another import's lock.
     /// Only `link_with` and the emitter read it, so it exists with `std`.
     #[cfg(feature = "std")]
     direct_imports: BTreeSet<LibraryName>,
-    /// FR-304, FR-306: this package's checked abstraction relation, when it
-    /// declares one. The checked package is its only authority.
-    abstraction: Option<CheckedAbstractionRelation>,
-    /// This package's checked emission, set only by the emitter
+    /// This package's latest checked emission, set only by the emitter
     /// ([`Self::remember_emission`]; the bytes stay the emitter's own
     /// output, ADR-013 O-02) so a package reached again, as a dependency or
-    /// by another emit, is not emitted again. Reset when the package changes.
+    /// by another emit, is not emitted again. A successful binding, the one
+    /// change a linked package takes, drops it.
     #[cfg(feature = "std")]
-    emission: OnceLock<Emission>,
+    emission: RwLock<Option<Arc<Emission>>>,
 }
 
 /// One library identity's selection in a package's resolved closure, and the
@@ -368,9 +373,11 @@ impl DebugWith for CheckedPackage {
             graph,
             dependencies,
             selections,
+            // Each is an emission of a dependency written above.
+            #[cfg(feature = "std")]
+                dependency_emissions: _,
             #[cfg(feature = "std")]
             direct_imports,
-            abstraction,
             #[cfg(feature = "std")]
             emission,
         } = self;
@@ -384,24 +391,32 @@ impl DebugWith for CheckedPackage {
             .field("selections", selections);
         #[cfg(feature = "std")]
         out.field("direct_imports", direct_imports);
-        out.field("abstraction", &Maybe(abstraction, table));
         #[cfg(feature = "std")]
-        out.field("emission", &RetainedEmission(emission, table));
+        out.field(
+            "emission",
+            &RetainedEmission(
+                emission
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_deref(),
+                table,
+            ),
+        );
         out.finish()
     }
 }
 
-/// The retained emission, written as `OnceLock` writes it, into `table`.
+/// The retained emission, written into `table`.
 #[cfg(feature = "std")]
-struct RetainedEmission<'a>(&'a OnceLock<Emission>, &'a DebugTable);
+struct RetainedEmission<'a>(Option<&'a Emission>, &'a DebugTable);
 
 #[cfg(feature = "std")]
 impl core::fmt::Debug for RetainedEmission<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut out = f.debug_tuple("OnceLock");
-        match self.0.get() {
+        let mut out = f.debug_tuple("Remembered");
+        match self.0 {
             Some(emission) => out.field(&With(emission, self.1)),
-            None => out.field(&format_args!("<uninit>")),
+            None => out.field(&format_args!("<none>")),
         };
         out.finish()
     }
@@ -523,14 +538,15 @@ impl CheckedPackage {
     /// ```
     pub fn link(graph: CheckedGraph) -> Self {
         Self {
-            abstraction: graph.abstraction().cloned(),
             graph: Arc::new(graph),
             dependencies: BTreeMap::new(),
             selections: BTreeMap::new(),
             #[cfg(feature = "std")]
+            dependency_emissions: BTreeMap::new(),
+            #[cfg(feature = "std")]
             direct_imports: BTreeSet::new(),
             #[cfg(feature = "std")]
-            emission: OnceLock::new(),
+            emission: RwLock::new(None),
         }
     }
 
@@ -542,7 +558,12 @@ impl CheckedPackage {
     /// [`LinkRefusal::ConflictingDefinition`].
     /// A refusal yields no package. Each dependency emission the link makes
     /// runs under the caller's `emit` ceiling (`emit.output_bytes`).
+    ///
+    /// The package keeps each library's emission as it is at this link
+    /// ([`Self::dependency_emission`]); two paths holding different bytes of
+    /// one library are a [`LinkRefusal::ConflictingDefinition`].
     #[cfg(feature = "std")]
+    #[implements("FR-640-AC-17")]
     pub fn link_with(
         graph: CheckedGraph,
         imports: Vec<Import>,
@@ -550,12 +571,13 @@ impl CheckedPackage {
     ) -> Result<Self, LinkRefusal> {
         let mut dependencies: BTreeMap<LibraryName, Arc<CheckedPackage>> = BTreeMap::new();
         let mut selections: BTreeMap<LibraryName, ResolvedDependency> = BTreeMap::new();
+        let mut dependency_emissions = BTreeMap::new();
         let direct_imports = imports
             .iter()
             .map(|import| import.identity.clone())
             .collect();
         for import in imports {
-            check_dependency_emission(&import, emit)?;
+            let linked = check_dependency_emission(&import, emit)?;
             let direct = ResolvedDependency {
                 package: Arc::clone(&import.package),
                 path: DependencyPath::Direct,
@@ -574,44 +596,30 @@ impl CheckedPackage {
                                 package: Arc::clone(&import.package),
                             },
                         },
+                        import.package.dependency_emissions.get(identity).cloned(),
                     )
                 });
-            let entries: Vec<(LibraryName, ResolvedDependency)> =
-                core::iter::once((import.identity.clone(), direct))
-                    .chain(transitive)
-                    .collect();
-            for (identity, resolved) in entries {
-                unify(&mut selections, identity, resolved, emit)?;
-            }
-            match dependencies.get(&import.identity) {
-                Some(existing)
-                    if !same_package(existing, &import.package, &import.identity, emit)? =>
-                {
-                    return Err(LinkRefusal::ConflictingDefinition {
-                        identity: import.identity.clone(),
-                        selections: Box::new([
-                            ResolvedDependency {
-                                package: Arc::clone(existing),
-                                path: DependencyPath::Direct,
-                            },
-                            ResolvedDependency {
-                                package: Arc::clone(&import.package),
-                                path: DependencyPath::Direct,
-                            },
-                        ]),
-                    });
-                }
-                _ => {}
+            let entries: Vec<_> = core::iter::once((import.identity.clone(), direct, Some(linked)))
+                .chain(transitive)
+                .collect();
+            for (identity, resolved, linked) in entries {
+                unify(
+                    &mut selections,
+                    &mut dependency_emissions,
+                    identity,
+                    resolved,
+                    linked,
+                )?;
             }
             dependencies.insert(import.identity, import.package);
         }
         Ok(Self {
-            abstraction: graph.abstraction().cloned(),
             graph: Arc::new(graph),
             dependencies,
             selections,
+            dependency_emissions,
             direct_imports,
-            emission: OnceLock::new(),
+            emission: RwLock::new(None),
         })
     }
 
@@ -622,16 +630,12 @@ impl CheckedPackage {
     /// # Errors
     ///
     /// Every refusal of the bindings; a refusal leaves the package unchanged.
+    #[implements("NFR-015-AC-9")]
     pub fn bind_abstraction(
         &mut self,
         bindings: &[AuthoredBinding],
     ) -> Result<(), Vec<AbstractionRefusal>> {
-        self.abstraction = Some(self.graph.check_abstraction(bindings)?);
-        #[cfg(feature = "std")]
-        {
-            self.emission = OnceLock::new();
-        }
-        Ok(())
+        self.bind_abstraction_at(bindings, Vec::new())
     }
 
     /// As [`Self::bind_abstraction`], for a relation read from the
@@ -639,36 +643,55 @@ impl CheckedPackage {
     /// the emitter writes one `declaration` occurrence of the relation node at
     /// each (FSpec FR-451).
     ///
+    /// A successful binding derives again everything checking derives from
+    /// the relation ([`CheckedGraph::with_abstraction`]) and drops the
+    /// remembered emission. A graph shared before the binding
+    /// ([`Self::shared_graph`]) is unchanged.
+    ///
     /// # Errors
     ///
     /// Every refusal of the bindings; a refusal leaves the package unchanged.
+    #[implements("NFR-015-AC-10")]
+    #[implements("FR-306-AC-5")]
     pub fn bind_abstraction_at(
         &mut self,
         bindings: &[AuthoredBinding],
         sites: Vec<filament_semantic_value::location::ExpressionLocation>,
     ) -> Result<(), Vec<AbstractionRefusal>> {
-        let relation = self.graph.check_abstraction(bindings)?;
-        self.abstraction = Some(relation.with_sites(sites));
+        let relation = self.graph.check_abstraction(bindings)?.with_sites(sites);
+        // A new graph, so a graph another package already shares is unchanged.
+        self.graph = Arc::new(self.graph.with_abstraction(relation)?);
+        #[cfg(feature = "std")]
+        {
+            self.emission = RwLock::new(None);
+        }
         Ok(())
     }
 
     /// FR-304: this package's checked abstraction relation, when it declares
     /// one.
     pub fn abstraction(&self) -> Option<&CheckedAbstractionRelation> {
-        self.abstraction.as_ref()
+        self.graph.abstraction()
     }
 
     /// Records `emission`, the emitter's output for this package. Only the
     /// emitter calls this (ADR-013 O-02).
     #[cfg(feature = "std")]
+    #[implements("FR-640-AC-16")]
     pub(crate) fn remember_emission(&self, emission: &Emission) {
-        let _ = self.emission.set(emission.clone());
+        *self
+            .emission
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(emission.clone()));
     }
 
     /// This package's emission, if it has been emitted.
     #[cfg(feature = "std")]
-    pub fn remembered_emission(&self) -> Option<&Emission> {
-        self.emission.get()
+    pub fn remembered_emission(&self) -> Option<Arc<Emission>> {
+        self.emission
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The name the emitter used for this package, if it was
@@ -678,7 +701,28 @@ impl CheckedPackage {
     /// none.
     #[cfg(feature = "std")]
     pub fn emitted_package_name(&self) -> Option<&str> {
-        self.emission.get().map(|emission| emission.package.name())
+        // Every emission of a package declares its graph's package name.
+        self.remembered_emission()
+            .map(|_| self.graph.package_name())
+    }
+
+    /// The emission of the library `identity` of this package's closure that
+    /// this package linked. A later emission of that library does not change
+    /// it.
+    #[cfg(feature = "std")]
+    #[implements("FR-640-AC-17")]
+    pub fn dependency_emission(&self, identity: &LibraryName) -> Option<&Emission> {
+        self.dependency_emissions.get(identity).map(AsRef::as_ref)
+    }
+
+    /// [`Self::dependency_emission`], with that library's checked graph.
+    #[cfg(feature = "std")]
+    pub(crate) fn linked_dependency(
+        &self,
+        identity: &LibraryName,
+    ) -> Option<(&CheckedGraph, &Emission)> {
+        let selected = self.selections.get(identity)?;
+        Some((&selected.package.graph, self.dependency_emission(identity)?))
     }
 
     /// This package's own checked declarations (S3's stage output) -- the
@@ -726,22 +770,21 @@ impl CheckedPackage {
     }
 }
 
-/// Check that the imported package emits complete bytes under the imported
-/// library name. A remembered emission is reused when available.
+/// The imported package's emission, checked to hold complete bytes under the
+/// imported library name. A remembered emission is reused when available.
 #[cfg(feature = "std")]
-fn check_dependency_emission(import: &Import, emit: EmitLimits) -> Result<(), LinkRefusal> {
-    let fresh;
+fn check_dependency_emission(
+    import: &Import,
+    emit: EmitLimits,
+) -> Result<Arc<Emission>, LinkRefusal> {
     let emission = match import.package.remembered_emission() {
         Some(emission) => emission,
-        None => {
-            fresh = emit_checked(&import.package, emit).map_err(|refusal| {
-                LinkRefusal::DependencyEmission {
-                    identity: import.identity.clone(),
-                    refusal: Some(Box::new(refusal)),
-                }
-            })?;
-            &fresh
-        }
+        None => Arc::new(emit_checked(&import.package, emit).map_err(|refusal| {
+            LinkRefusal::DependencyEmission {
+                identity: import.identity.clone(),
+                refusal: Some(Box::new(refusal)),
+            }
+        })?),
     };
     if !emission.omitted().is_empty() {
         return Err(LinkRefusal::DependencyEmission {
@@ -755,28 +798,7 @@ fn check_dependency_emission(import: &Import, emit: EmitLimits) -> Result<(), Li
             actual: emission.package().name().into(),
         });
     }
-    Ok(())
-}
-
-#[cfg(feature = "std")]
-fn same_package(
-    left: &CheckedPackage,
-    right: &CheckedPackage,
-    identity: &LibraryName,
-    emit_limits: EmitLimits,
-) -> Result<bool, LinkRefusal> {
-    if core::ptr::eq(left, right) {
-        return Ok(true);
-    }
-    let emit = |package: &CheckedPackage| {
-        emit_checked(package, emit_limits).map_err(|refusal| LinkRefusal::DependencyEmission {
-            identity: identity.clone(),
-            refusal: Some(Box::new(refusal)),
-        })
-    };
-    let left = emit(left)?;
-    let right = emit(right)?;
-    Ok(left.package().bytes() == right.package().bytes())
+    Ok(emission)
 }
 
 /// A dependency path written `a -> b -> c`.
@@ -788,28 +810,34 @@ fn display_path(path: &[LibraryName]) -> String {
         .join(" -> ")
 }
 
-/// Add `resolved` of `identity` to `selections`, unifying an equal
-/// selection reached by another path (FR-307 diamond rule).
+/// Add one library of the closure: its selection, and the emission it was
+/// linked at. One identity reached twice unifies only when both hold the same
+/// canonical bytes (FR-307).
 #[cfg(feature = "std")]
+#[implements("FR-640-AC-17")]
 fn unify(
     selections: &mut BTreeMap<LibraryName, ResolvedDependency>,
+    emissions: &mut BTreeMap<LibraryName, Arc<Emission>>,
     identity: LibraryName,
     resolved: ResolvedDependency,
-    emit: EmitLimits,
+    linked: Option<Arc<Emission>>,
 ) -> Result<(), LinkRefusal> {
-    match selections.get(&identity) {
-        Some(existing) if same_package(&existing.package, &resolved.package, &identity, emit)? => {
+    if let Some(existing) = selections.get(&identity) {
+        let held = emissions.get(&identity).map(|held| held.package().bytes());
+        return if held == linked.as_deref().map(|linked| linked.package().bytes()) {
             Ok(())
-        }
-        Some(existing) => Err(LinkRefusal::ConflictingDefinition {
-            selections: Box::new([existing.clone(), resolved]),
-            identity,
-        }),
-        None => {
-            selections.insert(identity, resolved);
-            Ok(())
-        }
+        } else {
+            Err(LinkRefusal::ConflictingDefinition {
+                selections: Box::new([existing.clone(), resolved]),
+                identity,
+            })
+        };
     }
+    if let Some(linked) = linked {
+        emissions.insert(identity.clone(), linked);
+    }
+    selections.insert(identity, resolved);
+    Ok(())
 }
 
 /// S4 wire output (ADR-013 T-1): canonical checked-package/v2 bytes and
@@ -873,7 +901,7 @@ pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
         CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
     };
     use fsl_semantics::check::PackageDeclarations;
-    static GRAPH: OnceLock<Arc<CheckedGraph>> = OnceLock::new();
+    static GRAPH: std::sync::OnceLock<Arc<CheckedGraph>> = std::sync::OnceLock::new();
     let graph = Arc::clone(GRAPH.get_or_init(|| {
         let source = fsl_foundation::Source::read(
             fsl_foundation::SourceIdentity::new("a", "u"),
@@ -923,9 +951,9 @@ pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
             graph: Arc::clone(&graph),
             dependencies: BTreeMap::new(),
             selections: BTreeMap::new(),
+            dependency_emissions: BTreeMap::new(),
             direct_imports: BTreeSet::new(),
-            abstraction: None,
-            emission: OnceLock::new(),
+            emission: RwLock::new(None),
         },
         |dependency, link| CheckedPackage {
             graph: Arc::clone(&graph),
@@ -934,9 +962,9 @@ pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
                 Arc::new(dependency),
             )]),
             selections: BTreeMap::new(),
+            dependency_emissions: BTreeMap::new(),
             direct_imports: BTreeSet::new(),
-            abstraction: None,
-            emission: OnceLock::new(),
+            emission: RwLock::new(None),
         },
     )
 }

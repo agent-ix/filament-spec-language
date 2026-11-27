@@ -42,7 +42,7 @@ use fsl_eval::simulation::model::PopulationUniverse;
 pub mod effect_decision;
 
 /// The request document format FR-620 reads.
-pub const REQUEST_FORMAT: &str = "native-analyze/1";
+pub const REQUEST_FORMAT: &str = fsl_foundation::wire_format::WireFormat::AnalyzeRequest.as_str();
 
 fn present_json_value<'de, D: serde::Deserializer<'de>>(
     decoder: D,
@@ -3899,6 +3899,10 @@ pub struct AnalyzeRun<'a> {
     pub engines: &'a Engines,
     /// The shared limits.
     pub limits: AnalyzeLimits,
+    /// The items as the caller stated them, in request order: the run
+    /// refuses an item that states a limit the caller also set (FR-255
+    /// "Caller limits and item limits"). Empty states no item members.
+    pub selections: &'a [ItemSelection],
 }
 
 /// Why no FR-621 document could be written.
@@ -4030,7 +4034,17 @@ pub fn settle_run_with_smt_proofs(
         items,
         engines,
         limits,
+        selections,
     } = run;
+    if let Some((position, setting)) = limits.engines.conflict(selections).or_else(|| {
+        limits
+            .engines
+            .timed_conflict(package, &binding, selections.len(), &items)
+    }) {
+        return Err(AnalyzeDocumentError::Refused(
+            super::AnalyzeRefusal::EngineConflict { position, setting },
+        ));
+    }
     let source_input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let Negotiation {
         components,
