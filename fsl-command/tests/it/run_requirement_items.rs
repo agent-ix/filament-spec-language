@@ -1112,7 +1112,7 @@ fn require_certified_withholds_a_call_s_trusted_items() {
     for item in items {
         assert_eq!(item["record"]["result"], "inconclusive", "{item}");
         assert_eq!(
-            item["record"]["cause"]["type"], "proof-not-certified",
+            item["record"]["cause"]["kind"], "proof-not-certified",
             "{item}"
         );
         assert!(item["record"].get("certification").is_none(), "{item}");

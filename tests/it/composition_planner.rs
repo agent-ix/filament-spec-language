@@ -495,10 +495,19 @@ fn require_certified_withholds_a_trusted_planner_result() {
         cause,
         json!({"type": "proof-not-certified", "certification": "trusted"})
     );
-    let certified = settle(&positive(&chain), CertificationPolicy::RequireCertified);
-    assert_eq!(certified.value, PlannerValue::Proved);
-    assert_eq!(certified.certification, Some(Certification::Certified));
-    assert!(certified.conclusion.is_some());
+    // An entry read from request bytes is never `certified` (FSpec FR-492:
+    // the reader caps it to `uncertified`), so even an all-`certified` pool
+    // is withheld under `RequireCertified`; the `certified` fold itself is
+    // asserted in-process in `planner::composition_tests`.
+    let capped = settle(&positive(&chain), CertificationPolicy::RequireCertified);
+    assert_eq!(capped.value, PlannerValue::Inconclusive);
+    assert_eq!(capped.certification, None);
+    let (member, cause) = capped.cause.expect("a cause").to_wire().expect("writable");
+    assert_eq!(member, "cause");
+    assert_eq!(
+        cause,
+        json!({"type": "proof-not-certified", "certification": "uncertified"})
+    );
 }
 
 // ---- FR-530-AC-6: trust, assumption, unsupported, failed, exhausted --------------

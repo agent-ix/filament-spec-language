@@ -11,6 +11,7 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
+use ix_trace_rs::implements;
 use fsl_replay::{
     CounterexampleKind, FamilyPayload, ProtocolConformanceOutput, ReplayLimits, TerminalRecord,
 };
@@ -546,6 +547,7 @@ pub(crate) fn global_behavior_item<'a>(
     )
 }
 
+#[implements("FR-896-AC-11")]
 fn behavior_report(
     index: fsl_foundation::RequestIndex,
     protocol: &fsl_semantics::check::CheckedProtocol,
@@ -686,13 +688,16 @@ fn behavior_report(
                 witness: witness.clone(),
             }),
     );
+    // FR-896-AC-11: the closure check is the only evaluator here and reads no
+    // requirement, so a requirement is never `satisfied`: it is `pending`
+    // unless the item is refuted.
     obligations.extend(protocol.requirements.iter().map(|requirement| {
         ConformanceObligationOutput {
             obligation: serde_json::json!({
                 "kind": "requirement",
                 "temporal": requirement.temporal,
             }),
-            verdict: verdict.to_owned(),
+            verdict: if refuted { "violated" } else { "pending" }.to_owned(),
             cause: cause.clone(),
             basis: "explored".to_owned(),
             witness: witness.clone(),
@@ -958,6 +963,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
     None
 }
 
+#[implements("FR-896-AC-11")]
 #[allow(
     clippy::too_many_arguments,
     reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
@@ -1058,8 +1064,20 @@ fn every_behavior_result(
             }
         }
     };
-    let record =
+    let mut record =
         fsl_replay::settle_protocol_check(&outcome, &form.limits, &certificate, cancel, replay);
+    // FR-896-AC-11: the closure check reads neither a requirement nor the
+    // exactly-once-premise channel premise, so a proof over a protocol with
+    // either is `uncertified`; FR-1052 then settles it by policy.
+    let unchecked_premise = !protocol.requirements.is_empty()
+        || protocol.channels.iter().any(|channel| {
+            channel.delivery == fsl_semantics::check::ChannelDelivery::ExactlyOncePremise
+        });
+    if unchecked_premise {
+        if let fsl_replay::TerminalValue::Proved { certification, .. } = &mut record.value {
+            *certification = fsl_replay::Certification::Uncertified;
+        }
+    }
     let counterexample = record.counterexample.as_ref().and_then(|counterexample| {
         let over = fsl_eval::simulation::protocol::over_reference(
             wire_simulation,

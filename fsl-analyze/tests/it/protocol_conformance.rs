@@ -589,7 +589,14 @@ fn a_requirement_no_check_evaluates_is_not_reported_satisfied() {
             1,
         )
     );
-    let item = conformance("gc-requirement", &unit, json!({}), &[]);
+    let ws = Workspace::new("gc-requirement");
+    let item = analyze(&litmus_request(
+        &ws,
+        &unit,
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}],
+            "require_certified": true}),
+    ))
+    .item(0);
     let requirement = obligations(&item)
         .into_iter()
         .find(|entry| entry["obligation"]["kind"] == "requirement")

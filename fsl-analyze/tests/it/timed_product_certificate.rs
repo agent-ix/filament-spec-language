@@ -669,10 +669,12 @@ fn a_workload_alone_makes_a_mean_time_infinite() {
     );
 
     let sure = race(2);
-    assert_eq!(
-        rejected_rule(&sure, "MeanTime", &doc),
-        ProbabilityCertificateRule::Malformed
-    );
+    // The document is bound to its world's identity: against the finite
+    // world the checker refuses it before any rule runs.
+    assert!(matches!(
+        check(&sure, "MeanTime", &doc),
+        Err(ProbabilityDocumentError::IdentityMismatch)
+    ));
     let record = settle(&sure, "MeanTime");
     let Settlement::Disposed(disposed) = &record.settlement else {
         panic!("a finite workload expected time is not certified: {record:#?}");
@@ -703,8 +705,12 @@ fn uncertified_race(send: &str, toggle: &str, delays: &str) -> World {
 }
 
 fn is_not_yet_certifiable(world: &World) {
+    is_unsupported_with(world, "not-yet-implemented");
+}
+
+fn is_unsupported_with(world: &World, cause: &str) {
     let record = settle(world, "MeanTime");
-    assert_eq!(unsupported_cause(&record), "not-yet-implemented");
+    assert_eq!(unsupported_cause(&record), cause);
     assert!(record.terminal().is_none());
 }
 
@@ -729,11 +735,12 @@ fn a_region_route_workload_infinity_is_not_yet_certified() {
 #[trace("TC-639", "FR-204-AC-24")]
 #[test]
 fn a_workload_infinity_with_racing_free_delays_is_not_yet_certified() {
-    is_not_yet_certifiable(&uncertified_race(
-        " and self.x >= 1 ms",
-        " and self.x >= 1 ms",
-        "",
-    ));
+    // The race is refused under its own code (`CatalogCode`
+    // `workload-free-delays-race`), not as not-yet-implemented.
+    is_unsupported_with(
+        &uncertified_race(" and self.x >= 1 ms", " and self.x >= 1 ms", ""),
+        "workload-free-delays-race",
+    );
 }
 
 /// FR-204-AC-24, not yet certifiable: `toggle` chooses its delay and a unit

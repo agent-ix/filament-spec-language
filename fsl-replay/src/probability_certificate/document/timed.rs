@@ -4173,38 +4173,38 @@ fn digital_workload_choices(
         .iter()
         .filter(|window| window.given.is_none())
         .collect();
+    // The free identities enabled now.
+    let free_now: Vec<&fsl_eval::simulation::model::Action> = enabled
+        .iter()
+        .filter(|action| discrete_delay(run.system, &action.identity.operation).is_none())
+        .collect();
+    // FR-204 reads this state as `UnitDelay` and one weighted
+    // `WorkloadResolve`; ADR-026 SD-1 and SD-3 (and FR-204's own
+    // `FreeDelays` rule) have the scheduler pick each free identity's
+    // delay inside its window. The two readings give different verdicts
+    // where several free identities are enabled now, and where the unit
+    // delay disables one that is enabled now, so neither is decided here.
+    if free_now.len() >= 2 {
+        return Err(ProbabilityDocumentError::WorkloadFreeDelays(
+            WorkloadFreeDelayRefusal::ManyFreeEnabled,
+        ));
+    }
+    if reach >= 1 {
+        for action in &free_now {
+            let closes = windows
+                .iter()
+                .find(|window| window.identity == action.identity)
+                .is_some_and(|window| !window.contains(1, reach));
+            if closes {
+                return Err(ProbabilityDocumentError::WorkloadFreeDelays(
+                    WorkloadFreeDelayRefusal::ClosesBeforeFiring,
+                ));
+            }
+        }
+    }
     let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
     let mut scheduler_actions: Vec<Vec<crate::ProductAction>> = Vec::new();
     if racers.is_empty() {
-        // The free identities enabled now.
-        let free_now: Vec<&fsl_eval::simulation::model::Action> = enabled
-            .iter()
-            .filter(|action| discrete_delay(run.system, &action.identity.operation).is_none())
-            .collect();
-        // FR-204 reads this state as `UnitDelay` and one weighted
-        // `WorkloadResolve`; ADR-026 SD-1 and SD-3 (and FR-204's own
-        // `FreeDelays` rule) have the scheduler pick each free identity's
-        // delay inside its window. The two readings give different verdicts
-        // where several free identities are enabled now, and where the unit
-        // delay disables one that is enabled now, so neither is decided here.
-        if free_now.len() >= 2 {
-            return Err(ProbabilityDocumentError::WorkloadFreeDelays(
-                WorkloadFreeDelayRefusal::ManyFreeEnabled,
-            ));
-        }
-        if reach >= 1 {
-            for action in &free_now {
-                let closes = windows
-                    .iter()
-                    .find(|window| window.identity == action.identity)
-                    .is_some_and(|window| !window.contains(1, reach));
-                if closes {
-                    return Err(ProbabilityDocumentError::WorkloadFreeDelays(
-                        WorkloadFreeDelayRefusal::ClosesBeforeFiring,
-                    ));
-                }
-            }
-        }
         let time_choices = digital_time_choices(
             run.system,
             run.timed,

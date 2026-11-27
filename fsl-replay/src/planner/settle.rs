@@ -329,7 +329,18 @@ pub fn settle(
     }
     let declaration = PlannerDeclaration::from_package(package, &request.item.node)
         .map_err(|_| SettleRefusal::Mismatch)?;
-    let mut result = settle_declared(&declaration, request, budget)?;
+    settle_declared_under(&declaration, request, budget, policy)
+}
+
+/// [`settle_declared`] admitting as `proved` what `policy` admits: the part
+/// of [`settle()`] that follows the package's declaration.
+pub(crate) fn settle_declared_under(
+    declaration: &PlannerDeclaration,
+    request: &SettlementRequest,
+    budget: Budget,
+    policy: CertificationPolicy,
+) -> Result<PlannerResult, SettleRefusal> {
+    let mut result = settle_declared(declaration, request, budget)?;
     let (value, cause, certification) = under_policy(
         policy,
         result.value,
@@ -734,6 +745,26 @@ impl PlannerCause {
                         cause.insert("reason".to_owned(), json!("stutter-closure"));
                     }
                 }
+                ("cause", Value::Object(cause))
+            }
+            Self::Inconclusive(InconclusiveCause::ProofNotCertified {
+                basis,
+                certification,
+            }) => {
+                // FR-331 spells the cause tag `type`; the analyze item wire
+                // that `outcome_cause` reads spells it `kind`.
+                let mut cause = Map::new();
+                cause.insert("type".to_owned(), json!("proof-not-certified"));
+                if let Some(basis) = basis {
+                    cause.insert(
+                        "basis".to_owned(),
+                        serde_json::to_value(basis).unwrap_or(Value::Null),
+                    );
+                }
+                cause.insert(
+                    "certification".to_owned(),
+                    serde_json::to_value(certification).unwrap_or(Value::Null),
+                );
                 ("cause", Value::Object(cause))
             }
             Self::Inconclusive(other) => (
