@@ -766,17 +766,16 @@ pub fn category_of(code: &CatalogCode) -> Option<Category> {
 }
 
 /// FR-285: the category an exit derives from for a catalog code, one
-/// category per code. It is [`category_of`] except that the three unsupported
-/// codes (`unsupported_construct`, `unsupported_projection`,
-/// `unknown_required_feature`), which the refusal-record map files under
-/// `Refusal`, are `Unsupported` (exit 21), as [`Code::category`] gives them.
-/// Use it wherever the category feeds an exit; [`category_of`] stays the
-/// ADR-013 O-17 record map.
+/// category per code. It is [`category_of`] except that every code
+/// [`Code::is_unsupported`] names (`unsupported_construct`,
+/// `unsupported_projection`, `unknown_required_feature`,
+/// `unimplemented_capability`), which the refusal-record map files under
+/// `Refusal` or not at all, is `Unsupported` (exit 21), as [`Code::category`]
+/// gives them. Use it wherever the category feeds an exit; [`category_of`]
+/// stays the ADR-013 O-17 record map.
 pub fn exit_category_of(code: &CatalogCode) -> Option<Category> {
-    match code.code() {
-        "unsupported_construct" | "unsupported_projection" | "unknown_required_feature" => {
-            Some(Category::Unsupported)
-        }
+    match Code::from_code(code.code()) {
+        Some(known) if known.is_unsupported() => Some(Category::Unsupported),
         _ => category_of(code),
     }
 }
@@ -1137,8 +1136,6 @@ mod foundation_tests {
         );
     }
 
-    /// FR-090-AC-5's map: one row per catalog code, the internal-fault code
-    /// is `internal failure`, and an unknown code has no category.
     /// FR-285-AC-1: the exit category of each unsupported code is
     /// `Unsupported` (exit 21), `Code::category`'s answer, though the record
     /// map files them under `Refusal`; every other code keeps its record
@@ -1150,9 +1147,10 @@ mod foundation_tests {
             "unsupported_construct",
             "unsupported_projection",
             "unknown_required_feature",
+            "unimplemented_capability",
         ] {
             let catalog = CatalogCode::new(code, "x");
-            assert_eq!(category_of(&catalog), Some(Category::Refusal), "{code}");
+            assert_ne!(category_of(&catalog), Some(Category::Unsupported), "{code}");
             assert_eq!(exit_category_of(&catalog), Some(Category::Unsupported));
             assert_eq!(Category::Unsupported.exit_code(), 21);
         }
@@ -1166,6 +1164,8 @@ mod foundation_tests {
         );
     }
 
+    /// FR-090-AC-5's map: one row per catalog code, the internal-fault code
+    /// is `internal failure`, and an unknown code has no category.
     #[test]
     fn category_of_reads_the_code_and_refuses_an_unknown_one() {
         let mut spellings: Vec<&str> = CATALOG_CATEGORIES.iter().map(|(code, _)| *code).collect();
