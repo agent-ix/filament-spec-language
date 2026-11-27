@@ -230,14 +230,11 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         ),
         CheckedPackageDispatchResult::AdmittedV2(_)
     ));
-    let admitted = match read_checked_package(
-        &bytes,
-        CheckedPackageReadLimits::bounded(),
-        &evidence,
-    ) {
-        CheckedPackageDispatchResult::AdmittedV2(package) => package,
-        other => panic!("strict reader refused paired law mutation: {other:?}"),
-    };
+    let admitted =
+        match read_checked_package(&bytes, CheckedPackageReadLimits::bounded(), &evidence) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("strict reader refused paired law mutation: {other:?}"),
+        };
     let retained = admitted
         .lock()
         .definition_selections
@@ -275,11 +272,8 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .expect("floor law row");
     row["identity"] = ceiling_identity.into();
     let bytes = serde_json::to_vec(&lock_only).expect("serialize lock-only mutation");
-    let refusal = match read_checked_package(
-        &bytes,
-        CheckedPackageReadLimits::bounded(),
-        &evidence,
-    ) {
+    let refusal = match read_checked_package(&bytes, CheckedPackageReadLimits::bounded(), &evidence)
+    {
         CheckedPackageDispatchResult::Refused(refusal) => refusal,
         other => panic!("strict reader admitted lock-only mutation: {other:?}"),
     };

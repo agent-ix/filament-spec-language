@@ -1067,8 +1067,8 @@ impl ModelSystem<'_> {
     /// evaluation meter.
     #[implements("FR-161-AC-5")]
     pub fn charge_concretisation_work(&self) -> Result<(), crate::simulation::ExpansionStop> {
-        use filament_exact::{Charge, ChargePoint};
         use crate::simulation::{ExpansionLimit, ExpansionStop};
+        use filament_exact::{Charge, ChargePoint};
 
         self.shared_meter
             .lock()

@@ -1035,12 +1035,7 @@ fn sampled_two_test_provenance_keeps_bindings_and_method() {
     };
     assert_eq!(sprt.basis.method, StatisticalMethod::Sprt);
     assert_eq!(okamoto.provenance.tests.len(), sprt.provenance.tests.len());
-    for (okamoto_test, sprt_test) in okamoto
-        .provenance
-        .tests
-        .iter()
-        .zip(&sprt.provenance.tests)
-    {
+    for (okamoto_test, sprt_test) in okamoto.provenance.tests.iter().zip(&sprt.provenance.tests) {
         assert_eq!(okamoto_test.index, sprt_test.index);
         assert_eq!(okamoto_test.initial, sprt_test.initial);
         assert_eq!(okamoto_test.binding, sprt_test.binding);
@@ -2399,10 +2394,7 @@ fn exact_only_claims_are_refused_before_any_sample() {
             "Expected" => StatisticalRequestRefusal::ExactOnlyForm,
             _ => unreachable!("listed claim"),
         };
-        assert_eq!(
-            cause,
-            &UnavailabilityCause::StatisticalRequest(refusal)
-        );
+        assert_eq!(cause, &UnavailabilityCause::StatisticalRequest(refusal));
         assert_eq!(cause.as_str(), "unsupported-requested-capability");
     }
 }
