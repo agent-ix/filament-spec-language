@@ -23,8 +23,8 @@ use filament_contract_model::{
     OperationModeKind,
 };
 use filament_exact::{
-    admit_text, ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload,
-    Timestamp, Uuid, Value, ValueType,
+    ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload, Timestamp,
+    Uuid, Value, ValueType, admit_text,
 };
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::{
@@ -38,7 +38,7 @@ use ix_trace_rs::implements;
 
 use crate::equality_file::{EqualityWitnessRefusal, ReadEqualityRows};
 use crate::introduced_binders::is_sum_identity;
-use crate::wire_form::{has_form, has_tag, split_tag_form, OperationSuffix, WireForm, WireTag};
+use crate::wire_form::{OperationSuffix, WireForm, WireTag, has_form, has_tag, split_tag_form};
 
 /// One projected protocol slot: owned evaluator nodes, the admitted function
 /// table its calls reach, and the frame its locals and case binders use.
@@ -78,17 +78,24 @@ impl ReaderProtocolProjection {
                             return true;
                         };
                         match declaration.shape() {
-                            filament_semantic_value::declaration::CompositeShape::Record(fields) => {
-                                pending.extend(fields.iter().map(|field| field.value_type().clone()));
+                            filament_semantic_value::declaration::CompositeShape::Record(
+                                fields,
+                            ) => {
+                                pending
+                                    .extend(fields.iter().map(|field| field.value_type().clone()));
                             }
-                            filament_semantic_value::declaration::CompositeShape::Tuple(positions) => {
+                            filament_semantic_value::declaration::CompositeShape::Tuple(
+                                positions,
+                            ) => {
                                 pending.extend(positions.iter().cloned());
                             }
-                            filament_semantic_value::declaration::CompositeShape::Union(members) => {
+                            filament_semantic_value::declaration::CompositeShape::Union(
+                                members,
+                            ) => {
                                 pending.extend(
                                     members
                                         .iter()
-                                    .flat_map(|member| member.positions().iter().cloned()),
+                                        .flat_map(|member| member.positions().iter().cloned()),
                                 );
                             }
                         }
@@ -1152,6 +1159,10 @@ struct WireIndex<'wire> {
     /// Source-object identities joined to this package for source-operation
     /// function signatures. Other reader routes leave this absent.
     source_object_ids: Option<&'wire BTreeMap<CheckedNodeId, filament_exact::EffectiveId>>,
+    /// Direct source-object declarations derived from this package's typed
+    /// source member facts. Other reader routes leave this absent.
+    source_object_declarations:
+        Option<&'wire [filament_semantic_value::declaration::ObjectTypeDeclaration]>,
     /// Whether the walk reads names and term structure for printing an atom,
     /// which needs no exact type of a declaration the identity rows select
     /// (FR-931 "The lowering input").
@@ -1199,6 +1210,7 @@ impl<'wire> WireIndex<'wire> {
             graph,
             identities,
             source_object_ids: None,
+            source_object_declarations: None,
             print: false,
         })
     }
@@ -1614,8 +1626,10 @@ impl<'wire> BareWalker<'wire> {
     pub(crate) fn with_source_objects(
         mut self,
         identities: Option<&'wire BTreeMap<CheckedNodeId, filament_exact::EffectiveId>>,
+        declarations: Option<&'wire [filament_semantic_value::declaration::ObjectTypeDeclaration]>,
     ) -> Self {
         self.index.source_object_ids = identities;
+        self.index.source_object_declarations = declarations;
         self
     }
 
@@ -3127,7 +3141,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             Some("filament.op.collection.seq") => {
                 // FR-322 `seq`: two bounds outside the binder, the body inside.
-                let [low_term, high_term, CheckedTerm::Binding { name, value, .. }] = arguments
+                let [
+                    low_term,
+                    high_term,
+                    CheckedTerm::Binding { name, value, .. },
+                ] = arguments
                 else {
                     return Err(fault("reader-seq-has-two-bounds-and-binder").into());
                 };
@@ -3548,9 +3566,12 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
                 return Err(fault("reader-union-case-arm-has-body").into());
             };
-            let [CheckedTerm::Aggregate {
-                members: binders, ..
-            }, body] = members.as_slice()
+            let [
+                CheckedTerm::Aggregate {
+                    members: binders, ..
+                },
+                body,
+            ] = members.as_slice()
             else {
                 return Err(fault("reader-union-case-arm-has-binders-and-body").into());
             };
@@ -3693,6 +3714,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
 
     /// `record.project`: a field of a record value, or an attribute of a
     /// model object read through `model.deref` (FR-107's charged read).
+    #[implements("FR-531-AC-64")]
     fn projection(
         &mut self,
         id: &CheckedNodeId,
@@ -3717,6 +3739,38 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         else {
             return Err(fault("reader-record-projection-has-admitted-field").into());
         };
+        if let Some(owner) = self
+            .index
+            .source_object_ids
+            .and_then(|source_objects| source_objects.get(field_declaration))
+        {
+            let declarations = self
+                .index
+                .source_object_declarations
+                .ok_or_else(|| fault("reader-source-object-field-has-declarations"))?;
+            let declaration = declarations
+                .iter()
+                .find(|declaration| declaration.key() == *owner)
+                .ok_or_else(|| fault("reader-source-object-owner-has-declaration"))?;
+            let field = declaration
+                .attributes()
+                .iter()
+                .find(|field| field.name() == field_name)
+                .ok_or_else(|| fault("reader-source-object-field-is-direct"))?;
+            let child = self.project_argument(id, operand_term, context, locals)?;
+            return Ok((
+                NodeKind::Attribute {
+                    reference: child,
+                    field: FieldRef::new(owner.clone(), field_name.to_string()),
+                    optional: field.presence() == filament_exact::Presence::Optional,
+                    derefed: matches!(
+                        read_form,
+                        Some(filament_contract_model::CheckedFieldReadForm::ExplicitDeref)
+                    ),
+                },
+                vec![child],
+            ));
+        }
         let selected = self
             .index
             .identities
