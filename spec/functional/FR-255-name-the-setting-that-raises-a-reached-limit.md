@@ -299,6 +299,9 @@ its row (FR-315 "Size limits").
 | `exact_prob.max_rational_bits` | `max_rational_bits` | EN-5 | `ExactProbLimits` max_rational_bits | 65536 bits | FR-203 |
 | `exact_prob.max_policy_iterations` | `max_policy_iterations` | EN-5 | `ExactProbLimits` max_policy_iterations | 10000 iterations | FR-203 |
 | `exact_prob.max_witness_paths` | `max_witness_paths` | EN-5 | `ExactProbLimits` max_witness_paths | 1024 paths | FR-203 |
+| `exact_prob.max_clocks` | `max_clocks` | EN-5 timed regions | `ExactProbLimits` max_clocks | 10 clocks | FR-922 |
+| `exact_prob.max_clock_scale` | `max_clock_scale` | EN-5 timed regions | `ExactProbLimits` max_clock_scale | 1048576 ticks per base unit | FR-922 |
+| `exact_prob.max_clock_cap` | `max_clock_cap` | EN-5 timed regions | `ExactProbLimits` max_clock_cap | 1048576 ticks | FR-922 |
 | `statistical.max_samples` | `max_samples` | EN-4 | `StatisticalLimits` max_samples | 16777216 samples | FR-191 |
 | `statistical.max_draws` | `max_draws` | EN-4 | `StatisticalLimits` max_draws | 67108864 draws | FR-191 |
 | `statistical.max_cycle_steps` | `max_cycle_steps` | EN-4 | `StatisticalLimits` max_cycle_steps | 16777216 steps | FR-191 |
@@ -370,7 +373,7 @@ observation, identity, I2-read and accounting settings:
 `library.single_artifact_bytes`, `intake.input_bytes`, and
 `replay.input_bytes`. It SHALL also accept the limits consumed by analysis
 items: `emit.output_bytes`, `expansion.max_candidates`, `simulation.max_steps`,
-all ten `model_check.*` settings, all nine `exact_prob.*` settings, all four
+all ten `model_check.*` settings, all twelve `exact_prob.*` settings, all four
 `statistical.*` settings, all five `zone_check.*` settings,
 `analysis.retained_bytes`, `schedule.max_demand_points`, `hybrid.max_solver_steps`,
 `hybrid.max_solver_time`, `smt_encoding.max_constants`,
@@ -413,7 +416,7 @@ effective value for that setting. Without a target, an explicit
 `monitor.max_activations` is operation-unavailable and is refused before
 work. The preparation settings are accepted but unused without a target; with
 a target they bound plan preparation. If `items` requests provider-routed analysis,
-monitor also accepts all ten `model_check.*`, all nine `exact_prob.*`, all
+monitor also accepts all ten `model_check.*`, all twelve `exact_prob.*`, all
 four `statistical.*`, all five `zone_check.*`, `analysis.retained_bytes`,
 `schedule.max_demand_points`,
 `hybrid.max_solver_steps`, `hybrid.max_solver_time`, all six
@@ -498,11 +501,13 @@ The operation lists' grouped names expand to these exact `--limit` spellings:
   `model_check.max_witness_set`, `model_check.max_relation_tuples`,
   `model_check.max_live_instances`, `model_check.max_store_buffer`, and
   `model_check.max_messages`.
-- The nine `exact_prob.*` names are `exact_prob.max_states`,
+- The twelve `exact_prob.*` names are `exact_prob.max_states`,
   `exact_prob.max_transitions`, `exact_prob.max_automaton_states`,
   `exact_prob.max_iterations`, `exact_prob.precision_bits`,
   `exact_prob.max_precision_bits`, `exact_prob.max_rational_bits`,
-  `exact_prob.max_policy_iterations`, and `exact_prob.max_witness_paths`.
+  `exact_prob.max_policy_iterations`, `exact_prob.max_witness_paths`,
+  `exact_prob.max_clocks`, `exact_prob.max_clock_scale`, and
+  `exact_prob.max_clock_cap`.
 - The four `statistical.*` names are `statistical.max_samples`,
   `statistical.max_draws`, `statistical.max_cycle_steps`, and
   `statistical.max_sample_steps`.
