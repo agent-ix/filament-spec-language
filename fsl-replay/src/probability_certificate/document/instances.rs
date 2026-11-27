@@ -206,9 +206,12 @@ fn instances_of(
     let filament_exact::ValueType::Reference(object) = value_type else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding.into());
     };
+    // FR-125 "Instancing": the one derivation. A claim with no instance is
+    // settled by `instancing_outcome` before any route reads its instances.
     system
-        .instances(value_type)
+        .claim_bindings(value_type)
         .map_err(instance_graph_error)?
+        .into_instances()
         .into_iter()
         .map(|instance| {
             let reference = system
@@ -452,10 +455,6 @@ impl Instances {
             each: instances_of(system, value_type)?,
         })
     }
-
-    fn is_empty(&self) -> bool {
-        self.initials.is_empty() || self.overs.is_empty() || self.each.is_empty()
-    }
 }
 
 fn roots(
@@ -691,6 +690,9 @@ fn rows_of(rows: &Rows) -> Vec<ExactProbabilityValue> {
 
 /// What `on each` settles to.
 pub enum OnEachOutcome {
+    /// The subject has no initial state: `no-initial-state`, before
+    /// `no-instance` (FSpec FR-361-AC-16).
+    NoInitialState,
     /// The population has no instance (FR-875-AC-1).
     NoInstance,
     /// Every instance holds: the unchecked `conditional` certificate bytes.
@@ -724,9 +726,26 @@ pub fn on_each_has_instance(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     cancel: &Cancel,
-) -> Result<bool, ProbabilityDocumentError> {
+) -> Result<OnEachInstances, ProbabilityDocumentError> {
     let claim = each_claim(system, claims, item, cancel)?;
-    Ok(!Instances::of(system, claim)?.is_empty())
+    Ok(match super::super::instancing_outcome(system, claim)? {
+        Some(super::super::ExactProbabilityCertificateCheck::NoInitialState) => {
+            OnEachInstances::NoInitialState
+        }
+        Some(_) => OnEachInstances::NoInstance,
+        None => OnEachInstances::Some,
+    })
+}
+
+/// What an `on each` claim's instances are (FR-125 "Instancing").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OnEachInstances {
+    /// The subject has an initial state and the claim has an instance.
+    Some,
+    /// The subject has no initial state.
+    NoInitialState,
+    /// The subject has an initial state and the claim no instance.
+    NoInstance,
 }
 
 /// Settle every instance of the `on each` claim `item` over `system`.
@@ -758,11 +777,16 @@ pub fn on_each_outcome_with_work_scope(
     work: Option<&filament_exact::WorkScope>,
 ) -> Result<OnEachOutcome, ProbabilityDocumentError> {
     let claim = each_claim(system, claims, item, cancel)?;
-    let instances = Instances::of(system, claim)?;
-    // An empty instance set is `no-instance` before the profile is admitted.
-    if instances.is_empty() {
-        return Ok(OnEachOutcome::NoInstance);
+    // No initial state, then no instance, settle before the profile is
+    // admitted (FR-125 "Instancing", FR-875-AC-1).
+    match super::super::instancing_outcome(system, claim)? {
+        Some(super::super::ExactProbabilityCertificateCheck::NoInitialState) => {
+            return Ok(OnEachOutcome::NoInitialState)
+        }
+        Some(_) => return Ok(OnEachOutcome::NoInstance),
+        None => {}
     }
+    let instances = Instances::of(system, claim)?;
     let subject = admit(system, claim)?;
     let found = roots_over(system, &subject, &instances, limits, cancel)?;
     let mut meter = limits.accounting_meter_in_scope(cancel, work);

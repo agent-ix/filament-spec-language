@@ -336,6 +336,9 @@ fn settle_on_each(read: &OnEachRead) -> Result<StatisticalRecord, UnsettledRefus
         }))
     };
     Ok(match read {
+        OnEachRead::NoInitialState => StatisticalRecord::of(TerminalValue::Inconclusive(
+            InconclusiveCause::NoInitialState,
+        )),
         OnEachRead::NoInstance => {
             StatisticalRecord::of(TerminalValue::Inconclusive(InconclusiveCause::NoInstance))
         }

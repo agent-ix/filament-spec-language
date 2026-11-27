@@ -2424,6 +2424,32 @@ fn a_subject_without_an_initial_binding_pair_is_inconclusive() {
     assert_eq!(record.measured(), None);
 }
 
+/// FSpec FR-361-AC-8 and FR-125 "Instancing" (guard): a statistical claim that
+/// is not `on each`, over a subject that has an initial state but no admitted
+/// key of the `over` type, is refused before sampling and settles inconclusive
+/// `no-instance`, not `no-initial-state`.
+#[trace("FSpec-TC-294", "FSpec-FR-361-AC-8", "FR-125-AC-13")]
+#[test]
+fn a_statistical_claim_over_no_admitted_key_is_inconclusive_no_instance() {
+    let model = prob_world::service(&p95("P95", 5));
+    let world = World::with_object_initials(&model, &["s"], &[json!({"objects": {"s": null}})]);
+    let refusal = run(
+        &world,
+        "P95",
+        StatisticalMethod::Okamoto,
+        StatisticalLimits::default(),
+        DEFAULT_MAX_WITNESSES,
+    )
+    .expect_err("there is no instance to sample");
+    assert_eq!(refusal, StatisticalRefusal::NoInstance);
+    let record = settle_statistical_refusal(&refusal).expect("NoInstance settles");
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInstance)
+    );
+    assert_eq!(record.measured(), None);
+}
+
 /// FR-189 "Methods" and FR-190: over `Service` a mean of a fraction is
 /// decided by Okamoto over the windowed fraction of `Idle` positions; over a
 /// `Health` whose `tick` sets `healthy` to a fair coin, a long-run fraction
@@ -3845,6 +3871,14 @@ fn on_each_timed_world(keys: &[&str]) -> crate::timed_world::World {
 
 /// The record the FR-280 provider entry settles `Probe` with.
 fn served(world: &crate::timed_world::World) -> fsl_replay::statistical::StatisticalRecord {
+    served_over(world, world.request())
+}
+
+/// [`served`] over `simulation`, the world's request or a variant of it.
+fn served_over(
+    world: &crate::timed_world::World,
+    simulation: fsl_eval::simulation::model::ModelSimulationRequest<'_>,
+) -> fsl_replay::statistical::StatisticalRecord {
     let claim = world
         .package
         .graph()
@@ -3855,7 +3889,7 @@ fn served(world: &crate::timed_world::World) -> fsl_replay::statistical::Statist
         StatisticalRequest {
             workers: 1,
             subject: ModelSubject {
-                simulation: world.request(),
+                simulation,
                 proof_bounds: Vec::new(),
             },
             claim,
@@ -3900,6 +3934,21 @@ fn the_provider_entry_settles_an_on_each_claim_over_no_instance() {
     assert_eq!(
         record.value,
         TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInstance)
+    );
+}
+
+/// FSpec FR-361-AC-16 and FR-125 "Instancing": over a subject with no initial
+/// state the same entry settles `no-initial-state`, not `no-instance`.
+#[trace("FSpec-TC-294", "FSpec-FR-361-AC-16", "FR-125-AC-4", "FR-125-AC-13")]
+#[test]
+fn the_provider_entry_settles_an_on_each_claim_over_no_initial_state() {
+    let world = on_each_timed_world(&["c"]);
+    let mut simulation = world.request();
+    simulation.initial = Vec::new();
+    let record = served_over(&world, simulation);
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInitialState)
     );
 }
 

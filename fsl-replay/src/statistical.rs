@@ -721,6 +721,9 @@ pub enum StatisticalOutcome {
 /// found when statistical evidence was requested. No sample is drawn.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OnEachRead {
+    /// The subject has no initial state: the item settles `no-initial-state`,
+    /// before `no-instance` (FR-125 "Instancing").
+    NoInitialState,
     /// The instance set is empty: the item settles `no-instance`.
     NoInstance,
     /// The set is not empty. FR-875 admits only exact evidence, so the item is

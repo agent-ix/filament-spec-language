@@ -65,6 +65,7 @@ pub(super) fn run(
         Err(error) => return failure(error, &limits, subject),
     };
     match outcome {
+        OnEachOutcome::NoInitialState => EngineReport::Exact(Box::new(ExactReport::NoInitialState)),
         OnEachOutcome::NoInstance => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
         OnEachOutcome::Holds { document } => {
             let checked = check_probability_certificate_document_as_with_work_scope(
@@ -125,6 +126,7 @@ pub(in crate::analyze) fn statistical(
     subject: SubjectLimits<'_>,
 ) -> EngineReport {
     match read {
+        OnEachRead::NoInitialState => EngineReport::Exact(Box::new(ExactReport::NoInitialState)),
         OnEachRead::NoInstance => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
         OnEachRead::Unimplemented => super::not_yet(),
         OnEachRead::Cancelled(cause) => settled(&ExactProbBuildIssue::Cancelled(cause), subject),

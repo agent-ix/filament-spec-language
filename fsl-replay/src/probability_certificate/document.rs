@@ -25,7 +25,7 @@ pub(super) mod instances;
 pub use fairness::BoundedFairProbabilityPhase;
 pub use instances::{
     on_each_has_instance, on_each_outcome, on_each_outcome_with_work_scope, replay_on_each_witness,
-    replay_on_each_witness_with_work_scope, OnEachOutcome,
+    replay_on_each_witness_with_work_scope, OnEachInstances, OnEachOutcome,
 };
 mod key;
 mod mdp;

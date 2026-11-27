@@ -126,8 +126,9 @@ fn read_on_each(
         Err(failure) => return OnEachRead::Admission(Box::new(failure)),
     };
     match fsl_replay::on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
-        Ok(false) => OnEachRead::NoInstance,
-        Ok(true) => OnEachRead::Unimplemented,
+        Ok(fsl_replay::OnEachInstances::NoInitialState) => OnEachRead::NoInitialState,
+        Ok(fsl_replay::OnEachInstances::NoInstance) => OnEachRead::NoInstance,
+        Ok(fsl_replay::OnEachInstances::Some) => OnEachRead::Unimplemented,
         Err(error) => OnEachRead::Document(error),
     }
 }
