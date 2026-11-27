@@ -1475,6 +1475,7 @@ fn a_protocol_deadlock_is_spelled_with_its_blocked_list_through_analyze() {
         &Engines::fsl().expect("the layer-A manifests register"),
         vec![derived_protocol_item(derived, obligation, item).expect("the run")],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (terminals, found) = split_records(records, &case.checked);
     assert_eq!(terminals[0].value(), &fsl_replay::TerminalValue::Refuted);
@@ -1576,6 +1577,7 @@ fn a_protocol_replay_allocation_keeps_the_actual_item_resource_evidence() {
         &Engines::fsl().unwrap(),
         vec![derived_protocol_item(derived, obligation, item).unwrap()],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (records, found) = split_records(records, &case.checked);
     assert!(found.is_empty());
@@ -2275,6 +2277,7 @@ fn analyzed(
         &Engines::fsl().expect("the layer-A manifests register"),
         vec![derived_protocol_item(derived, obligation, item).expect("the run")],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     split_records(records, &case.checked)
 }

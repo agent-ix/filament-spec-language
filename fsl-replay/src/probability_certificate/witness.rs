@@ -653,7 +653,7 @@ pub fn replay_probabilistic_witness_from_package_with_work_scope(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-203-AC-32", "FR-204-AC-1", "FR-204-AC-5")]
+#[implements("FR-202-AC-47", "FR-203-AC-32", "FR-204-AC-1", "FR-204-AC-5")]
 fn replay_probabilistic_witness_impl(
     probabilistic: &fsl_semantics::check::CheckedProbabilisticModel,
     system: &ModelSystem<'_>,
@@ -672,6 +672,10 @@ fn replay_probabilistic_witness_impl(
         ExactProbabilityGraphError::ClaimNotBound => ProbabilityWitnessError::Refused,
         _ => ProbabilityWitnessError::Graph(error),
     })?;
+    // An `on each` instance has its own replay entry.
+    if witness.instance.is_some() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
     if witness.subsystem.is_some() {
         return if matches!(claim.form, ProbForm::MeanOfFraction { .. }) {
             measure::replay_subsystem(system, claim, witness, limits, cancel, work)

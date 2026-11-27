@@ -21,6 +21,7 @@ pub struct ProbabilityUndefinedWitness {
 /// The threshold has no role: only the first undefined observation of an
 /// undecided claim can issue a reproduced-witness token. This entry admits
 /// untimed product forms whose checked predicates are replayed here.
+#[implements("FR-202-AC-47")]
 pub fn replay_probabilistic_undefined(
     package: &CheckedPackage,
     system: &ModelSystem<'_>,
@@ -48,7 +49,7 @@ pub fn replay_probabilistic_undefined_with_work_scope(
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
     let evidence = &witness.path;
-    if evidence.subsystem.is_some() {
+    if evidence.subsystem.is_some() || evidence.instance.is_some() {
         return Err(ProbabilityWitnessError::Refused);
     }
     if !system

@@ -55,11 +55,12 @@ use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::certificate::{CertificateLocus, CertificateRule};
+use crate::model_check::settle::ResultLabel;
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
     Certification, DeclineCode, IncompleteCause, InconclusiveCause, InstanceBound, ProofBasis,
-    ReportedInconclusiveCause, StaleIdentity, SymmetryBrokenCause, TerminalRecord, TerminalValue,
-    UnavailabilityCause, WeakAccessFailure,
+    ReportedInconclusiveCause, SettlementBasis, StaleIdentity, SymmetryBrokenCause, TerminalRecord,
+    TerminalValue, UnavailabilityCause, WeakAccessFailure, PROOF_NOT_CERTIFIED_KIND,
 };
 use crate::result::{DisagreementCause, ReplayResult};
 use crate::shared_wire::{StateLocus, TransitionIdentity};
@@ -474,6 +475,12 @@ pub struct ItemCause {
     /// A `provider-answer-unconfirmed` cause's `premises` index.
     #[serde(skip_serializing_if = "Option::is_none")]
     premise: Option<u64>,
+    /// A `proof-not-certified` cause's proof basis.
+    #[serde(rename = "basis", skip_serializing_if = "Option::is_none")]
+    proof_basis: Option<Box<ProofBasis>>,
+    /// A `proof-not-certified` cause's certification.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certification: Option<Certification>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rule: Option<CertificateRule>,
     #[serde(rename = "at", skip_serializing_if = "Option::is_none")]
@@ -766,6 +773,8 @@ impl ItemCause {
             hypothesis: None,
             result: None,
             premise: None,
+            proof_basis: None,
+            certification: None,
             certificate_at: None,
             limit: None,
             defect: None,
@@ -853,6 +862,13 @@ impl ItemCause {
                 premise,
             }) => {
                 item.premise = Some(*premise);
+            }
+            ReportedInconclusiveCause::Cause(InconclusiveCause::ProofNotCertified {
+                basis,
+                certification,
+            }) => {
+                item.proof_basis = basis.clone();
+                item.certification = Some(*certification);
             }
             ReportedInconclusiveCause::Cause(
                 InconclusiveCause::BoundReached { depth }
@@ -1126,6 +1142,34 @@ pub struct ProtocolConformanceOutput {
     /// assessment (FR-896).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prefixes: Option<Vec<ConformancePrefixOutput>>,
+}
+
+impl ProtocolConformanceOutput {
+    /// For a request that requires certified proofs, and an item whose record
+    /// is not a certified proof, every label that would read `proved` reads
+    /// `inconclusive`. Obligation verdicts and the closure record are
+    /// the evidence the engine computed and stay.
+    #[implements("FR-1052-AC-9")]
+    pub fn withhold_proofs(&mut self) {
+        let proved = |label: &str| label == ResultLabel::Proved.as_str();
+        let inconclusive = || ResultLabel::Inconclusive.as_str().to_owned();
+        if proved(&self.global.label) {
+            self.global.label = inconclusive();
+            self.global.basis = SettlementBasis::Unsettled.as_str().to_owned();
+            self.global.complete = false;
+            self.global.cause = Some(PROOF_NOT_CERTIFIED_KIND.to_owned());
+        }
+        for prefix in self.prefixes.iter_mut().flatten() {
+            if proved(&prefix.label) {
+                prefix.label = inconclusive();
+            }
+        }
+        for projection in self.projections.iter_mut().flatten() {
+            if proved(&projection.label) {
+                projection.label = inconclusive();
+            }
+        }
+    }
 }
 
 /// The assessment of the first `observations` observations of a recording.

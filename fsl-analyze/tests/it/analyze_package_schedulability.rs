@@ -370,6 +370,7 @@ fn package_release_backing_admits_task_product_candidates() {
                 fsl_analyze::analyze::DeadlineSupply::Unbounded,
             ),
             budget,
+            certification: Default::default(),
         },
         &capture,
         &filament_exact::Cancel::new(),

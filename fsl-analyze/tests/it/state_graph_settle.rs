@@ -2067,6 +2067,7 @@ fn a_confirmed_refutation_decides_over_a_disagreeing_replay_in_either_order() {
             &Engines::fsl().expect("the linked engines admit"),
             vec![item],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .into_iter()
         .next()
