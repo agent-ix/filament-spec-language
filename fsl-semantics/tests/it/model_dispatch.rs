@@ -1029,3 +1029,26 @@ fn link_chain_at_defaults(
         &mut NormalizationMeter::new(limits),
     )
 }
+
+/// QSL-3573: a 1,000-link `redefines` chain refuses typed at `family_steps`
+/// 999, naming the setting, the bound and the count the first edge past it
+/// would reach, and links at 1,000. The refusal is a stop, not a crash.
+#[trace("FR-255-AC-45", "FR-083-AC-5")]
+#[test]
+fn a_thousand_link_chain_refuses_typed_one_edge_short_of_family_steps() {
+    const EDGES: u64 = 1_000;
+    let package = chain_package(EDGES);
+    let at = |family_steps: u64| ModelNormalizationLimits {
+        family_steps,
+        ..ModelNormalizationLimits::UNLIMITED
+    };
+    assert_links_the_chain(link_chain(&package, at(EDGES)), EDGES);
+    let LinkCheckOutcome::Incomplete(stop) = link_chain(&package, at(EDGES - 1)) else {
+        panic!("the family walk is denied at the edge past 999");
+    };
+    assert_eq!(stop.limit_kind, NormalizationLimitKind::FamilySteps);
+    assert_eq!((stop.limit, stop.consumed), (EDGES - 1, EDGES - 1));
+    let denial = stop.denial();
+    assert_eq!(denial.setting(), fsl_foundation::Setting::ModelFamilySteps);
+    assert_eq!(denial.actual(), u128::from(EDGES));
+}

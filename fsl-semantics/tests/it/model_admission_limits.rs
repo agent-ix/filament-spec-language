@@ -401,3 +401,58 @@ fn nesting_depth_is_no_limit() {
     run(&bytes(&document), ModelNormalizationLimits::default())
         .unwrap_or_else(|refusal| panic!("200 nested options and sequences admit: {refusal:?}"));
 }
+
+/// QSL-3573: a package of 1,000 declared sequence types on top of the
+/// 11-record fixture admits at the default `model.declaration_records`, and
+/// refuses typed one record short of its 1,011, naming the limit, the bound
+/// and the count reached, not crashing or running on unbounded.
+#[trace("FR-255-AC-45", "FR-506-AC-1")]
+#[test]
+fn a_thousand_declarations_admit_at_the_default_and_refuse_typed_one_short() {
+    let mut document = document_of(framed_operation());
+    for index in 0..1_000 {
+        let identity = format!("ix://{PACKAGE_IDENTITY}/Sequence{index}");
+        document["types"]
+            .as_array_mut()
+            .expect("types")
+            .push(json!({
+                "identity": identity,
+                "displayName": identity,
+                "kind": "sequence",
+                "items": "ix://filament/native/Boolean",
+                "roles": [],
+                "origin": {"generated": {
+                    "generatorIdentity": identity,
+                    "generatorVersion": "1.0.0",
+                    "inputIdentities": [identity],
+                }},
+                "constraints": [],
+                "extensions": [],
+                "unknownPolicy": "reject",
+            }));
+    }
+    let document = bytes(&document);
+    let limited = |bound: u64| ModelNormalizationLimits {
+        declaration_records: bound,
+        ..ModelNormalizationLimits::default()
+    };
+    run(&document, ModelNormalizationLimits::default())
+        .unwrap_or_else(|refusal| panic!("1,000 declarations admit at the default: {refusal:?}"));
+    run(&document, limited(1_011)).expect("1,011 records fit a limit of 1,011");
+    let refusal = run(&document, limited(1_010)).expect_err("1,011 records exceed 1,010");
+    match refusal.cause {
+        UnitIntakeCause::Limit(incomplete) => {
+            assert_eq!(
+                incomplete.limit_kind,
+                NormalizationLimitKind::DeclarationRecords
+            );
+            assert_eq!((incomplete.limit, incomplete.next_charge), (1_010, 1_011));
+            let denial = incomplete.denial();
+            assert_eq!(
+                denial.setting(),
+                fsl_foundation::Setting::ModelDeclarationRecords
+            );
+        }
+        other => panic!("expected a denied declaration_records charge, got {other:?}"),
+    }
+}
