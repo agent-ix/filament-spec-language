@@ -28,6 +28,7 @@ use fsl_eval::probabilistic::TimedOperatorState;
 use fsl_eval::simulation::model::{
     same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
     PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
+    LOCKED_RUN_TERMINAL,
 };
 use fsl_eval::simulation::StateKey;
 use fsl_replay::{
@@ -3266,11 +3267,20 @@ impl<'c> Builder<'_, '_, 'c> {
                 _ => None,
             })
             .collect();
-        // A pending event at a state with no move at all (a time-lock) can
-        // never be met: ADR-026 TD-2 reports the lock, and the event closes
-        // as a rejection (FR-196 "Canonical probability product key").
+        // A pending event at a state with no move at all (a time-lock) closes
+        // as FSpec FR-416 "How claims read a time-lock" reads it: an `always`
+        // holds, an `eventually` or `until` is refuted (ADR-026 TD-2 reports
+        // the lock; ADR-038 RL-7). A nested formula keeps the rejection.
         for state in &self.time_locked {
-            decided.push((ProbStateId(*state), MonitorVerdict::Reject));
+            let kind = match self.nodes[*state].key.monitor {
+                Some(MonitorState::Deadline { kind, .. }) => Some(kind),
+                _ => None,
+            };
+            let verdict = LOCKED_RUN_TERMINAL
+                .iter()
+                .find(|(locked, _)| Some(*locked) == kind)
+                .map_or(MonitorVerdict::Reject, |(_, verdict)| *verdict);
+            decided.push((ProbStateId(*state), verdict));
         }
         decided.sort_by_key(|(state, _)| state.index());
         decided.dedup_by_key(|(state, _)| state.index());

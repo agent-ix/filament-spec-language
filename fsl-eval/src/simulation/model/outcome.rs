@@ -14,6 +14,7 @@ use fsl_semantics::check::{CheckedTemporalClause, TimedPropertyForm};
 use ix_trace_rs::implements;
 
 use crate::automaton::invariant_atom;
+use crate::probabilistic::{DeadlineKind, MonitorVerdict};
 
 use super::{ClaimInstances, NoClaimInstances, NotSimulated};
 
@@ -28,6 +29,19 @@ pub fn states_non_zeno(clause: &CheckedTemporalClause) -> bool {
             Some(TimedPropertyForm::TimedInvariant | TimedPropertyForm::BoundedWindow { .. })
         )
 }
+
+/// How a pending timed event reads at a time-lock (FSpec FR-416 "How claims
+/// read a time-lock", FR-924; ADR-038 RL-7): the verdict the run closes with
+/// when the model can make no further move. A lock stops time before an
+/// `always` window is read past, so no position violates it and it holds
+/// (value 1); an `eventually` or `until` target is never reached and is
+/// refuted (value 0). Data only (FR-1051 B-10): the producer and the checker
+/// each look the verdict up from their own reading of the monitor.
+pub const LOCKED_RUN_TERMINAL: [(DeadlineKind, MonitorVerdict); 3] = [
+    (DeadlineKind::Eventually, MonitorVerdict::Reject),
+    (DeadlineKind::Always, MonitorVerdict::Accept),
+    (DeadlineKind::Until, MonitorVerdict::Reject),
+];
 
 /// Why a timed item that found no violation is not proved.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

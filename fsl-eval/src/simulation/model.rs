@@ -39,6 +39,7 @@ pub use sim_state::ModelSimState;
 mod outcome;
 pub use outcome::{
     admitted_refutation, admitted_start, claim_start, states_non_zeno, TimedVacuity,
+    LOCKED_RUN_TERMINAL,
 };
 mod operation_coverage;
 pub use operation_coverage::{

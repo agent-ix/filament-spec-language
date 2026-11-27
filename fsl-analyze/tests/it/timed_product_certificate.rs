@@ -1546,6 +1546,36 @@ fn time_locked_state_is_certified_terminal() {
     );
 }
 
+/// QSL-3468 (ADR-038 RL-7): an `always` window at a time-locked initial state
+/// holds (value 1, FSpec FR-416 "How claims read a time-lock"); the checker,
+/// reading the lock from its own enumeration, rejects a certificate that
+/// gives it the `eventually` reading's value 0. Tagged to FR-924-AC-5, the
+/// time-lock fixture; the `always` reading itself is a Behavior bullet with
+/// no criterion of its own.
+#[trace("TC-2493", "FR-924-AC-5")]
+#[test]
+fn time_locked_always_is_certified_one_and_a_forged_zero_is_rejected() {
+    let world = retx(
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 5 ms: 1 };\nworkload One on M { weight Call::send = 1; }\n",
+        "probabilistic AlwaysAtLock using ev on M over (c: M::Call) under One on origin { \
+         probability >= 0.999 [ always[0 ms, 4 ms] holds(not c.late) ] }\n",
+    );
+    let record = settle(&world, "AlwaysAtLock");
+    assert_eq!(proved_value(&record), ratio(1, 1));
+    assert!(accepted(&world, "AlwaysAtLock", &document(&record)));
+    let forged = settle_tampered(&world, "AlwaysAtLock", |certificate| {
+        for entry in &mut certificate.values {
+            entry.value = ratio(0, 1);
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&forged),
+        CertificateRule::InequalityFails
+    );
+}
+
 // --- FR-877 (TC-2494) -------------------------------------------------------
 
 fn quantiles() -> World {

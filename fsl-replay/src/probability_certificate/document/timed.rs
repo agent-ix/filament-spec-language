@@ -1549,6 +1549,27 @@ fn phase_value(phase: &Phase) -> Option<bool> {
     }
 }
 
+/// How the checker reads a run that ends at a time-lock with its event
+/// still pending (FSpec FR-416 "How claims read a time-lock", ADR-038
+/// RL-7): the declared mapping from the operator's kind, looked up here from
+/// the checker's own reading of the phase. A plain deadline event is an
+/// `eventually` (rejected); a nested formula keeps the rejection.
+fn locked_terminal(phase: &Phase) -> bool {
+    use fsl_eval::probabilistic::{DeadlineKind, MonitorVerdict};
+    use fsl_eval::simulation::model::LOCKED_RUN_TERMINAL;
+    let kind = match phase {
+        Phase::Pending => Some(DeadlineKind::Eventually),
+        Phase::Bounded(operator) => Some(operator.kind),
+        _ => None,
+    };
+    kind.and_then(|kind| {
+        LOCKED_RUN_TERMINAL
+            .iter()
+            .find(|(locked, _)| *locked == kind)
+    })
+    .is_some_and(|(_, verdict)| *verdict == MonitorVerdict::Accept)
+}
+
 fn monitor_json(phase: &Phase) -> JsonValue {
     use fsl_eval::probabilistic::{DeadlineKind, DeadlinePhase, TimedOperatorState};
     let kind_name = |kind| match kind {
@@ -2169,7 +2190,7 @@ fn enumerate_digital_deadline(
             insert_checker_state(
                 key,
                 CheckerState {
-                    terminal: choices.is_empty().then_some(false),
+                    terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                     choices,
                 },
                 &mut states,
@@ -2366,7 +2387,7 @@ fn enumerate_digital_deadline(
         insert_checker_state(
             key,
             CheckerState {
-                terminal: choices.is_empty().then_some(false),
+                terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                 choices,
             },
             &mut states,
@@ -2670,7 +2691,7 @@ fn enumerate_region_deadline(
         insert_checker_state(
             key,
             CheckerState {
-                terminal: choices.is_empty().then_some(false),
+                terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                 choices,
             },
             &mut states,
