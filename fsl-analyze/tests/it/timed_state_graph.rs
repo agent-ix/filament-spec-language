@@ -2418,10 +2418,13 @@ fn fr852_gap_assert_undefined_record(
     assert_eq!(evidence["cause"], "division-by-zero", "{item}");
     assert_eq!(evidence["where"]["position"], expected_position, "{item}");
     assert!(evidence["where"]["state_key"]["key"].is_string(), "{item}");
-    assert!(
-        evidence["where"]["locus"]["occurrence"].is_object(),
-        "{item}"
-    );
+    let wire_locus = evidence["where"]["locus"]
+        .as_object()
+        .expect("FR-393 where.locus is an object");
+    assert!(wire_locus.contains_key("node"), "{item}");
+    assert!(wire_locus["occurrence"].is_object(), "{item}");
+    assert!(wire_locus["occurrence"]["role"].is_string(), "{item}");
+    assert!(wire_locus["occurrence"]["ordinal"].is_number(), "{item}");
     match expected_locus {
         "target" => assert!(evidence["where"]["predicate"].is_string(), "{item}"),
         "guard" => assert!(evidence["where"]["transition"].is_object(), "{item}"),
@@ -2429,6 +2432,27 @@ fn fr852_gap_assert_undefined_record(
             assert!(evidence["where"].get("transition").is_none(), "{item}")
         }
         _ => panic!("known undefined locus: {expected_locus}"),
+    }
+    if matches!(expected_locus, "terminal" | "constraint") {
+        let counterexample = graph
+            .counterexample
+            .as_ref()
+            .expect("the state-graph record retains its typed FR-393 evidence");
+        let fsl_replay::CounterexampleKind::UndefinedEvaluation(undefined) = &counterexample.kind
+        else {
+            panic!("expected typed undefined-evaluation evidence: {counterexample:?}");
+        };
+        match (expected_locus, &undefined.site.locus) {
+            ("terminal", fsl_replay::UndefinedLocus::Terminal(model)) => {
+                assert_eq!(model.label(), "Done", "{counterexample:?}");
+            }
+            ("constraint", fsl_replay::UndefinedLocus::Constraint(name)) => {
+                assert_eq!(name, "C", "{counterexample:?}");
+            }
+            (expected, actual) => panic!(
+                "expected {expected} source locus, got {actual:?}: {counterexample:?}"
+            ),
+        }
     }
 }
 
@@ -2625,6 +2649,79 @@ fn fr852_gap_digital_clocks_declines_unsupported_forms_for_all_sources() {
         assert!(
             run.record(0).state_graph.is_none(),
             "a declined form does not search: {:?}",
+            run.record(0)
+        );
+    }
+}
+
+/// FR-852-AC-18/19/26/27: retain the exact terminal-predicate versus selected
+/// constraint source in the typed FR-393 evidence; the wire locus carries the
+/// claim node and occurrence, while the typed record distinguishes the source.
+#[trace("TC-2412", "FR-852-AC-18")]
+#[trace("TC-2412", "FR-852-AC-19")]
+#[trace("TC-2412", "FR-852-AC-26")]
+#[trace("TC-2412", "FR-852-AC-27")]
+#[test]
+fn fr852_gap_zone_records_distinguish_terminal_and_constraint_loci() {
+    for (variant, claim, locus, name) in [
+        ("U-T", "UndefinedAlways", "terminal", "terminal-always"),
+        ("U-C", "UndefinedAlways", "constraint", "constraint-always"),
+        ("U-T", "UndefinedUnique", "terminal", "terminal-unique"),
+        ("U-C", "UndefinedUnique", "constraint", "constraint-unique"),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-zone-locus-{name}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(variant, claim, None)]),
+        );
+        fr852_gap_assert_undefined_record(&run.item(0), locus, 2, run.record(0));
+    }
+}
+
+/// FR-852-AC-20..23 and AC-28..31: the exact digital-clock refusal result is
+/// `declined`, with cause `invalid-input`, for every undefined source/form.
+#[trace("TC-2412", "FR-852-AC-20")]
+#[trace("TC-2412", "FR-852-AC-21")]
+#[trace("TC-2412", "FR-852-AC-22")]
+#[trace("TC-2412", "FR-852-AC-23")]
+#[trace("TC-2412", "FR-852-AC-28")]
+#[trace("TC-2412", "FR-852-AC-29")]
+#[trace("TC-2412", "FR-852-AC-30")]
+#[trace("TC-2412", "FR-852-AC-31")]
+#[test]
+fn fr852_gap_digital_clocks_declines_with_invalid_input_for_all_sources() {
+    for (variant, claim, form) in [
+        ("U-P", "UndefinedAlways", "always-possible"),
+        ("U-G", "UndefinedAlways", "always-possible"),
+        ("U-T", "UndefinedAlways", "always-possible"),
+        ("U-C", "UndefinedAlways", "always-possible"),
+        ("U-P", "UndefinedUnique", "unique-path"),
+        ("U-G", "UndefinedUnique", "unique-path"),
+        ("U-T", "UndefinedUnique", "unique-path"),
+        ("U-C", "UndefinedUnique", "unique-path"),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-decline-result-{variant}-{form}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(
+                variant,
+                claim,
+                Some(json!({"method": "digital-clocks"}))
+            )]),
+        );
+        let item = run.item(0);
+        assert_eq!(item["result"], "declined", "{item}");
+        assert_eq!(item["cause"]["kind"], "invalid-input", "{item}");
+        assert_eq!(item["cause"]["code"], "invalid_runtime_input", "{item}");
+        assert!(item.to_string().contains("not_digitisable"), "{item}");
+        assert!(item.to_string().contains(form), "{item}");
+        assert!(run.record(0).state_graph.is_none(), "{:?}", run.record(0));
+        assert!(
+            run.record(0)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-1"),
+            "the decline uses the EN-1 backend: {:?}",
             run.record(0)
         );
     }
