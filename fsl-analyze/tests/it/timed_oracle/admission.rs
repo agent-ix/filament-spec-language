@@ -120,7 +120,13 @@ fn settle(world: &World, claim: &str) -> AnalyzeRecord {
         limits: ExactProbLimits::default(),
     };
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 fn checker(world: &World, claim: &str) -> Result<TimedProbabilityRoute, ProbabilityDocumentError> {

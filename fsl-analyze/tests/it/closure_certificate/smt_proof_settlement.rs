@@ -239,6 +239,7 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
         ],
         engines: &engines,
         limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
+        certification: Default::default(),
     };
     let mismapped = [(
         RequestIndex::new(1),

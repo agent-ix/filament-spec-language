@@ -17,7 +17,7 @@ use fsl_replay::planner::{
     interface_mismatch, DeclarationRefusal, MismatchReason, PlannerCause, PlannerDeclaration,
     PlannerResult, PlannerValue, SlotRole,
 };
-use fsl_replay::{Certification, InconclusiveCause, PremiseOutcome};
+use fsl_replay::{Certification, CertificationPolicy, InconclusiveCause, PremiseOutcome};
 use fsl_route::request::RequestWriter;
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{
@@ -459,6 +459,57 @@ fn a_supplied_result_that_does_not_prove_a_declared_interface_is_not_a_mismatch(
     assert!(premise(&result).is_some());
 }
 
+/// FSL FR-1052: a request that requires certified proofs gets no `proved`
+/// from a trusted fold; a certified fold is unchanged.
+#[trace("TC-3240", "FR-1052-AC-12")]
+#[test]
+fn require_certified_withholds_a_trusted_planner_result() {
+    let world = World::new();
+    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
+    let mut trusted = positive(&chain);
+    let plugin = chain.entry(
+        SENDS,
+        json!({"result": "proved", "backend": "acme", "basis": {"type": "exhaustive"}, "certification": "trusted"}),
+    );
+    trusted["slots"][SENDS]["result"]["result"] = plugin;
+    let settle = |request: &serde_json::Value, policy| {
+        fsl_replay::planner::settle(
+            &chain.package,
+            &chain.read(request).expect("admitted"),
+            fsl_replay::planner::Budget::default(),
+            policy,
+        )
+        .expect("settles")
+    };
+    let withheld = settle(&trusted, CertificationPolicy::RequireCertified);
+    assert_eq!(withheld.value, PlannerValue::Inconclusive);
+    assert_eq!(withheld.certification, None);
+    assert!(withheld.conclusion.is_none());
+    let (member, cause) = withheld
+        .cause
+        .expect("a cause")
+        .to_wire()
+        .expect("writable");
+    assert_eq!(member, "cause");
+    assert_eq!(
+        cause,
+        json!({"type": "proof-not-certified", "certification": "trusted"})
+    );
+    // An entry read from request bytes is never `certified` (FSpec FR-492:
+    // the reader caps it to `uncertified`), so even an all-`certified` pool
+    // is withheld under `RequireCertified`; the `certified` fold itself is
+    // asserted in-process in `planner::composition_tests`.
+    let capped = settle(&positive(&chain), CertificationPolicy::RequireCertified);
+    assert_eq!(capped.value, PlannerValue::Inconclusive);
+    assert_eq!(capped.certification, None);
+    let (member, cause) = capped.cause.expect("a cause").to_wire().expect("writable");
+    assert_eq!(member, "cause");
+    assert_eq!(
+        cause,
+        json!({"type": "proof-not-certified", "certification": "uncertified"})
+    );
+}
+
 // ---- FR-530-AC-6: trust, assumption, unsupported, failed, exhausted --------------
 
 #[trace("TC-1330", "FR-530-AC-6")]
@@ -480,6 +531,7 @@ fn each_outcome_keeps_its_own_trust_basis_and_extent() {
         &chain.package,
         &read,
         fsl_replay::planner::Budget::default(),
+        CertificationPolicy::AdmitAny,
     )
     .expect("settles");
     assert_eq!(settled.value, PlannerValue::Proved);

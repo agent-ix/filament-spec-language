@@ -50,6 +50,7 @@ fn evidence(world: &World) -> ProbabilisticCounterexample {
             world.request("Claim", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let record = records.remove(0);
     assert_eq!(
@@ -473,6 +474,7 @@ fn adapter_budget_exhaustion_keeps_incomplete_without_evidence() {
                 &Engines::fsl().unwrap(),
                 vec![exact_probabilistic_item(RequestIndex::new(0), request)],
                 &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
             )
             .remove(0);
             assert!(
@@ -506,6 +508,7 @@ fn actual_s3_over_parameter_and_single_admitted_instance_drive_replay() {
             &Engines::fsl().unwrap(),
             vec![exact_probabilistic_item(RequestIndex::new(0), request)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);

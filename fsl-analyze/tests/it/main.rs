@@ -75,6 +75,7 @@ mod reference_model;
 mod related_by_support;
 mod relation_claims;
 mod relation_claims_support;
+mod resource_exhausted_exit;
 mod shared_wire_conformance;
 mod statistical_witness_replay;
 mod statistical_witness_support;

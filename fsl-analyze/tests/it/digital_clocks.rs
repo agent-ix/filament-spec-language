@@ -1465,7 +1465,13 @@ fn exponential_delay_exact_item_is_unsupported_without_a_measured_value() {
         },
     );
     let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let terminal = record.terminal().expect("unsupported is terminal");
     assert!(matches!(
         terminal.value(),
@@ -1601,7 +1607,13 @@ fn long_run_weighting_guards_keep_typed_unsupported_and_deciding_engine() {
                 limits: ExactProbLimits::default(),
             },
         );
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         let Settlement::Disposed(disposed) = &record.settlement else {
             panic!("{name} ({ownership}): expected an EN-5 disposition, got {record:?}");
         };
@@ -1772,7 +1784,13 @@ fn a_bounded_nested_punctual_claim_settles_an_exact_verdict() {
         identity,
     );
     let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
-    let refuted = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let refuted = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert!(
         matches!(
             refuted.terminal().expect("a terminal record").value(),
@@ -1898,7 +1916,13 @@ fn settle_trio(
         }
         None => fsl_analyze::analyze::exact_probabilistic_item(index, request),
     };
-    fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    fsl_analyze::analyze::analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 fn exact_value(record: &fsl_analyze::analyze::AnalyzeRecord) -> Rational {
