@@ -25,7 +25,7 @@ use fsl_replay::statistical::{
     replay_sampled_witness, Confidence, Decision, MeasureValue, SampledParity,
     SampledWitnessReplay, StatisticalLimit, StatisticalLimits, StatisticalMethod,
     StatisticalOutcome, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
-    StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
+    StatisticalVerdict, WitnessReplay, WitnessValue,
 };
 use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
 use fsl_replay::SymmetryRefusal;

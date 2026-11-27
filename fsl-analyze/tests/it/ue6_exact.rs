@@ -7,7 +7,9 @@ use filament_exact::Cancel;
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_foundation::RequestIndex;
-use fsl_replay::{InconclusiveCause, ModelCheckLimits, TerminalValue, UndefinedLocus};
+use fsl_replay::{
+    CertificationPolicy, InconclusiveCause, ModelCheckLimits, TerminalValue, UndefinedLocus,
+};
 use ix_trace_rs::trace;
 
 use crate::prob_world::{self, World};
@@ -29,10 +31,15 @@ fn record(world: &World, name: &str) -> fsl_analyze::analyze::AnalyzeRecord {
         RequestIndex::new(0),
         world.request(name, ModelCheckLimits::default()),
     );
-    analyze_items(&engines, vec![item], &Cancel::new())
-        .into_iter()
-        .next()
-        .expect("a record")
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        CertificationPolicy::AdmitAny,
+    )
+    .into_iter()
+    .next()
+    .expect("a record")
 }
 
 /// The claim refutes with the contract conjunction `CanInc` that has no
