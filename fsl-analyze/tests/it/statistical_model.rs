@@ -3497,27 +3497,27 @@ fn a_window_aggregate_event_does_not_check() {
     assert!(refusal.contains("aggregate-term-typed"), "{refusal}");
 }
 
-/// Five distinct interval bounds inside the idle tail are decided and six are
-/// not. No position holds `phase = 0` after 0 ms, so the decided event is
-/// false: the bounds inside `(2, 8)` are 3, 4, 5, 6 and 7; `[3 ms, 9 ms]`
-/// moves the window's end to 9 and puts 8 inside too.
+/// FSpec FR-420 idle-tail semantics decide every completion here: after send
+/// at 2 ms, phase is 1, so each eventuality for phase = 0 is false, including
+/// the wider [3 ms, 9 ms] interval.
+#[trace("FSpec-FR-420")]
 #[test]
-fn six_interval_bounds_inside_a_dense_idle_tail_stop_incomplete() {
-    let five = "eventually[3 ms, 4 ms] holds(c.phase = 0) \
-                or eventually[5 ms, 6 ms] holds(c.phase = 0) \
-                or eventually[7 ms, 8 ms] holds(c.phase = 0)";
-    assert_eq!(
-        measured(&window_world(
-            2,
-            None,
-            "",
-            &format!("probability >= 0.5 [{five}]")
-        )),
-        (Some(ratio(0, 1)), Decision::Rejected)
+fn six_interval_bounds_inside_a_dense_idle_tail_settle_rejected() {
+    let five = concat!(
+        "eventually[3 ms, 4 ms] holds(c.phase = 0) or ",
+        "eventually[5 ms, 6 ms] holds(c.phase = 0) or ",
+        "eventually[7 ms, 8 ms] holds(c.phase = 0)"
     );
-    stops_undecided(&format!(
-        "probability >= 0.5 [{five} or eventually[3 ms, 9 ms] holds(c.phase = 0)]"
-    ));
+    for claim in [
+        format!("probability >= 0.5 [{five}]"),
+        format!("probability >= 0.5 [{five} or eventually[3 ms, 9 ms] holds(c.phase = 0)]"),
+    ] {
+        assert_eq!(
+            measured(&window_world(2, None, "", &claim)),
+            (Some(ratio(0, 1)), Decision::Rejected),
+            "{claim}"
+        );
+    }
 }
 
 /// A falling fraction: `phase = 0` holds at 0 ms and not in the idle state, so
