@@ -2753,21 +2753,37 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
             .as_array()
             .unwrap_or_else(|| panic!("prefixes: {item}"));
         assert_eq!(prefixes.len(), 14, "{outstanding}: {item}");
-        for prefix in prefixes {
+        for (prefix_index, prefix) in prefixes.iter().enumerate() {
             for node in [NESTED_LEFT, NESTED_RIGHT] {
+                let expected_count = all[..=prefix_index]
+                    .iter()
+                    .filter(|observation| observation["node"] == node)
+                    .count();
+                let verdicts = node_verdicts_in(prefix, node);
+                assert_eq!(
+                    verdicts.len(),
+                    expected_count,
+                    "{outstanding} {node}: {prefix}"
+                );
                 assert!(
-                    node_verdicts_in(prefix, node)
-                        .iter()
-                        .all(|verdict| verdict == "satisfied"),
+                    verdicts.iter().all(|verdict| verdict == "satisfied"),
                     "{outstanding} {node}: {prefix}"
                 );
             }
         }
         for node in [NESTED_LEFT, NESTED_RIGHT] {
+            let verdicts = node_verdicts_in(&item, node);
+            let expected_count = all
+                .iter()
+                .filter(|observation| observation["node"] == node)
+                .count();
+            assert_eq!(
+                verdicts.len(),
+                expected_count,
+                "{outstanding} {node}: {item}"
+            );
             assert!(
-                node_verdicts_in(&item, node)
-                    .iter()
-                    .all(|verdict| verdict == "satisfied"),
+                verdicts.iter().all(|verdict| verdict == "satisfied"),
                 "{outstanding} {node}: {item}"
             );
         }
@@ -2892,10 +2908,12 @@ fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
     assert_eq!(prefixes.len(), 4, "{legitimate}");
     for prefix in prefixes {
         for node in [outer, inner] {
+            let results = control_results_in(prefix, node);
+            assert_eq!(results.len(), 1, "{node}: {prefix}");
             assert!(
-                control_results_in(prefix, node)
+                results
                     .iter()
-                    .all(|(verdict, _)| verdict != "violated"),
+                    .all(|(verdict, _)| matches!(verdict.as_str(), "pending" | "satisfied")),
                 "{node}: {prefix}"
             );
         }
@@ -2921,17 +2939,21 @@ fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
     assert_source_assessment_pair(&source, &recording, &undetermined);
     let prefixes = undetermined["prefixes"].as_array().expect("prefixes");
     for prefix in prefixes {
+        let results = control_results_in(prefix, inner);
+        assert_eq!(results.len(), 1, "{inner}: {prefix}");
         assert!(
-            control_results_in(prefix, inner)
+            results
                 .iter()
-                .all(|(verdict, _)| verdict != "violated"),
+                .all(|(verdict, _)| matches!(verdict.as_str(), "pending" | "satisfied")),
             "{inner}: {prefix}"
         );
     }
+    let undetermined_results = control_results_in(&undetermined, inner);
+    assert_eq!(undetermined_results.len(), 1, "{undetermined}");
     assert!(
-        control_results_in(&undetermined, inner)
+        undetermined_results
             .iter()
-            .all(|(verdict, _)| verdict != "violated"),
+            .all(|(verdict, _)| matches!(verdict.as_str(), "pending" | "satisfied")),
         "{undetermined}"
     );
     assert_eq!(
@@ -2946,10 +2968,12 @@ fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
     assert_source_assessment_pair(&source, &recording, &over_limit);
     let prefixes = over_limit["prefixes"].as_array().expect("prefixes");
     for prefix in &prefixes[..2] {
+        let results = control_results_in(prefix, inner);
+        assert_eq!(results.len(), 1, "{inner}: {prefix}");
         assert!(
-            control_results_in(prefix, inner)
+            results
                 .iter()
-                .all(|(verdict, _)| verdict != "violated"),
+                .all(|(verdict, _)| matches!(verdict.as_str(), "pending" | "satisfied")),
             "{inner}: {prefix}"
         );
     }
