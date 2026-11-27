@@ -4,14 +4,17 @@
 //! limit goes. FR-255 gives every limit a published value, so no layer
 //! substitutes one of these for it.
 //!
-//! The report is advisory: it never fails, and a person reads each line.
-//! The scan is syntactic. It does not look inside macro invocations, and it
+//! The gate fails (QSL-3573) when a file holds more findings of a kind than
+//! `limit-literals.allow` allows it, or fewer: each row names why the sites
+//! may stay, so the list can only shrink. The scan is syntactic. It does not look inside macro invocations, and it
 //! skips `#[cfg(test)]` items and `tests` and `*_tests` files.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ix_trace_rs::implements;
 use syn::spanned::Spanned;
 use syn::visit::Visit;
 
@@ -182,16 +185,64 @@ fn production_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// The allowlist: one `path<TAB>kind<TAB>count<TAB>reason` row per file and
+/// kind, `#` lines and blank lines ignored.
+const ALLOWLIST: &str = include_str!("../limit-literals.allow");
+
+/// The allowed count of each (path, kind) of [`ALLOWLIST`].
+fn allowed(text: &str) -> BTreeMap<(String, String), usize> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let mut columns = line.split('\t');
+            let (path, kind, count) = (columns.next()?, columns.next()?, columns.next()?);
+            Some(((path.to_owned(), kind.to_owned()), count.parse().ok()?))
+        })
+        .collect()
+}
+
+/// What `found` holds beyond, or short of, what `allowed` permits, one line
+/// each.
+#[implements("FR-255-AC-48")]
+fn violations(
+    found: &BTreeMap<(String, String), usize>,
+    allowed: &BTreeMap<(String, String), usize>,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (key, count) in found {
+        let permitted = allowed.get(key).copied().unwrap_or(0);
+        if *count > permitted {
+            problems.push(format!(
+                "{} {}: {count} found, {permitted} allowed; bound it with the shared Budget or name it in limit-literals.allow",
+                key.0, key.1
+            ));
+        }
+    }
+    for (key, permitted) in allowed {
+        let count = found.get(key).copied().unwrap_or(0);
+        if count < *permitted {
+            problems.push(format!(
+                "{} {}: {count} found, {permitted} allowed; lower the row in limit-literals.allow",
+                key.0, key.1
+            ));
+        }
+    }
+    problems
+}
+
 /// Report every finding of the workspace's production crates, one
-/// `path:line: kind` line each, then the count.
+/// `path:line: kind` line each, then the count, and fail when they differ
+/// from the allowlist.
 ///
 /// # Errors
 ///
-/// A source root that cannot be read or a file that does not parse.
+/// A source root that cannot be read or a file that does not parse, or
+/// [`Error::LimitLiteralsFound`] when the findings differ from the allowlist.
 #[ix_trace_rs::string_edge]
 pub fn run(workspace_root: &Path) -> Result<String> {
     let mut report = String::new();
     let mut count = 0_usize;
+    let mut found = BTreeMap::<(String, String), usize>::new();
     for root in crate_roots() {
         if root.starts_with("tests") {
             continue;
@@ -207,6 +258,9 @@ pub fn run(workspace_root: &Path) -> Result<String> {
             let shown = path.strip_prefix(workspace_root).unwrap_or(&path);
             for finding in findings {
                 count += 1;
+                *found
+                    .entry((shown.display().to_string(), finding.kind.to_owned()))
+                    .or_default() += 1;
                 let _ = writeln!(
                     report,
                     "{}:{}: {}",
@@ -218,14 +272,22 @@ pub fn run(workspace_root: &Path) -> Result<String> {
         }
     }
     let _ = writeln!(report, "limit-literals: {count} to read");
-    Ok(report)
+    let problems = violations(&found, &allowed(ALLOWLIST));
+    if problems.is_empty() {
+        return Ok(report);
+    }
+    Err(Error::LimitLiteralsFound {
+        summary: problems.join("\n"),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use ix_trace_rs::trace;
 
-    use super::{scan_source, Finding};
+    use std::collections::BTreeMap;
+
+    use super::{allowed, scan_source, violations, Finding};
 
     #[trace("FR-255")]
     #[test]
@@ -256,5 +318,39 @@ mod tests {
         ]
         .map(|(line, kind)| Finding { line, kind });
         assert_eq!(found, expected);
+    }
+
+    #[trace("FR-255-AC-48")]
+    #[test]
+    fn the_gate_fails_on_a_new_finding_and_on_a_stale_allowance() {
+        let key = |kind: &str| ("a.rs".to_owned(), kind.to_owned());
+        let allow = allowed("# comment\n\na.rs\tUNLIMITED\t2\twhy\nb.rs\tunbounded()\t1\twhy\n");
+        let found = BTreeMap::from([(key("UNLIMITED"), 2), (key("u64::MAX field"), 1)]);
+        let problems = violations(&found, &allow);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].starts_with("a.rs u64::MAX field: 1 found, 0 allowed"));
+        assert!(problems[1].starts_with("b.rs unbounded(): 0 found, 1 allowed"));
+        let exact = BTreeMap::from([
+            (key("UNLIMITED"), 2),
+            (("b.rs".to_owned(), "unbounded()".to_owned()), 1),
+        ]);
+        assert!(violations(&exact, &allow).is_empty());
+    }
+
+    #[trace("FR-255-AC-48")]
+    #[test]
+    fn every_allowlist_row_has_a_count_and_a_reason() {
+        let rows = super::ALLOWLIST
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.starts_with('#'));
+        for row in rows {
+            let columns: Vec<_> = row.split('\t').collect();
+            assert_eq!(columns.len(), 4, "{row}");
+            assert!(
+                columns[2].parse::<usize>().is_ok_and(|count| count > 0),
+                "{row}"
+            );
+            assert!(!columns[3].trim().is_empty(), "{row}");
+        }
     }
 }

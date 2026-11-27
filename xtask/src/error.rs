@@ -25,6 +25,9 @@ pub enum Code {
     /// FR-080-AC-3: `cargo xtask route-lint` found a `static`,
     /// `OnceLock` or `thread_local!` item in the `#185` registry module.
     RouteLint,
+    /// FR-255: `cargo xtask limit-literals` found a literal limit the allowlist
+    /// does not name, or an allowance no site needs.
+    LimitLiterals,
     /// FR-270: `cargo xtask checked-input` found a stage entry that takes,
     /// or a stage crate function that rebuilds, a pre-check representation.
     CheckedInput,
@@ -65,6 +68,7 @@ impl Code {
             Self::StringEdgeScan => "string-edge-scan",
             Self::ImportGraph => "import-graph",
             Self::RouteLint => "route-lint",
+            Self::LimitLiterals => "limit-literals",
             Self::CheckedInput => "checked-input",
             Self::CanonicalTypes => "canonical-types",
             Self::Metadata => "metadata",
@@ -286,6 +290,13 @@ pub enum Error {
         /// The findings, formatted for display.
         summary: String,
     },
+    /// `xtask::limit_literals` found a literal limit the allowlist does not
+    /// name, or an allowance with no site; `summary` lists them.
+    #[error("{summary}")]
+    LimitLiteralsFound {
+        /// The differences, one per line.
+        summary: String,
+    },
     /// `xtask::checked_input` found one or more `signature` or
     /// `reconstruction` violations; `summary` lists them.
     #[error("{summary}")]
@@ -496,6 +507,7 @@ impl Error {
             Self::StringEdgeScan(_) => Code::StringEdgeScan,
             Self::ImportGraphParse { .. } => Code::ImportGraph,
             Self::RouteLintParse { .. } | Self::RouteLintFound { .. } => Code::RouteLint,
+            Self::LimitLiteralsFound { .. } => Code::LimitLiterals,
             Self::CheckedInputFound { .. } => Code::CheckedInput,
             Self::CanonicalTypesFound { .. } => Code::CanonicalTypes,
             Self::CanonicalTypesSpawn { .. }
@@ -552,6 +564,7 @@ impl Error {
             | Code::StringEdge
             | Code::ImportGraph
             | Code::RouteLint
+            | Code::LimitLiterals
             | Code::CheckedInput
             | Code::CanonicalTypes
             | Code::Conformance

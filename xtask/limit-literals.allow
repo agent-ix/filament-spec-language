@@ -1,0 +1,131 @@
+# cargo xtask limit-literals allowlist (FR-255 Status, QSL-3573).
+# path<TAB>kind<TAB>count<TAB>reason. The gate fails when a file holds more of a kind than its row allows,
+# or fewer (shrink the row), so the baseline can only get smaller.
+fsl-analyze/src/analyze/document.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-analyze/src/exact_probabilistic/digital.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-analyze/src/exact_probabilistic/finite_horizon.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-analyze/src/exact_probabilistic/unbounded.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-analyze/src/monitor_entries.rs	unbounded()	3	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-analyze/src/monitor_plan.rs	unbounded()	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-analyze/src/protocol_analysis/recording.rs	u64::MAX field	20	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-analyze/src/statistical.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-bench/src/check.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-bench/src/model.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-bench/src/world.rs	UNLIMITED	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-command/src/command/handoff.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-command/src/command/limits.rs	u64::MAX field	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-command/src/command/monitor.rs	u64::MAX field	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-command/src/command/package_run.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-command/src/command/tl.rs	unbounded()	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-command/src/replay_request.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-conformance/src/parity.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/automaton/key.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/automaton/timed_window.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/policy_budget.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/key.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model.rs	u64::MAX argument	4	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model/domain.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model/encode.rs	u64::MAX argument	9	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model/encode/projection.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model/frames/judge.rs	u64::MAX argument	4	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model/probabilistic.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model/symbolic.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model/timed.rs	u64::MAX argument	5	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/model/timed.rs	unbounded()	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/protocol.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/protocol/access.rs	u64::MAX argument	3	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/protocol/fairness.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/protocol/identity.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/protocol/ra.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/protocol/steps.rs	u64::MAX argument	6	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/simulation/sampled/world.rs	UNLIMITED	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/smt/hyper.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/smt/refinement.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/smt/refinement.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/temporal/evidence/limits.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/temporal/evidence/owner.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/temporal/finite_window/identity.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/temporal/finite_window/progressed.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/temporal/tuple.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/value/expression/evaluate.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-eval/src/value/expression/evaluate/invariants.rs	UNLIMITED	1	named exception: test code; the parent declares this module under `#[cfg(test)]`, which the syntactic scan cannot see
+fsl-eval/src/value/expression/evaluate/text_conversion.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-foundation/src/canonical_json.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-jit/src/translate.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-package/src/bare_term.rs	unbounded()	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-package/src/emit/extent_agreement.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-package/src/reader_protocol_projection.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/execute.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/execute/argument.rs	UNLIMITED	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/execute/argument.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/execute/composite_parity.rs	UNLIMITED	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/execute/composite_site.rs	UNLIMITED	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/hybrid/process_request.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/hybrid_replay/certificate/machine.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/hybrid_replay/expand.rs	unbounded()	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/model_check/graph_replay.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/model_check/hyper_replay.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/model_check/hyper_replay.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/model_check/replay.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/model_check/settle.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/outcome/counterexample.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/planner/key_build.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate/bounded.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate/cyclic.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate/document.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate/document/key.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate/document/mdp.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate/document/timed.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate/reward.rs	u64::MAX field	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/probability_certificate/source.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/product_action.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/protocol_analysis.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/protocol_analysis/structure.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/reference_codec.rs	u64::MAX argument	3	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/reference_codec/json.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/refinement/liveness.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/refinement/protocol_witness.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/request/package.rs	u64::MAX argument	4	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/result/wire.rs	u64::MAX argument	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/result/wire/value.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/result/wire/value.rs	u64::MAX field	10	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/shared_wire/transition.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/call.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/call.rs	u64::MAX field	9	named exception: FR-100's published default accounting leaves the nine counters other than `work_units` at `u64::MAX`
+fsl-replay/src/spine/clause/correction.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/clause/ledger_wire.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/clause/temporal.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/native_result.rs	u64::MAX argument	5	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/native_result.rs	u64::MAX field	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/native_result/protocol.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/native_result/temporal.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/request.rs	u64::MAX argument	7	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/run_value.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/run_value.rs	unbounded()	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/spine/run_value/references.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-replay/src/value_check.rs	u64::MAX argument	1	named exception: the position walk of a checked type environment (`classify_extent`); it only reads types the checked package already bounds by `s3.nodes`, and a refusal leaves the extent unclassified
+fsl-replay/src/witness/value_text.rs	u64::MAX argument	6	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/facts.rs	unbounded()	6	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/facts/conversions.rs	unbounded()	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/family.rs	u64::MAX field	12	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/hyper_clause.rs	u64::MAX field	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/lowering.rs	u64::MAX field	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/probabilistic.rs	u64::MAX field	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/state_clause.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/temporal_clause.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/temporal_clause.rs	u64::MAX field	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/temporal_clause/timed.rs	unbounded()	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/check/wire_id.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/accounting.rs	u64::MAX field	8	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/index.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/intake.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/intake/unit.rs	UNLIMITED	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/key.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/observation/document.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/observation/encode.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/observation/write.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+fsl-semantics/src/model/population.rs	u64::MAX field	3	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+src/population_fixtures.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+tools/fsl-hybrid-test-provider/src/main.rs	u64::MAX argument	2	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
+xtask/src/qualification.rs	u64::MAX argument	1	baseline: first failing run of QSL-3573, not yet classified; remove the row when the site is bounded or named above
