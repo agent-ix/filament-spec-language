@@ -896,11 +896,10 @@ fn a_quiescent_state_keeps_its_steps_so_a_false_infinity_is_rejected() {
     let control = document(&settle(&never, "MeanTime"));
     let claim_100 = quiescent_send("holds(c.late) >= 100 ms");
     // The producer's finite certificate for the reachable target, stripped of
-    // its values and ranking: a value-free document claims the infinity the
+    // its values: a value-free document claims the infinity the
     // checker's own graph denies, with the claim's own identity and objective.
     let record = settle_tampered(&claim_100, "MeanTime", |certificate| {
         certificate.values.clear();
-        certificate.ranking.clear();
     });
     assert_eq!(rejected_item_rule(&record), CertificateRule::Malformed);
 
