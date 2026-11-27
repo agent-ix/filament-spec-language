@@ -14,10 +14,10 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(feature = "test-support")]
-use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(test)]
 use std::cell::Cell;
+#[cfg(feature = "test-support")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use filament_contract_model::{
     encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
@@ -11445,39 +11445,23 @@ fn read_index_segments(
             .map_err(|_| EmitRefusal::SourceMapInvariant)
     };
     for node in nodes.iter_mut() {
-        let mut changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
-        for id in reachable_ids(node) {
-            if holds_segment(id, is_index) {
-                let new = structural(id)?;
-                if !changes.iter().any(|(old, _)| {
-                    #[cfg(feature = "test-support")]
-                    READ_INDEX_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
-                    old == id
-                }) {
-                    changes.push((id.clone(), new.clone()));
-                }
-                *id = new;
+        let mut invalid_index = false;
+        node.map_node_ids(|id| {
+            #[cfg(feature = "test-support")]
+            READ_INDEX_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
+            if invalid_index || !holds_segment(id, is_index) {
+                return None;
             }
-        }
-        // As in `write_index_segments`: IR substitutes where this reader
-        // cannot reach.
-        #[cfg(feature = "test-support")]
-        {
-            // Count the candidate slots each repeated replacement scans. The
-            // public IR replacement method owns that traversal, so observe its
-            // exact slot count once and multiply by the exact replacement count.
-            let mut candidate_slots = 0usize;
-            node.map_node_ids(|_| {
-                candidate_slots = candidate_slots.saturating_add(1);
-                None
-            });
-            READ_INDEX_REWRITE_CANDIDATE_CHECKS.fetch_add(
-                candidate_slots.saturating_mul(changes.len()),
-                Ordering::Relaxed,
-            );
-        }
-        for (old, new) in &changes {
-            node.replace_node_id(old, new);
+            match structural(id) {
+                Ok(new) => Some(new),
+                Err(_) => {
+                    invalid_index = true;
+                    None
+                }
+            }
+        });
+        if invalid_index {
+            return Err(EmitRefusal::SourceMapInvariant);
         }
     }
     for entry in source_map.iter_mut() {
