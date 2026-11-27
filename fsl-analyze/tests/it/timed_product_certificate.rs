@@ -890,21 +890,19 @@ fn quiescent_send(claim: &str) -> World {
 #[trace("TC-2490", "FR-921-AC-6")]
 #[test]
 fn a_quiescent_state_keeps_its_steps_so_a_false_infinity_is_rejected() {
-    let world = quiescent_send("holds(c.late) >= 1 ms");
-    let mut forged = document(&settle(&world, "MeanTime"));
-    forged["values"] = json!([]);
-    forged["ranking"] = json!([]);
+    // The false document: the control's own value-free infinity document,
+    // presented for a claim whose target the quiescent `send` reaches at 1 ms.
+    let never = quiescent_send("holds(false) >= 100 ms");
+    let forged = document(&settle(&never, "MeanTime"));
     let claim_100 = quiescent_send("holds(c.late) >= 100 ms");
     assert_eq!(
         rejected_rule(&claim_100, "MeanTime", &forged),
         ProbabilityCertificateRule::Malformed
     );
 
-    let never = quiescent_send("holds(false) >= 100 ms");
-    let control = document(&settle(&never, "MeanTime"));
-    assert_eq!(control["values"], json!([]));
+    assert_eq!(forged["values"], json!([]));
     assert!(matches!(
-        check(&never, "MeanTime", &control),
+        check(&never, "MeanTime", &forged),
         Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))
     ));
 }
