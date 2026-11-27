@@ -26,7 +26,7 @@ fn run_with_source_population_universe() -> Run {
                 "fields": {"v": {"integer": "0"}}}]},
             {"population": "lamps", "complete": true,
              "objects": [{"key": "l", "type": "Lamp",
-                "fields": {"lit": {"boolean": false}}}]}
+                "fields": {"lit": {"boolean": true}}}]}
         ]
     });
     let ws = Workspace::new("request-source-population-universe");
@@ -48,6 +48,14 @@ fn request_snapshot_admits_a_scheme_less_source_population_universe() {
     assert_ne!(run.document()["category"], "refusal", "{}", run.document());
     assert!(run.document()["diagnostics"].as_array().unwrap().is_empty());
     assert_eq!(run.document()["items"].as_array().unwrap().len(), 2);
-    assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
-    assert_eq!(run.item(1)["claim_name"], "LampOff", "{}", run.document());
+    let lamp = run.item(1);
+    assert_eq!(lamp["claim_name"], "LampOff", "{}", run.document());
+    assert_eq!(label(&lamp), "refuted", "{}", run.document());
+    assert_eq!(
+        lamp["counterexample"]["instance"]["key"]["identity"],
+        "l",
+        "{}",
+        run.document()
+    );
+    assert_eq!(lamp["replay"]["reproduced"], true, "{}", run.document());
 }
