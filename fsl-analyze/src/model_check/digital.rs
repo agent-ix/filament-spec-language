@@ -1028,6 +1028,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             self.request.limits.max_automaton_states,
         ) {
             Ok(property) => property,
+            Err(AutomatonError::ProfileNotTranslated { .. }) => return Ok(None),
             Err(error) => {
                 return self.automaton_stop::<()>(Err(error)).map(|()| None);
             }
