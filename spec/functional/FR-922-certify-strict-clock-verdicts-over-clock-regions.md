@@ -65,6 +65,21 @@ unsound, and the checker rejects a certificate that states it.
   states paired with corners, each delay edge carrying the exact elapsed time
   between corners, whose minimum and maximum are the dense infimum and
   supremum.
+- Interim, until the symbolic region MDP of ADR-038 RL-3 replaces it
+  (QSL-3495): a claim whose only reason for the region route is a strict
+  constraint (`Region(Strict)` in the route admission table) SHALL be decided
+  by the existing grid walk, and its verdict is only as sound as the dense
+  oracle rows that pin it. Those rows are the strict `two_clocks` rows
+  `row_3444_two_clock_regions_minimum_routes`,
+  `row_3444_two_clock_regions_maximum_routes`,
+  `row_3444_two_clock_regions_bounded_minimum_routes` and
+  `row_3444_two_clock_regions_bounded_maximum_routes` (FR-922-AC-4 subject A)
+  and the strict time-lock row `row_3468_time_lock_strict_routes` with its
+  closed twin `row_3468_time_lock_closed_routes` (a locked run is read as
+  FSpec FR-416 "How claims read a time-lock" states, ADR-038 RL-7). A strict
+  claim for which a row of these kinds fails SHALL settle `incomplete`
+  (`unresolved-dynamics`) until the region MDP is built, never a verdict from
+  the grid walk.
 - The checker SHALL refuse `ObjectiveMismatch` for a digital document over a
   claim the region route decides (FR-204 Admission "Route"), and for a region
   document over a claim the digital route decides.
