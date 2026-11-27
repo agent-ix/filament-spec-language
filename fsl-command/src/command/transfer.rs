@@ -189,10 +189,20 @@ impl Transfer<'_> {
         let limits = self.analyze_limits();
         let abstract_binding = subjects
             .abstract_subject
-            .binding(self.packages, &subjects.documents);
+            .binding_with_source_packages(
+                self.packages,
+                &subjects.documents,
+                package.graph().source_packages(),
+            )
+            .expect("admit_snapshots validated abstract source population names");
         let concrete_binding = subjects
             .concrete
-            .binding(self.packages, &subjects.documents);
+            .binding_with_source_packages(
+                self.packages,
+                &subjects.documents,
+                package.graph().source_packages(),
+            )
+            .expect("admit_snapshots validated concrete source population names");
         let units = [self.checked.source().reference().clone()];
         let resolve = |subject: &SubjectSelection,
                        binding: &fsl_analyze::analyze::SubjectBinding<'_>,
@@ -554,6 +564,7 @@ impl Transfer<'_> {
 
     /// FR-1031's `initial` row: FR-106 admits each initial snapshot of each
     /// subject for its model before any premise or transfer settles.
+    #[implements("FR-480-AC-2")]
     fn admit_snapshots(&self, refinement: &CheckedRefinement, subjects: &Subjects) -> Result<()> {
         let package = self.checked.package();
         let published = self.analyze_limits();
@@ -569,7 +580,27 @@ impl Transfer<'_> {
                 &refinement.concrete_model_selection().identity,
             ),
         ] {
-            let binding = subject.binding(self.packages, &subjects.documents);
+            let binding = subject
+                .binding_with_source_packages(
+                    self.packages,
+                    &subjects.documents,
+                    package.graph().source_packages(),
+                )
+                .map_err(|ambiguity| {
+                    let record = ambiguity.admission_record();
+                    RunCause::TransferSelection {
+                        stage: "admit",
+                        member: format!("/refinement_transfer/{side}/initial"),
+                        cause: record.catalog.cause(),
+                        code: Code::AmbiguousDeclaration,
+                        message: ambiguity.to_string(),
+                        details: record
+                            .fields
+                            .into_iter()
+                            .map(|(name, value)| (name.to_owned(), json!(value)))
+                            .collect(),
+                    }
+                })?;
             for (index, initial) in binding.initial.iter().enumerate() {
                 let request = fsl_eval::simulation::model::ModelSimulationRequest {
                     input: fsl_eval::simulation::model::ModelCheckInput::source(package),
