@@ -6,6 +6,7 @@
 
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
+use fsl_eval::simulation::TransitionSystem;
 
 use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit};
@@ -299,6 +300,389 @@ fn digital_clocks_decide_always_possible_and_unique_path() {
     let item = unique_refuted.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// FR-852-AC-9 and FR-852-AC-13: both timed state-graph routes settle an
+/// undefined reachable reset guard as the first undefined-evaluation
+/// refutation, including when `possible` has a witness.
+#[trace("TC-2412", "FR-852-AC-9")]
+#[trace("TC-2412", "FR-852-AC-13")]
+#[trace("TC-2412", "FR-852-AC-8")]
+#[trace("TC-2412", "FR-852-AC-12")]
+#[trace("TC-2412", "FR-852-AC-17")]
+#[trace("TC-2412", "FR-852-AC-25")]
+#[trace("TC-2412", "FR-852-AC-16")]
+#[trace("TC-2412", "FR-852-AC-24")]
+#[test]
+fn timed_state_graph_routes_refute_an_undefined_guard() {
+    let guard = "q(2 - self.phase) >= 0";
+    let mut source = unit(true)
+        .replace(
+            "not self.inflight and (self.phase = 2 or self.phase = 3)",
+            guard,
+        )
+        .replacen(
+            "pre SendIdle",
+            "function q using v(x: Integer): Integer pure { 6 mod x }\npre SendIdle",
+            1,
+        )
+        .replacen(
+            "model M = ",
+            "profile d = \"filament.value.integer-division.truncating/v1\";\nmodel M = ",
+            1,
+        );
+    source.push_str(
+        "\npossible Never using v over (c: M::Call) { false }\n\
+         possible UndefinedTarget using v over (c: M::Call) { q(2 - c.phase) >= 0 }\n\
+         unique path UndefinedUnique using v over (c: M::Call) from (c.phase = 2) to (c.phase = 2);\n",
+    );
+    let body = source
+        .split_once("model M = \"test/timed\";\n")
+        .map(|(_, body)| body)
+        .expect("the timed fixture has a model declaration");
+    let world = crate::timed_world::world_with_mode(
+        &crate::zone_search::rpc_document(),
+        &format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        ),
+        body,
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
+    assert!(
+        String::from_utf8_lossy(&world.unit)
+            .contains("q(2 - self.phase) >= 0"),
+        "the checked fixture carries the undefined guard: {}",
+        String::from_utf8_lossy(&world.unit)
+    );
+    let system = world.system();
+    let timed = fsl_eval::simulation::model::TimedSystem::new(&system, "M")
+        .expect("the source selects a timed model");
+    let zones = fsl_analyze::zone_check::explore_timed_state_graph(
+        &timed,
+        fsl_analyze::zone_check::ZoneCheckLimits::default(),
+        &filament_exact::Cancel::new(),
+    );
+    let zones = zones.expect("the zone graph keeps the undefined finding");
+    assert_eq!(zones.undefined.len(), 1, "{zones:?}");
+    assert_eq!(zones.undefined[0].reading.site, fsl_eval::simulation::model::TimedSite::Guard { clause: "Reset".to_owned() });
+    assert!(format!("{:?}", zones.undefined[0].reading.cause).contains("DivisionByZero"));
+    assert!(zones.undefined[0].reading.transition.is_some(), "{zones:?}");
+    assert!(zones.undefined[0].reading.location.is_some(), "{zones:?}");
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("ReplyPossible")
+        .expect("the source package has the state-graph claim");
+    let parameter = claim.over().expect("the claim is over a call");
+    let instance = system
+        .instances(&filament_exact::ValueType::Reference(parameter.object.clone()))
+        .expect("enumerate claim instances")
+        .into_iter()
+        .next()
+        .expect("one call instance");
+    let over = system
+        .bound_reference(parameter.object.clone(), &instance)
+        .expect("bind the claim instance");
+    let decision = fsl_analyze::zone_check::decide_timed_state_graph(
+        &system,
+        &zones,
+        claim,
+        Some(&over),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("decide the claim over the graph");
+    assert!(
+        matches!(decision, fsl_analyze::zone_check::TimedStateGraphDecision::Undefined { .. }),
+        "undefined subject evaluation outranks this claim's graph decision: {decision:?}"
+    );
+    for name in ["BackToIdle", "UndefinedUnique"] {
+        let claim = world
+            .package
+            .graph()
+            .state_graph_claim(name)
+            .unwrap_or_else(|| panic!("the source package has the {name} claim"));
+        let parameter = claim.over().expect("the claim is over a call");
+        let over = system
+            .bound_reference(parameter.object.clone(), &instance)
+            .expect("bind the claim instance");
+        let decision = fsl_analyze::zone_check::decide_timed_state_graph(
+            &system,
+            &zones,
+            claim,
+            Some(&over),
+            &filament_exact::Cancel::new(),
+        )
+        .unwrap_or_else(|error| panic!("decide {name}: {error:?}"));
+        assert!(
+            matches!(decision, fsl_analyze::zone_check::TimedStateGraphDecision::Undefined { .. }),
+            "the undefined guard also settles {name}: {decision:?}"
+        );
+    }
+    let never = world
+        .package
+        .graph()
+        .state_graph_claim("Never")
+        .expect("the fixture has an earlier trap claim");
+    let never_parameter = never.over().expect("the claim is over a call");
+    let never_over = system
+        .bound_reference(never_parameter.object.clone(), &instance)
+        .expect("bind the never claim instance");
+    let never_decision = fsl_analyze::zone_check::decide_timed_state_graph(
+        &system,
+        &zones,
+        never,
+        Some(&never_over),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("decide the earlier trap");
+    assert!(
+        matches!(never_decision, fsl_analyze::zone_check::TimedStateGraphDecision::Refuted { node: 0, .. }),
+        "the initial trap precedes the later undefined node: {never_decision:?}"
+    );
+    let undefined_target = world
+        .package
+        .graph()
+        .state_graph_claim("UndefinedTarget")
+        .expect("the fixture has a claim predicate undefined at the same node");
+    let target_parameter = undefined_target.over().expect("the claim is over a call");
+    let target_over = system
+        .bound_reference(target_parameter.object.clone(), &instance)
+        .expect("bind the undefined target instance");
+    let target_decision = fsl_analyze::zone_check::decide_timed_state_graph(
+        &system,
+        &zones,
+        undefined_target,
+        Some(&target_over),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("decide the undefined predicate");
+    assert!(
+        matches!(&target_decision, fsl_analyze::zone_check::TimedStateGraphDecision::Undefined { reading, .. }
+            if reading.predicate == Some(fsl_semantics::check::PredicateRole::Target)
+                && reading.transition.is_none()),
+        "same-node claim predicate undefined takes precedence over the guard: {target_decision:?}"
+    );
+    assert_eq!(zones.undefined.len(), 1, "{zones:?}");
+    let phase_two = zones
+        .nodes
+        .iter()
+        .find(|node| {
+            node.state
+                .state()
+                .populations
+                .values()
+                .flat_map(|objects| objects.values())
+                .flat_map(|object| object.fields.values())
+                .any(|value| matches!(value, filament_exact::Value::Integer(value) if value.to_string() == "2"))
+        })
+        .expect("phase 2 is explored");
+    let clocks = fsl_eval::simulation::model::ClockValuation::new(
+        vec![filament_exact::Rational::from_integer(filament_exact::Integer::zero()); timed.places().len()],
+    );
+    let phase_two_timed = fsl_eval::simulation::model::TimedState::new(
+        phase_two.state.clone(),
+        clocks,
+    );
+    let expansion = system.successors(&phase_two.state).expect("expand phase two");
+    assert!(expansion.findings.iter().any(|finding| finding.undefined_contract().is_some()));
+    let phase_two_steps = timed.steps(&phase_two_timed);
+    assert!(
+        matches!(phase_two_steps, Err(fsl_eval::simulation::model::TimedStop::Undecided(_))),
+        "the reset guard has the undefined division: {phase_two_timed:?}; {phase_two_steps:?}"
+    );
+    assert!(
+        zones.nodes.iter().any(|node| {
+            node.state
+                .state()
+                .populations
+                .values()
+                .flat_map(|objects| objects.values())
+                .flat_map(|object| object.fields.values())
+                .any(|value| matches!(value, filament_exact::Value::Integer(value) if value.to_string() == "2"))
+        }),
+        "phase 2 is explored: {zones:?}"
+    );
+    let digital = fsl_replay::explore_digital_state_graph(
+        &timed,
+        10_000,
+        100_000,
+        &filament_exact::Cancel::new(),
+    );
+    let digital = digital.expect("the digital graph keeps the undefined finding");
+    assert!(!digital.undefined.is_empty(), "{digital:?}");
+    assert!(digital.undefined[0].reading.location.is_some(), "{digital:?}");
+    assert!(
+        digital.nodes.iter().any(|node| {
+            node.discrete()
+                .state()
+                .populations
+                .values()
+                .flat_map(|objects| objects.values())
+                .flat_map(|object| object.fields.values())
+                .any(|value| matches!(value, filament_exact::Value::Integer(value) if value.to_string() == "2"))
+        }),
+        "phase 2 is explored: {digital:?}"
+    );
+}
+
+/// FR-852-AC-10 and FR-852-AC-14: both timed routes retain an undefined
+/// `terminal when` reading at the reachable terminal model state.
+#[trace("TC-2412", "FR-852-AC-10")]
+#[trace("TC-2412", "FR-852-AC-14")]
+#[test]
+fn timed_state_graph_routes_retain_undefined_terminal_readings() {
+    let source = unit(false)
+        .replacen(
+            "pre SendIdle",
+            "function q using v(x: Integer): Integer pure { 6 mod x }\npre SendIdle",
+            1,
+        )
+        + "\nterminal Done using v on M when { q(2 - self.phase) >= 0 };\n";
+    let body = source
+        .split_once("model M = \"test/timed\";\n")
+        .map(|(_, body)| body)
+        .expect("the timed fixture has a model declaration");
+    let world = crate::timed_world::world_with_mode(
+        &crate::zone_search::rpc_document(),
+        &format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        ),
+        body,
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
+    let system = world.system();
+    let timed = fsl_eval::simulation::model::TimedSystem::new(&system, "M")
+        .expect("the source selects a timed model");
+    let zones = fsl_analyze::zone_check::explore_timed_state_graph(
+        &timed,
+        fsl_analyze::zone_check::ZoneCheckLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("zone exploration retains the terminal undefined reading");
+    assert!(zones.undefined.iter().any(|entry| {
+        matches!(entry.reading.site, fsl_eval::simulation::model::TimedSite::Terminal { .. })
+            && entry.reading.location.is_some()
+            && format!("{:?}", entry.reading.cause).contains("DivisionByZero")
+    }), "{zones:?}");
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("ReplyPossible")
+        .expect("the source package has the state-graph claim");
+    let parameter = claim.over().expect("the claim is over a call");
+    let instance = system
+        .instances(&filament_exact::ValueType::Reference(parameter.object.clone()))
+        .expect("enumerate claim instances")
+        .into_iter()
+        .next()
+        .expect("one call instance");
+    let over = system
+        .bound_reference(parameter.object.clone(), &instance)
+        .expect("bind the claim instance");
+    let decision = fsl_analyze::zone_check::decide_timed_state_graph(
+        &system,
+        &zones,
+        claim,
+        Some(&over),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("decide the claim over terminal undefined evidence");
+    assert!(
+        matches!(&decision, fsl_analyze::zone_check::TimedStateGraphDecision::Undefined { reading, .. }
+            if reading.transition.is_none() && reading.locus.is_some()),
+        "{decision:?}"
+    );
+    let digital = fsl_replay::explore_digital_state_graph(
+        &timed,
+        10_000,
+        100_000,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("digital exploration retains the terminal undefined reading");
+    assert!(digital.undefined.iter().any(|entry| {
+        matches!(entry.reading.site, fsl_eval::simulation::model::TimedSite::Terminal { .. })
+            && entry.reading.location.is_some()
+            && format!("{:?}", entry.reading.cause).contains("DivisionByZero")
+    }), "{digital:?}");
+}
+
+/// FR-852-AC-11 and FR-852-AC-15: the selected state constraint's undefined
+/// reading remains a refutation on both timed graph routes.
+#[trace("TC-2412", "FR-852-AC-11")]
+#[trace("TC-2412", "FR-852-AC-15")]
+#[test]
+fn timed_state_graph_routes_refute_an_undefined_state_constraint() {
+    let source = unit(true).replacen(
+        "pre SendIdle",
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n\
+         constraint C using v on M::Call at current { q(2 - self.phase) >= 0 }\n\
+         pre SendIdle",
+        1,
+    );
+    let body = source
+        .split_once("model M = \"test/timed\";\n")
+        .map(|(_, body)| body)
+        .expect("the timed fixture has a model declaration");
+    let world = crate::timed_world::world_with_mode(
+        &crate::zone_search::rpc_document(),
+        &format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        ),
+        body,
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
+    let system = world.system();
+    let timed = fsl_eval::simulation::model::TimedSystem::new(&system, "M")
+        .expect("the source selects a timed model");
+    let zones = fsl_analyze::zone_check::explore_timed_state_graph(
+        &timed,
+        fsl_analyze::zone_check::ZoneCheckLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("zone exploration reaches the undefined constraint state");
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("ReplyPossible")
+        .expect("the source package has the state-graph claim");
+    let parameter = claim.over().expect("the claim is over a call");
+    let instance = system
+        .instances(&filament_exact::ValueType::Reference(parameter.object.clone()))
+        .expect("enumerate claim instances")
+        .into_iter()
+        .next()
+        .expect("one call instance");
+    let over = system
+        .bound_reference(parameter.object.clone(), &instance)
+        .expect("bind the claim instance");
+    let decision = fsl_analyze::zone_check::decide_timed_state_graph_with_constraint(
+        &system,
+        &zones,
+        claim,
+        Some(&over),
+        Some("C"),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("decide the selected constraint");
+    assert!(
+        matches!(&decision, fsl_analyze::zone_check::TimedStateGraphDecision::Undefined { reading, .. }
+            if reading.locus == system.state_clause_locus("C")
+                && format!("{:?}", reading.cause).contains("DivisionByZero")),
+        "{decision:?}"
+    );
+    let digital = fsl_replay::explore_digital_state_graph(
+        &timed,
+        10_000,
+        100_000,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("digital exploration reaches the undefined constraint state");
+    assert!(digital.nodes.iter().any(|node| {
+        matches!(system.constraint_value(node.discrete(), "C"), Ok(fsl_eval::simulation::ConstraintValue::Undefined { .. }))
+    }));
 }
 
 /// FR-243: EN-1 refuses an open timed state-graph subject before search.
