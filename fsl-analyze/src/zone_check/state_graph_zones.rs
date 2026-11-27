@@ -27,7 +27,9 @@ use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint, TimedSystem};
+use fsl_eval::simulation::model::{
+    GuardedStep, ModelSimState, PlaceConstraint, TimedStop, TimedSystem,
+};
 use fsl_replay::{ModelPath, ModelStep};
 use ix_trace_rs::implements;
 use num_bigint::BigInt;
@@ -138,7 +140,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
             // `graph.undefined`, where it outranks a later verdict.
             let steps = match timed.guarded_steps(&states[source].state) {
                 Ok(steps) => steps,
-                Err(_) if !graph.undefined.is_empty() => Vec::new(),
+                Err(TimedStop::Undecided(_)) if !graph.undefined.is_empty() => Vec::new(),
                 Err(_) => return Err(ZoneCheckRefusal::Fault("state-graph-guarded-steps")),
             };
             for step in steps {

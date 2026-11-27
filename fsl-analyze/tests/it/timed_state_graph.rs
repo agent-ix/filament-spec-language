@@ -1787,6 +1787,109 @@ fn the_producer_charges_each_pair_a_subtraction_reads() {
     );
 }
 
+/// The subject of the trap-before-pair order: phase 0 has two steps, `a` and
+/// `b`, to phase 1 (a path pair to phase 1); phase 1 takes `c` to phase 2
+/// and `d` to phase 3; phase 3 has no step, a trap. `e` at phase 2 has the
+/// guard `guard`, which is undefined there when it divides by `2 - phase`.
+/// The nodes are in that order: phase 0 is node 0, phase 2 is node 2 and
+/// phase 3 is node 3.
+fn trap_and_pair_decision(guard: &str) -> fsl_analyze::zone_check::TimedStateGraphDecision {
+    let body = format!(
+        "{}\
+         pre A using v on M::Call::a {{ self.phase = 0 }}\n\
+         post ADone using v on M::Call::a {{ self.phase = 1 }}\n\
+         pre B using v on M::Call::b {{ self.phase = 0 }}\n\
+         post BDone using v on M::Call::b {{ self.phase = 1 }}\n\
+         pre C using v on M::Call::c {{ self.phase = 1 }}\n\
+         post CDone using v on M::Call::c {{ self.phase = 2 }}\n\
+         pre D using v on M::Call::d {{ self.phase = 1 }}\n\
+         post DDone using v on M::Call::d {{ self.phase = 3 }}\n\
+         pre E using v on M::Call::e {{ self.phase = 2 and {guard} }}\n\
+         post EDone using v on M::Call::e {{ self.phase = 2 }}\n\
+         function q using v(x: Integer): Integer pure {{ 6 mod x }}\n\
+         unique path Done using v over (c: M::Call) \
+         from (c.phase = 0 or c.phase = 3) to (c.phase = 1);\n",
+        crate::timed_world::DENSE,
+    );
+    let ops: [(&str, &[&str]); 5] = [
+        ("a", &["phase"]),
+        ("b", &["phase"]),
+        ("c", &["phase"]),
+        ("d", &["phase"]),
+        ("e", &["phase"]),
+    ];
+    let world = crate::timed_world::world_with_mode(
+        &crate::timed_world::document(&["x"], &ops),
+        &format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        ),
+        &body,
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
+    let system = world.system();
+    let timed = fsl_eval::simulation::model::TimedSystem::new(&system, "M")
+        .expect("the source selects a timed model");
+    let limits = fsl_analyze::zone_check::ZoneCheckLimits::default();
+    let graph = fsl_analyze::zone_check::explore_timed_state_graph(
+        &timed,
+        limits,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the zone graph is explored");
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("Done")
+        .expect("the source package has the claim");
+    let parameter = claim.over().expect("the claim is over a call");
+    let instance = system
+        .instances(&filament_exact::ValueType::Reference(parameter.object.clone()))
+        .expect("enumerate claim instances")
+        .into_iter()
+        .next()
+        .expect("one call instance");
+    let over = system
+        .bound_reference(parameter.object.clone(), &instance)
+        .expect("bind the claim instance");
+    fsl_analyze::zone_check::decide_timed_state_graph(
+        &timed,
+        &graph,
+        claim,
+        Some(&over),
+        limits,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the claim is decided")
+}
+
+/// For `unique path` a trap is taken before a path pair, and the evidence is
+/// compared with an undefined reading by its node: with the pair at node 0, an
+/// undefined guard at node 2 and the trap at node 3, the undefined reading
+/// decides; without it the trap at node 3 does, not the pair at node 0.
+#[trace("TC-2412", "FR-852-AC-34")]
+#[test]
+fn a_unique_path_trap_precedes_a_pair_and_is_compared_by_its_node() {
+    use fsl_analyze::zone_check::TimedStateGraphDecision;
+
+    let decision = trap_and_pair_decision("q(2 - self.phase) >= 0");
+    assert!(
+        matches!(&decision, TimedStateGraphDecision::Undefined { node: 2, reading, .. }
+            if format!("{:?}", reading.cause).contains("DivisionByZero")),
+        "{decision:?}"
+    );
+    let decision = trap_and_pair_decision("true");
+    let TimedStateGraphDecision::Refuted {
+        stem, node, paths, ..
+    } = decision
+    else {
+        panic!("refuted by the trap: {decision:?}");
+    };
+    assert_eq!((node, paths), (3, None), "{stem:?}");
+    // `a` or `b`, `d`: the last step lands in phase 3.
+    assert_eq!(stem.steps.len(), 2, "{stem:?}");
+}
+
 /// FR-125 "Instancing": on the digital probabilistic route, the proved entry
 /// and the refuted binding of `over (c: Base)` name the admitted `Derived`,
 /// and the proof's certificate accepts that binding.
