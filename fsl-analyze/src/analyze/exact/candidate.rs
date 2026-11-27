@@ -154,6 +154,7 @@ pub(super) fn sort<T>(
     Ok(())
 }
 
+#[implements("FR-203-AC-29")]
 fn sift_down<T>(
     rows: &mut [T],
     mut root: usize,
@@ -183,6 +184,7 @@ fn sift_down<T>(
     }
 }
 
+#[implements("FR-203-AC-29")]
 fn compare_rows<T>(
     rows: &[T],
     left: usize,
