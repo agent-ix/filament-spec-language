@@ -22,6 +22,40 @@ use ix_trace_rs::trace;
 fn ratio(n: i64, d: i64) -> Rational {
     Rational::new(Integer::from(n), Integer::from(d)).unwrap()
 }
+
+/// FR-199-AC-6: Reward weights affect the MEC optimum, and the checker
+/// independently validates each weighted policy certificate.
+#[trace("TC-2177", "FR-199-AC-6")]
+#[test]
+fn every_scheduler_reward_weighting_checks_minimum_and_maximum_mec_values() {
+    use fsl_replay::LongRunOptimization;
+
+    let world = World::new(&prob_world::avail2(
+        "reward cost on Server::tick = 1;\n\
+         reward cost on Server::repair_fast = 1;\n\
+         reward cost on Server::repair_slow = 3;\n\
+         probabilistic Minimum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.up) weighted by cost >= rational(1000,1003) }\n\
+         probabilistic Maximum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.up) weighted by cost <= rational(1800,1801) }\n",
+    ));
+
+    for (name, optimization, value) in [
+        ("Minimum", LongRunOptimization::Minimum, ratio(1000, 1003)),
+        ("Maximum", LongRunOptimization::Maximum, ratio(1800, 1801)),
+    ] {
+        let bytes = produce(&world, name);
+        let document = read_weighted_long_run_probability_certificate(
+            &bytes,
+            limits(),
+            &Cancel::new(),
+        )
+        .expect("the every-scheduler result carries weighted MEC evidence");
+        assert_eq!(document.certificate.optimization, optimization, "{name}");
+        assert_eq!(document.certificate.components.len(), 1, "{name}");
+        assert_eq!(document.certificate.components[0].value, value, "{name}");
+        assert!(accepted(&world, name, &document), "{name}");
+    }
+}
+
 fn claim(name: &str, predicate: &str, bound: &str) -> String {
     format!("probabilistic {name} using inf on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds({predicate}) weighted by duration {bound} }}\n")
 }
