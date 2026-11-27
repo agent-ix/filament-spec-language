@@ -123,11 +123,11 @@ fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
         .unwrap();
     let action_a = actions_a
         .iter()
-        .find(|action| action.identity.operation == "stay_a")
+        .find(|action| action.identity.operation.contains("stay_a"))
         .unwrap();
     let action_to_b = actions_a
         .iter()
-        .find(|action| action.identity.operation == "to_b")
+        .find(|action| action.identity.operation.contains("to_b"))
         .unwrap();
     let state_b = action_to_b.draws[0].successors[0].1.clone();
     let actions_b = system
@@ -136,7 +136,7 @@ fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
         .unwrap();
     let action_b = actions_b
         .iter()
-        .find(|action| action.identity.operation == "stay_b")
+        .find(|action| action.identity.operation.contains("stay_b"))
         .unwrap();
 
     let component = &mut forged.certificate.components[0];
