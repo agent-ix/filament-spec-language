@@ -433,6 +433,7 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         ]}),
     ));
     let document = run.document();
+    assert_eq!(run.exit, 21, "{document}");
     let hp4 = run.item(0);
     assert_eq!(label(&hp4), "unsupported", "{document}");
     assert_eq!(
@@ -455,7 +456,6 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         json!([fsl_route::tie::EN1])
     );
     let fixed_sample = run.item(3);
-    assert_eq!(run.exit, 21, "{document}");
     assert_eq!(label(&fixed_sample), "unsupported", "{document}");
     assert_eq!(
         fixed_sample["record"]["diagnostic"]["cause"],
