@@ -441,9 +441,9 @@ impl AbstractionRefusal {
     /// for a binding.
     #[implements("FR-306-AC-6")]
     pub(super) fn of_nodes(reason: AbstractionNodeRefusal) -> Self {
-        match reason {
-            AbstractionNodeRefusal::Internal(fault) => Self::Internal(*fault),
-            reason => Self::RelationNodes(Box::new(reason)),
+        match classify_node_refusal(reason) {
+            Err(fault) => Self::Internal(fault),
+            Ok(reason) => Self::RelationNodes(Box::new(reason)),
         }
     }
 
@@ -1184,6 +1184,16 @@ pub enum AbstractionNodeRefusal {
     /// A binding's kind disagrees with its key's: a broken check invariant.
     #[error("a check invariant is broken: {0:?}")]
     Internal(Box<InternalFault>),
+}
+
+/// Separates a broken check invariant from an authored, typed refusal.
+pub(super) fn classify_node_refusal(
+    reason: AbstractionNodeRefusal,
+) -> Result<AbstractionNodeRefusal, InternalFault> {
+    match reason {
+        AbstractionNodeRefusal::Internal(fault) => Err(*fault),
+        reason => Ok(reason),
+    }
 }
 
 /// `path` as FSpec FR-451's `RustPath`: its `::`-separated segments.

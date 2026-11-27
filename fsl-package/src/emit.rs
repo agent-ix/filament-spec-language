@@ -11197,9 +11197,13 @@ impl ForeignNodes {
             return Ok(foreign);
         }
         for (identity, dependency) in package.dependencies() {
-            let emission = emit_checked(dependency, limits)?;
+            let emission = match emit_linked_dependency(package, identity, limits) {
+                Some(linked) => linked?,
+                None => emit_checked(dependency, limits)?,
+            };
             // The positions are read from the dependency's own bytes, which
-            // `emit_checked` has just held to `limits.output_bytes`; that
+            // the link-time emission (or fallback) has held to
+            // `limits.output_bytes`; that
             // ceiling bounds this parse. The parse itself is not charged to
             // any budget, and its JSON tree is dropped when the positions
             // are read.

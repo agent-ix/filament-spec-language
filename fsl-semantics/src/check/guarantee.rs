@@ -1222,9 +1222,9 @@ impl CheckedGraph {
             .ok_or_else(|| internal("guarantee-relation-is-checked"))?;
         let relation_node = self
             .abstraction_nodes(relation)
-            .map_err(|reason| match reason {
-                AbstractionNodeRefusal::Internal(fault) => GuaranteeRefusal::Internal(*fault),
-                reason => GuaranteeRefusal::RelationNode {
+            .map_err(|reason| match super::abstraction::classify_node_refusal(reason) {
+                Err(fault) => GuaranteeRefusal::Internal(fault),
+                Ok(reason) => GuaranteeRefusal::RelationNode {
                     span: form.relation.span,
                     reason: Box::new(reason),
                 },
