@@ -3757,7 +3757,32 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 .iter()
                 .find(|field| field.name() == field_name.as_ref())
                 .ok_or_else(|| fault("reader-source-object-field-is-direct"))?;
-            let child = self.project_argument(id, operand_term, context, locals)?;
+            let operand = self.node(operand_id)?;
+            let explicit_deref = matches!(
+                read_form,
+                Some(filament_contract_model::CheckedFieldReadForm::ExplicitDeref)
+            ) && matches!(
+                &operand.body,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.model.deref")
+            );
+            let reference = match &operand.body {
+                CheckedTerm::Application {
+                    operation,
+                    arguments,
+                    ..
+                } if operation.identity() == Some("filament.op.model.deref") => arguments
+                    .first()
+                    .ok_or_else(|| fault("reader-attribute-deref-has-operand"))?
+                    .clone(),
+                _ => operand_term.clone(),
+            };
+            let child = self.project_argument(id, &reference, context, locals)?;
+            if explicit_deref && context == Context::Root {
+                if let Some(node) = self.nodes.get_mut(child) {
+                    node.absorbed = Some(operand_id.clone());
+                }
+            }
             return Ok((
                 NodeKind::Attribute {
                     reference: child,
