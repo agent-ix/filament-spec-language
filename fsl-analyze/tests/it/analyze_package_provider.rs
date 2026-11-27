@@ -293,6 +293,7 @@ fn contract_item_on_both_routes(name: &str, backend: Option<&str>) -> (Outcome, 
 /// `requires-bound`. Each record and exit equals the source route's.
 #[trace("TC-2725", "FR-968-AC-2")]
 #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14")]
+#[trace("FR-940-AC-28", "FSpec-FR-825-AC-3")]
 #[test]
 fn contract_package_reads_operation_contract_requirement_records() {
     for name in ["CanInc", "Inc"] {
