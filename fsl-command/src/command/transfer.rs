@@ -367,10 +367,7 @@ impl Transfer<'_> {
         });
         Ok(RunResult {
             exit_code,
-            value: NativeResult::analyze_document(transfer_document(
-                refinement_value,
-                transfers,
-            )),
+            value: NativeResult::analyze_document(transfer_document(refinement_value, transfers)),
             outcome: None,
             requirements: None,
             sources: super::super::Sources::default(),

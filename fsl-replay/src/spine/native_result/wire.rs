@@ -32,14 +32,14 @@ use crate::result::RecordWire;
 mod extraction;
 mod locus;
 
+pub(super) use extraction::validate_extraction;
 pub use extraction::{
     ExtractionBinding, ExtractionBody, ExtractionMap, ExtractionOriginal, ExtractionOutcome,
-    ExtractionPosition, ExtractionRecord, ExtractionRegion, ExtractionSegment,
-    ExtractionSegments, ExtractionSpan,
+    ExtractionPosition, ExtractionRecord, ExtractionRegion, ExtractionSegment, ExtractionSegments,
+    ExtractionSpan,
 };
-pub(super) use extraction::validate_extraction;
-pub use locus::{DocumentObject, Located, RefusalLocus, SourceRef};
 pub(super) use locus::source_identity_uri;
+pub use locus::{DocumentObject, Located, RefusalLocus, SourceRef};
 
 /// A member present with a value; `null` is read as that member's own type.
 pub(super) fn present<'de, D, T>(decoder: D) -> Result<Option<T>, D::Error>
@@ -412,8 +412,7 @@ impl CallLocation {
     #[ix_trace_rs::string_edge]
     pub(super) fn typed(&self) -> filament_semantic_value::location::ExpressionLocation {
         use filament_semantic_value::location::{
-            ExpressionLocation as Location, ExpressionOwner as Origin,
-            OperationClauseKind as Kind,
+            ExpressionLocation as Location, ExpressionOwner as Origin, OperationClauseKind as Kind,
         };
         let origin = match &self.origin {
             CallOrigin::Body { function, index } => Origin::Body {
@@ -826,7 +825,8 @@ impl From<&FrameChange> for FrameChangeWire {
 
 impl FrameChangeWire {
     fn typed(&self) -> FrameChange {
-        let keys = |keys: &[DeclarationKeyWire]| keys.iter().map(DeclarationKeyWire::typed).collect();
+        let keys =
+            |keys: &[DeclarationKeyWire]| keys.iter().map(DeclarationKeyWire::typed).collect();
         match self {
             Self::FieldWrite {
                 object,

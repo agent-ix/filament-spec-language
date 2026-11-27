@@ -24,16 +24,16 @@ use ix_trace_rs::implements;
 mod wire;
 use wire::{
     present, AdmissionUsage, AdmittedWire, Category, ClauseRunDocument, CounterUsage, Disposition,
-    FrameWitnessRecord, InternalFault, LateWire, ModelLimits, Outcome, OutcomeValue,
-    RefusalRecord, RunResultFormat, Stage, SupportWire, Usage,
+    FrameWitnessRecord, InternalFault, LateWire, ModelLimits, Outcome, OutcomeValue, RefusalRecord,
+    RunResultFormat, Stage, SupportWire, Usage,
 };
+use wire::{source_identity_uri, validate_extraction, OperationContract};
 pub use wire::{
     CallLocation, CallLocusRecord, CallOrigin, DocumentObject, ExtractionBinding, ExtractionBody,
     ExtractionMap, ExtractionOriginal, ExtractionOutcome, ExtractionPosition, ExtractionRecord,
     ExtractionRegion, ExtractionSegment, ExtractionSegments, ExtractionSpan, FieldValue,
     FieldsView, Located, OperationClause, RefusalLocus, RunPosition, RunSpan, SourceRef,
 };
-use wire::{source_identity_uri, validate_extraction, OperationContract};
 
 mod protocol;
 pub use protocol::{
@@ -1081,8 +1081,7 @@ fn validate_refusal_locus(value: &RefusalLocus) -> Result<(), NativeRunReadError
                 return Err(invalid());
             }
         }
-        RefusalLocus::Located(Located::Imported { .. })
-        | RefusalLocus::Occurrence { .. } => {}
+        RefusalLocus::Located(Located::Imported { .. }) | RefusalLocus::Occurrence { .. } => {}
     }
     Ok(())
 }
@@ -2054,7 +2053,8 @@ pub fn read_native_run_result_bounded(
             .map(FrameWitnessRecord::typed)
             .transpose()?;
         if frame_witness.is_some()
-            && (!matches!(document.basis, SettlementBasis::ClosedScope) || document.witness.is_some())
+            && (!matches!(document.basis, SettlementBasis::ClosedScope)
+                || document.witness.is_some())
         {
             return Err(NativeRunReadError::Invalid {
                 member: "basis",
@@ -2078,7 +2078,9 @@ pub fn read_native_run_result_bounded(
         if (verdict
             && !matches!(
                 document.basis,
-                SettlementBasis::ClosedScope | SettlementBasis::DecisiveWitness | SettlementBasis::DecisiveCounterexample
+                SettlementBasis::ClosedScope
+                    | SettlementBasis::DecisiveWitness
+                    | SettlementBasis::DecisiveCounterexample
             ))
             || (!verdict && !matches!(document.basis, SettlementBasis::Unavailable))
         {
@@ -2137,7 +2139,9 @@ impl Disposition {
             ClauseDisposition::Compile(refusal) => {
                 let mut record = RefusalRecord::new(refusal.code().as_str(), refusal.cause());
                 record.locus = refusal.region().map(|region| {
-                    RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone())))
+                    RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(
+                        region.clone(),
+                    )))
                 });
                 let mut source: &super::CompileRefusal = refusal.as_ref();
                 while let super::CompileRefusal::Dependency { refusal, .. } = source {
@@ -2176,8 +2180,9 @@ impl Disposition {
                 actual,
                 result_type_locus,
             } => {
-                let mut refusal = RefusalRecord::new(Code::IllTyped.as_str(), Some("type-mismatch"))
-                    .fields(BTreeMap::from([("name", name.clone())]));
+                let mut refusal =
+                    RefusalRecord::new(Code::IllTyped.as_str(), Some("type-mismatch"))
+                        .fields(BTreeMap::from([("name", name.clone())]));
                 refusal.message = Some(format!(
                     "function `{name}` returns `{actual}`; a claim selection needs a function whose result is `Boolean`"
                 ));
@@ -2207,7 +2212,8 @@ impl Disposition {
                     result.refusal = Some(refusal);
                 }
                 fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
-                    result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
+                    result.internal_fault =
+                        Some(InternalFault::new(fault.stage(), fault.invariant()));
                 }
             },
             ClauseDisposition::SnapshotAdmission {
@@ -2226,12 +2232,14 @@ impl Disposition {
                     result.refusal = Some(refusal);
                 }
                 fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
-                    result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
+                    result.internal_fault =
+                        Some(InternalFault::new(fault.stage(), fault.invariant()));
                 }
             },
             ClauseDisposition::ArgumentRefusal(refusal) => {
                 if let super::RunRefusal::Fault(fault) = refusal.as_ref() {
-                    result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
+                    result.internal_fault =
+                        Some(InternalFault::new(fault.stage(), fault.invariant()));
                     return Ok(result);
                 }
                 let cause = match refusal.as_ref() {
@@ -2364,7 +2372,9 @@ impl Disposition {
                     }
                     super::RunRefusal::Compile(compile) => {
                         record.locus = compile.region().map(|region| {
-                            RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone())))
+                            RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(
+                                region.clone(),
+                            )))
                         });
                     }
                     super::RunRefusal::MissingDeclaration { function }
@@ -2453,9 +2463,7 @@ impl Disposition {
                         }
                         if let Some(location) = payload.location {
                             // The wire's own location form, as compact JSON.
-                            if let Ok(text) =
-                                serde_json::to_string(&CallLocation::from(location))
-                            {
+                            if let Ok(text) = serde_json::to_string(&CallLocation::from(location)) {
                                 fields.insert("location", text);
                             }
                         }
@@ -2490,7 +2498,10 @@ impl Disposition {
                 }
                 CallOutcome::Completed(CallValue::Reference(_) | CallValue::Written(_)) => {
                     result.category = Category::InternalFailure;
-                    result.internal_fault = Some(InternalFault::new("native-result", "clause-completes-reference"));
+                    result.internal_fault = Some(InternalFault::new(
+                        "native-result",
+                        "clause-completes-reference",
+                    ));
                 }
                 CallOutcome::Refused(refusal) => {
                     result.outcome = Some(match refusal {
@@ -2548,7 +2559,10 @@ impl Disposition {
             // A valuation is read by the TL cross-evaluation (FR-931), never
             // written as a clause-run result.
             ClauseDisposition::TemporalValuation(_) => {
-                result.internal_fault = Some(InternalFault::new("clause-run", "a-valuation-is-not-a-clause-run-result"));
+                result.internal_fault = Some(InternalFault::new(
+                    "clause-run",
+                    "a-valuation-is-not-a-clause-run-result",
+                ));
             }
             ClauseDisposition::Temporal(verdict) => {
                 let (wire, outcome) = temporal::verdict_wire(verdict, counterexample)?;
@@ -2566,23 +2580,42 @@ impl Disposition {
                 }
                 None => {
                     if let super::TemporalTraceRefusal::Fault(fault) = refusal {
-                        result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
+                        result.internal_fault =
+                            Some(InternalFault::new(fault.stage(), fault.invariant()));
                     }
                 }
             },
             ClauseDisposition::TraceRefused(refusal) => {
                 let mut fields = BTreeMap::from([
-                    ("reason".to_owned(), FieldValue::Text(refusal.reason.to_owned())),
-                    ("profile".to_owned(), FieldValue::Text(refusal.profile.to_owned())),
+                    (
+                        "reason".to_owned(),
+                        FieldValue::Text(refusal.reason.to_owned()),
+                    ),
+                    (
+                        "profile".to_owned(),
+                        FieldValue::Text(refusal.profile.to_owned()),
+                    ),
                 ]);
                 if !refusal.expected.is_empty() {
-                    fields.insert("expected".to_owned(), FieldValue::List(refusal.expected.iter().map(|kind| (*kind).to_owned()).collect()));
+                    fields.insert(
+                        "expected".to_owned(),
+                        FieldValue::List(
+                            refusal
+                                .expected
+                                .iter()
+                                .map(|kind| (*kind).to_owned())
+                                .collect(),
+                        ),
+                    );
                 }
                 if let Some(supplied) = refusal.supplied {
                     fields.insert("supplied".to_owned(), FieldValue::Text(supplied.to_owned()));
                 }
                 if let Some(position) = refusal.position {
-                    fields.insert("position".to_owned(), FieldValue::Text(position.to_string()));
+                    fields.insert(
+                        "position".to_owned(),
+                        FieldValue::Text(position.to_string()),
+                    );
                 }
                 if let Some(pointer) =
                     selection.and_then(|selection| selection.request_pointer(refusal.reason))
@@ -2594,7 +2627,9 @@ impl Disposition {
                 record.fields = Some(fields);
                 record.message = Some(refusal.message.clone());
                 record.locus = refusal.locus.as_ref().map(|region| {
-                    RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone())))
+                    RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(
+                        region.clone(),
+                    )))
                 });
                 result.refusal = Some(record);
             }
@@ -2647,7 +2682,8 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
     use super::{TemporalIndeterminateReason as Reason, TemporalUndefinedCause, TemporalVerdict};
     let witness = match &report.disposition {
         ClauseDisposition::FrameViolation(frame_witness) => {
-            let mut witness = serde_json::to_value(FrameWitnessRecord::from(frame_witness.as_ref()))?;
+            let mut witness =
+                serde_json::to_value(FrameWitnessRecord::from(frame_witness.as_ref()))?;
             if let Some((before, after)) = &report.frame_field_values {
                 witness["before"] = serde_json::Value::String(before.clone());
                 witness["after"] = serde_json::Value::String(after.clone());

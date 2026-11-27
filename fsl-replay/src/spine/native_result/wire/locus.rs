@@ -38,27 +38,51 @@ pub enum RefusalLocus {
         /// The operand exactly as the caller wrote it.
         operand: String,
         /// Member path relative to a directory operand, present as null when absent.
-        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
         member: Option<Option<String>>,
         /// Pointer into the input, present as null when absent.
-        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
         pointer: Option<Option<String>>,
     },
     /// A member in a JSON input document.
     Document {
         /// Document identity, present as null when the caller supplied none.
-        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
         document: Option<Option<SourceRef>>,
         /// Caller path, present as null when the caller supplied none.
-        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
         path: Option<Option<String>>,
         /// Pointer to the failing member or object holding a missing member.
         pointer: String,
         /// Object identity, present as null when no snapshot object applies.
-        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
         object: Option<Option<DocumentObject>>,
         /// Failing member, present as null when none is named.
-        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
         member: Option<Option<String>>,
     },
 }
@@ -129,7 +153,11 @@ impl From<crate::outcome::OutcomeLocus> for RefusalLocus {
             identity: source.identity().to_owned(),
         };
         match locus {
-            Outcome::Region { source: s, start, end } => Self::Region {
+            Outcome::Region {
+                source: s,
+                start,
+                end,
+            } => Self::Region {
                 source: source(s),
                 start,
                 end,

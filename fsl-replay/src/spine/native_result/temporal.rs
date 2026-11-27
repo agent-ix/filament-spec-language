@@ -13,8 +13,8 @@ use super::wire::{
     CallLocation, Category, DeclarationKeyWire, Disposition, DocumentRefWire, Outcome, Stage,
 };
 use super::{NativeRunReadError, NativeRunResultError};
-use crate::proof_result::SettlementBasis;
 use crate::model_check::counterexample::{ObservedTemporalCounterexample, ObservedTemporalKind};
+use crate::proof_result::SettlementBasis;
 use crate::result::CauseCodecError;
 use crate::spine::{
     ContradictedDimension, ObservedPosition, ProgressClosure, ProgressCompleteness,
@@ -729,10 +729,7 @@ pub(super) fn verdict_wire(
 pub(super) fn refusal_wire(refusal: &TemporalTraceRefusal) -> Option<(TemporalWire, Outcome)> {
     let wire = trace_variant(refusal)?;
     let code = refusal.catalog_code();
-    Some((
-        wire,
-        Outcome::refused(code.code(), code.cause(), None),
-    ))
+    Some((wire, Outcome::refused(code.code(), code.cause(), None)))
 }
 
 /// The `temporal` member and `outcome` of an FR-502 contradiction.

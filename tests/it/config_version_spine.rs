@@ -1546,10 +1546,7 @@ fn tc_469_boundary_locus_survives_result_two_round_trip() {
         assert_eq!(read.category(), "refusal", "{}", case.id());
         assert_eq!(read.code(), Some("invalid_runtime_input"), "{}", case.id());
         let fields = read.fields().expect("the admission refusal retains fields");
-        assert_eq!(
-            fields.get("field").as_deref(),
-            Some("versionNumber")
-        );
+        assert_eq!(fields.get("field").as_deref(), Some("versionNumber"));
         assert_eq!(fields.get("object").as_deref(), Some(object));
     }
 }

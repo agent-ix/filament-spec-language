@@ -702,8 +702,7 @@ fn extraction_regions_for_locus(
 ) -> super::Result<Option<Vec<fsl_replay::spine::ExtractionRegion>>> {
     use fsl_replay::spine::RefusalLocus;
 
-    let decoded: RefusalLocus =
-        serde_json::from_value(locus.clone()).map_err(RunCause::Output)?;
+    let decoded: RefusalLocus = serde_json::from_value(locus.clone()).map_err(RunCause::Output)?;
     let body = map.body();
     let span = match decoded {
         RefusalLocus::Region { source, start, end }

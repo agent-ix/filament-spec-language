@@ -435,7 +435,9 @@ fn string_variant<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
 }
 
 #[implements("FR-267-AC-17")]
-pub(in crate::spine::native_result) fn validate_extraction(extraction: Option<NodeRef<'_>>) -> Result<(), NativeRunReadError> {
+pub(in crate::spine::native_result) fn validate_extraction(
+    extraction: Option<NodeRef<'_>>,
+) -> Result<(), NativeRunReadError> {
     let Some(value) = extraction.filter(|value| !matches!(value.node(), Node::Null)) else {
         return Ok(());
     };
@@ -468,4 +470,3 @@ pub(in crate::spine::native_result) fn validate_extraction(extraction: Option<No
     }
     Ok(())
 }
-
