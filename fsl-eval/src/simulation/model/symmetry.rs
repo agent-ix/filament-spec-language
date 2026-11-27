@@ -419,9 +419,7 @@ impl ModelSystem<'_> {
 mod tests {
     use filament_checked::key::DeclarationKey;
     use filament_exact::{Integer, Value};
-    use filament_semantic_value::relationship_extent::{
-        RelationshipExtent, RelationshipInstance,
-    };
+    use filament_semantic_value::relationship_extent::{RelationshipExtent, RelationshipInstance};
     use ix_trace_rs::trace;
     use quire_canonical::Limits;
     use serde_json::json;
@@ -626,7 +624,10 @@ mod tests {
 
         let permutation = Permutation::of(
             &class.population,
-            [("a".to_owned(), "b".to_owned()), ("b".to_owned(), "a".to_owned())],
+            [
+                ("a".to_owned(), "b".to_owned()),
+                ("b".to_owned(), "a".to_owned()),
+            ],
         );
         let universes = system.universes_of(&class.population);
         let renaming = permutation

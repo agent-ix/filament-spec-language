@@ -2,7 +2,7 @@
 //! FR-1051 AC-13: the harness's route check, run against this crate's real
 //! registrations, which use Routes-table ids.
 
-use fsl_certificate_mutation::{HarnessError, registered_routes, require_routes};
+use fsl_certificate_mutation::{registered_routes, require_routes, HarnessError};
 use ix_trace_rs::trace;
 
 /// The three registrations here are R-11, R-12 and R-13. R-14 has none, and

@@ -6,8 +6,8 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind, SubjectMemory, Tso,
-    live_instance_bound,
+    live_instance_bound, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind,
+    SubjectMemory, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
@@ -114,6 +114,7 @@ fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::R
     clippy::too_many_arguments,
     reason = "the recording assessment binds the subject, package, recording, cancellation, and replay limits"
 )]
+#[ix_trace_rs::string_edge]
 fn recording_result(
     index: fsl_foundation::RequestIndex,
     package: &super::recording_input::Input<'_>,
@@ -1002,6 +1003,7 @@ fn wrong_over_subject() -> crate::analyze::EngineReport {
 }
 
 #[implements("FR-896-AC-7", "FR-990-AC-11")]
+#[ix_trace_rs::string_edge]
 fn behavior_report(
     index: fsl_foundation::RequestIndex,
     protocol: &super::recording_input::Protocol<'_>,
@@ -1673,6 +1675,7 @@ impl ConformanceReplayRefusal {
 ///
 /// [`ConformanceReplayRefusal`] when the counterexample is malformed or the
 /// subject cannot build its protocol system.
+#[ix_trace_rs::string_edge]
 pub fn replay_counterexample(
     subject: &ProtocolSubject<'_>,
     counterexample: &ConformanceCounterexample,
@@ -1981,11 +1984,9 @@ mod tests {
         ));
         assert_eq!(code.to_string(), "invalid_runtime_input/invalid-value");
         assert_eq!(detail["prefix"], serde_json::json!(3));
-        assert!(
-            detail["detail"]
-                .as_str()
-                .is_some_and(|text| text.contains("a prefix was refused"))
-        );
+        assert!(detail["detail"]
+            .as_str()
+            .is_some_and(|text| text.contains("a prefix was refused")));
     }
 
     #[trace("TC-2805", "FR-990-AC-1")]

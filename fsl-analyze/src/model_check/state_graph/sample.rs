@@ -16,7 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{
-    Cancel, Charge, ChargePoint, Meter, ObjectReference, ScalarLimits, length_amount,
+    length_amount, Cancel, Charge, ChargePoint, Meter, ObjectReference, ScalarLimits,
 };
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -34,11 +34,11 @@ use fsl_replay::{
 use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole};
 
 use super::{
-    Budgets, Halt, InstanceView, budget_is_ceiling, cancelled, expansion_stop, fault, sampler,
-    step_ceiling, stopped, trace_index, trace_indices_fit,
+    budget_is_ceiling, cancelled, expansion_stop, fault, sampler, step_ceiling, stopped,
+    trace_index, trace_indices_fit, Budgets, Halt, InstanceView,
 };
-use crate::model_check::ModelCheckRefusal;
 use crate::model_check::check::BOUND_POSITIONS;
+use crate::model_check::ModelCheckRefusal;
 
 /// An instance's identity within the request: item and instance index.
 type InstanceKey = (usize, usize);
@@ -492,8 +492,8 @@ mod tests {
     use filament_semantic_value::declaration::TypeEnvironment;
     use fsl_eval::simulation::model::ClauseOutcome;
     use fsl_eval::simulation::{
-        Expansion, ExpansionStop, SampleRequest, TransitionSystem, sample_request,
-        sample_request_observed,
+        sample_request, sample_request_observed, Expansion, ExpansionStop, SampleRequest,
+        TransitionSystem,
     };
     use fsl_replay::{DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED};
     use ix_trace_rs::trace;

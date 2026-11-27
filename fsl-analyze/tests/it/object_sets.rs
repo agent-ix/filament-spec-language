@@ -15,33 +15,34 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use filament_exact::{Cancel, Meter, ObjectReference};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::model_check::{
-    ModelCheckRefusal, ModelCheckRequest, StateGraphItem, StateGraphRequest, check_model,
-    check_state_graph,
+    check_model, check_state_graph, ModelCheckRefusal, ModelCheckRequest, StateGraphItem,
+    StateGraphRequest,
 };
 use fsl_analyze::plan_search::{
-    PlanLengths, PlanSearchLimits, PlanSearchRequest, PlanStatus, search,
+    search, PlanLengths, PlanSearchLimits, PlanSearchRequest, PlanStatus,
 };
 use fsl_analyze::plan_source::SourcePlan;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CertificateRequest, ClosureCertificate, ComponentCertificate, HyperQueryRequest,
-    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure, ProductClosureCertificate,
-    ProductClosureClause, ProductClosureRequest, ProofCertificate, SmtEncodingLimits, SmtQueryKind,
-    StateGraphCertificate, StateGraphCertificateRequest, StateGraphOutcome, check_closure,
-    check_components, check_product_closure, encode_hyper_query, encode_temporal_smt_query,
+    check_closure, check_components, check_product_closure, encode_hyper_query,
+    encode_temporal_smt_query, CertificateRequest, ClosureCertificate, ComponentCertificate,
+    HyperQueryRequest, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProductClosure,
+    ProductClosureCertificate, ProductClosureClause, ProductClosureRequest, ProofCertificate,
+    SmtEncodingLimits, SmtQueryKind, StateGraphCertificate, StateGraphCertificateRequest,
+    StateGraphOutcome,
 };
 use fsl_semantics::check::{CheckedStateGraphClaim, HyperForm};
 use fsl_semantics::model::intake::package_input;
-use fsl_semantics::model::observation::{DocumentRef, document_reference};
+use fsl_semantics::model::observation::{document_reference, DocumentRef};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::analyze_cli_support::{Run, Workspace, analyze, request_over};
-use crate::counter::{UNLIMITED, declarations_in, unit_text_with_profiles};
-use crate::model_instances::{Held, PACKAGE, World, document, ident, universes, world};
-use crate::timed_world::{DENSE, unit_text};
+use crate::analyze_cli_support::{analyze, request_over, Run, Workspace};
+use crate::counter::{declarations_in, unit_text_with_profiles, UNLIMITED};
+use crate::model_instances::{document, ident, universes, world, Held, World, PACKAGE};
+use crate::timed_world::{unit_text, DENSE};
 
 #[path = "liveness_empty_components.rs"]
 mod liveness_empty_components;

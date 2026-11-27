@@ -528,6 +528,7 @@ pub(crate) fn source_object_effective_id(source_identity: &str, name: &str) -> E
 /// collection layer is wrapped in the layer's kind (`Set<Int[1, 3]>`), which
 /// this unwraps to the element type. `None` for any other rendering, which
 /// the row does not let a reader rebuild.
+#[ix_trace_rs::string_edge]
 fn rendered_scalar(
     rendering: &str,
     layers: &[filament_contract_model::SelectedClockCollectionLayer],
@@ -636,6 +637,7 @@ impl SourceModel {
 }
 
 /// The FR-789 wrapper a collection layer of `kind` renders as.
+#[ix_trace_rs::string_edge]
 pub(crate) fn collection_wrapper(kind: &str) -> Option<&'static str> {
     match kind {
         "sequence" => Some("Sequence"),
@@ -649,6 +651,7 @@ pub(crate) fn collection_wrapper(kind: &str) -> Option<&'static str> {
 /// The multiplicity a parameter row's collection layers spell: one value for
 /// no layer, the layer's kind and bounds for one, and `None` for the nested
 /// collections and kinds a reader does not rebuild.
+#[ix_trace_rs::string_edge]
 fn multiplicity_of(
     layers: &[filament_contract_model::SelectedClockCollectionLayer],
 ) -> Option<fsl_semantics::model::domain_package::Multiplicity> {

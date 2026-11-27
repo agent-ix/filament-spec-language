@@ -3433,6 +3433,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     /// A width-specific IEEE identity (`float32.*` or `float64.*`) names the
     /// width of the float its application yields; a mismatch is an admitted
     /// package the source lowering never writes.
+    #[ix_trace_rs::string_edge]
     fn ieee_width_matches(
         &self,
         id: &CheckedNodeId,
@@ -3735,6 +3736,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             declaration: field_declaration,
             name: field_name,
             read_form,
+            population: _population,
         }) = admitted_operation.member
         else {
             return Err(fault("reader-record-projection-has-admitted-field").into());
@@ -5235,6 +5237,7 @@ fn literal_value(
 /// `rational_range`. The exact-type projection of that declaration fails at its
 /// semantic type, the bare `scalar_type/rational`; the bounds are read from
 /// the declaration itself, never from that scalar.
+#[ix_trace_rs::string_edge]
 fn bounded_rational_literal_type(
     error: &filament_contract_model::ExactTypeProjectionError,
     type_id: &CheckedNodeId,

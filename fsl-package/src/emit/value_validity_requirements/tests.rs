@@ -946,8 +946,7 @@ fn body_locations_follow_final_ordinals_for_bodies_and_effective_preconditions()
             })
             .expect("the recursive function has its checked record")
     };
-    let recursive_paths = |owner: &CheckedNodeId,
-                           expected: &[(u64, Vec<CheckedKeyOrdinal>)]| {
+    let recursive_paths = |owner: &CheckedNodeId, expected: &[(u64, Vec<CheckedKeyOrdinal>)]| {
         let mut cursor = admitted.body_locations(owner, 100_000).unwrap();
         let mut paths = Vec::new();
         while let Some(view) = cursor.next_location().unwrap() {

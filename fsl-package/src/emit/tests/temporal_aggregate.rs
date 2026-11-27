@@ -383,7 +383,7 @@ fn package_window(declarations: &str, window: &str) -> String {
 fn emit_with_clock(
     text: &str,
     timestamp_unit: &str,
-) -> Result<Result<Value, EmitRefusal>, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<Result<Value, EmitRefusal>, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let document = super::timed_source::package_units_document();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let assembled =

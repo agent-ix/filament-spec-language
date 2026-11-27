@@ -1486,6 +1486,7 @@ fn names_a_clause(root: &Path, files: &[serde_json::Value]) -> bool {
 
 /// Build one selected vector's call, or `None` for a clause call. A vector
 /// with several defects has the cause of the first met here.
+#[ix_trace_rs::string_edge]
 fn build_corpus_case(
     root: &Path,
     schemas: Option<&CallSchemas>,

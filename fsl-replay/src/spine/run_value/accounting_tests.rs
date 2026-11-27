@@ -5,13 +5,13 @@ use crate::reference_codec::ReferenceCodec;
 use filament_exact::{Cancel, IntegerDecimalBudget, Reservation, ReservationDenied, Value};
 use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedPhase, SuppliedRun};
 use fsl_eval::execution::{
-    ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends, execute,
+    execute, ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends,
 };
 use fsl_package::ReferenceCatalog;
 use fsl_semantics::model::accounting::{NormalizationChargePoint, NormalizationLimitKind};
-use fsl_semantics::model::intake::{PackageInput, package_input};
+use fsl_semantics::model::intake::{package_input, PackageInput};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{DocumentRef, ObservationLimits, admit_current_snapshot};
+use fsl_semantics::model::observation::{admit_current_snapshot, DocumentRef, ObservationLimits};
 use serde_json::json;
 
 use crate::reference_codec::reference_fixture as domain;

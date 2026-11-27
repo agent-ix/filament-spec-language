@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::Span;
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
 };
+use fsl_foundation::Span;
 use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
@@ -63,18 +63,18 @@ mod integer_division_range;
 mod modulo_interval;
 mod native_literal;
 mod typing;
-use typing::{TypedOperand, is_option_some_constructor};
+use typing::{is_option_some_constructor, TypedOperand};
 
 use super::ir::{BodyBuilder, DispatchTable, EqualityProducerData, Node, NodeId, Slot};
 use super::model_spelling::{ModelSpellings, Spelled};
 use super::navigation::Relationships;
 use super::refusal::{
-    CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    IdentityObserving, KeyFault, Obligation, ReservedSlotName, SlotTag, StageLimitCause,
+    CheckCause, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode, IdentityObserving,
+    KeyFault, Obligation, ReservedSlotName, SemanticCheckRefusal, SlotTag, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
-use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
+use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
+use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -91,8 +91,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, StorageRequest,
-    StorageUnit, TypeEnvironment, admits_equality_conversion,
+    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
+    FieldDeclaration, StorageRequest, StorageUnit, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -100,8 +100,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
-    check_comparable, evaluate_quantity_unit, result_unit,
+    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
+    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -2219,8 +2219,8 @@ impl Scope {
     pub(crate) fn seal_unions(
         &mut self,
         nodes: &BTreeMap<filament_exact::NodeKey, filament_exact::NodeKey>,
-    ) -> Result<(), CheckRefusal> {
-        let fault = |invariant: &'static str| CheckRefusal {
+    ) -> Result<(), SemanticCheckRefusal> {
+        let fault = |invariant: &'static str| SemanticCheckRefusal {
             location: Location::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
@@ -2358,7 +2358,7 @@ impl Scope {
         &mut self,
         signatures: &[Signature],
         has_ieee_literal: bool,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let mut declared: Vec<&ValueType> = self.index.types.values().flatten().collect();
         for signature in signatures {
             declared.extend(signature.parameters.iter().map(|(_, ty)| ty));
@@ -2385,15 +2385,14 @@ impl Scope {
         self.ieee_operation = has_float;
         if has_float && self.ieee_profile.is_none() {
             let definition = DefinitionRole::IeeeProfile.reference();
-            self.ieee_profile =
-                Some(
-                    admit_ieee_profile(&[definition], &[]).map_err(|cause| CheckRefusal {
-                        location: Location::root(Origin::Expression),
-                        cause: Box::new(CheckCause::InternalFault(Box::new(
-                            KeyFault::IeeeProfileAdmission(cause),
-                        ))),
-                    })?,
-                );
+            self.ieee_profile = Some(admit_ieee_profile(&[definition], &[]).map_err(|cause| {
+                SemanticCheckRefusal {
+                    location: Location::root(Origin::Expression),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::IeeeProfileAdmission(cause),
+                    ))),
+                }
+            })?);
         }
         Ok(())
     }
@@ -2811,8 +2810,8 @@ pub(super) const NO_CHARGE: filament_exact::ScalarLimits = filament_exact::Scala
     result_units: 0,
 };
 
-fn refuse(location: &Location, cause: CheckCause) -> CheckRefusal {
-    CheckRefusal {
+fn refuse(location: &Location, cause: CheckCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(cause),
     }
@@ -2821,7 +2820,7 @@ fn refuse(location: &Location, cause: CheckCause) -> CheckRefusal {
 /// The refusal a charge returns when it saw a cancelled [`Cancel`]. It is a
 /// stand-in for the denial: the operation that owns the handle reports the
 /// cancellation, not this refusal.
-pub(crate) fn cancelled_refusal(location: &Location) -> CheckRefusal {
+pub(crate) fn cancelled_refusal(location: &Location) -> SemanticCheckRefusal {
     refuse(
         location,
         CheckCause::ResourceExhausted(Box::new(StageLimitCause {
@@ -2844,8 +2843,8 @@ pub(crate) fn cancelled_refusal(location: &Location) -> CheckRefusal {
 fn clock_reference_as_leaf(
     value_type: &ValueType,
     location: &Location,
-) -> Result<ValueType, CheckRefusal> {
-    fn reserve<T>(values: &mut Vec<T>, location: &Location) -> Result<(), CheckRefusal> {
+) -> Result<ValueType, SemanticCheckRefusal> {
+    fn reserve<T>(values: &mut Vec<T>, location: &Location) -> Result<(), SemanticCheckRefusal> {
         let request = StorageRequest::new(1, StorageUnit::AdditionalElements);
         values
             .try_reserve(1)
@@ -2921,8 +2920,8 @@ fn clock_reference_as_leaf(
     built.pop().ok_or_else(|| mismatch(location))
 }
 
-fn mismatch(location: &Location) -> CheckRefusal {
-    CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch)
+fn mismatch(location: &Location) -> SemanticCheckRefusal {
+    SemanticCheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch)
 }
 
 fn operand_mismatch(
@@ -2930,8 +2929,8 @@ fn operand_mismatch(
     operator: fsl_forms::BinaryOperator,
     left_type: ValueType,
     right_type: ValueType,
-) -> CheckRefusal {
-    CheckRefusal {
+) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(CheckCause::OperandTypeMismatch {
             operator,
@@ -3003,8 +3002,8 @@ fn is_exact_quantity_factor(value_type: &ValueType) -> bool {
     )
 }
 
-fn ineligible(location: &Location) -> CheckRefusal {
-    CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
+fn ineligible(location: &Location) -> SemanticCheckRefusal {
+    SemanticCheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
 }
 
 fn node(kind: NodeKind<NodeId>, value_type: ValueType, location: &Location) -> Node {
@@ -3172,7 +3171,7 @@ impl Typer<'_> {
         &mut self,
         node: Node,
         required: &ValueType,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         if &node.value_type == required {
             if let (NodeKind::IntegerDivision { .. } | NodeKind::Local(_), ValueType::Int(target)) =
                 (&node.kind, required)
@@ -3255,7 +3254,7 @@ fn bound(
     minimum: u64,
     maximum: u64,
     location: &Location,
-) -> Result<CardinalityBound, CheckRefusal> {
+) -> Result<CardinalityBound, SemanticCheckRefusal> {
     CardinalityBound::new(minimum, maximum)
         .map_err(|_| refuse(location, CheckCause::UnrepresentableBound))
 }
@@ -3478,7 +3477,7 @@ impl<'a> Typer<'a> {
         &mut self,
         form: super::state_model::Form,
         location: &Location,
-    ) -> Result<super::state_model::Checked, CheckRefusal> {
+    ) -> Result<super::state_model::Checked, SemanticCheckRefusal> {
         use crate::family::FamilyContract;
         use fsl_foundation::diagnostic::StageFailure;
         let cx = self
@@ -3496,15 +3495,15 @@ impl<'a> Typer<'a> {
         .map_err(|failure| match failure {
             StageFailure::Refused(refusal) => refusal,
             StageFailure::RefusedWithPayload(refusal, _) => *refusal,
-            StageFailure::Limit(limit) => CheckRefusal {
+            StageFailure::Limit(limit) => SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(super::limit_cause(&limit)),
             },
-            StageFailure::LimitWithPayload(limit, _) => CheckRefusal {
+            StageFailure::LimitWithPayload(limit, _) => SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(super::limit_cause(&limit)),
             },
-            StageFailure::Fault(fault) => CheckRefusal {
+            StageFailure::Fault(fault) => SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::InternalFault(Box::new(
                     super::refusal::KeyFault::StageFault(fault),
@@ -3518,7 +3517,7 @@ impl<'a> Typer<'a> {
         &mut self,
         form: super::state_model::Form,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         match self.model_check(form, location)? {
             super::state_model::Checked::Node(node) => Ok(*node),
             _ => Err(super::state_model::fault(location)),
@@ -3529,7 +3528,7 @@ impl<'a> Typer<'a> {
         &mut self,
         form: super::state_model::Form,
         location: &Location,
-    ) -> Result<ValueType, CheckRefusal> {
+    ) -> Result<ValueType, SemanticCheckRefusal> {
         match self.model_check(form, location)? {
             super::state_model::Checked::Type(value_type) => Ok(value_type),
             _ => Err(super::state_model::fault(location)),
@@ -3568,7 +3567,7 @@ impl<'a> Typer<'a> {
         &self,
         slot: Slot,
         location: &Location,
-    ) -> Result<String, CheckRefusal> {
+    ) -> Result<String, SemanticCheckRefusal> {
         self.slot_names.get(slot).cloned().ok_or_else(|| {
             refuse(
                 location,
@@ -3620,7 +3619,7 @@ impl<'a> Typer<'a> {
         value_type: ValueType,
         location: &Location,
         kind: LocalKind,
-    ) -> Result<Slot, CheckRefusal> {
+    ) -> Result<Slot, SemanticCheckRefusal> {
         self.bind_declared(name, value_type, location, kind, None)
     }
 
@@ -3634,7 +3633,7 @@ impl<'a> Typer<'a> {
         location: &Location,
         kind: LocalKind,
         site: Option<(&Location, usize)>,
-    ) -> Result<Slot, CheckRefusal> {
+    ) -> Result<Slot, SemanticCheckRefusal> {
         if let Some(mut refusal) = reserved_slot_refusal(name, None, location) {
             if let CheckCause::ReservedSlotName(cause) = refusal.cause.as_mut() {
                 cause.binder = site.map(|(node, ordinal)| (node.clone(), ordinal));
@@ -3864,7 +3863,7 @@ impl<'a> Typer<'a> {
         resolved.pop() == Some(true)
     }
 
-    fn enter(&mut self, location: &Location) -> Result<(), CheckRefusal> {
+    fn enter(&mut self, location: &Location) -> Result<(), SemanticCheckRefusal> {
         // The refused entry would have taken the counter one past the
         // current one (the actual counter a rendered diagnostic
         // names, not folded into the bound).
@@ -3900,7 +3899,7 @@ impl<'a> Typer<'a> {
         &self,
         value_type: &ValueType,
         location: &Location,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         // `Reference<Clock>` names no declared object type, so the whole type
         // is checked with each clock reference read as a leaf of its own.
         // Ask the owner to check the original borrowed type first. This keeps
@@ -3915,7 +3914,7 @@ impl<'a> Typer<'a> {
             )
         ) {
             return original_check
-                .map_err(|failure| CheckRefusal::from_type_check(location, failure));
+                .map_err(|failure| SemanticCheckRefusal::from_type_check(location, failure));
         }
         // Validate leaves directly instead of rebuilding an equivalent
         // ValueType with Arc allocations. Arc::new and the collection/map
@@ -3964,7 +3963,9 @@ impl<'a> Typer<'a> {
                         self.scope
                             .types
                             .try_check_type(value_type)
-                            .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?;
+                            .map_err(|refusal| {
+                                SemanticCheckRefusal::from_type_check(location, refusal)
+                            })?;
                     }
                     pending
                         .try_reserve(1)
@@ -3987,7 +3988,9 @@ impl<'a> Typer<'a> {
                     self.scope
                         .types
                         .try_check_type(value_type)
-                        .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?
+                        .map_err(|refusal| {
+                            SemanticCheckRefusal::from_type_check(location, refusal)
+                        })?
                 }
                 ValueType::Reference(_) | ValueType::Composite(_) => {}
                 ValueType::Boolean
@@ -4009,7 +4012,7 @@ impl<'a> Typer<'a> {
                     .scope
                     .types
                     .try_check_type(value_type)
-                    .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
+                    .map_err(|refusal| SemanticCheckRefusal::from_type_check(location, refusal))?,
                 ValueType::Population(_) => {}
             }
         }
@@ -4027,7 +4030,7 @@ impl<'a> Typer<'a> {
         &self,
         name: &str,
         location: &Location,
-    ) -> Result<ValueType, CheckRefusal> {
+    ) -> Result<ValueType, SemanticCheckRefusal> {
         super::type_form::resolve_named_type(&self.source_scope(), name, location)
     }
 
@@ -4040,11 +4043,11 @@ impl<'a> Typer<'a> {
         &self,
         form: &fsl_forms::TypeForm,
         location: &Location,
-    ) -> Result<ValueType, CheckRefusal> {
+    ) -> Result<ValueType, SemanticCheckRefusal> {
         super::type_form::resolve_type_form(&self.source_scope(), form, location)
     }
 
-    fn element_type(&self, collection: &Node) -> Result<ValueType, CheckRefusal> {
+    fn element_type(&self, collection: &Node) -> Result<ValueType, SemanticCheckRefusal> {
         match &collection.value_type {
             ValueType::Collection(collection_type) => Ok(collection_type.element().clone()),
             _ => Err(mismatch(&collection.location)),
@@ -4059,9 +4062,9 @@ impl<'a> Typer<'a> {
         &self,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         match hint {
-            None => Err(CheckRefusal::ill_typed(
+            None => Err(SemanticCheckRefusal::ill_typed(
                 location,
                 IllTypedCause::AmbiguousLiteral,
             )),
@@ -4082,10 +4085,10 @@ impl<'a> Typer<'a> {
         denominator: &Integer,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let domain = match hint {
             None => {
-                return Err(CheckRefusal::ill_typed(
+                return Err(SemanticCheckRefusal::ill_typed(
                     location,
                     IllTypedCause::AmbiguousLiteral,
                 ));
@@ -4141,10 +4144,10 @@ impl<'a> Typer<'a> {
         scale: u32,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let domain = match hint {
             None => {
-                return Err(CheckRefusal::ill_typed(
+                return Err(SemanticCheckRefusal::ill_typed(
                     location,
                     IllTypedCause::AmbiguousLiteral,
                 ));
@@ -4202,7 +4205,11 @@ impl<'a> Typer<'a> {
     /// carries. A name no declaration of the unit holds is `missing-name`
     /// (an import or a qualified name offers no local protocol); a name that
     /// resolves to a function or a type is `operator-ineligible`.
-    fn protocol_reference(&self, target: &str, location: &Location) -> Result<Node, CheckRefusal> {
+    fn protocol_reference(
+        &self,
+        target: &str,
+        location: &Location,
+    ) -> Result<Node, SemanticCheckRefusal> {
         if let Some(protocol) = self.scope.protocol_named(target) {
             return Ok(node(
                 NodeKind::ProtocolReference { protocol },
@@ -4221,7 +4228,7 @@ impl<'a> Typer<'a> {
         name: &str,
         expected: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         if let Some(local) = self.local(name) {
             return Ok(node(
                 NodeKind::Local(local.slot),
@@ -4287,7 +4294,7 @@ impl<'a> Typer<'a> {
         name: &str,
         expected: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         if let Some((shape, member)) = self
             .scope
             .variant_case_named(self.source_owner.as_ref(), name)
@@ -4354,7 +4361,7 @@ impl<'a> Typer<'a> {
         left: TypedOperand,
         right: TypedOperand,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         if matches!(&left.node.value_type, ValueType::CarriedQuantity(_))
             || matches!(&right.node.value_type, ValueType::CarriedQuantity(_))
         {
@@ -4477,7 +4484,7 @@ impl<'a> Typer<'a> {
                     } else {
                         location
                     };
-                    CheckRefusal::from_ill_typed(refusal_location, refusal)
+                    SemanticCheckRefusal::from_ill_typed(refusal_location, refusal)
                 })
         };
         let mut checked = check(&left.checked, &right.checked)?;
@@ -4527,16 +4534,18 @@ impl<'a> Typer<'a> {
                 let unit = self
                     .units
                     .get(unit_id.clone())
-                    .ok_or_else(|| CheckRefusal {
+                    .ok_or_else(|| SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::UnheldUnit(
                             unit_id,
                         )))),
                     })?;
-                units.insert(unit.clone()).map_err(|refusal| CheckRefusal {
-                    location: location.clone(),
-                    cause: Box::new(CheckCause::Identity(refusal)),
-                })?;
+                units
+                    .insert(unit.clone())
+                    .map_err(|refusal| SemanticCheckRefusal {
+                        location: location.clone(),
+                        cause: Box::new(CheckCause::Identity(refusal)),
+                    })?;
             }
         }
         let mut unit_type_facts = Vec::new();
@@ -4573,7 +4582,7 @@ impl<'a> Typer<'a> {
                 };
                 if let Some(unit_id) = unit_id {
                     if !units.ids().any(|held| held == unit_id) {
-                        return Err(CheckRefusal {
+                        return Err(SemanticCheckRefusal {
                             location: location.clone(),
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::UnheldUnit(unit_id),
@@ -4634,7 +4643,7 @@ impl<'a> Typer<'a> {
         left: Node,
         right: Node,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         if matches!(left.value_type, ValueType::Float(_))
             || matches!(right.value_type, ValueType::Float(_))
         {
@@ -4664,7 +4673,7 @@ impl<'a> Typer<'a> {
                     return Err(mismatch(location));
                 };
                 check_comparable(l, r)
-                    .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))?;
+                    .map_err(|refusal| SemanticCheckRefusal::from_ill_typed(location, refusal))?;
                 OrderedKind::Quantities
             }
             (ValueType::Boolean, ValueType::Boolean)
@@ -4704,7 +4713,7 @@ impl<'a> Typer<'a> {
         left: Node,
         right: Node,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let (ValueType::Float(left_type), ValueType::Float(right_type)) =
             (&left.value_type, &right.value_type)
         else {
@@ -4835,7 +4844,7 @@ impl<'a> Typer<'a> {
         right: Node,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let (left_type, right_type) = (left.value_type.clone(), right.value_type.clone());
         let left_literal = super::facts::rational_literal_domain(left.kind());
         let right_literal = super::facts::rational_literal_domain(right.kind());
@@ -4989,8 +4998,8 @@ impl<'a> Typer<'a> {
                     return Err(mismatch(location));
                 };
                 let unit = result_unit(operation, l, r)
-                    .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))?;
-                let unit = IdentifiedUnit::new(unit).map_err(|refusal| CheckRefusal {
+                    .map_err(|refusal| SemanticCheckRefusal::from_ill_typed(location, refusal))?;
+                let unit = IdentifiedUnit::new(unit).map_err(|refusal| SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::Identity(refusal)),
                 })?;
@@ -5006,7 +5015,7 @@ impl<'a> Typer<'a> {
                     ArithmeticOperator::Multiply => BinaryOperator::Multiply,
                     ArithmeticOperator::Divide => BinaryOperator::Divide,
                 };
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::OperandTypeMismatch {
                         operator,
@@ -5030,7 +5039,7 @@ impl<'a> Typer<'a> {
         operand: Node,
         exponent: Integer,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let unit = match &operand.value_type {
             ValueType::Quantity(unit) => unit.clone(),
             // FR-497: a carried quantity is refused at the expression.
@@ -5048,7 +5057,7 @@ impl<'a> Typer<'a> {
         )
         .map_err(|refusal| match refusal {
             QuantityRefusal::IllTyped(_) => ineligible(location),
-            QuantityRefusal::Identity(refusal) => CheckRefusal {
+            QuantityRefusal::Identity(refusal) => SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::Identity(refusal)),
             },
@@ -5073,7 +5082,7 @@ impl<'a> Typer<'a> {
         operand: Node,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let (kind, value_type) = match &operand.value_type {
             ValueType::Integer | ValueType::Int(_) => {
                 (NodeKind::Negate(self.push(operand)), ValueType::Integer)
@@ -5098,7 +5107,7 @@ impl<'a> Typer<'a> {
                         u64::from(source.max_scale()),
                         source.rounding(),
                     )
-                    .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))?,
+                    .map_err(|refusal| SemanticCheckRefusal::from_ill_typed(location, refusal))?,
                 };
                 (
                     NodeKind::DecimalNegate(self.push(operand), target.clone()),
@@ -5133,7 +5142,7 @@ impl<'a> Typer<'a> {
                 )
                 .map_err(|refusal| match refusal {
                     QuantityRefusal::IllTyped(_) => ineligible(location),
-                    QuantityRefusal::Identity(refusal) => CheckRefusal {
+                    QuantityRefusal::Identity(refusal) => SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::Identity(refusal)),
                     },
@@ -5265,6 +5274,7 @@ impl<'a> Typer<'a> {
     /// Whether `operand`, the operand of a field read `operand.op`, is
     /// `t.step` over a name `t` this scope does not resolve: the read is
     /// then the step label `t.step.op` of a trace variable (FR-612).
+    #[ix_trace_rs::string_edge]
     pub(super) fn unbound_step_label(&self, operand: fsl_forms::ExprRef<'_>) -> bool {
         let fsl_forms::ExprNode::Field {
             operand: trace,
@@ -5348,7 +5358,7 @@ impl<'a> Typer<'a> {
         field: &str,
         all: bool,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let ValueType::Reference(object) = &owner.value_type else {
             return Err(mismatch(location));
         };
@@ -5389,7 +5399,7 @@ impl<'a> Typer<'a> {
         field: &str,
         case: Option<&str>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let place = match &owner.value_type {
             ValueType::Reference(object) => self
                 .clock_presence_places()
@@ -5466,7 +5476,7 @@ impl<'a> Typer<'a> {
         path: &[(Option<&str>, Option<Location>)],
         selectors: &[Node],
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let ValueType::Reference(object) = &owner.value_type else {
             return Err(mismatch(location));
         };
@@ -5649,7 +5659,7 @@ impl<'a> Typer<'a> {
         owner: Node,
         field: &str,
         location: &Location,
-    ) -> Result<Option<Node>, CheckRefusal> {
+    ) -> Result<Option<Node>, SemanticCheckRefusal> {
         let ValueType::Reference(object) = &owner.value_type else {
             return Ok(None);
         };
@@ -5884,7 +5894,7 @@ impl<'a> Typer<'a> {
         operand_location: &Location,
         location: &Location,
         derefed: bool,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         if let ValueType::Reference(object) = &reference.value_type {
             let history = self.history.iter().find(|history| {
                 history.name == field
@@ -5952,7 +5962,7 @@ impl<'a> Typer<'a> {
     /// `self` (FR-104): in a state clause, the context object,
     /// `Reference<M::T>`. Outside a state clause no declaration binds it, so
     /// it refuses `missing_declaration`/`missing-name`.
-    fn self_reference(&self, location: &Location) -> Result<Node, CheckRefusal> {
+    fn self_reference(&self, location: &Location) -> Result<Node, SemanticCheckRefusal> {
         let Some(state) = &self.state else {
             return Err(refuse(location, CheckCause::MissingSelf));
         };
@@ -5963,7 +5973,7 @@ impl<'a> Typer<'a> {
     /// that declares a result, typed as that result. Anywhere else it
     /// refuses `wrong_snapshot`/`wrong-anchor`, naming the clause kind and
     /// the operation.
-    fn operation_result(&self, location: &Location) -> Result<Node, CheckRefusal> {
+    fn operation_result(&self, location: &Location) -> Result<Node, SemanticCheckRefusal> {
         match &self.state {
             Some(StateContext {
                 result_slot: Some(slot),
@@ -5981,7 +5991,7 @@ impl<'a> Typer<'a> {
 
     /// A read of `slot`, a state clause's own `self` or `result` binding,
     /// bound for the whole clause before its body is typed.
-    fn bound_slot(&self, slot: Slot, location: &Location) -> Result<Node, CheckRefusal> {
+    fn bound_slot(&self, slot: Slot, location: &Location) -> Result<Node, SemanticCheckRefusal> {
         // Locals are pushed in slot order, so they are sorted by slot.
         let local = self
             .locals
@@ -6009,7 +6019,7 @@ impl<'a> Typer<'a> {
         target: Node,
         edge: &str,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let source_type = source.value_type.clone();
         let target_type = target.value_type.clone();
         let source = self.push(source);
@@ -6090,13 +6100,14 @@ impl<'a> Typer<'a> {
 
     /// `e.f` over the typed record `e`.
     #[implements("FR-230-AC-67")]
+    #[ix_trace_rs::string_edge]
     fn field(
         &mut self,
         operand: Node,
         field: &str,
         member_span: Option<Span>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let ValueType::Composite(key) = &operand.value_type else {
             return Err(mismatch(location));
         };
@@ -6151,7 +6162,7 @@ impl<'a> Typer<'a> {
     /// `receiver.member(args)` (FR-151, `filament.model.dispatch.single/v1`):
     /// whether a dispatch call checks in this clause at all. It checks only
     /// inside an invariant, precondition or postcondition (TC-196 D07).
-    fn dispatch_admitted(&mut self, location: &Location) -> Result<(), CheckRefusal> {
+    fn dispatch_admitted(&mut self, location: &Location) -> Result<(), SemanticCheckRefusal> {
         self.model_check(
             super::state_model::Form::DispatchContext(self.clause_kind),
             location,
@@ -6170,7 +6181,7 @@ impl<'a> Typer<'a> {
         member: &str,
         arity: usize,
         location: &Location,
-    ) -> Result<(usize, &'a DispatchOperation), CheckRefusal> {
+    ) -> Result<(usize, &'a DispatchOperation), SemanticCheckRefusal> {
         let index = match self.model_check(
             super::state_model::Form::DispatchOperation {
                 receiver_type: receiver.value_type.clone(),
@@ -6209,7 +6220,7 @@ impl<'a> Typer<'a> {
         typed: Node,
         required: &ValueType,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let upcast_type = self.model_type(
             super::state_model::Form::Argument {
                 actual: typed.value_type.clone(),
@@ -6249,7 +6260,7 @@ impl<'a> Typer<'a> {
         &self,
         name: &str,
         location: &Location,
-    ) -> Result<(filament_exact::NodeKey, &'a [FieldDeclaration]), CheckRefusal> {
+    ) -> Result<(filament_exact::NodeKey, &'a [FieldDeclaration]), SemanticCheckRefusal> {
         let scope: &'a Scope = self.scope;
         let value_type = self.type_named(name, location)?;
         let ValueType::Composite(key) = &value_type else {
@@ -6275,7 +6286,7 @@ impl<'a> Typer<'a> {
         field: &str,
         initializer: FieldInitializer,
         field_location: &Location,
-    ) -> Result<Option<(usize, &'d ValueType, ExprId)>, CheckRefusal> {
+    ) -> Result<Option<(usize, &'d ValueType, ExprId)>, SemanticCheckRefusal> {
         let (index, declaration) = declared
             .iter()
             .enumerate()
@@ -6307,7 +6318,7 @@ impl<'a> Typer<'a> {
         declared: &[FieldDeclaration],
         supplied: Vec<Option<RecordSlot<NodeId>>>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let mut slots = Vec::with_capacity(declared.len());
         for (declaration, slot) in declared.iter().zip(supplied) {
             slots.push(match slot {
@@ -6334,9 +6345,9 @@ impl<'a> Typer<'a> {
         kind: CollectionKind,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<CollectionType, CheckRefusal> {
+    ) -> Result<CollectionType, SemanticCheckRefusal> {
         match hint {
-            None => Err(CheckRefusal::ill_typed(
+            None => Err(SemanticCheckRefusal::ill_typed(
                 location,
                 IllTypedCause::AmbiguousLiteral,
             )),
@@ -6352,7 +6363,7 @@ impl<'a> Typer<'a> {
         &self,
         target: &fsl_forms::TypeForm,
         location: &Location,
-    ) -> Result<ValueType, CheckRefusal> {
+    ) -> Result<ValueType, SemanticCheckRefusal> {
         let target = self.resolve_type(target, location)?;
         self.check_declared_type(&target, location)?;
         Ok(target)
@@ -6367,7 +6378,7 @@ impl<'a> Typer<'a> {
         node: IdentityNode,
         form: IdentityForm,
         operand: &ValueType,
-    ) -> Option<CheckRefusal> {
+    ) -> Option<SemanticCheckRefusal> {
         // FR-150 applies to checked clauses and refinement rows. Function
         // bodies are type-checked with the same model scope, but their rules
         // are deliberately unaffected by a population annotation (FR-150-AC-7).
@@ -6391,7 +6402,7 @@ impl<'a> Typer<'a> {
         target: &ValueType,
         operand: Node,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         if &operand.value_type == target
             && matches!(&operand.value_type, ValueType::Text(_) | ValueType::String)
         {
@@ -6493,9 +6504,9 @@ impl<'a> Typer<'a> {
                 | ValueType::Rational(_)
                 | ValueType::Decimal(_),
             ) => {
-                use super::numeric_conversion::{Class, classify};
+                use super::numeric_conversion::{classify, Class};
                 let class = classify(&operand.value_type, target).ok_or_else(|| {
-                    CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
+                    SemanticCheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
                 })?;
                 let kind =
                     if let (Class::ScaleReduction, ValueType::Decimal(decimal)) = (class, target) {
@@ -6567,7 +6578,7 @@ impl<'a> Typer<'a> {
         &mut self,
         target: &fsl_forms::TypeForm,
         location: &Location,
-    ) -> Result<ValueType, CheckRefusal> {
+    ) -> Result<ValueType, SemanticCheckRefusal> {
         self.model_type(super::state_model::Form::Target(target.clone()), location)
     }
 
@@ -6580,7 +6591,7 @@ impl<'a> Typer<'a> {
         target: &ValueType,
         population: Node,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let population_type = population.value_type.clone();
         let operand_location = population.location.clone();
         let population = self.push(population);
@@ -6599,7 +6610,7 @@ impl<'a> Typer<'a> {
     /// population binding with a declared maximum, otherwise
     /// `ill_typed`/`operator-ineligible` (TC-198 L06): the operand is the
     /// wrong kind, not merely the wrong type name.
-    fn lookup_population(&mut self, population: &Node) -> Result<(), CheckRefusal> {
+    fn lookup_population(&mut self, population: &Node) -> Result<(), SemanticCheckRefusal> {
         self.model_check(
             super::state_model::Form::Population {
                 value_type: population.value_type.clone(),
@@ -6627,7 +6638,7 @@ impl<'a> Typer<'a> {
         reference: Node,
         absence: AbsenceMode,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let reference_type = reference.value_type.clone();
         let reference_location = reference.location.clone();
         let population = self.push(population);
@@ -6653,7 +6664,7 @@ impl<'a> Typer<'a> {
         source: &Node,
         binder: &str,
         location: &Location,
-    ) -> Result<(Slot, Arc<CollectionType>), CheckRefusal> {
+    ) -> Result<(Slot, Arc<CollectionType>), SemanticCheckRefusal> {
         let ValueType::Collection(source_type) = &source.value_type else {
             return Err(mismatch(location));
         };
@@ -6677,7 +6688,7 @@ impl<'a> Typer<'a> {
         source: Node,
         body: Node,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let typed = match query {
             BinderQuery::Map | BinderQuery::FlatMap => {
                 // An unbounded source maps to an unbounded result (ADR-014
@@ -6777,7 +6788,7 @@ impl<'a> Typer<'a> {
         Ok(typed)
     }
 
-    fn flatten(&mut self, source: Node, location: &Location) -> Result<Node, CheckRefusal> {
+    fn flatten(&mut self, source: Node, location: &Location) -> Result<Node, SemanticCheckRefusal> {
         let ValueType::Collection(outer) = &source.value_type else {
             return Err(mismatch(location));
         };
@@ -6830,7 +6841,7 @@ impl<'a> Typer<'a> {
         (accumulator, binder): (&str, &str),
         source: &Node,
         location: &Location,
-    ) -> Result<(Slot, Slot, Arc<CollectionType>), CheckRefusal> {
+    ) -> Result<(Slot, Slot, Arc<CollectionType>), SemanticCheckRefusal> {
         let ValueType::Collection(source_type) = &source.value_type else {
             return Err(mismatch(location));
         };
@@ -6869,7 +6880,7 @@ impl<'a> Typer<'a> {
         item: Node,
         element: ValueType,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         self.require_member_equality(element, location)?;
         Ok(node(
             NodeKind::Contains(self.push(collection), self.push(item)),
@@ -6885,7 +6896,7 @@ impl Typer<'_> {
         &self,
         element: ValueType,
         location: &Location,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         self.scope
             .types
             .check_equality_in(
@@ -6896,7 +6907,7 @@ impl Typer<'_> {
                 &|shape: &EnumShape| self.scope.enum_members_of(shape),
             )
             .map(|_| ())
-            .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))
+            .map_err(|refusal| SemanticCheckRefusal::from_ill_typed(location, refusal))
     }
 
     /// `removeOne(c, v)` over its typed collection `c`, of element type
@@ -6908,7 +6919,7 @@ impl Typer<'_> {
         item: Node,
         element: ValueType,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         self.require_member_equality(element, location)?;
         let ValueType::Collection(source) = &collection.value_type else {
             return Err(mismatch(&collection.location));
@@ -6937,7 +6948,11 @@ impl Typer<'_> {
     /// `dropFirst(c)` over a sequence or an ordered set: the same kind with
     /// the bound `[max(a-1,0), max(b-1,0)]`; a set or a bag has no first
     /// occurrence (FSpec FR-145-AC-10).
-    fn drop_first(&mut self, source: Node, location: &Location) -> Result<Node, CheckRefusal> {
+    fn drop_first(
+        &mut self,
+        source: Node,
+        location: &Location,
+    ) -> Result<Node, SemanticCheckRefusal> {
         let ValueType::Collection(collection) = &source.value_type else {
             return Err(mismatch(&source.location));
         };
@@ -7088,7 +7103,7 @@ pub(crate) fn reserved_slot_refusal(
     name: &str,
     span: Option<Span>,
     location: &Location,
-) -> Option<CheckRefusal> {
+) -> Option<SemanticCheckRefusal> {
     reserved_slot_cause(name, span).map(|cause| refuse(location, cause))
 }
 
@@ -7117,7 +7132,7 @@ pub(crate) fn bind_parameters(
     typer: &mut Typer<'_>,
     parameters: &[(String, ValueType)],
     location: &Location,
-) -> Result<(), CheckRefusal> {
+) -> Result<(), SemanticCheckRefusal> {
     for (name, value_type) in parameters {
         if !matches!(value_type, ValueType::Population(_)) {
             typer.check_declared_type(value_type, location)?;

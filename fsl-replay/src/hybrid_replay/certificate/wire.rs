@@ -203,6 +203,7 @@ fn required<'a>(
     )
 }
 
+#[ix_trace_rs::string_edge]
 fn canonical_integer(text: &str) -> Option<Integer> {
     let digits = text.strip_prefix('-').unwrap_or(text);
     let canonical = !digits.is_empty()
@@ -473,6 +474,7 @@ fn witness_structure(
 ///
 /// [`CertificateRefusal`] at the first member the schema, the form match or
 /// a structural refusal rejects.
+#[ix_trace_rs::string_edge]
 pub fn read_certificate(
     model: &CheckedHybridModel,
     expect: Expect<'_>,

@@ -1700,7 +1700,8 @@ fn an_undefined_evaluation_on_a_reduced_run_refutes_with_a_concrete_prefix() {
             }
         );
     }
-    let record = settle(&world, &reduced);
+    let (record, replay_calls) = world.settle_clause_with_replay_count(0, undefined(), &reduced);
+    assert_eq!(replay_calls, 1, "the settlement replay callback runs once");
     assert_eq!(record.value, TerminalValue::Refuted);
     assert_eq!(record.label, ResultLabel::Refuted);
     assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);

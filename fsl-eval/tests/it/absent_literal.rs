@@ -9,7 +9,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 
@@ -30,7 +30,7 @@ const RECORD: &str = "record P { a: Integer; b: Integer?; }\n\
                       record Q { a: Integer; v: Option<Integer>; }\n";
 
 /// A complete-value unit holding `declarations`.
-fn compile(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn compile(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{RECORD}{declarations}\n"

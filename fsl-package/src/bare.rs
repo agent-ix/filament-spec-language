@@ -221,6 +221,7 @@ impl<'p> BarePackage<'p> {
     /// A unit the package declares but `time_unit_scale` cannot read here has a
     /// real factor this route lacks, which a caller must not replace by a count.
     #[must_use]
+    #[ix_trace_rs::string_edge]
     pub fn declares_unit(&self, unit: &str) -> bool {
         self.package.resolved_graph().nodes.iter().any(|node| {
             node.node_tag.as_ref() == "scalar_type"
@@ -669,6 +670,7 @@ impl<'p> BarePackage<'p> {
     /// FR-395). The rows and value-validity facts are projected from the
     /// admitted package; this does not reconstruct them from source.
     #[must_use]
+    #[ix_trace_rs::string_edge]
     pub fn call_requirements(&self, function: &str) -> Vec<BareCallRequirement> {
         let mut owners = self
             .package

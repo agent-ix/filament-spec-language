@@ -20,18 +20,18 @@ use filament_exact::{
 };
 
 use super::{
-    Lowering, NodeContent, generated_location, identifiers, refuse, require_admitted,
-    type_declaration,
+    generated_location, identifiers, refuse, require_admitted, type_declaration, Lowering,
+    NodeContent,
 };
 use crate::check::assemble::DimensionEquivalence;
 use crate::check::family::OccurrenceRole;
 
-use crate::check::VariantTypeDeclaration;
 use crate::check::node_key::{
     Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner,
     NodeRef, NodeTag, Owner,
 };
-use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
+use crate::check::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
+use crate::check::VariantTypeDeclaration;
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, NativeValueType, PopulationRecord,
     ValueTypeRef,
@@ -737,7 +737,7 @@ impl AdmittedModel {
         key: &DeclarationKey,
     ) -> Option<crate::model::systems::ConnectionCheckOutcome> {
         use crate::model::accounting::NormalizationMeter;
-        use crate::model::systems::{Kind, check_connection};
+        use crate::model::systems::{check_connection, Kind};
         let systems = self.systems.as_ref()?;
         if systems.actual_kind(key) != Kind::Connection {
             return None;
@@ -1520,7 +1520,10 @@ impl AdmittedModel {
                 .values()
                 .filter_map(|record| match record {
                     DomainPackageRecord::FieldMember(field) => Some((
-                        (field.owner.clone(), field.key.node.rsplit('/').next()?.to_owned()),
+                        (
+                            field.owner.clone(),
+                            field.key.node.rsplit('/').next()?.to_owned(),
+                        ),
                         field.position,
                     )),
                     _ => None,
@@ -2833,7 +2836,7 @@ pub struct ModelClause {
     pub source_declaration: Option<Vec<String>>,
 }
 
-fn fault(location: &Location, fault: KeyFault) -> CheckRefusal {
+fn fault(location: &Location, fault: KeyFault) -> SemanticCheckRefusal {
     refuse(location, CheckCause::InternalFault(Box::new(fault)))
 }
 
@@ -2999,7 +3002,7 @@ impl<'a> Lowering<'a> {
     /// bridge's view) projects rows too; it has no declaration site, so its
     /// nodes take the `generated` fallback location.
     #[implements("FR-496-AC-5")]
-    pub(crate) fn operation_effect_nodes(&mut self) -> Result<(), CheckRefusal> {
+    pub(crate) fn operation_effect_nodes(&mut self) -> Result<(), SemanticCheckRefusal> {
         let mut declarations = BTreeMap::new();
         for model in self.models {
             let location = model
@@ -3027,7 +3030,7 @@ impl<'a> Lowering<'a> {
         &self,
         declaration: &DeclarationKey,
         location: &Location,
-    ) -> Result<(ModelOwner, &'a AdmittedModel), CheckRefusal> {
+    ) -> Result<(ModelOwner, &'a AdmittedModel), SemanticCheckRefusal> {
         let models: &'a [AdmittedModel] = self.models;
         let model = models
             .iter()
@@ -3045,7 +3048,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         handle: NodeKey,
         location: &Location,
-    ) -> Result<Option<DeclarationKey>, CheckRefusal> {
+    ) -> Result<Option<DeclarationKey>, SemanticCheckRefusal> {
         for model in self.models {
             for (declaration, record) in &model.records {
                 let Some((tag, form)) = record_form(record) else {
@@ -3083,7 +3086,7 @@ impl<'a> Lowering<'a> {
         node: &NodeKey,
         alias: &str,
         location: &Location,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let models: &'a [AdmittedModel] = self.models;
         let Some(model) = models
             .iter()
@@ -3170,7 +3173,7 @@ impl<'a> Lowering<'a> {
         relationship: &DeclarationKey,
         near: EndSide,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let far = match near {
             EndSide::Source => EndSide::Target,
             EndSide::Target => EndSide::Source,
@@ -3189,7 +3192,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         declaration: &DeclarationKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let (owner, model) = self.model_owner(declaration, location)?;
         let record = model
             .records
@@ -3237,7 +3240,7 @@ impl<'a> Lowering<'a> {
         key: &NodeKey,
         model: &AdmittedModel,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         if self.graph.node(key.clone()).is_some() {
             return Ok(key.clone());
         }
@@ -3348,7 +3351,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         declaration: &DeclarationKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let (owner, model) = self.model_owner(declaration, location)?;
         if model.alias() == Some("") {
             // FR-322 "Population reference" (item 4): a source-declared
@@ -3388,7 +3391,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         variant: &VariantTypeDeclaration,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let declaration = self.model_node(variant.declaration(), location)?;
         let model = self
             .models
@@ -3451,7 +3454,7 @@ impl<'a> Lowering<'a> {
     pub(crate) fn relationship_nodes(
         &mut self,
         locations: &BTreeMap<String, Location>,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         // A package selected under several aliases roots each relationship
         // once, at its first alias's declaration site (FR-480 "Selections
         // and imports").
@@ -3501,7 +3504,7 @@ impl<'a> Lowering<'a> {
     pub(crate) fn selected_enum_nodes(
         &mut self,
         locations: &BTreeMap<String, Location>,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let mut rooted = BTreeSet::new();
         let mut declarations = Vec::new();
         for model in self.models {
@@ -3527,7 +3530,7 @@ impl<'a> Lowering<'a> {
     pub(crate) fn selected_object_nodes(
         &mut self,
         locations: &BTreeMap<String, Location>,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let mut rooted = BTreeSet::new();
         let mut declarations = Vec::new();
         for model in self.models {
@@ -3563,7 +3566,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         target: EffectiveId,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let declaration = self.declaration_key_of(target, location)?;
         self.model_node(&declaration, location)
     }
@@ -3576,7 +3579,7 @@ impl<'a> Lowering<'a> {
         &self,
         target: EffectiveId,
         location: &Location,
-    ) -> Result<DeclarationKey, CheckRefusal> {
+    ) -> Result<DeclarationKey, SemanticCheckRefusal> {
         self.models
             .iter()
             .find_map(|model| model.types.get(&target))
@@ -3590,7 +3593,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         value_type: &ValueType,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         match value_type {
             ValueType::Reference(target) => self.object_node(target.clone(), location),
             ValueType::Option(payload) => match payload.as_ref() {
@@ -3610,7 +3613,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         target: EffectiveId,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         if target == crate::check::clock_reference_target() {
             return self.scalar("clock_reference", location);
         }
@@ -3635,7 +3638,7 @@ impl<'a> Lowering<'a> {
         target: EffectiveId,
         maximum: Option<u64>,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let reference = self.reference_type(target, location)?;
         let set = self.insert(
             location,
@@ -3669,7 +3672,7 @@ impl<'a> Lowering<'a> {
         bound: &AuthoredBound,
         near: EffectiveId,
         reachability: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let site = type_declaration(&bound_origin(&bound.label));
         let node = self.population_type(near, Some(bound.maximum), reachability)?;
         if self.bound_sites.insert((bound.label.clone(), node.clone())) {
@@ -3685,7 +3688,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         unit: UnitId,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         match unit.domain() {
             UnitDomain::Declared => {
                 let key = unit
@@ -3732,7 +3735,7 @@ impl<'a> Lowering<'a> {
     pub(in crate::check) fn model_type_unit_nodes(
         &mut self,
         declared: &BTreeMap<String, UnitId>,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         use crate::model::domain_package::{ScalarValueDomain, ValueTypeRef};
 
         for model in self.models {
@@ -3828,7 +3831,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         bounded: &BoundedQuantityType,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let (Some(min), Some(max)) = (bounded.min(), bounded.max()) else {
             return Err(refuse(
                 location,
@@ -3864,7 +3867,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         carried: &CarriedQuantityType,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let unit = self.quantity_type(carried.unit().clone(), location)?;
         let carrier_type = match carried.carrier() {
             QuantityCarrier::Decimal(decimal) => ValueType::Decimal(decimal.clone()),
@@ -3905,7 +3908,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         unit: NodeKey,
         location: &Location,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let mut pending = vec![unit];
         while let Some(key) = pending.pop() {
             let Some(node) = self.units.nominal_node(&key).cloned() else {
@@ -4015,7 +4018,7 @@ impl<'a> Lowering<'a> {
     pub(in crate::check) fn declared_nominal_nodes(
         &mut self,
         keys: &[NodeKey],
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         for key in keys {
             let Some(nominal) = self.units.nominal_node(key) else {
                 continue;
@@ -4070,7 +4073,7 @@ impl<'a> Lowering<'a> {
     pub(crate) fn dimension_equivalence_nodes(
         &mut self,
         equivalences: &[DimensionEquivalence],
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         for (index, equivalence) in equivalences.iter().enumerate() {
             let site = type_declaration(&equivalence_origin(index));
             for dimension in &equivalence.dimensions {
@@ -4124,7 +4127,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         clause: &ModelClause,
         location: &Location,
-    ) -> Result<(Owner, MemberTerm), CheckRefusal> {
+    ) -> Result<(Owner, MemberTerm), SemanticCheckRefusal> {
         let (owner, model) = self.model_owner(&clause.declaration, location)?;
         let owner = if model.alias() == Some("") {
             let source_name = clause
@@ -4158,7 +4161,7 @@ pub(crate) fn equivalence_origin(index: usize) -> String {
     format!("dimension equivalence {index}")
 }
 
-fn mismatch(location: &Location) -> CheckRefusal {
+fn mismatch(location: &Location) -> SemanticCheckRefusal {
     refuse(
         location,
         CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),

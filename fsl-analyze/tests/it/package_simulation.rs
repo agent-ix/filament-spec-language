@@ -298,14 +298,17 @@ fn caller_simulation_max_steps_bounds_the_item_on_both_routes() {
     }
 
     // The item states the bound too: refused, whichever bound is larger.
-    let stated = json!([{"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}]);
+    let stated =
+        json!([{"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}]);
     let stated_path = counter_request_with(
         &Workspace::new("caller-simulation-max-steps-stated"),
         &bounded(),
         request_members(Some(stated)),
     );
-    let refused =
-        crate::analyze_cli_support::analyze_under(&stated_path, &[(Setting::SimulationMaxSteps, 2)]);
+    let refused = crate::analyze_cli_support::analyze_under(
+        &stated_path,
+        &[(Setting::SimulationMaxSteps, 2)],
+    );
     assert_eq!(refused.exit, 20, "{}", refused.document());
     let text = refused.document().to_string();
     assert!(text.contains("simulation.max_steps"), "{text}");
@@ -315,18 +318,27 @@ fn caller_simulation_max_steps_bounds_the_item_on_both_routes() {
     assert!(replay
         .set(SettingName::Stage(Setting::SimulationMaxSteps), 2)
         .is_err());
-    let mut monitor =
-        fsl_command::command::CommandLimits::monitor(fsl_command::command::MonitorPreparationLimits {
+    let mut monitor = fsl_command::command::CommandLimits::monitor(
+        fsl_command::command::MonitorPreparationLimits {
             work: 1,
             storage: 1,
-        });
+        },
+    );
     monitor
         .set(SettingName::Stage(Setting::SimulationMaxSteps), 2)
         .expect("monitor accepts it beside routed items");
     assert!(monitor.require_no_routed_only().is_err());
-    for operand in ["simulation.max_steps=0", "simulation.max_steps=-1", "simulation.max_steps=x"] {
+    for operand in [
+        "simulation.max_steps=0",
+        "simulation.max_steps=-1",
+        "simulation.max_steps=x",
+    ] {
         let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
-        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
+        assert_eq!(
+            refusal.cause,
+            fsl_foundation::UsageCause::NotAnInteger,
+            "{operand}"
+        );
         assert_eq!(refusal.operand, operand);
     }
 }
