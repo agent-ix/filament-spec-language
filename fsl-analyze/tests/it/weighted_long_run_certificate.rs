@@ -86,17 +86,21 @@ fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
                 reward cost on Server::to_b = 0;\n\
                 reward cost on Server::to_a = 0;\n\
                 reward cost on Server::stay_b = 1;\n\
-                probabilistic Maximum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.at_a) weighted by cost <= rational(1,1) }\n".to_owned(),
+                probabilistic Maximum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.at_a) weighted by cost <= rational(999,1000) }\n\
+                probabilistic Minimum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.at_a) weighted by cost <= rational(1,1000) }\n".to_owned(),
         initial: serde_json::json!({"at_a":{"boolean":true}}),
     });
-    let bytes = produce(&world, "Maximum");
+    let bytes = produce(&world, "Minimum");
     let mut forged =
         read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new())
             .expect("analyzer supplies a structurally valid maximum certificate");
     assert_eq!(
         forged.certificate.optimization,
-        LongRunOptimization::Maximum
+        LongRunOptimization::Minimum
     );
+    forged.certificate.optimization = LongRunOptimization::Maximum;
+    forged.certificate.identity =
+        fsl_replay::probabilistic_claim_identity(world.claim("Maximum")).unwrap();
     assert_eq!(forged.certificate.components.len(), 1);
 
     let system = ModelSystem::new(world.subject().simulation).unwrap();
