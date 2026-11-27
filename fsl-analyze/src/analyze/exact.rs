@@ -686,6 +686,7 @@ fn settled(issue: &ExactProbBuildIssue, subject: SubjectLimits<'_>) -> EngineRep
 }
 
 #[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
+#[implements("FR-204-AC-1", "FR-204-AC-21")]
 fn run_timed(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -1129,6 +1130,7 @@ fn same_mean_time_choice(
 }
 
 #[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
+#[implements("FR-204-AC-2")]
 fn run_timed_mean(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -4333,6 +4335,7 @@ pub fn exact_probabilistic_item_witness_tampered<'a>(
 /// carries the product-state key it reaches (the key is what the checker
 /// replays) and, where the step takes an operation, the operation, draw and
 /// post-state it resolves to in the model.
+#[implements("FR-203-AC-31", "FR-203-AC-32", "FR-204-AC-1", "FR-204-AC-5")]
 #[allow(clippy::too_many_arguments)]
 fn replay_timed_refutation(
     system: &ModelSystem<'_>,
@@ -4418,6 +4421,7 @@ fn replay_timed_refutation(
 /// Read a produced path set over a timed product as a witness (each step with
 /// the product key it reaches and, for an operation, its model step) and
 /// settle it through the checker's own replay.
+#[implements("FR-203-AC-32", "FR-204-AC-1", "FR-204-AC-5")]
 #[allow(clippy::too_many_arguments)]
 fn replay_timed_paths(
     system: &ModelSystem<'_>,
