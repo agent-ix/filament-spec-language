@@ -611,27 +611,32 @@ fn two_clocks(bounded: bool) -> Row {
     }
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_hand() {
     assert_hand(&two_clocks(false));
     assert_hand(&two_clocks(true));
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_minimum_routes() {
     assert_routes(&two_clocks(false).only(&["Min"]));
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_maximum_routes() {
     assert_routes(&two_clocks(false).only(&["Max", "Half"]));
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_bounded_minimum_routes() {
     assert_routes(&two_clocks(true).only(&["Min"]));
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_bounded_maximum_routes() {
     assert_routes(&two_clocks(true).only(&["Max", "Half"]));
@@ -1135,6 +1140,7 @@ fn time_lock(invariant: &str) -> Row {
     }
 }
 
+#[trace("FR-924-AC-5")]
 #[test]
 fn row_3468_time_lock_hand() {
     for invariant in ["self.x <= 1 ms", "self.x < 1 ms"] {

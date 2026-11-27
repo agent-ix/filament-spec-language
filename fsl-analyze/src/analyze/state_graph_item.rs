@@ -342,50 +342,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         cancel,
     ) {
         Ok(graph) => graph,
-        Err(fsl_replay::DigitalGraphLimit::States(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxStates,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Transitions(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Clocks(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxClocks,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        // No graph past an undefined step guard: the run stops incomplete
-        // with no verdict, unresolved dynamics, as a graph the engine does not
-        // build. The state-graph route's refutation of it (ADR-018 UE-6) is
-        // its own ticket's.
-        Err(fsl_replay::DigitalGraphLimit::UndefinedGuard) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::UnresolvedDynamics,
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Cancelled) => match cancel.cause() {
-            Some(source) => {
-                return EngineReport::Refused(Refusal::Incomplete(
-                    fsl_replay::IncompleteCause::Cancelled { source },
-                ));
-            }
-            None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
+        Err(limit) => return graph_limit_refusal(limit, cancel),
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
@@ -1962,5 +1919,63 @@ impl<'a> PackageStateGraphSubject<'a> {
             },
         )
         .claimed(key)
+    }
+}
+
+/// The refusal a digital state graph's stop settles: a named limit is
+/// `incomplete` with that limit; a graph that stops at a protocol expression
+/// or step guard with no value is `incomplete` with unresolved dynamics, as a
+/// graph the engine does not build (the route's refutation of it, ADR-018
+/// UE-6, is its own ticket's); cancellation is `incomplete` with its cause.
+fn graph_limit_refusal(limit: fsl_replay::DigitalGraphLimit, cancel: &Cancel) -> EngineReport {
+    use fsl_replay::{DigitalGraphLimit, IncompleteCause, ModelCheckLimit};
+    let limit_reached = |limit, value| {
+        EngineReport::Refused(Refusal::Incomplete(IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        }))
+    };
+    match limit {
+        DigitalGraphLimit::States(value) => limit_reached(ModelCheckLimit::MaxStates, value),
+        DigitalGraphLimit::Transitions(value) => {
+            limit_reached(ModelCheckLimit::MaxTransitions, value)
+        }
+        DigitalGraphLimit::Clocks(value) => limit_reached(ModelCheckLimit::MaxClocks, value),
+        DigitalGraphLimit::UndefinedGuard => {
+            EngineReport::Refused(Refusal::Incomplete(IncompleteCause::UnresolvedDynamics))
+        }
+        DigitalGraphLimit::Cancelled => match cancel.cause() {
+            Some(source) => {
+                EngineReport::Refused(Refusal::Incomplete(IncompleteCause::Cancelled { source }))
+            }
+            None => EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    /// FR-239-AC-11 (TC-710): a graph that stops at an expression with no
+    /// value settles `incomplete`, unresolved dynamics, never `Failed`.
+    #[trace("TC-710", "FR-239-AC-11")]
+    #[test]
+    fn an_undefined_guard_stop_settles_incomplete_unresolved_dynamics() {
+        let report = graph_limit_refusal(
+            fsl_replay::DigitalGraphLimit::UndefinedGuard,
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                report,
+                EngineReport::Refused(Refusal::Incomplete(
+                    fsl_replay::IncompleteCause::UnresolvedDynamics
+                ))
+            ),
+            "the undefined-guard stop is not incomplete unresolved dynamics"
+        );
     }
 }

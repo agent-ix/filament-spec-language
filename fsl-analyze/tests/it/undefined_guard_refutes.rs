@@ -57,19 +57,46 @@ fn temporal(formula: &str) -> String {
 }
 
 fn zone_refutes(outcome: &crate::zone_search::Outcome) {
-    let text = format!("{outcome:?}");
-    let kind = match outcome {
-        crate::zone_search::Outcome::Violated { counterexample, .. } => format!(
-            "kind={:?} prefix={}",
-            counterexample.kind,
-            counterexample.prefix.len()
-        ),
-        _ => String::new(),
+    let crate::zone_search::Outcome::Violated { counterexample, .. } = outcome else {
+        panic!(
+            "expected an undefined evaluation (UE-6): {}",
+            short(outcome)
+        );
     };
+    let CounterexampleKind::UndefinedEvaluation(undefined) = &counterexample.kind else {
+        panic!(
+            "expected an undefined evaluation (UE-6): {}",
+            short(outcome)
+        );
+    };
+    // FR-239-AC-11: the prefix is `go`; `where` names position 1, the
+    // precondition of `bad` and the division by zero.
+    assert_eq!(counterexample.prefix.len(), 1, "{}", short(outcome));
     assert!(
-        text.starts_with("Violated") && kind.contains("UndefinedEvaluation"),
-        "expected an undefined evaluation (UE-6): {}",
+        format!("{:?}", counterexample.prefix[0].transition).contains("go"),
+        "{}",
         short(outcome)
+    );
+    assert_eq!(undefined.site.position, 1, "{}", short(outcome));
+    assert!(
+        matches!(
+            &undefined.site.locus,
+            fsl_replay::UndefinedLocus::Contract(_)
+        ),
+        "{:?}",
+        undefined.site.locus
+    );
+    assert!(
+        format!("{:?}", undefined.site.transition).contains("bad"),
+        "{:?}",
+        undefined.site.transition
+    );
+    assert!(
+        format!("{:?}", undefined.cause)
+            .to_lowercase()
+            .contains("divis"),
+        "{:?}",
+        undefined.cause
     );
 }
 
@@ -132,7 +159,8 @@ fn digital_safety() {
     );
 }
 
-#[trace("TC-710", "FR-239-AC-11")]
+/// Control: the timed fixture's guard really has no value after `go`. It
+/// asserts the fixture, not a criterion, so it carries no tag.
 #[test]
 fn timed_fixture_control() {
     use fsl_eval::simulation::TransitionSystem;

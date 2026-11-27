@@ -342,3 +342,34 @@ fn a_strict_subject_takes_the_region_route() {
         "{found:?}"
     );
 }
+
+/// Every row named in the grid-walk table (FR-922's interim) exists as a test
+/// of this crate, so renaming a row cannot leave the table citing nothing.
+#[trace("FR-922-AC-4")]
+#[test]
+fn every_strict_grid_walk_row_is_a_test_that_exists() {
+    fn sources(dir: &std::path::Path, found: &mut String) {
+        for entry in std::fs::read_dir(dir).expect("the tests directory reads") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                sources(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                found.push_str(&std::fs::read_to_string(&path).expect("a source file reads"));
+            }
+        }
+    }
+    let mut text = String::new();
+    sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests"),
+        &mut text,
+    );
+    for (cause, rows) in fsl_eval::simulation::model::STRICT_GRID_WALK {
+        assert!(!rows.is_empty(), "{cause:?} cites no row");
+        for row in rows {
+            assert!(
+                text.contains(&format!("fn {row}(")),
+                "{cause:?}: no test named {row}"
+            );
+        }
+    }
+}

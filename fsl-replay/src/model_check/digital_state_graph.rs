@@ -25,8 +25,10 @@ pub enum DigitalGraphLimit {
     Clocks(u64),
     /// Caller cancellation.
     Cancelled,
-    /// A state's step guard has no value (ADR-018 UE-6): the graph's steps
-    /// there read it as disabled, so no graph is built past it.
+    /// A state's protocol expression (a join predicate) or step guard that is
+    /// not a data contract has no value (ADR-018 UE-6): no graph is built
+    /// past it. A data-contract guard with no value is recorded in the
+    /// graph's `undefined` list instead.
     UndefinedGuard,
 }
 
@@ -312,5 +314,32 @@ fn limit_from_stop(stop: TimedStop, max_states: u64) -> DigitalGraphLimit {
             DigitalGraphLimit::UndefinedGuard
         }
         _ => DigitalGraphLimit::States(max_states),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_semantic_value::catalog::UndefinedReason;
+    use fsl_eval::simulation::model::{ClauseOutcome, ModelFinding};
+    use ix_trace_rs::trace;
+
+    /// A timed state whose protocol expression has no value stops the graph
+    /// with the undefined-guard limit, and a state limit does not.
+    #[trace("TC-710", "FR-239-AC-11")]
+    #[test]
+    fn an_undefined_protocol_expression_stops_the_graph_with_the_undefined_guard_limit() {
+        let finding = ModelFinding::ProtocolExpressionUndetermined {
+            node: "Main/Both".to_owned(),
+            evaluation: ClauseOutcome::FamilyUndefined(UndefinedReason::AbsentKey),
+        };
+        assert_eq!(
+            limit_from_stop(TimedStop::Undefined(Box::new(finding)), 7),
+            DigitalGraphLimit::UndefinedGuard
+        );
+        assert_eq!(
+            limit_from_stop(TimedStop::MaxClocks { max_clocks: 3 }, 7),
+            DigitalGraphLimit::Clocks(3)
+        );
     }
 }
