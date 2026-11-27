@@ -3729,8 +3729,9 @@ fn a_past_operator_on_a_dense_idle_tail_stops_incomplete() {
 /// A window aggregate atom is not admitted in a probabilistic event, so it
 /// never reaches the idle-tail reading.
 ///
-/// The refusal today is an `InternalFault` where a user diagnostic is due
-/// (QSL-3524); that fix tightens these assertions to the diagnostic.
+/// A temporal aggregate over a model subject is rejected as an unsupported
+/// construct before lowering can report a missing typed aggregate (QSL-3524).
+#[trace("FR-194-AC-4", "FR-194-AC-7")]
 #[test]
 fn a_window_aggregate_event_does_not_check() {
     let checked = std::panic::catch_unwind(|| {
@@ -3743,8 +3744,8 @@ fn a_window_aggregate_event_does_not_check() {
     });
     let refusal = checked.err().expect("the unit does not check");
     let refusal = refusal.downcast_ref::<String>().expect("a message");
-    assert!(refusal.contains("SemanticCheckRefusal"), "{refusal}");
-    assert!(refusal.contains("aggregate-term-typed"), "{refusal}");
+    assert!(refusal.contains("AggregateModelSubject"), "{refusal}");
+    assert!(!refusal.contains("aggregate-term-typed"), "{refusal}");
 }
 
 /// FSpec FR-420 idle-tail semantics decide every completion here: after send
