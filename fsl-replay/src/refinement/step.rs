@@ -19,8 +19,6 @@
 use super::read::{MappingExpression, MappingTarget as StepTarget, RefinementRead, StepMapping};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{ObjectReference, Value};
-use fsl_foundation::budget::{Budget, BudgetStop};
-use fsl_foundation::Setting;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -29,6 +27,8 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::protocol::{ProtocolRefusal, StepKind};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::Setting;
 use fsl_semantics::check::StepClass;
 use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::implements;
