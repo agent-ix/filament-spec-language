@@ -5,13 +5,16 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
-use filament_exact::ScalarLimits;
+use filament_exact::{EffectiveId, OriginalDeclarationKey, ScalarLimits};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use fsl_eval::simulation::protocol::{ProtocolSystem, Reachable, ResolvedMemory, Sc, StepKind};
+use fsl_eval::simulation::protocol::{
+    over_reference, ProtocolSystem, Reachable, ResolvedMemory, Sc, StepKind,
+};
+use fsl_eval::simulation::Location;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -63,12 +66,20 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let domain = serde_json::to_vec(&tc1070::document()).expect("domain fixture serializes");
+    fixture_of(
+        SOURCE,
+        &tc1070::document(),
+        json!({"total": {"integer": "5"}}),
+    )
+}
+
+fn fixture_of(source: &str, document: &serde_json::Value, fields: serde_json::Value) -> Fixture {
+    let domain = serde_json::to_vec(document).expect("domain fixture serializes");
     let packages = package_input([domain.as_slice()]).expect("domain package admitted");
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("qsl-2220", "unit.native"),
         "unit.native",
-        SOURCE.as_bytes(),
+        source.as_bytes(),
         fsl_cst::Limits::default(),
     )
     .expect("unit parses");
@@ -114,7 +125,7 @@ fn fixture() -> Fixture {
             "objects": [{
                 "key": "node-1",
                 "type": tc1070::model::id("Node"),
-                "fields": {"total": {"integer": "5"}}
+                "fields": fields
             }]
         }]
     }))
@@ -132,7 +143,7 @@ fn fixture() -> Fixture {
     }
 }
 
-fn system(fixture: &Fixture) -> ProtocolSystem<'_, Sc> {
+fn simulation(fixture: &Fixture) -> (ModelSimulationRequest<'_>, ModelInstance) {
     let population = filament_checked::key::DeclarationKey {
         package: tc1070::model::PACKAGE.to_owned(),
         node: tc1070::model::id("nodes"),
@@ -154,6 +165,15 @@ fn system(fixture: &Fixture) -> ProtocolSystem<'_, Sc> {
         },
         meter: METER,
     };
+    let over = ModelInstance {
+        population,
+        key: "node-1".to_owned(),
+    };
+    (request, over)
+}
+
+fn system(fixture: &Fixture) -> ProtocolSystem<'_, Sc> {
+    let (request, over) = simulation(fixture);
     let model = ModelSystem::new(request.clone()).expect("model subject built");
     let protocol = fixture.package.graph().protocol("Flow").expect("protocol");
     let subject = ProtocolSubject {
@@ -162,10 +182,7 @@ fn system(fixture: &Fixture) -> ProtocolSystem<'_, Sc> {
             proof_bounds: Vec::new(),
         },
         protocol: "Flow".to_owned(),
-        over: ModelInstance {
-            population,
-            key: "node-1".to_owned(),
-        },
+        over,
         roles: vec![RoleBinding {
             role: "Service".to_owned(),
             model: tc1070::model::PACKAGE.to_owned(),
@@ -241,5 +258,112 @@ fn the_newly_compiled_forms_are_explored() {
     assert!(
         reachable.states.iter().any(|state| state.steps.is_empty()),
         "the finite exploration settles after the repeat"
+    );
+}
+
+/// FR-125 "Instancing": the reference a protocol's `over (view: M::Base)`
+/// binds at the key `node-1` has the type of the admitted record, `Node`.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_protocol_over_binding_names_the_admitted_member_type() {
+    let fixture = base_fixture(SOURCE);
+    let (request, over) = simulation(&fixture);
+    let reference = over_reference(request, "Flow", &over).expect("the instance binds");
+
+    assert_eq!(
+        reference.object_type(),
+        &EffectiveId::new(
+            None,
+            OriginalDeclarationKey::new(tc1070::model::PACKAGE, tc1070::model::id("Node")),
+        )
+    );
+}
+
+/// [`fixture`] with `Node` extending a `Base` that declares `tag`, and the
+/// protocol of `source` over `M::Base`.
+fn base_fixture(source: &str) -> Fixture {
+    let mut document = tc1070::document();
+    let types = document["types"].as_array_mut().expect("types");
+    let node_id = serde_json::Value::from(tc1070::model::id("Node"));
+    let node = types
+        .iter_mut()
+        .find(|declared| declared["identity"] == node_id)
+        .expect("Node is declared");
+    node["supertypes"] = json!([tc1070::model::id("Base")]);
+    let mut base = node.clone();
+    base["identity"] = json!(tc1070::model::id("Base"));
+    base["displayName"] = json!("Base");
+    base["supertypes"] = json!([]);
+    base["identityFields"] = json!([tc1070::model::id("Base/tag")]);
+    base["fields"] = json!([tc1070::model::field(
+        "Base",
+        "tag",
+        &tc1070::model::id("Total")
+    )]);
+    base["operations"] = json!([]);
+    base["relationships"] = json!([]);
+    base["origin"] = tc1070::model::origin("Base");
+    types.push(base);
+    // A role takes a type its population names, so every population names
+    // `Base` too.
+    for population in document["populations"].as_array_mut().expect("populations") {
+        population["members"]
+            .as_array_mut()
+            .expect("members")
+            .push(json!(tc1070::model::id("Base")));
+    }
+    let source = source.replace("over (view: M::Node)", "over (view: M::Base)");
+    fixture_of(
+        &source,
+        &document,
+        json!({"total": {"integer": "5"}, "tag": {"integer": "1"}}),
+    )
+}
+
+/// FR-125 "Instancing": a replicated role over `M::Base` holds the admitted
+/// `Node` reference, so `w = view` holds for the `over` object and the
+/// role's footprint covers a field read of that reference.
+#[trace("TC-520")]
+#[test]
+fn a_replicated_role_object_is_the_over_binding() {
+    let source = SOURCE.replace(
+        "  role Service on M::Node;\n",
+        "  role Service on M::Node;\n  \
+         role w each M::Base from nodes max 1 lifetime until(w = view and w.tag = 1);\n",
+    );
+    let fixture = base_fixture(&source);
+    let system = system(&fixture);
+    let reachable = system
+        .reachable(
+            NonZeroUsize::new(1).expect("one worker"),
+            fsl_eval::simulation::Limits::default().max_states,
+        )
+        .expect("finite exploration completes");
+    let admitted = EffectiveId::new(
+        None,
+        OriginalDeclarationKey::new(tc1070::model::PACKAGE, tc1070::model::id("Node")),
+    );
+    let (state, retire) = reachable
+        .states
+        .iter()
+        .find_map(|state| {
+            state
+                .steps
+                .iter()
+                .find(|(step, _)| step.kind() == StepKind::Retire)
+                .map(|(step, _)| (state, step))
+        })
+        .expect("`w = view` holds, so the spawned object retires");
+    let footprint = system
+        .footprint(&state.state, retire)
+        .expect("the retire step has a footprint");
+    // The footprint of a read through `w` lists the field of the admitted
+    // reference, so it covers the reference the role holds.
+    assert!(
+        footprint.enabling.iter().any(|location| matches!(
+            location,
+            Location::Field { object, .. } if *object.object_type() == admitted
+        )),
+        "{footprint:?}"
     );
 }

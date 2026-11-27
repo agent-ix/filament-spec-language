@@ -11,7 +11,7 @@ use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::Setting;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_package::{emit_checked, read_import_view};
-use fsl_semantics::check::CheckRefusal;
+use fsl_semantics::check::SemanticCheckRefusal;
 use fsl_semantics::library::LibraryName;
 use ix_trace_rs::trace;
 use serde_json::Value;
@@ -680,7 +680,7 @@ fn a_union_and_an_import_alias_sharing_a_member_name_are_ambiguous() {
     let CompileRefusal::Check { refusals, .. } = &*refusal else {
         panic!("a check refusal, not {refusal:?}")
     };
-    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+    let [SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
         panic!("one ambiguity, not {refusals:?}")
     };
     let CheckCause::AmbiguousQualified(ambiguous) = cause.as_ref() else {

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Declarative transcription of the frozen complete-V1 EBNF.
+use ix_trace_rs::implements;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
@@ -1270,6 +1272,9 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(P::Block, s(vec![x("{"), r(P::Expression), x("}")]));
 }
 
+#[implements("FR-002-AC-2")]
+#[implements("FR-002-AC-5")]
+#[implements("FR-764-AC-1")]
 fn expressions(g: &mut Grammar) {
     g.insert(
         P::HexDigit,
@@ -3320,6 +3325,7 @@ fn analysis(g: &mut Grammar) {
 /// the `probabilistic` claim (FSpec `random-decl`, `reward-decl`,
 /// `workload-decl` and `probabilistic-clause`). Every word they introduce
 /// is contextual, so no new keyword is reserved.
+#[implements("FR-186-AC-3")]
 fn probabilistic(g: &mut Grammar) {
     let bound_op = || c(vec![x("<="), x(">=")]);
     g.insert(

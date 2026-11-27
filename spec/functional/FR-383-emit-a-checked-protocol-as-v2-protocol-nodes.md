@@ -35,6 +35,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-322-AC-291
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-464
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-465

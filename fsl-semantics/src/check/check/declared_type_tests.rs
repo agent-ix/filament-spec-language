@@ -156,7 +156,7 @@ fn owner_storage_classes_and_units_survive_conversion() {
                 "reservation-size-overflow",
             ),
         ] {
-            let refusal = CheckRefusal::from_type_check(&location, error);
+            let refusal = SemanticCheckRefusal::from_type_check(&location, error);
             assert_eq!(refusal.location, location);
             assert_eq!(*refusal.cause, expected);
             assert_eq!(
@@ -250,13 +250,13 @@ fn declared_types_admit_float_keyed_collections_and_keep_missing_declaration_ref
     ] {
         assert_eq!(typer.check_declared_type(&ty, &location), Ok(()), "{ty:?}");
     }
-    let mismatch = CheckRefusal::from_ill_typed(
+    let mismatch = SemanticCheckRefusal::from_ill_typed(
         &location,
         filament_exact::IllTyped {
             cause: IllTypedCause::TypeMismatch,
         },
     );
-    let ineligible = CheckRefusal::from_ill_typed(
+    let ineligible = SemanticCheckRefusal::from_ill_typed(
         &location,
         filament_exact::IllTyped {
             cause: IllTypedCause::OperatorIneligible,

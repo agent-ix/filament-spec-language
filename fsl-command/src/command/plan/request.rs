@@ -213,6 +213,7 @@ fn max_value_bits(object: &Map<String, Value>) -> Result<Option<u64>> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn document(object: &Map<String, Value>, route: Route) -> Result<Option<String>> {
     let Some(member) = object.get("document").filter(|value| !value.is_null()) else {
         return match route {

@@ -10,12 +10,15 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{ClauseKind, TypeForm};
 use fsl_foundation::diagnostic::{StageFailure, Staged};
+use ix_trace_rs::implements;
 
 use super::check::Scope;
 use super::check::UntypedKind;
 use super::ir::{Node, NodeId};
 use super::navigation::Navigable;
-use super::refusal::{AmbiguousMember, CheckCause, CheckRefusal, KeyFault, MemberCandidate};
+use super::refusal::{
+    AmbiguousMember, CheckCause, KeyFault, MemberCandidate, SemanticCheckRefusal,
+};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract, FamilyKind};
 
 /// A located refusal attributed to the model form that produced it.
@@ -121,8 +124,8 @@ fn untyped_cause(untyped: &super::check::UntypedMember) -> CheckCause {
     }))
 }
 
-pub(crate) fn fault(location: &Location) -> CheckRefusal {
-    CheckRefusal {
+pub(crate) fn fault(location: &Location) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             InternalFault::new("S3", "state-model-check-result-shape"),
@@ -218,19 +221,20 @@ pub(crate) struct StateModelFamily;
 impl FamilyContract for StateModelFamily {
     type Form = Request;
     type Checked = Checked;
-    type Cause = CheckRefusal;
+    type Cause = SemanticCheckRefusal;
     type Declarations<'a> = Scope;
     type Claim = ();
 
     #[deny(clippy::wildcard_enum_match_arm)]
+    #[implements("FR-363-AC-9")]
     fn check<'a>(
         request: &Request,
         cx: &mut CheckContext<'a, Scope>,
-    ) -> CheckOutcome<Checked, CheckRefusal> {
+    ) -> CheckOutcome<Checked, SemanticCheckRefusal> {
         let scope = cx.declarations();
         let source_owner = cx.source_owner().cloned();
         let location = &request.location;
-        let refuse = |at: &Location, cause| CheckRefusal {
+        let refuse = |at: &Location, cause| SemanticCheckRefusal {
             location: at.clone(),
             cause: Box::new(CheckCause::StateModel(Box::new(StateModelRefusal {
                 cause,
@@ -254,7 +258,7 @@ impl FamilyContract for StateModelFamily {
                 binder_annotation: None,
             }))
         };
-        let checked = (|| -> Result<Checked, CheckRefusal> {
+        let checked = (|| -> Result<Checked, SemanticCheckRefusal> {
             Ok(match &request.form {
                 Form::Target(form) => {
                     let value_type = super::type_form::resolve_type_form(
@@ -302,25 +306,22 @@ impl FamilyContract for StateModelFamily {
                             // absent field, after `deref` or not, is
                             // `ill_typed`/`type-mismatch` keeping its owner,
                             // spelling and token span (FR-363).
-                            return Err(
-                                match scope.untyped_member(object, field, UntypedKind::Field) {
-                                    Some(untyped) => refuse(location, untyped_cause(untyped)),
-                                    None => refuse(
-                                        location,
-                                        CheckCause::UnknownField {
-                                            owner: object
-                                                .original()
-                                                .node()
-                                                .rsplit('/')
-                                                .next()
-                                                .unwrap_or(object.original().node())
-                                                .into(),
-                                            field: field.as_str().into(),
-                                            span: *member_span,
-                                        },
-                                    ),
+                            if let Some(untyped) =
+                                scope.untyped_member(object, field, UntypedKind::Field)
+                            {
+                                return Err(refuse(location, untyped_cause(untyped)));
+                            }
+                            let owner = scope
+                                .object_type_name(source_owner.as_ref(), object)
+                                .ok_or_else(|| fault(location))?;
+                            return Err(refuse(
+                                location,
+                                CheckCause::UnknownField {
+                                    owner: owner.into(),
+                                    field: field.as_str().into(),
+                                    span: *member_span,
                                 },
-                            );
+                            ));
                         }
                         (Some(_), []) if !*field_reads => return Err(mismatch(location)),
                         (Some(attribute), []) => {
@@ -617,12 +618,12 @@ impl FamilyContract for StateModelFamily {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::check::DispatchOperation;
     use crate::check::family::fixtures::{empty_scope, root_location};
+    use crate::check::DispatchOperation;
     use crate::family::{DiagnosticSink, ScopeStack, StageLimits};
     use ix_trace_rs::trace;
 
-    fn check_dispatch_arity(arity: usize) -> Result<Checked, CheckRefusal> {
+    fn check_dispatch_arity(arity: usize) -> Result<Checked, SemanticCheckRefusal> {
         let mut scope = empty_scope();
         let receiver = filament_exact::EffectiveId::new(
             None,
@@ -741,11 +742,9 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message, "existing diagnostic");
         assert_eq!(entries[1].scope, "enclosing");
-        assert!(
-            entries[1]
-                .message
-                .contains("node limit=37, meter admissions=3")
-        );
+        assert!(entries[1]
+            .message
+            .contains("node limit=37, meter admissions=3"));
         assert_eq!(scopes.path(), "enclosing");
     }
 

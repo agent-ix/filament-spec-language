@@ -656,11 +656,6 @@ const PARSER_ONLY: &[(&str, &str, &str)] = &[
         "FR-318-AC-1",
     ),
     (
-        "StepArgument",
-        "the standard has no ebnf production for this form (named in prose by FSpec FR-375); QSL-2960; FSpec FR-375-AC-4",
-        "FSpec FR-375-AC-4",
-    ),
-    (
         "StepDeclaration",
         "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define; FR-710-AC-3",
         "FR-710-AC-3",
@@ -829,11 +824,8 @@ fn drift_and_stale_entries_are_reported_by_name() {
         PARSER_ONLY,
     );
     assert!(found.iter().any(|line| line.contains("delivery-interval")));
-    assert!(
-        found.contains(
-            &"stale correspondence entry `DeliveryInterval`: not in the parser".to_owned()
-        )
-    );
+    assert!(found
+        .contains(&"stale correspondence entry `DeliveryInterval`: not in the parser".to_owned()));
 }
 
 /// FR-600-AC-3: the shared grammar is read from the pinned standard crate,

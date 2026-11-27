@@ -190,6 +190,7 @@ impl<'a> Ticks<'a> {
 /// (FR-251 "Non-timed clauses", FR-233): `step` for a `model-steps` clause,
 /// otherwise `event`, `sample` or `position` by its profile. `None` for a
 /// timestamped-event clause, whose ticks are time stamps.
+#[ix_trace_rs::string_edge]
 fn position_unit(clause: &CheckedTemporalClause) -> Option<&'static str> {
     if clause.clock() == "model-steps" {
         return Some("step");

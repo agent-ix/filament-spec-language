@@ -4,7 +4,7 @@
 
 use fsl_command::command::{self, RequestOverrides, RunLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const REQUEST: &str =
@@ -50,10 +50,8 @@ fn driver_provider_run_emits_the_complete_coll_cart_example_unit() {
 
     let directory = tempfile::tempdir().expect("temporary example tree creates");
     let request_path = copy_example_fixture(directory.path());
-    let engines = vec![
-        fsl_analyze::analyze::Engine::hybrid_reference()
-            .expect("the driver reference-hybrid provider registers"),
-    ];
+    let engines = vec![fsl_analyze::analyze::Engine::hybrid_reference()
+        .expect("the driver reference-hybrid provider registers")];
     let result = command::run_with_providers_and_limits_and_overrides(
         &request_path,
         RunLimits::default(),

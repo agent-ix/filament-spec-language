@@ -332,9 +332,9 @@ family as follows.
 
 - `Cause`: every family's `check` refuses with `StageFailure::Refused` of its
   own `Cause`, which implements `CatalogCoded`. A family whose refusals are
-  the shared checking refusals takes `CheckRefusal` as its `Cause`, and adds
+  the shared checking refusals takes `SemanticCheckRefusal` as its `Cause`, and adds
   its own enum, with its seam-probe entry (§5.3), when it has a refusal
-  `CheckRefusal` does not name.
+  `SemanticCheckRefusal` does not name.
 - `requirements()`: every family implements it, and a family whose claim
   forms carry no FR-057 kind returns no claim (§7.2). Its value is read from
   the extents `check` classified, so the method stays pure and total.
@@ -1545,7 +1545,7 @@ FR-146 fixes the order of the exhaustiveness obligations and says only the
 first failure is reported. FR-146 also checks typing before reachability.
 
 **One refusal per `case`.** The S3 `Typer` fails fast.
-`Typer::infer_form` returns `Result<Step, CheckRefusal>`
+`Typer::infer_form` returns `Result<Step, SemanticCheckRefusal>`
 (`fsl-semantics/src/check/check/typing.rs:613-619`), and a family `check`
 returns one refusal (`fsl-semantics/src/family/contract.rs:370-373`). A
 `case` therefore yields at most one refusal, and it is the first refusal in

@@ -14,11 +14,11 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-312
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-267
-    type: references
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-004
     type: references
   - target: ix://agent-ix/filament-specification/FR-352
-    type: references
+    type: depends_on
 ---
 ## Description
 

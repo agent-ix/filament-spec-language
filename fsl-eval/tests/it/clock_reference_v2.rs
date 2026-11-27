@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use filament_eval::{Evaluation, FamilyOutcome, FamilyResult};
-use filament_exact::{Integer, Meter, ObjectReference, Outcome, ScalarLimits, Value};
+use filament_exact::{Integer, Meter, ObjectReference, Outcome, ScalarLimits, Value, ValueType};
 use filament_semantic_value::admission::{AdmissionRecord, ObservationAdmission, PathStep};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::value::{
@@ -38,6 +38,43 @@ const LIMITS: ScalarLimits = ScalarLimits {
     work_units: 1 << 30,
     result_units: 1 << 30,
 };
+
+/// FR-829-AC-9: Rust hash identity for a foreign clock reference is its place
+/// text, matching equality and collection-key identity.
+#[trace("FR-829-AC-9")]
+#[test]
+fn foreign_clock_reference_hash_identity_uses_place_text() {
+    use std::collections::HashSet;
+    use std::hash::{Hash, Hasher};
+
+    let place = expected_place("c1", "x");
+    let left = filament_exact::ClockPlaceReference::new(
+        crate::support::ids::universe_id(b"hash-identity-left"),
+        &place,
+    )
+    .expect("canonical left clock-place reference");
+    let right = filament_exact::ClockPlaceReference::new(
+        crate::support::ids::universe_id(b"hash-identity-right"),
+        &place,
+    )
+    .expect("canonical foreign clock-place reference");
+
+    assert_ne!(left.universe(), right.universe());
+    assert_eq!(
+        left, right,
+        "equal place text defines identity across universes"
+    );
+    let mut left_hash = std::collections::hash_map::DefaultHasher::new();
+    let mut right_hash = std::collections::hash_map::DefaultHasher::new();
+    left.hash(&mut left_hash);
+    right.hash(&mut right_hash);
+    assert_eq!(
+        left_hash.finish(),
+        right_hash.finish(),
+        "equal clock-place references hash equally"
+    );
+    assert_eq!(HashSet::from([left, right]).len(), 1);
+}
 
 fn fixture(remove_x: bool) -> Checked {
     fixture_with(remove_x, QSlots::None)
@@ -376,7 +413,7 @@ impl fsl_eval::simulation::model::ModelRestoreBudget for RestoreBudget {
     }
 }
 
-#[trace("TC-3084", "FR-1040-AC-12")]
+#[trace("TC-3084", "FR-1040-AC-11", "FR-1040-AC-12")]
 #[test]
 fn clock_reference_values_restore_from_state_key_with_equality() {
     use fsl_eval::simulation::model::{
@@ -1733,9 +1770,16 @@ fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
 
 /// An ordinary snapshot supplies real owner population authority; generated
 /// Clock references do not require accepting transported Clock DATA.
-#[trace("FR-230-AC-71", "TC-3084", "FR-1040-AC-10")]
+#[trace(
+    "FR-230-AC-71",
+    "TC-3084",
+    "FR-829-AC-8",
+    "FR-829-AC-9",
+    "FR-1040-AC-10",
+    "FR-1040-AC-11"
+)]
 #[test]
-fn source_generates_clock_references_from_ordinary_admitted_owners() {
+fn source_uses_place_text_clock_reference_equality() {
     let body = format!("{}
         protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{
             capture chosen: Reference<Clock> = ref(call.x);
@@ -1746,6 +1790,9 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         invariant Stored using m on C::Call at current {{ ref(self.x) = ref(self.x) }}
         function same_clock(left: Reference<Clock>, right: Reference<Clock>): Boolean pure {{ left = right }}
         function differ(left: Reference<Clock>, right: Reference<Clock>): Boolean pure {{ left != right }}
+        function same_option(left: Option<Reference<Clock>>, right: Option<Reference<Clock>>): Boolean pure {{ left = right }}
+        function same_sequence(left: Sequence<Reference<Clock>>, right: Sequence<Reference<Clock>>): Boolean pure {{ left = right }}
+        function same_set(left: Set<Reference<Clock>>, right: Set<Reference<Clock>>): Boolean pure {{ left = right }}
         ",
         clock_refinement("used = count(c in C::calls where true); busy = false;"));
     let checked = ring_queue::check_models_with_profiles(
@@ -1850,6 +1897,102 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         compare(clock("c1", "x"), foreign("c1", "y")),
         Value::Boolean(false)
     ));
+
+    // FR-829-AC-8: equality remains text-only when clock references are
+    // nested inside options, sequences, and set keys.
+    let option =
+        |value| filament_exact::OptionValue::from_admitted(ValueType::ClockReference, Some(value));
+    let sequence = |value| {
+        filament_exact::from_admitted(
+            filament_exact::CollectionType::new(
+                filament_exact::CollectionKind::Sequence,
+                ValueType::ClockReference,
+                None,
+            ),
+            vec![value],
+        )
+    };
+    let set = |values| match filament_exact::form_collection(
+        &filament_exact::CollectionType::new(
+            filament_exact::CollectionKind::Set,
+            ValueType::ClockReference,
+            None,
+        ),
+        values,
+        &mut Meter::new(LIMITS),
+    )
+    .expect("clock-reference set admission")
+    {
+        Outcome::Completed(value) => value,
+        other => panic!("clock-reference set completes: {other:?}"),
+    };
+    let compare_named = |name: &str, left, right| {
+        let function = QualifiedName::unqualified(name).expect("function name");
+        completed(
+            package
+                .call(
+                    &function,
+                    vec![left, right],
+                    &observation.environment,
+                    &mut Meter::new(LIMITS),
+                )
+                .expect("composite ClockReference comparison completes"),
+        )
+    };
+    for (name, left, right, expected) in [
+        (
+            "same_option",
+            option(clock("c1", "x")),
+            option(foreign("c1", "x")),
+            true,
+        ),
+        (
+            "same_option",
+            option(clock("c1", "x")),
+            option(foreign("c2", "x")),
+            false,
+        ),
+        (
+            "same_sequence",
+            sequence(clock("c1", "x")),
+            sequence(foreign("c1", "x")),
+            true,
+        ),
+        (
+            "same_sequence",
+            sequence(clock("c1", "x")),
+            sequence(foreign("c1", "y")),
+            false,
+        ),
+        (
+            "same_set",
+            set(vec![clock("c1", "x")]),
+            set(vec![foreign("c1", "x")]),
+            true,
+        ),
+        (
+            "same_set",
+            set(vec![clock("c1", "x")]),
+            set(vec![foreign("c2", "x")]),
+            false,
+        ),
+    ] {
+        assert!(
+            matches!(
+                compare_named(name, left, right),
+                Value::Boolean(result) if result == expected
+            ),
+            "{name} expected {expected}"
+        );
+    }
+    let Value::Collection(coalesced) = set(vec![clock("c1", "x"), foreign("c1", "x")]) else {
+        panic!("the set constructor returns a collection");
+    };
+    assert_eq!(
+        coalesced.elements().len(),
+        1,
+        "same-text foreign keys coalesce"
+    );
     let differ = QualifiedName::unqualified("differ").expect("function name");
     let compare_ne = |left: Value, right: Value| {
         completed(
@@ -1871,6 +2014,7 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         compare_ne(clock("c1", "x"), foreign("c2", "x")),
         Value::Boolean(true)
     ));
+
     let mut generated = Vec::new();
     for owner in ["c1", "c2"] {
         let Value::ClockReference(reference) =
@@ -1883,6 +2027,119 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
     }
     assert_eq!(generated[0].universe(), generated[1].universe());
     assert_ne!(generated[0].text(), generated[1].text());
+}
+
+/// Native clock references are eligible map keys and use place-text identity
+/// on the in-process Source route (FR-829-AC-9, FR-1040-AC-11).
+#[trace("FR-829-AC-9", "FR-1040-AC-11")]
+#[test]
+fn source_compares_clock_reference_map_keys_by_place_text() {
+    let body = format!(
+        "{}
+        protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{
+            capture chosen: Reference<Clock> = ref(call.x);
+            role Observer on C::Call;
+            run sequence Main {{ check Ready using v {{ true }}; }}
+            finish End as (outcome: Boolean) {{ true }};
+        }}
+        invariant Stored using m on C::Call at current {{ ref(self.x) = ref(self.x) }}
+        function same_map(left: Map<Reference<Clock>, Boolean>, right: Map<Reference<Clock>, Boolean>): Boolean pure {{ left = right }}
+        ",
+        clock_refinement("used = count(c in C::calls where true); busy = false;")
+    );
+    let checked = ring_queue::check_models_with_profiles(
+        &ring_queue::queue_spec(),
+        ("C", CLOCKS, &ring_queue::clock_calls()),
+        true,
+        "profile p = \"filament.protocol.finite-global/v1\";\n",
+        &body,
+    )
+    .unwrap_or_else(|refusals| {
+        panic!(
+            "the map-key Source fixture checks: {:?}",
+            refusals
+                .iter()
+                .map(|refusal| (&refusal.refusal, refusal.at.as_str()))
+                .collect::<Vec<_>>()
+        )
+    });
+    let package = CheckedPackage::link(checked.graph);
+    let objects: Vec<_> = [("c1", "1"), ("c2", "2")]
+        .into_iter()
+        .map(|(key, n)| {
+            json!({
+                "key":key,
+                "type":node(CLOCKS,"Call"),
+                "fields":{"n":{"integer":n},"d":{"integer":"0"}}
+            })
+        })
+        .collect();
+    let document = json!({
+        "format":"filament.state.snapshot/v1",
+        "identity":{"authority":"test","identity":"clock-map-key-v1"},
+        "observation":"current",
+        "model":{"identity":CLOCKS},
+        "anchor":{"kind":"initialization","name":"start"},
+        "populations":[{"population":node(CLOCKS,"calls"),"complete":true,"objects":objects}]
+    });
+    let snapshots =
+        BTreeMap::from([(identity(), serde_json::to_vec(&document).expect("snapshot"))]);
+    let model = source_model(&checked.packages, &package);
+    let (state, _) = model
+        .admit_initial(&snapshots, &identity(), ObservationLimits::default())
+        .expect("the ordinary-owner population admits");
+    let observation = model
+        .observation(&state, identity())
+        .expect("the admitted state observes");
+
+    let universe = crate::support::ids::universe_id(b"clock-map-key-source");
+    let foreign_universe = crate::support::ids::universe_id(b"clock-map-key-foreign");
+    let clock = |owner: &str, field: &str| {
+        Value::ClockReference(
+            filament_exact::ClockPlaceReference::new(
+                universe.clone(),
+                &expected_place(owner, field),
+            )
+            .expect("canonical place reference"),
+        )
+    };
+    let foreign = |owner: &str, field: &str| {
+        Value::ClockReference(
+            filament_exact::ClockPlaceReference::new(
+                foreign_universe.clone(),
+                &expected_place(owner, field),
+            )
+            .expect("place reference in another universe"),
+        )
+    };
+    let map_type =
+        filament_exact::MapType::new(ValueType::ClockReference, ValueType::Boolean, None)
+            .expect("Reference<Clock> is an admitted map key");
+    let map = |key| {
+        filament_exact::from_admitted_map(map_type.clone(), vec![(key, Value::Boolean(true))])
+            .expect("one admitted clock key")
+    };
+    let function = QualifiedName::unqualified("same_map").expect("function name");
+    let compare = |left, right| {
+        completed(
+            package
+                .call(
+                    &function,
+                    vec![left, right],
+                    &observation.environment,
+                    &mut Meter::new(LIMITS),
+                )
+                .expect("Source Map<Reference<Clock>> comparison completes"),
+        )
+    };
+    assert!(matches!(
+        compare(map(clock("c1", "x")), map(foreign("c1", "x"))),
+        Value::Boolean(true)
+    ));
+    assert!(matches!(
+        compare(map(clock("c1", "x")), map(foreign("c1", "y"))),
+        Value::Boolean(false)
+    ));
 }
 
 /// FR-1040-AC-11: all four set aggregators consume ClockReference elements in

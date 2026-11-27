@@ -19,6 +19,8 @@
 use super::read::{MappingExpression, MappingTarget as StepTarget, RefinementRead, StepMapping};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{ObjectReference, Value};
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::Setting;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -438,16 +440,20 @@ pub fn check_protocol_initial(
     index: usize,
     concrete_initial: &ModelState,
 ) -> Result<StepResult, ProtocolRefusal> {
-    check_protocol_initial_with_transition_limit(
+    let (max, consumed) = protocol.replay_transitions();
+    let result = check_protocol_initial_with_transition_limit(
         refinement,
         concrete_system,
         abstract_system,
         protocol,
         index,
         concrete_initial,
-        u64::MAX,
-        0,
-    )
+        max,
+        consumed,
+        None,
+    )?;
+    protocol.charge_replay_transitions(result.abstract_successors);
+    Ok(result)
 }
 
 /// FR-148: check an initial state while charging protocol closure to the
@@ -466,6 +472,7 @@ pub fn check_protocol_initial_with_transition_limit(
     concrete_initial: &ModelState,
     max_transitions: u64,
     already_consumed: u64,
+    retained: Option<&Budget>,
 ) -> Result<StepResult, ProtocolRefusal> {
     let verdict = check_initial(
         refinement,
@@ -516,6 +523,7 @@ pub fn check_protocol_initial_with_transition_limit(
         roots,
         max_transitions.saturating_sub(already_consumed),
         max_transitions,
+        retained,
     ) {
         Ok(closure) => closure,
         Err(verdict) => {
@@ -561,16 +569,20 @@ pub fn check_protocol_step(
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
 ) -> StepResult {
-    check_protocol_step_with_transition_limit(
+    let (max, consumed) = protocol.replay_transitions();
+    let result = check_protocol_step_with_transition_limit(
         refinement,
         concrete_system,
         abstract_system,
         protocol,
         pre,
         step,
-        u64::MAX,
-        0,
-    )
+        max,
+        consumed,
+        None,
+    );
+    protocol.charge_replay_transitions(result.abstract_successors);
+    result
 }
 
 /// FR-148: decide a protocol step while charging closure to the caller's
@@ -589,6 +601,7 @@ pub fn check_protocol_step_with_transition_limit(
     step: &ConcreteStep<'_>,
     max_transitions: u64,
     already_consumed: u64,
+    retained: Option<&Budget>,
 ) -> StepResult {
     let row = step
         .transition
@@ -635,6 +648,7 @@ pub fn check_protocol_step_with_transition_limit(
             model_result.abstract_successors,
             max_transitions,
             already_consumed,
+            retained,
         );
     }
     if protocol_node {
@@ -649,6 +663,7 @@ pub fn check_protocol_step_with_transition_limit(
             model_result.abstract_successors,
             max_transitions,
             already_consumed,
+            retained,
         );
     }
     // In a protocol refinement, each protocol candidate already identifies
@@ -752,6 +767,7 @@ pub fn check_protocol_step_with_transition_limit(
         matching,
         remaining_transitions,
         max_transitions,
+        retained,
     ) {
         Ok(closure) => closure,
         Err(verdict) => {
@@ -812,6 +828,7 @@ fn check_protocol_any_step(
     mut count: u64,
     max_transitions: u64,
     already_consumed: u64,
+    retained: Option<&Budget>,
 ) -> StepResult {
     let mapped = match post.abstract_states.first() {
         Some(state) => state,
@@ -926,6 +943,7 @@ fn check_protocol_any_step(
         seeds,
         remaining_transitions,
         max_transitions,
+        retained,
     ) {
         Ok(closure) => closure,
         Err(verdict) => {
@@ -996,6 +1014,7 @@ fn check_protocol_node_step(
     mut count: u64,
     max_transitions: u64,
     already_consumed: u64,
+    retained: Option<&Budget>,
 ) -> StepResult {
     let Some(transition) = step.transition else {
         return StepResult {
@@ -1142,6 +1161,7 @@ fn check_protocol_node_step(
         matching,
         remaining_transitions,
         max_transitions,
+        retained,
     ) {
         Ok(closure) => closure,
         Err(verdict) => {
@@ -1250,6 +1270,7 @@ fn protocol_closure(
     seeds: Vec<ProtocolCandidate>,
     remaining_transitions: u64,
     transition_limit: u64,
+    retained: Option<&Budget>,
 ) -> Result<(Vec<ProtocolCandidate>, u64), StepVerdict> {
     let traces = seeds
         .into_iter()
@@ -1262,6 +1283,7 @@ fn protocol_closure(
         traces,
         remaining_transitions,
         transition_limit,
+        retained,
     )
     .map_err(|verdict| *verdict)?;
     let mut keyed = Vec::new();
@@ -1308,13 +1330,62 @@ fn make_protocol_trace(
     })
 }
 
+/// FR-255 "Retained bytes": the fixed overhead of one stored protocol
+/// closure path node, including its owned key and transition representation.
+pub const PROTOCOL_CLOSURE_PATH_OVERHEAD_BYTES: u64 = 256;
+
+/// The charged bytes for one newly retained shared protocol path node.
+fn closure_path_node_bytes(candidate_key: &[u8]) -> u64 {
+    let key_bytes = u64::try_from(candidate_key.len()).unwrap_or(u64::MAX);
+    let transition_bytes = u64::try_from(std::mem::size_of::<
+        fsl_eval::simulation::protocol::ProtocolTransition,
+    >())
+    .unwrap_or(u64::MAX);
+    PROTOCOL_CLOSURE_PATH_OVERHEAD_BYTES
+        .saturating_add(key_bytes)
+        .saturating_add(transition_bytes)
+}
+
+/// Charge one newly allocated shared closure node to the item's
+/// `analysis.retained_bytes` allowance before storing it (FR-255 "Retained
+/// bytes"). Shared predecessor prefixes are charged when their node is first
+/// inserted, and callers do not charge them again. A caller with no allowance
+/// (`None`) charges nothing.
+#[implements("FR-255-AC-29")]
+fn charge_closure_path(
+    retained: Option<&Budget>,
+    candidate_key: &[u8],
+) -> Result<(), Box<StepVerdict>> {
+    let Some(retained) = retained else {
+        return Ok(());
+    };
+    match retained.charge(
+        Setting::AnalysisRetainedBytes,
+        closure_path_node_bytes(candidate_key),
+    ) {
+        Ok(()) => Ok(()),
+        Err(BudgetStop::Limit(limit)) => Err(Box::new(StepVerdict::Stopped(ReachedLimit {
+            limit: ModelCheckLimit::AnalysisRetainedBytes,
+            value: limit.configured_bound(),
+        }))),
+        // A cancelled run decides nothing; the product polls its handle
+        // before each edge and settles the cancellation itself.
+        Err(BudgetStop::Cancelled(_)) => Err(Box::new(StepVerdict::Undetermined(
+            Undetermined::UndecidedSuccessor,
+        ))),
+        Err(BudgetStop::Accounting(_)) => Err(Box::new(fault("a-byte-charge-is-no-kernel-charge"))),
+    }
+}
+
 #[implements("FR-148-AC-15")]
+#[implements("FR-148-AC-8")]
 fn protocol_closure_traces(
     refinement: &dyn RefinementRead,
     system: &AbstractProtocolSystem<'_>,
     seeds: Vec<ProtocolTrace>,
     remaining_transitions: u64,
     transition_limit: u64,
+    retained: Option<&Budget>,
 ) -> Result<(Vec<crate::refinement::failure::ProtocolPathRef>, u64), Box<StepVerdict>> {
     let internal: std::collections::BTreeSet<&str> = refinement
         .abstract_internal()
@@ -1459,6 +1530,7 @@ fn protocol_closure_traces(
                     continue;
                 }
                 let previous = known.get(&key).and_then(Clone::clone);
+                charge_closure_path(retained, &post_key)?;
                 known.insert(
                     post_key.clone(),
                     Some(std::sync::Arc::new(
@@ -1484,6 +1556,7 @@ fn protocol_closure_traces(
                 .get(&post_key)
                 .ok_or_else(|| Box::new(fault("protocol-closure-target-has-candidate")))?;
             let previous = known.get(&key).and_then(Clone::clone);
+            charge_closure_path(retained, &post_key)?;
             paths.push(crate::refinement::failure::ProtocolPathRef {
                 seed: seed.clone(),
                 tail: Some(std::sync::Arc::new(
@@ -2878,5 +2951,61 @@ mod tests {
             let verdict = mapping_verdict(|| unreachable!("a fault keys no state"), 3, failure);
             assert!(matches!(verdict, StepVerdict::Fault(_)), "{verdict:?}");
         }
+    }
+
+    fn retained_budget(bound: u64) -> Budget {
+        let mut limits = crate::limits::EngineLimits::default();
+        limits.analysis_retained_bytes = bound;
+        Budget::from_settings(
+            &limits,
+            filament_exact::ScalarLimits {
+                integer_bits: u64::MAX,
+                decimal_digits: u64::MAX,
+                scale_expansion: u64::MAX,
+                text_input_bytes: u64::MAX,
+                text_scalars: u64::MAX,
+                normalized_scalars: u64::MAX,
+                unit_edges: u64::MAX,
+                value_occurrences: u64::MAX,
+                work_units: u64::MAX,
+                result_units: u64::MAX,
+            },
+            &filament_exact::Cancel::new(),
+        )
+    }
+
+    /// FR-255-AC-29: charge a shared root once, then each branch node once;
+    /// the exact retained-byte total admits all three nodes and one byte less
+    /// stops before the last node is stored.
+    #[trace("FR-255-AC-29")]
+    #[test]
+    fn retained_bytes_charge_shared_protocol_path_nodes_once() {
+        let keys: [&[u8]; 3] = [b"shared-root", b"left-leaf", b"right-leaf"];
+        let charges = keys.map(closure_path_node_bytes);
+        let total = charges.into_iter().fold(0_u64, u64::saturating_add);
+
+        let exact = retained_budget(total);
+        for key in keys {
+            assert!(charge_closure_path(Some(&exact), key).is_ok());
+        }
+        assert_eq!(exact.consumed(Setting::AnalysisRetainedBytes), total);
+
+        let short = retained_budget(total - 1);
+        for key in &keys[..2] {
+            assert!(charge_closure_path(Some(&short), key).is_ok());
+        }
+        let stopped = charge_closure_path(Some(&short), keys[2])
+            .expect_err("one byte below the exact total stops on the last node");
+        assert!(matches!(
+            stopped.as_ref(),
+            StepVerdict::Stopped(ReachedLimit {
+                limit: ModelCheckLimit::AnalysisRetainedBytes,
+                value,
+            }) if *value == total - 1
+        ));
+        assert_eq!(
+            short.consumed(Setting::AnalysisRetainedBytes),
+            charges[0] + charges[1]
+        );
     }
 }

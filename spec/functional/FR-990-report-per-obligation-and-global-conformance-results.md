@@ -7,6 +7,8 @@ relationships:
     type: implements
   - target: ix://agent-ix/filament-spec-language/FR-896
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-895
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-636
@@ -34,7 +36,8 @@ relationships:
 
 ## Description
 
-Every settled `global-conformance` item (FR-896), in either mode, SHALL
+Every settled `global-conformance` item (FR-896), in either mode and with the
+one exception below, SHALL
 carry FSpec FR-059's outputs as three members of its analyze item, beside
 the FR-360 label: one result per obligation (`obligations`), the
 complete-global-conformance closure record (`closure`), and one global
@@ -42,6 +45,13 @@ result (`global`). Over every behaviour, it also carries the projection
 results that FR-896 reports beside the verdict (`projections`). The global
 result is computed from the other two members, and the closure record is
 never computed from the global result or from any per-obligation verdict.
+
+An item over every behaviour that FR-125 "Instancing" settles before any
+state is explored (`RequiresBound`, `NoInitialState`,
+`conflicting-identity` or `NoInstance`), or that is declined before any
+state is explored (FR-896, FR-1033), is decided over no protocol subject,
+and SHALL carry none of `obligations`, `closure`, `global`, `projections`
+and `counterexample`.
 
 ### `obligations`: one result per obligation
 
@@ -317,6 +327,7 @@ instead of reporting a closure that nothing established.
 | FR-990-AC-8 | With the same `population`, a closed recording in which only `x` is observed and whose premises omit `y`'s two branch premises is refused `invalid_runtime_input` naming `{branch, node: R::Main::Both::left, role_instance: y}`, before any verdict. The same recording whose premises list `y`'s branch premises settles `refuted`, with `y`'s `control` obligations at `R::Main::Both::left` and `R::Main::Both::right` `violated`, cause `missing`; with closure `open` those obligations are `pending` and the item is `inconclusive`, cause `open-history`. | Test (TC-2955) |
 | FR-990-AC-9 | AC-7's complete closed recording with no `population` member settles `inconclusive`, cause `incomplete-closure-scope`, `complete` `false`, with `closure.state` `closed` as stated and every member `control` obligation `pending`; it is never `proved`. The same recording with closure `open` and no `population` member also settles `inconclusive`, cause `incomplete-closure-scope` (never `open-history`), `complete` `false`, with `closure.state` `open` as stated and every member `control` obligation `pending` (FSpec FR-059-AC-6: a closed and an open closure record both settle `incomplete-closure-scope` while the population is unknown). | Test (TC-2955) |
 | FR-990-AC-10 | With the AC-7 recording, a `population` entry for an undeclared role `q` refuses the item `invalid_runtime_input`/`missing-name`; an entry with an `instance` member, a `members` array listing `x` twice, and an observation by `z` not in `members` each refuse it `invalid_runtime_input`/`invalid-value`; a `population` with no entry for `r` refuses it `invalid_runtime_input`/`missing-member`. A `population` that is not an array, a member `{authority: "test"}`, and `population` on an item with no `recording` each refuse the request `invalid-request` at the member's pointer, exit 20. | Test (TC-2955) |
+| FR-990-AC-11 | `global-conformance` with no `recording` and no `subject.protocol` over the FR-636 order fixture, with the universe `cores` `[q]` and an initial state holding no object under `q`, settles `inconclusive`, cause `no-instance`, never `failed`, and the item carries no `obligations`, `closure`, `global`, `projections` or `counterexample`. | Test (TC-2800) |
 
 ## Dependencies
 

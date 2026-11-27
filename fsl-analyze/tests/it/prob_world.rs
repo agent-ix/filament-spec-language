@@ -25,8 +25,8 @@ use fsl_eval::value::S6aRewardEvaluator;
 use fsl_package::CheckedPackage;
 use fsl_replay::ModelCheckLimits;
 use fsl_semantics::check::{
-    CheckRefusal, CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward,
-    RewardEvaluationFailure, RewardEvaluator,
+    CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward, RewardEvaluationFailure,
+    RewardEvaluator, SemanticCheckRefusal,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -103,6 +103,20 @@ impl Model {
     /// The unit that selects this model as `M` and the model's domain
     /// package document, as a compile request reads them from files.
     pub(crate) fn unit_and_document(&self) -> (String, Vec<u8>) {
+        self.unit_and_document_with_frames(false, false)
+    }
+
+    /// The same unit with receiver-scoped operation frames and an explicitly
+    /// non-symmetric population, for multi-object probabilistic fixtures.
+    pub(crate) fn unit_and_receiver_scoped_document(&self) -> (String, Vec<u8>) {
+        self.unit_and_document_with_frames(false, true)
+    }
+
+    fn unit_and_document_with_frames(
+        &self,
+        symmetric: bool,
+        receiver_scoped: bool,
+    ) -> (String, Vec<u8>) {
         let unit = format!(
             "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
              profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
@@ -110,7 +124,7 @@ impl Model {
              model M = \"{}\";\n{}\n",
             self.package, self.body
         );
-        (unit, self.document(false))
+        (unit, self.document_with_frames(symmetric, receiver_scoped))
     }
 
     /// The identity of `suffix` in this package.
@@ -199,6 +213,10 @@ impl Model {
 
     /// The domain package document.
     pub(crate) fn document(&self, symmetric: bool) -> Vec<u8> {
+        self.document_with_frames(symmetric, symmetric)
+    }
+
+    fn document_with_frames(&self, symmetric: bool, receiver_scoped: bool) -> Vec<u8> {
         let mut kinds = vec![
             ("object_type", meaning::OBJECT_TYPE),
             ("population", meaning::POPULATION),
@@ -235,7 +253,7 @@ impl Model {
             "object_type",
             json!({
                 "supertypes": [], "fields": fields,
-                "operations": self.operations.iter().map(|operation| self.operation(operation, symmetric))
+                "operations": self.operations.iter().map(|operation| self.operation(operation, receiver_scoped))
                     .collect::<Vec<_>>(),
                 "relationships": [],
             }),
@@ -327,7 +345,7 @@ impl World {
     pub(crate) fn try_new_with_evaluator(
         model: &Model,
         evaluator: &dyn RewardEvaluator,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode_and_evaluator(
             model,
             &[model.key],
@@ -389,7 +407,7 @@ impl World {
     pub(crate) fn try_new_with_mode(
         model: &Model,
         mode: CheckMode,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode(
             model,
             &[model.key],
@@ -403,7 +421,7 @@ impl World {
 
     /// `model`'s S3 check result, exposed for acceptance tests of pre-sampling
     /// refusals.
-    pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<CheckRefusal>> {
+    pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build(
             model,
             &[model.key],
@@ -475,7 +493,7 @@ impl World {
         initials: &[&Json],
         symmetric: bool,
         value_profile: bool,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode(
             model,
             keys,
@@ -495,7 +513,7 @@ impl World {
         symmetric: bool,
         value_profile: bool,
         mode: CheckMode,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode_and_evaluator(
             model,
             keys,
@@ -523,7 +541,7 @@ impl World {
         mode: CheckMode,
         evaluator: &dyn RewardEvaluator,
         unemittable_workload: bool,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         let document = model.document(symmetric);
         let mut documents = vec![document.as_slice()];
         if unemittable_workload {
@@ -1136,6 +1154,86 @@ pub(crate) fn process_coin2(extra: &str) -> Model {
     }
 }
 
+/// `s` and `u` form one SCC; `z_go` is enabled at `s` only and may leave it
+/// for the target `g`. Strong fairness to `z_go` removes `s`, leaving the fair
+/// non-target end component `{u}`.
+pub(crate) fn fair_mec_refinement(extra: &str) -> Model {
+    Model {
+        package: "test/fair-mec-refinement",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("u", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "a_wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "z_go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "u", "g"], deletes: false },
+            Operation { name: "drift", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
+            Operation { name: "loop", parameters: vec![], modifies: vec!["u"], deletes: false },
+            Operation { name: "return", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
+        ],
+        body: format!(concat!(
+            "pre WaitAtS using v on M::W::a_wait {{ self.s }}\n",
+            "post Waited using v on M::W::a_wait {{ self.s = true }}\n",
+            "pre GoAtS using v on M::W::z_go {{ self.s }}\n",
+            "post Went using v on M::W::z_go {{ self.s = false and self.u = not success and self.g = success }}\n",
+            "pre DriftAtS using v on M::W::drift {{ self.s }}\n",
+            "post Drifted using v on M::W::drift {{ self.s = false and self.u = true }}\n",
+            "pre LoopAtU using v on M::W::loop {{ self.u }}\n",
+            "post Looped using v on M::W::loop {{ self.u = true }}\n",
+            "pre ReturnAtU using v on M::W::return {{ self.u }}\n",
+            "post Returned using v on M::W::return {{ self.u = false and self.s = true }}\n",
+            "random W::z_go(success) ~ {{ true: 1, false: 1 }};\n",
+            "terminal Done using v on M when {{ self.g }};\n",
+            "workload Equal on M {{ weight W::a_wait = 1; weight W::z_go = 1; weight W::drift = 1; weight W::loop = 1; weight W::return = 1; }}\n",
+            "{}"
+        ), extra),
+        initial: json!({"s": {"boolean": true}, "u": {"boolean": false}, "g": {"boolean": false}}),
+    }
+}
+
+/// `go` takes `s` to the target `g` and `back` returns, so `s` and `g` form one
+/// SCC of the whole product that no non-target component lies in.
+pub(crate) fn fair_returning_target(extra: &str) -> Model {
+    Model {
+        package: "test/fair-returning-target",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![("s", BOOLEAN.to_owned()), ("g", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "go",
+                parameters: vec![],
+                modifies: vec!["s", "g"],
+                deletes: false,
+            },
+            Operation {
+                name: "back",
+                parameters: vec![],
+                modifies: vec!["s", "g"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            concat!(
+                "pre GoAtS using v on M::W::go {{ self.s }}\n",
+                "post Went using v on M::W::go {{ self.s = false and self.g = true }}\n",
+                "pre BackAtG using v on M::W::back {{ self.g }}\n",
+                "post Returned using v on M::W::back {{ self.s = true and self.g = false }}\n",
+                "{}"
+            ),
+            extra
+        ),
+        initial: json!({"s": {"boolean": true}, "g": {"boolean": false}}),
+    }
+}
+
 /// FR-1041/FR-412 fair-minimum witness model: `drift` reaches `u`, where the
 /// only action loops and `go` is disabled; `wait` instead exposes an unfair
 /// live cycle at `s`.
@@ -1163,6 +1261,42 @@ pub(crate) fn fair_bounds_w(extra: &str) -> Model {
             "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
             "terminal Stop using v on M when {{ self.g or self.f }};\n",
             "workload Equal on M {{ weight W::wait = 1; weight W::go = 1; }}\n",
+            "{}"
+        ), extra),
+        initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),
+    }
+}
+
+/// Low-level fair-product fixture for FR-200's FreeDelays evaluator tests:
+/// `draw` supplies a distinct given-delay identity, while `wait` and `go` are
+/// the free scheduler choices. The focused tests rewrite its product into the
+/// row-factored form because checked-source workloads do not carry fairness.
+pub(crate) fn fair_free_delays(extra: &str) -> Model {
+    Model {
+        package: "test/fair-free-delays",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+            ("f", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "draw", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "g", "f"], deletes: false },
+        ],
+        body: format!(concat!(
+            "pre WaitAtS using v on M::W::wait {{ self.s }}\n",
+            "post Waited using v on M::W::wait {{ self.s = true }}\n",
+            "pre DrawAtS using v on M::W::draw {{ self.s }}\n",
+            "post Drew using v on M::W::draw {{ self.s = true }}\n",
+            "pre GoAtS using v on M::W::go {{ self.s }}\n",
+            "post Went using v on M::W::go {{ self.s = false and self.g = success and self.f = not success }}\n",
+            "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
+            "terminal Stop using v on M when {{ self.g or self.f }};\n",
             "{}"
         ), extra),
         initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),

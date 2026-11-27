@@ -12,7 +12,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRef, PackageDimensionRecord, PackageUnitRecord,
@@ -62,14 +62,14 @@ const DECLARATIONS: &str = "\
     function convert_string_quantity using v(s: String): Quantity<ms> pure { convert<Quantity<ms>>(s) }\
 ";
 
-fn compile(source: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn compile(source: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     compile_with_models(source, SelectedModels::default())
 }
 
 fn compile_with_models(
     source: &str,
     selected: SelectedModels,
-) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{source}"

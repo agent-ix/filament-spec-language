@@ -17,7 +17,7 @@ use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_forms::{BinaryOperator, BuiltinType, Expression, FunctionDeclaration, TypeForm};
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, EnumBinding, PackageDeclarations};
+use fsl_semantics::check::{CheckedGraph, EnumBinding, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::enumeration::{
     AdmittedEnumDeclaration, EnumDeclarationPreimage, EnumMemberPreimage,
@@ -212,7 +212,7 @@ pub fn enum_members(functions: usize, binding: &EnumBinding) -> PackageDeclarati
 }
 
 /// Check `declarations` at the default checking limits (NFR-011).
-pub fn check(declarations: PackageDeclarations) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+pub fn check(declarations: PackageDeclarations) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     declarations.check(
         CheckMode::Linked,
         CheckingLimits::default(),

@@ -891,9 +891,15 @@ fn package_call_union_parameter_requirement_items_match_the_source() {
         .unwrap_or_else(|error| panic!("source call with argument {argument} settles the union parameter's requirement: {error}"));
         let source_arguments = source_request["request"]["call"]["arguments"].clone();
         let mut package_request = source_request;
-        package_request["request"].as_object_mut().unwrap().remove("program");
+        package_request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("program");
         package_request["request"]["package"] = json!({"directory":"handoff"});
-        assert_eq!(package_request["request"]["call"]["arguments"], source_arguments);
+        assert_eq!(
+            package_request["request"]["call"]["arguments"],
+            source_arguments
+        );
         std::fs::write(&path, package_request.to_string()).unwrap();
         std::fs::remove_file(directory.path().join("unit.native")).unwrap();
         let package_seen = Arc::new(Mutex::new(Seen::default()));
@@ -1281,7 +1287,7 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
 #[trace("TC-2701", "FR-961-AC-6")]
 #[test]
 fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
-    use fsl_foundation::{Setting, SettingLimits};
+    use fsl_foundation::Setting;
     use fsl_replay::Operation;
 
     let directory = tempfile::tempdir().unwrap();
@@ -1291,8 +1297,7 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
         json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
-    let mut stage_limits = fsl_replay::spine::SpineLimits::default();
-    assert!(stage_limits.set_bound(Setting::S1Nodes, 1));
+    let stage_limits = std::collections::BTreeMap::from([(Setting::S1Nodes, 1)]);
     let overrides = command::RequestOverrides {
         limits: Some(&stage_limits),
         ..command::RequestOverrides::default()
@@ -1348,7 +1353,7 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
     assert_eq!(negotiate.negotiations.load(Ordering::SeqCst), 0);
     assert_eq!(seen.lock().unwrap().settle_calls, 0);
 
-    let default_limits = fsl_replay::spine::SpineLimits::default();
+    let default_limits = std::collections::BTreeMap::new();
     let default_overrides = command::RequestOverrides {
         limits: Some(&default_limits),
         ..command::RequestOverrides::default()

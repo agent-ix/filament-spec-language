@@ -5,11 +5,12 @@ use filament_checked::node::NodeKind;
 use filament_exact::{IllTypedCause, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::location::ExpressionLocation as Location;
+use ix_trace_rs::implements;
 
 use super::check::NamedScope;
 use super::ir::CheckedBody;
 pub use super::plan_value::{CheckedPlan, PlanOperation, PlanPopulation, PlanShape};
-use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
+use super::{CheckCause, Scope, SemanticCheckRefusal, Signatures, Typer};
 use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
 
 /// The checked source identity needed to name an emitted synthesis claim.
@@ -156,12 +157,15 @@ pub(crate) struct SynthesisCheckContext<'a> {
     pub(crate) models: &'a [super::lowering::AdmittedModel],
     pub(crate) dispatch_tables: &'a [super::DispatchTable],
     pub(crate) sealing_meter: &'a mut filament_exact::Meter,
+    /// The check's own `s3.*` limits, which each synthesis body is typed
+    /// under (FR-255 "Behavior" 13).
+    pub(crate) limits: super::CheckingLimits,
 }
 
 pub(crate) fn check_forms(
     forms: &[fsl_forms::SynthesisForm],
     context: SynthesisCheckContext<'_>,
-) -> Result<Vec<CheckedSynthesis>, Vec<CheckRefusal>> {
+) -> Result<Vec<CheckedSynthesis>, Vec<SemanticCheckRefusal>> {
     let SynthesisCheckContext {
         scope,
         signatures,
@@ -172,6 +176,7 @@ pub(crate) fn check_forms(
         models,
         dispatch_tables,
         sealing_meter,
+        limits,
     } = context;
     let mut checked = Vec::with_capacity(forms.len());
     for (index, form) in forms.iter().enumerate() {
@@ -181,13 +186,13 @@ pub(crate) fn check_forms(
         let objective_location =
             super::lowering::synthesis_objective_location(index, &form.name.name);
         let Some(domain) = named_type(scope, &form.domain.name) else {
-            return Err(vec![CheckRefusal {
+            return Err(vec![SemanticCheckRefusal {
                 location,
                 cause: Box::new(CheckCause::MissingQualifiedName(form.domain.clone())),
             }]);
         };
         let Some(grammar) = named_type(scope, &form.grammar.name) else {
-            return Err(vec![CheckRefusal {
+            return Err(vec![SemanticCheckRefusal {
                 location,
                 cause: Box::new(CheckCause::MissingQualifiedName(form.grammar.clone())),
             }]);
@@ -199,7 +204,7 @@ pub(crate) fn check_forms(
         let mut plan = match &grammar {
             ValueType::Reference(object) => {
                 if let Some(component) = first_unbounded_component(scope.types(), &domain) {
-                    return Err(vec![CheckRefusal {
+                    return Err(vec![SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::SynthesisUnboundedDomain {
                             component,
@@ -210,7 +215,7 @@ pub(crate) fn check_forms(
                 let lengths =
                     matches!(&domain, ValueType::Int(lengths) if !lengths.lower().is_negative());
                 if !lengths {
-                    return Err(vec![CheckRefusal::ill_typed(
+                    return Err(vec![SemanticCheckRefusal::ill_typed(
                         &location,
                         IllTypedCause::TypeMismatch,
                     )]);
@@ -262,7 +267,7 @@ pub(crate) fn check_forms(
                     .map_err(|refusal| vec![refusal])?;
                 drop(sealing);
                 plan.scope.seal_plan_union(handle, settled).ok_or_else(|| {
-                    vec![CheckRefusal {
+                    vec![SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             super::refusal::KeyFault::StageFault(
@@ -289,6 +294,7 @@ pub(crate) fn check_forms(
             &parameters,
             Some(&ValueType::Boolean),
             &satisfies_location,
+            limits,
         )
         .map_err(|refusal| vec![refusal])?;
         let (objective, objective_slot_names) = if let Some(objective) = &form.objective {
@@ -299,10 +305,11 @@ pub(crate) fn check_forms(
                 &parameters,
                 None,
                 &objective_location,
+                limits,
             )
             .map_err(|refusal| vec![refusal])?;
             if !is_numeric(body.root().value_type()) {
-                return Err(vec![CheckRefusal::ill_typed(
+                return Err(vec![SemanticCheckRefusal::ill_typed(
                     &objective_location,
                     IllTypedCause::TypeMismatch,
                 )]);
@@ -347,6 +354,7 @@ fn is_numeric(value_type: &ValueType) -> bool {
     )
 }
 
+#[implements("FR-255-AC-41")]
 fn check_expression(
     scope: &Scope,
     signatures: &Signatures,
@@ -354,8 +362,8 @@ fn check_expression(
     parameters: &[(String, ValueType)],
     expected: Option<&ValueType>,
     location: &Location,
-) -> Result<(CheckedBody, Vec<String>), CheckRefusal> {
-    let limits = super::CheckingLimits::default();
+    limits: super::CheckingLimits,
+) -> Result<(CheckedBody, Vec<String>), SemanticCheckRefusal> {
     let mut nodes = 0;
     let typer = Typer::new(
         scope,
@@ -380,7 +388,7 @@ fn check_expression(
     super::bind_parameters(&mut typer, parameters, location)?;
     let body = typer.infer(expression, expected, location)?;
     if expected == Some(&ValueType::Boolean) && body.root().value_type() != &ValueType::Boolean {
-        return Err(CheckRefusal {
+        return Err(SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(CheckCause::NonBooleanRoot),
         });

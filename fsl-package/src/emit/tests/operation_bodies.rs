@@ -98,7 +98,7 @@ fn compile(
     document: &[u8],
     declarations: &str,
     aliases: &[&str],
-) -> Result<Emission, Vec<CheckRefusal>> {
+) -> Result<Emission, Vec<SemanticCheckRefusal>> {
     compile_in_mode(CheckMode::Linked, document, declarations, aliases)
 }
 
@@ -108,7 +108,7 @@ fn compile_in_mode(
     document: &[u8],
     declarations: &str,
     aliases: &[&str],
-) -> Result<Emission, Vec<CheckRefusal>> {
+) -> Result<Emission, Vec<SemanticCheckRefusal>> {
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let mut assembled = assemble_with_models(unit(declarations, aliases).as_bytes(), &packages)
         .expect("the unit assembles");

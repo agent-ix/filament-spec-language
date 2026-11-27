@@ -5,8 +5,8 @@ use alloc::string::{String, ToString};
 use filament_exact::{
     Integer, IntegerDecimalBudget, IntegerDecimalBudgetError, IntegerDecimalError, UnitId,
 };
-use quire_canonical::{Error, Sink, Writer};
 use ix_trace_rs::implements;
+use quire_canonical::{Error, Sink, Writer};
 
 /// Write the canonical decimal-string integer under a caller's admitted capacity.
 ///

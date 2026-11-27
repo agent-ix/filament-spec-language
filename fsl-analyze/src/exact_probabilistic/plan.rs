@@ -5,7 +5,7 @@
 
 use filament_exact::{Identifier, Rational, Value};
 use fsl_eval::automaton::{
-    Atom, AutomatonError, Letter, Monitor, PropertyAutomaton, StateId, translate_body,
+    translate_body, Atom, AutomatonError, Letter, Monitor, PropertyAutomaton, StateId,
 };
 use fsl_foundation::Span;
 use fsl_semantics::check::{

@@ -788,7 +788,7 @@ fn eq_over(
     records: Vec<CompositeDeclaration>,
     compared: &str,
     limits: CheckingLimits,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     package(records, vec![equality("eq", ("a", "b"), named(compared))]).check(
         CheckMode::Linked,
         limits,
@@ -796,7 +796,7 @@ fn eq_over(
     )
 }
 
-fn eq_over_node(limits: CheckingLimits) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn eq_over_node(limits: CheckingLimits) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     eq_over(vec![node_record()], "Node", limits)
 }
 
@@ -843,7 +843,7 @@ fn a_leaf_walk_charges_the_node_limit() {
         smallest_limit(|limit| eq_over(vec![plain.clone()], "Plain", node_limit(limit)).is_ok());
     assert_eq!(admitted, typed + 2);
 
-    let exhausted = |refusals: Vec<CheckRefusal>, limit: u64| {
+    let exhausted = |refusals: Vec<SemanticCheckRefusal>, limit: u64| {
         assert!(
             matches!(
                 *refusals[0].cause,

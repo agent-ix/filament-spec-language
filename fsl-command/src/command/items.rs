@@ -8,7 +8,7 @@ use super::{
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
-const FORMAT: &str = "native-run-items/1";
+const FORMAT: &str = fsl_foundation::wire_format::WireFormat::RunItems.as_str();
 
 enum ItemExecution {
     Run(Box<Result<RunResult>>),
@@ -21,6 +21,7 @@ enum ItemExecution {
 }
 
 struct CallOutput {
+    item_limits: Box<fsl_analyze::analyze::AnalyzeLimits>,
     source: fsl_foundation::source::Source,
     function: String,
     requirements: Option<super::requirements::Requirements>,
@@ -39,6 +40,7 @@ struct PreparedValueInvariants {
     request: fsl_replay::spine::ValueInvariantsBatchRequest,
 }
 
+#[ix_trace_rs::string_edge]
 pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
@@ -59,6 +61,9 @@ pub(super) fn run_bytes(
             "items is mutually exclusive with call and clause",
         ));
     }
+    // FR-255 Behavior 16: each selection also refuses what its own route
+    // does not apply.
+    super::overrides::admit(super::overrides::RunRoute::Items, overrides)?;
     let Some(items) = items.as_object() else {
         return Err(refused("items", "expected an object"));
     };
@@ -402,8 +407,15 @@ pub(super) fn run_bytes(
                     if let (Some(parameter), Some(object)) =
                         (population_parameters.get(&index), object.as_ref())
                     {
-                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction { arguments, .. } = &mut request.selection else {
-                            return Err(refused("function", "an expanded function has canonical arguments"));
+                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction {
+                            arguments,
+                            ..
+                        } = &mut request.selection
+                        else {
+                            return Err(refused(
+                                "function",
+                                "an expanded function has canonical arguments",
+                            ));
                         };
                         bind_population_wire_argument(arguments, parameter, object)?;
                     }
@@ -424,9 +436,10 @@ pub(super) fn run_bytes(
                     {
                         bind_population_argument(&mut input.call, parameter, object)?;
                     }
-                    let candidate = compilation_from_function(&input);
+                    let candidate = compilation_from_function(&input, overrides.spine_limits());
                     set_compilation(&mut compilation, candidate)?;
                     let call_output = Some(CallOutput {
+                        item_limits: Box::new(super::overrides::item_limits(overrides)),
                         source: input.source.clone(),
                         function: input.call.function.clone(),
                         requirements: requirements.clone(),
@@ -531,7 +544,8 @@ pub(super) fn run_bytes(
                 fsl_replay::spine::ProgramBatchRefusal::Compile(report) => match report.disposition
                 {
                     fsl_replay::spine::ClauseDisposition::Compile(refusal)
-                        if refusal.stage() == fsl_replay::spine::SpineStage::Source =>
+                        if refusal.stage() == fsl_replay::spine::SpineStage::Source
+                            || refusal.code() == fsl_foundation::Code::StageLimitExceeded =>
                     {
                         if let Some((source, path)) = batch_source {
                             RunCause::Spine(Box::new(super::SpineFailure {
@@ -578,6 +592,7 @@ pub(super) fn run_bytes(
                                     &requirements,
                                     &selection,
                                     &call_output.packages,
+                                    *call_output.item_limits,
                                     settle,
                                 )?)
                             }
@@ -716,6 +731,7 @@ pub(super) fn run_bytes(
 
 /// Prepare FR-652's actual no-clause item without applying function-selection
 /// roles to its snapshot. FR-106 owns current/pre/post admission for this item.
+#[ix_trace_rs::string_edge]
 fn prepare_value_invariants(
     directory: &Path,
     bytes: &[u8],
@@ -723,6 +739,7 @@ fn prepare_value_invariants(
     overrides: &RequestOverrides<'_>,
     input: ValueInvariantInput<'_>,
 ) -> Result<PreparedValueInvariants> {
+    super::overrides::admit(super::overrides::RunRoute::ValueInvariants, overrides)?;
     let request: super::wire::Request = super::request_with_overrides(bytes, overrides)?;
     if request.package.is_some()
         || request.refinement_transfer.is_some()
@@ -777,7 +794,7 @@ fn prepare_value_invariants(
         &request,
         &observation_files,
         observation_limits.as_ref(),
-        overrides.observation.copied(),
+        overrides.observation_limits(),
     )?;
     let (snapshot, invocation) = {
         let reference = |member: &str| {
@@ -821,7 +838,7 @@ fn prepare_value_invariants(
             package_name: super::package_name(source.source().identity()),
             packages: inputs.packages,
             dependencies: inputs.dependencies,
-            limits: overrides.limits.copied().unwrap_or_default(),
+            limits: overrides.spine_limits(),
             clocks: request.clocks,
         },
         request: fsl_replay::spine::ValueInvariantsBatchRequest {
@@ -830,10 +847,7 @@ fn prepare_value_invariants(
             snapshot,
             invocation,
             observation_limits: inputs.observation_limits,
-            accounting: overrides
-                .accounting
-                .copied()
-                .unwrap_or_else(|| super::call_accounting(&accounting)),
+            accounting: overrides.accounting_over(super::call_accounting(&accounting)),
         },
     })
 }
@@ -863,6 +877,7 @@ fn compilation_from_clause(
 
 fn compilation_from_function(
     input: &super::FunctionRunInput,
+    limits: fsl_replay::spine::SpineLimits,
 ) -> fsl_replay::spine::ProgramCompilationRequest {
     fsl_replay::spine::ProgramCompilationRequest {
         source: input.source.identity().clone(),
@@ -871,7 +886,7 @@ fn compilation_from_function(
         package_name: input.package_name.clone(),
         packages: input.packages.clone(),
         dependencies: input.dependencies.clone(),
-        limits: fsl_replay::spine::SpineLimits::default(),
+        limits,
         clocks: input.call.clocks.clone(),
     }
 }
@@ -961,6 +976,7 @@ fn value_invariant_items(
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn contains_each(value: &Value) -> bool {
     match value {
         Value::Object(object) => object
@@ -971,6 +987,7 @@ fn contains_each(value: &Value) -> bool {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn each_count(value: &Value) -> usize {
     match value {
         Value::Object(object) => object
@@ -990,6 +1007,7 @@ fn find_selector(value: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
+#[ix_trace_rs::string_edge]
 fn find_selector_for<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     match kind {
         "clause" => find_selector(value),
@@ -1017,6 +1035,7 @@ fn find_selector_for<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn selector_observation<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     match kind {
         "clause" => value.get("observation").and_then(Value::as_str),
@@ -1065,6 +1084,7 @@ fn selector_observation<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn set_selector_reference(kind: &str, value: &mut Value, reference: Value) -> Result<()> {
     if kind == "clause" {
         return set_clause_self(value, reference);
@@ -1172,7 +1192,7 @@ fn refused(member: &str, reason: impl Into<String>) -> RunCause {
 
 fn population_refusal(population: &str) -> Value {
     json!({
-        "format": "native-run-result/2",
+        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
         "disposition": {
             "category": "refusal",
             "refusal": {
@@ -1232,7 +1252,8 @@ fn whole_request_failure(cause: &RunCause) -> bool {
 }
 
 fn is_compile_refusal(value: &Value) -> bool {
-    value.get("format").and_then(Value::as_str) == Some("native-run-result/2")
+    value.get("format").and_then(Value::as_str)
+        == Some(fsl_foundation::wire_format::WireFormat::RunResult.as_str())
         && value
             .get("disposition")
             .and_then(|disposition| disposition.get("stage"))
@@ -1261,6 +1282,7 @@ fn category_for_exit(exit_code: u8) -> &'static str {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn invariant_result(
     category: &str,
     stage: &str,
@@ -1282,7 +1304,7 @@ fn invariant_result(
     }
     let settled = truth.is_some();
     json!({
-        "format": "native-run-result/2",
+        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
         "disposition": disposition,
         "usage": {
             "admission": {

@@ -19,7 +19,7 @@ excluded keys, instance order and guard, the order of the instancing
 outcomes, and the production letter seam's reading of an `on each`
 activation guard.
 
-Scope: FR-125-AC-1 to FR-125-AC-5 and FR-125-AC-7 to FR-125-AC-18; FR-361-AC-16.
+Scope: FR-125-AC-1 to FR-125-AC-5 and FR-125-AC-7 to FR-125-AC-18, FR-125-AC-23; FR-361-AC-16.
 
 ## Test Procedure
 
@@ -73,7 +73,9 @@ Scope: FR-125-AC-1 to FR-125-AC-5 and FR-125-AC-7 to FR-125-AC-18; FR-361-AC-16.
     universes; over records under key `c` typed `Animal` in `animals` and
     `Dog` in `dogs`, in one initial state and then split over two; over the
     same records with agreeing types; over an initial state with no admitted
-    key (FR-125-AC-13).
+    key (FR-125-AC-13). Call `claim_instances` on each of those subjects, on
+    the conflicting records with a third overlapping population's universe
+    removed, and over step 9's populations (FR-125-AC-23).
 13. Build FR-125-AC-14's `P1` with `make`, check `always holds(x.value = 0)`
     and read the instances and excluded keys (FR-125-AC-14).
 14. Instantiate a state-graph claim `over (x: Thing)` over step 9's
@@ -141,6 +143,9 @@ Tag the tests `#[trace("TC-520", "FR-125-AC-n")]`.
 - Step 12: `RequiresBound` naming the population; `NoInitialState`;
   `invalid_runtime_input`/`conflicting-identity` naming `c` and both types,
   in both layouts; admitted; `NoInstance`. No state is explored in any run.
+  From `claim_instances`: `ConflictingIdentity`, then `RequiresBound` with a
+  universe removed or with an empty list and a universe removed,
+  `NoInitialState`, `NoInstance` and `l`, `s`.
 - Step 13: instances `c` and `d`, excluded keys `[z]`, verdict `proved`.
 - Step 14: the temporal claim's instances, order and excluded keys; `v` reads
   typed `Lamp` and typed `Switch`; the `V::Lamp` parameter reads `absent-key`

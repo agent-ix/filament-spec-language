@@ -60,9 +60,13 @@ reader; refusing to report it would hide a real violating run.
 - `category`: `success` when enumeration exhausted the bounded behaviours or
   sampling drew every requested sample; `incomplete` when a bound stopped it,
   with cause `LimitReached{limit}`, `state-key-limit-exceeded` or
-  `cancelled`.
+  `cancelled`. An expansion that stops at a bound ends its trace or the
+  enumeration and the item is `incomplete` with cause
+  `{"kind": "limit-reached", "limit", "setting", "value"}`; for the candidate
+  bound, `limit` `max_candidates` and `setting` `expansion.max_candidates`.
 - `traces`: each trace's states in FSpec FR-181's typed canonical form and
-  the choice taken at each step, as "Traces" below selects them.
+  the choice taken at each step, a written transition (FR-120), as "Traces"
+  below selects them.
 - `coverage`: `{"states", "transitions", "choices"}`, each an ASCII decimal
   count over what the run visited, with one meaning in both modes:
   `states` the distinct state keys visited, `transitions` the distinct
@@ -101,6 +105,12 @@ reader; refusing to report it would hide a real violating run.
   in trace-index order `0` to `samples - 1`, each named by the echoed seed
   and its trace index and drawn by FSpec FR-181's sampler, ending at a
   terminal state or after `max_steps` steps.
+- **Stopped expansion.** A trace ended by a stopped expansion is a prefix:
+  its final state is not terminal. The traces, coverage and findings up to
+  that state are kept, the invariants of that state included, `sample` goes
+  on to draw its remaining samples, and `enumerate` reports the unexplored
+  states in `frontier`. A sampled trace that already holds `max_steps` steps
+  is complete.
 - **Cancellation** returns `incomplete` with cause `cancelled` and the
   frontier at the time of cancellation.
 
@@ -143,6 +153,9 @@ reader; refusing to report it would hide a real violating run.
 | FR-634-AC-5 | A `sample` run with seed 5 and `samples` 3 over the staying Counter reports three traces with trace indices 0, 1 and 2 in that order, each starting at `value = 0`, the item's `seed` 5, `coverage.states` equal to the number of distinct states on the three reported traces, and `coverage.transitions` equal to the number of distinct (pre-state, transition, post-state) steps on them. | Test (TC-2293) |
 | FR-634-AC-6 | Over the Counter subject with `invariant AtMostTwo using v on M::Counter at current { self.value <= 2 }`, enumeration gives `success`, exactly one trace, `value` 0 to 3, and `findings` exactly one entry, `kind` `invariant-violated`, `invariant` naming `AtMostTwo`, `self` counter `a`, `trace` 0 and `position` 3, with no `record` and no `counterexample`; a `sample` run with seed 5 and `samples` 2 gives `success` and two entries, at trace 0 and at trace 1, each at position 3, and a second run of the same request gives an equal document. | Test (TC-2976) |
 | FR-634-AC-7 | Over the Counter subject with `invariant AtMostThree using v on M::Counter at current { self.value <= 3 }`, enumeration and a `sample` run with seed 5 each give `findings` `[]` and the same `category`, `traces` and `coverage` as the subject with no invariant; under `max_states` 2 over `AtMostTwo` the item is `incomplete` `LimitReached{max_states}` and `findings` holds no entry, since no reported trace reaches `value = 3`. | Test (TC-2976) |
+| FR-634-AC-8 | A `sample` run over the Counter subject with `expansion.max_candidates` 1 is `incomplete` (exit 22) with cause `{"kind": "limit-reached", "limit": "max_candidates", "setting": "expansion.max_candidates", "value": 1}`, `coverage.states` 1 and `coverage.transitions` 0. | Test |
+| FR-634-AC-9 | An `enumerate` run of the same request settles the same category, exit, cause and coverage, with the initial state in `frontier`. | Test |
+| FR-634-AC-10 | A `sample` run and an `enumerate` run of the same request with the request's `accounting.integer_bits` 1, where an expansion's evaluation exhausts that counter, are `incomplete` with cause `{"kind": "limit-reached", "limit": "integer_bits", "setting": "accounting.integer_bits", "value": 1}`, naming the counter and not `max_candidates`. | Test |
 
 ## Dependencies
 

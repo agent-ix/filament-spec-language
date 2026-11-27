@@ -241,11 +241,12 @@ instance's record is `proved` and every certificate an instance carries was
 checked, and whose certification and basis "The proved record over several
 instances" chooses. An item with
 no instance reports FR-125's `NoInstance` or `NoInitialState`, never a fault.
-An engine that returns one outcome over all of a hyper item's instances
-SHALL select it by this rule. A temporal clause's engine returns its outcome
-as FR-126 "Bindings and ranking" states. A claim is false when any instance
-is false, so a single refutation decides the item, and a fixed order makes the
-reported instance the same on every run.
+An engine that returns one outcome over all of a hyper or temporal item's
+instances SHALL select it by this rule; a temporal clause's run cancelled
+before it refutes an instance returns the cancellation, as FR-126 "Bindings
+and ranking" states, which also names the stops that end its run. A claim is
+false when any instance is false, so a single refutation decides the item,
+and a fixed order makes the reported instance the same on every run.
 The counterexample names the instance it refutes (FSpec FR-364
 `over_binding`; FSpec FR-393 `instance` for state-graph evidence).
 
@@ -376,6 +377,8 @@ The Counter fixture is FR-620's.
 | FR-621-AC-24 | A state-graph item has two instances with their own FR-169 records, and one instance's evidence is altered so that its replay disagrees, giving `inconclusive`, `replay-parity`. When the other instance's refutation replays, the item is `refuted` with that instance's counterexample and replay, whichever of the two is earlier in the instance order. When the other instance is `proved`, the item is `inconclusive`, `replay-parity`, in either order. | Test (TC-3219) |
 | FR-621-AC-25 | Two instances, `p` then `q`, are both `proved`; each case gives their records and the item's. (a) `exhaustive` `certified` and `exhaustive` `uncertified`: `uncertified`, with `q`'s record. (b) `bounded-complete` depth 3 `certified` and `exhaustive` `uncertified`: `exhaustive` `uncertified`, `q`'s, certification being chosen first. (c) `exhaustive` `uncertified` and `exhaustive` `trusted`: `trusted`, `q`'s. (d) `reduced` `uncertified` and `bounded-complete` depth 5 `uncertified`: `bounded-complete` depth 5, `q`'s, a bound being preferred over a reduction. (e) `bounded-complete` depth 5 and depth 3, both `uncertified`: depth 3, `q`'s. (f) `exhaustive` `uncertified` and `reduced` `uncertified`: `reduced`, `q`'s. (g) `exhaustive` `certified` twice, with different certificates: `p`'s record and `certificate`. (h) `exhaustive` and `inductive` depth 1, both `uncertified`: `p`'s `exhaustive`, an inductive basis not being depth-bounded. (i) `inductive` depth 1 and `bounded-complete` depth 5, both `uncertified`: `q`'s. (j) a witness basis and `bounded-complete` depth 5, both `certified`: `q`'s. (k) two `exhaustive` `uncertified` records, `q`'s run under a state constraint and `p`'s not: `q`'s. (l) `bounded-complete` depth 5 and a `bounded-solver` horizon of 3 time units, both `uncertified`: `p`'s, bounds in different units not being compared. In every case each instance's own record is unchanged. | Test (TC-3219) |
 | FR-621-AC-26 | An engine that returns one outcome over all instances. Over FR-176-AC-8's first request (`p` at 0, `q` at 2), `check_hyper` returns `Violated` for `p`. With that counterexample replaced by the lasso for the instance `p`, from the same initial state, that takes `idle` at every step, on which `p` stays at 0, `settle_hyper_check` settles the item `inconclusive`, `replay-parity`, not `refuted`, although `q` is violated at position 0. For FR-177-AC-11's case with `v` violated at position 1 and `w` at position 0, the item likewise settles `inconclusive`, `replay-parity`, when `v`'s returned `WitnessExhausted` counterexample is replaced by one whose replay recomputes a non-empty witness set (FR-183-AC-4). | Test (TC-3219) |
+| FR-621-AC-27 | On a 512 KiB stack, `check_probability_certificate_package` given a package with the deepest operand chain admitted by default checked-package limits (10,000 graph nodes, 9,999 operand links, and at most 1 MiB) and a held certificate whose first value holds an id into node 9,999 and whose next value holds the out-of-range index 10,000 returns typed `Malformed` without overflowing the stack. | Test (TC-3154) |
+| FR-621-AC-28 | On a 512 KiB stack, `check_probability_certificate_source` given source that compiles under default limits to a package with 10,000 graph nodes and 9,999 operand links (within the default 1 MiB package-byte limit), and a held certificate whose first value holds an id into node 9,999 and whose next value holds the out-of-range index 10,000, returns typed `Malformed` without overflowing the stack. | Test (TC-3154) |
 
 ## Dependencies
 

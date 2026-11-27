@@ -237,7 +237,7 @@ pub struct HybridInterval {                   // seconds under ModelTime, positi
 
 `CheckedPackage::hybrid_models: Vec<CheckedHybridModel>` and
 `CheckedPackage::hybrid_claims: Vec<CheckedHybridClaim>`, each in source
-order. A typed `CheckRefusal` with a span on refusal.
+order. A typed `SemanticCheckRefusal` with a span on refusal.
 
 At S4, the emitted v2 package carries each checked hybrid model and claim as
 FSpec FR-481's `hybrid` nodes and `temporal_clause` node.

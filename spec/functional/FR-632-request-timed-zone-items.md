@@ -48,8 +48,7 @@ digitised and checked explicitly (FR-243).
   a state may hold (FSpec FR-415 "Cardinality bound"). Like every FR-625
   limit it is a positive count; absent, it is the published default 1024.
 - `options.method`: `zones` (the default) or `digital-clocks`; the second is
-  admitted only for a closed subject and a claim whose every interval is
-  closed (FR-243).
+  admitted only for a closed subject and a digitisable claim (FR-243).
 
 ### Decision: `digital-clocks` is a caller-selected route, not an EN-6 mode
 
@@ -62,8 +61,8 @@ digital-clock route (FR-243), which reads the closed subject through integer-val
 to TA-3) and decides the claim by EN-1's explicit-state search (FR-126) over
 that reading. The route stays a function of the item alone (its kind, its evidence
 kind and its `options`, negotiated against the published manifests), so one
-item always reaches one engine. Digitisation decides the same verdict as dense time exactly when the
-subject and the claim are both closed (Henzinger, Manna and Pnueli), so the
+item always reaches one engine. Digitisation preserves the dense-time verdict
+only for a closed subject and a digitisable claim (FR-243), so on those the
 route is a cross-check of the zone verdict, with the basis `exhaustive`
 (FR-235, FSpec FR-416), and is refused where it could disagree. The basis is
 `exhaustive` because the proof is a complete explicit-state search of the
@@ -107,7 +106,8 @@ with its timed-product certificate (FR-920).
   interval, is declined by EN-1's digital-clock route before any search: the
   item settles `declined` `invalid-input`, naming the constraint or the
   interval, with `settled_by` `result` and `backend` `en-1`, and no search
-  runs; an untimed subject routes to EN-1 as FR-625 states.
+  runs; an untimed subject routes to EN-1 as FR-625 states. A claim that is
+  not digitisable is declined the same way (FR-243).
 
 ## Acceptance Criteria
 

@@ -15,20 +15,26 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, CancelCause};
 use filament_semantic_value::catalog::Category;
+use fsl_analyze::analyze::{
+    analyze_items, AlterEvidence, AnalyzeLimits, DeadlineSupply, Engines, PackageStateGraphSubject,
+};
 use fsl_analyze::model_check::{check_and_settle_state_graph, StateGraphItem, StateGraphRequest};
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::ModelSimState;
+use fsl_eval::simulation::model::PackageModelInput;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::temporal::UndefinedCause;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
     settle_state_graph, AppliedReduction, CertificateLocus, CertificateRule, Certification,
-    DisagreementCause, Execution, GraphReplayResult, GraphReplaySettlement, GraphWitness,
-    HyperIdentity, IncompleteCause, InconclusiveCause, ModelCheckLimit, ModelCheckLimits,
-    ModelPath, OpenCause, ProofBasis, ReachedLimit, ResultLabel, RunEnd, SettlementBasis,
-    StateGraphCertificate, StateGraphIdentity, StateGraphInstanceOutcome, StateGraphMethod,
-    StateGraphOutcome, StateGraphRecord, TerminalValue, Truth, Verdict, WitnessSource,
-    DEFAULT_WITNESS_SEED, EXPLICIT_STATE,
+    DisagreementCause, Execution, GraphEvidence, GraphReplayResult, GraphReplaySettlement,
+    GraphWitness, HyperIdentity, IncompleteCause, InconclusiveCause, ModelCheckLimit,
+    ModelCheckLimits, ModelPath, OpenCause, ProofBasis, ReachedLimit, ResultLabel, RunEnd,
+    SettlementBasis, StateGraphCertificate, StateGraphIdentity, StateGraphInstanceOutcome,
+    StateGraphMethod, StateGraphOutcome, StateGraphRecord, TerminalValue, Truth, Verdict,
+    WitnessPath, WitnessSource, DEFAULT_WITNESS_SEED, EXPLICIT_STATE,
 };
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use ix_trace_rs::trace;
 
 use crate::certificate_rejection_support::state_locus;
@@ -41,6 +47,7 @@ use crate::graph_world::{
 };
 use crate::state_graph::{no_samples, reachable, run, AB};
 use crate::state_graph_certificate::{config, ranks_of, state_where, with_ranks, GUARDED};
+use crate::terminal_two_models::handoff_package;
 
 /// The method of a run under `limits` with no horizon and the default seed.
 fn method(limits: ModelCheckLimits) -> StateGraphMethod {
@@ -187,6 +194,7 @@ fn the_state_graph_pipeline_runs_and_settles_each_instance() {
         max_depth: None,
         limits: no_samples(),
         seed: None,
+        retained: None,
     };
     let settled = check_and_settle_state_graph(request, &Cancel::new(), |_| {
         Ok(GraphReplayResult {
@@ -226,6 +234,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
         max_depth: None,
         limits: no_samples(),
         seed: None,
+        retained: None,
     };
     let baseline = run(request());
     assert_eq!(baseline.items[0].len(), 2, "two actual native instances");
@@ -1382,6 +1391,43 @@ fn a_boundary_open_cause_settles_constraint_reached_after_an_undecided_one() {
     assert_eq!(replays, 0);
 }
 
+/// FR-255-AC-44: a one-byte retention allowance stops a state-graph run
+/// before it stores the first successor its expansion returns.
+#[trace("FR-255-AC-44")]
+#[test]
+fn a_one_byte_retention_allowance_stops_a_state_graph_before_its_first_successor() {
+    use fsl_foundation::Setting;
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let run_with = |bound: Option<u64>| {
+        let mut engines = fsl_analyze::analyze::EngineBounds::default();
+        if let Some(bound) = bound {
+            assert!(engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        let retained = engines.item_budget(UNLIMITED, &Cancel::new());
+        let mut request = world.request(AB, vec![world.item("ReachesTwo")], no_samples());
+        request.retained = Some(&retained);
+        (run(request), retained)
+    };
+    let (stopped, retained) = run_with(Some(1));
+    assert_eq!(retained.consumed(Setting::AnalysisRetainedBytes), 0);
+    assert_eq!(
+        stopped.graph.end,
+        RunEnd::Stopped {
+            cause: IncompleteCause::ResourceExhausted,
+            limit: Some(ReachedLimit {
+                limit: ModelCheckLimit::AnalysisRetainedBytes,
+                value: 1,
+            }),
+        }
+    );
+    assert_eq!(stopped.graph.nodes.len(), 1, "only the one initial state");
+    assert!(stopped.graph.edges.is_empty());
+    let (again, _) = run_with(Some(1));
+    assert_eq!(stopped.graph.end, again.graph.end);
+    let (published, _) = run_with(None);
+    assert_eq!(published.graph.end, RunEnd::Completed);
+}
+
 /// FR-169-AC-1, AC-5: a `Witnessed` outcome whose replay settles
 /// `inconclusive` settles `inconclusive`, `ReplayParity`, never `proved`; a
 /// `Trapped` outcome whose replay a limit stops settles `incomplete`,
@@ -1959,4 +2005,98 @@ fn a_cancelled_request_settles_incomplete_before_any_replay() {
     );
     assert_eq!(record.execution, Execution::ResourceIncomplete);
     assert_eq!(replays, 0);
+}
+
+/// Replace the evidence of the instance at `key` with a witness whose path
+/// takes no step: it ends at the start, where `versionNumber` is not 2, so
+/// its replay disagrees with the record it was to support.
+fn alter(evidence: &mut GraphEvidence, key: &str) {
+    if evidence.over().iter().any(|instance| instance.key == key) {
+        *evidence = GraphEvidence::Witness {
+            paths: vec![(
+                WitnessPath::Path(ModelPath {
+                    initial: 0,
+                    steps: Vec::new(),
+                }),
+                WitnessSource::Explored,
+            )],
+            over: evidence.over().to_vec(),
+        };
+    }
+}
+
+fn alter_a(evidence: &mut GraphEvidence) {
+    alter(evidence, "a");
+}
+
+fn alter_b(evidence: &mut GraphEvidence) {
+    alter(evidence, "b");
+}
+
+/// FR-621-AC-24: `attemptUpdate` takes `versionNumber` from 0 to 1 to 2 and
+/// back, and is disabled at 3, so `ReachesTwo` is proved of an instance that
+/// starts at 0 and refuted of one that starts at 3. With one instance's
+/// evidence altered, a refutation of the other decides the item in either
+/// order, and beside a proof the disagreeing replay does.
+#[trace("TC-3219", "FR-621-AC-24")]
+#[test]
+fn a_confirmed_refutation_decides_over_a_disagreeing_replay_in_either_order() {
+    let item = |starts: (i64, i64), altered: AlterEvidence| {
+        let world = config_world(REACHES_TWO, &[starts]);
+        let handoff = handoff_package(&world.package, world.packages());
+        let bare = handoff.bare();
+        let input =
+            PackageModelInput::of(&bare, world.packages(), ModelNormalizationLimits::default())
+                .expect("the package read");
+        let occurrence = world
+            .claim("ReachesTwo")
+            .occurrence()
+            .expect("claim occurrence");
+        let item = PackageStateGraphSubject::new(
+            &input,
+            &handoff.bytes,
+            handoff.supply(),
+            world.binding(AB),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
+            occurrence,
+        )
+        .expect("the package route rebuilds the claim")
+        .altering_evidence(altered)
+        .item(RequestIndex::new(0));
+        let record = analyze_items(
+            &Engines::fsl().expect("the linked engines admit"),
+            vec![item],
+            &Cancel::new(),
+        )
+        .into_iter()
+        .next()
+        .expect("one record");
+        let report = record.state_graph.as_ref().expect("a state-graph record");
+        let decided = report.counterexample.as_ref().map(|counterexample| {
+            counterexample["instance"]["key"]["identity"]
+                .as_str()
+                .expect("a key")
+                .to_owned()
+        });
+        (report.record.value.clone(), decided)
+    };
+    for (altered, other) in [(alter_a as AlterEvidence, "b"), (alter_b, "a")] {
+        assert_eq!(
+            item((3, 3), altered),
+            (TerminalValue::Refuted, Some(other.to_owned()))
+        );
+    }
+    for (starts, altered) in [((3, 0), alter_a as AlterEvidence), ((0, 3), alter_b)] {
+        let (value, decided) = item(starts, altered);
+        assert!(
+            matches!(
+                value,
+                TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+                    DisagreementCause::Verdicts { .. }
+                ))
+            ),
+            "{starts:?}: {value:?}"
+        );
+        assert_eq!(decided, None);
+    }
 }

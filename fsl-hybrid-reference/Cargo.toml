@@ -17,8 +17,6 @@ serde_json = { version = "1.0.151", features = ["raw_value", "unbounded_depth"] 
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-replay = { path = "../fsl-replay" }
 fsl-semantics = { path = "../fsl-semantics" }
-
-[dev-dependencies]
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 
 [lints.rust]

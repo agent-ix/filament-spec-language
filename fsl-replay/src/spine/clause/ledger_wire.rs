@@ -12,7 +12,7 @@ use super::progress::{
 };
 
 /// The ledger document's `format` member.
-pub const LEDGER_FORMAT: &str = "filament.progress-ledger/1";
+pub const LEDGER_FORMAT: &str = fsl_foundation::wire_format::WireFormat::ProgressLedger.as_str();
 
 /// A ledger document that cannot be read.
 #[derive(Debug, thiserror::Error)]
@@ -103,6 +103,7 @@ fn names_a_sample(identity: &str) -> bool {
 
 /// Whether `fingerprint` is FR-993's form: `sha256:` and 64 lowercase
 /// hexadecimal digits.
+#[ix_trace_rs::string_edge]
 fn is_fingerprint(fingerprint: &str) -> bool {
     fingerprint.strip_prefix("sha256:").is_some_and(|digits| {
         digits.len() == 64
@@ -183,6 +184,7 @@ pub fn write_ledger(ledger: &ProgressLedger) -> Result<serde_json::Value, Ledger
 /// A document that is not a closed `filament.progress-ledger/1` object, whose
 /// entries are out of binding order or repeat a binding, or whose `covered`
 /// positions are out of order.
+#[ix_trace_rs::string_edge]
 pub fn read_ledger(bytes: &[u8]) -> Result<ProgressLedger, LedgerReadError> {
     // The canonical reader refuses duplicate members before serde sees them.
     quire_canonical::read(bytes, u64::MAX).map_err(|error| invalid("ledger", error.to_string()))?;

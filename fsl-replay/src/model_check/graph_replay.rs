@@ -182,6 +182,16 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         }
     }
 
+    // FSL FR-243: the integer-clock graph does not preserve these forms, so
+    // no evidence for one is read under digital-clock timing.
+    if let (Some(claim), Some(timing)) = (claim, subject.timed.as_ref()) {
+        if timing.digital {
+            if let Some(declined) = crate::NotDigitisable::of_state_graph(claim) {
+                return Err(refused(ModelTraceRefusal::NotDigitisable(declined)));
+            }
+        }
+    }
+
     let documents = request.byte_provision().snapshots();
     let simulation = ModelSimulationRequest {
         input: fsl_eval::simulation::model::ModelCheckInput::source(package),
@@ -281,6 +291,8 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         super::graph_hyper::replay_evidence(
             &system,
             package,
+            Some(package),
+            None,
             clause,
             envelope.family_payload(),
             model_limits.limits.max_states,
@@ -877,23 +889,14 @@ fn replay_claim_undefined(
     Ok(false)
 }
 
-fn evidence_over(evidence: &GraphEvidence) -> Option<&fsl_eval::model_subject::ModelInstance> {
-    match evidence {
-        GraphEvidence::Witness { over, .. }
-        | GraphEvidence::Trap { over, .. }
-        | GraphEvidence::PathPair { over, .. }
-        | GraphEvidence::Undefined { over, .. } => over.as_ref(),
-    }
-}
-
 fn graph_over(
     system: &ModelSystem<'_>,
     claim: &CheckedStateGraphClaim,
     evidence: &GraphEvidence,
 ) -> Result<Option<ObjectReference>, ReplayRefusal> {
-    match (claim.over(), evidence_over(evidence)) {
-        (None, None) => Ok(None),
-        (Some(parameter), Some(instance)) => {
+    match (claim.over(), evidence.over()) {
+        (None, []) => Ok(None),
+        (Some(parameter), [instance]) => {
             let model_instance = system
                 .instances(&filament_exact::ValueType::Reference(
                     parameter.object.clone(),
@@ -955,25 +958,16 @@ fn digital_state_graph_truth(
             })
             .collect::<Result<Vec<_>, _>>()
     };
-    let (source, target) = match claim.form() {
-        StateGraphForm::Possible { target } => (None, target),
-        StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
-        StateGraphForm::UniquePath { from, to } => (Some(from), to),
+    // The only form read here: the others are refused before replay (FR-243).
+    let StateGraphForm::Possible { target } = claim.form() else {
+        return Err(ReplayRefusal::ModelGraphMismatch { member: "timing" });
     };
     let target_values = read_values(target)?;
     let reaches_target = digital_predecessors(&graph, &target_values);
-    if let Some(source) = source {
-        let source_values = read_values(source)?;
-        Ok(source_values
-            .iter()
-            .zip(&reaches_target)
-            .all(|(is_source, reaches)| !is_source || *reaches))
-    } else {
-        Ok(graph
-            .initials
-            .iter()
-            .all(|initial| reaches_target[*initial]))
-    }
+    Ok(graph
+        .initials
+        .iter()
+        .all(|initial| reaches_target[*initial]))
 }
 
 fn digital_predecessors(graph: &crate::DigitalStateGraph, target: &[bool]) -> Vec<bool> {

@@ -23,8 +23,8 @@ use filament_contract_model::{
 use filament_exact::{EffectiveId, Integer, IntegerInterval, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::{
-    object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
-    SourceRowObject, SourceRowOperation, SourceRowParameter,
+    package_of_source_rows, source_identity, source_type_node_key, SourceRowObject,
+    SourceRowOperation, SourceRowParameter,
 };
 use fsl_semantics::model::domain_package::{DomainPackage, ValueTypeRef};
 use ix_trace_rs::implements;
@@ -75,11 +75,29 @@ pub enum SourceModelFault {
         /// The row's node.
         node: CheckedNodeId,
     },
+    /// A direct data field of a source-object row does not name a readable
+    /// checked type node.
+    #[error("the type of source-object field `{field}` is not readable from its row")]
+    UnreadField {
+        /// The field's admitted name.
+        field: String,
+        /// The declaring row's node.
+        node: CheckedNodeId,
+    },
     /// Reading a row's parameter types broke an invariant admission
     /// established. An admitted package does not give this fault.
     #[error("the parameter types of a source-object row are not readable from the package")]
     ParameterTypeFault {
         /// The row's node.
+        node: CheckedNodeId,
+        /// The broken invariant.
+        fault: InternalFault,
+    },
+    /// Reading a direct source-object field type broke an invariant admission
+    /// established. An admitted package does not give this fault.
+    #[error("the type of a source-object field is not readable from the package")]
+    FieldTypeFault {
+        /// The declaring row's node.
         node: CheckedNodeId,
         /// The broken invariant.
         fault: InternalFault,
@@ -94,7 +112,9 @@ impl SourceModelFault {
             | Self::MalformedOperation { node, .. }
             | Self::UnownedObject { node, .. }
             | Self::UnreadParameter { node, .. }
+            | Self::UnreadField { node, .. }
             | Self::ParameterTypeFault { node, .. } => node,
+            Self::FieldTypeFault { node, .. } => node,
         }
     }
 }
@@ -242,15 +262,108 @@ impl BarePackage<'_> {
     /// The object types of the source units as declarations of a type
     /// environment, keyed under the same source-unit identities as source
     /// evaluation.
+    #[implements("FR-531-AC-64")]
     pub(crate) fn source_object_declarations(
         &self,
     ) -> Result<Vec<filament_semantic_value::declaration::ObjectTypeDeclaration>, SourceModelFault>
     {
-        Ok(self
-            .source_units()?
+        let units = self.source_units()?;
+        let Ok((supply, identities)) = self.witness() else {
+            return Ok(Vec::new());
+        };
+        let Some(first) = units.iter().find_map(|unit| unit.nodes.first()) else {
+            return Ok(Vec::new());
+        };
+        let package = self.package();
+        let nodes: BTreeMap<&CheckedNodeId, &CheckedSemanticNodeV2> = package
+            .resolved_graph()
+            .nodes
             .iter()
-            .flat_map(|unit| object_types_of_source_rows(&unit.identity, &unit.objects))
-            .collect())
+            .map(|node| (&node.node_id, node))
+            .collect();
+        let graph = wire_graph(package).map_err(|_| SourceModelFault::FieldTypeFault {
+            node: first.clone(),
+            fault: InternalFault::new("FR-390", "bare-package-has-structural-keys"),
+        })?;
+        let object_ids = self.source_object_effective_ids()?;
+        let types = TypeReader {
+            admitted: package,
+            identities,
+            nodes: &nodes,
+            graph: &graph,
+            projections: self.exact_type_projections(),
+            source_object_ids: Some(&object_ids),
+        };
+        let rows = supply.identities.source_objects();
+        let member_facts = supply.identities.source_object_member_facts();
+        let mut declarations = Vec::new();
+        for unit in units {
+            for ((object, row_index), node) in unit.objects.iter().zip(&unit.rows).zip(&unit.nodes)
+            {
+                let row = &rows[*row_index];
+                let facts = &member_facts[*row_index];
+                let mut fields = Vec::new();
+                for (member, fact) in row.members.iter().zip(facts) {
+                    // The effective row also carries inherited members. An
+                    // original identity equal to this object's canonical
+                    // direct field key is the producer's ownership fact.
+                    let direct_identity =
+                        format!("ix://{}/{}/{}", unit.identity, object.name, member.name);
+                    if fact.original_member_identity.as_ref() != direct_identity {
+                        continue;
+                    }
+                    let Some(exact_type) = fact.value_type.as_ref() else {
+                        // Clock entries have no Exact value type.
+                        continue;
+                    };
+                    let Some(type_node) = member.type_node.as_ref() else {
+                        return Err(SourceModelFault::UnreadField {
+                            field: member.name.to_string(),
+                            node: node.clone(),
+                        });
+                    };
+                    let checked_type =
+                        declared_value_type(&types, type_node).map_err(|fault| match fault {
+                            TypeError::Unsupported => SourceModelFault::UnreadField {
+                                field: member.name.to_string(),
+                                node: node.clone(),
+                            },
+                            TypeError::Fault(fault) => SourceModelFault::FieldTypeFault {
+                                node: node.clone(),
+                                fault,
+                            },
+                        })?;
+                    if &checked_type != exact_type {
+                        return Err(SourceModelFault::FieldTypeFault {
+                            node: node.clone(),
+                            fault: InternalFault::new(
+                                "FR-531",
+                                "source-object-member-exact-type-agrees",
+                            ),
+                        });
+                    }
+                    fields.push(filament_semantic_value::declaration::FieldDeclaration::new(
+                        member.name.as_ref(),
+                        exact_type.clone(),
+                        fact.presence,
+                    ));
+                }
+                let supertypes = object
+                    .supertypes
+                    .iter()
+                    .map(|name| source_object_effective_id(&unit.identity, name))
+                    .collect();
+                declarations.push(
+                    filament_semantic_value::declaration::ObjectTypeDeclaration::new(
+                        source_object_effective_id(&unit.identity, &object.name),
+                        object.name.clone(),
+                        fields,
+                    )
+                    .with_supertypes(supertypes),
+                );
+            }
+        }
+        Ok(declarations)
     }
 
     /// FSL FR-740 "Source objects": the source packages the package's
@@ -415,6 +528,7 @@ pub(crate) fn source_object_effective_id(source_identity: &str, name: &str) -> E
 /// collection layer is wrapped in the layer's kind (`Set<Int[1, 3]>`), which
 /// this unwraps to the element type. `None` for any other rendering, which
 /// the row does not let a reader rebuild.
+#[ix_trace_rs::string_edge]
 fn rendered_scalar(
     rendering: &str,
     layers: &[filament_contract_model::SelectedClockCollectionLayer],
@@ -523,6 +637,7 @@ impl SourceModel {
 }
 
 /// The FR-789 wrapper a collection layer of `kind` renders as.
+#[ix_trace_rs::string_edge]
 pub(crate) fn collection_wrapper(kind: &str) -> Option<&'static str> {
     match kind {
         "sequence" => Some("Sequence"),
@@ -536,6 +651,7 @@ pub(crate) fn collection_wrapper(kind: &str) -> Option<&'static str> {
 /// The multiplicity a parameter row's collection layers spell: one value for
 /// no layer, the layer's kind and bounds for one, and `None` for the nested
 /// collections and kinds a reader does not rebuild.
+#[ix_trace_rs::string_edge]
 fn multiplicity_of(
     layers: &[filament_contract_model::SelectedClockCollectionLayer],
 ) -> Option<fsl_semantics::model::domain_package::Multiplicity> {

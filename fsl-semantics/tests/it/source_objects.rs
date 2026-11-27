@@ -117,7 +117,7 @@ fn offset(text: &str, needle: &str, occurrence: usize, skip: usize) -> usize {
 /// Links dispatch and checks `declarations`, as the compile driver does.
 fn finish(
     mut declarations: PackageDeclarations,
-) -> Result<CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let pending = declarations.link_dispatch(ModelNormalizationLimits::default())?;
     declarations
         .check(
