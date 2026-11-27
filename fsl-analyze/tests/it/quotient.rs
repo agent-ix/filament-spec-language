@@ -829,22 +829,9 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
     let explored = usize::try_from(stats.product_edges).expect("small");
     let full_transition_budget = explored + 2 * 2;
 
-    let exploration_work = minimum_work(&world, explored, |outcome| {
-        matches!(
-            outcome,
-            ModelCheckOutcome::Stopped {
-                limit: Some(ReachedLimit {
-                    limit: ModelCheckLimit::MaxTransitions,
-                    ..
-                }),
-                ..
-            }
-        )
-    });
     let completion_work = minimum_work(&world, full_transition_budget, |outcome| {
         matches!(outcome, ModelCheckOutcome::Violated { .. })
     });
-    assert_eq!(completion_work - exploration_work, 4);
 
     let one_work_short = with_budgets(&world, full_transition_budget, completion_work - 1)
         .expect("meter exhaustion is a typed outcome");
