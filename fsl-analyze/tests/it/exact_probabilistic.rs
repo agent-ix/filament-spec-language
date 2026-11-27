@@ -2135,10 +2135,13 @@ fn fair_freedelays_weak_minimum_and_component_projection() {
     for (index, probability) in row_choices {
         let mut policy_indices = vec![None; product.states.len() + 1];
         policy_indices[product.states.len()] = Some(index);
-        let Some(ProductAction::FreeDelays(vec![row])) =
+        let Some(ProductAction::FreeDelays(rows)) =
             free_delays_choice(&product, state, &policy_indices)
         else {
             panic!("the row policy selects a FreeDelays row choice");
+        };
+        let [row] = rows.as_slice() else {
+            panic!("a row choice maps to one FreeDelays row: {rows:?}");
         };
         assert_eq!(row.given, vec![(draw.clone(), 1)]);
         match row.free.as_slice() {
