@@ -85,7 +85,10 @@ mod tests {
 
     // The checked-package v2 `Rational`: `numerator` an `IntegerString`,
     // `denominator` a `PositiveIntegerString`.
-    #[trace("FR-290-AC-9")]
+    // FR-290-AC-9 is withdrawn and no FSL criterion governs this object; the
+    // owning requirement is FSpec FR-331 (and FR-418, FR-652), so only it is
+    // tagged.
+    #[trace("FSpec-FR-331")]
     #[test]
     fn a_rational_object_is_two_canonical_integer_strings() {
         let written = json!({"numerator": "-3", "denominator": "2"});

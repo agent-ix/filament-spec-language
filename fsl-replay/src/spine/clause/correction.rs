@@ -16,7 +16,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::{ClauseRunReport, FiniteWindowReport};
 
 /// The format tag of the evidence ledger file a run writes (FR-975).
-pub const EVIDENCE_LEDGER_FORMAT: &str = "filament.finite-window-evidence-ledger/1";
+pub const EVIDENCE_LEDGER_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::EvidenceLedger.as_str();
 
 /// The largest `lineage` the file form carries (FR-975).
 const LINEAGE_CEILING: u64 = 9_007_199_254_740_991;

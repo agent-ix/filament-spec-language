@@ -1736,10 +1736,7 @@ impl OutcomeItem {
 }
 
 fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
-    serde_json::json!({
-        "numerator": value.numerator().to_string(),
-        "denominator": value.denominator().to_string(),
-    })
+    crate::shared_wire::RationalObject::value(value)
 }
 
 fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json::Value {

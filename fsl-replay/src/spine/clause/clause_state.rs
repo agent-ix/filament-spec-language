@@ -67,7 +67,7 @@ use super::{
 };
 
 /// The format member of [`ClauseState::to_bytes`].
-pub const CLAUSE_STATE_FORMAT: &str = "filament.clause-state/1";
+pub const CLAUSE_STATE_FORMAT: &str = fsl_foundation::wire_format::WireFormat::ClauseState.as_str();
 
 /// The kind of trace a carried clause state reads (FR-641).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

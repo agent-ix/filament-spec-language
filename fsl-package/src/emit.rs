@@ -2775,8 +2775,9 @@ fn application_operator(operator: Operator) -> ApplicationOperator {
     }
 }
 
-/// FR-038-AC-644: the operation of an application, written from the typed
+/// Contract IR FR-038-AC-644: the operation of an application, written from the typed
 /// form and read back through the IR's strict reader.
+#[implements("IR-FR-038-AC-644")]
 fn operation_term(
     ids: &StructuralIds,
     operation: &fsl_semantics::check::Operation,
@@ -2866,7 +2867,9 @@ fn operation_term(
 }
 
 /// The typed member of an operation, with the state clause's execution point
-/// that the wire writes inside the member (FR-038-AC-644).
+/// that the wire writes inside the member (IR FR-038-AC-644; FR-105-AC-12 for
+/// the point).
+#[implements("IR-FR-038-AC-644", "FR-105-AC-12")]
 fn member_value(
     ids: &StructuralIds,
     member: &Member,

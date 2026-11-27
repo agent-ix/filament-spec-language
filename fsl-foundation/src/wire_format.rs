@@ -69,6 +69,12 @@ formats! {
     TracePopulation => "filament.trace-population/1",
     /// A progress ledger.
     ProgressLedger => "filament.progress-ledger/1",
+    /// A clause's saved state.
+    ClauseState => "filament.clause-state/1",
+    /// A clause's saved progress.
+    ClauseProgress => "filament.clause-progress/1",
+    /// A finite-window correction's evidence ledger.
+    EvidenceLedger => "filament.finite-window-evidence-ledger/1",
     /// Checked-handoff selection document.
     HandoffSelection => "filament.checked-handoff.selection/1",
     /// Checked-handoff inventory document.
@@ -98,12 +104,12 @@ impl Serialize for WireFormat {
 #[cfg(test)]
 mod tests {
     use super::WireFormat;
-    use ix_trace_rs::trace;
 
     /// The label set is generated from the type: every variant of `ALL`
-    /// has a distinct `name/version` label that parses back to itself.
+    /// has a distinct `name/version` label that parses back to itself. No
+    /// criterion governs format labels (ADR-037 is the decision), so the test
+    /// carries no trace tag.
     #[test]
-    #[trace("FR-027")]
     fn every_format_label_is_unique_versioned_and_round_trips() {
         let mut seen = std::collections::BTreeSet::new();
         for format in WireFormat::ALL {

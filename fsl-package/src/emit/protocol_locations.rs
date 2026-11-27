@@ -20,6 +20,7 @@ use filament_contract_model::{
     CheckedProtocolLocationOrigin, CheckedProtocolSemanticLocation,
 };
 use filament_exact::NodeKey;
+use ix_trace_rs::implements;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -247,6 +248,7 @@ fn refusal(application: &NodeKey) -> EmitRefusal {
 /// Number each group's rows from zero across its origins, the origins in
 /// origin order and one origin's rows in visit order, then order every row
 /// by (application, occurrence, `term_ordinal`).
+#[implements("FSpec-FR-322-AC-291")]
 pub(super) fn ordered<L, R>(
     mut pending: Vec<PendingRow<L>>,
     build: impl Fn(CheckedNodeId, CheckedOccurrence, u64, L) -> R,

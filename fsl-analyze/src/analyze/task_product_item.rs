@@ -457,7 +457,10 @@ fn task_search_evidence(
                     .cloned()
                     .unwrap_or_default()
             };
-            json!({"bound": (at(row) - at(column)).to_string(), "strict": false})
+            fsl_replay::shared_wire::DbmBound(Some((
+                filament_exact::Integer::from_big(at(row) - at(column)),
+                false,
+            ))).value()
         };
         let zone: Vec<Vec<serde_json::Value>> = (0..=width)
             .map(|row| (0..=width).map(|column| bound(row, column)).collect())
