@@ -360,8 +360,6 @@ fn digital_clocks_decline_the_forms_over_a_fractional_trap() {
 #[trace("TC-2412", "FR-852-AC-12")]
 #[trace("TC-2412", "FR-852-AC-17")]
 #[trace("TC-2412", "FR-852-AC-25")]
-#[trace("TC-2412", "FR-852-AC-16")]
-#[trace("TC-2412", "FR-852-AC-24")]
 #[test]
 fn timed_state_graph_routes_refute_an_undefined_guard() {
     let guard = "q(2 - self.phase) >= 0";
@@ -2151,5 +2149,435 @@ fn a_digital_probability_binding_names_the_admitted_member_type() {
             &item["counterexample"]["binding"]
         };
         assert_eq!(*binding, the_admitted_derived(), "{item}");
+    }
+}
+/// A timed RPC unit with one undefined source. `U-P` makes the claim target
+/// undefined at phase 2; the other variants make a subject-side predicate
+/// undefined at the same reachable state.
+fn fr852_gap_undefined_unit(source: &str) -> String {
+    let q = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+    let profile = "profile d = \"filament.value.integer-division.truncating/v1\";\n";
+    let base = match source {
+        "U-G" => unit(true).replace(
+            "not self.inflight and (self.phase = 2 or self.phase = 3)",
+            "q(2 - self.phase) >= 0",
+        ),
+        "U-T" => unit(false) + "\nterminal Done using v on M when { q(2 - self.phase) >= 0 };\n",
+        "U-C" => unit(true).replacen(
+            "pre SendIdle",
+            "constraint C using v on M::Call at current { q(2 - self.phase) >= 0 }\npre SendIdle",
+            1,
+        ),
+        "U-P" => unit(true),
+        _ => panic!("known undefined source variant: {source}"),
+    };
+    let with_function = base.replacen("pre SendIdle", &format!("{q}pre SendIdle"), 1);
+    let with_profile = with_function.replacen("model M = ", &format!("{profile}model M = "), 1);
+    if source == "U-P" {
+        with_profile + "\npossible UndefinedTarget using v over (c: M::Call) { c.phase = 2 and q(2 - c.phase) > 0 }\n\
+         always possible UndefinedAlways using v over (c: M::Call) { q(2 - c.phase) >= 0 }\n\
+         unique path UndefinedUnique using v over (c: M::Call) from (c.phase = 3) to (q(2 - c.phase) >= 0);\n"
+    } else {
+        with_profile
+            + "\nalways possible UndefinedAlways using v over (c: M::Call) { c.phase = 2 }\n\
+         unique path UndefinedUnique using v over (c: M::Call) from (c.phase = 3) to (c.phase = 2);\n"
+    }
+}
+
+fn fr852_gap_request_item(variant: &str, claim: &str, options: Option<Value>) -> Value {
+    let mut item = json!({"claim": claim});
+    if let Some(options) = options {
+        item["options"] = options;
+    }
+    if variant == "U-C" {
+        item["reductions"] = json!({"constraint": "C"});
+    }
+    item
+}
+
+struct Fr852GapRun {
+    items: Vec<Value>,
+    records: Vec<fsl_analyze::analyze::AnalyzeRecord>,
+}
+
+impl Fr852GapRun {
+    fn item(&self, index: usize) -> Value {
+        self.items[index].clone()
+    }
+
+    fn record(&self, index: usize) -> &fsl_analyze::analyze::AnalyzeRecord {
+        &self.records[index]
+    }
+}
+
+fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
+    use fsl_analyze::analyze::{
+        AnalyzeLimits, DeadlineSupply, Engines, RunInput, SourceProvision, SubjectBinding,
+        TemporalItem, test_support_state_graph_item,
+    };
+    use fsl_foundation::RequestIndex;
+
+    let body = source
+        .split_once("model M = \"test/timed\";\n")
+        .map(|(_, body)| body)
+        .expect("the fixture carries its model declaration");
+    let profiles = if source.contains("profile d =") {
+        format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        )
+    } else {
+        crate::zone_search::TIMED.to_owned()
+    };
+    let world = crate::timed_world::world_with_mode(
+        &crate::zone_search::rpc_document(),
+        &profiles,
+        body,
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
+    let request = world.request();
+    let package = &world.package;
+    let phase_two_initial = items.as_array().is_some_and(|selections| {
+        selections.len() == 1
+            && selections[0]["claim"] == "UndefinedTarget"
+            && selections[0]["options"]["method"] == "digital-clocks"
+    });
+    let mut snapshots = world.snapshots.clone();
+    if phase_two_initial {
+        let snapshot = snapshots
+            .values_mut()
+            .next()
+            .expect("the U-P fixture has one initial snapshot");
+        let mut document: Value = serde_json::from_slice(snapshot)
+            .expect("the initial snapshot is valid JSON");
+        document["populations"][0]["objects"][0]["fields"]["phase"] =
+            json!({"integer": "2"});
+        *snapshot = serde_json::to_vec(&document)
+            .expect("the phase-2 snapshot serializes");
+    }
+    let input = RunInput::source(package);
+    let binding = SubjectBinding {
+        packages: request.packages,
+        snapshots: &snapshots,
+        initial: request.initial,
+        universes: request.universes,
+    };
+    let source_ref = package.graph().source();
+    let provision = SourceProvision::single(source_ref, &world.unit);
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+    let engines = Engines::fsl().expect("the layer-A engines register");
+    let selections = items
+        .as_array()
+        .expect("the scenario supplies item selections");
+    let records = selections
+        .iter()
+        .enumerate()
+        .map(|(index, selection)| {
+            let name = selection["claim"]
+                .as_str()
+                .expect("each selection names its claim");
+            let claim = package
+                .graph()
+                .state_graph_claim(name)
+                .expect("the checked package contains the selected claim");
+            let key = claim.occurrence().expect("the claim has an occurrence");
+            let mut form = TemporalItem::default();
+            if let Some(constraint) = selection["reductions"]["constraint"].as_str() {
+                form.reductions.constraint = Some(constraint.to_owned());
+            }
+            let method = selection["options"]["method"].as_str();
+            test_support_state_graph_item(
+                &engines,
+                &input,
+                &binding,
+                limits,
+                &provision,
+                key,
+                RequestIndex::new(index),
+                &form,
+                method,
+                &filament_exact::Cancel::new(),
+            )
+            .expect("the selected state-graph claim builds an item")
+        })
+        .collect::<Vec<_>>();
+    let items = records
+        .iter()
+        .map(|record| {
+            let outcome = if let Some(graph) = &record.state_graph {
+                let terminal = record.terminal().expect("the graph item is terminal");
+                let backend = terminal
+                    .backend()
+                    .expect("the graph item names its backend")
+                    .clone();
+                fsl_analyze::analyze::analyze_item(
+                    terminal,
+                    &[fsl_analyze::analyze::ItemCounterexample {
+                        request_index: record.request_index,
+                        backend,
+                        counterexample: fsl_analyze::analyze::Counterexample::StateGraph(
+                            graph.clone(),
+                        ),
+                        wire: Ok(Value::Null),
+                    }],
+                )
+                .expect("the analyzed graph writes FR-286 and FR-393 evidence")
+            } else {
+                record
+                    .outcome_item(package)
+                    .expect("the analyzed claim writes an outcome")
+                    .unwrap_or_else(|error| {
+                        panic!("the outcome carries FR-286 and FR-393 evidence: {error}; {record:?}")
+                    })
+            };
+            serde_json::to_value(outcome).expect("the outcome serializes")
+        })
+        .collect();
+    Fr852GapRun { items, records }
+}
+
+fn fr852_gap_assert_undefined_record(
+    item: &Value,
+    expected_locus: &str,
+    expected_position: u64,
+    record: &fsl_analyze::analyze::AnalyzeRecord,
+) {
+    assert_eq!(item["result"], "refuted", "{item}; {record:?}");
+    let graph = record
+        .state_graph
+        .as_ref()
+        .expect("the state-graph item settled its full record");
+    assert_eq!(
+        graph.record.label,
+        fsl_replay::ResultLabel::Refuted,
+        "{graph:?}"
+    );
+    assert_eq!(
+        graph.record.basis,
+        fsl_replay::SettlementBasis::DecisiveCounterexample,
+        "{graph:?}"
+    );
+    assert_eq!(
+        graph.record.execution,
+        fsl_replay::Execution::Completed,
+        "a completed refutation includes successful replay: {graph:?}"
+    );
+    assert!(graph.counterexample.is_some(), "FR-393 evidence: {graph:?}");
+    let evidence = &item["counterexample"]["undefined"];
+    assert_eq!(evidence["type"], "undefined-evaluation", "{item}");
+    assert_eq!(evidence["cause"], "division-by-zero", "{item}");
+    assert_eq!(evidence["where"]["position"], expected_position, "{item}");
+    assert!(evidence["where"]["state_key"]["key"].is_string(), "{item}");
+    assert!(evidence["where"]["locus"]["occurrence"].is_object(), "{item}");
+    match expected_locus {
+        "target" => assert!(evidence["where"]["predicate"].is_string(), "{item}"),
+        "guard" => assert!(evidence["where"]["transition"].is_object(), "{item}"),
+        "terminal" | "constraint" => {
+            assert!(evidence["where"].get("transition").is_none(), "{item}")
+        }
+        _ => panic!("known undefined locus: {expected_locus}"),
+    }
+}
+
+/// FR-852-AC-16 and AC-24: at adapter level, not the command route, EN-6
+/// reports U-P target undefinedness for both forms with FR-393 evidence.
+#[trace("TC-2412", "FR-852-AC-16")]
+#[trace("TC-2412", "FR-852-AC-24")]
+#[test]
+fn fr852_gap_zone_route_refutes_undefined_target_for_always_and_unique() {
+    let source = fr852_gap_undefined_unit("U-P");
+    let run = fr852_gap_analyze(
+        "fr852-gap-zone-target",
+        &source,
+        json!([
+            {"claim": "UndefinedAlways"},
+            {"claim": "UndefinedUnique"}
+        ]),
+    );
+    for (index, item) in [run.item(0), run.item(1)].into_iter().enumerate() {
+        fr852_gap_assert_undefined_record(&item, "target", 2, run.record(index));
+        assert!(
+            run.record(index)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-6"),
+            "{:?}",
+            run.record(index)
+        );
+        assert!(
+            run.record(index)
+                .state_graph
+                .as_ref()
+                .is_some_and(|graph| graph.counterexample.is_some()),
+            "{:?}",
+            run.record(index)
+        );
+    }
+}
+
+/// FR-852-AC-18/19/26/27: at adapter level, not the command route, EN-6
+/// settles U-T and U-C for both forms with FR-393 undefined evidence.
+#[trace("TC-2412", "FR-852-AC-18")]
+#[trace("TC-2412", "FR-852-AC-19")]
+#[trace("TC-2412", "FR-852-AC-26")]
+#[trace("TC-2412", "FR-852-AC-27")]
+#[test]
+fn fr852_gap_zone_route_refutes_undefined_terminal_and_constraint() {
+    for (variant, claim, locus, name) in [
+        (
+            "U-T",
+            "UndefinedAlways",
+            "terminal",
+            "terminal-always",
+        ),
+        (
+            "U-C",
+            "UndefinedAlways",
+            "constraint",
+            "constraint-always",
+        ),
+        (
+            "U-T",
+            "UndefinedUnique",
+            "terminal",
+            "terminal-unique",
+        ),
+        (
+            "U-C",
+            "UndefinedUnique",
+            "constraint",
+            "constraint-unique",
+        ),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-zone-{name}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(variant, claim, None)]),
+        );
+        let item = run.item(0);
+        fr852_gap_assert_undefined_record(&item, locus, 2, run.record(0));
+        assert!(
+            run.record(0)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-6"),
+            "{:?}",
+            run.record(0)
+        );
+        assert!(
+            run.record(0)
+                .state_graph
+                .as_ref()
+                .is_some_and(|graph| graph.counterexample.is_some()),
+            "{:?}",
+            run.record(0)
+        );
+    }
+}
+
+/// FR-852-AC-12..15: at adapter level, not the command route, EN-1's
+/// digital-clocks method settles each source with FR-393 evidence and replay.
+#[trace("TC-2412", "FR-852-AC-12")]
+#[trace("TC-2412", "FR-852-AC-13")]
+#[trace("TC-2412", "FR-852-AC-14")]
+#[trace("TC-2412", "FR-852-AC-15")]
+#[test]
+fn fr852_gap_digital_clocks_refutes_all_undefined_sources() {
+    for (variant, claim, locus, name, position) in [
+        ("U-P", "UndefinedTarget", "target", "target", 0),
+        ("U-G", "ReplyPossible", "guard", "guard", 2),
+        ("U-T", "ReplyPossible", "terminal", "terminal", 2),
+        ("U-C", "ReplyPossible", "constraint", "constraint", 2),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-digital-{name}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(
+                variant,
+                claim,
+                Some(json!({"method": "digital-clocks"}))
+            )]),
+        );
+        let item = run.item(0);
+        fr852_gap_assert_undefined_record(&item, locus, position, run.record(0));
+        assert!(
+            run.record(0)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-1"),
+            "{:?}",
+            run.record(0)
+        );
+        assert!(
+            run.record(0)
+                .state_graph
+                .as_ref()
+                .is_some_and(|graph| graph.counterexample.is_some()),
+            "{:?}",
+            run.record(0)
+        );
+    }
+}
+
+/// FR-852-AC-20..23 and AC-28..31: at adapter level, not the command route,
+/// EN-1 returns the exact digital-clocks decline for each source and form.
+#[trace("TC-2412", "FR-852-AC-20")]
+#[trace("TC-2412", "FR-852-AC-21")]
+#[trace("TC-2412", "FR-852-AC-22")]
+#[trace("TC-2412", "FR-852-AC-23")]
+#[trace("TC-2412", "FR-852-AC-28")]
+#[trace("TC-2412", "FR-852-AC-29")]
+#[trace("TC-2412", "FR-852-AC-30")]
+#[trace("TC-2412", "FR-852-AC-31")]
+#[test]
+fn fr852_gap_digital_clocks_declines_unsupported_forms_for_all_sources() {
+    for (variant, claim, requested_form, expected_name) in [
+        (
+            "U-P",
+            "UndefinedAlways",
+            "always-possible",
+            "always possible",
+        ),
+        ("U-G", "UndefinedAlways", "always-possible", "always possible"),
+        ("U-T", "UndefinedAlways", "always-possible", "always possible"),
+        ("U-C", "UndefinedAlways", "always-possible", "always possible"),
+        ("U-P", "UndefinedUnique", "unique-path", "unique path"),
+        ("U-G", "UndefinedUnique", "unique-path", "unique path"),
+        ("U-T", "UndefinedUnique", "unique-path", "unique path"),
+        ("U-C", "UndefinedUnique", "unique-path", "unique path"),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-decline-{variant}-{requested_form}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(
+                variant,
+                claim,
+                Some(json!({"method": "digital-clocks"}))
+            )]),
+        );
+        let item = run.item(0);
+        assert!(item.to_string().contains("not_digitisable"), "{item}");
+        assert!(item.to_string().contains(expected_name), "{item}");
+        assert!(
+            matches!(
+                &run.record(0).settlement,
+                fsl_analyze::analyze::Settlement::Terminal(_)
+            ),
+            "the EN-1 request settles its decline: {:?}",
+            run.record(0)
+        );
+        assert!(
+            run.record(0)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-1"),
+            "the decline uses the EN-1 backend: {:?}",
+            run.record(0)
+        );
+        assert!(
+            run.record(0).state_graph.is_none(),
+            "a declined form does not search: {:?}",
+            run.record(0)
+        );
     }
 }
