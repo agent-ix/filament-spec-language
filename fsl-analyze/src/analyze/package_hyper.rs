@@ -248,7 +248,7 @@ impl<'a> PackageHyperSubject<'a> {
         }
     }
 
-    #[implements("FR-940-AC-17")]
+    #[implements("FR-940-AC-17", "FR-181-AC-10")]
     #[allow(clippy::too_many_arguments)]
     fn single_existential(
         &self,
@@ -262,7 +262,7 @@ impl<'a> PackageHyperSubject<'a> {
     ) -> EngineReport {
         use fsl_replay::{StateGraphMethod, StateGraphPropertyForm, TerminalValue};
 
-        if clause.parameters().len() > 1 {
+        if !clause.parameters().is_empty() {
             return EngineReport::Refused(Refusal::Unsupported(super::items::NOT_YET));
         }
         let [system] = systems else {

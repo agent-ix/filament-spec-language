@@ -1076,12 +1076,27 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     }
 
     /// The decision over every instance (FR-240, FR-126).
-    #[implements("FR-232-AC-3", "FR-243-AC-8")]
+    #[implements("FR-232-AC-3", "FR-240-AC-4", "FR-243-AC-8")]
     fn decide(&mut self, automaton: &mut PositionAutomaton) -> Result<ModelCheckOutcome, Halt> {
         let system = self.timed().system();
         let instances = system
             .instances(&self.request.clause.over().1)
             .map_err(|_| DigitalRefusal::Fault("instances"))?;
+        // FR-240 and FR-232 "Vacuity": establish that a timed behaviour is
+        // admitted before allowing a finite bad prefix to refute the claim.
+        if let Some(instance) = instances.first() {
+            let mut product = Product::default();
+            self.build(&mut product, automaton, true, instance)?;
+            let tail = product.vertices.iter().any(|vertex| vertex.tail);
+            let model = self.fair_model(&product, automaton, true, true)?;
+            if !tail && self.fair_cycle(&product, &model)?.is_none() {
+                self.non_zeno = Some(NonZeno::Refuted);
+                return Ok(ModelCheckOutcome::Undecided {
+                    cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
+                    stats: self.stats,
+                });
+            }
+        }
         for instance in &instances {
             if let Some(counterexample) = self.initial_bad_prefix(instance)? {
                 return Ok(self.violated(counterexample));
@@ -1112,21 +1127,6 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             let without_divergence = self.fair_model(&product, automaton, false, false)?;
             if self.fair_cycle(&product, &without_divergence)?.is_some() {
                 self.non_zeno = Some(NonZeno::Assumed);
-            }
-        }
-        // FR-240 and FR-232 "Vacuity": a proof needs a fair time-divergent
-        // behaviour or a quiescent state, with or without a declared fairness.
-        if let Some(instance) = instances.first() {
-            let mut product = Product::default();
-            self.build(&mut product, automaton, true, instance)?;
-            let tail = product.vertices.iter().any(|vertex| vertex.tail);
-            let model = self.fair_model(&product, automaton, true, true)?;
-            if !tail && self.fair_cycle(&product, &model)?.is_none() {
-                self.non_zeno = Some(NonZeno::Refuted);
-                return Ok(ModelCheckOutcome::Undecided {
-                    cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
-                    stats: self.stats,
-                });
             }
         }
         if self.non_zeno.is_none() {
