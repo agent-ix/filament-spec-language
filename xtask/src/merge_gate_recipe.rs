@@ -4862,4 +4862,13 @@ mod tests {
             "{error}"
         );
     }
+
+    #[test]
+    #[trace("NFR-142-AC-8")]
+    fn repository_declares_xtask_cargo_alias() {
+        assert!(
+            include_str!("../../.cargo/config.toml")
+                .contains("xtask = \"run --locked -p xtask --\"")
+        );
+    }
 }
