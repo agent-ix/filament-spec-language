@@ -1235,6 +1235,72 @@ fn a_source_population_is_visible_only_in_the_unit_that_declares_it() {
         .expect("the declaring unit sees its population");
 }
 
+/// FR-480's package namespace refuses repeated native declaration names
+/// across source units, so a scheme-less source population suffix is unique.
+#[trace("FR-480-AC-2")]
+#[test]
+fn source_populations_with_one_name_across_units_are_ambiguous() {
+    let first = format!("{UNIT_PROFILES}object First {{ population lamps; }}");
+    let second = format!("{UNIT_PROFILES}object Second {{ population lamps; }}");
+    let units = [("a", first.as_str()), ("b", second.as_str())];
+
+    match crate::model_operations::try_assemble_units(&units, &[]) {
+        Err(refusal) => {
+            assert_eq!(refusal.errors.len(), 2, "{refusal:?}");
+            assert!(
+                refusal.errors.iter().all(|error| {
+                    matches!(
+                        &error.cause,
+                        AssemblyCause::AmbiguousTypeName {
+                            name,
+                            candidates,
+                            ..
+                        } if name == "lamps" && candidates.len() == 2
+                    )
+                }),
+                "a duplicate source population name must be ambiguous: {refusal:?}"
+            );
+            let mut observed_spans: Vec<_> = refusal
+                .errors
+                .iter()
+                .map(|error| (error.span.start, error.span.end))
+                .collect();
+            observed_spans.sort_unstable();
+            let mut declaration_spans: Vec<_> = [first.as_str(), second.as_str()]
+                .into_iter()
+                .map(|unit| {
+                    let source = format!("language \"ix:native\" edition \"1-draft\";\n{unit}\n");
+                    let start = source.find("lamps").expect("each unit declares lamps");
+                    (start, start + "lamps".len())
+                })
+                .collect();
+            declaration_spans.sort_unstable();
+            assert_eq!(
+                observed_spans, declaration_spans,
+                "the ambiguity names the lamps declaration in test:a and test:b"
+            );
+        }
+        Ok(declarations) => {
+            let refusals = finish(declarations)
+                .expect_err("two source units cannot admit the same population name");
+            assert!(
+                refusals.iter().any(|refusal| {
+                    refusal.cause.code() == Code::AmbiguousDeclaration
+                        && refusal.cause.catalog_code().is_some_and(|catalog| {
+                            catalog.cause() == "ambiguous-name"
+                        })
+                        && matches!(&*refusal.cause, CheckCause::AmbiguousName { name, .. } if name == "lamps")
+                }),
+                "the duplicate source population name must be ambiguous: {refusals:?}"
+            );
+            let rendered = format!("{refusals:?}");
+            assert!(rendered.contains("lamps"), "{rendered}");
+            assert!(rendered.contains("test:a"), "{rendered}");
+            assert!(rendered.contains("test:b"), "{rendered}");
+        }
+    }
+}
+
 const UNIT_TEMPORAL_PROFILE: &str = "profile t = \"filament.temporal.infinite-trace/v1\";\n";
 
 /// A temporal clause over `over_type` whose body names the population `orders`.

@@ -128,7 +128,13 @@ fn objective(checked: &CheckedSynthesis) -> PlanObjective {
 }
 
 /// Run `plan` over the plan synthesis.
-#[implements("FR-1012-AC-12", "FR-1012-AC-13", "FR-1013-AC-3")]
+#[implements(
+    "FR-1012-AC-12",
+    "FR-1012-AC-13",
+    "FR-1013-AC-3",
+    "FR-569-AC-9",
+    "FR-480-AC-2"
+)]
 pub(super) fn run(
     plan: PlanRun<'_, '_>,
     overrides: &super::RequestOverrides<'_>,
@@ -177,7 +183,12 @@ pub(super) fn run(
         universes: vec![selection],
         ..SubjectSelection::default()
     };
-    let binding = subject.binding(packages, &documents);
+    let binding = subject
+        .binding_with_source_packages(packages, &documents, package.graph().source_packages())
+        .map_err(|ambiguity| RunCause::SynthesisSnapshot {
+            file: initial.to_owned(),
+            record: Box::new(ambiguity.admission_record()),
+        })?;
     let effective = effective_limits(
         RunRoute::PlanSynthesis,
         RequestLimits {
