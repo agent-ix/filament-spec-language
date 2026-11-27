@@ -1099,7 +1099,9 @@ fn native_result_two_refuses_an_extraction_map_with_no_segments() {
     let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     document["extraction"]["map"]["segments"] = json!([]);
     let edited = serde_json::to_vec(&document).unwrap();
-    let error = crate::spine::read_native_run_result(&edited).unwrap_err();
+    let Err(error) = crate::spine::read_native_run_result(&edited) else {
+        panic!("an empty segment array must be refused");
+    };
     assert!(
         error.to_string().contains("extraction.map.segments"),
         "{error}"
