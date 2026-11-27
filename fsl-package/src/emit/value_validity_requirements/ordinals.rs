@@ -59,19 +59,6 @@ struct NodeMapping {
     slots: Vec<Slot>,
 }
 
-impl NodeMapping {
-    fn source_slots(mapping: Mapping) -> Self {
-        let mut slots: Vec<_> = mapping
-            .iter()
-            .filter_map(|&(old, new)| new.map(|ordinal| Slot::Source { old, ordinal }))
-            .collect();
-        slots.sort_by_key(|slot| match slot {
-            Slot::Source { ordinal, .. } | Slot::Synthetic { ordinal, .. } => *ordinal,
-        });
-        Self { slots }
-    }
-}
-
 /// The new ordinal of each renumbered expression occurrence, by node.
 #[derive(Default)]
 pub(in crate::emit) struct Renumbering {
@@ -450,7 +437,7 @@ pub(in crate::emit) fn rewalk(
     base_nodes: &[CheckedSemanticNodeV2],
     base_source_map: &[CheckedSourceMapEntry],
     nodes: &mut [CheckedSemanticNodeV2],
-    source_map: &mut [CheckedSourceMapEntry],
+    source_map: &mut Vec<CheckedSourceMapEntry>,
 ) -> Result<BTreeMap<CheckedNodeId, Mapping>, EmitRefusal> {
     let carry = |reason| EmitRefusal::RequirementRowCarry(reason);
     let finals = nodes
@@ -464,27 +451,29 @@ pub(in crate::emit) fn rewalk(
         .map(|node| {
             node.occurrences
                 .iter()
-                .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression)
-                .count()
-                > 1
+                .any(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression)
         })
         .collect();
     let owners = |nodes: &[CheckedSemanticNodeV2],
                   source_map: &[CheckedSourceMapEntry]|
-     -> Result<HashMap<usize, Vec<(usize, bool)>>, EmitRefusal> {
-        let mut owners = HashMap::<usize, Vec<(usize, bool)>>::new();
-        let walked = frames::visits(nodes, source_map, &keep);
-        for visit in walked {
-            owners
-                .entry(visit.node)
-                .or_default()
-                .push((visit.owner, visit.measure));
+     -> HashMap<usize, Vec<WalkVisit>> {
+        let mut owners = HashMap::<usize, Vec<WalkVisit>>::new();
+        for visit in frames::visits(nodes, source_map, &keep) {
+            owners.entry(visit.node).or_default().push(WalkVisit {
+                owner: visit.owner,
+                measure: visit.measure,
+                lexical: (
+                    visit.syntax_owner,
+                    visit.syntax_measure,
+                    visit.syntax_ordinal,
+                ),
+            });
         }
-        Ok(owners)
+        owners
     };
-    let before = owners(base_nodes, base_source_map)?;
-    let after = owners(finals, source_map)?;
-    let mut changed = BTreeMap::<usize, Mapping>::new();
+    let before = owners(base_nodes, base_source_map);
+    let after = owners(finals, source_map);
+    let mut changed = BTreeMap::<usize, NodeMapping>::new();
     for (position, base) in &before {
         let Some(now) = after.get(position) else {
             return Err(carry("a rekey changed which nodes the owner walk reaches"));
@@ -494,50 +483,131 @@ pub(in crate::emit) fn rewalk(
                 "a rekey changed how often the owner walk visits a node",
             ));
         }
-        // The j-th visit of an owner takes, in the new order, the ordinal the
-        // owner's j-th visit is given there.
+        // The j-th visit of an owner takes, in the new order, the place the
+        // owner's j-th visit has there.
         let mut seen = HashMap::<(usize, bool), usize>::new();
         let mut places = HashMap::<(usize, bool, usize), usize>::new();
-        for (new, use_of_visit) in now.iter().enumerate() {
-            let nth = seen.entry(*use_of_visit).or_default();
-            places.insert((use_of_visit.0, use_of_visit.1, *nth), new);
+        for (new, visit) in now.iter().enumerate() {
+            let nth = seen.entry((visit.owner, visit.measure)).or_default();
+            places.insert((visit.owner, visit.measure, *nth), new);
             *nth += 1;
         }
         let mut seen = HashMap::<(usize, bool), usize>::new();
-        let mut mapping: Mapping = Vec::with_capacity(base.len());
-        for (old, use_of_visit) in base.iter().enumerate() {
-            let nth = seen.entry(*use_of_visit).or_default();
-            let new = *places
-                .get(&(use_of_visit.0, use_of_visit.1, *nth))
-                .ok_or(carry("a rekey changed an owner's visits of a node"))?;
+        let mut placed = Vec::with_capacity(base.len());
+        for visit in base {
+            let nth = seen.entry((visit.owner, visit.measure)).or_default();
+            placed.push(
+                *places
+                    .get(&(visit.owner, visit.measure, *nth))
+                    .ok_or(carry("a rekey changed an owner's visits of a node"))?,
+            );
             *nth += 1;
-            mapping.push((old as u64, Some(new as u64)));
         }
         let listed = base_nodes[*position]
             .occurrences
             .iter()
             .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression)
             .count();
-        // Uses the walk does not reach keep their ordinals after the visits.
-        mapping.extend((mapping.len()..listed).map(|rest| (rest as u64, Some(rest as u64))));
-        if mapping.iter().any(|(old, new)| Some(*old) != *new) {
-            changed.insert(*position, mapping);
+        let lexical: Vec<_> = base.iter().map(|visit| visit.lexical).collect();
+        let slots = rewalk_slots(listed, &lexical, &placed).ok_or(carry(
+            "a rekey moved a visit whose lexical occurrence has no source region",
+        ))?;
+        let identity = slots.len() == listed
+            && slots.iter().enumerate().all(|(at, slot)| {
+                matches!(*slot, Slot::Source { old, ordinal } if old == at as u64 && ordinal == old)
+            });
+        if !identity {
+            changed.insert(*position, NodeMapping { slots });
         }
     }
-    let applied: BTreeMap<_, _> = changed
-        .iter()
-        .map(|(&position, mapping)| (position, NodeMapping::source_slots(mapping.clone())))
-        .collect();
-    let mut rebuilt_source_map = source_map.to_vec();
-    apply(nodes, &mut rebuilt_source_map, &applied)?;
-    if rebuilt_source_map.len() != source_map.len() {
-        return Err(carry("a rekey changed the source-map occurrence count"));
-    }
-    source_map.clone_from_slice(&rebuilt_source_map);
+    let mut rebuilt_source_map = source_map.clone();
+    apply(nodes, &mut rebuilt_source_map, &changed)?;
+    *source_map = rebuilt_source_map;
     Ok(changed
         .into_iter()
-        .map(|(position, mapping)| (nodes[position].node_id.clone(), mapping))
+        .map(|(position, mapping)| {
+            let mut moved: Mapping = mapping
+                .slots
+                .iter()
+                .filter_map(|slot| match *slot {
+                    Slot::Source { old, ordinal } => Some((old, Some(ordinal))),
+                    Slot::Synthetic { .. } => None,
+                })
+                .collect();
+            moved.sort_unstable();
+            (nodes[position].node_id.clone(), moved)
+        })
         .collect())
+}
+
+/// One visit of the owner walk to a node, as a rekey re-reads it.
+struct WalkVisit {
+    owner: usize,
+    measure: bool,
+    /// The lexical occurrence the visit is inside: the function whose syntax
+    /// it is, whether that is its measure, and its place among the node's
+    /// visits in that syntax scope.
+    lexical: (usize, bool, usize),
+}
+
+/// The slots of a node whose owner walk was reordered by a rekey. `listed` is
+/// the number of expression occurrences the base lists; the first of them
+/// belong, in order, to the base's visits (a visit's slot is a source use or a
+/// synthetic copy of one) and any beyond the visits are source uses the walk
+/// never reached. `lexical` names each base visit's lexical occurrence and
+/// `placed[i]` the place base visit `i` takes in the new walk. A visit keeps
+/// its occurrence and moves to its new place; a visit before the last moved
+/// one that had none gets a synthetic slot copying the region of an
+/// occurrence of the same lexical place. `None` when no such occurrence
+/// exists.
+fn rewalk_slots(
+    listed: usize,
+    lexical: &[(usize, bool, usize)],
+    placed: &[usize],
+) -> Option<Vec<Slot>> {
+    let numbered = listed.min(placed.len());
+    let end = placed[..numbered]
+        .iter()
+        .map(|place| place + 1)
+        .max()
+        .unwrap_or(0);
+    let mut at_place = vec![None; end];
+    for (visit, &place) in placed.iter().enumerate() {
+        if place < end {
+            at_place[place] = Some(visit);
+        }
+    }
+    let mut region_of = HashMap::<(usize, bool, usize), u64>::new();
+    for visit in 0..numbered {
+        region_of.entry(lexical[visit]).or_insert(visit as u64);
+    }
+    let mut slots = Vec::with_capacity(end + listed - numbered);
+    for place in 0..end {
+        let ordinal = place as u64;
+        let visit = at_place[place]?;
+        slots.push(if visit < numbered {
+            Slot::Source {
+                old: visit as u64,
+                ordinal,
+            }
+        } else {
+            // A place no numbered visit holds borrows the next numbered
+            // visit's occurrence, as `renumber` borrows the next future use.
+            let from = region_of.get(&lexical[visit]).copied().or_else(|| {
+                (place + 1..end)
+                    .find_map(|later| at_place[later].filter(|&v| v < numbered))
+                    .map(|v| v as u64)
+            })?;
+            Slot::Synthetic { from, ordinal }
+        });
+    }
+    for old in numbered..listed {
+        slots.push(Slot::Source {
+            old: old as u64,
+            ordinal: (end + old - numbered) as u64,
+        });
+    }
+    Some(slots)
 }
 
 /// Move the checked-term rows that name a renumbered expression occurrence of
@@ -630,5 +700,51 @@ fn relabel_term_data_inner(
                 right.term_ordinal,
             ))
         });
+    }
+}
+
+#[cfg(test)]
+mod rewalk_tests {
+    use super::{rewalk_slots, Slot};
+
+    fn pairs(slots: &[Slot]) -> Vec<(bool, u64, u64)> {
+        slots
+            .iter()
+            .map(|slot| match *slot {
+                Slot::Source { old, ordinal } => (true, old, ordinal),
+                Slot::Synthetic { from, ordinal } => (false, from, ordinal),
+            })
+            .collect()
+    }
+
+    /// QSL-3559: two visits listed one slot each swap places: each occurrence
+    /// follows its visit and no synthetic slot appears.
+    #[test]
+    fn a_rekey_that_swaps_two_numbered_visits_moves_their_occurrences() {
+        let lexical = [(0, false, 0), (1, false, 0)];
+        let slots = rewalk_slots(2, &lexical, &[1, 0]).unwrap();
+        assert_eq!(pairs(&slots), [(true, 1, 0), (true, 0, 1)]);
+    }
+
+    /// QSL-3559: the base numbers two of three visits (a third visit comes
+    /// after the last source use, so it has no slot). A rekey moves that
+    /// third visit first and the numbered ones behind it: the moved visit now
+    /// precedes numbered visits, so it takes a synthetic slot that copies the
+    /// region of the occurrence of its lexical place, and the numbered
+    /// visits shift by one.
+    #[test]
+    fn a_rekey_moving_an_unnumbered_visit_first_gives_it_a_synthetic_slot() {
+        let lexical = [(0, false, 0), (1, false, 0), (0, false, 0)];
+        let slots = rewalk_slots(2, &lexical, &[1, 2, 0]).unwrap();
+        assert_eq!(pairs(&slots), [(false, 0, 0), (true, 0, 1), (true, 1, 2)]);
+    }
+
+    /// A visit moved before the numbered ones whose lexical place no numbered
+    /// visit holds borrows the next numbered visit's occurrence.
+    #[test]
+    fn an_unnumbered_visit_of_an_unseen_place_borrows_the_next_numbered_one() {
+        let lexical = [(0, false, 0), (1, false, 0), (2, false, 0)];
+        let slots = rewalk_slots(2, &lexical, &[1, 2, 0]).unwrap();
+        assert_eq!(pairs(&slots), [(false, 0, 0), (true, 0, 1), (true, 1, 2)]);
     }
 }

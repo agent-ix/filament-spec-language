@@ -1156,7 +1156,7 @@ fn relabel_rows(
 pub(super) fn carry_rows(
     base: &filament_contract_model::CheckedPackageV2,
     nodes: &mut [CheckedSemanticNodeV2],
-    source_map: &mut [CheckedSourceMapEntry],
+    source_map: &mut Vec<CheckedSourceMapEntry>,
 ) -> Result<CarriedRows, EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
