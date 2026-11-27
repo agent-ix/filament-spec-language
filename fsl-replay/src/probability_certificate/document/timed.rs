@@ -5979,7 +5979,8 @@ mod quiescent_infinity_tests {
         let choices = if reaches {
             vec![vec![ProbabilityEdge {
                 target: key("T"),
-                probability: Rational::new(Integer::from(1), Integer::from(1)).expect("nonzero"),
+                probability: Rational::new(Integer::from(1i64), Integer::from(1i64))
+                    .expect("nonzero"),
             }]]
         } else {
             Vec::new()
@@ -6025,7 +6026,7 @@ mod quiescent_infinity_tests {
     }
 
     fn at_least() -> Bound {
-        Bound::AtLeast(Rational::new(Integer::from(1), Integer::from(1)).expect("nonzero"))
+        Bound::AtLeast(Rational::new(Integer::from(1i64), Integer::from(1i64)).expect("nonzero"))
     }
 
     /// FR-921-AC-6: a quiescent state keeps its enabled steps, so a target the
