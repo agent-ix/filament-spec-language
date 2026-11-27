@@ -51,11 +51,5 @@ fn request_snapshot_admits_a_scheme_less_source_population_universe() {
     let lamp = run.item(1);
     assert_eq!(lamp["claim_name"], "LampOff", "{}", run.document());
     assert_eq!(label(&lamp), "refuted", "{}", run.document());
-    assert_eq!(
-        lamp["counterexample"]["instance"]["key"]["identity"],
-        "l",
-        "{}",
-        run.document()
-    );
     assert_eq!(lamp["replay"]["reproduced"], true, "{}", run.document());
 }

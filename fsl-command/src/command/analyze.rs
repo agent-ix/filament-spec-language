@@ -1165,6 +1165,7 @@ pub(super) struct RoutedItems {
 ///
 /// A whole-request refusal (FR-624) of the subject binding or source
 /// provision, or an internal fault.
+#[implements("FR-480-AC-2")]
 pub(super) fn settle_items<'u>(
     package: &fsl_package::CheckedPackage,
     packages: &fsl_semantics::model::intake::PackageInput,
@@ -1189,11 +1190,19 @@ pub(super) fn settle_items<'u>(
             .map_err(|_| RunCause::AnalyzeFault)?;
     }
     check_memory(package, &routed.memory)?;
-    let binding = routed.subject.binding_with_source_packages(
-        packages,
-        &routed.documents,
-        package.graph().source_packages(),
-    );
+    let binding = routed
+        .subject
+        .binding_with_source_packages(
+            packages,
+            &routed.documents,
+            package.graph().source_packages(),
+        )
+        .map_err(|ambiguity| RunCause::AnalyzePackage {
+            code: fsl_foundation::diagnostic::Code::AmbiguousDeclaration,
+            cause: Some("ambiguous-name".to_owned()),
+            pointer: None,
+            message: ambiguity.to_string(),
+        })?;
     let resolved = resolve_items(
         package,
         &routed.subject,
