@@ -98,6 +98,23 @@ impl Renumbering {
         relabel_term_data_inner(&by_id, &Synthetics::new(), data);
     }
 
+    /// Relabel the equality rows to the final owner-walk occurrence ordinals.
+    pub(in crate::emit) fn relabel_equality_rows(
+        &self,
+        ids: &HashMap<NodeKey, CheckedNodeId>,
+        producers: &mut Vec<crate::emit::EqualityProducerEmissionRow>,
+        facts: &mut Vec<crate::emit::EqualityFactWitnessRow>,
+        source_map: &[CheckedSourceMapEntry],
+    ) {
+        relabel_equality_rows(
+            producers,
+            facts,
+            &self.by_id(ids),
+            &Synthetics::new(),
+            source_map,
+        );
+    }
+
     fn by_id(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> BTreeMap<CheckedNodeId, Mapping> {
         let mut by_id = BTreeMap::new();
         for (key, mapping) in &self.by_node {
@@ -636,30 +653,124 @@ pub(in crate::emit) fn relabel_term_data(
     relabel_term_data_inner(by_id, synthetics, data);
 }
 
-/// A copy of each row that names the use a synthetic occurrence copies, at the
-/// synthetic occurrence's ordinal.
+/// The rows of a node a rekey gave synthetic occurrences, one copy per new
+/// occurrence. The rows of an application differ only in their ordinal (the
+/// schedule, operands and facts are the application's), so the copy follows the
+/// row of the use the occurrence copies when that use has one and the node's
+/// first row otherwise. `at` names a row's application and occurrence.
 fn synthetic_copies<T: Clone>(
     rows: &[T],
     synthetics: &Synthetics,
     at: impl Fn(&mut T) -> (&CheckedNodeId, &mut CheckedOccurrence),
 ) -> Vec<T> {
     let mut copies = Vec::new();
-    for row in rows {
-        let mut probe = row.clone();
-        let (application, occurrence) = at(&mut probe);
-        if occurrence.role != CheckedOccurrenceRole::Expression {
-            continue;
+    for (application, wanted) in synthetics {
+        let mut own: Vec<(u64, &T)> = Vec::new();
+        for row in rows {
+            let mut probe = row.clone();
+            let (id, occurrence) = at(&mut probe);
+            if id == application && occurrence.role == CheckedOccurrenceRole::Expression {
+                own.push((occurrence.ordinal, row));
+            }
         }
-        let old = occurrence.ordinal;
-        for &(from, ordinal) in synthetics.get(application).into_iter().flatten() {
-            if from == old {
-                let mut copy = row.clone();
-                at(&mut copy).1.ordinal = ordinal;
-                copies.push(copy);
+        // Rows of one application at one occurrence are all copied together.
+        for &(from, ordinal) in wanted {
+            let source = if own.iter().any(|(old, _)| *old == from) {
+                from
+            } else if let Some(&(first, _)) = own.iter().min_by_key(|(old, _)| *old) {
+                first
+            } else {
+                continue;
+            };
+            for (old, row) in &own {
+                if *old == source {
+                    let mut copy = (*row).clone();
+                    at(&mut copy).1.ordinal = ordinal;
+                    copies.push(copy);
+                }
             }
         }
     }
     copies
+}
+
+/// Move the equality rows that name a renumbered expression occurrence to its
+/// new ordinal, in the row, in the source-map entry it holds (the package's own
+/// entry of that occurrence) and in the exact location of a producer row, and
+/// give each synthetic occurrence the walk now has a copy of the row of the use
+/// it copies (FSpec FR-322: the walk's ordinals are the occurrences the rows
+/// name). The one function the checker's emission and a monitor re-encoder
+/// share.
+pub(in crate::emit) fn relabel_equality_rows(
+    producers: &mut Vec<crate::emit::EqualityProducerEmissionRow>,
+    facts: &mut Vec<crate::emit::EqualityFactWitnessRow>,
+    by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    synthetics: &Synthetics,
+    source_map: &[CheckedSourceMapEntry],
+) {
+    if by_id.is_empty() {
+        return;
+    }
+    fn relabel<T: Clone>(
+        rows: &mut Vec<T>,
+        by_id: &BTreeMap<CheckedNodeId, Mapping>,
+        synthetics: &Synthetics,
+        at: impl Fn(&mut T) -> (&CheckedNodeId, &mut CheckedOccurrence),
+    ) {
+        let copies = synthetic_copies(rows, synthetics, &at);
+        for row in rows.iter_mut() {
+            let (id, occurrence) = at(row);
+            if occurrence.role != CheckedOccurrenceRole::Expression {
+                continue;
+            }
+            let Some(mapping) = by_id.get(id) else {
+                continue;
+            };
+            let Ok(position) = mapping.binary_search_by_key(&occurrence.ordinal, |(old, _)| *old)
+            else {
+                continue;
+            };
+            if let Some(new) = mapping[position].1 {
+                occurrence.ordinal = new;
+            }
+        }
+        rows.extend(copies);
+    }
+    relabel(producers, by_id, synthetics, |row| {
+        (&row.checked_node, &mut row.occurrence)
+    });
+    relabel(facts, by_id, synthetics, |row| {
+        (&row.checked_application, &mut row.occurrence)
+    });
+    let entries: BTreeMap<(&CheckedNodeId, u64), &CheckedSourceMapEntry> = source_map
+        .iter()
+        .filter(|entry| entry.role == CheckedOccurrenceRole::Expression)
+        .filter(|entry| by_id.contains_key(&entry.node_id))
+        .map(|entry| ((&entry.node_id, entry.ordinal), entry))
+        .collect();
+    for row in producers.iter_mut() {
+        if row.occurrence.role == CheckedOccurrenceRole::Expression {
+            if let Some(entry) = entries.get(&(&row.checked_node, row.occurrence.ordinal)) {
+                row.source_map_entry = (*entry).clone();
+            }
+        }
+        if row.location.occurrence().ordinal() != row.occurrence.ordinal {
+            row.location = filament_exact::Location::new(
+                row.location.node().clone(),
+                filament_exact::Origin::new(
+                    row.location.occurrence().role().clone(),
+                    row.occurrence.ordinal,
+                ),
+            );
+        }
+    }
+    for row in facts.iter_mut() {
+        if row.occurrence.role == CheckedOccurrenceRole::Expression {
+            if let Some(entry) = entries.get(&(&row.checked_application, row.occurrence.ordinal)) {
+                row.source_map_entry = (*entry).clone();
+            }
+        }
+    }
 }
 
 fn relabel_term_data_inner(

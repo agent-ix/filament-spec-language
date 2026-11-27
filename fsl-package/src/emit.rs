@@ -8464,13 +8464,13 @@ fn emit_package_nodes(
         &source_map,
     )?;
     meter.charge(&claim_names)?;
-    let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
+    let mut equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &producer_node_ids,
         &source_map,
         &omitted_keys,
     )?;
-    let equality_fact_witness_rows = equality_fact_witness_rows(
+    let mut equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
         &producer_node_ids,
         &nodes,
@@ -8497,6 +8497,20 @@ fn emit_package_nodes(
             );
             value_validity.renumbering.relabel_term_data(&row_ids, data);
         }
+    }
+    if value_validity.renumbering.renumbers() {
+        let mut row_ids = emitted_node_ids.clone();
+        row_ids.extend(
+            producer_node_ids
+                .iter()
+                .map(|(key, id)| (key.clone(), id.clone())),
+        );
+        value_validity.renumbering.relabel_equality_rows(
+            &row_ids,
+            &mut equality_producer_identity_rows,
+            &mut equality_fact_witness_rows,
+            &source_map,
+        );
     }
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()

@@ -1469,7 +1469,13 @@ pub(super) fn finish(
     #[cfg(test)]
     WRITTEN_NODES.with(|written| *written.borrow_mut() = nodes.clone());
     let mut rows = carry_rows(retained, changes);
-    relabel_equality_rows(&mut rows, &renumbered, &synthetics);
+    super::value_validity_requirements::ordinals::relabel_equality_rows(
+        &mut rows.equality_producer_identity_rows,
+        &mut rows.equality_fact_witness_rows,
+        &renumbered,
+        &synthetics,
+        &source_map,
+    );
     follow_final_bindings(&mut rows.selected_source_record_rows, &nodes)?;
     follow_final_positions(&mut rows.selected_source_tuple_rows, &nodes)?;
     follow_final_collections(&mut rows.selected_source_collection_rows, &nodes)?;
@@ -1512,76 +1518,6 @@ pub(super) fn finish(
 
 /// Carry the original package-local/emitted filter onto final rows. This is
 /// only a materialization hint: IR still validates every returned native row.
-/// Move the equality rows that name a renumbered expression occurrence to its
-/// new ordinal, in the row and in the source-map entry it holds, and give each
-/// synthetic occurrence the walk now has a copy of the row of the use it copies
-/// (FSpec FR-322: the walk's ordinals are the occurrences the rows name).
-fn relabel_equality_rows(
-    rows: &mut RetainedRows,
-    renumbered: &std::collections::BTreeMap<
-        CheckedNodeId,
-        super::value_validity_requirements::ordinals::Mapping,
-    >,
-    synthetics: &super::value_validity_requirements::ordinals::Synthetics,
-) {
-    fn relabel<T: Clone>(
-        rows: &mut Vec<T>,
-        application: impl Fn(&T) -> &CheckedNodeId,
-        entry: impl Fn(&mut T) -> (&mut CheckedOccurrence, &mut CheckedSourceMapEntry),
-        renumbered: &std::collections::BTreeMap<
-            CheckedNodeId,
-            super::value_validity_requirements::ordinals::Mapping,
-        >,
-        synthetics: &super::value_validity_requirements::ordinals::Synthetics,
-    ) {
-        let mut copies = Vec::new();
-        for row in rows.iter_mut() {
-            let id = application(row).clone();
-            let (occurrence, source_entry) = entry(row);
-            if occurrence.role != CheckedOccurrenceRole::Expression {
-                continue;
-            }
-            let old = occurrence.ordinal;
-            for &(from, ordinal) in synthetics.get(&id).into_iter().flatten() {
-                if from == old {
-                    copies.push((ordinal, row.clone()));
-                }
-            }
-            let Some(mapping) = renumbered.get(&id) else {
-                continue;
-            };
-            let Ok(at) = mapping.binary_search_by_key(&old, |(old, _)| *old) else {
-                continue;
-            };
-            if let Some(new) = mapping[at].1 {
-                let (occurrence, source_entry) = entry(row);
-                occurrence.ordinal = new;
-                source_entry.ordinal = new;
-            }
-        }
-        for (ordinal, mut row) in copies {
-            let (occurrence, source_entry) = entry(&mut row);
-            occurrence.ordinal = ordinal;
-            source_entry.ordinal = ordinal;
-            rows.push(row);
-        }
-    }
-    relabel(
-        &mut rows.equality_producer_identity_rows,
-        |row| &row.checked_node,
-        |row| (&mut row.occurrence, &mut row.source_map_entry),
-        renumbered,
-        synthetics,
-    );
-    relabel(
-        &mut rows.equality_fact_witness_rows,
-        |row| &row.checked_application,
-        |row| (&mut row.occurrence, &mut row.source_map_entry),
-        renumbered,
-        synthetics,
-    );
-}
-
 pub(super) fn refresh_equality_membership(
     rows: &mut [super::EqualityFactWitnessRow],
     nodes: &[CheckedSemanticNodeV2],
