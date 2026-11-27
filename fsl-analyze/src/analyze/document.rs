@@ -1830,7 +1830,7 @@ fn requirement_items(
     fsl_route::request::items_from_requirements(package.graph().requirements(), registry, named)
 }
 
-#[implements("FR-940-AC-10", "FR-173-AC-3")]
+#[implements("FR-940-AC-10", "FR-173-AC-3", "FR-896-AC-8", "FR-896-AC-9", "FR-896-AC-10")]
 fn resolve_one(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -1991,6 +1991,7 @@ fn resolve_one(
         kind,
         Capability::LocalProjection | Capability::Realizability
     );
+    let protocol_global_kind = kind == Capability::GlobalConformance;
     let record = own.iter().find(|record| record.kind() == kind);
     if selection.probabilistic.is_some() && kind != Capability::ProbabilisticSatisfaction {
         return invalid_value(index, name, "probabilistic");
@@ -2177,7 +2178,11 @@ fn resolve_one(
         .subject
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
-    let protocol = if protocol_deadlock || protocol_temporal_deadlock || protocol_analysis_kind {
+    let protocol = if protocol_deadlock
+        || protocol_temporal_deadlock
+        || protocol_analysis_kind
+        || protocol_global_kind
+    {
         let owner = package.graph().protocols().iter().find(|protocol| {
             package
                 .graph()
@@ -2192,6 +2197,8 @@ fn resolve_one(
                     None => return invalid_value(index, name, "capacities"),
                 }
             }
+            // FR-896-AC-10: the deadlock-freedom item declines without a subject.protocol.
+            (Some(_), None) if protocol_global_kind && !protocol_deadlock => None,
             (Some(_), _) if protocol_analysis_kind => {
                 return invalid_member(index, name, "temporal.subject.protocol");
             }

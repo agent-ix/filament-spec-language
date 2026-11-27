@@ -2350,7 +2350,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// Supplied finite replay or recording over an admitted protocol declaration.
+    /// Resolve conformance or supplied replay/recording over a package protocol.
+    #[implements("FR-896-AC-8", "FR-896-AC-9", "FR-896-AC-10", "FR-990-AC-11")]
     fn supplied_protocol(
         &self,
         index: RequestIndex,
@@ -2388,8 +2389,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ) {
             return Ok(Resolution::Settled(refused));
         }
-        if (kind == Capability::GlobalConformance && selection.recording.is_none())
-            || !crate::protocol_analysis::recording::package_recording_supported(
+        if !(kind == Capability::GlobalConformance && selection.recording.is_none())
+            && !crate::protocol_analysis::recording::package_recording_supported(
                 &input.input(),
                 name,
             )
@@ -2406,8 +2407,45 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let candidates = self.registry.candidates(kind, named.as_ref());
         let temporal = selection.temporal.clone().unwrap_or_default();
         let own_subject = self.own_subject(index, selection)?;
-        let item_form = (kind == Capability::GlobalConformance)
-            .then(|| ItemForm::Temporal(temporal_settings(&temporal)));
+        // FR-896-AC-8/9: a `subject.protocol` binding this protocol selects
+        // the item's `over` and roles; one binding another protocol declines.
+        let mut form = temporal_settings(&temporal);
+        if kind == Capability::GlobalConformance {
+            if own_subject
+                .protocol
+                .as_ref()
+                .is_some_and(|selected| selected.protocol != name)
+            {
+                return Ok(Resolution::Settled(super::invalid_value(
+                    index,
+                    name,
+                    "temporal.subject.protocol",
+                )));
+            }
+            form.protocol = match protocol_binding(&own_subject, input) {
+                Ok(protocol) => protocol,
+                Err(member) => {
+                    return Ok(Resolution::Settled(super::invalid_value(
+                        index, name, member,
+                    )));
+                }
+            };
+        }
+        // FR-896-AC-10: a deadlock-freedom item needs an explicit protocol
+        // subject, as on the source route (FR-850-AC-2).
+        if kind == Capability::GlobalConformance
+            && form.protocol.is_none()
+            && temporal
+                .item_kind
+                .is_some_and(|item_kind| item_kind.kind() == ItemKind::DeadlockFreedom)
+        {
+            return Ok(Resolution::Settled(super::invalid_value(
+                index,
+                name,
+                "temporal.subject.protocol",
+            )));
+        }
+        let item_form = (kind == Capability::GlobalConformance).then(|| ItemForm::Temporal(form));
         Ok(Resolution::Claim(
             Box::new(ResolvedClaim {
                 item: ClaimItem {
@@ -3726,25 +3764,42 @@ impl<'a> WorkInputs<'_, 'a> {
             (_, Some(Route::SuppliedProtocol(protocol)))
                 if item.kind == Capability::GlobalConformance =>
             {
-                let recording = item
-                    .options
-                    .recording
-                    .as_ref()
-                    .and_then(|reference| self.binding.snapshots.get(reference))
-                    .map(Vec::as_slice);
-                crate::protocol_analysis::conformance::package_global_recording_item(
-                    item.request_index,
-                    crate::protocol_analysis::conformance::PackageRecordingRequest {
-                        input: self.input.input(),
-                        selected_protocol: protocol,
-                        recording_identity: item.options.recording.clone(),
-                        recording,
-                        population: item.options.population.clone(),
-                        incremental: item.options.assessment
-                            == Some(super::super::request::AssessmentMode::Incremental),
-                        replay_limits: self.limits.replay,
-                    },
-                )
+                match item.options.recording.as_ref() {
+                    Some(recording_identity) => {
+                        let recording = self
+                            .binding
+                            .snapshots
+                            .get(recording_identity)
+                            .map(Vec::as_slice);
+                        crate::protocol_analysis::conformance::package_global_recording_item(
+                            item.request_index,
+                            crate::protocol_analysis::conformance::PackageRecordingRequest {
+                                input: self.input.input(),
+                                selected_protocol: protocol,
+                                recording_identity: Some(recording_identity.clone()),
+                                recording,
+                                population: item.options.population.clone(),
+                                incremental: item.options.assessment
+                                    == Some(super::super::request::AssessmentMode::Incremental),
+                                replay_limits: self.limits.replay,
+                            },
+                        )
+                    }
+                    None => crate::protocol_analysis::conformance::package_global_behavior_item(
+                        item.request_index,
+                        self.input.input().clone(),
+                        self.binding.clone(),
+                        self.limits,
+                        protocol,
+                        item.form
+                            .as_ref()
+                            .and_then(|form| match form {
+                                ItemForm::Temporal(form) => Some(form.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default(),
+                    ),
+                }
             }
             (
                 Some(ItemForm::Temporal(form)),

@@ -425,6 +425,13 @@ pub trait PlanRules {
     /// The number of policy clauses, in the request's `policy` order.
     fn policy_count(&self) -> usize;
 
+    /// Whether any requested policy has no admitted instance. Implementations
+    /// must distinguish a non-reference `over` binding from an empty object
+    /// population.
+    fn has_empty_policy_instance(&mut self) -> Result<bool, RuleStop> {
+        Ok(false)
+    }
+
     /// Allocate the ordered policy vector before retaining any monitor.
     ///
     /// # Errors
@@ -666,11 +673,16 @@ pub enum PlanStatus {
     /// A limit, a cancellation or a rejected closure certificate stopped
     /// the search before a definite answer.
     Incomplete,
+    /// A requested policy has no admitted instance, so it cannot be read as
+    /// satisfied or violated.
+    Inconclusive,
 }
 
-/// Why a search ended `incomplete` (FSpec FR-801, FR-650).
+/// Why a search ended `incomplete` or `inconclusive` (FSpec FR-801, FR-650).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanStopCause {
+    /// The requested policy set contains a policy with no admitted instance.
+    Inconclusive(Box<fsl_replay::InconclusiveCause>),
     /// A planner limit or an evaluation-meter counter denied a charge.
     LimitReached {
         /// The member or counter name, e.g. `max_states`.
@@ -756,7 +768,8 @@ pub struct PlanResult {
     pub certified: bool,
     /// The search counts.
     pub explored: PlanExplored,
-    /// The stop cause of an `incomplete` result.
+    /// The stop cause of an `incomplete` result or the cause of an
+    /// `inconclusive` result.
     pub cause: Option<PlanStopCause>,
     /// The index of the first negative step cost, which reclassified a
     /// per-step sum as general for this run (FSpec FR-802).
@@ -1006,6 +1019,7 @@ impl From<PlanSearchError> for Stop {
 /// # Errors
 /// [`PlanSearchError`] for a model that cannot be searched and for a
 /// reported plan that fails native replay (a method failure).
+#[implements("FR-1012-AC-11")]
 pub fn search<R: PlanRules>(
     system: &ModelSystem<'_>,
     rules: &mut R,
@@ -1014,6 +1028,35 @@ pub fn search<R: PlanRules>(
     let initial = system.initial();
     if initial.len() != 1 {
         return Err(PlanSearchError::InitialStates(initial.len()));
+    }
+    match rules.has_empty_policy_instance() {
+        Ok(true) => {
+            return Ok(PlanResult {
+                status: PlanStatus::Inconclusive,
+                plan: None,
+                objective: None,
+                certificate: None,
+                certified: false,
+                explored: PlanExplored::default(),
+                cause: Some(PlanStopCause::Inconclusive(Box::new(
+                    fsl_replay::InconclusiveCause::NoInstance,
+                ))),
+                negative_step: None,
+            });
+        }
+        Ok(false) => {}
+        Err(stop) => {
+            return Ok(PlanResult {
+                status: PlanStatus::Incomplete,
+                plan: None,
+                objective: None,
+                certificate: None,
+                certified: false,
+                explored: PlanExplored::default(),
+                cause: Some(stop_cause(stop)),
+                negative_step: None,
+            });
+        }
     }
     let kind = rules.objective_kind();
     let mut dominance = kind == ObjectiveKind::StepSum && rules.merges_prefixes();
@@ -1086,6 +1129,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
         Ok(key)
     }
 
+    #[implements("FR-1012-AC-10")]
     fn explore(&mut self) -> Result<(), Stop> {
         let Some(start) = self.system.initial().into_iter().next() else {
             return Err(Stop::Error(PlanSearchError::InitialStates(0)));
