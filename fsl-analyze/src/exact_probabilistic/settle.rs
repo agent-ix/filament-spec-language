@@ -62,7 +62,8 @@ pub fn settle_product_refusal(
         ProductRefusal::NotMarkov(cause) => ExactProbBuildIssue::NotMarkov(cause),
         ProductRefusal::UndecidedSuccessor(_) => ExactProbBuildIssue::UndecidedSuccessor,
         ProductRefusal::PredicateRefused(outcome) => ExactProbBuildIssue::Predicate(outcome),
-        ProductRefusal::Translation(_) | ProductRefusal::Internal(_) => {
+        diag @ (ProductRefusal::Translation(_) | ProductRefusal::Internal(_)) => {
+            eprintln!("DIAG3468 {diag:?}");
             ExactProbBuildIssue::BrokenInvariant
         }
         ProductRefusal::Stopped(ProductStop::Limit { limit, value }) => {
