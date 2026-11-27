@@ -2,8 +2,10 @@
 //! FR-1041/FR-1042 interval bounds for fair eventual probabilities.
 
 use filament_exact::{Cancel, Integer, Rational};
+use ix_trace_rs::implements;
 
 use super::fair::maximal_fair_end_components_within;
+use super::rows::Evaluation;
 use super::{
     decide_until_threshold, Dyadic, ExactProbLimits, ProbProduct, UnboundedError,
     UnboundedObjective, UnboundedOutcome,
@@ -17,6 +19,7 @@ use super::{
 /// read from the complete action graph, as [`super::decide_fair_reachability`]
 /// derives them; the numeric reachability interval is then produced by FR-198's
 /// outward-rounded solver.
+#[implements("FR-200-AC-11")]
 pub fn decide_fair_reachability_threshold(
     product: &ProbProduct,
     target: &[bool],
@@ -27,15 +30,21 @@ pub fn decide_fair_reachability_threshold(
     if target.len() != product.states.len() {
         return Err(UnboundedError::InvalidState);
     }
+    let evaluation = Evaluation::of(product).map_err(|_| UnboundedError::InvalidProbability)?;
+    let target = evaluation
+        .extend(target)
+        .ok_or(UnboundedError::InvalidState)?;
     let domain = target
         .iter()
         .map(|is_target| !is_target)
         .collect::<Vec<_>>();
     let mut fair_targets = vec![false; target.len()];
     for component in
-        maximal_fair_end_components_within(product, &domain).map_err(|error| match error {
-            super::FairProductError::Product(error) => error,
-            _ => UnboundedError::InvalidState,
+        maximal_fair_end_components_within(&evaluation.product, &domain).map_err(|error| {
+            match error {
+                super::FairProductError::Product(error) => error,
+                _ => UnboundedError::InvalidState,
+            }
         })?
     {
         for state in component.states {
@@ -44,7 +53,7 @@ pub fn decide_fair_reachability_threshold(
     }
     let avoidance_threshold = Rational::from_integer(Integer::from(1_i64)).sub(threshold);
     match decide_until_threshold(
-        product,
+        &evaluation.product,
         &domain,
         &fair_targets,
         UnboundedObjective::Max,
@@ -58,6 +67,7 @@ pub fn decide_fair_reachability_threshold(
                     *value = Rational::from_integer(Integer::from(1_i64)).sub(value);
                 }
             }
+            result.values = evaluation.restrict(result.values);
             Ok(UnboundedOutcome::Exact(result))
         }
         UnboundedOutcome::Bounds {
@@ -66,13 +76,17 @@ pub fn decide_fair_reachability_threshold(
             precision_bits,
             sweeps,
             policy,
-        } => Ok(UnboundedOutcome::Bounds {
-            lower: upper.iter().map(complement).collect(),
-            upper: lower.iter().map(complement).collect(),
-            precision_bits,
-            sweeps,
-            policy,
-        }),
+        } => {
+            let projected_lower = evaluation.restrict(upper.iter().map(complement).collect());
+            let projected_upper = evaluation.restrict(lower.iter().map(complement).collect());
+            Ok(UnboundedOutcome::Bounds {
+                lower: projected_lower,
+                upper: projected_upper,
+                precision_bits,
+                sweeps,
+                policy,
+            })
+        }
         UnboundedOutcome::PrecisionBudget { lower, upper } => {
             Ok(UnboundedOutcome::PrecisionBudget {
                 lower: complement(&upper),

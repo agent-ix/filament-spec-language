@@ -230,6 +230,7 @@ edges, automaton states and stored zone bytes.
 | FR-239-AC-7 | A timed item with no stated limit and no caller setting runs EN-6 with `max_symbolic_states` 1048576, `max_symbolic_transitions` 16777216, `max_automaton_states` 1048576 and `max_zone_bytes` 1073741824, and with `max_check_work` 100000000 for a task product; changing a `model_check.*` setting changes none of them. | Test |
 | FR-239-AC-8 | Over a task set of one task with period 2, worst-case execution time 1 and deadline 2, the task-product symbolic pass with `max_symbolic_states` 1 stops with `LimitReached{limit: max_symbolic_states, value: 1, setting: zone_check.max_symbolic_states}` having stored at most one symbolic state. | Test |
 | FR-239-AC-9 | An `analyze` request over a timed item accepts `--limit zone_check.max_symbolic_states=2` and `--limit zone_check.max_check_work=2`, and each bounds that item; either setting given twice is refused before any item runs. | Test |
+| FR-239-AC-10 | On the closed timed subject with one `Call` initially at `phase = 0`, operations `block` (`phase = 0` to `phase = 2`) and `go` (`phase = 0` to `phase = 1`), clock `x`, and invariant `Locked when phase = 2 { x <= 0 ms }`, the claim `always holds(c.phase = 1)` with `options.method` absent routes to EN-6 and returns `refuted` at `trace_position: 0`. Its finite bad-prefix counterexample has empty `prefix` and `loop`, and its replay is reproduced; it carries no terminal-stutter marker. | Test |
 
 ## Dependencies
 

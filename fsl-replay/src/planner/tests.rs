@@ -1513,6 +1513,42 @@ fn incomplete_schedulability_entries_read_and_bind_task_search_frontiers() {
     );
 }
 
+/// FSpec FR-418's DBM entry has one reader (`shared_wire::DbmBound`), so a task
+/// search zone bound that is no canonical integer string is refused at its
+/// `bound`, where the hand-written reader once admitted any non-empty text.
+#[trace("FSpec-FR-418")]
+#[test]
+fn a_task_search_zone_bound_is_read_by_the_shared_dbm_entry() {
+    let identity = json!({
+        "node_id": fsl_foundation::node_wire::node_key_to_json(&node("Task"))
+            .expect("node identity writes"),
+        "model": "app@1",
+        "ordinal": 0
+    });
+    let entry = |bound: &str| {
+        with(
+            base("incomplete"),
+            json!({
+                "kind": "schedulability",
+                "cause": {"type": "bounded-search-incomplete", "reason": "unresolved-dynamics"},
+                "task_search": {
+                    "type": "task-search-frontier",
+                    "identity": identity,
+                    "nodes": [{"state": {"key": "0000000000000000000000000000000000000000000000000000000000000000"}, "depth": 0, "zone": [[{"bound": bound, "strict": false}]], "expanded": false}],
+                    "edges": [],
+                    "frontier": [{"node": 0, "reason": "unresolved-choice", "open": ["demand"]}]
+                }
+            }),
+        )
+    };
+    read_result_entry(&entry("-4"), 0, EntryOrigin::FirstParty).expect("a canonical bound reads");
+    for bound in ["01", "-0"] {
+        let (pointer, cause) = entry_defect(&entry(bound), EntryOrigin::FirstParty);
+        assert!(pointer.ends_with("/bound"), "{bound}: {pointer}");
+        assert_eq!(cause, EntryCause::InvalidValue, "{bound}");
+    }
+}
+
 #[trace("FSpec-FR-419-AC-6")]
 #[test]
 fn unresolved_task_search_requires_the_unresolved_dynamics_cause() {

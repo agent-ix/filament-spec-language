@@ -124,10 +124,8 @@ identity that does not repeat the inherited members for each type.
 
 ## Status
 
-FR-083-AC-5 and FR-083-AC-6 (the 1,000-link and 2,000-link `redefines`
-chains at the published `model.derivation_facts`) are specified here and not
-implemented or tested in QSL-3508's limits consolidation; they wait on their
-own ticket.
+FR-083-AC-5 and FR-083-AC-6 are implemented and tested in
+`fsl-semantics/tests/it/model_dispatch.rs`.
 
 ## Dependencies
 

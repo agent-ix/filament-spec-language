@@ -34,7 +34,7 @@ use fsl_semantics::model::observation::{
 use quire_canonical::{Node, NodeRef};
 
 /// The format member of a trace document.
-pub const TRACE_FORMAT: &str = "filament.monitor-trace/1";
+pub const TRACE_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorTrace.as_str();
 
 /// One selected temporal clause: its declared name and the object its `over`
 /// parameter binds, resolved in the observation at position 0.

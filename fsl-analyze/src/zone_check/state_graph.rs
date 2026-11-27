@@ -308,6 +308,7 @@ fn prefer_undefined(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn predicate(
     system: &ModelSystem<'_>,
     predicate: &CheckedStatePredicate,

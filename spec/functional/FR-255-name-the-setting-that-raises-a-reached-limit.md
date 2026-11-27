@@ -757,8 +757,11 @@ these names through the same operand grammar as the stage settings
     per entry kind plus the lengths of the buffers the entry owns (the bytes
     of its keys, 8 bytes for each limb of a big integer, and length times
     element size for a sequence), never an allocator capacity or a resident
-    set size. An EN-1 stored state's fixed overhead is 256 bytes. The
-    retained entries are an EN-6 symbolic vertex, a protocol closure path,
+    set size. The fixed overhead of an EN-1 stored state, of a product state
+    of an EN-1 hyper search, of a successor a model expansion returns and the
+    graph stores, and of a protocol closure path is 256 bytes each. A protocol
+    closure path also counts the bytes of the keys it owns and the size of
+    each step it holds. The retained entries are an EN-6 symbolic vertex, a protocol closure path,
     an EN-1 stored state and a model-expansion successor. Each entry SHALL be charged before it is stored, the charges of one item SHALL
     accumulate and SHALL NOT be refunded, and the item's producer, certificate
     checker and witness replay SHALL charge one shared allowance. A per-engine
@@ -827,8 +830,8 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-26 | For every setting-table row, setting its value to the maximum representable value of the bound's type is accepted and preserved unchanged by every entry point listed for that row; a setting above that type's maximum cannot be represented and is refused at the entry point's input boundary. No setting applies an additional configured ceiling. | Test (TC-720) |
 | FR-255-AC-27 | Given no setting, the settings operation returns `s1.tokens` 100000, `emit.output_bytes` 16777216, `zone_check.max_symbolic_states` 1048576, `zone_check.max_check_work` 100000000 and `analysis.retained_bytes` 4294967296. Given `analysis.retained_bytes=0` or `zone_check.max_check_work=0`, it returns a usage refusal naming the operand. | Test |
 | FR-255-AC-28 | A setting bound of 3, charged one unit at a time by two parts of one item that share its allowance, admits the first three charges and refuses the fourth with bound 3, count 4 and the setting's name; the step the fourth charge would have paid for does not run. | Test |
-| FR-255-AC-29 | An analyze item over a protocol subject run with `analysis.retained_bytes=1` stops at its first closure path, before that path is stored, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. Two runs give equal outcomes. | Test |
-| FR-255-AC-30 | A replay request whose `stage_limits` holds `model_check.max_transitions` 2, replaying a protocol refinement step whose check needs at least three transitions, stops naming `max_transitions`, value 2 and setting `model_check.max_transitions`, and expands no third transition. | Test |
+| FR-255-AC-29 | A refinement check (`check_refinement`) with a protocol binding, run with `analysis.retained_bytes=1`, stops at its first closure path, before that path is stored, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. Two runs give equal outcomes. | Test |
+| FR-255-AC-30 | Replaying a protocol refinement step whose check needs at least three transitions, with the `ModelCheckLimits` the caller gives the replay holding `max_transitions` 2 (the protocol closures of the replay share that allowance), stops naming `max_transitions`, value 2 and setting `model_check.max_transitions`, and expands no third transition. | Test |
 | FR-255-AC-31 | A replay of a clause over a model with caller setting `emit.output_bytes` 1 returns `stage_limit_exceeded` with bound 1 and setting `emit.output_bytes`. A hyper clause whose body has five expression nodes (`1 + 1 + 1`), checked with `s3.nodes` 4, returns `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. An 11-byte snapshot read with `observation.input_bytes` 10 refuses with bound 10, count 11 and that setting. | Test |
 | FR-255-AC-32 | A synthesis request whose own accounting gives `work_units` 1000000, run with the caller override `accounting.work_units=0`, settles `incomplete` naming `work_units`, bound 0, count 1 and setting `accounting.work_units`. A `refinement_transfer` request and a monitor request whose checked source holds `1 + 1 + 1`, each run with `s3.nodes` 4, return `stage_limit_exceeded` with bound 4, count 5 and setting `s3.nodes`. | Test |
 | FR-255-AC-33 | A synthesis run given a clocks override both by its request and by its caller, and any run given one `--limit` setting twice, are refused before work starts. A `native-replay/1` run given a clocks override or an output override is refused `invalid-request` naming it. | Test |
@@ -841,6 +844,8 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-40 | A deadlock-freedom analyze item over a model subject, decided by EN-1, run with `analysis.retained_bytes=1`, stops before it stores its first state, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`. The same item with no setting settles as it does at the published default. | Test |
 | FR-255-AC-41 | A synthesis goal whose typed expression has five nodes, checked under a caller's `s3.nodes` 4, is refused at the typing stage naming the node limit, bound 4 and count 5; under `s3.nodes` 5 it checks. | Test |
 | FR-255-AC-42 | An EN-1 liveness item over a model or protocol subject charges `analysis.retained_bytes` for each product state before storing it: run with `analysis.retained_bytes=1`, it stops with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`; a model liveness item whose product has four states stops likewise at 1024, and with no setting settles as it does at the published default. | Test |
+| FR-255-AC-43 | An EN-1 hyper item over a lockstep clause, run with `analysis.retained_bytes=1`, stops before it stores its first product state with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}` and stores none; two runs give equal outcomes, and with no setting the item settles as it does at the published default. | Test |
+| FR-255-AC-44 | An EN-1 state-graph item over a model subject with an enabled step, run with `analysis.retained_bytes=1`, stops before it stores the first successor its expansion returns, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`, and its graph holds only the initial states; with no setting it settles as it does at the published default. | Test |
 
 ## Status
 
@@ -849,16 +854,30 @@ builders, the settings operation, a request's `stage_limits` and their
 defaults are implemented (TC-720, TC-721). FR-255-AC-15 to FR-255-AC-19 specify native-join
 setting bindings, defaults and refusals; their implementation is not yet complete.
 Of the retained entries, the states of EN-1's safety and reduced searches
-(FR-255-AC-40), the product states of its liveness searches (FR-255-AC-42) and
-EN-6 symbolic vertices charge `analysis.retained_bytes`. The states of EN-1's
-hyper searches, the model states a liveness search keeps where its automaton
-has no move, protocol closure paths and model-expansion successors do not yet
-charge it.
-FR-255-AC-29 (a protocol closure path), FR-255-AC-30 (a replay request's
-`stage_limits` at a protocol refinement step) and FR-255-AC-31 (a replay's
-`emit.output_bytes`, `s3.nodes` and `observation.input_bytes` stops) are
-specified here and not implemented or tested in QSL-3508's limits
-consolidation; each waits on its own ticket.
+(FR-255-AC-40), the product states of its liveness searches (FR-255-AC-42),
+the product states of its hyper searches (FR-255-AC-43), the successors of
+its state-graph expansion (FR-255-AC-44), the closure paths of a protocol
+refinement (FR-255-AC-29) and EN-6 symbolic vertices charge
+`analysis.retained_bytes`. The model states a liveness search keeps where its
+automaton has no move, and the product states of a refinement search, do not
+yet charge it. No analyze item builds a protocol-abstract refinement yet, so
+FR-255-AC-29 is reached through `check_refinement` with a protocol binding.
+FR-255-AC-30 is implemented in `replay_refinement_trace`, which takes the
+`model_check` limits: the protocol closures of one replay share the
+`max_transitions` allowance, and the analyze refinement item passes its own.
+No replay request route carries `stage_limits` into that call yet: the
+caller of `replay_refinement_trace` passes the `ModelCheckLimits`.
+Not charged, and unbounded for a direct caller: the replay closure paths
+(they retain nothing, `retained` is `None` in the protocol step), the public
+`check_protocol_initial` and `check_protocol_step` when called directly (their
+per-replay transition allowance defaults to `u64::MAX`; `replay_refinement_trace`
+and the timed replay set it, and it is per-replay state on the system, not
+per call). The EN-1 hyper subject precheck (HC-8) charges its subject states
+to `analysis.retained_bytes` like the product states.
+FR-255-AC-31 is tested for `observation.input_bytes` (a snapshot), for
+`emit.output_bytes` (a clause replay over a model, source route; a package
+run emits nothing and has no emission to bound) and for `s3.nodes` (a hyper
+clause).
 
 Backing of the criteria:
 

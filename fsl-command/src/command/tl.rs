@@ -1291,7 +1291,7 @@ fn tl_verdict(
 
 /// The run result document of a lowering.
 pub(super) fn document(record: Value) -> Value {
-    json!({"format": "native-run-result/2", "tl_lowering": record})
+    json!({"format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(), "tl_lowering": record})
 }
 
 /// The record of the request path's lowering: each atom mapped to its own

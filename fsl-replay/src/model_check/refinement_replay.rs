@@ -42,7 +42,7 @@ use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::{
     CounterexampleKind, Lasso, TemporalCounterexample, UndefinedEvaluation, UndefinedLocus,
 };
-use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
+use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
 use crate::model_check::replay::{
     close_loop, disagreement, fault, loop_states_of, no_value_cause, reexecute, refused,
     timed_prefix, unfair_constraint, ModelTraceRefusal, Position,
@@ -754,11 +754,14 @@ enum Found {
 /// refinement failure, a lasso's history values or candidates differ at the
 /// end of its loop from its entry, a lasso is unfair under `F_C`, or an
 /// internal fault occurs.
+#[implements("FR-255-AC-30")]
 pub fn replay_refinement_trace(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
+    limits: &ModelCheckLimits,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    bound_protocol_replay(systems, &limits.limits);
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
@@ -771,6 +774,16 @@ pub fn replay_refinement_trace(
         close_loop(&systems.concrete, &positions, lasso.clone())?;
     }
     settle_positions(refinement, systems, payload, recorded, &positions, true)
+}
+
+/// FR-255-AC-30: the protocol closures of one replay together expand at most
+/// `limits.max_transitions` transitions; a replay over a system with no
+/// protocol side has nothing to bound.
+#[implements("FR-255-AC-30")]
+fn bound_protocol_replay(systems: &RefinementSystems<'_>, limits: &Limits) {
+    if let Some(protocol) = systems.abstract_protocol.as_ref() {
+        protocol.bound_replay_transitions(widen(limits.max_transitions));
+    }
 }
 
 /// FSpec FR-430: replay `payload`, a refinement counterexample of
@@ -827,6 +840,7 @@ fn replay_refinement_trace_with_time_source(
     exploration: &Limits,
     timed: &TimedSystem<'_, '_>,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    bound_protocol_replay(systems, exploration);
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
@@ -1941,8 +1955,11 @@ fn replay_lasso(
                 Taken::CandidateSteps(steps) => {
                     identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
                 }
-                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {
-                }
+                Taken::Stutter
+                | Taken::Protocol(_)
+                | Taken::ProtocolTraces(_)
+                | Taken::ProtocolPathRefs(_)
+                | Taken::Failing => {}
             }
         }
         let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
@@ -1965,9 +1982,11 @@ fn replay_lasso(
     let divergent = loop_taken.iter().all(|taken| match taken {
         Taken::Stutter => true,
         Taken::CandidateSteps(steps) => steps.iter().all(|step| step.transition.is_none()),
-        Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {
-            false
-        }
+        Taken::Abstract(_)
+        | Taken::Protocol(_)
+        | Taken::ProtocolTraces(_)
+        | Taken::ProtocolPathRefs(_)
+        | Taken::Failing => false,
     });
     Ok(match (payload.refinement.as_ref(), violated, divergent) {
         (Some(RefinementFailure::Divergence { .. }), true, true)
@@ -2366,6 +2385,7 @@ fn protocol_enabled_at(
 /// protocol has a step of it from that candidate's configuration, and a
 /// trace edge runs through the configurations of its internal closure, each
 /// with its own enabledness and its own taken application.
+#[implements("FR-899-AC-1")]
 fn protocol_hidden_graph(
     protocol: &crate::refinement::AbstractProtocolSystem<'_>,
     loop_trail: &[RefinementPosition],
@@ -2462,6 +2482,98 @@ fn protocol_hidden_graph(
                         rows.push((pre_candidate, pre.clone(), first, post, None, hops));
                     }
                 }
+                Taken::ProtocolPathRefs(paths) => {
+                    for path in paths.iter().filter(|path| path.seed.start_key == pre) {
+                        let post = path.endpoint_key().to_vec();
+                        if !reaches(&post) {
+                            continue;
+                        }
+                        let first = path
+                            .first_transition()
+                            .and_then(|step| step.applied_application().cloned());
+
+                        let mut enabled_union = BTreeSet::new();
+                        let mut enabled_intersection = None::<BTreeSet<ModelTransition>>;
+                        let mut interior_count = 0_usize;
+                        let seed_interior = if path.tail.is_some() {
+                            path.seed.candidates.as_slice()
+                        } else {
+                            path.seed
+                                .candidates
+                                .get(..path.seed.candidates.len().saturating_sub(1))
+                                .unwrap_or_default()
+                        };
+                        for candidate in seed_interior {
+                            let enabled = match protocol_enabled_at(protocol, candidate)? {
+                                Ok(enabled) => enabled,
+                                Err(settlement) => {
+                                    return Ok(ProtocolHiddenGraph::Settled(settlement));
+                                }
+                            };
+                            let enabled: BTreeSet<_> = enabled.into_iter().collect();
+                            enabled_union.extend(enabled.iter().cloned());
+                            enabled_intersection = Some(match enabled_intersection.take() {
+                                Some(previous) => {
+                                    previous.intersection(&enabled).cloned().collect()
+                                }
+                                None => enabled,
+                            });
+                            interior_count = interior_count.saturating_add(1);
+                        }
+                        let mut node = path.tail.as_deref();
+                        if let Some(endpoint) = node {
+                            node = endpoint.previous.as_deref();
+                        }
+                        while let Some(current) = node {
+                            let enabled =
+                                match protocol_enabled_at(protocol, current.candidate.as_ref())? {
+                                    Ok(enabled) => enabled,
+                                    Err(settlement) => {
+                                        return Ok(ProtocolHiddenGraph::Settled(settlement));
+                                    }
+                                };
+                            let enabled: BTreeSet<_> = enabled.into_iter().collect();
+                            enabled_union.extend(enabled.iter().cloned());
+                            enabled_intersection = Some(match enabled_intersection.take() {
+                                Some(previous) => {
+                                    previous.intersection(&enabled).cloned().collect()
+                                }
+                                None => enabled,
+                            });
+                            interior_count = interior_count.saturating_add(1);
+                            node = current.previous.as_deref();
+                        }
+                        let weak_enabled: Vec<_> = enabled_intersection
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
+                        let strong_enabled: Vec<_> = enabled_union.into_iter().collect();
+                        let mut hops = Vec::new();
+                        if interior_count != 0 {
+                            // The intersection vertex preserves weak fairness;
+                            // the union vertex preserves strong fairness.
+                            hops.push((weak_enabled.clone(), None));
+                            hops.push((strong_enabled, None));
+                        }
+                        let mut taken = BTreeSet::new();
+                        for transition in path.seed.transitions.iter().skip(1) {
+                            if let Some(application) = transition.applied_application() {
+                                taken.insert(application.clone());
+                            }
+                        }
+                        let mut node = path.tail.as_deref();
+                        while let Some(current) = node {
+                            if let Some(application) = current.transition.applied_application() {
+                                taken.insert(application.clone());
+                            }
+                            node = current.previous.as_deref();
+                        }
+                        for transition in taken {
+                            hops.push((weak_enabled.clone(), Some(transition)));
+                        }
+                        rows.push((pre_candidate, pre.clone(), first, post, None, hops));
+                    }
+                }
                 Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Failing => {
                     return Err(fault("a-protocol-loop-edge-takes-protocol-steps"));
                 }
@@ -2551,12 +2663,14 @@ mod cas_fixture;
 #[cfg(test)]
 mod tests {
     use fsl_eval::model_subject::ModelInstance;
+    use fsl_eval::simulation::model::operation_identity_text;
     use fsl_eval::simulation::protocol::StepKind;
     use ix_trace_rs::trace;
 
-    use super::cas_fixture::{failing_compensation, key, SPEC, UNLIMITED};
+    use super::cas_fixture::{failing_compensation, key, CAS, SPEC, UNLIMITED};
     use super::*;
     use crate::refinement::open_protocol_systems;
+    use crate::{ProtocolPathNode, ProtocolPathRef, ProtocolTrace};
 
     /// One concrete step of [`failing_compensation`]: in the candidate graph
     /// replay rebuilds, the rows apply `add` and never `inc`, whose
@@ -2617,8 +2731,10 @@ mod tests {
             panic!("bump passes");
         };
 
-        let Taken::ProtocolTraces(paths) = taken.as_ref().clone() else {
-            panic!("bump takes protocol traces");
+        let paths = match taken.as_ref() {
+            Taken::ProtocolTraces(paths) => paths.clone(),
+            Taken::ProtocolPathRefs(paths) => paths.iter().map(|path| path.to_trace()).collect(),
+            other => panic!("bump takes protocol traces: {other:?}"),
         };
 
         let ProtocolHiddenGraph::Built(_, steps) =
@@ -2646,9 +2762,8 @@ mod tests {
         }) {
             let end = path.candidate_keys.last().unwrap_or(&path.start_key);
             assert!(
-                rows.iter().any(|row| row.1 == path.start_key
-                    && row.3 == *end
-                    && row.5.len() + 1 == path.transitions.len()),
+                rows.iter()
+                    .any(|row| row.1 == path.start_key && row.3 == *end),
                 "a path that fails the compensation of inc has no row"
             );
             failed += 1;
@@ -2670,5 +2785,139 @@ mod tests {
         assert!(rows
             .iter()
             .any(|row| row.5.iter().any(|hop| inc.is_enabled_in(&hop.0))));
+    }
+
+    /// An `any` closure can carry its first internal edge only in the shared
+    /// tail; replay must put that edge in the first-taken slot.
+    #[trace("TC-2536", "FR-899-AC-1")]
+    #[test]
+    fn replay_keeps_the_first_internal_transition_of_an_empty_any_seed() {
+        let world = failing_compensation();
+        let systems = open_protocol_systems(
+            world.refinement(),
+            &world.concrete_request(UNLIMITED),
+            world.package(),
+            vec![world.abstract_initial()],
+            ModelInstance {
+                population: key(SPEC, "counters"),
+                key: "c".to_owned(),
+            },
+            &[],
+        )
+        .expect("the compensating protocol opens");
+        let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+        let state = systems.concrete.initial_states()[0].clone();
+        let StepVerdict::Passes { post: initial, .. } = check_protocol_initial(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            0,
+            state.state(),
+        )
+        .expect("initial states settle")
+        .verdict
+        else {
+            panic!("the root maps");
+        };
+        let (concrete_transition, concrete_post) = systems
+            .concrete
+            .successors(&state)
+            .expect("the concrete state expands")
+            .successors
+            .into_iter()
+            .find(|(step, _)| {
+                step.operation() == operation_identity_text(&key(CAS, "Counter/bump")).unwrap()
+            })
+            .expect("bump is enabled");
+        let StepVerdict::Passes { post, taken } = check_protocol_step(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            &initial,
+            &ConcreteStep {
+                position: 1,
+                transition: Some(&concrete_transition),
+                post: &concrete_post,
+            },
+        )
+        .verdict
+        else {
+            panic!("the concrete step passes");
+        };
+        let Taken::ProtocolPathRefs(paths) = taken.as_ref() else {
+            panic!("the concrete step carries shared protocol paths: {taken:?}");
+        };
+        let fairness: Vec<_> = world
+            .refinement()
+            .abstract_operation_fairness()
+            .cloned()
+            .collect();
+        let classes = abstract_classes(&systems.abstract_system, &fairness, &[])
+            .expect("the protocol fairness operations are declared");
+        let [add, inc] = classes.as_slice() else {
+            panic!("one class per fairness constraint: {classes:?}");
+        };
+        let path = paths
+            .iter()
+            .find(|path| {
+                path.seed
+                    .transitions
+                    .first()
+                    .and_then(|transition| transition.applied_application())
+                    .is_some_and(|transition| add.covers(transition))
+            })
+            .expect("the concrete add has a protocol path");
+        let expected_first = path.seed.transitions[0].clone();
+        let expected_candidate = path.seed.candidates[0].clone();
+        let expected_key = path.seed.candidate_keys[0].clone();
+        assert!(add.covers(
+            expected_first
+                .applied_application()
+                .expect("the expected path first takes add")
+        ));
+        assert!(!inc.covers(
+            expected_first
+                .applied_application()
+                .expect("the expected path first takes add")
+        ));
+        let empty_seed = ProtocolTrace {
+            start: path.seed.start.clone(),
+            start_key: path.seed.start_key.clone(),
+            transitions: Vec::new(),
+            candidates: Vec::new(),
+            candidate_keys: Vec::new(),
+        };
+        let path_ref = ProtocolPathRef {
+            seed: std::sync::Arc::new(empty_seed),
+            tail: Some(std::sync::Arc::new(ProtocolPathNode {
+                previous: None,
+                transition: std::sync::Arc::new(expected_first),
+                candidate: std::sync::Arc::new(expected_candidate),
+                candidate_key: expected_key,
+            })),
+        };
+        let empty_seed_taken = Taken::ProtocolPathRefs(vec![path_ref.clone()]);
+        let ProtocolHiddenGraph::Built(_, steps) = protocol_hidden_graph(
+            protocol,
+            &[*initial, *post],
+            std::slice::from_ref(&empty_seed_taken),
+        )
+        .expect("the replay candidate graph rebuilds") else {
+            panic!("the candidate graph is built");
+        };
+        let rows: Vec<_> = steps.iter().flatten().collect();
+        assert!(
+            rows.iter().any(|row| {
+                row.1 == path_ref.seed.start_key
+                    && row.3 == path_ref.endpoint_key()
+                    && row
+                        .2
+                        .as_ref()
+                        .is_some_and(|transition| add.covers(transition))
+            }),
+            "replay counts the expected add application in the first-taken slot"
+        );
     }
 }

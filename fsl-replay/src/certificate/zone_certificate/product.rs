@@ -947,8 +947,11 @@ impl<O> Checker<'_, '_, O> {
         constraints: &[FairnessMember],
         nested: &Components,
     ) -> Step<bool, O> {
-        for node in 0..self.certificate.nodes.len() {
-            let numbered = nested.numbering[node].is_some();
+        for (node, number) in nested.numbering[..self.certificate.nodes.len()]
+            .iter()
+            .enumerate()
+        {
+            let numbered = number.is_some();
             if !members.contains(&node) {
                 if numbered {
                     return Ok(false);

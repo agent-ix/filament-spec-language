@@ -103,6 +103,20 @@ impl Model {
     /// The unit that selects this model as `M` and the model's domain
     /// package document, as a compile request reads them from files.
     pub(crate) fn unit_and_document(&self) -> (String, Vec<u8>) {
+        self.unit_and_document_with_frames(false, false)
+    }
+
+    /// The same unit with receiver-scoped operation frames and an explicitly
+    /// non-symmetric population, for multi-object probabilistic fixtures.
+    pub(crate) fn unit_and_receiver_scoped_document(&self) -> (String, Vec<u8>) {
+        self.unit_and_document_with_frames(false, true)
+    }
+
+    fn unit_and_document_with_frames(
+        &self,
+        symmetric: bool,
+        receiver_scoped: bool,
+    ) -> (String, Vec<u8>) {
         let unit = format!(
             "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
              profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
@@ -110,7 +124,7 @@ impl Model {
              model M = \"{}\";\n{}\n",
             self.package, self.body
         );
-        (unit, self.document(false))
+        (unit, self.document_with_frames(symmetric, receiver_scoped))
     }
 
     /// The identity of `suffix` in this package.
@@ -199,6 +213,10 @@ impl Model {
 
     /// The domain package document.
     pub(crate) fn document(&self, symmetric: bool) -> Vec<u8> {
+        self.document_with_frames(symmetric, symmetric)
+    }
+
+    fn document_with_frames(&self, symmetric: bool, receiver_scoped: bool) -> Vec<u8> {
         let mut kinds = vec![
             ("object_type", meaning::OBJECT_TYPE),
             ("population", meaning::POPULATION),
@@ -235,7 +253,7 @@ impl Model {
             "object_type",
             json!({
                 "supertypes": [], "fields": fields,
-                "operations": self.operations.iter().map(|operation| self.operation(operation, symmetric))
+                "operations": self.operations.iter().map(|operation| self.operation(operation, receiver_scoped))
                     .collect::<Vec<_>>(),
                 "relationships": [],
             }),
@@ -1243,6 +1261,42 @@ pub(crate) fn fair_bounds_w(extra: &str) -> Model {
             "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
             "terminal Stop using v on M when {{ self.g or self.f }};\n",
             "workload Equal on M {{ weight W::wait = 1; weight W::go = 1; }}\n",
+            "{}"
+        ), extra),
+        initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),
+    }
+}
+
+/// Low-level fair-product fixture for FR-200's FreeDelays evaluator tests:
+/// `draw` supplies a distinct given-delay identity, while `wait` and `go` are
+/// the free scheduler choices. The focused tests rewrite its product into the
+/// row-factored form because checked-source workloads do not carry fairness.
+pub(crate) fn fair_free_delays(extra: &str) -> Model {
+    Model {
+        package: "test/fair-free-delays",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+            ("f", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "draw", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "g", "f"], deletes: false },
+        ],
+        body: format!(concat!(
+            "pre WaitAtS using v on M::W::wait {{ self.s }}\n",
+            "post Waited using v on M::W::wait {{ self.s = true }}\n",
+            "pre DrawAtS using v on M::W::draw {{ self.s }}\n",
+            "post Drew using v on M::W::draw {{ self.s = true }}\n",
+            "pre GoAtS using v on M::W::go {{ self.s }}\n",
+            "post Went using v on M::W::go {{ self.s = false and self.g = success and self.f = not success }}\n",
+            "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
+            "terminal Stop using v on M when {{ self.g or self.f }};\n",
             "{}"
         ), extra),
         initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),

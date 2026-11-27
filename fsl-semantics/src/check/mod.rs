@@ -888,6 +888,7 @@ fn occurrences_by_location(occurrences: &family::OccurrenceMap<Location>) -> Occ
 /// ```
 ///
 /// filament:canonical
+#[derive(Clone)]
 pub struct CheckedGraph {
     /// Process-local identity shared with standalone expressions checked
     /// against this graph. It is never serialized or used as package identity.
@@ -906,7 +907,7 @@ pub struct CheckedGraph {
     /// Every compound unit retained from this check stage for later checked
     /// subexpression evaluation and standalone clause checking.
     evaluation_units: FormedUnits,
-    functions: CheckedFunctions,
+    functions: std::sync::Arc<CheckedFunctions>,
     dispatch_tables: Vec<DispatchTable>,
     /// FR-062-AC-2/FR-065-AC-3: the occurrence-keyed source map (identity,
     /// role, ordinal) -> source [`Location`], for every function
@@ -947,7 +948,7 @@ pub struct CheckedGraph {
     function_check_modes: BTreeMap<usize, CheckMode>,
     /// Producer-retained expression identities, owned by this graph rather
     /// than written into its borrowed checked bodies.
-    checked_node_keys: BTreeMap<usize, lowering::CheckedNodeKeys>,
+    checked_node_keys: std::sync::Arc<BTreeMap<usize, lowering::CheckedNodeKeys>>,
     /// Cross-declaration reference occurrences, captured at their S3
     /// resolution sites and sorted by source position.
     dependency_references: Vec<CheckedDependencyReference>,
@@ -1051,19 +1052,19 @@ pub struct CheckedGraph {
     /// FR-230/FR-251: exact checked time-unit scales used for timed clauses.
     time_units: time_units::TimeUnits,
     /// FR-104: every checked state clause, in declaration order.
-    state_clauses: Vec<CheckedStateClause>,
+    state_clauses: std::sync::Arc<Vec<CheckedStateClause>>,
     /// FR-103/FR-702: checked model operation contracts, retained for the
     /// operation run that evaluates their invocation.
-    operation_clauses: Vec<operation_clause::CheckedOperationClause>,
+    operation_clauses: std::sync::Arc<Vec<operation_clause::CheckedOperationClause>>,
     /// FR-366: every checked type-level invariant, in declaration order of
     /// the selected models and their clauses.
-    type_invariants: Vec<CheckedTypeInvariant>,
+    type_invariants: std::sync::Arc<Vec<CheckedTypeInvariant>>,
     /// FR-124: the intended terminal states of each selected model, by
     /// alias.
-    terminals: Vec<CheckedTerminal>,
+    terminals: std::sync::Arc<Vec<CheckedTerminal>>,
     /// FR-230: the checked timed model of each time source, in time-source
     /// order.
-    timed_models: Vec<TimedModel>,
+    timed_models: std::sync::Arc<Vec<TimedModel>>,
     /// FR-367 "Member entries": the authored members of each source record,
     /// tuple and union that holds a clock directly.
     source_clock_members: BTreeMap<filament_exact::NodeKey, SourceClockMembers>,
@@ -1074,7 +1075,7 @@ pub struct CheckedGraph {
         BTreeMap<(filament_exact::NodeKey, String, String), filament_exact::NodeKey>,
     clock_declaration_table: crate::model::clock_reference::normalization::ClockDeclarationTable,
     /// FR-135 to FR-137: every checked refinement, in declaration order.
-    refinements: Vec<CheckedRefinement>,
+    refinements: std::sync::Arc<Vec<CheckedRefinement>>,
     /// FR-304: the unit's `abstraction` declarations, in declaration order,
     /// checked into [`Self::abstraction`].
     abstractions: Vec<fsl_forms::AbstractionDeclarationForm>,
@@ -1135,8 +1136,12 @@ pub struct CheckedGraph {
     finite_hyper_nodes: Vec<hyper_clause::CheckedFiniteHyperClause>,
     /// FR-180: every checked model relation emitted as a step-relation claim.
     step_relations: Vec<hyper_clause::CheckedModelRelation>,
+    /// Each step relation's lowering before its implementation references
+    /// are written, aligned with [`Self::step_relations`], so another
+    /// abstraction relation can be bound.
+    step_relation_lowerings: Vec<lowering::LoweredStepRelation>,
     /// FR-165: every checked state-graph claim, in declaration order.
-    state_graph_claims: Vec<CheckedStateGraphClaim>,
+    state_graph_claims: std::sync::Arc<Vec<CheckedStateGraphClaim>>,
     /// FR-1036: source names and declaration spans for emitted synthesis claims.
     synthesis_claims: Vec<CheckedSynthesisClaim>,
     /// FR-754: checked synthesis expressions retained for the bounded runner.
@@ -1149,7 +1154,7 @@ pub struct CheckedGraph {
     /// each checked hybrid claim, in declaration order.
     hybrid_claim_sites: Vec<ClauseSite>,
     /// FR-185: every checked random parameter, reward and workload.
-    probabilistic: CheckedProbabilisticModel,
+    probabilistic: std::sync::Arc<CheckedProbabilisticModel>,
     /// FSL FR-246: every checked task set and the claims over them.
     task_sets: CheckedTaskSets,
     /// FR-115: every operation a state clause or attempt names, with its
@@ -1298,6 +1303,7 @@ impl DebugWith for CheckedGraph {
             hyper_nodes,
             finite_hyper_nodes,
             step_relations,
+            step_relation_lowerings: _,
             state_graph_claims,
             synthesis_claims,
             syntheses,
@@ -8714,7 +8720,7 @@ impl PackageDeclarations {
             package_name,
             scope,
             evaluation_units,
-            functions,
+            functions: std::sync::Arc::new(functions),
             dispatch_tables,
             occurrences,
             occurrences_by_location: OccurrencesByLocation::default(),
@@ -8728,7 +8734,7 @@ impl PackageDeclarations {
                 .collect(),
             function_check_modes,
             semantic_graph,
-            checked_node_keys,
+            checked_node_keys: std::sync::Arc::new(checked_node_keys),
             dependency_references,
             equality_producer_data,
             equality_producer_identities,
@@ -8756,15 +8762,15 @@ impl PackageDeclarations {
             extension_definitions,
             time_sources: self.time_sources,
             time_units: time_units.clone(),
-            state_clauses,
-            operation_clauses,
-            type_invariants,
-            terminals,
-            timed_models,
+            state_clauses: std::sync::Arc::new(state_clauses),
+            operation_clauses: std::sync::Arc::new(operation_clauses),
+            type_invariants: std::sync::Arc::new(type_invariants),
+            terminals: std::sync::Arc::new(terminals),
+            timed_models: std::sync::Arc::new(timed_models),
             source_clock_members,
             source_parameter_nodes,
             clock_declaration_table: Default::default(),
-            refinements,
+            refinements: std::sync::Arc::new(refinements),
             abstractions: self.abstractions,
             guarantee_forms: self.guarantees,
             guarantees: Vec::new(),
@@ -8807,7 +8813,8 @@ impl PackageDeclarations {
             hyper_nodes,
             finite_hyper_nodes,
             step_relations: Vec::new(),
-            state_graph_claims: state_graph_nodes,
+            step_relation_lowerings: Vec::new(),
+            state_graph_claims: std::sync::Arc::new(state_graph_nodes),
             synthesis_claims: checked_syntheses
                 .iter()
                 .zip(&lowered_syntheses)
@@ -8823,7 +8830,7 @@ impl PackageDeclarations {
             hybrid_models: checked_hybrid_models,
             hybrid_claims: checked_hybrid_claim_list,
             hybrid_claim_sites,
-            probabilistic: probabilistic_model,
+            probabilistic: std::sync::Arc::new(probabilistic_model),
             task_sets: checked_task_sets,
             operation_frames,
             model_objects,
@@ -8856,8 +8863,8 @@ impl PackageDeclarations {
         }
         // FSpec FR-490: the unit's `guarantee` declarations check against the
         // relation and the temporal clauses.
-        match graph.check_declared_guarantees() {
-            Ok(guarantees) => graph.guarantees = guarantees,
+        match graph.derive_guarantees() {
+            Ok(()) => {}
             Err(found) => {
                 return Err(found
                     .into_iter()
@@ -8886,6 +8893,8 @@ impl PackageDeclarations {
                     .collect());
             }
         }
+        graph.step_relation_lowerings = lowered_relations;
+        let lowered_relations = graph.step_relation_lowerings.clone();
         finish_step_relations(&mut graph, checked_relations, lowered_relations)?;
         // FSpec FR-746 admits no empty checked graph. A type alias is a
         // name for another node and does not itself populate the wire graph,
@@ -8917,9 +8926,81 @@ impl PackageDeclarations {
     }
 }
 
+impl CheckedGraph {
+    /// Derive each `guarantee` declaration's facts against the relation the
+    /// graph holds.
+    fn derive_guarantees(&mut self) -> Result<(), Vec<(usize, guarantee::GuaranteeRefusal)>> {
+        self.guarantees = self.check_declared_guarantees()?;
+        Ok(())
+    }
+
+    /// This graph with `relation` as its abstraction relation: everything
+    /// checking derives from the relation (each guarantee's item refusal and
+    /// relation node, each step relation's claim node, occurrences and
+    /// requirement records) is derived again, by the functions checking uses.
+    /// `self` is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// An [`AbstractionRefusal`] when a derivation refuses.
+    #[implements("FR-306-AC-5")]
+    pub fn with_abstraction(
+        &self,
+        relation: CheckedAbstractionRelation,
+    ) -> Result<Self, Vec<AbstractionRefusal>> {
+        let mut graph = self.clone();
+        graph.abstraction = Some(relation);
+        graph.derive_guarantees().map_err(|found| {
+            found
+                .into_iter()
+                .map(|(_, refusal)| AbstractionRefusal::Guarantee(Box::new(refusal)))
+                .collect::<Vec<_>>()
+        })?;
+        let relations = graph.retract_step_relations();
+        let lowered_relations = graph.step_relation_lowerings.clone();
+        finish_step_relations(&mut graph, relations, lowered_relations).map_err(|found| {
+            found
+                .into_iter()
+                .map(|refusal| match *refusal.cause {
+                    CheckCause::Abstraction(cause) => *cause,
+                    // Every other refusal of the derivation is an invariant.
+                    _ => AbstractionRefusal::Internal(
+                        filament_semantic_value::catalog::InternalFault::new(
+                            "check.abstraction",
+                            "step-relations-derive-for-a-bound-relation",
+                        ),
+                    ),
+                })
+                .collect::<Vec<_>>()
+        })?;
+        graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
+        Ok(graph)
+    }
+
+    /// Take out what [`finish_step_relations`] added for each step relation,
+    /// and give the relations back to be finished again.
+    fn retract_step_relations(&mut self) -> Vec<hyper_clause::CheckedModelRelation> {
+        let relations = std::mem::take(&mut self.step_relations);
+        let mut claims = std::collections::HashSet::new();
+        for relation in &relations {
+            if let Some(key) = relation.identity() {
+                self.semantic_graph.remove_finalized(&key);
+                self.occurrences
+                    .retract_last(&key, family::OccurrenceRole::Declaration);
+                self.occurrences
+                    .retract_last(&key, family::OccurrenceRole::Claim);
+            }
+            claims.extend(relation.occurrence().cloned());
+        }
+        self.requirements = std::mem::take(&mut self.requirements).without(&claims);
+        relations
+    }
+}
+
 /// QSL-552: finalize FR-180 claims after the checked abstraction relation is
 /// known, because the implementation reference participates in claim
 /// identity and the abstraction node is keyed from the assembled graph.
+#[implements("FR-306-AC-6")]
 fn finish_step_relations(
     graph: &mut CheckedGraph,
     checked: Vec<hyper_clause::CheckedModelRelation>,
@@ -8965,16 +9046,11 @@ fn finish_step_relations(
             Some(
                 graph
                     .abstraction_nodes(relation)
-                    .map_err(|_| {
+                    .map_err(|reason| {
                         vec![SemanticCheckRefusal {
                             location: location.clone(),
-                            cause: Box::new(CheckCause::InternalFault(Box::new(
-                                KeyFault::StageFault(
-                                    filament_semantic_value::catalog::InternalFault::new(
-                                        "S4",
-                                        "step-relation-abstraction-node-keyed",
-                                    ),
-                                ),
+                            cause: Box::new(CheckCause::Abstraction(Box::new(
+                                AbstractionRefusal::of_nodes(reason),
                             ))),
                         }]
                     })?
@@ -9760,7 +9836,7 @@ impl CheckedGraph {
         let mut entries = Vec::new();
         let mut run_places = Vec::new();
         let mut locations = BTreeMap::new();
-        for model in &self.timed_models {
+        for model in self.timed_models.iter() {
             let Some(index) = self
                 .time_sources
                 .iter()
@@ -10643,7 +10719,7 @@ impl CheckedGraph {
             .iter()
             .map(|field| field.name().to_owned())
             .collect();
-        for timed in &self.timed_models {
+        for timed in self.timed_models.iter() {
             for clock in timed.clocks() {
                 if clock.owner() != *owner {
                     continue;

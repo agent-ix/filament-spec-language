@@ -79,14 +79,9 @@ pub fn admit_checked_package_with_dependencies(
             crate::bare_synthesis::locate_plan_candidate_refusal(bytes, &mut refusal);
             Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes)))
         }
-        CheckedPackageDispatchResult::Incomplete(incomplete) => Err(PackageAdmissionRefusal {
-            limit: None,
-            code: Code::ResourceExhausted,
-            cause: None,
-            pointer: incomplete.path.map(|path| path.as_str().to_owned()),
-            identity: None,
-            host_allocation_failure: None,
-        }),
+        CheckedPackageDispatchResult::Incomplete(incomplete) => {
+            Err(reader_ceiling_refusal(incomplete))
+        }
         CheckedPackageDispatchResult::CatalogUnavailable(_) => Err(PackageAdmissionRefusal {
             limit: None,
             code: Code::InvalidPackage,
@@ -98,6 +93,26 @@ pub fn admit_checked_package_with_dependencies(
         CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
             Err(host_allocation_failed(failure))
         }
+    }
+}
+
+/// A read ceiling the strict reader reached: `resource_exhausted` at the
+/// node it stopped on, naming the limit, its bound, the count reached and the
+/// `i2.*` setting that raises it (FR-255 Behavior 1, QSL-3543).
+fn reader_ceiling_refusal(
+    incomplete: filament_contract_model::CheckedPackageIncomplete,
+) -> PackageAdmissionRefusal {
+    PackageAdmissionRefusal {
+        limit: Some(Box::new(fsl_foundation::diagnostic::LimitExceeded::new(
+            crate::checked_v2::limit_setting(incomplete.limit_kind),
+            incomplete.limit,
+            u128::from(incomplete.consumed),
+        ))),
+        code: Code::ResourceExhausted,
+        cause: None,
+        pointer: incomplete.path.map(|path| path.as_str().to_owned()),
+        identity: None,
+        host_allocation_failure: None,
     }
 }
 
@@ -182,14 +197,7 @@ pub fn admit_checked_package_with_evidence(
             u128::from(budget.consumed().work).saturating_add(exhausted.denied.amount),
             None,
         )),
-        Read::Incomplete(incomplete) => Err(PackageAdmissionRefusal {
-            limit: None,
-            code: Code::ResourceExhausted,
-            cause: None,
-            pointer: incomplete.path.map(|path| path.as_str().to_owned()),
-            identity: None,
-            host_allocation_failure: None,
-        }),
+        Read::Incomplete(incomplete) => Err(reader_ceiling_refusal(incomplete)),
         Read::CatalogUnavailable(_) => Err(PackageAdmissionRefusal {
             limit: None,
             code: Code::InvalidPackage,

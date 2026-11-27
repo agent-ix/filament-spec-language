@@ -162,6 +162,7 @@ impl<'a> PackageHyperSubject<'a> {
                 Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
             };
         let matcher = CheckedStepMatch::for_evaluator(self.input.evaluator, clause);
+        let retained = limits.engines.item_budget(limits.accounting, cancel);
         let outcome = match check_hyper(
             HyperCheckRequest {
                 clause,
@@ -178,6 +179,7 @@ impl<'a> PackageHyperSubject<'a> {
                 max_depth: form.max_depth,
                 meter: limits.accounting,
                 reductions: form.reductions.clone(),
+                retained: Some(&retained),
             },
             cancel,
         ) {
@@ -247,6 +249,7 @@ impl<'a> PackageHyperSubject<'a> {
     }
 
     #[implements("FR-940-AC-17")]
+    #[allow(clippy::too_many_arguments)]
     fn single_existential(
         &self,
         certificate: &fsl_replay::PackageHyperClosureRequest<'_>,
