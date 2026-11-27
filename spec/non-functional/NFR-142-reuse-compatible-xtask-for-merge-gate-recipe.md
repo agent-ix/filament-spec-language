@@ -58,6 +58,7 @@ current `main` head covers this limitation by evaluating the integrated tree.
 | NFR-142-AC-5 | The PR recipe-relevant path set contains paths reported by Git for PR changes, every package footprint selected by the recipe, and the exact source paths of selected integration-test modules. The command compares this set with main's changed paths using exact and directory-prefix overlap. Any main change within a selected package footprint is overlap, including a sibling file. Changes to `Cargo.toml`, `Cargo.lock`, `.cargo/**`, `rust-toolchain.toml`, or `xtask/**` on either side are unconditional overlap. | unit-testing |
 | NFR-142-AC-6 | Before deciding, the command prints the PR-head, fetched-main, and merge-base commit SHAs. It reports deterministic overlapping paths and an explicit accept or merge-required verdict. | unit-testing |
 | NFR-142-AC-7 | Documentation states that textual path non-overlap cannot establish semantic compatibility and that the rolling merge-gate check on current `main` covers this limitation. | review |
+| NFR-142-AC-8 | When `--preflight` validates recipe selectors, the command invokes `cargo test --no-run --message-format=json` at most once for each selected package, resolves each selector to its test executable, and checks that selector by listing both ordinary and ignored tests from the executable. The recipe lines printed to stdout remain identical to a non-preflight invocation for the same paths. | unit-testing |
 
 ## Verification
 
