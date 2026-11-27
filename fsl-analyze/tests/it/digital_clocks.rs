@@ -1758,6 +1758,170 @@ fn complete_window_world() -> World {
     )
 }
 
+fn window_operator_world() -> World {
+    let document = timed_world::document(
+        &["x"],
+        &[("first", &["late", "x"]), ("second", &["retried", "x"])],
+    );
+    let claims = "\
+        probabilistic Eventual using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ eventually[0 ms, 2 ms] holds(c.late) ] }\n\
+        probabilistic Always using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ always[0 ms, 2 ms] holds(not c.late) ] }\n\
+        probabilistic Until using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ holds(not c.retried) until[0 ms, 2 ms] holds(c.late) ] }\n\
+        probabilistic Release using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ holds(c.late) release[0 ms, 2 ms] holds(not c.late) ] }\n\
+        probabilistic Once using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ eventually[0 ms, 2 ms] once[0 ms, 2 ms] holds(c.late) ] }\n\
+        probabilistic Historically using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ always[0 ms, 2 ms] historically[0 ms, 2 ms] holds(not c.late) ] }\n\
+        probabilistic Since using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ eventually[0 ms, 2 ms] (holds(not c.retried) since[1 ms, 2 ms] holds(not c.late)) ] }\n\
+        probabilistic Triggered using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ always[0 ms, 2 ms] (holds(c.retried) triggered[1 ms, 2 ms] holds(c.late)) ] }\n\
+        probabilistic DelayOnly using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0 [ eventually[0 ms, 3 ms] once[0 ms, 1 ms] holds(c.late) ] }\n";
+    let body = format!(
+        "{}\
+         pre First using v on M::Call::first {{ not self.late }}\n\
+         post First using v on M::Call::first {{ self.late = true }}\n\
+         delay M::Call::first ~ discrete {{ 1 ms: 1 }};\n\
+         pre Second using v on M::Call::second {{ not self.retried }}\n\
+         post Second using v on M::Call::second {{ self.retried = true }}\n\
+         delay M::Call::second ~ discrete {{ 1 ms: 1 }};\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    timed_world::world(&document, PROFILES, &body)
+}
+
+fn timed_monitor_member(key: &fsl_analyze::exact_probabilistic::ProbKey) -> serde_json::Value {
+    let bytes = key
+        .certificate_state
+        .as_ref()
+        .expect("a timed state has a canonical product key")
+        .as_bytes();
+    let value: serde_json::Value = serde_json::from_slice(bytes).expect("a canonical product key");
+    value[5].clone()
+}
+
+/// FR-196-AC-20: each admitted interval operator retains its own canonical
+/// residual, while delay-only moves age and expire candidates without
+/// creating a new predicate position.
+#[trace("FR-196-AC-20")]
+#[test]
+fn timed_window_operator_residuals_match_literal_position_and_delay_tables() {
+    let world = window_operator_world();
+    let cases = [
+        (
+            "Eventual",
+            json!(["window", ["eventually", "0", "0", "0"]]),
+            json!(["window", ["accept"]]),
+        ),
+        (
+            "Always",
+            json!(["window", ["always", "0", "0", "0"]]),
+            json!(["window", ["reject"]]),
+        ),
+        (
+            "Until",
+            json!(["window", ["until", "0", "0", "0"]]),
+            json!(["window", ["accept"]]),
+        ),
+        (
+            "Release",
+            json!(["window", ["release", "0", "0", "0"]]),
+            json!(["window", ["reject"]]),
+        ),
+        (
+            "Once",
+            json!(["window", ["past-state", ["eventually", "0", "0", "0"], [["once", "1", [["0", "0", ["reject"], ["accept"]]]]]]]),
+            json!(["window", ["past-state", ["accept"], [["once", "1", [["0", "0", ["accept"], ["accept"]], ["1", "0", ["reject"], ["accept"]]]]]]]),
+        ),
+        (
+            "Historically",
+            json!(["window", ["past-state", ["always", "0", "0", "0"], [["historically", "1", [["0", "0", ["accept"], ["accept"]]]]]]]),
+            json!(["window", ["past-state", ["reject"], [["historically", "1", [["0", "0", ["reject"], ["accept"]], ["1", "0", ["accept"], ["accept"]]]]]]]),
+        ),
+        (
+            "Since",
+            json!(["window", ["past-state", ["eventually", "0", "0", "0"], [["since", "1", [["0", "0", ["accept"], ["accept"]]]]]]]),
+            json!(["window", ["past-state", ["accept"], [["since", "1", [["0", "0", ["reject"], ["accept"]], ["1", "0", ["accept"], ["accept"]]]]]]]),
+        ),
+        (
+            "Triggered",
+            json!(["window", ["past-state", ["always", "0", "0", "0"], [["triggered", "1", [["0", "0", ["accept"], ["accept"]]]]]]]),
+            json!(["window", ["past-state", ["reject"], [["triggered", "1", [["0", "0", ["reject"], ["accept"]], ["1", "0", ["accept"], ["accept"]]]]]]]),
+        ),
+    ];
+
+    for (name, at_zero, at_one) in cases {
+        let built = product(&world, name);
+        let initial = built.initial[0].2.index();
+        assert_eq!(timed_monitor_member(&built.states[initial]), at_zero, "{name} at position 0");
+        assert!(
+            built.states.iter().any(|state| timed_monitor_member(state) == at_one),
+            "{name} reaches the literal position-1 residual"
+        );
+    }
+
+    let delay = product(&world, "DelayOnly");
+    let expected_delays = [
+        json!(["window", ["past-state", ["eventually", "0", "0", "0"], [["once", "1", [["0", "0", ["reject"], ["accept"]]]]]]]),
+        json!(["window", ["past-state", ["eventually", "0", "1", "0"], [["once", "1", [["1", "0", ["reject"], ["accept"]]]]]]]),
+        json!(["window", ["past-state", ["eventually", "0", "2", "0"], [["once", "1", []]]]]),
+    ];
+    for expected in expected_delays {
+        assert!(
+            delay.states.iter().any(|state| timed_monitor_member(state) == expected),
+            "delay-only monitor state {expected}"
+        );
+    }
+}
+
+/// FR-196-AC-21: replay independently reconstructs all eight literal
+/// residuals and rejects a certificate that changes a past candidate age.
+#[trace("FR-196-AC-21")]
+#[test]
+fn checker_reconstructs_window_residuals_and_rejects_tampered_past_candidate() {
+    let world = window_operator_world();
+    for name in [
+        "Eventual",
+        "Always",
+        "Until",
+        "Release",
+        "Once",
+        "Historically",
+        "Since",
+        "Triggered",
+    ] {
+        let record = settle_trio(&world, name, None);
+        assert!(matches!(
+            record.terminal().expect("a terminal record").value(),
+            TerminalValue::Proved { .. }
+        ), "{name}: {record:#?}");
+        assert_eq!(timed_route(&record), "region");
+    }
+
+    let tamper = |certificate: &mut fsl_replay::ExactProbabilityCertificate| {
+        let row = certificate
+            .values
+            .iter_mut()
+            .find(|row| {
+                let value: serde_json::Value =
+                    serde_json::from_slice(row.state.as_bytes()).expect("a product key");
+                value[5][1][0] == "past-state"
+            })
+            .expect("a state with past residual bytes");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(row.state.as_bytes()).expect("a product key");
+        value[5][1][2][0][2][0][0] = json!("1");
+        row.state = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
+            serde_json::to_vec(&value).expect("serializes canonical arrays and strings"),
+        );
+    };
+    let record = settle_trio(&world, "Once", Some(&tamper));
+    assert!(
+        !matches!(
+            record.terminal().expect("a terminal record").value(),
+            TerminalValue::Proved { .. }
+        ),
+        "the checker rejects a changed past candidate age: {record:#?}"
+    );
+}
+
 /// FR-204-AC-21/26 and FR-186-AC-3: the specified non-punctual nested
 /// Eventually/Always formula settles at its exact value over the region MDP.
 #[trace("FR-204-AC-21", "FR-204-AC-26", "FR-186-AC-3")]
