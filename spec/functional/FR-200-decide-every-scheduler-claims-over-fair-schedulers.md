@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-199
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-204
+    type: depends_on
 ---
 # FR-200: Decide every-scheduler claims over fair schedulers
 
@@ -68,6 +70,10 @@ FR-198 and FR-199 return them, with a policy of `SchedulerChoice`s.
   the states where a strong constraint is enabled when none of its actions
   belongs to that constraint; decompose what remains into MECs; and repeat
   until no component changes. The result SHALL be in canonical state order.
+- For a product with FR-204 `FreeDelays` rows, row-dispatch states used by a
+  fair evaluator SHALL remain transparent to weak fairness. Evaluating a row
+  choice SHALL NOT reset whether a scheduled identity is enabled when testing
+  weak fairness.
 
 ### Forms
 
@@ -119,6 +125,7 @@ FR-198 and FR-199 return them, with a policy of `SchedulerChoice`s.
 | FR-200-AC-8 | On the `Link` fixture, the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair strong M::Msg::send_a` settles `refuted`. | Test |
 | FR-200-AC-9 | On the `Link` fixture, the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair weak each M::Msg::send_a` settles `refuted`. | Test |
 | FR-200-AC-10 | On the `Link` fixture, the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair strong each M::Msg::send_a` settles `refuted`. | Test |
+| FR-200-AC-11 | On a low-level product with one `FreeDelays` row, `stay` self-loops and `go` reaches the target; under `fair weak go`, the exact fair minimum is 1. Without fairness on the same product, the exact minimum is 0 and its `stay` fair component contains only the original product state with the action mapped to its parent identity. On a multi-row product, the fair interval route returns lower and upper vectors in original-state order enclosing value `1/4` at `s`, `1` at goal `g`, and `0` at terminal `f`, and retains one policy entry per row. | Test (TC-635) |
 
 ## Dependencies
 
