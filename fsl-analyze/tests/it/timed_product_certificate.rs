@@ -857,7 +857,7 @@ fn an_infinite_expected_time_is_rederived_not_claimed() {
 /// there. The least expected time until `late` is exactly 1 ms.
 fn quiescent_send(claim: &str) -> World {
     timed_world::world(
-        &timed_world::document(&["x"], &[("send", &["late", "x"])]),
+        &timed_world::document(&["x"], &[("send", &["late"])]),
         PROFILES,
         &format!(
             "{}pre Send using v on M::Call::send {{ not self.late and self.x >= 1 ms }}\n\
