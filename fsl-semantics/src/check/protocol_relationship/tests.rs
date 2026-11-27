@@ -14,7 +14,7 @@ use ix_trace_rs::trace;
 use crate::check::refusal::{
     ProtocolAnchorCause, ProtocolConstruct, ProtocolReferenceCause, RelatedEnd,
 };
-use crate::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
+use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 use crate::model::domain_package::{
     ComponentRecord, DomainPackageRecord, EndpointRecord, FieldMemberRecord, Multiplicity,
     NativeValueType, ObjectTypeRecord, PortDirection, RecordValueTypeRecord, RelationshipDirection,
@@ -28,7 +28,7 @@ mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{HEADER, obligation_model_with};
+use fixture::{obligation_model_with, HEADER};
 
 fn key(name: &str) -> DeclarationKey {
     DeclarationKey {

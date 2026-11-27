@@ -10,8 +10,8 @@ use filament_exact::{Integer, Rational, ValueType};
 use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    AggregateTerm, BodyTerm, CheckCause, SemanticCheckRefusal, CheckedGraph, CheckedNode,
-    CheckingLimitKind, ClockOp, MeasureObligation, StatePredicate, TemporalCause, TimeSourceKind,
+    AggregateTerm, BodyTerm, CheckCause, CheckedGraph, CheckedNode, CheckingLimitKind, ClockOp,
+    MeasureObligation, SemanticCheckRefusal, StatePredicate, TemporalCause, TimeSourceKind,
     TimedModel,
 };
 use fsl_semantics::model::intake::meaning;
@@ -163,7 +163,10 @@ fn rpc(time: &str) -> String {
     )
 }
 
-pub(super) fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
+pub(super) fn check(
+    document: &[u8],
+    body: &str,
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     admit_and_assemble_with_profiles(document, TEMPORAL, body)
         .expect("S2 builds every timed form")
         .with_unwritten_timed_members()

@@ -1987,7 +1987,10 @@ fn s3_checks_the_on_each_guard_and_binder() {
 }
 
 /// The one refusal of `activation` and `body` and the unit text it refuses.
-fn refusal_of(activation: &str, body: &str) -> (fsl_semantics::check::SemanticCheckRefusal, String) {
+fn refusal_of(
+    activation: &str,
+    body: &str,
+) -> (fsl_semantics::check::SemanticCheckRefusal, String) {
     let text = unit(INFINITE, &declared_on("Each", activation, body));
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let refusals = assemble_with_models(text.as_bytes(), &packages)

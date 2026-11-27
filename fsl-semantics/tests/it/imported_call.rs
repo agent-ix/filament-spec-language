@@ -17,7 +17,9 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{AdmittedImport, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{
+    AdmittedImport, CheckedGraph, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::library::{ImportView, LibraryName, LibraryPackage};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;

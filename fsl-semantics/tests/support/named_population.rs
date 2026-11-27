@@ -17,8 +17,8 @@ use filament_exact::{Integer, Meter, Value};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_semantics::check::{
-    SemanticCheckRefusal, CheckedGraph, PackageDeclarations, Reward, RewardEvaluationFailure,
-    RewardEvaluator,
+    CheckedGraph, PackageDeclarations, Reward, RewardEvaluationFailure, RewardEvaluator,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};

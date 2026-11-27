@@ -26,8 +26,8 @@ use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::{Accumulation, BinaryOperator, BinderQuery, Expression, FunctionDeclaration};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, CollectionLoss, CollectionProperty, Obligation, OperandText,
-    PackageDeclarations, ProvedInterval,
+    CheckCause, CollectionLoss, CollectionProperty, Obligation, OperandText, PackageDeclarations,
+    ProvedInterval, SemanticCheckRefusal,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;

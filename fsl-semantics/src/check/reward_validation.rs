@@ -5,8 +5,8 @@ use filament_checked::node::NodeKind;
 use filament_exact::{Charge, ChargePoint, Integer, Meter, Value, ValueType};
 
 use super::{
-    CheckCause, SemanticCheckRefusal, CheckedGraph, CheckingLimitKind, CheckingStage, Reward,
-    RewardEvaluator, StageLimitCause,
+    CheckCause, CheckedGraph, CheckingLimitKind, CheckingStage, Reward, RewardEvaluator,
+    SemanticCheckRefusal, StageLimitCause,
 };
 
 enum Domain {

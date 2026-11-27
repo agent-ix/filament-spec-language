@@ -9,7 +9,9 @@
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, TemporalCause, TimedConstruct};
+use fsl_semantics::check::{
+    CheckCause, CheckedGraph, SemanticCheckRefusal, TemporalCause, TimedConstruct,
+};
 use ix_trace_rs::trace;
 use serde_json::json;
 

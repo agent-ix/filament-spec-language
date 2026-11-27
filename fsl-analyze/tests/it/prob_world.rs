@@ -25,8 +25,8 @@ use fsl_eval::value::S6aRewardEvaluator;
 use fsl_package::CheckedPackage;
 use fsl_replay::ModelCheckLimits;
 use fsl_semantics::check::{
-    SemanticCheckRefusal, CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward,
-    RewardEvaluationFailure, RewardEvaluator,
+    CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward, RewardEvaluationFailure,
+    RewardEvaluator, SemanticCheckRefusal,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};

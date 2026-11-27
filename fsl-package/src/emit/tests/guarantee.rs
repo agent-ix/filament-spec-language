@@ -8,9 +8,9 @@
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind, PropertyForm};
 use fsl_semantics::check::{
-    AbstractionKey, AbstractionRefusal, AssemblyCause, CheckCause, SemanticCheckRefusal,
-    CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot, ModelFamily,
-    SlotBacking, SlotRole,
+    AbstractionKey, AbstractionRefusal, AssemblyCause, CheckCause, CheckedImplementationGuarantee,
+    GuaranteeName, GuaranteeRefusal, GuaranteeSlot, ModelFamily, SemanticCheckRefusal, SlotBacking,
+    SlotRole,
 };
 use ix_trace_rs::trace;
 

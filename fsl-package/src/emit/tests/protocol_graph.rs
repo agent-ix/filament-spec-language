@@ -10,7 +10,7 @@ use super::protocol_reference::{clause_argument, node_by_id, node_of};
 use super::reachability::{lower_package, lower_with, model_node, Lowered};
 use super::*;
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, ProtocolAnchorCause};
+use fsl_semantics::check::{CheckCause, ProtocolAnchorCause, SemanticCheckRefusal};
 
 pub(super) const PROFILES: &str = "profile p = \"filament.protocol.finite-global/v1\";\n\
                          profile e = \"filament.temporal.timed/v1\";\n";

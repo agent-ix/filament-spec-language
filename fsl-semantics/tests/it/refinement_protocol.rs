@@ -16,8 +16,8 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::Code;
 use fsl_semantics::check::{
-    AbstractSide, CheckCause, SemanticCheckRefusal, CheckedGraph, CheckedRefinement, RefinementCatalogNode,
-    RefinementCause, RefinementSupport, StepTarget,
+    AbstractSide, CheckCause, CheckedGraph, CheckedRefinement, RefinementCatalogNode,
+    RefinementCause, RefinementSupport, SemanticCheckRefusal, StepTarget,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};

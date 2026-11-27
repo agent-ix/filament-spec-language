@@ -46,7 +46,7 @@ use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, CheckedExpression, Obligation, PackageDeclarations,
+    CheckCause, CheckedExpression, Obligation, PackageDeclarations, SemanticCheckRefusal,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::enumeration::{

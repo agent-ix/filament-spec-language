@@ -16,7 +16,7 @@ use filament_semantic_value::location::{
 use ix_trace_rs::implements;
 
 use super::state::AnchorInput;
-use super::{Binder, Binders, Lowering, fault};
+use super::{fault, Binder, Binders, Lowering};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{BindingValue, BodyTerm, LeafTerm, MemberTerm};
@@ -25,7 +25,7 @@ use crate::check::refinement::{
     KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget,
     StepClass, StepTarget,
 };
-use crate::check::refusal::{SemanticCheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
 use filament_exact::{Value, ValueType};
 use filament_semantic_value::fairness::FairnessConstraint;
 

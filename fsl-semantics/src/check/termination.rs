@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 use super::facts::{ArgumentShape, CallSite, EdgeKind};
 use super::ir::{CheckedNode, Slot};
-use super::refusal::{CheckCause, SemanticCheckRefusal, MeasureObligation};
+use super::refusal::{CheckCause, MeasureObligation, SemanticCheckRefusal};
 use filament_exact::ValueType;
 use filament_semantic_value::location::ExpressionLocation as Location;
 
@@ -985,11 +985,9 @@ mod tests {
                     })
                     .collect();
                 let names = names(LENGTH);
-                assert!(
-                    recursive_components(&members(&names, &chain))
-                        .list
-                        .is_empty()
-                );
+                assert!(recursive_components(&members(&names, &chain))
+                    .list
+                    .is_empty());
                 let ring: Vec<Vec<CallSite>> = (0..LENGTH)
                     .map(|member| vec![call((member + 1) % LENGTH, EdgeKind::Ordinary, 0)])
                     .collect();

@@ -13,13 +13,13 @@ use ix_trace_rs::trace;
 use super::{CheckedLifetime, CheckedTerminalMember};
 use crate::check::protocol_clause::ProtocolNodeId;
 use crate::check::refusal::{ProtocolAnchorCause, ProtocolReferenceCause, SlotKind};
-use crate::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
+use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 
 mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{HEADER, obligation_model_with};
+use fixture::{obligation_model_with, HEADER};
 
 /// ADR-027 §7's `Fill` over `k: M::Node`, activated `activation`, with
 /// `members` written before `run`.
@@ -852,17 +852,15 @@ fn the_reference_protocols_check_with_their_edges() {
 
     let chatter = format!("{HEADER}{CHATTER}");
     let graph = checks(&chatter);
-    assert!(
-        graph
-            .protocol("Chatter")
-            .expect("checked")
-            .edges
-            .contains(&CausalEdge {
-                kind: EdgeKind::Message,
-                from: port(node_id(&chatter, "Tx"), Port::Exit),
-                to: port(node_id(&chatter, "Rx"), Port::Enter),
-            })
-    );
+    assert!(graph
+        .protocol("Chatter")
+        .expect("checked")
+        .edges
+        .contains(&CausalEdge {
+            kind: EdgeKind::Message,
+            from: port(node_id(&chatter, "Tx"), Port::Exit),
+            to: port(node_id(&chatter, "Rx"), Port::Enter),
+        }));
 
     let graph = checks(&workers("until(r.total > 0)"));
     assert_eq!(

@@ -3485,12 +3485,10 @@ mod tests {
     #[test]
     fn unrelated_replay_paths_do_not_run_the_probability_check() {
         let recipe = plan(workspace_root(), &["fsl-replay/src/refinement.rs"]);
-        assert!(
-            !recipe
-                .selectors
-                .iter()
-                .any(|item| item.package == "fsl-probability-check")
-        );
+        assert!(!recipe
+            .selectors
+            .iter()
+            .any(|item| item.package == "fsl-probability-check"));
     }
 
     #[test]
@@ -3512,12 +3510,10 @@ mod tests {
                 "cyclic_mdp"
             )]
         );
-        assert!(
-            !module
-                .selectors
-                .iter()
-                .any(|item| item.package == "filament-spec-language")
-        );
+        assert!(!module
+            .selectors
+            .iter()
+            .any(|item| item.package == "filament-spec-language"));
         for path in [
             "tools/fsl-probability-check/tests/it/main.rs",
             "tools/fsl-probability-check/src/main.rs",
@@ -3589,11 +3585,9 @@ mod tests {
             }
         }
         let other = plan(workspace_root(), &["fsl-analyze/src/provider.rs"]);
-        assert!(
-            !integration_runs(&other, "fsl-analyze")
-                .iter()
-                .any(|(_, filter)| filter == "analyze_request_wire")
-        );
+        assert!(!integration_runs(&other, "fsl-analyze")
+            .iter()
+            .any(|(_, filter)| filter == "analyze_request_wire"));
     }
 
     #[test]
@@ -3666,10 +3660,8 @@ mod tests {
             workspace_root(),
             &["fsl-analyze/tests/it/weak_memory/replay_boundary_cases.rs"],
         );
-        assert!(
-            integration_runs(&recipe, "fsl-analyze")
-                .contains(&pair("it_refinement", "weak_memory::replay_boundary_cases"))
-        );
+        assert!(integration_runs(&recipe, "fsl-analyze")
+            .contains(&pair("it_refinement", "weak_memory::replay_boundary_cases")));
     }
 
     #[test]
@@ -3967,24 +3959,18 @@ mod tests {
                 .map(|item| item.to_string())
                 .collect::<Vec<_>>()
         );
-        assert!(
-            recipe
-                .selectors
-                .iter()
-                .any(|item| item.package == "fsl-replay"
-                    && item.filter.as_deref()
-                        == Some(
-                            "tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict"
-                        )
-                    && item.timed)
-        );
-        assert!(
-            recipe
-                .selectors
-                .iter()
-                .filter(|item| item.timed)
-                .all(|item| item.threads == Some(1))
-        );
+        assert!(recipe
+            .selectors
+            .iter()
+            .any(|item| item.package == "fsl-replay"
+                && item.filter.as_deref()
+                    == Some("tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict")
+                && item.timed));
+        assert!(recipe
+            .selectors
+            .iter()
+            .filter(|item| item.timed)
+            .all(|item| item.threads == Some(1)));
     }
 
     #[test]
@@ -4005,12 +3991,10 @@ mod tests {
                 && item.target == TestTarget::Library
                 && item.filter.as_deref() == Some("spans::")
         }));
-        assert!(
-            spans
-                .selectors
-                .iter()
-                .any(|item| item.filter.as_deref() == Some(LARGE_EMIT_FILTER))
-        );
+        assert!(spans
+            .selectors
+            .iter()
+            .any(|item| item.filter.as_deref() == Some(LARGE_EMIT_FILTER)));
     }
 
     #[test]
@@ -4083,18 +4067,13 @@ mod tests {
             &runner,
         )
         .expect("recipe");
-        assert!(
-            result.starts_with(
-                "# PR head head-sha; origin/main main-sha; merge-base merge-base-sha\n"
-            )
-        );
+        assert!(result
+            .starts_with("# PR head head-sha; origin/main main-sha; merge-base merge-base-sha\n"));
         let calls = runner.calls.borrow();
         assert_eq!(calls[0].1[0], "fetch");
-        assert!(
-            calls
-                .iter()
-                .any(|(_, args)| args.first().is_some_and(|arg| arg == "merge-base"))
-        );
+        assert!(calls
+            .iter()
+            .any(|(_, args)| args.first().is_some_and(|arg| arg == "merge-base")));
         let compile = result.find("--no-run").expect("compile first");
         let tests = result
             .find("\ncargo test --locked -p fsl-analyze --test it_probabilistic -- probabilistic")
@@ -4114,13 +4093,11 @@ mod tests {
         assert!(result.contains(
             "cargo test --locked -p fsl-analyze --test it_probabilistic -- probabilistic"
         ));
-        assert!(
-            runner
-                .calls
-                .borrow()
-                .iter()
-                .all(|(program, _)| program == "git")
-        );
+        assert!(runner
+            .calls
+            .borrow()
+            .iter()
+            .all(|(program, _)| program == "git"));
     }
 
     #[test]
@@ -4129,22 +4106,20 @@ mod tests {
             no_tests: true,
             ..FakeRunner::new()
         };
-        assert!(
-            run_with_runner(
-                workspace_root(),
-                &[
-                    OsString::from("--preflight"),
-                    OsString::from("fsl-analyze/src/analyze/exact.rs"),
-                ],
-                &runner,
-            )
-            .is_err()
-        );
-        assert!(
-            runner.calls.borrow().iter().any(|(program, args)| {
-                program != "git" && args.contains(&"--ignored".to_owned())
-            })
-        );
+        assert!(run_with_runner(
+            workspace_root(),
+            &[
+                OsString::from("--preflight"),
+                OsString::from("fsl-analyze/src/analyze/exact.rs"),
+            ],
+            &runner,
+        )
+        .is_err());
+        assert!(runner
+            .calls
+            .borrow()
+            .iter()
+            .any(|(program, args)| { program != "git" && args.contains(&"--ignored".to_owned()) }));
     }
 
     #[test]
@@ -4179,58 +4154,46 @@ mod tests {
             no_tests: true,
             ..FakeRunner::new()
         };
-        assert!(
-            run_with_runner(
-                workspace_root(),
-                &[
-                    OsString::from("--preflight"),
-                    OsString::from("fsl-analyze/src/analyze/exact.rs"),
-                ],
-                &runner
-            )
-            .is_err()
-        );
+        assert!(run_with_runner(
+            workspace_root(),
+            &[
+                OsString::from("--preflight"),
+                OsString::from("fsl-analyze/src/analyze/exact.rs"),
+            ],
+            &runner
+        )
+        .is_err());
     }
 
     #[test]
     fn empty_unknown_manifest_fixture_deleted_and_root_paths_have_fallbacks() {
-        assert!(
-            plan_paths(workspace_root(), &[])
-                .expect("empty planning")
-                .selectors
-                .is_empty()
-        );
+        assert!(plan_paths(workspace_root(), &[])
+            .expect("empty planning")
+            .selectors
+            .is_empty());
         assert!(run_with_runner(workspace_root(), &[], &FakeRunner::new()).is_err());
-        assert!(
-            plan(workspace_root(), &["untracked/unknown.dat"])
-                .notes
-                .iter()
-                .any(|note| note.contains("unknown.dat"))
-        );
-        assert!(
-            plan(workspace_root(), &["Cargo.lock"])
-                .selectors
-                .iter()
-                .any(|item| item.filter.as_deref() == Some("monitor_"))
-        );
-        assert!(
-            plan(workspace_root(), &["fsl-eval/src/new_unknown.rs"])
-                .notes
-                .iter()
-                .any(|note| note.contains("unknown fsl-eval"))
-        );
+        assert!(plan(workspace_root(), &["untracked/unknown.dat"])
+            .notes
+            .iter()
+            .any(|note| note.contains("unknown.dat")));
+        assert!(plan(workspace_root(), &["Cargo.lock"])
+            .selectors
+            .iter()
+            .any(|item| item.filter.as_deref() == Some("monitor_")));
+        assert!(plan(workspace_root(), &["fsl-eval/src/new_unknown.rs"])
+            .notes
+            .iter()
+            .any(|note| note.contains("unknown fsl-eval")));
         assert!(
             plan(workspace_root(), &["fsl-semantics/src/new_unknown.rs"])
                 .notes
                 .iter()
                 .any(|note| note.contains("unknown fsl-semantics"))
         );
-        assert!(
-            plan(workspace_root(), &["xtask/src/new_task.rs"])
-                .selectors
-                .iter()
-                .any(|item| item.package == "xtask" && item.filter.is_some())
-        );
+        assert!(plan(workspace_root(), &["xtask/src/new_task.rs"])
+            .selectors
+            .iter()
+            .any(|item| item.package == "xtask" && item.filter.is_some()));
         assert!(
             plan(
                 workspace_root(),
@@ -4240,24 +4203,18 @@ mod tests {
             .len()
                 > 1
         );
-        assert!(
-            plan(workspace_root(), &["fsl-analyze/src/deleted.rs"])
-                .notes
-                .iter()
-                .any(|note| note.contains("absent"))
-        );
-        assert!(
-            plan(workspace_root(), &["fsl-analyze/src/lib.rs"])
-                .selectors
-                .iter()
-                .any(|item| item.filter.as_deref() == Some("monitor_"))
-        );
-        assert!(
-            plan(workspace_root(), &["src/lib.rs"])
-                .selectors
-                .iter()
-                .any(|item| item.package == "filament-spec-language" && item.filter.is_some())
-        );
+        assert!(plan(workspace_root(), &["fsl-analyze/src/deleted.rs"])
+            .notes
+            .iter()
+            .any(|note| note.contains("absent")));
+        assert!(plan(workspace_root(), &["fsl-analyze/src/lib.rs"])
+            .selectors
+            .iter()
+            .any(|item| item.filter.as_deref() == Some("monitor_")));
+        assert!(plan(workspace_root(), &["src/lib.rs"])
+            .selectors
+            .iter()
+            .any(|item| item.package == "filament-spec-language" && item.filter.is_some()));
     }
 
     #[test]
@@ -4271,10 +4228,11 @@ mod tests {
             ],
         );
         assert!(recipe.notes.iter().any(|note| note.contains("README.md")));
-        assert!(
-            recipe.selectors.iter().any(|item| item.package == "xtask"
-                && item.filter.as_deref() == Some("merge_gate_recipe::"))
-        );
+        assert!(recipe
+            .selectors
+            .iter()
+            .any(|item| item.package == "xtask"
+                && item.filter.as_deref() == Some("merge_gate_recipe::")));
     }
 
     #[test]
@@ -4315,16 +4273,14 @@ mod tests {
                     == Some("tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict")
                 && !item.exact
         }));
-        assert!(
-            foundation
-                .selectors
-                .iter()
-                .chain(source.selectors.iter())
-                .chain(cst.selectors.iter())
-                .chain(forms.selectors.iter())
-                .chain(package.selectors.iter())
-                .all(|item| item.filter.is_some())
-        );
+        assert!(foundation
+            .selectors
+            .iter()
+            .chain(source.selectors.iter())
+            .chain(cst.selectors.iter())
+            .chain(forms.selectors.iter())
+            .chain(package.selectors.iter())
+            .all(|item| item.filter.is_some()));
     }
 
     #[test]
@@ -4398,12 +4354,10 @@ mod tests {
         ] {
             assert_selects_owner(&manifest, package, filter);
         }
-        assert!(
-            manifest
-                .selectors
-                .iter()
-                .all(|selector| selector.filter.is_some())
-        );
+        assert!(manifest
+            .selectors
+            .iter()
+            .all(|selector| selector.filter.is_some()));
     }
 
     #[test]
@@ -4669,11 +4623,9 @@ mod tests {
         };
         let error = ensure_tool_compatible(&["README.md"], &runner)
             .expect_err("ancestry failure must refuse reuse");
-        assert!(
-            error
-                .to_string()
-                .contains("tool workspace HEAD must be on origin/main history")
-        );
+        assert!(error
+            .to_string()
+            .contains("tool workspace HEAD must be on origin/main history"));
     }
 
     #[test]
@@ -4899,11 +4851,9 @@ mod tests {
         )
         .expect_err("caller path mismatch must fail closed");
         assert!(error.to_string().contains("do not match PR Git diff"));
-        assert!(
-            error
-                .to_string()
-                .contains("fsl-analyze/src/analyze/exact.rs")
-        );
+        assert!(error
+            .to_string()
+            .contains("fsl-analyze/src/analyze/exact.rs"));
         assert!(runner.calls.borrow().iter().any(|(_, args)| {
             args.first().is_some_and(|arg| arg == "diff")
                 && args.contains(&"-z".to_owned())

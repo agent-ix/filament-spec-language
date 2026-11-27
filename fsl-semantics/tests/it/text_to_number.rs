@@ -6,8 +6,8 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::{build_unit, BuiltinType, Expression, TypeForm};
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_semantics::check::{
-    ApplicationTerm, AssemblyRefusal, BodyTerm, SemanticCheckRefusal, CheckedGraph, LawRole, LeafTerm,
-    MemberTerm, OperationMode, Operator, PackageDeclarations, SemanticNode,
+    ApplicationTerm, AssemblyRefusal, BodyTerm, CheckedGraph, LawRole, LeafTerm, MemberTerm,
+    OperationMode, Operator, PackageDeclarations, SemanticCheckRefusal, SemanticNode,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::value::{DefinitionRole, Member};

@@ -15,14 +15,14 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{NodeKey, Value};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::{Binders, Lowering, identifiers, require_admitted};
+use super::{identifiers, require_admitted, Binders, Lowering};
 use crate::check::extension::{
-    CheckedClause, CheckedExtensionForm, ClauseValue, extension_location,
+    extension_location, CheckedClause, CheckedExtensionForm, ClauseValue,
 };
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedNode;
 use crate::check::node_key::{BodyTerm, ExtensionClauseTerm, ExtensionTerm, NodeRef, NodeTag};
-use crate::check::refusal::{SemanticCheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
 
 /// One checked extension form, as lowering reads it.
 pub(crate) struct ExtensionFormInput<'a> {

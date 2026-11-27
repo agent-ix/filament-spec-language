@@ -5,7 +5,7 @@ use filament_checked::node::IntegerDivisionOperator;
 use filament_exact::{DivisionProfile, Integer, NonZeroInteger};
 use filament_semantic_value::location::ExpressionLocation;
 
-use super::{CheckCause, SemanticCheckRefusal, refuse};
+use super::{refuse, CheckCause, SemanticCheckRefusal};
 use crate::check::ir::IntegerRange;
 
 type Charge<'a> = &'a mut dyn FnMut() -> Result<(), SemanticCheckRefusal>;

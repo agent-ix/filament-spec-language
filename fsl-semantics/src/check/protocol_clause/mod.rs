@@ -57,10 +57,10 @@ use fsl_foundation::Span;
 
 use super::protocol_obligation::CheckedObligations;
 use super::protocol_requirement::UnitDeclarations;
-use super::refusal::{AliasKind, CheckCause, SemanticCheckRefusal, ProtocolAnchorCause};
+use super::refusal::{AliasKind, CheckCause, ProtocolAnchorCause, SemanticCheckRefusal};
 use super::state_clause::{AttemptDeclaration, StateClauseDeclaration};
 use super::{Scope, Signatures};
-use anchors::{ScopeKey, check_kind, resolve, scope_key};
+use anchors::{check_kind, resolve, scope_key, ScopeKey};
 use attempts::bind_attempts;
 use binders::shadow_refusals;
 use filament_semantic_value::location::ExpressionOwner as Origin;

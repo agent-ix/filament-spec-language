@@ -8,7 +8,8 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, CheckedGraph, CheckingLimitKind, Obligation, PackageDeclarations,
+    CheckCause, CheckedGraph, CheckingLimitKind, Obligation, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;

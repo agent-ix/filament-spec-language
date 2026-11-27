@@ -11,7 +11,7 @@ use filament_exact::{DecimalType, Integer, RoundingMode, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput, UnitIntakeCause};
 use fsl_semantics::model::observation::{
@@ -626,12 +626,10 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
             .graph
             .state_clause(name)
             .unwrap_or_else(|| panic!("{name} checks"));
-        assert!(
-            clause
-                .parameters()
-                .iter()
-                .any(|(parameter, value_type)| parameter == "by" && value_type == &p)
-        );
+        assert!(clause
+            .parameters()
+            .iter()
+            .any(|(parameter, value_type)| parameter == "by" && value_type == &p));
         if !name.starts_with("Quantifier") {
             assert!(
                 clause
@@ -762,10 +760,7 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         .body()
         .children();
     let after_let_comparison = after_let[1].children();
-    assert!(matches!(
-        after_let_comparison[0].kind(),
-        NodeKind::Local(2)
-    ));
+    assert!(matches!(after_let_comparison[0].kind(), NodeKind::Local(2)));
     assert_eq!(
         after_let_comparison[0].value_type(),
         &p,

@@ -29,7 +29,7 @@ pub use relation::{
 };
 
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
-use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
+use super::scc::{check_partition, CertificateState, Component, ComponentWitness, ProductGraph};
 use super::{CertificateLocus, CertificateRule};
 use crate::shared_wire::state_key_text;
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};

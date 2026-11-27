@@ -22,7 +22,7 @@ use super::refusal;
 use super::types::{
     CausalEdge, CheckedControl, CheckedControlTree, EdgeKind, Port, PortRef, ProtocolNodeId,
 };
-use crate::check::refusal::{CheckCause, SemanticCheckRefusal, KeyFault, ProtocolAnchorCause};
+use crate::check::refusal::{CheckCause, KeyFault, ProtocolAnchorCause, SemanticCheckRefusal};
 
 /// What [`compile`] builds: the control tree and its edge relation.
 pub(super) struct Compiled {
@@ -635,7 +635,11 @@ fn required_labels(parallel: &ParallelForm) -> BTreeSet<&str> {
         JoinPolicy::Any => listed.len() == 1,
         JoinPolicy::Predicate(_) => false,
     };
-    if all { listed } else { BTreeSet::new() }
+    if all {
+        listed
+    } else {
+        BTreeSet::new()
+    }
 }
 
 /// Whether `commit` dominates `effect` (FR-381 "Retry, commit and

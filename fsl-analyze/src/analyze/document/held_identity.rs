@@ -22,8 +22,8 @@ use fsl_semantics::check::wire_id::{
     peer_graphs, WireGraph,
 };
 use fsl_semantics::check::ComponentPackages;
-use serde_json::Value;
 use ix_trace_rs::implements;
+use serde_json::Value;
 
 use crate::analyze::GraphUnavailable;
 

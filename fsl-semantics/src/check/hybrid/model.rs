@@ -10,18 +10,18 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{BinaryOperator, ExprId, ExprNode, ExpressionForm, HybridForm, SpanId};
-use fsl_foundation::Span;
 use fsl_foundation::selection::ProfileSelection;
+use fsl_foundation::Span;
 
 use super::callee::Callees;
 use super::cause::MalformedReason;
-use super::term::{Binder, Env, Kind, Lowered, Meter, Stop, lower, lower_at};
+use super::term::{lower, lower_at, Binder, Env, Kind, Lowered, Meter, Stop};
 use super::{
     CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable, HybridCause,
     HybridModelIndex, HybridTerm, InitialEntry, ModeIndex, ResetConstraint, VariableClass,
     VariableIndex,
 };
-use crate::check::refusal::{CheckCause, SemanticCheckRefusal, CheckingStage, StageLimitCause};
+use crate::check::refusal::{CheckCause, CheckingStage, SemanticCheckRefusal, StageLimitCause};
 
 /// A `hybrid` declaration as the assembler hands it to the check: its form,
 /// and the profile selection its `using` alias resolved to.

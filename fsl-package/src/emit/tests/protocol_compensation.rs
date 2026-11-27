@@ -134,7 +134,9 @@ fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<SemanticCheck
     Ok((emission, wire, read))
 }
 
-fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
+fn checked_graph(
+    unit: &str,
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     let document =
         crate::emit::tests::wire_bytes(&fixture::document()).expect("fixture serializes");
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();

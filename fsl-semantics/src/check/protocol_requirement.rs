@@ -27,7 +27,7 @@ use filament_semantic_value::location::{
 use fsl_forms::{ExprNode, ExpressionForm, ProtocolDeclarationForm, TemporalNodeForm};
 use fsl_foundation::Span;
 
-use super::refusal::{CheckCause, SemanticCheckRefusal, ProtocolAnchorCause};
+use super::refusal::{CheckCause, ProtocolAnchorCause, SemanticCheckRefusal};
 use super::temporal_clause::TemporalDeclaration;
 
 /// One checked `requires temporal T;` member (FR-218 "Outputs").

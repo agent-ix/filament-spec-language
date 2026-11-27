@@ -1649,11 +1649,7 @@ mod tests {
                 "CompositionSourceMember",
                 "fsl-replay/src/planner/from_admitted.rs",
             ),
-            (
-                "ParsedSource",
-                "FormsSource",
-                "fsl-forms/src/cst.rs",
-            ),
+            ("ParsedSource", "FormsSource", "fsl-forms/src/cst.rs"),
             (
                 "CheckRefusal",
                 "SemanticCheckRefusal",
@@ -1680,10 +1676,9 @@ mod tests {
                 "{production_file} no longer defines the namesake {former_name}"
             );
         }
-        let semantic_refusal = fs::read_to_string(
-            workspace_root.join("fsl-semantics/src/check/refusal.rs"),
-        )
-        .expect("semantic refusal source exists");
+        let semantic_refusal =
+            fs::read_to_string(workspace_root.join("fsl-semantics/src/check/refusal.rs"))
+                .expect("semantic refusal source exists");
         assert!(
             semantic_refusal.contains(
                 "/// filament:canonical\n#[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]\n#[error(\"",

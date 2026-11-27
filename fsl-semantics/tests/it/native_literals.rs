@@ -12,9 +12,9 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    ApplicationTerm, BindingValue, BodyTerm, CheckCause, SemanticCheckRefusal, CheckedGraph, I128Limit,
+    ApplicationTerm, BindingValue, BodyTerm, CheckCause, CheckedGraph, I128Limit,
     IntegerOutsideI128, IntegerSite, LawRole, LeafTerm, LiteralValue, MemberTerm, NodeTag,
-    OperationMode, PackageDeclarations, SemanticNode,
+    OperationMode, PackageDeclarations, SemanticCheckRefusal, SemanticNode,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;

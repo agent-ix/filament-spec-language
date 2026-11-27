@@ -10,7 +10,7 @@ use ix_trace_rs::implements;
 use super::check::NamedScope;
 use super::ir::CheckedBody;
 pub use super::plan_value::{CheckedPlan, PlanOperation, PlanPopulation, PlanShape};
-use super::{CheckCause, SemanticCheckRefusal, Scope, Signatures, Typer};
+use super::{CheckCause, Scope, SemanticCheckRefusal, Signatures, Typer};
 use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
 
 /// The checked source identity needed to name an emitted synthesis claim.

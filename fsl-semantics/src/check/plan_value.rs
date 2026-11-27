@@ -28,7 +28,7 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::check::{EnumBinding, NamedScope};
-use super::{CheckCause, SemanticCheckRefusal, Scope};
+use super::{CheckCause, Scope, SemanticCheckRefusal};
 use crate::value::enumeration::{
     AdmittedEnumDeclaration, EnumDeclarationPreimage, EnumMemberPreimage,
 };

@@ -21,7 +21,7 @@ use fsl_eval::value::{
     ValuePathSubject,
 };
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::admit_unit;
 use fsl_semantics::model::normalize::{normalize_with_meter, EffectiveView, NormalizeOutcome};

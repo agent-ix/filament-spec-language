@@ -15,7 +15,8 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{emit_checked, CheckedPackage, EmitLimits, EmitRefusal, ReadIdentityRows};
 use fsl_semantics::{
     check::{
-        CheckCause, SemanticCheckRefusal, PackageDeclarations, ProbabilisticCause, ProbabilisticFeature,
+        CheckCause, PackageDeclarations, ProbabilisticCause, ProbabilisticFeature,
+        SemanticCheckRefusal,
     },
     model::{
         accounting::ModelNormalizationLimits,

@@ -10,7 +10,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{SemanticCheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_integer_division, DefinitionRole};
 use ix_trace_rs::trace;

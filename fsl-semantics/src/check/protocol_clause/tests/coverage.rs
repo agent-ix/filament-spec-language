@@ -20,7 +20,10 @@ fn checks_with_header(header: &str, source: &str) {
         .unwrap_or_else(|refusals| panic!("{source}: {refusals:?}"));
 }
 
-fn refusals_with_header(header: &str, source: &str) -> (String, Vec<crate::check::SemanticCheckRefusal>) {
+fn refusals_with_header(
+    header: &str,
+    source: &str,
+) -> (String, Vec<crate::check::SemanticCheckRefusal>) {
     let (text, assembled) = super::assemble_with(header, source);
     let refusals = assembled
         .check(

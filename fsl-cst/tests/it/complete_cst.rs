@@ -482,12 +482,20 @@ fn the_s1_diagnostics_setting_moves_only_the_report_cut() {
     ));
     let parsed = recover_under(&body, limits).expect("a recovered unit");
     assert_eq!(parsed.diagnostics().len(), 11);
-    assert_eq!(parsed.diagnostics()[10].cause.as_str(), "diagnostic-list-cut");
-    assert!(parsed.diagnostics()[10].message.contains("cut after 10 syntax errors"));
+    assert_eq!(
+        parsed.diagnostics()[10].cause.as_str(),
+        "diagnostic-list-cut"
+    );
+    assert!(parsed.diagnostics()[10]
+        .message
+        .contains("cut after 10 syntax errors"));
     let limits = limits.with_diagnostics(1000);
     let parsed = recover_under(&body, limits).expect("a recovered unit");
     assert_eq!(parsed.diagnostics().len(), 150);
-    assert!(parsed.diagnostics().iter().all(|d| d.cause.as_str() != "diagnostic-list-cut"));
+    assert!(parsed
+        .diagnostics()
+        .iter()
+        .all(|d| d.cause.as_str() != "diagnostic-list-cut"));
 }
 
 #[trace("TC-2154", "FR-762-AC-7")]

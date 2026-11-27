@@ -13,13 +13,13 @@ use ix_trace_rs::trace;
 
 use super::CheckedOrdering;
 use crate::check::refusal::ProtocolAnchorCause;
-use crate::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
+use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 
 mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{HEADER, obligation_model};
+use fixture::{obligation_model, HEADER};
 
 /// A protocol whose one channel `Q` carries `carries`, ordered `ordering`.
 fn with_channel(carries: &str, ordering: &str) -> String {

@@ -44,7 +44,7 @@ use fsl_eval::value::{undefined_contract_code, CheckedPackageEvaluation, Qualifi
 use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    AdmittedModel, CheckCause, SemanticCheckRefusal, CheckedExpression, PackageDeclarations,
+    AdmittedModel, CheckCause, CheckedExpression, PackageDeclarations, SemanticCheckRefusal,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::dispatch::GeneralizationClosure;
@@ -2092,7 +2092,11 @@ fn lookup_expression_refuses_a_non_conforming_reference_type_at_check_time() {
     assert_state_model_ill_typed(&refusal, IllTypedCause::TypeMismatch, "type-mismatch");
 }
 
-fn assert_state_model_ill_typed(refusal: &SemanticCheckRefusal, expected: IllTypedCause, raw: &str) {
+fn assert_state_model_ill_typed(
+    refusal: &SemanticCheckRefusal,
+    expected: IllTypedCause,
+    raw: &str,
+) {
     let CheckCause::StateModel(owner) = &*refusal.cause else {
         panic!("StateModel ownership: {refusal:?}");
     };

@@ -43,9 +43,9 @@ use fsl_semantics::check::{
     OperationClauses,
 };
 use fsl_semantics::check::{
-    AdmittedModel, CheckCause, SemanticCheckRefusal, DispatchCandidate, DispatchFunctionRole,
-    DispatchOperation, DispatchTable, InvalidDispatchDeclaration, ModelClause, PackageDeclarations,
-    StateClauseDeclaration,
+    AdmittedModel, CheckCause, DispatchCandidate, DispatchFunctionRole, DispatchOperation,
+    DispatchTable, InvalidDispatchDeclaration, ModelClause, PackageDeclarations,
+    SemanticCheckRefusal, StateClauseDeclaration,
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -76,7 +76,11 @@ const SCALAR_UNLIMITED: ScalarLimits = ScalarLimits {
     result_units: u64::MAX,
 };
 
-fn assert_state_model_ill_typed(refusal: &SemanticCheckRefusal, expected: IllTypedCause, raw: &str) {
+fn assert_state_model_ill_typed(
+    refusal: &SemanticCheckRefusal,
+    expected: IllTypedCause,
+    raw: &str,
+) {
     let CheckCause::StateModel(owner) = &*refusal.cause else {
         panic!("StateModel ownership: {refusal:?}");
     };
@@ -1017,17 +1021,19 @@ fn dispatch_candidate_with_an_out_of_range_body_index_is_refused_invalid_dispatc
         )
         .expect_err("an out-of-range candidate body index must be refused");
     assert!(
-        refusals.iter().any(|refusal: &SemanticCheckRefusal| matches!(
-            refusal.cause.as_ref(),
-            CheckCause::InvalidDispatchDeclaration(detail)
-                if matches!(
-                    **detail,
-                    InvalidDispatchDeclaration::FunctionOutOfRange {
-                        role: DispatchFunctionRole::Body,
-                        index: 99,
-                    }
-                )
-        )),
+        refusals
+            .iter()
+            .any(|refusal: &SemanticCheckRefusal| matches!(
+                refusal.cause.as_ref(),
+                CheckCause::InvalidDispatchDeclaration(detail)
+                    if matches!(
+                        **detail,
+                        InvalidDispatchDeclaration::FunctionOutOfRange {
+                            role: DispatchFunctionRole::Body,
+                            index: 99,
+                        }
+                    )
+            )),
         "expected an InvalidDispatchDeclaration/FunctionOutOfRange refusal, got {refusals:?}"
     );
 }
@@ -1053,19 +1059,21 @@ fn dispatch_candidate_with_a_mismatched_arity_is_refused_invalid_dispatch() {
         )
         .expect_err("a candidate/operation arity mismatch must be refused");
     assert!(
-        refusals.iter().any(|refusal: &SemanticCheckRefusal| matches!(
-            refusal.cause.as_ref(),
-            CheckCause::InvalidDispatchDeclaration(detail)
-                if matches!(
-                    **detail,
-                    InvalidDispatchDeclaration::Arity {
-                        role: DispatchFunctionRole::Body,
-                        index: 0,
-                        declared: 1,
-                        expected: 2,
-                    }
-                )
-        )),
+        refusals
+            .iter()
+            .any(|refusal: &SemanticCheckRefusal| matches!(
+                refusal.cause.as_ref(),
+                CheckCause::InvalidDispatchDeclaration(detail)
+                    if matches!(
+                        **detail,
+                        InvalidDispatchDeclaration::Arity {
+                            role: DispatchFunctionRole::Body,
+                            index: 0,
+                            declared: 1,
+                            expected: 2,
+                        }
+                    )
+            )),
         "expected an InvalidDispatchDeclaration/Arity refusal, got {refusals:?}"
     );
     let location = refusals

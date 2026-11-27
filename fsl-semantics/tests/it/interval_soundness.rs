@@ -18,7 +18,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_proptest_policy as prop;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 use proptest::prelude::*;

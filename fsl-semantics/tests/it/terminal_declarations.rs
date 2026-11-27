@@ -9,7 +9,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
 use fsl_semantics::check::{
-    AssemblyCause, AssemblyError, SemanticCheckRefusal, CheckedGraph, TerminalDeclaration,
+    AssemblyCause, AssemblyError, CheckedGraph, SemanticCheckRefusal, TerminalDeclaration,
 };
 use ix_trace_rs::trace;
 use serde_json::json;

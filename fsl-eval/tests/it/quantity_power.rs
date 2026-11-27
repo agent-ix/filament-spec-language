@@ -11,7 +11,7 @@ use filament_exact::{
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, Obligation};
+use fsl_semantics::check::{CheckCause, Obligation, SemanticCheckRefusal};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 

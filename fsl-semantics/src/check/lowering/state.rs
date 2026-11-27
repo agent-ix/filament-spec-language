@@ -27,7 +27,7 @@ use crate::check::node_key::{
     BindingValue, BodyTerm, FrameDeletesScoped, FrameField, FrameModifies, FrameScope, GroupTerm,
     LeafTerm, MemberTerm, NodeRef, NodeTag, Operation, Operator,
 };
-use crate::check::refusal::{CheckCause, SemanticCheckRefusal, ExecutionPointRefusal, KeyFault};
+use crate::check::refusal::{CheckCause, ExecutionPointRefusal, KeyFault, SemanticCheckRefusal};
 use crate::check::state_clause::{ClauseOperation, PopulationDomain};
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::intake::member_identity_name;

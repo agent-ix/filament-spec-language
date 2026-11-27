@@ -28,7 +28,6 @@
 
 use std::cell::Cell;
 
-use ix_trace_rs::implements;
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::smt::{
@@ -36,6 +35,7 @@ use fsl_eval::smt::{
     SmtEncodingRefusal, SmtItem, SmtQueryKind,
 };
 use fsl_semantics::check::{Activation, TemporalProfile};
+use ix_trace_rs::implements;
 
 use super::alethe::{read_proof, read_query, Proof, ProofOutcome, Query, Reading};
 use super::closure::CertificateRejection;

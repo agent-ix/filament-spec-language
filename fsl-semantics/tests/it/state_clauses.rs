@@ -24,7 +24,9 @@ use fsl_forms::StateClauseKind;
 use fsl_foundation::bound::DomainKey;
 use fsl_foundation::bound::DomainKind;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{AssemblyCause, AssemblyError, CheckCause, SemanticCheckRefusal, CheckedGraph};
+use fsl_semantics::check::{
+    AssemblyCause, AssemblyError, CheckCause, CheckedGraph, SemanticCheckRefusal,
+};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::clause_observation::Observation;
 use ix_trace_rs::trace;

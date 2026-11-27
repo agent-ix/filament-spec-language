@@ -657,11 +657,9 @@ fn native_fence_locus_prefix(locus: Option<&fsl_replay::OutcomeLocus>) -> String
         Some(fsl_replay::OutcomeLocus::ImportedLocated { file, span, .. }) => {
             format!("{}:{}:{}", file, span.start.line, span.start.column)
         }
-        Some(fsl_replay::OutcomeLocus::Region {
-            source,
-            start,
-            end,
-        }) => format!("{}:{}-{}", source_label(source), start, end),
+        Some(fsl_replay::OutcomeLocus::Region { source, start, end }) => {
+            format!("{}:{}-{}", source_label(source), start, end)
+        }
         Some(_) | None => String::from("<no-source>"),
     }
 }
@@ -1798,10 +1796,7 @@ mod tests {
             document: document.clone(),
             path: path.to_owned(),
             clause: Some(clause.to_owned()),
-            body: fsl_foundation::source::SourceIdentity::new(
-                "docs",
-                format!("{path}#{clause}"),
-            ),
+            body: fsl_foundation::source::SourceIdentity::new("docs", format!("{path}#{clause}")),
             first_line,
             category,
             diagnostics,
@@ -1810,9 +1805,7 @@ mod tests {
     }
 
     #[cfg(feature = "quire-extraction")]
-    fn native_fence_document(
-        fences: Vec<fsl_replay::spine::NativeFenceResult>,
-    ) -> OutcomeDocument {
+    fn native_fence_document(fences: Vec<fsl_replay::spine::NativeFenceResult>) -> OutcomeDocument {
         OutcomeDocument::from_native_fences(&fsl_replay::spine::NativeFenceReport { fences })
     }
 

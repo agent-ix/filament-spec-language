@@ -908,7 +908,8 @@ fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
         )
     );
     let refusals = refusals_of(PROFILES, &unit);
-    let name = |refusal: &fsl_semantics::check::SemanticCheckRefusal| match &refusal.location.origin {
+    let name = |refusal: &fsl_semantics::check::SemanticCheckRefusal| match &refusal.location.origin
+    {
         filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name } => {
             name.clone()
         }

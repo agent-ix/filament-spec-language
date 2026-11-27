@@ -4854,13 +4854,17 @@ fn quantified_presence_over_a_boolean_clock_map_uses_boolean_keys() {
             _ => None,
         })
         .expect("the slot-presence application exists");
-    let [_, _, MemberTerm::Leaf(LeafTerm::Reference { target })] =
-        presence.arguments.as_slice()
+    let [_, _, MemberTerm::Leaf(LeafTerm::Reference { target })] = presence.arguments.as_slice()
     else {
         panic!("option.present has a parameter selector: {presence:?}");
     };
     let selector = semantic_graph
-        .node(target.admitted().expect("selector reference is admitted").clone())
+        .node(
+            target
+                .admitted()
+                .expect("selector reference is admitted")
+                .clone(),
+        )
         .expect("selector parameter exists");
     let selector_type = semantic_graph
         .node(selector.semantic_type().expect("selector is typed"))

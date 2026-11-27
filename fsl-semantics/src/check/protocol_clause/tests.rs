@@ -3,11 +3,11 @@
 //! The helpers below are shared by every submodule.
 
 use filament_semantic_value::checking::CheckMode;
-use fsl_forms::{AnchorSite, ProtocolDeclarationForm, ProtocolNodeKind, build_unit};
+use fsl_forms::{build_unit, AnchorSite, ProtocolDeclarationForm, ProtocolNodeKind};
 use fsl_foundation::SourceIdentity;
 
 use super::super::{
-    CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations, Scope, Signatures,
+    CheckCause, CheckedGraph, PackageDeclarations, Scope, SemanticCheckRefusal, Signatures,
 };
 use super::{CheckedProtocol, ProtocolNodeId};
 use crate::check::refusal::ProtocolAnchorCause;
@@ -18,7 +18,7 @@ mod attempt_fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_attempt.rs");
 }
-use attempt_fixture::{HEADER, m_actor_model};
+use attempt_fixture::{m_actor_model, HEADER};
 
 mod anchors;
 mod attempts;

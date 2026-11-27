@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::Span;
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
 };
+use fsl_foundation::Span;
 use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
@@ -63,18 +63,18 @@ mod integer_division_range;
 mod modulo_interval;
 mod native_literal;
 mod typing;
-use typing::{TypedOperand, is_option_some_constructor};
+use typing::{is_option_some_constructor, TypedOperand};
 
 use super::ir::{BodyBuilder, DispatchTable, EqualityProducerData, Node, NodeId, Slot};
 use super::model_spelling::{ModelSpellings, Spelled};
 use super::navigation::Relationships;
 use super::refusal::{
-    CheckCause, SemanticCheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    IdentityObserving, KeyFault, Obligation, ReservedSlotName, SlotTag, StageLimitCause,
+    CheckCause, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode, IdentityObserving,
+    KeyFault, Obligation, ReservedSlotName, SemanticCheckRefusal, SlotTag, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
-use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
+use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
+use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -91,8 +91,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, StorageRequest,
-    StorageUnit, TypeEnvironment, admits_equality_conversion,
+    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
+    FieldDeclaration, StorageRequest, StorageUnit, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -100,8 +100,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
-    check_comparable, evaluate_quantity_unit, result_unit,
+    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
+    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -2385,15 +2385,14 @@ impl Scope {
         self.ieee_operation = has_float;
         if has_float && self.ieee_profile.is_none() {
             let definition = DefinitionRole::IeeeProfile.reference();
-            self.ieee_profile =
-                Some(
-                    admit_ieee_profile(&[definition], &[]).map_err(|cause| SemanticCheckRefusal {
-                        location: Location::root(Origin::Expression),
-                        cause: Box::new(CheckCause::InternalFault(Box::new(
-                            KeyFault::IeeeProfileAdmission(cause),
-                        ))),
-                    })?,
-                );
+            self.ieee_profile = Some(admit_ieee_profile(&[definition], &[]).map_err(|cause| {
+                SemanticCheckRefusal {
+                    location: Location::root(Origin::Expression),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::IeeeProfileAdmission(cause),
+                    ))),
+                }
+            })?);
         }
         Ok(())
     }
@@ -3964,7 +3963,9 @@ impl<'a> Typer<'a> {
                         self.scope
                             .types
                             .try_check_type(value_type)
-                            .map_err(|refusal| SemanticCheckRefusal::from_type_check(location, refusal))?;
+                            .map_err(|refusal| {
+                                SemanticCheckRefusal::from_type_check(location, refusal)
+                            })?;
                     }
                     pending
                         .try_reserve(1)
@@ -3987,7 +3988,9 @@ impl<'a> Typer<'a> {
                     self.scope
                         .types
                         .try_check_type(value_type)
-                        .map_err(|refusal| SemanticCheckRefusal::from_type_check(location, refusal))?
+                        .map_err(|refusal| {
+                            SemanticCheckRefusal::from_type_check(location, refusal)
+                        })?
                 }
                 ValueType::Reference(_) | ValueType::Composite(_) => {}
                 ValueType::Boolean
@@ -4202,7 +4205,11 @@ impl<'a> Typer<'a> {
     /// carries. A name no declaration of the unit holds is `missing-name`
     /// (an import or a qualified name offers no local protocol); a name that
     /// resolves to a function or a type is `operator-ineligible`.
-    fn protocol_reference(&self, target: &str, location: &Location) -> Result<Node, SemanticCheckRefusal> {
+    fn protocol_reference(
+        &self,
+        target: &str,
+        location: &Location,
+    ) -> Result<Node, SemanticCheckRefusal> {
         if let Some(protocol) = self.scope.protocol_named(target) {
             return Ok(node(
                 NodeKind::ProtocolReference { protocol },
@@ -4533,10 +4540,12 @@ impl<'a> Typer<'a> {
                             unit_id,
                         )))),
                     })?;
-                units.insert(unit.clone()).map_err(|refusal| SemanticCheckRefusal {
-                    location: location.clone(),
-                    cause: Box::new(CheckCause::Identity(refusal)),
-                })?;
+                units
+                    .insert(unit.clone())
+                    .map_err(|refusal| SemanticCheckRefusal {
+                        location: location.clone(),
+                        cause: Box::new(CheckCause::Identity(refusal)),
+                    })?;
             }
         }
         let mut unit_type_facts = Vec::new();
@@ -6495,7 +6504,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Rational(_)
                 | ValueType::Decimal(_),
             ) => {
-                use super::numeric_conversion::{Class, classify};
+                use super::numeric_conversion::{classify, Class};
                 let class = classify(&operand.value_type, target).ok_or_else(|| {
                     SemanticCheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
                 })?;
@@ -6939,7 +6948,11 @@ impl Typer<'_> {
     /// `dropFirst(c)` over a sequence or an ordered set: the same kind with
     /// the bound `[max(a-1,0), max(b-1,0)]`; a set or a bag has no first
     /// occurrence (FSpec FR-145-AC-10).
-    fn drop_first(&mut self, source: Node, location: &Location) -> Result<Node, SemanticCheckRefusal> {
+    fn drop_first(
+        &mut self,
+        source: Node,
+        location: &Location,
+    ) -> Result<Node, SemanticCheckRefusal> {
         let ValueType::Collection(collection) = &source.value_type else {
             return Err(mismatch(&source.location));
         };

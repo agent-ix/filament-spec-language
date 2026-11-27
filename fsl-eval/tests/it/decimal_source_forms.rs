@@ -19,8 +19,8 @@ use filament_semantic_value::loss::ValueLoss;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    AssemblyCause, CheckCause, SemanticCheckRefusal, CheckingLimitKind, DecimalLiteralLimits,
-    PackageDeclarations,
+    AssemblyCause, CheckCause, CheckingLimitKind, DecimalLiteralLimits, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;

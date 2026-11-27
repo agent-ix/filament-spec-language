@@ -81,7 +81,7 @@ use super::lowering::AdmittedModel;
 use super::observation::Observations;
 use super::profile::TemporalProfile;
 use super::protocol_clause::ProtocolNodeId;
-use super::refusal::{CheckCause, SemanticCheckRefusal, KeyFault};
+use super::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use super::state_clause::{observation_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;

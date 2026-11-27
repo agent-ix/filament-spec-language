@@ -12,8 +12,8 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    Capability, CheckCause, SemanticCheckRefusal, CheckedGraph, CheckedNode, CheckedStateGraphClaim,
-    StateGraphCause, StateGraphForm,
+    Capability, CheckCause, CheckedGraph, CheckedNode, CheckedStateGraphClaim,
+    SemanticCheckRefusal, StateGraphCause, StateGraphForm,
 };
 use fsl_semantics::family::ClaimExtent;
 use ix_trace_rs::trace;
@@ -98,7 +98,14 @@ const UNIQUE: &str = "unique path InOneWay using v over (c: Config::ConfigVersio
 
 /// The one refusal of a unit that must not check, as its catalog code, cause
 /// tag and the source text it names.
-fn sole_refusal(body: &str) -> (Code, Option<&'static str>, Option<String>, SemanticCheckRefusal) {
+fn sole_refusal(
+    body: &str,
+) -> (
+    Code,
+    Option<&'static str>,
+    Option<String>,
+    SemanticCheckRefusal,
+) {
     let Err(mut refusals) = check(body) else {
         panic!("`{body}` must not check");
     };

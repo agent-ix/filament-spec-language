@@ -21,7 +21,7 @@ use fsl_replay::{Certification, InconclusiveCause, PremiseOutcome};
 use fsl_route::request::RequestWriter;
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{
-    AdmittedImport, Capability, SemanticCheckRefusal, PackageDeclarations, SlotRole as SemRole,
+    AdmittedImport, Capability, PackageDeclarations, SemanticCheckRefusal, SlotRole as SemRole,
 };
 use fsl_semantics::library::LibraryName;
 use ix_trace_rs::trace;

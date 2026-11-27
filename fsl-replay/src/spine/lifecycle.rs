@@ -100,8 +100,9 @@ use fsl_foundation::{Code, SourceIdentity};
 use fsl_package as pkg;
 use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
 use fsl_semantics::check::{
-    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, SemanticCheckRefusal,
+    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause,
     CorrespondenceConflict, KeyFault, Obligation, OperandText, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
 use fsl_semantics::library::{ImportView, LibraryName};
@@ -849,7 +850,8 @@ fn name_operand(
     region: Option<&SourceRegion>,
     sources: &[ParsedUnitSource],
 ) {
-    let (Some(SemanticCheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region) else {
+    let (Some(SemanticCheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region)
+    else {
         return;
     };
     let CheckCause::Unproved(Obligation::Range {

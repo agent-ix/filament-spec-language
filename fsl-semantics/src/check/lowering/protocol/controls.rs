@@ -32,10 +32,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::{Integer, NodeKey};
 use fsl_forms::{AnchorSite, JoinPolicy, Outstanding, ProtocolNodeKind};
 
-use super::super::{Binder, Binders, Lowering, NodeRef, fault};
+use super::super::{fault, Binder, Binders, Lowering, NodeRef};
 use super::{
-    ProtocolInput, ProtocolSite, RelatedSide, checked_slot_names, empty_group, identifier, member,
-    protocol_location, protocol_site, sorted,
+    checked_slot_names, empty_group, identifier, member, protocol_location, protocol_site, sorted,
+    ProtocolInput, ProtocolSite, RelatedSide,
 };
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedBody;
@@ -46,7 +46,7 @@ use crate::check::node_key::{
 use crate::check::protocol_clause::{CheckedControl, CheckedControlTree, ProtocolNodeId};
 use crate::check::protocol_obligation::CheckedCommit;
 use crate::check::protocol_slots::CheckedNodeBody;
-use crate::check::refusal::{SemanticCheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
 use crate::value::member::Member;
 
 /// The nodes one protocol `attempt` names, which are keyed after the

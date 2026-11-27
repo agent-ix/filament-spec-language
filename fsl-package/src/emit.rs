@@ -1185,7 +1185,9 @@ impl ProtocolEmission {
 
     /// One primary diagnostic for each refused protocol, in declaration
     /// order (FR-383 diagnostics rule).
-    pub fn diagnostics(&self) -> impl Iterator<Item = &fsl_semantics::check::SemanticCheckRefusal> + '_ {
+    pub fn diagnostics(
+        &self,
+    ) -> impl Iterator<Item = &fsl_semantics::check::SemanticCheckRefusal> + '_ {
         self.results.iter().filter_map(|result| match result {
             ProtocolEmissionResult::Emitted { .. } => None,
             ProtocolEmissionResult::Refused { refusal, .. } => Some(refusal),
@@ -8410,9 +8412,7 @@ fn emit_package_nodes(
                     .iter()
                     .map(|(key, id)| (key.clone(), id.clone())),
             );
-            value_validity
-                .renumbering
-                .relabel_term_data(&row_ids, data);
+            value_validity.renumbering.relabel_term_data(&row_ids, data);
         }
     }
     let selected_operation_member_rows = selected_operation_member_rows
@@ -8497,11 +8497,7 @@ fn emit_package_nodes(
         &relation_rows,
         &omitted_causes,
     )?;
-    value_validity_requirements::renumber_records(
-        &requirement_rows,
-        &mut nodes,
-        &mut source_map,
-    )?;
+    value_validity_requirements::renumber_records(&requirement_rows, &mut nodes, &mut source_map)?;
     meter.charge(&requirement_rows)?;
     let path_condition_frames =
         value_validity_requirements::frame_rows(ids, &producer_node_ids, &value_validity.frames)?;

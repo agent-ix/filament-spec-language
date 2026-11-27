@@ -24,11 +24,11 @@ use filament_exact::{Identifier, NodeKey, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use ix_trace_rs::string_edge;
 
-use super::temporal::{FormulaCondition, FormulaInput, stage_fault};
+use super::temporal::{stage_fault, FormulaCondition, FormulaInput};
 use super::{Binder, Binders, Lowering};
 use crate::check::abstraction::{AbstractionKey, CheckedAbstractionRelation};
 use crate::check::family::OccurrenceRole;
-use crate::check::hyper_clause::lowering::{Site, hyper_location};
+use crate::check::hyper_clause::lowering::{hyper_location, Site};
 use crate::check::hyper_clause::{
     CheckedFiniteHyperClause, CheckedHyperClause, CheckedModelRelation, MatchPart,
 };
@@ -673,7 +673,10 @@ impl Lowering<'_> {
 
     /// `match`: one term per conjunct in source order, each its lowered
     /// condition over its step-label slot nodes.
-    fn conjuncts(&mut self, input: &HyperClauseInput<'_>) -> Result<GroupTerm, SemanticCheckRefusal> {
+    fn conjuncts(
+        &mut self,
+        input: &HyperClauseInput<'_>,
+    ) -> Result<GroupTerm, SemanticCheckRefusal> {
         let clause = input.clause;
         let mut members = Vec::new();
         for (part, index) in clause.conjuncts() {

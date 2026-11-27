@@ -659,7 +659,10 @@ fn overriding_document() -> Vec<u8> {
 fn tick_over(
     document: &[u8],
     operation: &str,
-) -> Result<Vec<fsl_semantics::check::ModelTimeSource>, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
+) -> Result<
+    Vec<fsl_semantics::check::ModelTimeSource>,
+    Vec<fsl_semantics::check::SemanticCheckRefusal>,
+> {
     let body = format!("dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config tick {operation} period 1 ms unit ms;\n");
     admit_and_assemble_with_profiles(
         document,

@@ -38,8 +38,8 @@ use fsl_replay::{
     ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel, TemporalCounterexample,
 };
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, CheckedProtocolTarget, PackageDeclarations, ProtocolAnchorCause,
-    TemporalCause,
+    CheckCause, CheckedProtocolTarget, PackageDeclarations, ProtocolAnchorCause,
+    SemanticCheckRefusal, TemporalCause,
 };
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;

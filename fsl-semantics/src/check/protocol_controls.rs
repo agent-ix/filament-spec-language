@@ -32,17 +32,17 @@ use fsl_forms::{
 };
 use fsl_foundation::Span;
 
-use super::Scope;
 use super::ir::CheckedBody;
-use super::lowering::{ProtocolSite, protocol_location};
+use super::lowering::{protocol_location, ProtocolSite};
 use super::protocol_obligation::{
-    CheckedBinder, Goal, model_state_reads, span_of, type_body, wraps,
+    model_state_reads, span_of, type_body, wraps, CheckedBinder, Goal,
 };
 use super::refusal::{
-    AliasKind, ChannelEnd, CheckCause, SemanticCheckRefusal, JoinFault, ProtocolAnchorCause,
+    AliasKind, ChannelEnd, CheckCause, JoinFault, ProtocolAnchorCause, SemanticCheckRefusal,
 };
 use super::state_clause::ClauseDeclarations;
 use super::type_form::resolve_form;
+use super::Scope;
 use crate::family::CheckContext;
 
 /// A checked channel's ordering premise (FR-218 "Channels").
@@ -724,7 +724,10 @@ fn refuse_fifo_binder_clashes(
 /// FR-218 "Channels": two channels of one name refuse at each declaration,
 /// naming both in source order. Channels and relationships have separate
 /// namespaces, so only channels are compared.
-fn refuse_duplicate_channels(channels: &[ChannelForm], refusals: &mut Vec<(Span, SemanticCheckRefusal)>) {
+fn refuse_duplicate_channels(
+    channels: &[ChannelForm],
+    refusals: &mut Vec<(Span, SemanticCheckRefusal)>,
+) {
     let mut by_name: BTreeMap<&str, Vec<Span>> = BTreeMap::new();
     for channel in channels {
         by_name
@@ -899,13 +902,13 @@ mod control_region_tests;
 mod tests {
     use filament_semantic_value::checking::CheckMode;
     use filament_semantic_value::checking::CheckingLimits;
-    use fsl_forms::{ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector, build_unit};
+    use fsl_forms::{build_unit, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector};
     use fsl_foundation::SourceIdentity;
     use ix_trace_rs::trace;
 
     use super::super::{
-        ChannelEnd, CheckCause, SemanticCheckRefusal, CheckedGraph, JoinFault, PackageDeclarations,
-        ProtocolAnchorCause,
+        ChannelEnd, CheckCause, CheckedGraph, JoinFault, PackageDeclarations, ProtocolAnchorCause,
+        SemanticCheckRefusal,
     };
     use super::CheckedChannel;
 
@@ -913,7 +916,7 @@ mod tests {
         use crate as semantics;
         include!("../../tests/fixtures/protocol_attempt.rs");
     }
-    use attempt_fixture::{HEADER, attempt_flow, m_actor_model, shared_binder_protocols};
+    use attempt_fixture::{attempt_flow, m_actor_model, shared_binder_protocols, HEADER};
 
     const RECORD: &str = "record Plain { ready: Boolean; }\n\
         enum Color { Red, Blue, }\n";
@@ -1685,13 +1688,11 @@ mod tests {
         checks(&shared_binder_protocols());
         let flow = attempt_flow("Flow", "");
         let graph = checks(&flow);
-        assert!(
-            graph
-                .protocol("Flow")
-                .expect("the checked protocol")
-                .channels
-                .is_empty()
-        );
+        assert!(graph
+            .protocol("Flow")
+            .expect("the checked protocol")
+            .channels
+            .is_empty());
 
         let with_channel = flow.replacen(
             "run sequence",

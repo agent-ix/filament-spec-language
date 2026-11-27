@@ -13,7 +13,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::{IntakeLimits, Span};
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, CheckedGraph, IdentityForm, IdentityNode, IdentityObserving,
+    CheckCause, CheckedGraph, IdentityForm, IdentityNode, IdentityObserving, SemanticCheckRefusal,
 };
 use fsl_semantics::model::domain_package::DomainPackageRecord;
 use fsl_semantics::model::intake::{read_records, PackageDocument};
@@ -22,8 +22,8 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::model_operations::{
-    admit_and_assemble_with_body, attempt_update_modifies_version_number,
-    config_unit_with_body, config_version_document, PACKAGE_IDENTITY,
+    admit_and_assemble_with_body, attempt_update_modifies_version_number, config_unit_with_body,
+    config_version_document, PACKAGE_IDENTITY,
 };
 
 const POPULATION: &str = "ix://example/config-version/config_history";
@@ -124,10 +124,8 @@ fn with_drafts(document: &[u8]) -> Vec<u8> {
     drafts["multiplicity"] = json!({
         "lower": 0, "upper": 5, "ordered": false, "unique": true,
     });
-    drafts["origin"]["generated"]["generatorIdentity"] =
-        format!("{CONFIG_VERSION}/drafts").into();
-    drafts["origin"]["generated"]["inputIdentities"] =
-        json!([format!("{CONFIG_VERSION}/drafts")]);
+    drafts["origin"]["generated"]["generatorIdentity"] = format!("{CONFIG_VERSION}/drafts").into();
+    drafts["origin"]["generated"]["inputIdentities"] = json!([format!("{CONFIG_VERSION}/drafts")]);
     fields.push(drafts);
 
     let config_type = types
@@ -155,20 +153,23 @@ fn with_drafts(document: &[u8]) -> Vec<u8> {
     draft_type["operations"] = json!([]);
     draft_type["relationships"] = json!([]);
     types.push(draft_type);
-    envelope["populations"].as_array_mut().expect("populations").push(json!({
-        "identity": DRAFTS,
-        "displayName": DRAFTS,
-        "kind": {"module": "example/config-version", "name": "population"},
-        "members": [DRAFT],
-        "extent": "closed",
-        "origin": {
-            "generated": {
-                "generatorIdentity": DRAFTS,
-                "generatorVersion": "1.0.0",
-                "inputIdentities": [DRAFTS],
-            }
-        },
-    }));
+    envelope["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(json!({
+            "identity": DRAFTS,
+            "displayName": DRAFTS,
+            "kind": {"module": "example/config-version", "name": "population"},
+            "members": [DRAFT],
+            "extent": "closed",
+            "origin": {
+                "generated": {
+                    "generatorIdentity": DRAFTS,
+                    "generatorVersion": "1.0.0",
+                    "inputIdentities": [DRAFTS],
+                }
+            },
+        }));
     serde_json::to_vec(&envelope).expect("valid JSON")
 }
 
@@ -314,7 +315,11 @@ fn a_refinement_field_cannot_convert_a_symmetric_reference_to_text() {
         "",
         &[
             ("Spec", ABSTRACT, &abstract_document),
-            ("Impl", crate::model_operations::PACKAGE_IDENTITY, &concrete_document),
+            (
+                "Impl",
+                crate::model_operations::PACKAGE_IDENTITY,
+                &concrete_document,
+            ),
         ],
         &body,
     )
@@ -381,7 +386,8 @@ fn a_counting_fold_over_a_bag_of_references_checks_and_a_chooser_refuses() {
 fn each_fold_uses_the_annotation_of_its_own_source_population() {
     let document = annotated(&with_drafts(&with_peers(&document())));
     let peers_fold = "fold<PeerRef>(acc, p in self.peers: p, identity: self)";
-    let drafts_fold = "fold<Tally>(acc, p in self.drafts: acc - convert<Tally>(p.versionNumber), identity: 0)";
+    let drafts_fold =
+        "fold<Tally>(acc, p in self.drafts: acc - convert<Tally>(p.versionNumber), identity: 0)";
     let body = format!(
         "{FLAG}type PeerRef = Reference<Config::ConfigVersion>;\n\
          post Peer using v on Config::ConfigVersion::attemptUpdate {{ {peers_fold} = self }}\n\
@@ -583,9 +589,7 @@ fn ordered_reference_conversions_refuse_and_bag_conversion_preserves_scope() {
     );
     check(&document, &body).expect("an unordered bag conversion checks");
 
-    let chooser = format!(
-        "fold<Flag>(acc, p in {bag}: p = self, identity: false)"
-    );
+    let chooser = format!("fold<Flag>(acc, p in {bag}: p = self, identity: false)");
     let body = format!(
         "{FLAG}invariant Chooser using v on Config::ConfigVersion at current {{ not {chooser} }}\n"
     );

@@ -7,14 +7,14 @@ use filament_contract_model::CheckedPackageV2;
 use fsl_eval::temporal::evidence::{ActivationState, EvidencePackage, Truth};
 use fsl_package::{BarePackage, IdentityFileRefusal, IdentityMember, ReadIdentityRows};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::checked_handoff::{KINDS, admitted, request, tree};
+use super::checked_handoff::{admitted, request, tree, KINDS};
 use super::temporal_package_route::{
     clause_ids, event_clauses, event_clauses_over, recipe, recipe_naming,
     request as evidence_request, run,
 };
-use fsl_command::checked_handoff::{Corpus, evidence, write};
+use fsl_command::checked_handoff::{evidence, write, Corpus};
 
 #[trace("TC-2624", "FR-944-AC-10")]
 #[test]
@@ -28,11 +28,9 @@ fn bare_reader_route_keeps_the_exact_admitted_package_bytes() {
         bare.canonical_bytes(),
         Some(built.emission.package().bytes())
     );
-    assert!(
-        BarePackage::new(read.admitted())
-            .canonical_bytes()
-            .is_none()
-    );
+    assert!(BarePackage::new(read.admitted())
+        .canonical_bytes()
+        .is_none());
 }
 
 use super::bare_equality::tc1070 as population_fixture;
@@ -43,8 +41,8 @@ fn matrix(
     package: &EvidencePackage<'_>,
     clause: &filament_contract_model::CheckedNodeId,
 ) -> Vec<(String, fsl_eval::temporal::evidence::EvidenceRequest)> {
-    use fsl_eval::temporal::Valuation;
     use fsl_eval::temporal::evidence::{EvidenceCounter, TemporalEvidenceLimits};
+    use fsl_eval::temporal::Valuation;
     let base = evidence_request(package, clause, None, 3);
     let mut requests = vec![("true".to_owned(), base.clone())];
     let mut falsified = base.clone();
@@ -1221,7 +1219,8 @@ fn through(import: &str, name: &str, callee: &str) -> String {
     )
 }
 
-const CLAUSE: &str = "temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
+const CLAUSE: &str =
+    "temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
      always[0,2] holds(%CALL%(c.versionNumber >= 1)) }";
 
 /// IR-1325 AC3: the closure over a chain (root, mid, leaf) and a diamond
@@ -1281,7 +1280,8 @@ fn the_dependency_closure_follows_a_chain_and_lists_a_diamond_once() {
     );
 }
 
-const ONE_CLAUSE: &str = "temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
+const ONE_CLAUSE: &str =
+    "temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
      always[0,3] holds(c.versionNumber >= 1) }";
 
 /// Rewrite the interval of the `always` node of `built`'s package.
@@ -1443,8 +1443,8 @@ fn the_reader_refuses_absent_clock_rows_and_a_missing_profile_row() {
 #[trace("FR-532-AC-3", "TC-1332")]
 #[test]
 fn every_temporal_operator_gives_the_same_result_over_the_three_routes() {
-    use fsl_eval::temporal::Valuation;
     use fsl_eval::temporal::evidence::EvidencePosition;
+    use fsl_eval::temporal::Valuation;
     let p = "holds(c.versionNumber >= 1)";
     let q = "holds(c.versionNumber >= 2)";
     let bodies = [

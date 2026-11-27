@@ -15,12 +15,14 @@ use fsl_package::{
     BareClauseFormRefusal, BarePackage, CompositionMemberValue, CompositionModelContextRefusal,
     CompositionView, CompositionViewRefusal, OwnedNodeRef,
 };
-use fsl_semantics::check::wire_id::{StructuralKeyMaterializationError, StructuralKeys, WireIdError};
+use fsl_semantics::check::wire_id::{
+    StructuralKeyMaterializationError, StructuralKeys, WireIdError,
+};
 use fsl_semantics::check::{
     CompositionGraphRefusal, CompositionRule, PackageClauseForm, PackagePropertyRefusal,
 };
 
-use super::composition_graph::{CompositionCycleRefusal, CompositionEdge, composition_cycle_rows};
+use super::composition_graph::{composition_cycle_rows, CompositionCycleRefusal, CompositionEdge};
 use super::declaration::{
     DerivedSlot, EnvSupplies, EnvironmentMember, SchedulingPremise, SlotBacking, SlotRole,
 };
@@ -450,7 +452,9 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
         &self,
         budget: &mut NativeJoinBudget,
     ) -> Result<Option<super::mismatch::InterfaceMismatch>, PackageCompositionRefusal> {
-        use super::mismatch::{MismatchClauseFairness, MismatchFacts, MismatchNeed, MismatchSupply};
+        use super::mismatch::{
+            MismatchClauseFairness, MismatchFacts, MismatchNeed, MismatchSupply,
+        };
         let locus = NativeJoinLocus {
             source: filament_contract_model::NativeJoinLocusSource::Package,
             form: "composition_mismatch_facts",
@@ -1389,21 +1393,19 @@ mod tests {
             .iter()
             .find(|c| c.component == "Producer" && c.name.name.as_ref() == "Shared")
             .expect("bounded owner clause");
-        assert!(
-            clause
-                .form
-                .as_ref()
-                .expect("run form")
-                .formula
-                .iter()
-                .any(|node| matches!(
-                    node,
-                    fsl_semantics::check::PackageFormulaNode::Unary {
-                        interval: Some(_),
-                        ..
-                    }
-                ))
-        );
+        assert!(clause
+            .form
+            .as_ref()
+            .expect("run form")
+            .formula
+            .iter()
+            .any(|node| matches!(
+                node,
+                fsl_semantics::check::PackageFormulaNode::Unary {
+                    interval: Some(_),
+                    ..
+                }
+            )));
         assert_eq!(clause.property, Some(PropertyForm::Safety));
     }
 
@@ -1431,12 +1433,10 @@ mod tests {
             projected.slots().is_empty(),
             "cycles stop before premise slots or execution forms"
         );
-        assert!(
-            projected
-                .clauses()
-                .iter()
-                .all(|clause| clause.form.is_none())
-        );
+        assert!(projected
+            .clauses()
+            .iter()
+            .all(|clause| clause.form.is_none()));
         for (actual, expected) in projected.cycles().iter().zip(source.cycles()) {
             let actual_nodes = actual
                 .guarantees

@@ -9,7 +9,7 @@ use filament_checked::node::{EndSide, NodeKind};
 use filament_exact::{Presence, ValueType};
 use filament_semantic_value::declaration::FieldRef;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, MemberCandidate};
+use fsl_semantics::check::{CheckCause, CheckedGraph, MemberCandidate, SemanticCheckRefusal};
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, FieldMemberRecord, Multiplicity,
     OperationEffect, OperationMemberRecord, OperationParameterRecord, PopulationRecord,
@@ -318,7 +318,12 @@ fn assert_admitted(declarations: &str, relationship: &str, role: &str) {
     );
 }
 
-fn assert_refused(declarations: &str, code: Code, cause: &str, path: Vec<usize>) -> SemanticCheckRefusal {
+fn assert_refused(
+    declarations: &str,
+    code: Code,
+    cause: &str,
+    path: Vec<usize>,
+) -> SemanticCheckRefusal {
     assert_refusal(check(declarations), declarations, code, cause, path)
 }
 

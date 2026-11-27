@@ -10,11 +10,11 @@ use filament_semantic_value::call::WrongSnapshotCause;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use fsl_forms::{AccessOrdering, BinaryOperator};
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::MemoryModelName;
 use fsl_foundation::Setting;
 use fsl_foundation::Span;
-use fsl_foundation::diagnostic::Code;
-use fsl_foundation::source::provenance::SourceRegion;
 
 /// FR-113: why a protocol's `ProtocolClause` checker refused one scoped
 /// anchor, or a name it declares. Each variant's `span` is the refusal's

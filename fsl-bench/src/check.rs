@@ -17,7 +17,7 @@ use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_forms::{BinaryOperator, BuiltinType, Expression, FunctionDeclaration, TypeForm};
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{SemanticCheckRefusal, CheckedGraph, EnumBinding, PackageDeclarations};
+use fsl_semantics::check::{CheckedGraph, EnumBinding, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::enumeration::{
     AdmittedEnumDeclaration, EnumDeclarationPreimage, EnumMemberPreimage,

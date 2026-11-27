@@ -29,13 +29,11 @@ fn usage(meter: &Meter) -> [u64; 10] {
 #[implements("FR-520-AC-10")]
 fn is_workspace_source_file(path: &std::path::Path, workspace_root: &std::path::Path) -> bool {
     path.extension().is_some_and(|ext| ext == "rs")
-        && path
-            .strip_prefix(workspace_root)
-            .is_ok_and(|relative| {
-                relative
-                    .components()
-                    .any(|component| component.as_os_str() == "src")
-            })
+        && path.strip_prefix(workspace_root).is_ok_and(|relative| {
+            relative
+                .components()
+                .any(|component| component.as_os_str() == "src")
+        })
 }
 
 fn run(
@@ -546,8 +544,7 @@ fn the_retired_state_module_and_its_exports_do_not_exist() {
     let nested_test = nested_root.join("tests/it/model.rs");
     std::fs::create_dir_all(nested_test.parent().expect("test parent exists"))
         .expect("fixture directories create");
-    std::fs::write(&nested_test, "// test outside crate source\n")
-        .expect("fixture source writes");
+    std::fs::write(&nested_test, "// test outside crate source\n").expect("fixture source writes");
     assert!(
         nested_test
             .components()
@@ -568,9 +565,7 @@ fn the_retired_state_module_and_its_exports_do_not_exist() {
                 if !matches!(name, "target" | ".git" | "fuzz") {
                     stack.push(path);
                 }
-            } else if is_workspace_source_file(&path, &root)
-                && name != "state_compensation.rs"
-            {
+            } else if is_workspace_source_file(&path, &root) && name != "state_compensation.rs" {
                 let text = std::fs::read_to_string(&path).expect("source reads");
                 scanned += 1;
                 for retired in ["StateView", "EvaluationReport"] {

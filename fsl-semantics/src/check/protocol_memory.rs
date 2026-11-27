@@ -18,7 +18,7 @@ use fsl_foundation::Span;
 
 use super::footprint::{FootprintRefusal, SymbolicFootprint, SymbolicLocation};
 use super::protocol_clause::{BoundAttempt, CheckedControlTree, CheckedProtocol, ProtocolNodeId};
-use super::refusal::{CheckCause, SemanticCheckRefusal, ProtocolAnchorCause};
+use super::refusal::{CheckCause, ProtocolAnchorCause, SemanticCheckRefusal};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };

@@ -119,7 +119,10 @@ impl Binder {
 
 /// Check `f(a: Boolean, x: Int[0, 9], s: Sequence<Int[0, 9]>[0, 5], o:
 /// Option<Int[0, 9]>): result = body` with the alias `Total = Integer`.
-fn check_body(result: TypeForm, body: Expression) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
+fn check_body(
+    result: TypeForm,
+    body: Expression,
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     PackageDeclarations {
         functions: vec![function(
             "f",

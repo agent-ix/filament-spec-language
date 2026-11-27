@@ -60,7 +60,10 @@ pub(crate) struct TerminalInput<'a> {
 impl Lowering<'_> {
     /// Lower and key the `terminal` declaration `input`, recording its one
     /// `claim` occurrence at the declaration. Returns the node's key.
-    pub(crate) fn terminal(&mut self, input: &TerminalInput<'_>) -> Result<NodeKey, SemanticCheckRefusal> {
+    pub(crate) fn terminal(
+        &mut self,
+        input: &TerminalInput<'_>,
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let claim_at = terminal_location(input.index, TerminalSite::Claim);
         let boolean = self.type_node(&ValueType::Boolean, &claim_at)?;
         self.record(boolean.clone(), OccurrenceRole::Type, claim_at.clone());

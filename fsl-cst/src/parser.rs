@@ -168,12 +168,10 @@ pub(super) fn parse(
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, compounds, cancel)?;
     if diagnostics.len() > limits.diagnostics {
-        let cut_span = diagnostics[limits.diagnostics]
-            .byte_span()
-            .unwrap_or(Span {
-                start: source.text().len(),
-                end: source.text().len(),
-            });
+        let cut_span = diagnostics[limits.diagnostics].byte_span().unwrap_or(Span {
+            start: source.text().len(),
+            end: source.text().len(),
+        });
         diagnostics.truncate(limits.diagnostics);
         diagnostics.push(*super::diagnostic::error(
             &source,
@@ -780,8 +778,7 @@ fn parse_with_declaration_recovery(
                             },
                             str::to_owned,
                         );
-                        if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics
-                        {
+                        if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics {
                             diagnostics.push(*super::diagnostic::error(
                                 source,
                                 CompleteCode::InvalidSyntax,
@@ -823,23 +820,23 @@ fn parse_with_declaration_recovery(
                         .collect::<Vec<_>>()
                         .join(" or ");
                     let message = derived_form(&tokens, &failure)
-                    .or_else(|| {
-                        declared_type_name_hint(
-                            &tokens,
-                            &Failure::expected(failure.position, expected.clone()),
-                        )
-                    })
-                    .map_or_else(
-                        || {
-                            format_expected(
+                        .or_else(|| {
+                            declared_type_name_hint(
                                 &tokens,
-                                failure.position,
-                                &failure.expected,
-                                reserved_words,
+                                &Failure::expected(failure.position, expected.clone()),
                             )
-                        },
-                        str::to_owned,
-                    );
+                        })
+                        .map_or_else(
+                            || {
+                                format_expected(
+                                    &tokens,
+                                    failure.position,
+                                    &failure.expected,
+                                    reserved_words,
+                                )
+                            },
+                            str::to_owned,
+                        );
                     if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics {
                         diagnostics.push(*super::diagnostic::error(
                             source,

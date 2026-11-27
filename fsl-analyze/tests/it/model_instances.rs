@@ -20,8 +20,8 @@ use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{
-    ModelCheckRefusal, ModelCheckRequest, SingleExistentialRequest, StateGraphItem,
-    StateGraphRequest, check_model, check_single_existential, check_state_graph,
+    check_model, check_single_existential, check_state_graph, ModelCheckRefusal, ModelCheckRequest,
+    SingleExistentialRequest, StateGraphItem, StateGraphRequest,
 };
 use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
@@ -34,23 +34,23 @@ use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
-use fsl_replay::{CertificateRequest, ClosureCertificate, ClosureRefusal, check_closure};
+use fsl_replay::{check_closure, CertificateRequest, ClosureCertificate, ClosureRefusal};
+use fsl_replay::{
+    settle_existential, ProductClosureClause, ProductClosureRefusal, ProductClosureRequest,
+    ResultLabel, StateGraphMethod,
+};
 use fsl_replay::{CounterexampleKind, ModelCheckItem, ModelCheckLimits};
 use fsl_replay::{ModelCheckOutcome, UndecidedCause};
-use fsl_replay::{
-    ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ResultLabel,
-    StateGraphMethod, settle_existential,
-};
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNode, FormulaNodeId};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::analyze_cli_support::{Workspace, analyze, label, request_over};
-use crate::counter::{UNLIMITED, declarations_in, declarations_with_model_profile, unit_text_in};
+use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::counter::{declarations_in, declarations_with_model_profile, unit_text_in, UNLIMITED};
 
 pub(crate) const PACKAGE: &str = "test/things";
 
@@ -930,17 +930,15 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ],
     );
     let (agreeing_package, _) = agreeing.clause("Animal");
-    assert!(
-        ModelSystem::new(
-            agreeing
-                .subject(
-                    &agreeing_package,
-                    universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
-                )
-                .simulation,
-        )
-        .is_ok()
-    );
+    assert!(ModelSystem::new(
+        agreeing
+            .subject(
+                &agreeing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .is_ok());
     assert_eq!(
         agreeing.instances(
             "Animal",

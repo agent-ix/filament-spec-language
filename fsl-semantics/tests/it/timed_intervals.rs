@@ -15,8 +15,8 @@ use fsl_foundation::bound::{InvalidTimedInterval, TimedInterval};
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_foundation::Span;
 use fsl_semantics::check::{
-    check_clauses, CheckCause, SemanticCheckRefusal, CheckedInterval, CheckedTemporalClause,
-    ModelTimeBinding, ModelTimeSource, PackageDeclarations, TemporalCause, TemporalProfile,
+    check_clauses, CheckCause, CheckedInterval, CheckedTemporalClause, ModelTimeBinding,
+    ModelTimeSource, PackageDeclarations, SemanticCheckRefusal, TemporalCause, TemporalProfile,
     TemporalTraceFamily, TimeSourceKind, TimeUnitCause, TimedPropertyForm,
 };
 use fsl_semantics::family::{FamilyContract, UnsupportedItem};

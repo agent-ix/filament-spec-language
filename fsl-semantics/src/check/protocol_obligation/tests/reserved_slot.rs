@@ -8,7 +8,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
-use super::{BASE, assemble};
+use super::{assemble, BASE};
 use crate::check::{CheckCause, SemanticCheckRefusal};
 
 /// One reserved-name refusal: the identifier, its tag and the text of the

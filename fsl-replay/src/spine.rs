@@ -41,9 +41,9 @@ pub use fsl_package::{
 use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
-    AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, SemanticCheckRefusal, ClockSelectionFault,
-    ExtensionCause, Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause,
-    ProvedInterval, RefinementCause, RowClass, ShadowedDeclaration, SourceObjectFault,
+    AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, ClockSelectionFault, ExtensionCause,
+    Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, ProvedInterval,
+    RefinementCause, RowClass, SemanticCheckRefusal, ShadowedDeclaration, SourceObjectFault,
     TemporalCause, TimeTypeMismatchReason, TimeUnitCause, TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
@@ -3527,8 +3527,8 @@ mod tests {
     };
     use fsl_foundation::{Code, Setting, SettingLimits, SourceIdentity, Span};
     use fsl_semantics::check::{
-        CheckCause, SemanticCheckRefusal, HybridCause, ProtocolAnchorCause, RefinementCause,
-        RefinementRefusal, RefusedProtocolDependency, RowClass,
+        CheckCause, HybridCause, ProtocolAnchorCause, RefinementCause, RefinementRefusal,
+        RefusedProtocolDependency, RowClass, SemanticCheckRefusal,
     };
     use fsl_semantics::value::DefinitionRole;
     use ix_trace_rs::trace;
@@ -4172,7 +4172,7 @@ mod tests {
         use filament_semantic_value::location::{
             ExpressionLocation as Location, ExpressionOwner as Origin,
         };
-        use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, ProbabilisticCause};
+        use fsl_semantics::check::{CheckCause, ProbabilisticCause, SemanticCheckRefusal};
         let render = |cause: ProbabilisticCause| {
             CompileRefusal::Check {
                 refusals: vec![SemanticCheckRefusal {
@@ -4221,7 +4221,7 @@ mod tests {
         use filament_semantic_value::location::{
             ExpressionLocation as Location, ExpressionOwner as Origin,
         };
-        use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, ProbabilisticCause};
+        use fsl_semantics::check::{CheckCause, ProbabilisticCause, SemanticCheckRefusal};
         let refusal = CompileRefusal::Check {
             refusals: vec![SemanticCheckRefusal {
                 location: Location::root(Origin::Expression),

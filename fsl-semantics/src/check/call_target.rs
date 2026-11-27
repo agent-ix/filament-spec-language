@@ -15,7 +15,7 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::check::Typer;
 use super::imports::ImportedNames;
-use super::refusal::{AmbiguousQualified, CheckCause, SemanticCheckRefusal, QualifiedCandidate};
+use super::refusal::{AmbiguousQualified, CheckCause, QualifiedCandidate, SemanticCheckRefusal};
 use super::sum_case::{UnionMember, UnionRef};
 
 /// What a call or name resolved to.

@@ -952,11 +952,9 @@ mod tests {
             activates: false,
             ..classes
         };
-        assert!(
-            origin
-                .catalog_classes()
-                .is_ok_and(|classes| classes.is_empty())
-        );
+        assert!(origin
+            .catalog_classes()
+            .is_ok_and(|classes| classes.is_empty()));
     }
 
     #[test]

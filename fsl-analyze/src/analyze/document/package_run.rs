@@ -36,13 +36,13 @@ use fsl_eval::simulation::model::{PackageModelInput, PendingClauseForm, PendingP
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
-use fsl_replay::TerminalRecord;
 use fsl_replay::value_check::ValueTarget;
+use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::implements;
-use serde_json::{Map, json};
+use serde_json::{json, Map};
 
 use super::super::hyper_route::PackageRelationSubject;
 use super::super::package_hyper::PackageHyperSubject;
@@ -57,10 +57,10 @@ mod probability;
 mod schedule;
 
 use super::{
-    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
-    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
-    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
-    write_run,
+    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
+    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
+    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
+    SubjectSelection,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route

@@ -27,7 +27,7 @@ use fsl_foundation::Span;
 
 use super::check::Scope;
 use super::lowering::AdmittedModel;
-use super::refusal::{CheckCause, SemanticCheckRefusal, ProtocolAnchorCause};
+use super::refusal::{CheckCause, ProtocolAnchorCause, SemanticCheckRefusal};
 use crate::model::domain_package::DomainPackageRecord;
 use filament_checked::key::DeclarationKey;
 

@@ -12,7 +12,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{SemanticCheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRef, PackageDimensionRecord, PackageUnitRecord,

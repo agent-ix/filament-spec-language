@@ -27,7 +27,7 @@
 //! one object type the model's populations range over.
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,15 +48,15 @@ pub use self::collection_write::{CollectionWrite, Written};
 use super::assemble::TimedDeclaration;
 use super::check::NamedScope;
 use super::ir::{CheckedBody, CheckedNode};
-use super::lowering::{AdmittedModel, CollectionShape, PlaceStep, strictly_below};
+use super::lowering::{strictly_below, AdmittedModel, CollectionShape, PlaceStep};
 use super::refusal::TimedConstruct;
 use super::refusal::{
-    CheckCause, SemanticCheckRefusal, ExcludedClauseForm, TemporalCause, TimedOmission,
+    CheckCause, ExcludedClauseForm, SemanticCheckRefusal, TemporalCause, TimedOmission,
     UnwrittenTimedMember,
 };
 use super::state_clause::{
-    ClauseDeclarations, ClauseOperation, ClauseView, PopulationDomain, StateClauseDeclaration,
-    check_clause, check_clause_named, population_of,
+    check_clause, check_clause_named, population_of, ClauseDeclarations, ClauseOperation,
+    ClauseView, PopulationDomain, StateClauseDeclaration,
 };
 use super::state_graph_claim::StatePredicate;
 use super::temporal_clause::{ModelTimeSource, TimeSourceKind};
@@ -3435,7 +3435,11 @@ fn part_predicate(
                 | DataLiteral::Presence(_)
                 | DataLiteral::ElementPresence(..) => return None,
             };
-            if positive { Some(cut) } else { cut.negated() }
+            if positive {
+                Some(cut)
+            } else {
+                cut.negated()
+            }
         })
         .collect::<Option<Vec<_>>>()?;
     ExpressionForm::conjunction(operands)
@@ -5994,7 +5998,7 @@ pub(crate) fn not_emitted(model: &TimedModel) -> Option<SemanticCheckRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use fsl_forms::{ExpressionForm, ExpressionSpans, parse_clause_text};
+    use fsl_forms::{parse_clause_text, ExpressionForm, ExpressionSpans};
     use ix_trace_rs::trace;
 
     use super::DataLiteral;

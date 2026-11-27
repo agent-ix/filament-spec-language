@@ -30,15 +30,15 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
-use super::{Binder, Binders, Lowering, fault, require_admitted};
+use super::{fault, require_admitted, Binder, Binders, Lowering};
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedNode;
 use crate::check::node_key::{
     Binding, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm, LiteralValue, MemberTerm,
     NodeTag, Operation, OperationLaw, Operator,
 };
-use crate::check::refusal::{SemanticCheckRefusal, KeyFault};
-use crate::check::temporal_clause::condition::{Family, TypedCondition, TypedConditions, family};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
+use crate::check::temporal_clause::condition::{family, Family, TypedCondition, TypedConditions};
 use crate::check::temporal_clause::{
     AggregateKind, AggregateWindow, BinaryTemporal, CheckedAggregate, CheckedFairnessMember,
     CheckedFormula, CheckedInterval, CheckedTemporalClause, DurationWindow, FormulaNode,

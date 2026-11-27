@@ -14,7 +14,7 @@ use filament_semantic_value::declaration::CompositeShape;
 use fsl_forms::{build_unit, BinaryOperator, BinderQuery, Expression};
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    AssemblyLimits, CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations,
+    AssemblyLimits, CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal,
     VariantTypeDeclaration,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;

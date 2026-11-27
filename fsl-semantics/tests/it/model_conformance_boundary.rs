@@ -9,13 +9,15 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, ModelConformanceFailure, PackageDeclarations, RefinementObligation,
+    CheckCause, ModelConformanceFailure, PackageDeclarations, RefinementObligation,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::model::accounting::{
-    NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationLimitKind,
 };
-use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
 use fsl_semantics::model::domain_package::ValueTypeRef;
+use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
 use fsl_semantics::model::normalize::{EffectiveParameterType, ModelRefusalCause};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};

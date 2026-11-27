@@ -11,8 +11,8 @@ use fsl_forms::build_unit;
 use fsl_foundation::Span;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_semantics::check::{
-    ApplicationTerm, AssemblyRefusal, BodyTerm, SemanticCheckRefusal, CheckedGraph, LeafTerm, MemberTerm,
-    PackageDeclarations,
+    ApplicationTerm, AssemblyRefusal, BodyTerm, CheckedGraph, LeafTerm, MemberTerm,
+    PackageDeclarations, SemanticCheckRefusal,
 };
 #[cfg(feature = "test-support")]
 use fsl_semantics::model::accounting::ModelNormalizationLimits;

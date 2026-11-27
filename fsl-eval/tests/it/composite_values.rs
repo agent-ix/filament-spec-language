@@ -763,7 +763,7 @@ mod checked {
     use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
     use fsl_package::CheckedPackage;
     use fsl_semantics::check::{
-        CheckCause, SemanticCheckRefusal, CheckedExpression, Obligation, PackageDeclarations,
+        CheckCause, CheckedExpression, Obligation, PackageDeclarations, SemanticCheckRefusal,
     };
 
     fn name(spelling: &str) -> Expression {

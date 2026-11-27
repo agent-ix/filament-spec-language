@@ -31,7 +31,7 @@ use crate::check::check::ScopedHistory;
 use crate::check::lowering::AdmittedModel;
 use crate::check::protocol_clause::{BoundAttempt, CheckedProtocol, ProtocolNodeId};
 use crate::check::protocol_obligation::CheckedActivation;
-use crate::check::refusal::{CheckCause, SemanticCheckRefusal, KeyFault};
+use crate::check::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use crate::check::state_clause::ClauseDeclarations;
 use crate::family::CheckContext;
 use crate::model::domain_package::DomainPackageRef;

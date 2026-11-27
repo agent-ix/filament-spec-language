@@ -8,8 +8,8 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    AssemblyCause, AssemblyRefusal, CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations,
-    TypeFormFault,
+    AssemblyCause, AssemblyRefusal, CheckCause, CheckedGraph, PackageDeclarations,
+    SemanticCheckRefusal, TypeFormFault,
 };
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;

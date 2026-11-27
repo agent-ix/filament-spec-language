@@ -4460,7 +4460,7 @@ fn a_reached_limit_is_a_limit_not_a_fault() {
 #[trace("TC-769", "FR-285-AC-3")]
 #[test]
 fn an_internal_invariant_failure_is_a_fault() {
-    use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, KeyFault};
+    use fsl_semantics::check::{CheckCause, KeyFault, SemanticCheckRefusal};
     let refusal = Box::new(CompileRefusal::Check {
         refusals: vec![SemanticCheckRefusal {
             location: filament_semantic_value::location::ExpressionLocation::root(
@@ -4486,7 +4486,9 @@ fn an_internal_invariant_failure_is_a_fault() {
 #[test]
 fn a_rebound_model_node_leaves_the_front_end_as_an_internal_failure_with_no_package() {
     use filament_checked::key::DeclarationKey;
-    use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CorrespondenceConflict, KeyFault};
+    use fsl_semantics::check::{
+        CheckCause, CorrespondenceConflict, KeyFault, SemanticCheckRefusal,
+    };
     let node = filament_exact::NodeKey::new(
         "fixture",
         vec![filament_exact::PathSegment::Text("node".into())],

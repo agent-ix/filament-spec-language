@@ -13,7 +13,9 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, NodeTag, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckCause, CheckedGraph, NodeTag, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use ix_trace_rs::trace;

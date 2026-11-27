@@ -30,8 +30,8 @@ use fsl_forms::{Accumulation, BinaryOperator, Expression, FunctionDeclaration, T
 use fsl_foundation::selection::ProfileSelection;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, CheckedGraph, CheckingLimitKind, CheckingStage, MeasureObligation,
-    Obligation, PackageDeclarations, ProvedInterval, StageLimitCause,
+    CheckCause, CheckedGraph, CheckingLimitKind, CheckingStage, MeasureObligation, Obligation,
+    PackageDeclarations, ProvedInterval, SemanticCheckRefusal, StageLimitCause,
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -211,7 +211,9 @@ fn check(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<Semant
 
 /// The quotient fixture uses integer operands with a Rational result; `/`
 /// therefore needs the complete value profile on that function.
-fn check_quotient(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
+fn check_quotient(
+    functions: Vec<FunctionDeclaration>,
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let mut package = declarations(TypeEnvironment::default(), functions);
     let index = package
         .functions

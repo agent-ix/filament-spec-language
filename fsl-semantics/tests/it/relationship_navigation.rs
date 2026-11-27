@@ -14,8 +14,8 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::FieldRef;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    AmbiguousMember, CheckCause, SemanticCheckRefusal, CheckedGraph, CheckedNode, MemberCandidate,
-    PackageDeclarations,
+    AmbiguousMember, CheckCause, CheckedGraph, CheckedNode, MemberCandidate, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -250,7 +250,11 @@ fn package(links: &[Link]) -> DomainPackage {
 
 /// Compile fixture N with `links` and check
 /// `invariant I using v on M::<owner> at current { <body> }`.
-fn compile(links: &[Link], owner: &str, body: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
+fn compile(
+    links: &[Link],
+    owner: &str,
+    body: &str,
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     check_invariant(package(links), owner, body)
 }
 

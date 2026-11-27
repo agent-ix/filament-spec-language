@@ -2747,7 +2747,9 @@ fn release_blocked_provider(
 #[test]
 #[trace("FR-255-AC-25")]
 fn a_monitor_routed_item_and_the_caller_may_not_both_state_a_limit() {
-    use fsl_command::command::{monitor, CommandLimits, MonitorPreparationLimits, MonitorProviders, RunLimits};
+    use fsl_command::command::{
+        monitor, CommandLimits, MonitorPreparationLimits, MonitorProviders, RunLimits,
+    };
     use fsl_foundation::{Setting, SettingName};
 
     let directory = tempfile::tempdir().unwrap();
@@ -2779,6 +2781,9 @@ fn a_monitor_routed_item_and_the_caller_may_not_both_state_a_limit() {
     );
     let error = refused.expect_err("the duplicate bound is refused");
     assert_eq!(error.category().exit_code(), 20);
-    assert!(error.to_string().contains("exact_prob.max_states"), "{error}");
+    assert!(
+        error.to_string().contains("exact_prob.max_states"),
+        "{error}"
+    );
     assert_eq!(events, 0);
 }

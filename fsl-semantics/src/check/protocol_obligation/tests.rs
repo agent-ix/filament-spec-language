@@ -22,7 +22,7 @@ use super::{
 };
 use crate::check::refusal::{ObservationReason, SlotKind};
 use crate::check::{
-    CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations, ProtocolAnchorCause,
+    CheckCause, CheckedGraph, PackageDeclarations, ProtocolAnchorCause, SemanticCheckRefusal,
 };
 
 mod recorded;
@@ -33,7 +33,7 @@ mod fixture {
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
 use crate::model::intake::SelectedModel;
-use fixture::{HEADER, obligation_model, obligation_model_with};
+use fixture::{obligation_model, obligation_model_with, HEADER};
 
 /// Fixture R with the object type `Pool` and its operation `drain`, `Pool`
 /// a member type of the two populations `Pools` and `Reserves`, so a frame
@@ -271,7 +271,8 @@ fn changed(old: &str, new: &str) -> String {
     edit(BASE, old, new)
 }
 
-const TRIGGER: &str = "activate first (trigger: M::Flag) when { not trigger.ready and target >= 0 } {\n\
+const TRIGGER: &str =
+    "activate first (trigger: M::Flag) when { not trigger.ready and target >= 0 } {\n\
         capture activated: Boolean = trigger.ready;\n\
       }";
 
@@ -692,11 +693,8 @@ fn a_barred_stage_cannot_read_a_field_of_an_object_binder() {
         RETRY,
         "retry (earlier: M::Node, later: M::Node) { earlier.n = later.n };",
     ));
-    let [
-        ObligationCause::AttemptType { .. },
-        first @ ObligationCause::ModelStateRead { .. },
-        second @ ObligationCause::ModelStateRead { .. },
-    ] = &found[..]
+    let [ObligationCause::AttemptType { .. }, first @ ObligationCause::ModelStateRead { .. }, second @ ObligationCause::ModelStateRead { .. }] =
+        &found[..]
     else {
         panic!("an attempt type refusal and two barred reads, got {found:?}");
     };

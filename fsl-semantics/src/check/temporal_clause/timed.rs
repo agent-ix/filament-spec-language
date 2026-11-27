@@ -34,17 +34,19 @@ use fsl_forms::{QuantityForm, TimedIntervalForm, TimedUpper};
 use fsl_foundation::bound::TimedInterval;
 use fsl_foundation::diagnostic::{LimitExceeded, StageFailure};
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 use fsl_foundation::{Setting, Span};
 
 use super::{
-    Activation, CheckedFormula, CheckedInterval, FormulaNode, TemporalDeclarations, UnaryTemporal,
-    in_safety_fragment, is_temporal_node, located,
+    in_safety_fragment, is_temporal_node, located, Activation, CheckedFormula, CheckedInterval,
+    FormulaNode, TemporalDeclarations, UnaryTemporal,
 };
 use crate::check::lowering::AdmittedModel;
-use crate::check::probabilistic::{ExactFault, exact_value};
-use crate::check::refusal::{SemanticCheckRefusal, ClockSelectionFault, TemporalCause, TimeUnitCause};
+use crate::check::probabilistic::{exact_value, ExactFault};
+use crate::check::refusal::{
+    ClockSelectionFault, SemanticCheckRefusal, TemporalCause, TimeUnitCause,
+};
 use crate::check::time_units::TimeScale;
 
 /// The clock role that binds `model-time` (ADR-026 CB-1).

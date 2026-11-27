@@ -7,14 +7,14 @@
 //! role too, so it needs the same selection.
 
 use fsl_forms::{IntervalUpper, ProtocolDeclarationForm, ProtocolNodeKind};
-use fsl_foundation::Span;
 use fsl_foundation::selection::ProfileSelection;
+use fsl_foundation::Span;
 
 use super::refusal;
 use super::types::{CheckedAwait, ProtocolNodeId};
 use crate::check::profile::TemporalProfile;
 use crate::check::protocol_obligation::CheckedDeadline;
-use crate::check::refusal::{SemanticCheckRefusal, ProtocolAnchorCause};
+use crate::check::refusal::{ProtocolAnchorCause, SemanticCheckRefusal};
 
 /// The profile selections an `await` reads: the selected protocol
 /// profile's identity, which an awaited-form refusal names, and whether the

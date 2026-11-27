@@ -730,9 +730,7 @@ pub fn check_timed_model<S: Clone>(
         }
         Err(ClosureRefusal::Encoding(_)) => return Err(ZoneCheckRefusal::Fault("state-key")),
         Err(
-            ClosureRefusal::Unordered
-            | ClosureRefusal::Stopped(_)
-            | ClosureRefusal::Initial(_),
+            ClosureRefusal::Unordered | ClosureRefusal::Stopped(_) | ClosureRefusal::Initial(_),
         ) => {
             return Err(ZoneCheckRefusal::Fault("symmetry-closure"));
         }

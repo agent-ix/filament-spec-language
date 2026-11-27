@@ -6,7 +6,7 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, CheckedGraph, Obligation, PackageDeclarations,
+    CheckCause, CheckedGraph, Obligation, PackageDeclarations, SemanticCheckRefusal,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;

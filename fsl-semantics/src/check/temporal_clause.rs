@@ -48,7 +48,7 @@
 //! package's signatures are known, and the clause is emitted as FR-337's
 //! v2 temporal clause node.
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{
@@ -79,15 +79,15 @@ use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_foundation::source_map::SourceMap;
 use fsl_foundation::{Setting, Span};
 
-use super::Scope;
 use super::check::SourceScope;
 use super::lowering::AdmittedModel;
 use super::profile::TemporalProfile;
 use super::refusal::{CheckCause, SemanticCheckRefusal, TemporalCause, TimeUnitCause};
-use super::state_clause::{PopulationDomain, populations_overlapping};
+use super::state_clause::{populations_overlapping, PopulationDomain};
+use super::Scope;
 use crate::check::Capability;
+use crate::family::requirements::{classify_domains, ClassifyFailure};
 use crate::family::requirements::{ClaimExtent, Requirements, UnsupportedItem};
-use crate::family::requirements::{ClassifyFailure, classify_domains};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
 
@@ -2568,7 +2568,10 @@ fn formula_horizon(
 /// Whether `refusal` of the clause `form` is located after its `on each`
 /// activation's binder, in the guard or the body, so that the guard is checked
 /// first (FR-337 "`on each` activation at S3").
-pub(crate) fn refuses_after_activation(form: &TemporalClauseForm, refusal: &SemanticCheckRefusal) -> bool {
+pub(crate) fn refuses_after_activation(
+    form: &TemporalClauseForm,
+    refusal: &SemanticCheckRefusal,
+) -> bool {
     let ActivationForm::Each { parameter, .. } = &form.activation else {
         return false;
     };

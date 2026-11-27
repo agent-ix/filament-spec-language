@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-940's package normal form, without source expressions or recursive walks.
 
-use super::{FORMULA_VISITS, Nodes, malformed, pending};
+use super::{malformed, pending, Nodes, FORMULA_VISITS};
 use crate::BareClauseRefusal;
 use filament_contract_model::{CheckedNodeId, CheckedTerm};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -440,14 +440,11 @@ fn expression(
                             .saturating_mul(std::mem::size_of::<Work<'_>>()),
                     )?;
                     if identity == "filament.op.control.let" {
-                        let [
-                            CheckedTerm::Binding {
-                                binder: Some(binder),
-                                value,
-                                ..
-                            },
-                            body,
-                        ] = arguments.as_slice()
+                        let [CheckedTerm::Binding {
+                            binder: Some(binder),
+                            value,
+                            ..
+                        }, body] = arguments.as_slice()
                         else {
                             return Err(malformed(claim));
                         };

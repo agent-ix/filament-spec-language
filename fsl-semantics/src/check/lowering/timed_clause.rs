@@ -21,14 +21,14 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{EffectiveId, Identifier, NodeKey, Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::{Binder, Binders, Lowering, PlaceStep, refuse, require_admitted};
+use super::{refuse, require_admitted, Binder, Binders, Lowering, PlaceStep};
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{
     Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, LiteralValue, MemberTerm,
     NodeTag, Operation, Operator, TupleMember, TupleTerm,
 };
-use crate::check::refusal::{CheckCause, SemanticCheckRefusal, KeyFault};
+use crate::check::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use crate::check::state_clause::ClauseOperation;
 use crate::check::timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockId, ConstraintNodes,

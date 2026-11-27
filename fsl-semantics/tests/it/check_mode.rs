@@ -9,7 +9,8 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    CheckCause, SemanticCheckRefusal, CheckedGraph, MeasureObligation, Obligation, PackageDeclarations,
+    CheckCause, CheckedGraph, MeasureObligation, Obligation, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::value::{admit_integer_division, DefinitionRole};

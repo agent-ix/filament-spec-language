@@ -8,7 +8,7 @@
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, PackageDeclarations, SemanticCheckRefusal};
 use ix_trace_rs::trace;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\

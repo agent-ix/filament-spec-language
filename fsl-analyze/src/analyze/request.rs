@@ -1839,7 +1839,7 @@ mod tests {
     #[trace("FR-741-AC-6", "FR-255-AC-23")]
     #[test]
     fn both_probability_requests_use_the_finite_local_candidate_default() {
-        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
@@ -1971,7 +1971,7 @@ mod tests {
     #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
     #[test]
     fn request_work_forwards_operation_contract_finite_bound_availability() {
-        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"

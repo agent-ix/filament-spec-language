@@ -27,8 +27,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
-use super::{Lowering, fault};
-use crate::check::Signature;
+use super::{fault, Lowering};
 use crate::check::family::OccurrenceRole;
 use crate::check::hybrid::{
     ArithmeticOp, CheckedHybridClaim, CheckedHybridModel, CompareOp, HybridActivation, HybridClock,
@@ -39,7 +38,8 @@ use crate::check::node_key::{
     MemberTerm, NodeTag, Operation, OperationLaw, Operator, TupleMember, TupleTerm,
 };
 use crate::check::profile::TemporalProfile;
-use crate::check::refusal::{SemanticCheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
+use crate::check::Signature;
 use crate::value::member::{FairnessTarget, Member, TimedMember};
 use fsl_foundation::bound::{TemporalInterval, TemporalUpper};
 

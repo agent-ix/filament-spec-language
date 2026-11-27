@@ -29,15 +29,15 @@ use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use ix_trace_rs::implements;
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::request::ProtocolAnalysisSelection;
 use super::{
     AnalyzeLimits, ClaimItem, Diagnostic, Engines, ItemForm, ItemOptions, NegotiatedItem,
     SourceProvision, SubjectBinding, TemporalItem,
 };
-use fsl_eval::simulation::model::PopulationUniverse;
 pub use crate::model_check::smt::SmtProofEvidence;
+use fsl_eval::simulation::model::PopulationUniverse;
 
 pub mod effect_decision;
 
@@ -901,7 +901,8 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
                 }
                 if temporal.profile.is_some() || temporal.max_history.is_some() {
                     return Err(ItemSelectionReadError {
-                        message: "a non-protocol item carries an unsupported protocol member or count",
+                        message:
+                            "a non-protocol item carries an unsupported protocol member or count",
                     });
                 }
             }
@@ -1716,8 +1717,8 @@ pub use composition_item::{ComponentOwner, CompositionClaim};
 pub use held_identity::HeldIdentityError;
 
 pub use package_run::{
-    PackageRun, PackageRunError, PendingFamily, PendingPackageFamily, settle_package_call,
-    settle_package_run,
+    settle_package_call, settle_package_run, PackageRun, PackageRunError, PendingFamily,
+    PendingPackageFamily,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
@@ -2998,7 +2999,11 @@ fn read_identities<'p>(
                 .any(|universe| universe.population.package == *identity)
         })
         .collect();
-    if read.is_empty() { all } else { read }
+    if read.is_empty() {
+        all
+    } else {
+        read
+    }
 }
 
 fn candidate_list(candidates: &CandidateOutcome) -> Vec<fsl_route::Candidate> {
@@ -3795,11 +3800,9 @@ impl ClaimItem {
                     );
                     member.insert(
                         "max_witnesses".to_owned(),
-                        json!(
-                            probabilistic
-                                .max_witnesses
-                                .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)
-                        ),
+                        json!(probabilistic
+                            .max_witnesses
+                            .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)),
                     );
                     member.insert(
                         "workers".to_owned(),
@@ -4085,7 +4088,12 @@ pub fn settle_run_with_smt_proofs(
         {
             return Err(AnalyzeDocumentError::Fault);
         }
-        let ItemForm::Temporal(temporal) = matching_item.item.form.as_ref().ok_or(AnalyzeDocumentError::Fault)? else {
+        let ItemForm::Temporal(temporal) = matching_item
+            .item
+            .form
+            .as_ref()
+            .ok_or(AnalyzeDocumentError::Fault)?
+        else {
             return Err(AnalyzeDocumentError::Fault);
         };
         let clock_selections = super::clause_item::clock_selections(package, &provision);
@@ -4103,23 +4111,52 @@ pub fn settle_run_with_smt_proofs(
         if fsl_replay::SubjectIdentity::of(&subject) != *evidence.subject() {
             return Err(AnalyzeDocumentError::Fault);
         }
-        let clause_node = package.graph().temporal_clauses().iter().find(|node| {
-            node.identity() == *matching_item.item.claim.node()
-                && node.claim() == matching_item.item.claim.origin()
-        }).ok_or(AnalyzeDocumentError::Fault)?;
+        let clause_node = package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|node| {
+                node.identity() == *matching_item.item.claim.node()
+                    && node.claim() == matching_item.item.claim.origin()
+            })
+            .ok_or(AnalyzeDocumentError::Fault)?;
         let expected_digests = match evidence.settlement().value() {
-            TerminalValue::Proved { basis: fsl_replay::ProofBasis::BoundedComplete { depth }, .. } => {
-                vec![fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
-                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::Unrolling { depth: *depth }, &encoding,
-                ).map_err(|_| AnalyzeDocumentError::Fault)?)]
+            TerminalValue::Proved {
+                basis: fsl_replay::ProofBasis::BoundedComplete { depth },
+                ..
+            } => {
+                vec![fsl_replay::smt_query_digest(
+                    &fsl_replay::encode_temporal_smt_query(
+                        &subject,
+                        clause_node.clause(),
+                        fsl_replay::SmtQueryKind::Unrolling { depth: *depth },
+                        &encoding,
+                    )
+                    .map_err(|_| AnalyzeDocumentError::Fault)?,
+                )]
             }
-            TerminalValue::Proved { basis: fsl_replay::ProofBasis::Inductive { depth }, .. } => vec![
-                fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
-                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::InductionBase { depth: *depth }, &encoding,
-                ).map_err(|_| AnalyzeDocumentError::Fault)?),
-                fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
-                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::InductionStep { depth: *depth }, &encoding,
-                ).map_err(|_| AnalyzeDocumentError::Fault)?),
+            TerminalValue::Proved {
+                basis: fsl_replay::ProofBasis::Inductive { depth },
+                ..
+            } => vec![
+                fsl_replay::smt_query_digest(
+                    &fsl_replay::encode_temporal_smt_query(
+                        &subject,
+                        clause_node.clause(),
+                        fsl_replay::SmtQueryKind::InductionBase { depth: *depth },
+                        &encoding,
+                    )
+                    .map_err(|_| AnalyzeDocumentError::Fault)?,
+                ),
+                fsl_replay::smt_query_digest(
+                    &fsl_replay::encode_temporal_smt_query(
+                        &subject,
+                        clause_node.clause(),
+                        fsl_replay::SmtQueryKind::InductionStep { depth: *depth },
+                        &encoding,
+                    )
+                    .map_err(|_| AnalyzeDocumentError::Fault)?,
+                ),
             ],
             _ => return Err(AnalyzeDocumentError::Fault),
         };
@@ -5064,8 +5101,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         record.get("result").and_then(Value::as_str),
     ) {
         if matches!(result, "proved" | "refuted") {
-            let mut certificate =
-                checker_certificate_member(identity, checker, result == "proved");
+            let mut certificate = checker_certificate_member(identity, checker, result == "proved");
             if let Some(document) = certificate_document {
                 if let Some(certificate) = certificate.as_object_mut() {
                     certificate.insert("document".to_owned(), document);

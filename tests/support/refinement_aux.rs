@@ -25,7 +25,9 @@ use fsl_eval::simulation::model::{
 };
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{SemanticCheckRefusal, CheckedGraph, CheckedRefinement, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckedGraph, CheckedRefinement, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};

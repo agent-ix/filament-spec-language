@@ -38,7 +38,7 @@ mod controls;
 use controls::RunInputs;
 pub(crate) use controls::{AttemptNodes, CompensationNodes};
 
-use super::{Binder, Binders, Lowering, NodeContent, NodeRef, fault, refuse, require_admitted};
+use super::{fault, refuse, require_admitted, Binder, Binders, Lowering, NodeContent, NodeRef};
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::{CheckedBody, CheckedNode};
 use crate::check::node_key::{
@@ -59,7 +59,7 @@ use crate::check::refinement::{
     RefinementCatalogNode, RefinementClassCatalog,
 };
 use crate::check::refusal::{
-    CheckCause, SemanticCheckRefusal, KeyFault, ProtocolConstruct, ProtocolReferenceCause,
+    CheckCause, KeyFault, ProtocolConstruct, ProtocolReferenceCause, SemanticCheckRefusal,
 };
 use crate::value::member::Member;
 

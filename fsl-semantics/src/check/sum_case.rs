@@ -20,7 +20,7 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::ir::{NodeId, Slot};
-use super::refusal::{CheckCause, SemanticCheckRefusal, KeyFault};
+use super::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 
 /// Which of FSpec FR-146's exhaustiveness obligations a `case` failed, in
 /// FR-146's order.

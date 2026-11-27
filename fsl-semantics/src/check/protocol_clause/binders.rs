@@ -11,7 +11,9 @@ use ix_trace_rs::implements;
 
 use super::refusal;
 use crate::check::check::SourceScope;
-use crate::check::refusal::{AliasKind, SemanticCheckRefusal, ProtocolAnchorCause, ShadowedDeclaration};
+use crate::check::refusal::{
+    AliasKind, ProtocolAnchorCause, SemanticCheckRefusal, ShadowedDeclaration,
+};
 use crate::check::{Scope, Signatures};
 
 /// FR-113 "Refusals" binder no-shadowing rule: every binder that shadows a

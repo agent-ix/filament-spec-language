@@ -1165,12 +1165,12 @@ fn an_admitted_root_without_a_call_site_is_a_fault_before_work() {
     let mut registry = Registry::new(MissingRoot(Closure::new(&package)));
     let mut meter = Meter::new(UNLIMITED);
     let failure = match registry.begin_call(
-            callable,
-            vec![int(3)],
-            SessionLimits::default(),
-            &ObjectEnvironment::default(),
-            &mut meter,
-        ) {
+        callable,
+        vec![int(3)],
+        SessionLimits::default(),
+        &ObjectEnvironment::default(),
+        &mut meter,
+    ) {
         Ok(_) => panic!("an admitted callable without a body root is an invariant fault"),
         Err(failure) => failure,
     };

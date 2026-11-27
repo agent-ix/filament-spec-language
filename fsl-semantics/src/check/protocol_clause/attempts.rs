@@ -8,8 +8,8 @@ use filament_semantic_value::declaration::{ObjectTypeDeclaration, TypeEnvironmen
 use fsl_forms::ProtocolDeclarationForm;
 use fsl_foundation::Span;
 
-use super::{BoundAttempt, refusal};
-use crate::check::refusal::{SemanticCheckRefusal, ProtocolAnchorCause};
+use super::{refusal, BoundAttempt};
+use crate::check::refusal::{ProtocolAnchorCause, SemanticCheckRefusal};
 use crate::check::state_clause::{AttemptDeclaration, StateClauseDeclaration};
 
 /// FR-114 "Behavior": each `attempt`'s already-resolved operation

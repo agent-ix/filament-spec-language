@@ -33,13 +33,13 @@ use fsl_semantics::model::state::{ModelState, StateModel};
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
+#[path = "model_simulation/deep_state_key.rs"]
+mod deep_state_key;
 mod evaluator_closure_cases;
 #[path = "mbt_generate.rs"]
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
-#[path = "model_simulation/deep_state_key.rs"]
-mod deep_state_key;
 #[path = "model_simulation/model_based_run.rs"]
 mod model_based_run;
 #[path = "model_simulation/reference_literals.rs"]

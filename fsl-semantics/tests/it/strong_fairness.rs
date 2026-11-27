@@ -12,7 +12,7 @@ use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity,
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_foundation::Span;
 use fsl_semantics::check::{
-    check_clauses, CheckCause, SemanticCheckRefusal, CheckedTemporalClause, TemporalCause,
+    check_clauses, CheckCause, CheckedTemporalClause, SemanticCheckRefusal, TemporalCause,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};

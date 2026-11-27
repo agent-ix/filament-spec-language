@@ -106,7 +106,11 @@ fn interval_type(lower: Integer, upper: Integer) -> Result<ValueType, ModuloRang
 fn max_abs(left: &Integer, right: &Integer) -> Integer {
     let left = left.abs();
     let right = right.abs();
-    if left >= right { left } else { right }
+    if left >= right {
+        left
+    } else {
+        right
+    }
 }
 
 /// Magnitudes of every nonzero member of one integer interval.

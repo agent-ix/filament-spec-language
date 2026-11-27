@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
@@ -11,39 +11,38 @@ use crate::ExactProbLimits;
 
 pub(super) mod measure;
 pub use measure::{
-    MeasurePayoffKind, MeasureProbabilityDocument, conditional_measure_probability_certificate,
-    measure_probability_certificate_document, measure_probability_certificate_document_with_work_scope,
-    measure_probability_objective,
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_certificate_document_with_work_scope, measure_probability_objective,
     measure_probability_product_key, partial_lower_measure_probability_certificate_document,
     partial_lower_measure_probability_certificate_document_with_work_scope,
-    read_measure_probability_certificate,
-    vacuous_measure_probability_certificate_document,
+    read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
     vacuous_measure_probability_certificate_document_with_work_scope,
-    write_measure_probability_certificate,
+    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
 };
 mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
 pub use instances::{
-    OnEachOutcome, on_each_has_instance, on_each_outcome, on_each_outcome_with_work_scope,
-    replay_on_each_witness, replay_on_each_witness_with_work_scope,
+    on_each_has_instance, on_each_outcome, on_each_outcome_with_work_scope, replay_on_each_witness,
+    replay_on_each_witness_with_work_scope, OnEachOutcome,
 };
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity,
+    check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
 };
 pub use mdp::{
-    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
+    cyclic_mdp_probability_certificate_document,
     cyclic_mdp_probability_certificate_document_with_work_scope,
     cyclic_mdp_reward_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document_with_work_scope, probability_proof_document,
     probability_proof_document_with_work_scope, read_probability_proof_document,
     write_probability_proof_document, write_probability_proof_document_with_work_scope,
     write_value_bounds_proof_document, write_value_bounds_proof_document_with_work_scope,
+    ProbabilityProofDocument,
 };
 pub(super) mod long_run;
 mod partial;
@@ -52,20 +51,20 @@ pub use partial::{
     partial_lower_probability_proof_document_with_work_scope,
 };
 pub(super) mod refutation;
-pub use long_run::{
-    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
-    long_run_probability_certificate_document, read_long_run_probability_certificate,
-    long_run_probability_certificate_document_with_work_scope,
-    read_weighted_long_run_probability_certificate,
-    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    weighted_long_run_probability_certificate_document_with_work_scope,
-    write_weighted_long_run_probability_certificate,
-};
 #[cfg(feature = "test-support")]
 pub use long_run::{
-    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity,
+    check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
+};
+pub use long_run::{
+    long_run_probability_certificate_document,
+    long_run_probability_certificate_document_with_work_scope,
+    read_long_run_probability_certificate, read_weighted_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document,
+    weighted_long_run_probability_certificate_document_with_work_scope,
+    write_long_run_probability_certificate, write_weighted_long_run_probability_certificate,
+    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
+    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
@@ -2284,12 +2283,7 @@ impl Offer<'_> {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[implements(
-    "FR-203-AC-30",
-    "FR-1042-AC-19",
-    "FR-1042-AC-25",
-    "FR-1042-AC-26"
-)]
+#[implements("FR-203-AC-30", "FR-1042-AC-19", "FR-1042-AC-25", "FR-1042-AC-26")]
 fn check_document_bytes(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2964,8 +2958,8 @@ mod tests {
     #[test]
     fn cancellation_at_a_certificate_reader_charge_stops_parsing() {
         use std::sync::{
-            Arc, OnceLock,
             atomic::{AtomicUsize, Ordering},
+            Arc, OnceLock,
         };
 
         let slot = Arc::new(OnceLock::<Cancel>::new());

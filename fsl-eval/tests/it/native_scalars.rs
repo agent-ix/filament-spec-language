@@ -18,7 +18,7 @@ use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{SemanticCheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;

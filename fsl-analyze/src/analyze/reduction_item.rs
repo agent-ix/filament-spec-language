@@ -11,7 +11,7 @@
 use filament_checked::key::DeclarationKey;
 use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 use fsl_route::reductions::{Reductions, SymmetryDeclaration};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 /// Why a `reductions` member is refused (FR-623 "Refusals").
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]

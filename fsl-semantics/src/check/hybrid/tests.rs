@@ -6,15 +6,15 @@
 use filament_exact::Rational;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::diagnostic::Code;
+use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 use crate::check::{
-    ArithmeticOp, CaptureIndex, CheckCause, SemanticCheckRefusal, CheckedFunctionRef, CheckedGraph,
-    CheckedHybridClaim, CheckedHybridModel, CompareOp, HybridActivation, HybridCause, HybridClock,
-    HybridFormula, HybridHorizon, HybridInterval, HybridTerm, ModeIndex, PackageDeclarations,
-    ResetConstraint, TemporalProfile, TransitionIndex, VariableClass, VariableIndex,
+    ArithmeticOp, CaptureIndex, CheckCause, CheckedFunctionRef, CheckedGraph, CheckedHybridClaim,
+    CheckedHybridModel, CompareOp, HybridActivation, HybridCause, HybridClock, HybridFormula,
+    HybridHorizon, HybridInterval, HybridTerm, ModeIndex, PackageDeclarations, ResetConstraint,
+    SemanticCheckRefusal, TemporalProfile, TransitionIndex, VariableClass, VariableIndex,
 };
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 

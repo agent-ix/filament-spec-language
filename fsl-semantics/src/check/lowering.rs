@@ -34,12 +34,12 @@ use filament_checked::node::{
     OrderedKind, RecordField, RecordSlot, Visit,
 };
 use ix_trace_rs::implements;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
+use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::ControlFlow;
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 
 use filament_exact::{
@@ -64,7 +64,7 @@ use super::node_key::{
 };
 use super::node_key::{NodeRef, PlaceholderId};
 use super::refusal::{
-    CheckCause, SemanticCheckRefusal, CheckingLimitKind, CheckingStage, KeyFault, StageLimitCause,
+    CheckCause, CheckingLimitKind, CheckingStage, KeyFault, SemanticCheckRefusal, StageLimitCause,
 };
 use crate::value::definition::{DefinitionReference, DefinitionRole};
 use crate::value::member::Member;
@@ -97,34 +97,34 @@ mod timed_clause;
 
 pub(crate) use extension::ExtensionFormInput;
 pub(crate) use hybrid::{
-    HybridClaimInput, HybridModelInput, HybridSite, hybrid_location, hybrid_site,
+    hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
 };
 pub(crate) use hyper::{
-    FiniteHyperClauseInput, HyperClauseInput, LoweredStepRelation, StepRelationInput,
-    finish_step_relation,
+    finish_step_relation, FiniteHyperClauseInput, HyperClauseInput, LoweredStepRelation,
+    StepRelationInput,
 };
 pub(crate) use model::ParentSlotFailure;
-pub use model::{
-    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
-    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
-    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember, SourceClockEntry,
-    SourceClockMembers, clock_field_member_type, collection_kind, model_root_key,
-};
 pub(crate) use model::{
-    QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,
-    equivalence_origin, model_declaration_key, quantity_origin, record_node_key, strictly_below,
+    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
+    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
+};
+pub use model::{
+    clock_field_member_type, collection_kind, model_root_key, AdmittedModel, CollectionShape,
+    ForeignView, ModelClause, PlaceRow, PlaceStep, SelectedModelEnumDeclaration,
+    SelectedModelEnumMember, SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload,
+    SelectedOperationMember, SourceClockEntry, SourceClockMembers,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
-    AttemptNodes, CompensationNodes, ProtocolInput, compensation_origin, declaration_origin,
-    protocol_location,
+    compensation_origin, declaration_origin, protocol_location, AttemptNodes, CompensationNodes,
+    ProtocolInput,
 };
-pub use protocol::{ProtocolSite, RelatedSide, protocol_site};
+pub use protocol::{protocol_site, ProtocolSite, RelatedSide};
 pub(crate) use state::{
-    AnchorInput, AttemptInput, LoweredAttempt, LoweredClause, OperationBinding, StateClauseInput,
     protocol_attempt_operation_location, protocol_attempt_operation_site,
     state_clause_name_location, state_clause_name_site, state_operation_location,
-    state_operation_site,
+    state_operation_site, AnchorInput, AttemptInput, LoweredAttempt, LoweredClause,
+    OperationBinding, StateClauseInput,
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
@@ -132,10 +132,10 @@ pub(crate) use synthesis::{
     synthesis_location, synthesis_objective_location, synthesis_satisfies_location,
 };
 pub(crate) use temporal::{
-    AggregatePart, LoweredTemporalClause, TemporalClauseInput, TemporalSite, temporal_location,
-    temporal_site,
+    temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
+    TemporalSite,
 };
-pub(crate) use terminal::{TerminalInput, TerminalSite, terminal_location, terminal_site};
+pub(crate) use terminal::{terminal_location, terminal_site, TerminalInput, TerminalSite};
 pub(crate) use timed_clause::TimedClauseInput;
 
 /// A node's place in its recursion group (FR-092 "Recursion groups"): the
@@ -1321,11 +1321,11 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 #[implements("FR-531-AC-42")]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
-        [
-            filament_exact::PathSegment::Text(kind),
-            filament_exact::PathSegment::Text(form),
-            filament_exact::PathSegment::Text(identity),
-        ] if kind == "model" && form == "variant_type" => Some(identity),
+        [filament_exact::PathSegment::Text(kind), filament_exact::PathSegment::Text(form), filament_exact::PathSegment::Text(identity)]
+            if kind == "model" && form == "variant_type" =>
+        {
+            Some(identity)
+        }
         _ => None,
     }
 }
@@ -1689,7 +1689,10 @@ enum FoldStage {
 }
 
 /// `name`'s `::`-separated segments, each an identifier.
-fn qualified_name(name: &str, location: &Location) -> Result<Vec<Identifier>, SemanticCheckRefusal> {
+fn qualified_name(
+    name: &str,
+    location: &Location,
+) -> Result<Vec<Identifier>, SemanticCheckRefusal> {
     identifiers(name.split("::"), location)
 }
 
@@ -2900,7 +2903,11 @@ impl<'a> Lowering<'a> {
     // ------------------------------------------------------------------
 
     /// A builtin `scalar_type` node: its own semantic type, empty body.
-    fn scalar(&mut self, form: &'static str, location: &Location) -> Result<NodeKey, SemanticCheckRefusal> {
+    fn scalar(
+        &mut self,
+        form: &'static str,
+        location: &Location,
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let node = self.insert_ref(
             location,
             NodeTag::ScalarType,
@@ -2942,7 +2949,11 @@ impl<'a> Lowering<'a> {
     }
 
     /// A text literal typed at the builtin text scalar node (T3).
-    fn text_literal(&mut self, value: &str, location: &Location) -> Result<LeafTerm, SemanticCheckRefusal> {
+    fn text_literal(
+        &mut self,
+        value: &str,
+        location: &Location,
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let text = self.scalar("text", location)?;
         // Generated type metadata can be the only use of the builtin Text
         // scalar in an expression-only unit; root it at that source use.
@@ -3586,7 +3597,10 @@ impl<'a> Lowering<'a> {
 
     /// The node of the declared composite `declaration` (FR-092-AC-12): its
     /// checked type node's id.
-    pub(crate) fn composite_node(&mut self, declaration: NodeKey) -> Result<NodeKey, SemanticCheckRefusal> {
+    pub(crate) fn composite_node(
+        &mut self,
+        declaration: NodeKey,
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let location = generated_location();
         let node = self.composite_type_node(declaration, &location)?;
         require_admitted(node, &location)
@@ -3601,7 +3615,11 @@ impl<'a> Lowering<'a> {
         self.enum_nodes_at(binding, type_declaration(&binding.name))
     }
 
-    fn enum_nodes_at(&mut self, binding: &EnumBinding, site: Location) -> Result<(), SemanticCheckRefusal> {
+    fn enum_nodes_at(
+        &mut self,
+        binding: &EnumBinding,
+        site: Location,
+    ) -> Result<(), SemanticCheckRefusal> {
         let declaration = binding.declaration.key();
         let name = identifiers(
             binding
@@ -3750,7 +3768,11 @@ impl<'a> Lowering<'a> {
     }
 
     /// The law of `role`, or the FR-093 refusal.
-    fn law(&self, role: LawRole, location: &Location) -> Result<OperationLaw, SemanticCheckRefusal> {
+    fn law(
+        &self,
+        role: LawRole,
+        location: &Location,
+    ) -> Result<OperationLaw, SemanticCheckRefusal> {
         let definition = match role {
             LawRole::TextProfile => Some(DefinitionRole::TextProfile.reference()),
             LawRole::IeeeProfile => self
@@ -4594,7 +4616,10 @@ impl<'a> Lowering<'a> {
     /// The model package names an unparameterized floating field by its
     /// scalar type. Preserve that identity for its projection and for IEEE
     /// negation, whose checked result has the operand's type node.
-    fn lowering_type_ref(&mut self, node: CheckedNode<'_>) -> Result<NodeRef, SemanticCheckRefusal> {
+    fn lowering_type_ref(
+        &mut self,
+        node: CheckedNode<'_>,
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let node = under_pre(node);
         let source_type = self.type_ref(&node.lowered_value_type(), node.location())?;
         let Some(scalar) = float_member_scalar(node) else {
@@ -4816,7 +4841,10 @@ impl<'a> Lowering<'a> {
     /// The `type_argument` member of `node`'s result type, carrying the alias
     /// its source wrote for the argument (FSpec FR-322 "Named type
     /// arguments").
-    fn aliased_type_argument(&mut self, node: CheckedNode<'_>) -> Result<Member, SemanticCheckRefusal> {
+    fn aliased_type_argument(
+        &mut self,
+        node: CheckedNode<'_>,
+    ) -> Result<Member, SemanticCheckRefusal> {
         Ok(Member::TypeArgument {
             declaration: self.type_node(node.value_type(), node.location())?,
             alias: node.type_argument().cloned(),
@@ -5842,7 +5870,7 @@ impl<'a> Lowering<'a> {
                         ..plain("filament.op.quantity.convert")
                     }
                 } else {
-                    use super::numeric_conversion::{Class, classify};
+                    use super::numeric_conversion::{classify, Class};
                     let identity = match classify(node.at(*operand).value_type(), &target) {
                         Some(Class::RangeNarrowing) => "filament.op.numeric.narrow",
                         Some(Class::RationalNarrowing) => "filament.op.rational.narrow",
@@ -7435,7 +7463,11 @@ impl<'a> Lowering<'a> {
     /// A literal's node: `value`/`literal` for a Boolean, integer, rational,
     /// quantity or absent option, the enum member's nominal node for an
     /// enum member.
-    fn literal(&mut self, node: CheckedNode<'_>, value: &Value) -> Result<LeafTerm, SemanticCheckRefusal> {
+    fn literal(
+        &mut self,
+        node: CheckedNode<'_>,
+        value: &Value,
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         self.literal_as(node, value, node.value_type(), None)
     }
 
@@ -7443,7 +7475,10 @@ impl<'a> Lowering<'a> {
     /// node typed at the one-value range `Int[v, v]`, since the reader takes
     /// each bound's extremes from its `integer_range` type node; any other
     /// bound lowers as the term it is.
-    fn seq_bound<'n>(&mut self, bound: CheckedNode<'n>) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
+    fn seq_bound<'n>(
+        &mut self,
+        bound: CheckedNode<'n>,
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         if let NodeKind::Literal(CheckedLiteral(value @ Value::Integer(integer))) = bound.kind() {
             let interval =
                 filament_exact::IntegerInterval::new(integer.clone(), integer.clone())
@@ -7726,7 +7761,10 @@ fn text_profile(value_type: &ValueType) -> Option<TextProfile> {
 }
 
 /// The element type of a collection type.
-fn element_type(value_type: &ValueType, location: &Location) -> Result<ValueType, SemanticCheckRefusal> {
+fn element_type(
+    value_type: &ValueType,
+    location: &Location,
+) -> Result<ValueType, SemanticCheckRefusal> {
     match value_type {
         ValueType::Collection(collection) => Ok(collection.element().clone()),
         _ => Err(refuse(

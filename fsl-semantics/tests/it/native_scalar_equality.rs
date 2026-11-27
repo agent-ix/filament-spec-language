@@ -12,8 +12,8 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::{SourceIdentity, Span};
 use fsl_semantics::check::{
-    ApplicationTerm, AssemblyCause, BodyTerm, CheckCause, SemanticCheckRefusal, CheckedGraph,
-    PackageDeclarations, SemanticNode,
+    ApplicationTerm, AssemblyCause, BodyTerm, CheckCause, CheckedGraph, PackageDeclarations,
+    SemanticCheckRefusal, SemanticNode,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;

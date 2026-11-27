@@ -9,7 +9,9 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, MeasureObligation, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckCause, MeasureObligation, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 

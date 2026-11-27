@@ -659,7 +659,7 @@ mod checked {
     use fsl_forms::{BinaryOperator, BinderQuery, Expression, TypeForm};
     use fsl_package::CheckedPackage;
     use fsl_semantics::check::{
-        CheckCause, SemanticCheckRefusal, CheckedExpression, EnumBinding, PackageDeclarations,
+        CheckCause, CheckedExpression, EnumBinding, PackageDeclarations, SemanticCheckRefusal,
     };
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use fsl_semantics::value::enumeration::{

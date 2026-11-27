@@ -25,7 +25,9 @@ use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::Expression;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedExpression, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckCause, CheckedExpression, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;

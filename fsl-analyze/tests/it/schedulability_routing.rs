@@ -10,8 +10,8 @@ use fsl_foundation::Span;
 use fsl_route::request::items_from_requirements;
 use fsl_route::{CandidateOutcome, ProviderOrigin, Registry};
 use fsl_semantics::check::{
-    Capability, SemanticCheckRefusal, CheckedGraph, CheckedScheduleClaim, RequirementMap,
-    RequirementRecord, ScheduleClaim, SchedulingPolicy,
+    Capability, CheckedGraph, CheckedScheduleClaim, RequirementMap, RequirementRecord,
+    ScheduleClaim, SchedulingPolicy, SemanticCheckRefusal,
 };
 use fsl_semantics::family::{ClaimExtent, Requirements};
 use ix_trace_rs::trace;

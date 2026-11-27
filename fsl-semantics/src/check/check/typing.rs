@@ -25,19 +25,19 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
-    is_integer, mismatch, node, refuse,
+    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
+    node, refuse, LocalKind, Typer,
 };
-use crate::check::DispatchOperation;
-use crate::check::call_target::{ResolvedTarget, resolve_target};
+use crate::check::call_target::{resolve_target, ResolvedTarget};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
-    CheckCause, SemanticCheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    KeyFault, StageLimitCause,
+    CheckCause, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode, KeyFault,
+    SemanticCheckRefusal, StageLimitCause,
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
+use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -111,7 +111,11 @@ fn population_operand(population: &super::NamedPopulation, location: &Location) 
 }
 
 /// `Int[low, high]`.
-fn int_type(low: Integer, high: Integer, location: &Location) -> Result<ValueType, SemanticCheckRefusal> {
+fn int_type(
+    low: Integer,
+    high: Integer,
+    location: &Location,
+) -> Result<ValueType, SemanticCheckRefusal> {
     IntegerInterval::new(low, high)
         .map(ValueType::Int)
         .map_err(|_| refuse(location, CheckCause::UnrepresentableBound))
@@ -2939,15 +2943,17 @@ impl<'a> Typer<'a> {
         match result {
             Ok(value_type) => Ok(value_type),
             Err(super::modulo_interval::ModuloRangeError::Refused(refusal)) => Err(refusal),
-            Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => Err(SemanticCheckRefusal {
-                location: location.clone(),
-                cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
-                    filament_semantic_value::catalog::InternalFault::new(
-                        "check.integer-modulo",
-                        "range-invariant",
-                    ),
-                )))),
-            }),
+            Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => {
+                Err(SemanticCheckRefusal {
+                    location: location.clone(),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                        filament_semantic_value::catalog::InternalFault::new(
+                            "check.integer-modulo",
+                            "range-invariant",
+                        ),
+                    )))),
+                })
+            }
         }
     }
 
@@ -4309,7 +4315,11 @@ impl<'a> Typer<'a> {
         })
     }
 
-    fn accept_unary(&mut self, frame: UnaryFrame<'_>, operand: Node) -> Result<Node, SemanticCheckRefusal> {
+    fn accept_unary(
+        &mut self,
+        frame: UnaryFrame<'_>,
+        operand: Node,
+    ) -> Result<Node, SemanticCheckRefusal> {
         let UnaryFrame { form, location } = frame;
         match form {
             Unary::Negate(hint) => self.negate(operand, hint.as_deref(), &location),
@@ -4656,7 +4666,11 @@ impl<'a> Typer<'a> {
     /// A concrete population name: the objects of the population in the
     /// observed state, `Set<Reference<T>>` with the universe size left
     /// symbolic (FR-139).
-    fn population_objects(&self, name: &str, location: &Location) -> Result<Node, SemanticCheckRefusal> {
+    fn population_objects(
+        &self,
+        name: &str,
+        location: &Location,
+    ) -> Result<Node, SemanticCheckRefusal> {
         let population = self
             .population_named(name)
             .ok_or_else(|| refuse(location, CheckCause::MissingName(name.to_owned())))?;

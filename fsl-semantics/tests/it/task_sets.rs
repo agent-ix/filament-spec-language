@@ -55,7 +55,9 @@ fn unit_text(declarations: &str) -> String {
     format!("{UNITS}{declarations}")
 }
 
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
+fn check(
+    declarations: &str,
+) -> Result<CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     admit_and_assemble_with_profiles(&document(), PROFILES, &unit_text(declarations))
         .expect("S2 keeps the task-set forms")
         .check(

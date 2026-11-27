@@ -19,9 +19,9 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_foundation::Code;
 use fsl_semantics::check::{
-    AssemblyRefusal, BindingValue, BodyTerm, CheckCause, SemanticCheckRefusal, CheckedGraph,
-    CheckedRefinement, LeafTerm, LiteralValue, MemberTerm, PackageDeclarations, RefinementCause,
-    RefinementV2Emission, RowClass, StepClass, StepTarget,
+    AssemblyRefusal, BindingValue, BodyTerm, CheckCause, CheckedGraph, CheckedRefinement, LeafTerm,
+    LiteralValue, MemberTerm, PackageDeclarations, RefinementCause, RefinementV2Emission, RowClass,
+    SemanticCheckRefusal, StepClass, StepTarget,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
