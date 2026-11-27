@@ -884,7 +884,7 @@ fn check_safety(
                 .filter_map(|instance| instance.binding.clone())
                 .collect()
         } else {
-            system.instances(&clause.over().1).map_err(not_simulated)?
+            claim_bindings(&system, &clause.over().1)?
         };
         listed.clone_from(bindings);
         if let Some(cap) = cap {
@@ -1155,7 +1155,7 @@ pub(crate) fn check_protocol_retaining(
                 .filter_map(|instance| instance.binding.clone())
                 .collect()
         } else {
-            model.instances(&clause.over().1).map_err(not_simulated)?
+            claim_bindings(&model, &clause.over().1)?
         };
     }
     refuse_capture_read(request.item)?;
@@ -1695,7 +1695,7 @@ fn check_reduced(
     let symmetric = !reductions.symmetry.is_empty();
     let plans = match request.item {
         ModelCheckItem::Clause { clause, .. } => {
-            let mut bindings = system.instances(&clause.over().1).map_err(not_simulated)?;
+            let mut bindings = claim_bindings(&system, &clause.over().1)?;
             listed.clone_from(&bindings);
             if let Some(cap) = cap {
                 bindings.truncate(cap);
@@ -2201,6 +2201,17 @@ pub(super) fn precheck(
         }
     }
     Ok(Admitted::Group(group))
+}
+
+/// FR-125: the `over` instances of a clause, from `ModelSystem::claim_instances`.
+/// A subject with no initial state or no instance reads as no binding: the
+/// run settles that as `NoInitialState` or `NoInstance` at its own check of
+/// the initial states and the bindings.
+pub(super) fn claim_bindings(
+    system: &ModelSystem<'_>,
+    over: &filament_exact::ValueType,
+) -> Result<Vec<ModelInstance>, ModelCheckRefusal> {
+    system.claim_bindings(over).map_err(not_simulated)
 }
 
 /// FR-336 and FR-125: an unbounded root, or an admitting population with no

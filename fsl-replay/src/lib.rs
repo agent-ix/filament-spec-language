@@ -459,7 +459,10 @@ pub use filament_semantic_value::declaration::EqualityOperator;
 pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
-pub use instance_records::{combine_instance_records, InstanceRecord};
+pub use instance_records::{
+    combine_instance_records, fold_instances, InstanceFold, InstanceRecord, InstanceSelection,
+    InstanceVerdict,
+};
 pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use outcome::undefined_reason;
 pub use outcome::{

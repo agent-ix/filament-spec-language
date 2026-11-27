@@ -894,3 +894,37 @@ fn a_liveness_run_charges_each_product_state_to_retained_bytes() {
     }
     assert!(!matches!(run(None).value(), TerminalValue::Incomplete(_)));
 }
+
+/// FR-126-AC-30 (FSpec FR-361): a binding that reaches the horizon does not
+/// end the item. Over `a` at 3 and `b` at 0, `eventually holds(c.value = 3)`
+/// with `max_depth` 1: the first binding `a` is not decided at the horizon,
+/// and the second binding `b` is refuted, so the item is refuted, bound to
+/// `b`, not settled `BoundReached`.
+#[trace("TC-1085", "FR-126-AC-30")]
+#[test]
+fn a_later_binding_is_refuted_past_an_earlier_one_at_the_horizon() {
+    let fixture = fixture(
+        document_with_ranged_parameter(),
+        CONTRACT,
+        "",
+        "eventually holds(c.value = 3)",
+        &[("a", 3), ("b", 0)],
+    );
+    let outcome = fixture
+        .run(
+            is_three,
+            Some(1),
+            ModelCheckLimits::default(),
+            UNLIMITED,
+            &Cancel::new(),
+        )
+        .expect("checked");
+    assert_eq!(
+        violated(&outcome)
+            .over_binding
+            .as_ref()
+            .map(|b| b.key.as_str()),
+        Some("b"),
+        "{outcome:?}"
+    );
+}

@@ -28,11 +28,10 @@
 //! reduced product, and so decides every binding before any proof. Findings
 //! and lassos from different bindings are never ranked against one another.
 //!
-//! Known deviation from FR-126 (QSL-3472): a horizon, a bound, a state
-//! constraint or an ignored fairness constraint ends the loop early. FR-126
-//! requires the next binding to be decided after one ends undecided, at a
-//! bound or at a constraint; until it is, a later binding's refutation can be
-//! missed and the run settles as a non-proof.
+//! The bindings combine as FSpec FR-361 states, by `fsl_replay::InstanceFold`:
+//! a binding that ends at a horizon, a bound, a state constraint or an ignored
+//! fairness constraint does not end the run; the next binding is decided, and
+//! a later refutation settles the item (FR-126 "Bindings and ranking").
 //!
 //! Each binding's second phase decomposes its retained graph into strongly
 //! connected components in
@@ -135,8 +134,8 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
-    ModelCheckRequest, BOUND_POSITIONS, EN1_STATE_OVERHEAD_BYTES,
+    atom_refusal, claim_bindings, not_simulated, precheck, refuse_capture_read, Admitted,
+    ModelCheckRefusal, ModelCheckRequest, BOUND_POSITIONS, EN1_STATE_OVERHEAD_BYTES,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
 use super::fair_walk::{fairness_constraints, tree_path, FairModel};
@@ -233,7 +232,7 @@ pub(super) fn check(
     // The instances are the keys of the universes of the populations that
     // admit the clause's `over` type (FR-125 Instancing); under symmetry one
     // per orbit, run under its stabiliser (FR-151 "Instances").
-    let instances = system.instances(&clause.over().1).map_err(not_simulated)?;
+    let instances = claim_bindings(&system, &clause.over().1)?;
     refuse_capture_read(request.item)?;
     let bindings: Vec<Binding> = if symmetric {
         reduce::instance_groups(Some(&instances), &group)
@@ -382,9 +381,7 @@ where
             .iter()
             .any(|member| member.origin() == FairnessOrigin::Memory))
     .then_some(full_fairness.as_slice());
-    let bindings: Vec<Binding> = model
-        .instances(&clause.over().1)
-        .map_err(not_simulated)?
+    let bindings: Vec<Binding> = claim_bindings(model, &clause.over().1)?
         .into_iter()
         .map(|instance| Binding {
             instance,
@@ -2416,6 +2413,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         let mut reduced_refutation: Option<Box<TemporalCounterexample<Tr<S>>>> = None;
         let mut cut = false;
         let mut ignored_fairness_lasso = false;
+        let mut fold = fsl_replay::InstanceFold::new();
         for binding in self.bindings {
             let mut run = match self.explore(binding, &mut totals)? {
                 Ok(run) => run,
@@ -2493,6 +2491,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     // next binding uses the shared transition budget.
                     self.charge_lifted(&mut totals);
                     explored.push(run);
+                    fold.push(fsl_replay::InstanceVerdict::Refuted);
                     continue;
                 }
                 Second::IgnoringConstraints => ignored_fairness_lasso = true,
@@ -2506,9 +2505,9 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
                 Second::NoneFair => {}
             }
-            // A reduction never ends the loop: each binding, or each orbit
-            // under symmetry, is its own product and must be decided. The
-            // other stops below are a known deviation from FR-126 (QSL-3472).
+            // FSpec FR-361: a binding that is not decided is not proved and
+            // does not end the item; the next binding is read, and the
+            // aggregate below names what the run reached.
             let binding_decided = !run.dead_cut
                 && !run.graph.states().iter().any(|state| {
                     state.findings.iter().any(|finding| {
@@ -2526,9 +2525,11 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 && totals.instance_limited.is_empty()
                 && !ignored_fairness_lasso;
             explored.push(run);
-            if !binding_decided {
-                break;
-            }
+            fold.push(if binding_decided {
+                fsl_replay::InstanceVerdict::Proved
+            } else {
+                fsl_replay::InstanceVerdict::NotProved
+            });
         }
         // ADR-025 MB-4: a bound-limited state settles before a counterexample
         // or a proof (see the module docs for why a counterexample too).
@@ -2635,6 +2636,9 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 reductions,
                 stats: totals.stats(),
             }),
+            _ if fold.selection() != fsl_replay::InstanceSelection::Proved => {
+                Err(fault("a-proof-has-every-binding-proved"))
+            }
             _ => match self.component_certificate(&explored)? {
                 Ok(certificate) => Ok(ModelCheckOutcome::Holds {
                     certificate: ProofCertificate::Component(certificate),

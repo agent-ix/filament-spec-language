@@ -30,28 +30,118 @@ impl<T: InstanceRecord + ?Sized> InstanceRecord for &T {
     }
 }
 
-/// Select the item record from per-instance records in canonical instance order.
-/// A replay-confirmed refutation wins; otherwise the first non-proof wins; if
-/// every record proves the item, report the weakest proof basis.
-#[implements("FR-621-AC-9", "FR-621-AC-23", "FR-621-AC-24", "FR-621-AC-25")]
-pub fn combine_instance_records<T: InstanceRecord>(records: &[T]) -> usize {
-    if let Some(index) = records
-        .iter()
-        .position(|record| matches!(record.terminal_value(), TerminalValue::Refuted))
-    {
-        return index;
+/// How one instance's result stands in the combination of an item over
+/// several instances (FSpec FR-361 "Instancing").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstanceVerdict {
+    /// The instance is refuted.
+    Refuted,
+    /// The instance is not proved: it ended undecided, at a bound, stopped,
+    /// or was not decided at all.
+    NotProved,
+    /// The instance is proved.
+    Proved,
+}
+
+/// What the instances read so far give the item.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstanceSelection {
+    /// The item is refuted, by the first refuted instance, at this index.
+    Refuted(usize),
+    /// No instance is refuted and the first that is not proved is at this
+    /// index: the item is not proved and takes that instance's outcome.
+    NotProved(usize),
+    /// Every instance read is proved.
+    Proved,
+}
+
+/// The one fold of FSpec FR-361: an item over several instances is refuted
+/// exactly when some instance is refuted, by the first refuted instance in
+/// the canonical order, whatever an earlier instance gave; otherwise it is
+/// proved only when every instance is, and else it takes the outcome of the
+/// first instance that is not proved. Every route that reads the instances of
+/// an item, over records or over engine outcomes, combines them with this.
+#[derive(Clone, Debug, Default)]
+pub struct InstanceFold {
+    read: usize,
+    refuted: Option<usize>,
+    first_not_proved: Option<usize>,
+}
+
+impl InstanceFold {
+    /// A fold that has read no instance.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
-    let mut proofs = Vec::with_capacity(records.len());
-    for (index, record) in records.iter().enumerate() {
-        match record.terminal_value() {
-            TerminalValue::Proved {
-                basis,
-                certification,
-            } => proofs.push((basis, *certification)),
-            _ => return index,
+
+    /// Read the next instance in canonical order. Returns whether the item is
+    /// now refuted, so that no later instance need be read.
+    pub fn push(&mut self, verdict: InstanceVerdict) -> bool {
+        let index = self.read;
+        self.read += 1;
+        match verdict {
+            InstanceVerdict::Refuted => {
+                self.refuted.get_or_insert(index);
+            }
+            InstanceVerdict::NotProved => {
+                self.first_not_proved.get_or_insert(index);
+            }
+            InstanceVerdict::Proved => {}
+        }
+        self.refuted.is_some()
+    }
+
+    /// What the instances read so far give the item.
+    #[must_use]
+    pub fn selection(&self) -> InstanceSelection {
+        match (self.refuted, self.first_not_proved) {
+            (Some(index), _) => InstanceSelection::Refuted(index),
+            (None, Some(index)) => InstanceSelection::NotProved(index),
+            (None, None) => InstanceSelection::Proved,
         }
     }
-    weakest(&proofs)
+}
+
+/// [`InstanceFold`] over `items` in canonical order, each read by `verdict`.
+pub fn fold_instances<T>(
+    items: &[T],
+    verdict: impl Fn(&T) -> InstanceVerdict,
+) -> InstanceSelection {
+    let mut fold = InstanceFold::new();
+    for item in items {
+        if fold.push(verdict(item)) {
+            break;
+        }
+    }
+    fold.selection()
+}
+
+/// Select the item record from per-instance records in canonical instance
+/// order, by [`InstanceFold`]: a refutation wins, otherwise the first
+/// non-proof, and if every record proves the item, the weakest proof basis.
+#[implements("FR-621-AC-9", "FR-621-AC-23", "FR-621-AC-24", "FR-621-AC-25")]
+pub fn combine_instance_records<T: InstanceRecord>(records: &[T]) -> usize {
+    match fold_instances(records, |record| match record.terminal_value() {
+        TerminalValue::Refuted => InstanceVerdict::Refuted,
+        TerminalValue::Proved { .. } => InstanceVerdict::Proved,
+        _ => InstanceVerdict::NotProved,
+    }) {
+        InstanceSelection::Refuted(index) | InstanceSelection::NotProved(index) => index,
+        InstanceSelection::Proved => {
+            let proofs: Vec<_> = records
+                .iter()
+                .filter_map(|record| match record.terminal_value() {
+                    TerminalValue::Proved {
+                        basis,
+                        certification,
+                    } => Some((basis, *certification)),
+                    _ => None,
+                })
+                .collect();
+            weakest(&proofs)
+        }
+    }
 }
 
 enum Bound<'a> {
@@ -208,5 +298,37 @@ mod tests {
             }),
         ];
         assert_eq!(combine_instance_records(&records), 1);
+    }
+
+    #[trace("FR-621-AC-9")]
+    #[test]
+    fn the_fold_reads_a_refutation_past_an_earlier_not_proved_instance() {
+        let mut fold = InstanceFold::new();
+        assert!(!fold.push(InstanceVerdict::NotProved));
+        assert_eq!(fold.selection(), InstanceSelection::NotProved(0));
+        assert!(!fold.push(InstanceVerdict::Proved));
+        assert!(fold.push(InstanceVerdict::Refuted));
+        assert_eq!(fold.selection(), InstanceSelection::Refuted(2));
+    }
+
+    #[trace("FR-621-AC-9")]
+    #[test]
+    fn the_fold_proves_only_when_every_instance_is_proved() {
+        let verdict = |v: &InstanceVerdict| *v;
+        assert_eq!(
+            fold_instances(&[InstanceVerdict::Proved, InstanceVerdict::Proved], verdict),
+            InstanceSelection::Proved
+        );
+        assert_eq!(
+            fold_instances(
+                &[
+                    InstanceVerdict::Proved,
+                    InstanceVerdict::NotProved,
+                    InstanceVerdict::NotProved
+                ],
+                verdict
+            ),
+            InstanceSelection::NotProved(1)
+        );
     }
 }

@@ -2717,6 +2717,21 @@ impl<'a> ModelSystem<'a> {
         Ok(ClaimInstances(instances))
     }
 
+    /// The `over` instances of a claim, from [`Self::claim_instances`], for a
+    /// caller that settles the two instancing outcomes itself: a subject with
+    /// no initial state or no instance reads as no instance here.
+    ///
+    /// # Errors
+    ///
+    /// The [`NotSimulated`] of [`Self::claim_instances`].
+    pub fn claim_bindings(&self, over: &ValueType) -> Result<Vec<ModelInstance>, NotSimulated> {
+        match self.claim_instances(over) {
+            Ok(instances) => Ok(instances.as_slice().to_vec()),
+            Err(NoClaimInstances::NotSimulated(error)) => Err(error),
+            Err(NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance) => Ok(Vec::new()),
+        }
+    }
+
     /// The first of FR-125's outcomes a parameter of object type `object`
     /// raises before any initial state is read: `RequiresBound` when an
     /// overlapping population has no universe.

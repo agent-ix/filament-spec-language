@@ -866,6 +866,10 @@ pub fn check_timed_model<S: Clone>(
     let mut applied = Vec::new();
     let mut total = ZoneStats::default();
     let mut proved = None;
+    // FSpec FR-361: an orbit that ends undecided is not proved and does not
+    // end the item; a later orbit's refutation settles it.
+    let mut fold = fsl_replay::InstanceFold::new();
+    let mut first_undecided: Option<(ZoneUndecided, Option<NonZeno>)> = None;
     for plan in plans {
         let (judged, window, live) = judge_plan(&request, plan.instances)?;
         let automaton_constants = live
@@ -894,10 +898,12 @@ pub fn check_timed_model<S: Clone>(
             }
             Searched::Holds { proof, stats } => {
                 total = total.plus(stats);
+                fold.push(fsl_replay::InstanceVerdict::Proved);
                 proved = Some(proof);
             }
             Searched::HoldsReduced { stats } => {
                 total = total.plus(stats);
+                fold.push(fsl_replay::InstanceVerdict::Proved);
                 applied.push(AppliedReduction::Symmetry {
                     groups: group.classes.clone(),
                     orbit: plan.orbit,
@@ -908,6 +914,7 @@ pub fn check_timed_model<S: Clone>(
                 counterexample,
                 stats,
             } => {
+                fold.push(fsl_replay::InstanceVerdict::Refuted);
                 let non_zeno = (liveness_product
                     && matches!(&counterexample.kind, CounterexampleKind::Formula)
                     && counterexample.lasso.is_some())
@@ -919,14 +926,12 @@ pub fn check_timed_model<S: Clone>(
                 });
             }
             Searched::Undecided { cause, stats } => {
+                total = total.plus(stats);
                 let non_zeno = (liveness_product
                     && matches!(&cause, ZoneUndecided::NoAdmittedBehaviour))
                 .then_some(NonZeno::Refuted);
-                return Ok(ZoneCheckOutcome::Undecided {
-                    cause,
-                    non_zeno,
-                    stats: total.plus(stats),
-                });
+                fold.push(fsl_replay::InstanceVerdict::NotProved);
+                first_undecided.get_or_insert((cause, non_zeno));
             }
             Searched::Stopped { cause, stats } => {
                 return Ok(ZoneCheckOutcome::Stopped {
@@ -935,6 +940,15 @@ pub fn check_timed_model<S: Clone>(
                 });
             }
         }
+    }
+    if let (fsl_replay::InstanceSelection::NotProved(_), Some((cause, non_zeno))) =
+        (fold.selection(), first_undecided)
+    {
+        return Ok(ZoneCheckOutcome::Undecided {
+            cause,
+            non_zeno,
+            stats: total,
+        });
     }
     Ok(match proved {
         Some(proof) if !symmetric => ZoneCheckOutcome::Holds {
@@ -964,14 +978,16 @@ fn reads_unreduced_graph<S>(
             if fsl_eval::automaton::invariant_atom(clause).is_some() {
                 false
             } else {
-                let instances = request
-                    .subject
-                    .system()
-                    .instances(&clause.over().1)
-                    .map_err(not_simulated)?;
+                // One derivation of the instances (FR-125); none to read
+                // is an item `check_timed_model` settles undecided.
+                let instances = match request.subject.system().claim_instances(&clause.over().1) {
+                    Ok(instances) => instances.as_slice().len(),
+                    Err(NoClaimInstances::NotSimulated(error)) => return Err(not_simulated(error)),
+                    Err(NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance) => 0,
+                };
                 flat_window(
                     clause,
-                    instances.len(),
+                    instances,
                     request.subject.tick_period().cloned(),
                     request.limits.max_automaton_states,
                 )?
