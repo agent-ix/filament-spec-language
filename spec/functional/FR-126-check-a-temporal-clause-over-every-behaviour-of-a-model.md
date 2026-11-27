@@ -424,13 +424,15 @@ zero, the first distinct initial state causes the limit refusal.
 **Which binding the item reports.** These two rules hold for every clause
 item, safety (TP-1 to TP-3) and TP-4 alike.
 
-- The item SHALL be refuted by the first refuted binding of the clause's
-  `over` parameter in FR-125's canonical instance order (population, then
-  universe list order) (FR-621 "Items over several claim instances", FSpec
-  FR-361), also when an earlier binding is undecided, reached a bound or
-  stopped. A refutation the run found SHALL NOT be replaced by an earlier
-  binding's outcome that is not a refutation. The counterexample SHALL name
-  the reported binding.
+- An item over several bindings of the clause's `over` parameter is combined
+  as FSpec FR-361 "Instancing" states (the order is FR-125's canonical instance
+  order, FR-621 "Items over several claim instances"): a binding that ends
+  undecided, at a bound or stopped does not end the item; the item is refuted
+  when some binding is refuted, by the first refuted binding, whatever an
+  earlier binding gave, and otherwise is proved only when every binding is
+  proved, and else gives the outcome of the first binding that is not proved.
+  The counterexample SHALL name the reported binding. This clause holds no
+  other statement of the rule.
 - Depth, state order and lasso length SHALL rank findings within one
   binding only, never findings of different bindings.
 
@@ -456,22 +458,17 @@ outcomes, which precede every product, are the item's.
   second phase's canonical lasso selection, including its shortest
   stem-and-loop witness.
 - The engine SHALL decide no binding after a refuted one.
-- When a binding ends undecided, at a bound, or on `max_candidates` or
-  `max_automaton_states`, the engine SHALL decide the next binding. This
-  covers `Undecided(UndecidedSuccessor)`, `BoundReached` at `max_depth` and
-  every outcome that reports a method bound or a constraint reached. Each
-  such limit applies to one binding: each binding's product has its own
+- A binding's end at a bound, on `max_candidates` or on `max_automaton_states`
+  is combined as the first bullet of this list states and FSpec FR-361 owns.
+  Each such limit applies to one binding: each binding's product has its own
   depth horizon and its own automaton-state count, and `max_candidates`
   counts one expansion (FR-120).
 - `max_states`, `max_transitions`, the evaluation meter and cancellation end
   the whole run: when one stops a binding, the engine SHALL decide no later
   binding.
-- When no binding is refuted, the engine SHALL return a proof only when
-  every binding is proved, and otherwise the outcome of the first binding in
-  canonical order that is not proved. A binding the run did not decide is
-  not proved. A run cancelled before it refutes a binding SHALL return
+- A run cancelled before it refutes a binding SHALL return
   `Stopped{cause: Cancelled, limit: None}` (FR-276), whatever an earlier
-  binding's outcome.
+  binding's outcome. A binding the run did not decide is not proved.
 - The run's `max_states` and `max_transitions` SHALL be shared by every
   binding; the run's `automaton_states` SHALL be the largest count of any one
   binding; the run's `product_states` SHALL be the sum over bindings.
@@ -644,6 +641,7 @@ outcomes, which precede every product, are the item's.
 | FR-126-AC-27 | A later binding's refutation is reported past an earlier binding that reached a bound. Over the example subject with initial versions `a` 0 and `b` 1 and `mod_defined` of AC-11, `always holds(mod_defined(c.versionNumber))` with `max_depth` 1 returns `Violated` bound to `b` with the prefix `(0,1) -upd(b)-> (0,2)` and `kind: UndefinedEvaluation{where: position 1, cause: division-by-zero}`, although binding `a`, whose version is at most 1 to depth 1, has only reached the horizon; with `max_depth` 2 it returns AC-11's finding for `a`. The TP-4 claim `always eventually holds(mod_defined(c.versionNumber))` with no fairness constraint and `max_depth` 1 returns the same violation bound to `b`. | Test (TC-1085) |
 | FR-126-AC-28 | A run limit does not discard a refutation the run found. AC-27's safety request with `max_depth` 2 and `max_states` 3 returns AC-27's violation bound to `b`: the product states of `(0,1)`, `(1,1)` and `(0,2)` use the budget, so the engine cannot reach the state `(2,1)` at which `a` is violated. | Test (TC-1085) |
 | FR-126-AC-29 | A later binding's refutation is reported past an earlier undecided binding. Given to the engine as a test `TransitionSystem` (FR-101) whose initial state and expansions are those of AC-27's subject except that the expansion of `(1,1)` records FR-120's `ContractUndetermined` with one `Refused` evaluation and no `Undefined` one, `always holds(mod_defined(c.versionNumber))` returns `Violated` bound to `b` with AC-27's prefix and `kind`: a search for `a`'s violation ends undecided at the expansion of `(1,1)`, the first state after the initial one in breadth-first order, while `b`'s undefined letter is read at `(0,2)`, a successor of the initial state. | Test (TC-1085) |
+| FR-126-AC-30 | A TP-4 item over two bindings in which the first binding ends at a bound and the second is refuted is refuted, bound to the second: over AC-27's subject, `always eventually holds(mod_defined(c.versionNumber))` with no fairness constraint, `max_depth` 1 and the first binding reaching the horizon returns `Violated` bound to `b`, and with the second binding proved instead the item is not proved and names the first binding's bound. | Test (TC-1085) |
 
 ## Dependencies
 
