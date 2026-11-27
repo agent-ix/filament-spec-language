@@ -198,20 +198,30 @@ fn compare_rows<T>(
     }
     let left_key = key(&rows[left]);
     let right_key = key(&rows[right]);
-    let bytes = left_key
-        .as_bytes()
-        .len()
-        .min(right_key.as_bytes().len())
-        .saturating_add(1);
+    let left_bytes = left_key.as_bytes();
+    let right_bytes = right_key.as_bytes();
+    let mut compared = 0_usize;
+    let mut ordering = None;
+    for (left, right) in left_bytes.iter().zip(right_bytes) {
+        compared = compared.saturating_add(1);
+        match left.cmp(right) {
+            std::cmp::Ordering::Equal => {}
+            different => {
+                ordering = Some(different);
+                break;
+            }
+        }
+    }
+    let ordering = ordering.unwrap_or_else(|| left_bytes.len().cmp(&right_bytes.len()));
     meter
         .charge(
             filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge).work(
-                filament_exact::Integer::from(u64::try_from(bytes).unwrap_or(u64::MAX)),
+                filament_exact::Integer::from(u64::try_from(compared).unwrap_or(u64::MAX)),
             ),
         )
         .map_err(|error| match cancel.tripped() {
             Some(cause) => ProbabilityDocumentError::Cancelled(cause),
             None => ProbabilityDocumentError::Accounting(Box::new(error)),
         })?;
-    Ok(left_key.cmp(right_key))
+    Ok(ordering)
 }
