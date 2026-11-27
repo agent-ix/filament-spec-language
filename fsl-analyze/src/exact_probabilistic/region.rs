@@ -70,7 +70,10 @@ impl Region {
                 _ => return None,
             }
         }
-        let dense = classes.keys().zip(1_u32..).all(|(class, want)| *class == want);
+        let dense = classes
+            .keys()
+            .zip(1_u32..)
+            .all(|(class, want)| *class == want);
         if !dense {
             return None;
         }
@@ -150,7 +153,9 @@ impl Region {
     /// denominator)` per clock, in base units: the integer part plus
     /// `class / (K + 1)`; a saturated clock is at its cap.
     pub(super) fn representative(&self) -> Vec<(u64, u64)> {
-        let classes = u64::try_from(self.open.len()).unwrap_or(u64::MAX).saturating_add(1);
+        let classes = u64::try_from(self.open.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
         self.places()
             .into_iter()
             .zip(&self.integer)
@@ -258,7 +263,10 @@ mod tests {
     fn a_successor_that_skips_the_region_between_two_integer_crossings_is_caught() {
         let skipping = |region: &Region| region.successor().successor();
         if let Some(outcome) = run_fixture(skipping) {
-            assert!(outcome.is_err(), "the fixture must reject a skipping successor");
+            assert!(
+                outcome.is_err(),
+                "the fixture must reject a skipping successor"
+            );
         }
     }
 
@@ -277,8 +285,14 @@ mod tests {
         let region = Region::of(
             &[3, 3],
             &[
-                ClockPlace::Open { integer: 0, class: 1 },
-                ClockPlace::Open { integer: 0, class: 2 },
+                ClockPlace::Open {
+                    integer: 0,
+                    class: 1,
+                },
+                ClockPlace::Open {
+                    integer: 0,
+                    class: 2,
+                },
             ],
         )
         .expect("valid places");
@@ -289,8 +303,22 @@ mod tests {
     #[trace("FR-920-AC-1")]
     #[test]
     fn places_with_a_class_gap_or_above_the_cap_are_refused() {
-        assert!(Region::of(&[3], &[ClockPlace::Open { integer: 0, class: 2 }]).is_none());
-        assert!(Region::of(&[3], &[ClockPlace::Open { integer: 2, class: 1 }]).is_none());
+        assert!(Region::of(
+            &[3],
+            &[ClockPlace::Open {
+                integer: 0,
+                class: 2
+            }]
+        )
+        .is_none());
+        assert!(Region::of(
+            &[3],
+            &[ClockPlace::Open {
+                integer: 2,
+                class: 1
+            }]
+        )
+        .is_none());
         assert!(Region::of(&[3], &[ClockPlace::Integer(3)]).is_none());
     }
 }

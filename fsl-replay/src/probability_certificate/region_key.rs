@@ -127,9 +127,7 @@ pub struct RegionKey {
 fn place_is_valid(place: ClockPlace, cap: u64) -> bool {
     match place {
         ClockPlace::Integer(integer) => cap >= 1 && integer <= cap - 1,
-        ClockPlace::Open { integer, class } => {
-            class >= 1 && cap >= 2 && integer <= cap - 2
-        }
+        ClockPlace::Open { integer, class } => class >= 1 && cap >= 2 && integer <= cap - 2,
         ClockPlace::Saturated => cap >= 1,
     }
 }
@@ -201,16 +199,12 @@ impl RegionKey {
             if deadline || corner.ticks_per_unit == 0 || corner.coordinates.len() != entries {
                 return Err(invalid);
             }
-            let caps = self
-                .clocks
-                .iter()
-                .map(|clock| Some(clock.cap))
-                .chain(
-                    self.claim_clocks
-                        .iter()
-                        .filter(|claim| matches!(claim, ClaimClock::Deadline { .. }))
-                        .map(|claim| claim.cap()),
-                );
+            let caps = self.clocks.iter().map(|clock| Some(clock.cap)).chain(
+                self.claim_clocks
+                    .iter()
+                    .filter(|claim| matches!(claim, ClaimClock::Deadline { .. }))
+                    .map(|claim| claim.cap()),
+            );
             for (coordinate, cap) in corner.coordinates.iter().zip(caps) {
                 let limit = cap
                     .and_then(|cap| cap.checked_mul(corner.ticks_per_unit))
@@ -236,9 +230,7 @@ impl RegionKey {
             .clocks
             .iter()
             .enumerate()
-            .map(|(index, clock)| {
-                canonical_json(&clock.identity).map(|bytes| (bytes, index))
-            })
+            .map(|(index, clock)| canonical_json(&clock.identity).map(|bytes| (bytes, index)))
             .collect::<Result<Vec<_>, _>>()?;
         order.sort();
         let clocks = order

@@ -47,15 +47,11 @@ impl CheckerRegion {
                     rank: 0,
                     saturated: false,
                 },
-                ClockPlace::Open { integer, class }
-                    if class >= 1 && integer + 2 <= *cap =>
-                {
-                    Cell {
-                        whole: integer,
-                        rank: class,
-                        saturated: false,
-                    }
-                }
+                ClockPlace::Open { integer, class } if class >= 1 && integer + 2 <= *cap => Cell {
+                    whole: integer,
+                    rank: class,
+                    saturated: false,
+                },
                 ClockPlace::Saturated => Cell {
                     whole: *cap,
                     rank: 0,
@@ -204,7 +200,9 @@ mod tests {
 
     /// Run every fixture case against `successor`; the first mismatch is the
     /// error. `None` when the fixture is not on disk (a packaged crate).
-    fn run_fixture(successor: impl Fn(&CheckerRegion) -> CheckerRegion) -> Option<Result<(), String>> {
+    fn run_fixture(
+        successor: impl Fn(&CheckerRegion) -> CheckerRegion,
+    ) -> Option<Result<(), String>> {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../testdata/timed/region_paths.json"
@@ -262,15 +260,19 @@ mod tests {
     fn a_successor_that_skips_the_region_between_two_integer_crossings_is_caught() {
         let skipping = |region: &CheckerRegion| region.successor().successor();
         if let Some(outcome) = run_fixture(skipping) {
-            assert!(outcome.is_err(), "the fixture must reject a skipping successor");
+            assert!(
+                outcome.is_err(),
+                "the fixture must reject a skipping successor"
+            );
         }
     }
 
     #[trace("FR-922-AC-1")]
     #[test]
     fn an_all_saturated_region_is_unbounded_and_its_own_successor() {
-        let region = CheckerRegion::from_places(&[2, 3], &[ClockPlace::Saturated, ClockPlace::Saturated])
-            .expect("valid places");
+        let region =
+            CheckerRegion::from_places(&[2, 3], &[ClockPlace::Saturated, ClockPlace::Saturated])
+                .expect("valid places");
         assert!(region.is_unbounded());
         assert_eq!(region.successor(), region);
     }
