@@ -908,20 +908,27 @@ fn relabel_term_data_inner(
     if !follow_body_rows {
         return;
     }
-    let mut changed = false;
-    data.body_locations.retain_mut(|row| {
-        let moved = relabel(&row.application, &mut row.occurrence);
-        changed |= moved != Some(false);
-        moved.is_some()
-    });
-    if changed {
-        data.body_locations.sort_by(|left, right| {
-            (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
-                &right.application,
-                &right.occurrence,
-                right.term_ordinal,
-            ))
-        });
+    // The renumbered keys go to the rows in their old order: a function's
+    // rows pair with its visits by rank, so the rows keep their order and the
+    // sorted keys are dealt out to them, instead of the rows being sorted by
+    // the keys they now name.
+    data.body_locations
+        .retain_mut(|row| relabel(&row.application, &mut row.occurrence).is_some());
+    let mut keys: Vec<_> = data
+        .body_locations
+        .iter()
+        .map(|row| {
+            (
+                row.application.clone(),
+                row.occurrence.clone(),
+                row.term_ordinal,
+            )
+        })
+        .collect();
+    keys.sort();
+    for (row, (_, occurrence, term_ordinal)) in data.body_locations.iter_mut().zip(keys) {
+        row.occurrence = occurrence;
+        row.term_ordinal = term_ordinal;
     }
 }
 
@@ -930,13 +937,12 @@ mod rewalk_tests {
     use super::{rewalk_slots, Slot};
 
     use super::{
-        relabel_occurrences, relabel_term_data, relabel_term_data_inner, synthetic_copies,
-        Mapping, Synthetics,
+        relabel_occurrences, relabel_term_data, relabel_term_data_inner, synthetic_copies, Mapping,
+        Synthetics,
     };
     use filament_contract_model::{
-        CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation,
-        CheckedNodeId, CheckedNodePathSegment, CheckedOccurrence, CheckedOccurrenceRole,
-        CheckedTermDataV2,
+        CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation, CheckedNodeId,
+        CheckedNodePathSegment, CheckedOccurrence, CheckedOccurrenceRole, CheckedTermDataV2,
     };
     use std::collections::BTreeMap;
 
@@ -1054,17 +1060,17 @@ mod rewalk_tests {
             .collect()
     }
 
-    /// FSpec FR-322 (QSL-3613): a rewalk that swaps two owners' occurrences of
-    /// a shared application leaves the `body_locations` rows at their keys
-    /// (the reader pairs them with a function's visits by rank), while the
-    /// renumbering of the checker's own numbering moves them with their uses.
+    /// FSpec FR-322 (QSL-3613): a rewalk leaves the `body_locations` rows at
+    /// their keys (the reader pairs them with a function's visits by rank),
+    /// while the renumbering of the checker's own numbering gives them the
+    /// renumbered keys without reordering them.
     #[test]
     fn a_rewalk_leaves_body_rows_at_their_keys_and_a_renumbering_moves_them() {
         let data = || CheckedTermDataV2 {
             body_locations: vec![body_row("g", 0), body_row("h", 1)],
             ..CheckedTermDataV2::default()
         };
-        let mapping: Mapping = vec![(0, Some(1)), (1, Some(0))];
+        let mapping: Mapping = vec![(0, Some(1)), (1, Some(2))];
         let by_id: BTreeMap<_, _> = [(id("app"), mapping)].into_iter().collect();
         let mut rewalked = data();
         relabel_term_data(&by_id, &Synthetics::new(), &mut rewalked);
@@ -1076,7 +1082,8 @@ mod rewalk_tests {
         relabel_term_data_inner(&by_id, &Synthetics::new(), &mut renumbered, true);
         assert_eq!(
             functions(&renumbered),
-            [("h".to_owned(), 0), ("g".to_owned(), 1)]
+            [("g".to_owned(), 1), ("h".to_owned(), 2)],
+            "the rows keep their order and take the renumbered keys"
         );
     }
 
