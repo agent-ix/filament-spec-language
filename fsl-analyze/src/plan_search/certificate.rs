@@ -852,8 +852,22 @@ mod tests {
     struct Rules;
 
     impl PlanRules for Rules {
+        type StepKey = ();
+
         fn direction(&self) -> Direction {
             Direction::Minimize
+        }
+
+        fn objective_kind(&self) -> ObjectiveKind {
+            ObjectiveKind::General
+        }
+
+        fn merges_prefixes(&self) -> bool {
+            false
+        }
+
+        fn step_key(&mut self, _: &PlanStep) -> Result<Self::StepKey, RuleStop> {
+            Ok(())
         }
 
         fn policy_count(&self) -> usize {
@@ -985,7 +999,18 @@ mod tests {
             expansion: ExpansionLimits {
                 max_candidates: 1_000_000,
             },
-            meter: ScalarLimits::default(),
+            meter: ScalarLimits {
+                integer_bits: 1 << 20,
+                decimal_digits: 1 << 20,
+                scale_expansion: 1 << 20,
+                text_input_bytes: 1 << 20,
+                text_scalars: 1 << 20,
+                normalized_scalars: 1 << 20,
+                unit_edges: 1 << 20,
+                value_occurrences: 1 << 20,
+                work_units: 1 << 30,
+                result_units: 1 << 30,
+            },
             emit: fsl_package::EmitLimits::fixture(),
         })
         .expect("the model system admits");
