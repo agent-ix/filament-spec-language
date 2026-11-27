@@ -1016,6 +1016,35 @@ syntactic admission alone supplies no model state or authority. Budgets
 stop explicitly under FR-203/FR-259 and produce no truncated key,
 default monitor, default accumulator or fabricated pending data.
 
+#### Idle tail of a plain deadline monitor
+
+A claim whose monitor is one deadline clock (`eventually[0, D] B`,
+`until[0, D](A, B)`, and `always[0, D] B` as the complement of `eventually[0,
+D] not B`) has no `["window",residual]` and no obligation list. Over the
+region route its quiescent state `q` takes the same single `EnterIdleTail`
+move (item 1 above, with the key `q`'s key at `tail` `"idle-entry"`), and the
+value of `e(q)` is a function of the key alone: the monitor state, the place of
+the deadline clock `z`, and the letter of `q`.
+
+The tail repeats `q`'s letter at stamps in any region reachable from `q`'s
+region by a positive delay, including a delay that stays inside an open region
+(time passes inside an open or unbounded region; that is not a region move).
+A quiescent state has no time invariant, so a scheduler may place no
+observation stutter in the window `[0, D]` (one jump past `D`), and may place
+one when the window is still reachable. Write "window reachable" for `z <= D`
+and "decided" for a monitor that has already accepted or violated from the
+positions read so far. The stutter letter is `q`'s letter, so a body that fails
+at `q` fails at every stutter.
+
+| Monitor | Maximum (the scheduler wants acceptance) | Minimum (the scheduler wants rejection) |
+| --- | --- | --- |
+| `eventually[0, D] B` | decided accepted: 1. Otherwise 1 when `B` holds at `q` and the window is reachable, else 0 | decided accepted: 1. Otherwise 0 |
+| `until[0, D](A, B)` | decided accepted: 1. Otherwise 1 when `B` holds at `q`, `A` holds at every earlier position and the window is reachable, else 0 | decided accepted: 1. Otherwise 0 |
+| `always[0, D] B` | decided violated: 0. Otherwise 1 | decided violated: 0. Otherwise 0 when `B` fails at `q` and the window is reachable, and 1 when `B` holds at `q` |
+
+The producer and the checker each compute the value from the key alone and do
+not share the function (FR-921).
+
 ### Worked canonical vectors
 
 Hold the actual rederived binding B, model form M, checked reward/model/unit
@@ -1255,6 +1284,7 @@ result.
 | FR-196-AC-17 | Under `filament.temporal.event-position.false-extension/v1`, EN-5 builds the bounded formula product with its FR-338 monitor for the reachability/v1 subset FR-201 admits: `eventually[0,2] holds(P)` over FR-201-AC-13's horizon-2 model settles with its exact value `3/4`, and `always[0,1] holds(P)` over FR-201-AC-16's model has minimum `1/4` and maximum `3/4`, accepted at those bounds. Each product reads a formula position once at its model state and applies the event-position false-extension closure at terminal model states; EN-5 does not substitute the timed-deadline monitor or refuse these admitted forms as `unsupported` or `not-yet-implemented`. | Test |
 | FR-196-AC-18 | For a conditional reading whose reset process is built from a model with more than one canonical initial root, every product key in that reset process has the ninth `root` member equal to that root's zero-based index in FR-101 canonical initial-root order, including states reached after convergence and reset edges. For a single-root model, and for any model without a reset process, the key is exactly the existing eight-member canonical array with its existing RFC 8785 bytes. | Test |
 | FR-196-AC-19 | Over `Retx` of FR-204-AC-1, for `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)` on the region route, the behaviour whose first attempt at 1 ms is delivered reaches a quiescent running state `q` whose residual is `["and",["always","0","1","0"],["eventually","1","0","0"],["eventually","1","1","0"]]`. The product has no `"idle-ready"` or `"idle-delayed"` state; `q`'s idle-tail alternative is one move to the decided state with `q`'s key and `tail` `"idle-entry"`. Its tail value is `0` for the minimum, decided at layer `L_0` (a delay past 2 ms with no stutter rejects), and `1` for the maximum, decided at layer `L_5` (stutters at 2, 3, 4, 5 and 6 ms; no tail with fewer stutters accepts). EN-5 and FR-921's checker give these values for that key in the minimum's and the maximum's documents, and the overall values remain FR-204-AC-21's minimum `0` and maximum `99/100`. A document with that row's value changed is rejected `InequalityFails` at that key. For the maximum's item (`probability <= 0.99`), let `N` be the run's count of item 6 recorded by an instrumented run with the default limits; with `exact_prob.max_states` set to `N - 1` the item stops `Incomplete(LimitReached{MaxStates, N - 1, exact_prob.max_states})` with no truth value and no certificate, and with `N` it settles `proved` as FR-204-AC-21 states; the producer and the checker record the same `N`. Stop (c) is not exercised (see the rule's unproved list). | Test |
+| FR-196-AC-20 | For a plain deadline claim on the region route, the value of the tail-entry state of a quiescent state is the table's: for each of `eventually[0, D] B`, `until[0, D](A, B)` and `always[0, D] B`, each of maximum and minimum, each of the deadline clock at most `D` and above `D`, and `B` true and false at `q`, the value equals the table's entry (24 hand rows), and no `"idle-ready"` or `"idle-delayed"` state is built. | Test (TC-2491) |
 
 ## Dependencies
 

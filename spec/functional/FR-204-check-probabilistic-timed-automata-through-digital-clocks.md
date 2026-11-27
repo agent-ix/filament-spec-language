@@ -177,8 +177,12 @@ unsupported cause `DelayDistribution{operation}`.
   integer clocks.
 - Over every scheduler, each digital timed state's actions SHALL be its
   admissible UnitDelay and enabled scheduled identities in running mode.
-  A TS-5 quiescent running state additionally admits EnterIdleDelay: a
-  positive unit delay committing irreversibly to idle-delayed. In idle-ready
+  A TS-5 quiescent running state additionally admits EnterIdleDelay on the
+  digital route: a positive unit delay committing irreversibly to
+  idle-delayed. On a region product it admits EnterIdleTail instead (FR-196
+  "Idle tail of a timed window monitor" and "Idle tail of a plain deadline
+  monitor"), in addition to every other move, and builds no idle-ready or
+  idle-delayed state. In idle-ready
   or idle-delayed, IdleDelay applies the actual delay guards/invariants,
   advances one unit and yields idle-delayed. IdleObserve is enabled only in
   idle-delayed, advances no clock/time, emits the current clock-valued
