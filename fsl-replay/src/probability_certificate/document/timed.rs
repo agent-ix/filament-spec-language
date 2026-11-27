@@ -11,10 +11,12 @@ use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use ix_trace_rs::implements;
 use num_traits::Zero;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 mod elapsed;
 
+#[implements("FR-203-AC-30")]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -23,8 +25,9 @@ pub(super) fn check(
     relation: super::super::ValueRelation,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let mut fairness_records = Vec::new();
     let document = read_document_profile(
@@ -1082,10 +1085,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [
-            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-            | fsl_eval::simulation::model::PredicateReading::Refused(_),
-        ] => Err(ProbabilityDocumentError::Unsupported),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -4428,11 +4431,75 @@ fn digital_state_after_delay(
     Ok(Some(state))
 }
 
+/// Move a region representative's live fractions as low as their order allows
+/// (FR-922): clocks below their caps and a running claim clock. The region key
+/// is unchanged, and the walk to the time successor then never carries a clock
+/// off an integer and another onto one in the same unit. A nested formula's
+/// monitor reads concrete times, so its representative stays.
+///
+/// Interim: part of a walk over a finer grid, not the symbolic region MDP of
+/// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
+#[implements("FR-922-AC-4")]
+fn lower_fractions(
+    watch: &Watch<'_>,
+    current: &RegionState,
+    caps: &[u64],
+    subdivisions: u64,
+    scale: u64,
+    deadline: u64,
+) -> Result<RegionState, ProbabilityDocumentError> {
+    if matches!(watch, Watch::Nested { .. }) {
+        return Ok(current.clone());
+    }
+    let mut units = Vec::with_capacity(caps.len() + 1);
+    for value in current.timed.clocks().values() {
+        units.push(time_units(value, scale).ok_or(ProbabilityDocumentError::Unsupported)?);
+    }
+    let mut live: Vec<bool> = units
+        .iter()
+        .zip(caps)
+        .map(|(value, cap)| value < cap)
+        .collect();
+    units.push(current.elapsed);
+    live.push(current.phase != Phase::Inactive && current.elapsed < deadline + subdivisions);
+
+    // Visit the fractions upwards, giving each one in use the next free slot.
+    let mut lowered = units.clone();
+    let mut slot = 0;
+    for fraction in 1..subdivisions {
+        let mut used = false;
+        for ((value, live), target) in units.iter().zip(&live).zip(&mut lowered) {
+            if *live && value % subdivisions == fraction {
+                if !used {
+                    slot += 1;
+                    used = true;
+                }
+                *target = value - fraction + slot;
+            }
+        }
+    }
+
+    let elapsed = lowered.pop().ok_or(ProbabilityDocumentError::Malformed)?;
+    let clocks = lowered
+        .into_iter()
+        .map(|value| rational_units(value, scale))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RegionState {
+        timed: TimedState::new(
+            current.timed.discrete().clone(),
+            ClockValuation::new(clocks),
+        ),
+        elapsed,
+        phase: current.phase.clone(),
+        tail: current.tail,
+    })
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
-#[implements("FR-204-AC-21")]
+#[implements("FR-204-AC-21", "FR-922-AC-4")]
 fn next_region_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4467,7 +4534,7 @@ fn next_region_delay(
         .saturating_mul(subdivisions)
         .saturating_add(2);
     let mut steps = 0_u64;
-    let mut state = current.clone();
+    let mut state = lower_fractions(watch, current, caps, subdivisions, scale, deadline)?;
     while state.elapsed <= deadline {
         if let Some(cause) = cancel.tripped() {
             return Err(ProbabilityDocumentError::Cancelled(cause));
@@ -4776,12 +4843,14 @@ fn certificate_scale(
 /// [`ProbabilityWitnessError`] when the claim is not a timed deadline claim,
 /// the product cannot be enumerated within the limits, or the witness names a
 /// state, step or choice the checker's product does not have.
+#[implements("FR-203-AC-32")]
 pub(in crate::probability_certificate) fn replay_timed_witness(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &super::super::ProbabilisticCounterexample,
     limits: &crate::ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<super::super::ProbabilityWitnessReplay, super::super::ProbabilityWitnessError> {
     use super::super::{ProbabilityWitnessError as Error, ProbabilityWitnessReplay as Replay};
     let unsupported = || Error::Graph(ExactProbabilityGraphError::UnsupportedClaimForm);
@@ -4797,7 +4866,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         _ => unsupported(),
     };
     if let Some(query) = elapsed::query(claim) {
-        return elapsed::replay(system, claim, &query, witness, limits, cancel);
+        return elapsed::replay(system, claim, &query, witness, limits, cancel, work);
     }
     if !claim.fairness.is_empty() {
         return Err(unsupported());
@@ -4827,8 +4896,12 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         }
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut meter =
-        filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(document_limits.accounting),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let mut storage = 0;
     let graph = match route {
         TimedProbabilityRoute::Digital => enumerate_digital_deadline(
@@ -5024,7 +5097,11 @@ impl Payoff<'_> {
             Self::Deadline { failing, .. } => verdict == !*failing,
             Self::Elapsed { violating, .. } => violating.contains(key),
         };
-        if counted { one() } else { zero() }
+        if counted {
+            one()
+        } else {
+            zero()
+        }
     }
 
     fn activation(&self, key: &ProbabilityProductKey) -> Rational {

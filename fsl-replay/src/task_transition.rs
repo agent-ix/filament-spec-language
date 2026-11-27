@@ -195,7 +195,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     /// The facade conversion retains every scheduler identity field and arm.
-    #[trace("FR-100-AC-8")]
+    #[trace("FR-100-AC-8", "TC-471", "FR-120-AC-40")]
     #[test]
     fn task_transition_wrappers_preserve_identity_and_alphabet() {
         let source = ModelTransition::new(
@@ -249,8 +249,11 @@ mod tests {
             assert_eq!(wire["deadline"]["numerator"], "17");
             assert_eq!(wire["priority"], 19);
             assert_eq!(wire["budget_delta"]["numerator"], "23");
-            assert_eq!(wire["release"]["operation"], "release");
-            assert_eq!(wire["source_transition"]["operation"], "release");
+            assert_eq!(wire["release"]["operation"], r#"{"name":"release"}"#);
+            assert_eq!(
+                wire["source_transition"]["operation"],
+                r#"{"name":"release"}"#
+            );
             assert!(
                 !converted_actions.contains(&task.action),
                 "actions stay distinct"

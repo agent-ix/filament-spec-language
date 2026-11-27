@@ -443,9 +443,16 @@ pub(crate) fn check<R: PlanRules>(
                             Control::Stop
                         }
                     },
-                    Event::Undetermined { outcome, .. } => match outcome {
+                    Event::Undetermined {
+                        outcome, clause, ..
+                    } => match outcome {
                         ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_) => {
-                            Control::Continue
+                            // No disabled invocation (ADR-018 UE-6).
+                            denied = Some(PlanStopCause::ContractUndefined {
+                                clause: clause.to_owned(),
+                                state: entry.key.state.clone(),
+                            });
+                            Control::Stop
                         }
                         ClauseOutcome::Incomplete(incomplete) => {
                             denied = Some(PlanStopCause::LimitReached {
@@ -487,6 +494,18 @@ pub(crate) fn check<R: PlanRules>(
                 Ok(expansion) => expansion,
                 Err(_) => return reject(CertificateRule::Closure, index),
             };
+            // A contract conjunction with no value is no disabled step
+            // (ADR-018 UE-6): a derivation resting on it is not a proof.
+            if let Some(contract) = expansion
+                .findings
+                .iter()
+                .find_map(fsl_eval::simulation::model::ModelFinding::undefined_contract)
+            {
+                return Err(PlanStopCause::ContractUndefined {
+                    clause: contract.clause,
+                    state: entry.key.state.clone(),
+                });
+            }
             derived = expansion
                 .successors
                 .into_iter()

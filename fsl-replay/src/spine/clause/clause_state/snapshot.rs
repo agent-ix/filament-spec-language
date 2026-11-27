@@ -87,6 +87,7 @@ impl<'a> ClauseState<'a> {
             package_name: self.package.emitted_package_name().unwrap_or_default(),
             sources: self.open.sources,
             progress_capacity: self.open.limits.covered_positions,
+            emit: crate::spine::PackageLimits::default().emit(),
         }
     }
 

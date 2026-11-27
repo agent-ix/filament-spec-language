@@ -132,8 +132,8 @@ names, plus `UndefinedEvaluation` and `Undetermined`, and whose other members ar
 | --- | --- |
 | `InitialNotAbstract` | `initial` (decimal string, the concrete initial state's index) |
 | `StutterChanged` | `position` |
-| `AbstractStepRejected` | `position`, `transition` (the transition identity encoding of FSpec FR-364, from FR-181), `cause` |
-| `NoAbstractMatch` | `position`, `transition` (the failing edge's concrete transition, in the transition identity encoding of FSpec FR-364, from FR-181) |
+| `AbstractStepRejected` | `position`, `transition` (the transition identity encoding of FSpec FR-364, from FR-181, with `operation` written by FR-120's writer rule), `cause` |
+| `NoAbstractMatch` | `position`, `transition` (the failing edge's concrete transition, in the transition identity encoding of FSpec FR-364, from FR-181, with `operation` written by FR-120's writer rule) |
 | `UndefinedEvaluation` | `where` and `cause` (FR-127's `UndefinedEvaluation` encoding), the step verdict `Undefined`; FSpec FR-379's `Undefined{position, row}` is the same failure as the engine writes it, and `check_step` never returns that form |
 | `Undetermined` | `cause` (`MappingUndetermined` or `UndecidedSuccessor`) and `evaluation` (`{"outcome": "refused"}` or `{"outcome": "incomplete", "limit": <limit spelling>}`, where the limit spelling is `evaluation-meter` for the evaluation meter (the `ModelCheckLimit` wire spelling) and filament-exact's `LimitKind` name for another counter of the evaluation, in snake case such as `integer_bits`) |
 

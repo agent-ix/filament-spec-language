@@ -12,6 +12,7 @@
 //! qualitative set is read.
 
 use super::*;
+use ix_trace_rs::implements;
 
 type RandomizedSchedule = BTreeMap<ProbabilityProductKey, Vec<(usize, Rational)>>;
 
@@ -152,7 +153,7 @@ pub(in crate::probability_certificate) fn admit(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<(), ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     decode(bytes, limits, cancel, &mut meter).map(|_| ())
 }
 
@@ -449,6 +450,7 @@ fn subject(
 
 /// Write a counterexample-role certificate whose base objective is derived
 /// from the checked subject. This grants no acceptance.
+#[implements("FR-203-AC-29")]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn write(
     system: &ModelSystem<'_>,
@@ -459,8 +461,9 @@ pub(in crate::probability_certificate) fn write(
     ranking: Option<&[(ProbabilityProductKey, u64)]>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let subject = subject(
         system,
@@ -519,6 +522,7 @@ pub(in crate::probability_certificate) enum SubsystemRefutationCheck {
 /// counterexample-role certificate over it. `scheduler` is the
 /// counterexample's deterministic memoryless rows; it is empty under a
 /// workload.
+#[implements("FR-203-AC-32")]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn check(
     system: &ModelSystem<'_>,
@@ -528,8 +532,9 @@ pub(in crate::probability_certificate) fn check(
     scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<SubsystemRefutationCheck, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let decoded = decode(bytes, limits, cancel, &mut meter)?;
     if &decoded.identity != item {

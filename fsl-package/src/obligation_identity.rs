@@ -87,6 +87,8 @@ impl fmt::Display for ObligationIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::borrow::ToOwned;
+    use alloc::vec;
     use filament_exact::{Origin, PathSegment, Role};
     use fsl_foundation::source::provenance::OccurrenceKey;
 

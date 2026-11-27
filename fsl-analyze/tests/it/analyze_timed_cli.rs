@@ -92,11 +92,7 @@ fn an_mitl_claim_proves_certified_and_refutes_with_exact_delays() {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]
-                    .as_str()
-                    .and_then(|node| node.rsplit('/').next())
-                    .unwrap_or("-")
-                    .to_owned(),
+                operation_name(step),
             )
         })
         .collect();
@@ -151,6 +147,32 @@ fn a_zone_state_budget_is_incomplete() {
     );
     assert_eq!(label(&items[0]), "incomplete");
     assert_eq!(run.exit, 22);
+}
+
+/// FR-255-AC-25: a timed item's `temporal.limits.max_states` and the
+/// caller's `zone_check.max_symbolic_states` are one bound given twice.
+#[trace("FR-255-AC-25")]
+#[test]
+fn a_timed_item_limit_and_the_zone_setting_are_refused() {
+    let ws = Workspace::new("timed-zone-conflict");
+    let request = request_over(
+        &ws,
+        &rpc_unit(4, &settles("[0 ms, 3 ms]")),
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Settles", "temporal": {"limits": {"max_states": 2}}}]}),
+    );
+    let run = crate::analyze_cli_support::analyze_under(
+        &request,
+        &[(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5)],
+    );
+    assert_eq!(run.exit, 20, "{}", run.document());
+    let document = run.document().to_string();
+    assert!(document.contains("items[0]"), "{document}");
+    assert!(
+        document.contains("zone_check.max_symbolic_states"),
+        "{document}"
+    );
 }
 
 /// QSL-2129: a clock bound of the wrong dimension (a bare number against a
@@ -341,6 +363,16 @@ fn an_unread_member_settles_unsupported_not_requires_bound() {
     assert_eq!(run.exit, 21);
 }
 
+/// The operation's name in `step`'s transition, whose `operation` is its
+/// declaration identity text (FR-120); `-` when it is not one.
+fn operation_name(step: &Value) -> String {
+    step["transition"]["operation"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .and_then(|identity| Some(identity["node"].as_str()?.rsplit('/').next()?.to_owned()))
+        .unwrap_or_else(|| "-".to_owned())
+}
+
 /// The first two steps of `item`'s counterexample: each delay's numerator and
 /// denominator and its operation's name.
 fn head(item: &Value) -> Vec<(String, String, String)> {
@@ -354,11 +386,7 @@ fn head(item: &Value) -> Vec<(String, String, String)> {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]
-                    .as_str()
-                    .and_then(|node| node.rsplit('/').next())
-                    .unwrap_or("-")
-                    .to_owned(),
+                operation_name(step),
             )
         })
         .collect()

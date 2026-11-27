@@ -72,8 +72,9 @@ dependent files fitting their aggregate ceiling.
 
 ### The library entry
 
-FR-640's `RequestOverrides` SHALL gain `limits: Option<&SpineLimits>`, the
-caller's stage limits from the settings operation, and the compile entry
+FR-640's `RequestOverrides` SHALL gain
+`limits: Option<&BTreeMap<Setting, u64>>`, the stage and observation settings
+the caller names, each with its value, and the compile entry
 SHALL take FR-026's `RunLimits` for its intake ceilings
 (`compile_outcome_with_limits_and_overrides(path, limits, overrides)`).
 A compile that is given no limits runs at FR-255's defaults (FR-255-AC-6).
