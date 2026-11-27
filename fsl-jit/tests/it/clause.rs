@@ -24,8 +24,8 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, FieldMemberRecord, Multiplicity,
-    ObjectTypeRecord, PopulationRecord, RelationshipDirection, RelationshipEnd,
-    RelationshipRecord, ScalarTypeRecord, ScalarValueDomain, ValueTypeRef,
+    ObjectTypeRecord, PopulationRecord, RelationshipDirection, RelationshipEnd, RelationshipRecord,
+    ScalarTypeRecord, ScalarValueDomain, ValueTypeRef,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -316,7 +316,10 @@ fn a_covered_state_clause_is_compiled_and_matches_the_interpreter_evaluation() {
 fn population_only_query_uses_the_admitted_population_members() {
     let (package, source) = orders_package_with_clause_source("only(pump in M::pumps: 1) = 1");
     let package = Arc::new(package);
-    let clause = package.graph().state_clause("TankLevel").expect("the clause checks");
+    let clause = package
+        .graph()
+        .state_clause("TankLevel")
+        .expect("the clause checks");
     let selection = EntrySelection {
         kind: EntryKind::Clause,
         name: crate::common::name("TankLevel"),
@@ -329,7 +332,11 @@ fn population_only_query_uses_the_admitted_population_members() {
             &Cancel::new(),
         )
         .unwrap_or_else(|failure| panic!("the JIT prepares: {failure:?}"));
-    assert!(prepared.unsupported().is_empty(), "{:?}", prepared.unsupported());
+    assert!(
+        prepared.unsupported().is_empty(),
+        "{:?}",
+        prepared.unsupported()
+    );
 
     let self_object = ObjectReference::new(
         UniverseId::new(
@@ -455,8 +462,11 @@ fn a_selected_state_clause_is_listed_unsupported_with_its_first_outside_construc
     let UnsupportedCause::Untranslatable { construct, .. } = &entry.cause else {
         panic!("expected Untranslatable, got {:?}", entry.cause);
     };
-    assert!(matches!(
-        construct,
-        UntranslatableConstruct::ExpressionForm(form) if form == "deref"
-    ), "{construct:?}");
+    assert!(
+        matches!(
+            construct,
+            UntranslatableConstruct::ExpressionForm(form) if form == "deref"
+        ),
+        "{construct:?}"
+    );
 }

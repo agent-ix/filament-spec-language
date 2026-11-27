@@ -2427,7 +2427,9 @@ fn certificate_values(
         }
         let named = values.keys().cloned().collect::<BTreeSet<_>>();
         for key in graph.states.keys() {
-            values.entry(key.clone()).or_insert_with(|| Rational::from_integer(0_i64.into()));
+            values
+                .entry(key.clone())
+                .or_insert_with(|| Rational::from_integer(0_i64.into()));
         }
         return Ok(CertificateValues::Partial { values, named });
     }

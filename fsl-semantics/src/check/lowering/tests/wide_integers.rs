@@ -16,7 +16,7 @@ fn wide_form(lower: &str, upper: &str) -> TypeForm {
 }
 
 /// `g(x: Int[i128::MIN, 0]): Boolean { x >= <literal> }`.
-fn compared_with(literal: Integer) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn compared_with(literal: Integer) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     check(vec![function(
         "g",
         &[(

@@ -1794,10 +1794,7 @@ fn protocol_package_is_independently_admitted_and_identity_mutations_refuse() {
         "{lock_refusal:?}"
     );
     assert_eq!(
-        lock_refusal.loci[0]
-            .path
-            .as_ref()
-            .map(|path| path.as_str()),
+        lock_refusal.loci[0].path.as_ref().map(|path| path.as_str()),
         Some("/temporal_bindings/2/source_unit"),
         "{lock_refusal:?}"
     );

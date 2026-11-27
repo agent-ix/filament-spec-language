@@ -1217,7 +1217,11 @@ fn default_and_caller_forms_preserve_parser_outputs() {
             production_tree(&with_empty_forms),
             "{id}"
         );
-        assert_eq!(default.diagnostics(), with_empty_forms.diagnostics(), "{id}");
+        assert_eq!(
+            default.diagnostics(),
+            with_empty_forms.diagnostics(),
+            "{id}"
+        );
     }
 
     let forms = ExtensionForms::new([ExtensionProduction::new("deploy", ["by"])]);
@@ -1239,11 +1243,9 @@ fn default_and_caller_forms_preserve_parser_outputs() {
         "{:?}",
         parsed.diagnostics()
     );
-    assert!(
-        parsed
-            .cst()
-            .nodes()
-            .iter()
-            .any(|node| node.production() == Production::ExtensionDeclaration)
-    );
+    assert!(parsed
+        .cst()
+        .nodes()
+        .iter()
+        .any(|node| node.production() == Production::ExtensionDeclaration));
 }

@@ -97,3 +97,7 @@ pub(crate) mod letters;
 )]
 #[path = "../tests/it/counter.rs"]
 pub(crate) mod counter;
+
+#[cfg(test)]
+#[path = "../tests/it/timed_world.rs"]
+pub(crate) mod timed_world;

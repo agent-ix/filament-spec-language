@@ -88,24 +88,24 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    Atom, AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
-    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, SubjectKind, closure_shape,
-    invariant_atom, is_safety_translated, translate, translate_counted,
+    closure_shape, invariant_atom, is_safety_translated, translate, translate_counted, Atom,
+    AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
+    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, SubjectKind,
 };
 use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass, check_model_bounds,
+    check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
+    activates_on_each, check_package_protocol_bounds, check_protocol_bounds, live_instance_bound,
     Capacities, DataRace, MemoryModel, PackageProtocolProgram, ProtocolFairnessError,
     ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, Sc, SubjectMemory,
-    UnboundCapacity, WeakAccessShape, activates_on_each, check_package_protocol_bounds,
-    check_protocol_bounds, live_instance_bound,
+    UnboundCapacity, WeakAccessShape,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
     InitialStateRefusal, Location, NotSimulated, Permutation, RequiresBound, SubjectSystem,
@@ -1992,36 +1992,39 @@ where
             #[cfg(test)]
             let hook = hook.clone();
             threads.push(scope.spawn(move || loop {
-                    let Some((position, state)) = queue
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .pop_front()
-                    else {
-                        break;
-                    };
-                    #[cfg(test)]
-                    if let (Some(hook), Some(batch)) = (&hook, batch) {
-                        let active = hook.active_workers.fetch_add(1, Ordering::Relaxed) + 1;
-                        hook.peak_workers.fetch_max(active, Ordering::Relaxed);
-                        if hook.delay_first_job && position == 0 {
-                            std::thread::sleep(std::time::Duration::from_millis(20));
-                        }
-                        let output = expand(&state);
-                        outputs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[position] =
-                            Some(output);
-                        hook.completed
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .entry(batch)
-                            .or_default()
-                            .push(position);
-                        hook.active_workers.fetch_sub(1, Ordering::Relaxed);
-                        continue;
+                let Some((position, state)) = queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .pop_front()
+                else {
+                    break;
+                };
+                #[cfg(test)]
+                if let (Some(hook), Some(batch)) = (&hook, batch) {
+                    let active = hook.active_workers.fetch_add(1, Ordering::Relaxed) + 1;
+                    hook.peak_workers.fetch_max(active, Ordering::Relaxed);
+                    if hook.delay_first_job && position == 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
                     }
                     let output = expand(&state);
-                    outputs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[position] =
+                    outputs
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)[position] =
                         Some(output);
-                }));
+                    hook.completed
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .entry(batch)
+                        .or_default()
+                        .push(position);
+                    hook.active_workers.fetch_sub(1, Ordering::Relaxed);
+                    continue;
+                }
+                let output = expand(&state);
+                outputs
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)[position] = Some(output);
+            }));
         }
         for thread in threads {
             if let Err(panic) = thread.join() {
@@ -2176,7 +2179,9 @@ pub(super) fn precheck(
         }
         Err(reduce::ClosureRefusal::Encoding(refusal)) => return Err(refusal.into()),
         Err(reduce::ClosureRefusal::Initial(_)) => {
-            return Err(fault("model-initial-admission-has-no-protocol-construction-fault"));
+            return Err(fault(
+                "model-initial-admission-has-no-protocol-construction-fault",
+            ));
         }
         Err(reduce::ClosureRefusal::Unordered) => {
             return Err(fault("a-permuted-collection-is-ordered"));

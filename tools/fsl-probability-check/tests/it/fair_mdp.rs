@@ -7,7 +7,9 @@ use fsl_analyze::analyze::Settlement;
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use fsl_replay::{ProofBasis, TerminalValue};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
+
+pub(crate) mod mutation;
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");

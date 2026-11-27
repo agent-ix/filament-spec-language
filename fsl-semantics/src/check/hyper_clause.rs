@@ -14,7 +14,7 @@
 //! abstraction-relation binding it also has a second requirement, the code
 //! claim.
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
@@ -31,26 +31,26 @@ use fsl_forms::{
     QuantifierKind, SpanId, StepLabelForm, TemporalFormulaForm, TemporalNodeForm, TemporalOperator,
     TypeFormHead,
 };
-use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::Span;
 use ix_trace_rs::implements;
 
-use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
 use super::check::{HyperTyping, Signatures, Typer};
 use super::ir::{CheckedBody, CheckedNode};
 use super::profile::TemporalProfile;
-use super::refusal::{CheckCause, CheckRefusal, Obligation, TemporalCause};
-use super::state_clause::{PopulationDomain, populations_overlapping};
+use super::refusal::{CheckCause, Obligation, SemanticCheckRefusal, TemporalCause};
+use super::state_clause::{populations_overlapping, PopulationDomain};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
-    CheckedFormula, CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
-    build_formula, checked_constraint, checked_operators, in_safety_fragment,
+    build_formula, checked_constraint, checked_operators, in_safety_fragment, CheckedFormula,
+    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
 };
+use super::Scope;
 use super::{AdmittedModel, Capability};
-use crate::family::requirements::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
+use crate::family::requirements::{classify_domains, ClaimExtent, ClassifyFailure, Requirements};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
 use crate::model::state::StateModel;
@@ -58,7 +58,7 @@ use crate::model::state::StateModel;
 pub(crate) mod emission;
 pub(crate) mod lowering;
 
-pub use lowering::{AtomSlot, STUTTER_TEXT, operation_text};
+pub use lowering::{operation_text, AtomSlot, STUTTER_TEXT};
 
 /// The stage name this module's faults report.
 const STAGE: &str = "check.hyper";
@@ -370,6 +370,18 @@ impl HyperForm {
             | Self::ProjectionAligned => None,
         }
     }
+
+    /// Classify package-read quantifier facts with the same HP-4 rule used by
+    /// source checking. Each pair is the quantifier kind and whether that
+    /// quantifier has a non-empty fairness set.
+    #[implements("FR-173-AC-5")]
+    pub fn classify_package_facts(
+        quantifiers: &[(QuantifierKind, bool)],
+        aligned: bool,
+        safety: bool,
+    ) -> Self {
+        classify_facts(quantifiers, aligned, safety)
+    }
 }
 
 /// Which rule of ADR-023 section 3 places a clause in HP-4.
@@ -642,13 +654,17 @@ impl CheckedHyperClause {
     /// # Errors
     /// Refuses an unsupported profile, malformed arena, unknown alias or
     /// inconsistent atom slot; it never constructs a partial checked clause.
+    #[implements("FR-173-AC-3")]
     pub fn of_package_form(
         form: PackageHyperForm,
         types: &filament_semantic_value::declaration::TypeEnvironment,
         position_limit: u64,
     ) -> Result<Self, super::PackageClauseRefusal> {
         use super::PackageClauseRefusal::{Domains, Shape};
-        if form.profile != TemporalProfile::InfiniteTrace {
+        if !matches!(
+            form.profile,
+            TemporalProfile::InfiniteTrace | TemporalProfile::EventPositionFalseExtension
+        ) {
             return Err(super::PackageClauseRefusal::Profile(form.profile));
         }
         if form.subject_models.len() != form.aliases.len()
@@ -1289,14 +1305,14 @@ pub enum CheckedHyper {
 impl FamilyContract for HyperTraceFamily {
     type Form = HyperDeclaration;
     type Checked = CheckedHyper;
-    type Cause = CheckRefusal;
+    type Cause = SemanticCheckRefusal;
     type Declarations<'a> = HyperDeclarations<'a>;
     type Claim = TemporalClaim;
 
     fn check<'a>(
         form: &HyperDeclaration,
         cx: &mut CheckContext<'a, HyperDeclarations<'a>>,
-    ) -> CheckOutcome<CheckedHyper, CheckRefusal> {
+    ) -> CheckOutcome<CheckedHyper, SemanticCheckRefusal> {
         check_declaration(form, cx).map(Staged::new)
     }
 
@@ -1676,7 +1692,7 @@ enum Found {
     /// A value-typer refusal with its original declaration location.
     Typed(HyperCause, Location),
     /// A non-hyper refusal, such as a resource limit, retained as reported.
-    Raw(CheckRefusal, Span),
+    Raw(SemanticCheckRefusal, Span),
 }
 
 impl Found {
@@ -1689,7 +1705,7 @@ impl Found {
         }
     }
 
-    fn into_failure(self) -> StageFailure<CheckRefusal> {
+    fn into_failure(self) -> StageFailure<SemanticCheckRefusal> {
         let (cause, location) = match self {
             Self::Hyper(cause) => (
                 CheckCause::Hyper(Box::new(cause)),
@@ -1702,7 +1718,7 @@ impl Found {
             Self::Typed(cause, location) => (CheckCause::Hyper(Box::new(cause)), location),
             Self::Raw(refusal, _) => return StageFailure::Refused(refusal),
         };
-        StageFailure::Refused(CheckRefusal {
+        StageFailure::Refused(SemanticCheckRefusal {
             // Synthesized clause diagnostics carry their source span in the
             // cause; value-typer refusals retain their original declaration
             // location so package region lookup can resolve the source node.
@@ -1712,12 +1728,12 @@ impl Found {
     }
 }
 
-fn fault(invariant: &'static str) -> StageFailure<CheckRefusal> {
+fn fault(invariant: &'static str) -> StageFailure<SemanticCheckRefusal> {
     StageFailure::Fault(InternalFault::new(STAGE, invariant))
 }
 
 /// The earliest refusal of `found`, as a failure; `Ok` when there is none.
-fn earliest(found: Vec<Found>) -> Result<(), StageFailure<CheckRefusal>> {
+fn earliest(found: Vec<Found>) -> Result<(), StageFailure<SemanticCheckRefusal>> {
     match found.into_iter().min_by_key(Found::start) {
         Some(first) => Err(first.into_failure()),
         None => Ok(()),
@@ -1727,7 +1743,7 @@ fn earliest(found: Vec<Found>) -> Result<(), StageFailure<CheckRefusal>> {
 fn check_declaration<'a>(
     declaration: &HyperDeclaration,
     cx: &mut CheckContext<'a, HyperDeclarations<'a>>,
-) -> Result<CheckedHyper, StageFailure<CheckRefusal>> {
+) -> Result<CheckedHyper, StageFailure<SemanticCheckRefusal>> {
     let declarations = cx.declarations();
     *declarations.clause_source.borrow_mut() = declarations
         .temporal
@@ -1754,7 +1770,7 @@ fn check_finite(
     form: &HyperFiniteForm,
     declarations: &HyperDeclarations<'_>,
     cx: &mut CheckContext<'_, HyperDeclarations<'_>>,
-) -> Result<CheckedFiniteHyperClause, StageFailure<CheckRefusal>> {
+) -> Result<CheckedFiniteHyperClause, StageFailure<SemanticCheckRefusal>> {
     // A model alias on a finite trace quantifier is refused before checking
     // the selected profile, matching the hyper-clause refusal precedence.
     earliest(
@@ -1944,7 +1960,7 @@ fn check_behaviours<'a>(
     form: &HyperBehavioursForm,
     declarations: &HyperDeclarations<'a>,
     cx: &mut CheckContext<'a, HyperDeclarations<'a>>,
-) -> Result<CheckedHyperClause, StageFailure<CheckRefusal>> {
+) -> Result<CheckedHyperClause, StageFailure<SemanticCheckRefusal>> {
     let temporal = &declarations.temporal;
     let scope = temporal.scope;
     let clause_index = declarations.behaviours_checked.get();
@@ -2127,7 +2143,7 @@ fn check_behaviours<'a>(
     earliest(std::mem::take(&mut found))?;
     let predicates = |drafts: Vec<ConjunctDraft>,
                       lowered: Vec<lowering::ConjunctCondition>|
-     -> Result<Vec<CheckedStepPredicate>, StageFailure<CheckRefusal>> {
+     -> Result<Vec<CheckedStepPredicate>, StageFailure<SemanticCheckRefusal>> {
         if drafts.len() != lowered.len() {
             return Err(fault("conjuncts-lowered"));
         }
@@ -2244,7 +2260,7 @@ fn checked_quantifiers(
     form: &HyperBehavioursForm,
     declarations: &HyperDeclarations<'_>,
     found: &mut Vec<Found>,
-) -> Result<QuantifiersWithSpans, StageFailure<CheckRefusal>> {
+) -> Result<QuantifiersWithSpans, StageFailure<SemanticCheckRefusal>> {
     let mut checked = Vec::with_capacity(form.quantifiers.len());
     let mut spans = Vec::with_capacity(form.quantifiers.len());
     let mut seen: Vec<&str> = Vec::new();
@@ -2461,7 +2477,7 @@ fn root_span(spans: &ExpressionSpans) -> Span {
 /// Map a value-typer refusal to the source span it identifies and preserve
 /// the hyper clause's public refusal categories.
 fn body_refusal(
-    refusal: CheckRefusal,
+    refusal: SemanticCheckRefusal,
     expression: &Expression,
     spans: &ExpressionSpans,
     roots: &BTreeMap<String, EffectiveId>,
@@ -2484,7 +2500,7 @@ fn body_refusal(
 }
 
 fn body_refusal_at(
-    refusal: CheckRefusal,
+    refusal: SemanticCheckRefusal,
     mut span: Span,
     expression: &Expression,
     spans: &ExpressionSpans,
@@ -2938,7 +2954,7 @@ fn check_match(
     variables: &Variables<'_>,
     declarations: &HyperDeclarations<'_>,
     found: &mut Vec<Found>,
-) -> Result<(Vec<ConjunctDraft>, Vec<ConjunctDraft>), StageFailure<CheckRefusal>> {
+) -> Result<(Vec<ConjunctDraft>, Vec<ConjunctDraft>), StageFailure<SemanticCheckRefusal>> {
     let expression = &block.expression;
     let conjuncts = split_conjuncts(block);
     let mut parents: Vec<Option<ExprId>> = vec![None; expression.len()];
@@ -3328,21 +3344,47 @@ fn checked_align_skip(
 /// The form of a clause over `behaviours` under infinite-trace (ADR-023 section
 /// 3, in the order FR-173 states).
 fn classify(quantifiers: &[CheckedQuantifier], aligned: bool, safety: bool) -> HyperForm {
-    let exists = |quantifier: &&CheckedQuantifier| quantifier.kind == QuantifierKind::Exists;
+    classify_facts(quantifiers, aligned, safety)
+}
+
+trait QuantifierFacts {
+    fn kind(&self) -> QuantifierKind;
+    fn has_fairness(&self) -> bool;
+}
+
+impl QuantifierFacts for CheckedQuantifier {
+    fn kind(&self) -> QuantifierKind {
+        self.kind
+    }
+
+    fn has_fairness(&self) -> bool {
+        !self.fairness.is_empty()
+    }
+}
+
+impl QuantifierFacts for (QuantifierKind, bool) {
+    fn kind(&self) -> QuantifierKind {
+        self.0
+    }
+
+    fn has_fairness(&self) -> bool {
+        self.1
+    }
+}
+
+fn classify_facts<Q: QuantifierFacts>(quantifiers: &[Q], aligned: bool, safety: bool) -> HyperForm {
     let any_exists = quantifiers
         .iter()
-        .any(|quantifier| quantifier.kind == QuantifierKind::Exists);
-    if let [only] = quantifiers {
-        if only.kind == QuantifierKind::Exists && !aligned {
-            return HyperForm::SingleExistential;
-        }
+        .any(|quantifier| quantifier.kind() == QuantifierKind::Exists);
+    if quantifiers.len() == 1 && quantifiers[0].kind() == QuantifierKind::Exists && !aligned {
+        return HyperForm::SingleExistential;
     }
     let first_exists = quantifiers
         .iter()
-        .position(|quantifier| quantifier.kind == QuantifierKind::Exists);
+        .position(|quantifier| quantifier.kind() == QuantifierKind::Exists);
     let last_forall = quantifiers
         .iter()
-        .rposition(|quantifier| quantifier.kind == QuantifierKind::Forall);
+        .rposition(|quantifier| quantifier.kind() == QuantifierKind::Forall);
     if first_exists
         .zip(last_forall)
         .is_some_and(|(exists, forall)| exists < forall)
@@ -3353,8 +3395,7 @@ fn classify(quantifiers: &[CheckedQuantifier], aligned: bool, safety: bool) -> H
     }
     let existential_fairness = quantifiers
         .iter()
-        .filter(exists)
-        .any(|quantifier| !quantifier.fairness.is_empty());
+        .any(|quantifier| quantifier.kind() == QuantifierKind::Exists && quantifier.has_fairness());
     if any_exists && quantifiers.len() >= 2 && (!safety || existential_fairness) {
         return HyperForm::Other {
             reason: HyperUnsupported::ExistentialOutsideSafety,
@@ -4095,7 +4136,7 @@ fn check_relation(
     form: &ModelRelationForm,
     declarations: &HyperDeclarations<'_>,
     cx: &mut CheckContext<'_, HyperDeclarations<'_>>,
-) -> Result<CheckedModelRelation, StageFailure<CheckRefusal>> {
+) -> Result<CheckedModelRelation, StageFailure<SemanticCheckRefusal>> {
     let temporal = &declarations.temporal;
     let scope = temporal.scope;
     let mut found: Vec<Found> = Vec::new();
@@ -4304,7 +4345,7 @@ fn relation_component_reads(
 #[cfg(any(test, feature = "test-support"))]
 pub fn check_hyper_clauses(
     package: &crate::check::PackageDeclarations,
-) -> Vec<Result<CheckedHyper, StageFailure<CheckRefusal>>> {
+) -> Vec<Result<CheckedHyper, StageFailure<SemanticCheckRefusal>>> {
     let complete_value = package
         .function_selections
         .values()

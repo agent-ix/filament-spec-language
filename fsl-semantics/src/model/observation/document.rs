@@ -3,7 +3,7 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{AdmissionRecordExt, admission_record};
+use super::{admission_record, AdmissionRecordExt};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
@@ -14,12 +14,12 @@ use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::implements;
 
 use super::helpers::object_reference;
-use super::tree::{Json, Object, read_raw_value};
+use super::tree::{read_raw_value, Json, Object};
 use super::{
+    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
-    population_universe, refuse,
+    SelectedObject, SnapshotValue,
 };
 use crate::model::object_environment::{
     ObjectEnvironment, ReferenceOriginBuilder, ReferenceOriginLocus, ReferenceOriginPrefix,
@@ -1674,14 +1674,15 @@ fn admit_leaf(
         // selected route supplies the authenticated declaration table that
         // resolves its population, owner and template.
         (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
-            let admitted = references.resolve_clock(reference).map_err(|record| {
-                match &references.document {
-                    Some(document) => record
-                        .with("document", document.clone())
-                        .with("target", reference.key.clone()),
-                    None => record,
-                }
-            })?;
+            let admitted =
+                references.resolve_clock(reference).map_err(|record| {
+                    match &references.document {
+                        Some(document) => record
+                            .with("document", document.clone())
+                            .with("target", reference.key.clone()),
+                        None => record,
+                    }
+                })?;
             let place = filament_exact::ClockPlaceReference::new(
                 admitted.universe().clone(),
                 admitted.object().as_str(),
@@ -3509,6 +3510,7 @@ fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep>
 /// the document spells them and ending at the failing member (FR-663). A
 /// missing member is absent from the document, so its pointer stays at the
 /// containing object.
+#[ix_trace_rs::string_edge]
 fn refusal_steps(form: RawForm<'_>, record: &AdmissionRecord) -> Vec<PathStep> {
     let mut steps = document_spelling(form, &record.path);
     let missing = record.catalog.cause() == "missing-member";

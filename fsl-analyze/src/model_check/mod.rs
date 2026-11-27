@@ -15,6 +15,7 @@ mod ample;
 mod check;
 mod concretise;
 pub mod digital;
+pub(crate) mod digitisable;
 pub(crate) mod fair_summary;
 pub(crate) mod fair_walk;
 pub(crate) mod false_extension;
@@ -35,8 +36,8 @@ mod state_graph;
 
 pub use ample::{Atoms, Por};
 pub use check::{
-    ModelCheckRefusal, ModelCheckRequest, ModelCheckRequestIdentity, ProtocolCheckRequest,
-    check_model, check_protocol, check_protocol_constrained,
+    check_model, check_protocol, check_protocol_constrained, ModelCheckRefusal, ModelCheckRequest,
+    ModelCheckRequestIdentity, ProtocolCheckRequest,
 };
 pub(crate) use check::{check_model_with_stutter_closure, check_protocol_retaining};
 pub use fsl_replay::SubjectIdentity;
@@ -45,8 +46,8 @@ pub use graph::{
     RetainedEdge, RetainedGraph, RetainedState,
 };
 pub use hyper::{
-    HyperCheckRequest, HyperRefusal, SingleExistentialRequest, SingleExistentialRun,
-    alias_provisions, alias_system, check_hyper, check_single_existential,
+    alias_provisions, alias_system, check_hyper, check_single_existential, HyperCheckRequest,
+    HyperRefusal, SingleExistentialRequest, SingleExistentialRun,
 };
 #[cfg(feature = "test-support")]
 pub use initial::keyed_initial_states;
@@ -56,18 +57,18 @@ pub use product::{
 };
 pub(crate) use reduce::closure_under_limit;
 pub use reduce::{
-    ClosureRefusal, InstanceGroup, TableForm, admit, closure, generators, instance_groups,
-    not_preserving, preserves, unoffered,
+    admit, closure, generators, instance_groups, not_preserving, preserves, unoffered,
+    ClosureRefusal, InstanceGroup, TableForm,
 };
-pub use refine::{AbstractProtocolBinding, RefinementCheckRequest, check_refinement};
+pub use refine::{check_refinement, AbstractProtocolBinding, RefinementCheckRequest};
 pub use relation::{
-    ModelRelationCheckRequest, ModelRelationInput, ModelRelationOutcome, ModelRelationRefusal,
-    ModelRelationStats, check_model_relation, check_model_relation_input,
+    check_model_relation, check_model_relation_input, ModelRelationCheckRequest,
+    ModelRelationInput, ModelRelationOutcome, ModelRelationRefusal, ModelRelationStats,
 };
 pub use request::{RequestRefusal, SubjectContext};
 pub use scc::Component;
 pub use state_graph::{
-    ExploredStateGraph, GraphEdge, GraphNode, GraphStats, NodeIndex, PredicateLabel,
-    SettledStateGraphRun, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
-    StateGraphRun, check_and_settle_state_graph, check_state_graph,
+    check_and_settle_state_graph, check_state_graph, ExploredStateGraph, GraphEdge, GraphNode,
+    GraphStats, NodeIndex, PredicateLabel, SettledStateGraphRun, StateGraphItem,
+    StateGraphPipelineRefusal, StateGraphRequest, StateGraphRun,
 };

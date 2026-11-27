@@ -1874,6 +1874,7 @@ fn rational_value_type_schema_diagnostic(
 /// the first node of its alias chain that is a policy-less `decimal` scalar
 /// or a policy-less alias of native Decimal. `None` when the chain carries a
 /// policy, or ends anywhere else.
+#[ix_trace_rs::string_edge]
 fn policy_less_decimal_root<'t>(types: &'t [Value], reference: &str) -> Option<&'t str> {
     let mut current = reference;
     for _ in 0..=types.len() {
@@ -1902,6 +1903,7 @@ fn policy_less_decimal_root<'t>(types: &'t [Value], reference: &str) -> Option<&
 /// Whether `reference` reaches native Decimal through a value type bound to it
 /// by `target`, with no policy on the way. Such a value type is an untyped
 /// native alias, not a Decimal walk that lacks its policy.
+#[ix_trace_rs::string_edge]
 fn reaches_target_bound_decimal(types: &[Value], reference: &str) -> bool {
     let mut current = reference;
     for _ in 0..=types.len() {
@@ -2274,6 +2276,7 @@ fn duplicate_member_identity_refusal(
 /// FCD's diagnostic constants for these edges are private, so classify them
 /// from the exact member path and whether the selected package has the target.
 #[implements("FR-056-AC-5")]
+#[ix_trace_rs::string_edge]
 fn missing_graph_reference_kind(document: &PackageDocument, pointer: &str) -> Option<&'static str> {
     let mut segments = pointer.strip_prefix('/')?.split('/');
     let collection = segments.next()?;
@@ -2313,6 +2316,7 @@ fn missing_graph_reference_kind(document: &PackageDocument, pointer: &str) -> Op
 /// The one identity segment after a selected package's dimension or unit
 /// namespace.
 #[implements("FR-056-AC-5")]
+#[ix_trace_rs::string_edge]
 fn package_graph_identity_segment<'a>(
     package_identity: &str,
     namespace: &str,
@@ -3118,6 +3122,7 @@ fn refuse_repeated_operation_name(
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 fn read_operation_parameter(
     package: &str,
     owner_identity: &str,
@@ -4036,6 +4041,7 @@ fn read_decimal_value_type(
 
 /// Convert a canonical decimal string into its coefficient at `scale`,
 /// without passing through a floating-point value.
+#[ix_trace_rs::string_edge]
 fn decimal_coefficient(text: &str, scale: u64) -> Option<Integer> {
     let (negative, unsigned) = match text.strip_prefix('-') {
         Some(unsigned) => (true, unsigned),
@@ -6812,6 +6818,7 @@ pub fn read_records(
 /// declaration refusals are retained on the package until normalization has
 /// charged all source records, as FR-154 requires. A shared reader refusal
 /// ends intake before those declaration checks, retaining the reader's order.
+#[ix_trace_rs::string_edge]
 pub fn read_domain_package(
     selection: DomainPackageRef,
     document: &PackageDocument,

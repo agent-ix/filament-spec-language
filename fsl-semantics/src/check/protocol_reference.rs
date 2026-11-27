@@ -6,7 +6,7 @@ use fsl_forms::ProtocolDeclarationForm;
 
 use super::lowering::ProtocolInput;
 use super::protocol_clause::CheckedProtocol;
-use super::refusal::CheckRefusal;
+use super::refusal::SemanticCheckRefusal;
 
 /// Each successfully checked protocol as lowering reads it. A protocol S3
 /// refused has no input; its source index is retained for authored edges.
@@ -14,7 +14,7 @@ pub(super) fn inputs<'a>(
     protocols: &'a [ProtocolDeclarationForm],
     places: &[Option<usize>],
     checked: &'a [CheckedProtocol],
-) -> Result<Vec<ProtocolInput<'a>>, CheckRefusal> {
+) -> Result<Vec<ProtocolInput<'a>>, SemanticCheckRefusal> {
     Ok(protocols
         .iter()
         .enumerate()

@@ -22,8 +22,8 @@ use fsl_package::{EmitRefusal, ImportViewRefusal};
 use fsl_semantics::check::TypeInvariantRefusal;
 use fsl_semantics::check::{AssemblyCause, AssemblyError, AssemblyRefusal};
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, DispatchLinkCause, KeyFault, ProtocolAnchorCause,
-    ProtocolReferenceCause, TemporalCause,
+    CheckCause, DispatchLinkCause, KeyFault, ProtocolAnchorCause, ProtocolReferenceCause,
+    SemanticCheckRefusal, TemporalCause,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::refusal::MemberPath;
@@ -58,7 +58,7 @@ fn check(causes: Vec<CheckCause>) -> CompileRefusal {
     CompileRefusal::Check {
         refusals: causes
             .into_iter()
-            .map(|cause| CheckRefusal {
+            .map(|cause| SemanticCheckRefusal {
                 location: location(),
                 cause: Box::new(cause),
             })

@@ -16,8 +16,8 @@ use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
 use super::{
-    AssemblyCause, AssemblyError, AssemblyRefusal, TopologyFault, Unmapped, admit_types_with,
-    model_field, model_operation, model_value_type,
+    admit_types_with, model_field, model_operation, model_value_type, AssemblyCause, AssemblyError,
+    AssemblyRefusal, TopologyFault, Unmapped,
 };
 use crate::check::{CheckCause, Owner, PackageDeclarations, SourceOwner, TypeFormFault};
 use crate::model::accounting::ModelNormalizationLimits;
@@ -30,7 +30,7 @@ use crate::model::domain_package::{
     TuplePositionRecord, TupleValueTypeRecord, ValueTypeRef, VariantRecord,
 };
 use crate::model::intake::SelectedModel;
-use crate::model::normalize::{NormalizeOutcome, normalize};
+use crate::model::normalize::{normalize, NormalizeOutcome};
 use crate::value::layer::{HeaderLayer, LayerForm};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
@@ -541,12 +541,10 @@ fn the_assembler_reports_every_error() {
     );
 
     let (_, found) = errors("type A = B;\ntype B = A;");
-    let [
-        AssemblyError {
-            cause: AssemblyCause::AliasCycle { edges },
-            ..
-        },
-    ] = found.as_slice()
+    let [AssemblyError {
+        cause: AssemblyCause::AliasCycle { edges },
+        ..
+    }] = found.as_slice()
     else {
         panic!("one alias cycle, not {found:?}");
     };
@@ -1060,12 +1058,10 @@ fn using_aliases_resolve_to_the_units_profile_selections() {
     );
     match assemble_as("a", "u", &text) {
         Err(refusal) => {
-            let [
-                AssemblyError {
-                    cause: AssemblyCause::DuplicateAlias { alias, spans },
-                    ..
-                },
-            ] = refusal.errors.as_slice()
+            let [AssemblyError {
+                cause: AssemblyCause::DuplicateAlias { alias, spans },
+                ..
+            }] = refusal.errors.as_slice()
             else {
                 panic!("one duplicate-alias error, not {refusal:?}");
             };
@@ -2864,12 +2860,10 @@ fn name_and_number_errors_are_reported_and_the_topology_does_not_run() {
             ),
         ]
     );
-    assert!(
-        found
-            .iter()
-            .any(|error| error.cause == AssemblyCause::ZeroDenominator
-                && error.span == last(&text, "rational(1, 0)"))
-    );
+    assert!(found
+        .iter()
+        .any(|error| error.cause == AssemblyCause::ZeroDenominator
+            && error.span == last(&text, "rational(1, 0)")));
 
     // Without those three, the topology runs and reports the first defect
     // alone: `Length`'s turn, before `Area`'s `Width` and the `P`/`Q` cycle.
@@ -3632,7 +3626,7 @@ fn a_quantity_argument_of_another_unit_is_a_type_mismatch() {
         )
         .expect_err("a Quantity<s> argument is not a Quantity<ms>");
     let argument = last(&text, "3 s");
-    let located = |refusal: &crate::check::CheckRefusal| {
+    let located = |refusal: &crate::check::SemanticCheckRefusal| {
         regions.region(&refusal.location).is_some_and(|region| {
             (region.start(), region.end()) == (argument.start as u64, argument.end as u64)
         })
@@ -5494,16 +5488,14 @@ fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
         first_point, expected_point,
         "the original source has the literal Point node key"
     );
-    let assert_literal_point_key = |authority: &str,
-                                    identity: &str,
-                                    unit_text: &str,
-                                    variation: &str| {
-        let (source, unit) = parsed_unit_as(authority, identity, unit_text);
-        let graph = assemble(vec![(source.clone(), unit)]);
-        let point = graph.checked_type_nodes().next().unwrap().node();
-        assert_eq!(point, expected_point, "{variation}");
-        (graph, source)
-    };
+    let assert_literal_point_key =
+        |authority: &str, identity: &str, unit_text: &str, variation: &str| {
+            let (source, unit) = parsed_unit_as(authority, identity, unit_text);
+            let graph = assemble(vec![(source.clone(), unit)]);
+            let point = graph.checked_type_nodes().next().unwrap().node();
+            assert_eq!(point, expected_point, "{variation}");
+            (graph, source)
+        };
     let byte_variant = text("", "record Point { x: Int[0, 10]; }");
     let _ = assert_literal_point_key("repo", "a", &byte_variant, "bytes alone vary");
     let (authority_variant, source_c) =

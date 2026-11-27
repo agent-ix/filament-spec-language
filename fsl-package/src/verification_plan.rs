@@ -310,6 +310,7 @@ fn claim_site(
         .map(split)
 }
 
+#[ix_trace_rs::string_edge]
 fn method_semantics(name: &str, bounded: bool) -> VerificationPlanMethod {
     let (kind, evidence_kind) = match name {
         "model_check" => ("temporal-satisfaction", vec!["proof", "refutation"]),
@@ -335,6 +336,7 @@ fn method_semantics(name: &str, bounded: bool) -> VerificationPlanMethod {
 /// Read and validate a plan document before any coordinator can execute it.
 /// Unknown fields, an unsupported format, malformed graph edges and a package
 /// identity mismatch are refused.
+#[ix_trace_rs::string_edge]
 pub fn read_verification_plan(
     package: &CheckedPackage,
     document: &[u8],
@@ -360,6 +362,7 @@ pub fn read_verification_plan(
     Ok(plan)
 }
 
+#[ix_trace_rs::string_edge]
 fn validate_graph(plan: &VerificationPlan) -> Result<(), VerificationPlanRefusal> {
     let mut names = BTreeSet::new();
     for node in &plan.nodes {

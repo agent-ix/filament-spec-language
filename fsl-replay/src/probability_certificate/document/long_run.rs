@@ -468,6 +468,7 @@ fn read_rows(
     Ok(values)
 }
 
+#[ix_trace_rs::string_edge]
 fn parse_long_run_policy_choice(
     bytes: &str,
     cx: &mut Context<'_>,

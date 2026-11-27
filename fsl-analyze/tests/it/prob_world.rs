@@ -25,8 +25,8 @@ use fsl_eval::value::S6aRewardEvaluator;
 use fsl_package::CheckedPackage;
 use fsl_replay::ModelCheckLimits;
 use fsl_semantics::check::{
-    CheckRefusal, CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward,
-    RewardEvaluationFailure, RewardEvaluator,
+    CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward, RewardEvaluationFailure,
+    RewardEvaluator, SemanticCheckRefusal,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -345,7 +345,7 @@ impl World {
     pub(crate) fn try_new_with_evaluator(
         model: &Model,
         evaluator: &dyn RewardEvaluator,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode_and_evaluator(
             model,
             &[model.key],
@@ -407,7 +407,7 @@ impl World {
     pub(crate) fn try_new_with_mode(
         model: &Model,
         mode: CheckMode,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode(
             model,
             &[model.key],
@@ -421,7 +421,7 @@ impl World {
 
     /// `model`'s S3 check result, exposed for acceptance tests of pre-sampling
     /// refusals.
-    pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<CheckRefusal>> {
+    pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build(
             model,
             &[model.key],
@@ -493,7 +493,7 @@ impl World {
         initials: &[&Json],
         symmetric: bool,
         value_profile: bool,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode(
             model,
             keys,
@@ -513,7 +513,7 @@ impl World {
         symmetric: bool,
         value_profile: bool,
         mode: CheckMode,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode_and_evaluator(
             model,
             keys,
@@ -541,7 +541,7 @@ impl World {
         mode: CheckMode,
         evaluator: &dyn RewardEvaluator,
         unemittable_workload: bool,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         let document = model.document(symmetric);
         let mut documents = vec![document.as_slice()];
         if unemittable_workload {
@@ -1193,6 +1193,44 @@ pub(crate) fn fair_mec_refinement(extra: &str) -> Model {
             "{}"
         ), extra),
         initial: json!({"s": {"boolean": true}, "u": {"boolean": false}, "g": {"boolean": false}}),
+    }
+}
+
+/// `go` takes `s` to the target `g` and `back` returns, so `s` and `g` form one
+/// SCC of the whole product that no non-target component lies in.
+pub(crate) fn fair_returning_target(extra: &str) -> Model {
+    Model {
+        package: "test/fair-returning-target",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![("s", BOOLEAN.to_owned()), ("g", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "go",
+                parameters: vec![],
+                modifies: vec!["s", "g"],
+                deletes: false,
+            },
+            Operation {
+                name: "back",
+                parameters: vec![],
+                modifies: vec!["s", "g"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            concat!(
+                "pre GoAtS using v on M::W::go {{ self.s }}\n",
+                "post Went using v on M::W::go {{ self.s = false and self.g = true }}\n",
+                "pre BackAtG using v on M::W::back {{ self.g }}\n",
+                "post Returned using v on M::W::back {{ self.s = true and self.g = false }}\n",
+                "{}"
+            ),
+            extra
+        ),
+        initial: json!({"s": {"boolean": true}, "g": {"boolean": false}}),
     }
 }
 

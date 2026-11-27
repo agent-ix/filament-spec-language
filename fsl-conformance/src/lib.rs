@@ -21,8 +21,8 @@
 
 mod call_input;
 mod cases;
-mod fault_backend;
 mod deep_json;
+mod fault_backend;
 mod matrix;
 mod parity;
 mod run;
@@ -37,10 +37,10 @@ pub use run::{run_case, run_case_with, CaseError, CaseOutcome, CaseStage, Report
 
 pub use cases::{lifecycle_matrix, task_set_case};
 pub use fault_backend::FaultInjectingBackend;
-#[cfg(feature = "test-support")]
-pub use parity::{run_parity_with_reference, ParityClauseCase};
 pub use parity::{
     run_parity, BackendEntry, BackendReport, Finding, FindingKind, ParityInputs, ParityLimits,
     ParityMember, ParityRefusal, ParityReport, SourceFile, UnbuildableCase, UnbuildableCause,
     UnsupportedRecord, DEFAULT_PARITY_SEED,
 };
+#[cfg(feature = "test-support")]
+pub use parity::{run_parity_with_reference, ParityClauseCase};

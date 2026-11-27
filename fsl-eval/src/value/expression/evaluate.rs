@@ -2889,6 +2889,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self.apply_as(node, Application::OrderingPart, None)
     }
 
+    #[implements("FR-1040-AC-10")]
     fn eval(&mut self, node: N) -> Result<(), Halt> {
         match node.kind() {
             NodeKind::Coerce(operand, domain)
@@ -3718,15 +3719,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             || outside_declared_range(*right_node, &right) =>
                     {
                         (l == r) == (*operator == EqualityOperator::Equal)
-                    }
-                    // FR-1040-AC-10 / FR-829: across universes two clock
-                    // references are equal exactly when their place id
-                    // texts match; the kernel refuses that pair as
-                    // `ForeignReference`.
-                    (Value::ClockReference(l), Value::ClockReference(r))
-                        if l.universe() != r.universe() =>
-                    {
-                        (l.text() == r.text()) == (*operator == EqualityOperator::Equal)
                     }
                     _ => outcome_into_stop(checked.evaluate(
                         self.world.types(),
