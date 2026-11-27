@@ -525,7 +525,7 @@ pub fn check_simulation_certificate(
     })?;
     for system in [&concrete, &abstract_system] {
         check_model_bounds(system, BOUND_POSITIONS)
-            .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
+            .map_err(ClosureRefusal::from_not_simulated)?;
     }
     if concrete.initial_states().is_empty() {
         return Err(ClosureRefusal::NoInitialState.into());
