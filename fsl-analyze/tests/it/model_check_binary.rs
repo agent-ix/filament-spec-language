@@ -107,7 +107,6 @@ mod model_instances;
 mod model_trace_run;
 mod model_world;
 mod por_world;
-mod probe3534_mc;
 mod provider_test_support;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
@@ -134,6 +133,7 @@ mod timed_refinement_certificate;
 mod timed_refinement_liveness;
 mod timed_state_graph;
 mod tso_fairness;
+mod undefined_guard_refutes;
 mod universe_obligation;
 mod zone_certificate;
 mod zone_clock_collections;
