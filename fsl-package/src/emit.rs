@@ -7192,10 +7192,10 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let (requirement_rows, path_condition_frames, renumbered) =
+    let (requirement_rows, path_condition_frames, renumbered, synthetics) =
         value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     if let Some(data) = &mut checked_term_data {
-        value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+        value_validity_requirements::ordinals::relabel_term_data(&renumbered, &synthetics, data);
     }
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {

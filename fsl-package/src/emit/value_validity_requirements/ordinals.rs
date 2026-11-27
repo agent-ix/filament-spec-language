@@ -44,6 +44,10 @@ enum Use {
 /// ordinal; `None` is a use that is dropped with its omitted owner.
 pub(in crate::emit) type Mapping = Vec<(u64, Option<u64>)>;
 
+/// The synthetic occurrences a rekey added to a node, by node: each new ordinal
+/// with the old ordinal of the source use it copies.
+pub(in crate::emit) type Synthetics = BTreeMap<CheckedNodeId, Vec<(u64, u64)>>;
+
 /// One expression occurrence the reader's owner walk will consume.
 #[derive(Clone, Copy)]
 enum Slot {
@@ -91,7 +95,7 @@ impl Renumbering {
         data: &mut filament_contract_model::CheckedTermDataV2,
     ) {
         let by_id = self.by_id(ids);
-        relabel_term_data_inner(&by_id, data);
+        relabel_term_data_inner(&by_id, &Synthetics::new(), data);
     }
 
     fn by_id(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> BTreeMap<CheckedNodeId, Mapping> {
@@ -438,13 +442,13 @@ pub(in crate::emit) fn rewalk(
     base_source_map: &[CheckedSourceMapEntry],
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
-) -> Result<BTreeMap<CheckedNodeId, Mapping>, EmitRefusal> {
+) -> Result<(BTreeMap<CheckedNodeId, Mapping>, Synthetics), EmitRefusal> {
     let carry = |reason| EmitRefusal::RequirementRowCarry(reason);
     let finals = nodes
         .get(..base_nodes.len())
         .ok_or(carry("the writer's graph holds fewer nodes than the base"))?;
     if frames::owner_order(base_nodes, base_source_map) == frames::owner_order(finals, source_map) {
-        return Ok(BTreeMap::new());
+        return Ok((BTreeMap::new(), Synthetics::new()));
     }
     let keep: Vec<bool> = base_nodes
         .iter()
@@ -523,21 +527,33 @@ pub(in crate::emit) fn rewalk(
     let mut rebuilt_source_map = source_map.clone();
     apply(nodes, &mut rebuilt_source_map, &changed)?;
     *source_map = rebuilt_source_map;
-    Ok(changed
-        .into_iter()
-        .map(|(position, mapping)| {
-            let mut moved: Mapping = mapping
-                .slots
-                .iter()
-                .filter_map(|slot| match *slot {
-                    Slot::Source { old, ordinal } => Some((old, Some(ordinal))),
-                    Slot::Synthetic { .. } => None,
-                })
-                .collect();
-            moved.sort_unstable();
-            (nodes[position].node_id.clone(), moved)
-        })
-        .collect())
+    let mut synthetics = Synthetics::new();
+    let mut moved = BTreeMap::new();
+    for (position, mapping) in changed {
+        let id = nodes[position].node_id.clone();
+        let copies: Vec<(u64, u64)> = mapping
+            .slots
+            .iter()
+            .filter_map(|slot| match *slot {
+                Slot::Synthetic { from, ordinal } => Some((from, ordinal)),
+                Slot::Source { .. } => None,
+            })
+            .collect();
+        if !copies.is_empty() {
+            synthetics.insert(id.clone(), copies);
+        }
+        let mut sources: Mapping = mapping
+            .slots
+            .iter()
+            .filter_map(|slot| match *slot {
+                Slot::Source { old, ordinal } => Some((old, Some(ordinal))),
+                Slot::Synthetic { .. } => None,
+            })
+            .collect();
+        sources.sort_unstable();
+        moved.insert(id, sources);
+    }
+    Ok((moved, synthetics))
 }
 
 /// One visit of the owner walk to a node, as a rekey re-reads it.
@@ -614,13 +630,41 @@ fn rewalk_slots(
 /// the nodes `by_id` holds, and drop the rows of a dropped use.
 pub(in crate::emit) fn relabel_term_data(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    synthetics: &Synthetics,
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {
-    relabel_term_data_inner(by_id, data);
+    relabel_term_data_inner(by_id, synthetics, data);
+}
+
+/// A copy of each row that names the use a synthetic occurrence copies, at the
+/// synthetic occurrence's ordinal.
+fn synthetic_copies<T: Clone>(
+    rows: &[T],
+    synthetics: &Synthetics,
+    at: impl Fn(&mut T) -> (&CheckedNodeId, &mut CheckedOccurrence),
+) -> Vec<T> {
+    let mut copies = Vec::new();
+    for row in rows {
+        let mut probe = row.clone();
+        let (application, occurrence) = at(&mut probe);
+        if occurrence.role != CheckedOccurrenceRole::Expression {
+            continue;
+        }
+        let old = occurrence.ordinal;
+        for &(from, ordinal) in synthetics.get(application).into_iter().flatten() {
+            if from == old {
+                let mut copy = row.clone();
+                at(&mut copy).1.ordinal = ordinal;
+                copies.push(copy);
+            }
+        }
+    }
+    copies
 }
 
 fn relabel_term_data_inner(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    synthetics: &Synthetics,
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {
     if by_id.is_empty() {
@@ -649,12 +693,14 @@ fn relabel_term_data_inner(
             Some(false)
         }
     };
-    let mut changed = false;
+    let copies = synthetic_copies(&data.equality_decisions, synthetics, |row| (&row.application, &mut row.occurrence));
+    let mut changed = !copies.is_empty();
     data.equality_decisions.retain_mut(|row| {
         let moved = relabel(&row.application, &mut row.occurrence);
         changed |= moved != Some(false);
         moved.is_some()
     });
+    data.equality_decisions.extend(copies);
     if changed {
         data.equality_decisions.sort_by(|left, right| {
             (&left.application, &left.occurrence).cmp(&(&right.application, &right.occurrence))

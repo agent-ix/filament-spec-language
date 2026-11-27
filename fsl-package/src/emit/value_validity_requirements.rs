@@ -1121,14 +1121,26 @@ pub(super) type CarriedRows = (
     Vec<RequirementItemRow>,
     Vec<PathConditionFrame>,
     BTreeMap<CheckedNodeId, ordinals::Mapping>,
+    ordinals::Synthetics,
 );
 
+/// A carried value-validity record whose occurrence (or its conversion's) moved:
+/// its node's old and new id and the occurrences its body now holds.
+struct MovedRecord {
+    old: CheckedNodeId,
+    new: CheckedNodeId,
+    occurrence: u64,
+    conversion: Option<u64>,
+}
+
 /// Move each record, conversion and row naming a renumbered expression
-/// occurrence to its new ordinal.
+/// occurrence to its new ordinal. The records that moved are returned: their
+/// nodes carry the occurrence in the body and in the identity path
+/// (FSpec FR-322, FR-825), so they follow with `rename_moved_records`.
 fn relabel_rows(
     rows: &mut [RequirementItemRow],
     renumbered: &BTreeMap<CheckedNodeId, ordinals::Mapping>,
-) {
+) -> Result<Vec<MovedRecord>, EmitRefusal> {
     let moved = |id: &CheckedNodeId, old: u64| -> u64 {
         renumbered
             .get(id)
@@ -1140,17 +1152,113 @@ fn relabel_rows(
             })
             .unwrap_or(old)
     };
+    let mut records = Vec::new();
     for row in rows {
         if row.occurrence.role == CheckedOccurrenceRole::Expression {
             row.occurrence.ordinal = moved(&row.claim, row.occurrence.ordinal);
         }
         if let Some(WireRecord::ValueValidity(record)) = &mut row.record {
+            let before = (record.occurrence, record.conversion.as_ref().map(|c| c.1));
             record.occurrence = moved(&record.application, record.occurrence);
             if let Some((narrow, occurrence)) = &mut record.conversion {
                 *occurrence = moved(narrow, *occurrence);
             }
+            let after = (record.occurrence, record.conversion.as_ref().map(|c| c.1));
+            if before != after {
+                let old = record.node.clone();
+                record.node = record_id_with(&old, after.0, after.1)?;
+                records.push(MovedRecord {
+                    old,
+                    new: record.node.clone(),
+                    occurrence: after.0,
+                    conversion: after.1,
+                });
+            }
         }
     }
+    Ok(records)
+}
+
+/// A record node's id with its occurrence, and its conversion's, replaced. The
+/// id path is `value_validity`, the owner and claim nodes, the occurrence,
+/// `bound`, the result bound, `conversion` (with the narrowing node and its
+/// occurrence when there is one), then the rest.
+fn record_id_with(
+    id: &CheckedNodeId,
+    occurrence: u64,
+    conversion: Option<u64>,
+) -> Result<CheckedNodeId, EmitRefusal> {
+    use filament_contract_model::CheckedNodePathSegment as Segment;
+    let shape = || EmitRefusal::RequirementRowCarry("a record's identity path has an unknown shape");
+    let is_name = |segment: &Segment, text: &str| {
+        matches!(segment, Segment::Name(name) if name.as_ref() == text)
+    };
+    let mut id = id.clone();
+    let bound = id
+        .path
+        .iter()
+        .position(|segment| is_name(segment, "bound"))
+        .filter(|&at| at > 0)
+        .ok_or_else(shape)?;
+    id.path[bound - 1] = Segment::Name(occurrence.to_string().into());
+    if let Some(conversion) = conversion {
+        let at = id
+            .path
+            .iter()
+            .position(|segment| is_name(segment, "conversion"))
+            .ok_or_else(shape)?;
+        let slot = id.path.get_mut(at + 2).ok_or_else(shape)?;
+        *slot = Segment::Name(conversion.to_string().into());
+    }
+    Ok(id)
+}
+
+/// Rename the record nodes `relabel_rows` moved, and put the occurrence in their
+/// bodies: the node ids, their `occurrence` bindings (and the conversion's) and
+/// the source-map entries that name them.
+fn rename_moved_records(
+    moved: &[MovedRecord],
+    nodes: &mut [CheckedSemanticNodeV2],
+    source_map: &mut [CheckedSourceMapEntry],
+) -> Result<(), EmitRefusal> {
+    let by_old: BTreeMap<&CheckedNodeId, &MovedRecord> =
+        moved.iter().map(|record| (&record.old, record)).collect();
+    let refuse = |reason| EmitRefusal::RequirementRowCarry(reason);
+    for node in nodes.iter_mut() {
+        let Some(record) = by_old.get(&node.node_id) else {
+            continue;
+        };
+        node.node_id = record.new.clone();
+        let CheckedTerm::Aggregate { members, .. } = &mut node.body else {
+            return Err(refuse("a carried record body is no aggregate"));
+        };
+        let set = |term: Option<&mut CheckedTerm>, value: u64| -> Result<(), EmitRefusal> {
+            let Some(CheckedTerm::Binding { value: bound, .. }) = term else {
+                return Err(refuse("a carried record has no occurrence binding"));
+            };
+            let CheckedTerm::Literal { value: literal, .. } = bound.as_mut() else {
+                return Err(refuse("a carried record occurrence is no literal"));
+            };
+            *literal = checked_literal_json(&value)?;
+            Ok(())
+        };
+        set(members.get_mut(2), record.occurrence)?;
+        if let Some(conversion) = record.conversion {
+            let Some(CheckedTerm::Binding { value, .. }) = members.get_mut(4) else {
+                return Err(refuse("a carried record has no conversion binding"));
+            };
+            let CheckedTerm::Aggregate { members, .. } = value.as_mut() else {
+                return Err(refuse("a carried record conversion is no aggregate"));
+            };
+            set(members.get_mut(1), conversion)?;
+        }
+    }
+    for entry in source_map.iter_mut() {
+        if let Some(record) = by_old.get(&entry.node_id) {
+            entry.node_id = record.new.clone();
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn carry_rows(
@@ -1160,7 +1268,7 @@ pub(super) fn carry_rows(
 ) -> Result<CarriedRows, EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
-        return Ok((Vec::new(), Vec::new(), BTreeMap::new()));
+        return Ok((Vec::new(), Vec::new(), BTreeMap::new(), ordinals::Synthetics::new()));
     }
     let base_nodes = &base.resolved_graph().nodes;
     let finals = nodes
@@ -1231,13 +1339,14 @@ pub(super) fn carry_rows(
     }
     // A rekey of declaration-less functions reorders the owner walk, and the
     // expression occurrences follow it (FSpec FR-322).
-    let renumbered = ordinals::rewalk(
+    let (renumbered, synthetics) = ordinals::rewalk(
         &base.resolved_graph().nodes,
         base.source_map(),
         nodes,
         source_map,
     )?;
-    relabel_rows(&mut rows, &renumbered);
+    let moved = relabel_rows(&mut rows, &renumbered)?;
+    rename_moved_records(&moved, nodes, source_map)?;
     // A rename changes the structural key of every node holding the renamed
     // node as an operand (a call of a rekeyed entry), so the rows are put in
     // package order again by their final claim keys.
@@ -1258,7 +1367,7 @@ pub(super) fn carry_rows(
     let mut rows = package_order(keyed);
     frames = rederived_frames(frames, &mut rows, nodes, source_map)?;
     renumber_records(&rows, nodes, source_map)?;
-    Ok((rows, frames, renumbered))
+    Ok((rows, frames, renumbered, synthetics))
 }
 
 /// The frame table re-derived from the final `nodes` by the reader's walk
